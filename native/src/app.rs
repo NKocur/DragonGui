@@ -1,0 +1,109 @@
+use pyo3::prelude::*;
+use pyo3::types::{PyAny, PyDict};
+use std::collections::HashMap;
+
+use crate::commands::{CommandBridge, NativeCommandSender};
+use crate::document::{self, StartupDoc, WidgetNode};
+use crate::error::DragonError;
+use crate::events::ChangeValue;
+use crate::runtime::{run_event_loop, AppSpec};
+use crate::theme::Theme;
+
+pub fn run_app_impl(
+    py: Python<'_>,
+    document: Bound<'_, PyAny>,
+    click_callbacks: Bound<'_, PyDict>,
+    change_callbacks: Bound<'_, PyDict>,
+    app_handle: Option<Bound<'_, PyAny>>,
+) -> PyResult<Py<PyDict>> {
+    // Serialize the Python dict to JSON while holding the GIL.
+    let json_str: String = py
+        .import("json")?
+        .call_method1("dumps", (&document,))?
+        .extract()?;
+
+    let raw: serde_json::Value =
+        serde_json::from_str(&json_str).map_err(|e| DragonError::ParseError(e.to_string()))?;
+
+    let scatter_spec = document::find_scatter_in_doc(&raw);
+    let widget_tree: Option<WidgetNode> = document::parse_widget_tree(&raw);
+    let python_theme: Option<Theme> = document::parse_theme_from_doc(&raw);
+
+    let doc: StartupDoc =
+        serde_json::from_value(raw).map_err(|e| DragonError::ParseError(e.to_string()))?;
+
+    // Wrap Python callables into thread-safe closures.  The closures capture
+    // `Py<PyAny>` (which is Send) and re-acquire the GIL when called from
+    // inside `py.allow_threads`.
+    let click_cbs: HashMap<String, Box<dyn Fn() + Send>> = click_callbacks
+        .iter()
+        .filter_map(|(k, v)| {
+            let id = k.extract::<String>().ok()?;
+            let cb: Py<PyAny> = v.unbind();
+            let f: Box<dyn Fn() + Send> = Box::new(move || {
+                Python::with_gil(|py| {
+                    if let Err(err) = cb.call0(py) {
+                        err.print(py);
+                    }
+                });
+            });
+            Some((id, f))
+        })
+        .collect();
+
+    let change_cbs: HashMap<String, Box<dyn Fn(ChangeValue) + Send>> = change_callbacks
+        .iter()
+        .filter_map(|(k, v)| {
+            let id = k.extract::<String>().ok()?;
+            let cb: Py<PyAny> = v.unbind();
+            let f: Box<dyn Fn(ChangeValue) + Send> = Box::new(move |val: ChangeValue| {
+                Python::with_gil(|py| {
+                    let result = match val {
+                        ChangeValue::Bool(b) => cb.call1(py, (b,)),
+                        ChangeValue::Float(f) => cb.call1(py, (f,)),
+                        ChangeValue::Text(s) => cb.call1(py, (s,)),
+                    };
+                    if let Err(err) = result {
+                        err.print(py);
+                    }
+                });
+            });
+            Some((id, f))
+        })
+        .collect();
+
+    let (command_bridge, python_runtime) = if let Some(handle) = app_handle {
+        let bridge = std::sync::Arc::new(CommandBridge::new());
+        let sender = Py::new(py, NativeCommandSender::new(std::sync::Arc::clone(&bridge)))?;
+        handle.call_method1("_bind_native_sender", (sender,))?;
+        (Some(bridge), Some(handle.unbind()))
+    } else {
+        (None, None)
+    };
+
+    let spec = AppSpec {
+        title: doc.window.props.title,
+        width: doc.window.props.width,
+        height: doc.window.props.height,
+        scatter: scatter_spec,
+        widget_tree,
+        theme: python_theme,
+        click_callbacks: click_cbs,
+        change_callbacks: change_cbs,
+        command_bridge,
+        python_runtime,
+    };
+
+    let run_result = py.allow_threads(|| run_event_loop(spec))?;
+
+    let result = PyDict::new(py);
+    result.set_item("status", "ok")?;
+    result.set_item("renderer", "wgpu")?;
+    result.set_item("upload_ms", run_result.upload_ms)?;
+    result.set_item("frame_ms", run_result.frame_ms)?;
+    let debug_snapshot = py
+        .import("json")?
+        .call_method1("loads", (&run_result.debug_snapshot,))?;
+    result.set_item("debug_snapshot", debug_snapshot)?;
+    Ok(result.unbind())
+}

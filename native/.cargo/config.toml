@@ -1,0 +1,5 @@
+# Local MSYS2/MinGW64 developer default.
+# CI overrides this by setting PYO3_PYTHON in the workflow env, which takes
+# precedence because Cargo [env] entries do not force-override process env vars.
+[env]
+PYO3_PYTHON = "C:\\msys64\\mingw64\\bin\\python.exe"

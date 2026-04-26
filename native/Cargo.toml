@@ -1,0 +1,36 @@
+[package]
+name = "dragongui-native"
+version = "0.1.0"
+edition = "2021"
+description = "Rust native backend for DragonGUI."
+license = "MIT"
+repository = "https://github.com/dragonframe/dragongui"
+exclude = [
+    ".pytest_cache/**",
+    ".test-cache/**",
+    "dist/**",
+    "pytest-cache-files-*",
+    "target/**",
+]
+
+[lib]
+name = "_dragongui"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.23", features = ["abi3-py311"] }
+winit = "0.30"
+wgpu = "29"
+glam = "0.28"
+bytemuck = { version = "1", features = ["derive"] }
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+taffy = "0.5"
+thiserror = "2"
+pollster = "0.4"
+glyphon = "0.11.0"
+
+[features]
+default = []
+gpu = []

@@ -1,0 +1,586 @@
+# DragonGUI Library Overview
+
+DragonGUI is a Python application toolkit for GPU-native data tools. The core
+idea is simple: Python describes the application, while Rust owns the hot path:
+windowing, input, layout, rendering, text, data uploads, retained widget state,
+and custom GPU widgets.
+
+The library is currently pre-alpha. It already supports a usable set of native
+widgets, live updates from Python callbacks and background threads, structured
+styling, themes, reactive Python components, GPU scatter rendering, and
+DataFrame-style tables.
+
+## What DragonGUI Does
+
+DragonGUI lets Python developers build desktop data applications without
+writing Rust:
+
+```python
+import dragongui as dg
+
+app = dg.App(theme=dg.Theme.dark())
+win = dg.Window("My Tool", width=1200, height=800)
+
+with dg.HLayout():
+    with dg.Panel("Controls", style={"width": 320, "padding": 14, "gap": 10}):
+        col = dg.Dropdown(items=["x", "y", "z"], value="x")
+        dg.Button("Plot")
+    dg.Scatter3D(frame, x="x", y="y", z="z")
+
+app.run(win)
+```
+
+Python code builds the widget tree and handles user callbacks. The native Rust
+backend runs the event loop, computes layout, handles input, draws widgets, and
+updates GPU resources.
+
+## Product Position
+
+DragonGUI targets the same broad slot as Dear PyGui: native desktop tools for
+data-heavy Python applications. The intended differentiation is:
+
+- Modern `wgpu` rendering instead of an OpenGL-first stack.
+- Rust-owned runtime state and rendering.
+- Python API ergonomics for scientists and tool builders.
+- First-class DragonSci-style GPU data widgets.
+- Native DataFrame and large-data workflows without pushing every operation
+  through Python frame by frame.
+
+DragonGUI is not a browser, not a webview wrapper, and not a JavaScript UI
+framework. It aims for web-like layout and styling flexibility through native
+Rust systems.
+
+## Architecture
+
+The current architecture is:
+
+```text
+Python app and widgets
+    -> optional reactive component runtime
+    -> typed document / VNode diff / command patches
+    -> PyO3 native bridge
+    -> Rust command queue and retained widget tree
+    -> Taffy layout, widget state, resource registries
+    -> wgpu primitive, text, table, and scatter renderers
+    -> native window through winit
+```
+
+Python is not in the render loop. Python runs when:
+
+- The application creates the initial widget tree.
+- A callback fires.
+- Component state changes.
+- A background thread schedules work with `call_soon_threadsafe`.
+- A live widget method queues a native update.
+
+Rust owns:
+
+- The native window and event loop.
+- Hit testing, hover, active, focus, scrolling, and keyboard input.
+- Layout computation.
+- Text shaping and glyph rendering.
+- Primitive widget rendering.
+- Scatter and table rendering.
+- GPU buffers and retained resources.
+- Command draining and redraw invalidation.
+
+## Python Frontend
+
+The Python package exposes a flat `import dragongui as dg` API.
+
+Core application objects:
+
+- `App`
+- `Theme`
+- `Window`
+- `BackendUnavailableError`
+- `backend_info()`
+- `native_backend_available()`
+
+The user can build UIs with context managers:
+
+```python
+win = dg.Window("Tool")
+with dg.HLayout():
+    with dg.Panel("Controls"):
+        dg.Button("Run", on_click=run)
+        dg.Checkbox("Enabled", checked=True)
+    dg.DataFrameTable(df)
+```
+
+Widgets can also be created as explicit children where useful:
+
+```python
+panel = dg.Panel("Controls")
+panel.add(dg.Button("Run", on_click=run, parent=None))
+```
+
+Each widget serializes to a typed document for startup. Live widgets also keep
+handles after `app.run(...)` begins, so Python methods can enqueue native
+updates instead of rebuilding the whole app.
+
+## Widget Catalog
+
+### Top-Level
+
+| Widget | Purpose |
+| --- | --- |
+| `Window` | Top-level native application window. Holds the root widget tree. |
+
+### Layout And Structure
+
+| Widget | Purpose |
+| --- | --- |
+| `HLayout` | Horizontal flex container. |
+| `VLayout` | Vertical flex container. |
+| `Panel` | Framed titled container for controls and grouped content. |
+| `Sidebar` | Side navigation/container region. |
+| `StatusBar` | Bottom/status strip container. |
+| `Separator` | Visual divider. |
+| `Spacer` | Fixed or flexible blank layout space. |
+
+### Navigation
+
+| Widget | Purpose |
+| --- | --- |
+| `Tabs` | Tab strip container. |
+| `Tab` | Individual tab item. |
+| `Pages` | Page container paired with navigation state. |
+| `Page` | Individual page inside `Pages`. |
+| `NavItem` | Sidebar/page navigation item. |
+
+### Basic Controls
+
+| Widget | Purpose |
+| --- | --- |
+| `Label` | Text display. |
+| `Button` | Clickable command control with `on_click`. |
+| `TextInput` | Editable single-line text input with `on_change`. |
+| `Slider` | Numeric drag control with range and `on_change`. |
+| `Dropdown` | Select one value from a list. |
+| `Checkbox` | Boolean toggle. |
+
+### Data And GPU Widgets
+
+| Widget | Purpose |
+| --- | --- |
+| `Scatter3D` | GPU-rendered 3D point cloud/scatter widget. |
+| `DataFrameTable` | Native virtualized table for DataFrame-like data. |
+
+## Widget Behavior
+
+Current interaction support includes:
+
+- Button click callbacks.
+- Checkbox toggling.
+- Dropdown open/select behavior.
+- Slider drag and value callbacks.
+- Text input editing, caret positioning, and keyboard input.
+- Tab focus navigation.
+- Enter/Space activation for keyboard-focused controls.
+- Sidebar/page navigation.
+- Table scrolling and cell/header selection.
+- Scatter orbit, pan, and zoom.
+
+Scatter interaction:
+
+- Left drag orbits the camera.
+- Middle or right drag pans.
+- Mouse wheel zooms.
+- Resize updates the scatter viewport and camera aspect.
+
+## Reactive Component Frontend
+
+DragonGUI includes an experimental reactive Python layer.
+
+Exports:
+
+- `@component`
+- `ComponentCtx`
+- `ComponentInstance`
+- `StateSlot`
+- `VNode`
+- `Patch`
+- `ResourceRef`
+
+The component model uses keyed state instead of React-style positional hooks:
+
+```python
+@dg.component
+def Tool(ctx, df):
+    x = ctx.state("x", "x")
+
+    return dg.Panel(children=[
+        dg.Dropdown(items=df.columns, value=x.value, on_change=x.set),
+        dg.Scatter3D(df, x=x.value, y="y", z="z", key="main-scatter"),
+    ])
+```
+
+State rules:
+
+- State keys must be unique within a component instance.
+- Updating state rerenders the owning component subtree.
+- Child component state is preserved when parent path, component type, and key
+  remain stable.
+- Large resources are compared by handle/object identity, not by deep value.
+
+The component system produces VNode diffs and sends patches through the live
+native command queue.
+
+## Live Updates And Command Queue
+
+DragonGUI supports runtime mutation after startup. Python can enqueue native
+updates from UI callbacks or background threads.
+
+Important APIs:
+
+- `App.call_soon_threadsafe(fn)`
+- `App.debug_snapshot(timeout_ms=1000)`
+- `Widget.set_style(style)`
+- `Container.replace_children(children)`
+- `Scatter3D.set_points(frame, x=..., y=..., z=...)`
+- `DataFrameTable.set_frame(frame)`
+- `App.set_buffer_resource(...)`
+- `App.release_resource(resource_id)`
+
+The native command queue supports commands such as:
+
+- Set widget property.
+- Set style patch.
+- Replace children.
+- Replace a node.
+- Set packed scatter point data.
+- Set table data.
+- Set table data columns.
+- Set/release buffer resources.
+- Invalidate layout, text, visual, GPU data, or full state.
+- Request debug snapshots.
+- Drain scheduled Python tasks.
+
+The queue wakes the event loop when work is scheduled, drains before redraw,
+marks dirty state, and requests a redraw when needed.
+
+## Styling And Theming
+
+DragonGUI uses structured inline styles, not CSS strings.
+
+Example:
+
+```python
+dg.Panel(
+    "Controls",
+    class_="controls",
+    style={
+        "width": 340,
+        "padding": 14,
+        "gap": 10,
+        "background": "surface",
+        "border_color": "border",
+        "border_radius": 6,
+    },
+)
+```
+
+`class_` is currently a semantic/debug label. It is retained in metadata and
+debug output, but it does not trigger selector-based styling yet.
+
+Supported layout style concepts include:
+
+- `display`
+- `flex_direction`
+- `flex`
+- `flex_grow`
+- `flex_shrink`
+- `width`
+- `height`
+- `min_width`
+- `min_height`
+- `max_width`
+- `max_height`
+- `padding`
+- `padding_left`
+- `padding_right`
+- `padding_top`
+- `padding_bottom`
+- `margin`
+- `gap`
+
+Supported visual style concepts include:
+
+- `background`
+- `foreground`
+- `border_color`
+- `border_width`
+- `border_radius`
+- `opacity`
+- `accent`
+- `track_color`
+- `thumb_color`
+
+Supported text style concepts include:
+
+- `font_size`
+- `font_family`
+- `font_weight`
+- `color`
+- `text_align`
+
+Pseudo-state styles are structural:
+
+```python
+dg.Button(
+    "Run",
+    style={
+        "background": "surface_alt",
+        "hover": {"background": "accent_mix_20"},
+        "active": {"background": "accent_dark"},
+        "focus": {"border_color": "focus"},
+        "disabled": {"opacity": 0.5},
+    },
+)
+```
+
+Current built-in themes:
+
+- `Theme.dark(...)`
+- `Theme.light(...)`
+
+Theme tokens include:
+
+- `background`
+- `surface`
+- `surface_alt`
+- `text`
+- `muted_text`
+- `accent`
+- `border`
+- `danger`
+- `warning`
+- `success`
+- `focus`
+- `disabled`
+- `radius`
+- `spacing`
+- `font_size`
+
+The native renderer also resolves derived tokens such as accent mix and accent
+dark variants.
+
+## Rust Backend
+
+The native backend is a PyO3 extension module built with maturin.
+
+Major backend systems:
+
+| Area | Files | Responsibility |
+| --- | --- | --- |
+| Python bridge | `native/src/lib.rs`, `native/src/app.rs` | Exposes native APIs to Python. |
+| Command queue | `native/src/commands.rs` | Thread-safe command bridge and runtime events. |
+| Runtime | `native/src/runtime.rs` | Window/event loop, command drain, redraw, native state. |
+| Document parsing | `native/src/document.rs` | Converts Python widget documents into typed Rust nodes. |
+| Layout | `native/src/layout.rs` | Taffy-based layout and widget rect computation. |
+| Events | `native/src/events.rs` | Hit testing, focus, active/hover state, widget interactions. |
+| Styles | `native/src/style.rs`, `native/src/theme.rs` | Style parsing, pseudo-state merging, token resolution. |
+| Primitive rendering | `native/src/primitives/` | Instanced rounded rectangles, controls, table shapes, overlays. |
+| Text rendering | `native/src/text/` | Text layout, glyph caching, widget labels, table/dropdown text. |
+| Tables | `native/src/table.rs`, `native/src/resources.rs` | Table metrics, visible ranges, data resources. |
+| Scatter | `native/src/scatter/` | GPU 3D scatter widget, camera, colormaps, point shader. |
+
+Native dependencies currently include:
+
+- `pyo3`
+- `winit`
+- `wgpu`
+- `taffy`
+- `glyphon`
+- `glam`
+- `bytemuck`
+- `serde` / `serde_json`
+- `base64`
+- `pollster`
+- `thiserror`
+
+## Rendering Pipeline
+
+The backend renders with `wgpu`. The exact ordering is implementation-specific,
+but the rendering model is:
+
+1. Clear the window surface.
+2. Draw primitive widget geometry.
+3. Draw custom GPU widgets such as `Scatter3D` within their layout rects and
+   clip regions.
+4. Draw table and overlay primitives.
+5. Draw text, caret, dropdown text, table text, and other foreground elements.
+
+Primitive widgets are mostly instanced rectangles with color, radius, and
+border-like effects. Text rendering uses a Rust text pipeline and buffer cache.
+Scatter uses its own GPU pipeline and camera state.
+
+## Data Model
+
+DragonGUI has two data paths:
+
+### Startup Document Data
+
+The initial app document can include bounded metadata or compact serialized
+payloads. This is used for startup compatibility and simple examples.
+
+### Live Resource Data
+
+After the app is running, large data should flow through resource handles and
+native commands, not through full document resend.
+
+Current live data support includes:
+
+- Packed float32 scatter point buffers.
+- Table resource updates.
+- Generic buffer resource registration.
+- Resource release commands.
+- Optional widget ownership for generic buffers; app-owned buffers persist until
+  explicit release, while widget-owned buffers are purged when the owner leaves
+  the retained tree.
+
+For Python data, the package includes helpers that can summarize DataFrame-like
+objects, extract bounded table samples, and pack NumPy-accessible columns.
+
+## DataFrameTable
+
+`DataFrameTable` displays tabular data in the native renderer.
+
+Current capabilities:
+
+- Accepts DataFrame-like objects.
+- Extracts column names, dtypes, shape, and bounded samples.
+- Supports live table replacement.
+- Supports selected cell/header state.
+- Supports scrolling by row and column.
+- Renders headers, grid/row backgrounds, visible cells, and selected regions.
+
+The table is designed around visible rows/columns rather than drawing every row
+in Python.
+
+## Scatter3D
+
+`Scatter3D` is the current flagship GPU widget.
+
+Current capabilities:
+
+- Renders 3D point data with `wgpu`.
+- Uses a retained camera for orbit, pan, and zoom.
+- Supports colormaps and point shader logic derived from DragonSci work.
+- Supports live colormap changes through `Scatter3D.set_colormap(...)`.
+- Can receive live point updates from Python.
+- Renders inside the same native window/layout tree as the rest of the UI.
+
+This is the core example of DragonGUI's intended moat: data widgets that are
+native GPU scene nodes, not embedded browser canvases.
+
+## Debugging And Introspection
+
+`App.debug_snapshot()` returns a JSON-compatible snapshot from the native
+runtime.
+
+The snapshot is intended to expose:
+
+- Retained widget tree.
+- Layout rects.
+- Computed style state.
+- Focus, hover, and active state.
+- Dirty flags.
+- Frame timing.
+- GPU upload timing where available.
+- Command queue/resource state.
+
+This is the first observability layer. A full visual inspector is not part of
+the current runtime.
+
+## Packaging And Development
+
+The package is organized for PyPI through `pyproject.toml` and maturin.
+
+Package facts:
+
+- Python package name: `dragongui`
+- Native extension module: `dragongui._dragongui`
+- Rust crate: `dragongui-native`
+- Python source directory: `python`
+- Native source directory: `native`
+- Python requirement: `>=3.11`
+
+Optional dependency groups:
+
+- `dataframe`: pandas and polars support.
+- `dev`: maturin, pytest, ruff.
+
+The repository also includes local development helpers such as `start.bat` and
+examples that can run against the in-repo Python package before wheel
+installation.
+
+## Examples
+
+Current examples cover:
+
+- Full feature showcase: `examples/all_features_demo.py`
+- Scatter tool: `examples/scatter_tool.py`
+- Table tool: `examples/table_tool.py`
+- Live table updates: `examples/live_table_tool.py`
+- Streaming scatter updates: `examples/streaming_scatter_tool.py`
+- Live style updates: `examples/live_style_tool.py`
+- Live prop updates: `examples/live_update_tool.py`
+- Live child replacement: `examples/live_children_tool.py`
+- Component counter: `examples/component_counter_tool.py`
+- Nested components: `examples/component_nested_tool.py`
+- Component node swapping: `examples/component_node_swap_tool.py`
+- Multipage navigation: `examples/multipage_tool.py`
+- Style showcase: `examples/style_showcase.py`
+- Debug snapshot demo: `examples/debug_snapshot_tool.py`
+
+The reactive engine plan also includes API-first examples under
+`plans/10-reactive-native-engine/api-examples/`.
+
+## Current Limits
+
+DragonGUI intentionally does not currently include:
+
+- Browser DOM.
+- HTML parser.
+- Webview frontend.
+- JavaScript runtime.
+- Full CSS selector engine.
+- CSS cascade/specificity/inheritance.
+- Full visual inspector.
+- Complete native desktop app feature set such as file dialogs, menu bars,
+  modal dialogs, context menus, image widgets, tooltips, and color pickers.
+
+Some of these are planned or documented separately, but they are not part of the
+current core runtime.
+
+Known engineering areas that still need continued audit and hardening:
+
+- Cross-platform CI and packaging breadth.
+- More concurrency tests around shutdown and background updates.
+- More visual regression testing for layout/text clipping.
+- More performance profiling for large table and high-frequency update paths.
+- Resource lifetime tracking as large data workflows expand.
+
+## Summary
+
+DragonGUI currently provides:
+
+- A Python widget API.
+- A Python reactive component layer with keyed state.
+- A PyO3 bridge into a Rust native backend.
+- A retained Rust widget/render tree.
+- Taffy-based layout.
+- Structured inline styling and theme tokens.
+- Native input/focus/hover/active behavior.
+- `wgpu` rendering.
+- Native text rendering through `glyphon`.
+- Primitive widgets and navigation widgets.
+- GPU scatter rendering.
+- DataFrame table rendering.
+- Live updates through a thread-safe command queue.
+- Debug snapshots for runtime inspection.
+
+The long-term direction is a Python-first application toolkit with web-like
+layout/styling flexibility and Rust/GPU performance for serious data tools.
