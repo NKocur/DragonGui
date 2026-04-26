@@ -2,19 +2,14 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use crate::style::NodeStyle;
-use crate::theme::Theme;
+use crate::theme::{parse_hex_color as parse_hex_color_str, Theme};
 
 // ---------------------------------------------------------------------------
 // Top-level typed document used only for window geometry.
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 pub struct StartupDoc {
-    pub schema: u32,
-    #[serde(rename = "type")]
-    pub kind: String,
-    pub title: String,
     pub window: WindowDoc,
 }
 
@@ -38,12 +33,6 @@ pub struct WindowProps {
 /// `Scatter3D(df, x=..., y=..., z=...)` node.
 #[derive(Debug)]
 pub struct ScatterSpec {
-    #[allow(dead_code)]
-    pub x: String,
-    #[allow(dead_code)]
-    pub y: String,
-    #[allow(dead_code)]
-    pub z: String,
     pub colormap: String,
     /// Base64-encoded packed float32 xyz triples supplied by Python.
     pub data_b64: Option<String>,
@@ -58,9 +47,6 @@ fn find_scatter_value(v: &serde_json::Value) -> Option<ScatterSpec> {
     if v.get("type").and_then(|t| t.as_str()) == Some("scatter_3d") {
         let props = v.get("props")?;
         return Some(ScatterSpec {
-            x: props.get("x")?.as_str()?.to_string(),
-            y: props.get("y")?.as_str()?.to_string(),
-            z: props.get("z")?.as_str()?.to_string(),
             colormap: props
                 .get("colormap")
                 .and_then(|v| v.as_str())
@@ -137,14 +123,7 @@ pub fn parse_theme_from_doc(doc: &serde_json::Value) -> Option<Theme> {
 }
 
 fn parse_hex_color(v: Option<&serde_json::Value>) -> Option<[f32; 4]> {
-    let hex = v?.as_str()?.trim_start_matches('#');
-    if hex.len() == 6 {
-        let r = u8::from_str_radix(&hex[0..2], 16).ok()? as f32 / 255.0;
-        let g = u8::from_str_radix(&hex[2..4], 16).ok()? as f32 / 255.0;
-        let b = u8::from_str_radix(&hex[4..6], 16).ok()? as f32 / 255.0;
-        return Some([r, g, b, 1.0]);
-    }
-    None
+    parse_hex_color_str(v?.as_str()?)
 }
 
 // ---------------------------------------------------------------------------
@@ -153,21 +132,28 @@ fn parse_hex_color(v: Option<&serde_json::Value>) -> Option<[f32; 4]> {
 
 /// Widget type.  Unknown variants are preserved so unrecognised widgets still
 /// contribute a flex-grow leaf to the layout.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WidgetKind {
     Window,
     HLayout,
     VLayout,
     Panel,
+    Modal,
     Button,
     Checkbox,
     Dropdown,
     Label,
     Slider,
+    NumberInput,
+    ProgressBar,
     TextInput,
     Separator,
     Spacer,
     StatusBar,
+    MenuBar,
+    Menu,
+    MenuItem,
+    ContextMenu,
     Tabs,
     Tab,
     Pages,
@@ -176,6 +162,7 @@ pub enum WidgetKind {
     NavItem,
     Scatter3D,
     DataFrameTable,
+    Image,
     Unknown,
 }
 
@@ -186,15 +173,22 @@ impl WidgetKind {
             "h_layout" => WidgetKind::HLayout,
             "v_layout" => WidgetKind::VLayout,
             "panel" => WidgetKind::Panel,
+            "modal" => WidgetKind::Modal,
             "button" => WidgetKind::Button,
             "checkbox" => WidgetKind::Checkbox,
             "dropdown" => WidgetKind::Dropdown,
             "label" => WidgetKind::Label,
             "slider" => WidgetKind::Slider,
+            "number_input" => WidgetKind::NumberInput,
+            "progress_bar" => WidgetKind::ProgressBar,
             "text_input" => WidgetKind::TextInput,
             "separator" => WidgetKind::Separator,
             "spacer" => WidgetKind::Spacer,
             "status_bar" => WidgetKind::StatusBar,
+            "menu_bar" => WidgetKind::MenuBar,
+            "menu" => WidgetKind::Menu,
+            "menu_item" => WidgetKind::MenuItem,
+            "context_menu" => WidgetKind::ContextMenu,
             "tabs" => WidgetKind::Tabs,
             "tab" => WidgetKind::Tab,
             "pages" => WidgetKind::Pages,
@@ -203,6 +197,7 @@ impl WidgetKind {
             "nav_item" => WidgetKind::NavItem,
             "scatter_3d" => WidgetKind::Scatter3D,
             "dataframe_table" => WidgetKind::DataFrameTable,
+            "image" => WidgetKind::Image,
             _ => WidgetKind::Unknown,
         }
     }
@@ -253,6 +248,16 @@ pub struct NodeProps {
     pub table_cells: Vec<Vec<String>>,
     /// Non-interactive disabled state.
     pub disabled: bool,
+    /// Modal visibility state.
+    pub open: Option<bool>,
+    /// Context menu target widget id.
+    pub target: Option<String>,
+    /// Optional static tooltip text shown on hover.
+    pub tooltip: Option<String>,
+    /// Image file path for native image display widgets.
+    pub image_path: Option<String>,
+    /// Image fit mode: contain, cover, or stretch.
+    pub image_fit: Option<String>,
 }
 
 /// One node in the widget tree.
@@ -412,11 +417,33 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         .get("disabled")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let open = props.get("open").and_then(|v| v.as_bool());
+    let target = props
+        .get("target")
+        .and_then(|v| v.as_str())
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_string());
+    let tooltip = props
+        .get("tooltip")
+        .and_then(|v| v.as_str())
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_string());
+    let image_path = props
+        .get("path")
+        .and_then(|v| v.as_str())
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_string());
+    let image_fit = props
+        .get("fit")
+        .and_then(|v| v.as_str())
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_ascii_lowercase());
     let text_key = match kind {
-        WidgetKind::Panel | WidgetKind::Sidebar => "title",
+        WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal => "title",
         WidgetKind::Checkbox => "label",
         WidgetKind::Dropdown | WidgetKind::TextInput => "value",
-        WidgetKind::Tab | WidgetKind::NavItem => "label",
+        WidgetKind::ProgressBar => "label",
+        WidgetKind::Tab | WidgetKind::NavItem | WidgetKind::Menu | WidgetKind::MenuItem => "label",
         WidgetKind::Page => "title",
         _ => "text",
     };
@@ -453,6 +480,11 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         page_size,
         table_cells,
         disabled,
+        open,
+        target,
+        tooltip,
+        image_path,
+        image_fit,
     }
 }
 
@@ -489,5 +521,35 @@ mod tests {
         assert_eq!(tree.style_json.get("background").unwrap(), "surface");
         assert_eq!(tree.style.layout.width, Some(320.0));
         assert!(tree.style.hover.background.is_some());
+    }
+
+    #[test]
+    fn parse_image_widget_props() {
+        let doc = json!({
+            "window": {
+                "id": "window",
+                "type": "window",
+                "props": {"title": "Images", "width": 320, "height": 240},
+                "children": [{
+                    "id": "hero",
+                    "type": "image",
+                    "props": {
+                        "path": "examples/demo.png",
+                        "fit": "cover",
+                        "width": 160,
+                        "height": 90
+                    }
+                }]
+            }
+        });
+
+        let tree = parse_widget_tree(&doc).unwrap();
+        let image = &tree.children[0];
+
+        assert_eq!(image.kind, WidgetKind::Image);
+        assert_eq!(image.props.image_path.as_deref(), Some("examples/demo.png"));
+        assert_eq!(image.props.image_fit.as_deref(), Some("cover"));
+        assert_eq!(image.props.fixed_width, Some(160.0));
+        assert_eq!(image.props.fixed_height, Some(90.0));
     }
 }

@@ -51,6 +51,8 @@ module-name = "dragongui._dragongui"
 features = ["pyo3/extension-module"]
 strip = true
 include = [
+  { path = "THIRD_PARTY_NOTICES.md", format = "sdist" },
+  { path = "THIRD_PARTY_NOTICES.md", format = "wheel" },
   { path = "examples/*.py", format = "sdist" },
   { path = "plans/*.md", format = "sdist" },
   { path = "tests/*.py", format = "sdist" },

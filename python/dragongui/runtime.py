@@ -449,7 +449,7 @@ def _table_column_payload(columns: object) -> tuple[list[dict[str, object]], lis
 def _collect_runtime_callbacks(
     widget: object,
 ) -> tuple[dict[str, Callable[[], None]], dict[str, Callable[[object], None]]]:
-    from .widgets import Button, Checkbox, Container, Dropdown, Pages, Slider, Tabs, TextInput, Widget
+    from .widgets import Button, Checkbox, Container, Dropdown, MenuItem, NumberInput, Pages, Slider, Tabs, TextInput, Widget
 
     click_callbacks: dict[str, Callable[[], None]] = {}
     change_callbacks: dict[str, Callable[[object], None]] = {}
@@ -458,6 +458,8 @@ def _collect_runtime_callbacks(
         if not isinstance(node, Widget):
             return
         if isinstance(node, Button) and node.on_click is not None:
+            click_callbacks[node.id] = node.on_click
+        if isinstance(node, MenuItem) and node.on_click is not None:
             click_callbacks[node.id] = node.on_click
         if isinstance(node, Checkbox) and node.on_change is not None:
             def checkbox_changed(value: object, widget: Checkbox = node) -> None:
@@ -471,6 +473,12 @@ def _collect_runtime_callbacks(
                 widget.on_change(widget.value)
 
             change_callbacks[node.id] = slider_changed
+        if isinstance(node, NumberInput) and node.on_change is not None:
+            def number_changed(value: object, widget: NumberInput = node) -> None:
+                widget.value = float(value)
+                widget.on_change(widget.value)
+
+            change_callbacks[node.id] = number_changed
         if isinstance(node, Dropdown) and node.on_change is not None:
             def dropdown_changed(value: object, widget: Dropdown = node) -> None:
                 widget.value = str(value)

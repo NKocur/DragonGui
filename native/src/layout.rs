@@ -54,6 +54,7 @@ pub fn compute_layout(
         theme,
         Some((window_w, window_h)),
         None,
+        false,
     );
 
     tree.compute_layout(
@@ -68,6 +69,7 @@ pub fn compute_layout(
     let mut result = LayoutResult::default();
     collect(&tree, root_id, root, 0.0, 0.0, &mut result);
     apply_navigation_layout(root, &mut result, scale_factor, theme, state);
+    apply_modal_layout(root, &mut result, scale_factor, theme);
     result
 }
 
@@ -82,20 +84,35 @@ fn build_node(
     theme: &Theme,
     size_override: Option<(f32, f32)>,
     parent_kind: Option<&WidgetKind>,
+    layout_modal_children: bool,
 ) -> NodeId {
-    let mut style = style_for(node, sf, theme, parent_kind);
+    let mut style = style_for(node, sf, theme, parent_kind, layout_modal_children);
     if let Some((w, h)) = size_override {
         style.size = taffy::geometry::Size {
             width: Dimension::Length(w),
             height: Dimension::Length(h),
         };
     }
-    let child_ids: Vec<NodeId> = if matches!(node.kind, WidgetKind::Tabs | WidgetKind::Pages) {
+    let child_ids: Vec<NodeId> = if matches!(
+        node.kind,
+        WidgetKind::Tabs | WidgetKind::Pages | WidgetKind::Menu | WidgetKind::ContextMenu
+    ) || (node.kind == WidgetKind::Modal && !layout_modal_children)
+    {
         Vec::new()
     } else {
         node.children
             .iter()
-            .map(|c| build_node(tree, c, sf, theme, None, Some(&node.kind)))
+            .map(|c| {
+                build_node(
+                    tree,
+                    c,
+                    sf,
+                    theme,
+                    None,
+                    Some(&node.kind),
+                    layout_modal_children,
+                )
+            })
             .collect()
     };
     if child_ids.is_empty() {
@@ -111,7 +128,13 @@ fn build_node(
 // ---------------------------------------------------------------------------
 
 // Logical-pixel constants — multiplied by scale_factor before use.
-fn style_for(node: &WidgetNode, sf: f32, theme: &Theme, parent_kind: Option<&WidgetKind>) -> Style {
+fn style_for(
+    node: &WidgetNode,
+    sf: f32,
+    theme: &Theme,
+    parent_kind: Option<&WidgetKind>,
+    layout_modal_children: bool,
+) -> Style {
     let ctrl_h = theme.control_height() * sf;
     let ctrl_gap = (theme.spacing * 0.75) * sf;
     let panel_pad = (theme.spacing + 2.0) * sf;
@@ -175,6 +198,35 @@ fn style_for(node: &WidgetNode, sf: f32, theme: &Theme, parent_kind: Option<&Wid
             ..Default::default()
         },
 
+        WidgetKind::MenuBar => Style {
+            display: Display::Flex,
+            flex_direction: FlexDirection::Row,
+            align_items: Some(AlignItems::Center),
+            flex_grow: 0.0,
+            flex_shrink: 0.0,
+            size: Size {
+                width: Dimension::Percent(1.0),
+                height: Dimension::Length(
+                    node.props
+                        .fixed_height
+                        .unwrap_or_else(|| theme.control_height())
+                        .max(theme.control_height())
+                        * sf,
+                ),
+            },
+            padding: taffy::geometry::Rect {
+                left: LengthPercentage::Length(panel_pad),
+                right: LengthPercentage::Length(panel_pad),
+                top: LengthPercentage::Length(0.0),
+                bottom: LengthPercentage::Length(0.0),
+            },
+            gap: taffy::geometry::Size {
+                width: LengthPercentage::Length(ctrl_gap),
+                height: LengthPercentage::Length(0.0),
+            },
+            ..Default::default()
+        },
+
         WidgetKind::Panel | WidgetKind::Sidebar => {
             let width = match node.props.fixed_width {
                 Some(w) => Dimension::Length(w * sf), // logical → physical pixels
@@ -212,17 +264,54 @@ fn style_for(node: &WidgetNode, sf: f32, theme: &Theme, parent_kind: Option<&Wid
             }
         }
 
+        WidgetKind::Modal if !layout_modal_children => Style {
+            flex_grow: 0.0,
+            flex_shrink: 0.0,
+            size: Size {
+                width: Dimension::Length(0.0),
+                height: Dimension::Length(0.0),
+            },
+            ..Default::default()
+        },
+
+        WidgetKind::Modal => Style {
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            align_items: Some(AlignItems::Stretch),
+            flex_grow: 0.0,
+            flex_shrink: 0.0,
+            size: Size {
+                width: Dimension::Length(0.0),
+                height: Dimension::Length(0.0),
+            },
+            padding: taffy::geometry::Rect {
+                left: LengthPercentage::Length(panel_pad),
+                right: LengthPercentage::Length(panel_pad),
+                top: LengthPercentage::Length(panel_pad),
+                bottom: LengthPercentage::Length(panel_pad),
+            },
+            gap: taffy::geometry::Size {
+                width: LengthPercentage::Length(0.0),
+                height: LengthPercentage::Length(ctrl_gap),
+            },
+            ..Default::default()
+        },
+
         // ── leaf controls ────────────────────────────────────────────────────
-        WidgetKind::Button | WidgetKind::Dropdown | WidgetKind::NavItem | WidgetKind::Tab => {
-            Style {
-                size: Size {
-                    width: Dimension::Auto,
-                    height: Dimension::Length(ctrl_h),
-                },
-                flex_shrink: 0.0,
-                ..Default::default()
-            }
-        }
+        WidgetKind::Button
+        | WidgetKind::Dropdown
+        | WidgetKind::Menu
+        | WidgetKind::MenuItem
+        | WidgetKind::NumberInput
+        | WidgetKind::NavItem
+        | WidgetKind::Tab => Style {
+            size: Size {
+                width: Dimension::Auto,
+                height: Dimension::Length(ctrl_h),
+            },
+            flex_shrink: 0.0,
+            ..Default::default()
+        },
 
         WidgetKind::Checkbox => Style {
             size: Size {
@@ -233,7 +322,10 @@ fn style_for(node: &WidgetNode, sf: f32, theme: &Theme, parent_kind: Option<&Wid
             ..Default::default()
         },
 
-        WidgetKind::Label | WidgetKind::Slider | WidgetKind::TextInput => Style {
+        WidgetKind::Label
+        | WidgetKind::Slider
+        | WidgetKind::ProgressBar
+        | WidgetKind::TextInput => Style {
             size: Size {
                 width: Dimension::Auto,
                 height: Dimension::Length(ctrl_h),
@@ -264,6 +356,35 @@ fn style_for(node: &WidgetNode, sf: f32, theme: &Theme, parent_kind: Option<&Wid
                 }
             }
         }
+
+        WidgetKind::Image => {
+            let width = node.props.fixed_width.map(|w| Dimension::Length(w * sf));
+            let height = node.props.fixed_height.map(|h| Dimension::Length(h * sf));
+            let fixed = width.is_some() || height.is_some();
+            Style {
+                flex_grow: if fixed { 0.0 } else { 1.0 },
+                flex_shrink: if fixed { 0.0 } else { 1.0 },
+                size: Size {
+                    width: width.unwrap_or(Dimension::Auto),
+                    height: height.unwrap_or(Dimension::Auto),
+                },
+                min_size: Size {
+                    width: Dimension::Length(48.0 * sf),
+                    height: Dimension::Length(48.0 * sf),
+                },
+                ..Default::default()
+            }
+        }
+
+        WidgetKind::ContextMenu => Style {
+            flex_grow: 0.0,
+            flex_shrink: 0.0,
+            size: Size {
+                width: Dimension::Length(0.0),
+                height: Dimension::Length(0.0),
+            },
+            ..Default::default()
+        },
 
         WidgetKind::Spacer => {
             let width = node.props.fixed_width.map(|w| Dimension::Length(w * sf));
@@ -317,13 +438,17 @@ fn style_for(node: &WidgetNode, sf: f32, theme: &Theme, parent_kind: Option<&Wid
     };
     apply_intrinsic_leaf_width(&mut style, node, parent_kind, sf, theme);
     apply_node_style(&mut style, node, sf);
-    reserve_panel_title_space(&mut style, node, sf, theme);
+    if node.kind != WidgetKind::Modal || layout_modal_children {
+        reserve_panel_title_space(&mut style, node, sf, theme);
+    }
     style
 }
 
 fn reserve_panel_title_space(style: &mut Style, node: &WidgetNode, sf: f32, theme: &Theme) {
-    if !matches!(node.kind, WidgetKind::Panel | WidgetKind::Sidebar)
-        || !node.props.text.as_deref().is_some_and(|t| !t.is_empty())
+    if !matches!(
+        node.kind,
+        WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal
+    ) || !node.props.text.as_deref().is_some_and(|t| !t.is_empty())
     {
         return;
     }
@@ -369,6 +494,7 @@ fn apply_intrinsic_leaf_width(
     if !matches!(
         parent_kind,
         Some(WidgetKind::HLayout | WidgetKind::StatusBar | WidgetKind::Tabs)
+            | Some(WidgetKind::MenuBar)
     ) {
         return;
     }
@@ -385,7 +511,9 @@ fn intrinsic_leaf_width(node: &WidgetNode, theme: &Theme) -> Option<f32> {
     let pad = theme.spacing * 2.0;
     match node.kind {
         WidgetKind::Button => Some((text_w.unwrap_or(0.0) + pad).clamp(72.0, 240.0)),
+        WidgetKind::Menu => Some((text_w.unwrap_or(0.0) + pad).clamp(44.0, 180.0)),
         WidgetKind::Dropdown => Some((text_w.unwrap_or(0.0) + pad + 22.0).clamp(112.0, 260.0)),
+        WidgetKind::NumberInput => Some((text_w.unwrap_or(0.0) + pad + 34.0).clamp(96.0, 220.0)),
         WidgetKind::TextInput => Some((text_w.unwrap_or(0.0) + pad).clamp(120.0, 280.0)),
         WidgetKind::Checkbox => Some(
             (text_w.unwrap_or(0.0) + CHECKBOX_LEFT_PAD_LP + CHECKBOX_BOX_LP + pad)
@@ -395,6 +523,7 @@ fn intrinsic_leaf_width(node: &WidgetNode, theme: &Theme) -> Option<f32> {
             Some((text_w.unwrap_or(0.0) + pad).clamp(32.0, 280.0))
         }
         WidgetKind::Slider => Some(140.0),
+        WidgetKind::ProgressBar => Some(160.0),
         _ => None,
     }
 }
@@ -585,6 +714,79 @@ fn apply_navigation_layout(
             }
         }
     }
+}
+
+fn apply_modal_layout(root: &WidgetNode, result: &mut LayoutResult, sf: f32, theme: &Theme) {
+    let root_rect = result.rects.get(&root.id).copied().unwrap_or(Rect {
+        x: 0.0,
+        y: 0.0,
+        w: 800.0 * sf,
+        h: 600.0 * sf,
+    });
+    for modal in open_modals(root) {
+        layout_modal(modal, root_rect, result, sf, theme);
+    }
+}
+
+fn open_modals(node: &WidgetNode) -> Vec<&WidgetNode> {
+    let mut out = Vec::new();
+    collect_open_modals(node, &mut out);
+    out
+}
+
+fn collect_open_modals<'a>(node: &'a WidgetNode, out: &mut Vec<&'a WidgetNode>) {
+    if node.kind == WidgetKind::Modal && node.props.open.unwrap_or(false) {
+        out.push(node);
+    }
+    for child in &node.children {
+        collect_open_modals(child, out);
+    }
+}
+
+fn layout_modal(
+    modal: &WidgetNode,
+    root_rect: Rect,
+    result: &mut LayoutResult,
+    sf: f32,
+    theme: &Theme,
+) {
+    let margin = (theme.spacing * 3.0 * sf).max(16.0 * sf);
+    let max_w = (root_rect.w - margin * 2.0).max(80.0 * sf);
+    let max_h = (root_rect.h - margin * 2.0).max(80.0 * sf);
+    let modal_w = modal
+        .props
+        .fixed_width
+        .map(|w| w * sf)
+        .unwrap_or(420.0 * sf)
+        .clamp(80.0 * sf, max_w);
+    let modal_h = modal
+        .props
+        .fixed_height
+        .map(|h| h * sf)
+        .unwrap_or(220.0 * sf)
+        .clamp(80.0 * sf, max_h);
+    let x = root_rect.x + (root_rect.w - modal_w) * 0.5;
+    let y = root_rect.y + (root_rect.h - modal_h) * 0.5;
+
+    let mut tree: TaffyTree<()> = TaffyTree::new();
+    let root_id = build_node(
+        &mut tree,
+        modal,
+        sf,
+        theme,
+        Some((modal_w, modal_h)),
+        None,
+        true,
+    );
+    tree.compute_layout(
+        root_id,
+        Size {
+            width: AvailableSpace::Definite(modal_w),
+            height: AvailableSpace::Definite(modal_h),
+        },
+    )
+    .expect("taffy modal layout failed");
+    collect(&tree, root_id, modal, x, y, result);
 }
 
 fn layout_tabs(
@@ -946,6 +1148,64 @@ mod tests {
     }
 
     #[test]
+    fn menu_bar_lays_out_menus_without_popup_children() {
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "menu-bar",
+                WidgetKind::MenuBar,
+                NodeProps {
+                    fixed_height: Some(32.0),
+                    ..NodeProps::default()
+                },
+                vec![
+                    node(
+                        "file",
+                        WidgetKind::Menu,
+                        NodeProps {
+                            text: Some("File".to_string()),
+                            ..NodeProps::default()
+                        },
+                        vec![node(
+                            "open",
+                            WidgetKind::MenuItem,
+                            NodeProps {
+                                text: Some("Open".to_string()),
+                                ..NodeProps::default()
+                            },
+                            vec![],
+                        )],
+                    ),
+                    node(
+                        "help",
+                        WidgetKind::Menu,
+                        NodeProps {
+                            text: Some("Help".to_string()),
+                            ..NodeProps::default()
+                        },
+                        vec![],
+                    ),
+                ],
+            )],
+        );
+
+        let layout = compute_layout(&root, 640.0, 200.0, 1.0, &Theme::dark(), None);
+        let menu_bar = layout.rects.get("menu-bar").unwrap();
+        let file = layout.rects.get("file").unwrap();
+        let help = layout.rects.get("help").unwrap();
+
+        assert_eq!(menu_bar.h, Theme::dark().control_height());
+        assert!(file.w >= 44.0, "file menu collapsed: {file:?}");
+        assert!(help.x > file.x, "help menu did not flow after file menu");
+        assert!(
+            !layout.rects.contains_key("open"),
+            "menu item should be popup-only, not normal layout"
+        );
+    }
+
+    #[test]
     fn inline_style_overrides_width_and_gap() {
         let mut row = node(
             "row",
@@ -978,5 +1238,67 @@ mod tests {
 
         assert_eq!(panel.w, 300.0);
         assert_eq!(scatter.x, 316.0);
+    }
+
+    #[test]
+    fn open_modal_is_centered_and_does_not_consume_window_flow() {
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![
+                node(
+                    "button",
+                    WidgetKind::Button,
+                    NodeProps {
+                        text: Some("Background".to_string()),
+                        ..NodeProps::default()
+                    },
+                    vec![],
+                ),
+                node(
+                    "modal",
+                    WidgetKind::Modal,
+                    NodeProps {
+                        text: Some("Confirm".to_string()),
+                        fixed_width: Some(400.0),
+                        fixed_height: Some(220.0),
+                        open: Some(true),
+                        ..NodeProps::default()
+                    },
+                    vec![node(
+                        "ok",
+                        WidgetKind::Button,
+                        NodeProps {
+                            text: Some("OK".to_string()),
+                            ..NodeProps::default()
+                        },
+                        vec![],
+                    )],
+                ),
+            ],
+        );
+
+        let layout = compute_layout(&root, 800.0, 600.0, 1.0, &Theme::dark(), None);
+        let button = layout.rects.get("button").unwrap();
+        let modal = layout.rects.get("modal").unwrap();
+        let ok = layout.rects.get("ok").unwrap();
+
+        assert!(
+            button.y < 10.0,
+            "background flow moved by modal: {button:?}"
+        );
+        assert!(
+            (modal.x - 200.0).abs() < 0.1,
+            "modal not centered: {modal:?}"
+        );
+        assert!(
+            (modal.y - 190.0).abs() < 0.1,
+            "modal not centered: {modal:?}"
+        );
+        assert!(
+            ok.x > modal.x && ok.y > modal.y,
+            "child not inside modal: {ok:?}"
+        );
     }
 }

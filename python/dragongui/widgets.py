@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import base64
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import AbstractContextManager
 from itertools import count
+import math
+import numbers
 import re
 import time
 from typing import Any, ClassVar, Self
@@ -69,6 +71,39 @@ def _scatter_colormap(value: str) -> str:
     return colormap
 
 
+def _format_number(value: float) -> str:
+    text = f"{float(value):.12g}"
+    return "0" if text == "-0" else text
+
+
+def _normalize_color_tuple(value: Sequence[object], *, alpha: bool) -> tuple[int, ...]:
+    if isinstance(value, (str, bytes, bytearray)) or not isinstance(value, Sequence):
+        raise TypeError("ColorPicker value must be a sequence of RGB or RGBA values")
+    if len(value) not in {3, 4}:
+        raise ValueError("ColorPicker value must contain 3 RGB or 4 RGBA channels")
+
+    raw_channels = list(value)
+    channels = [float(channel) for channel in raw_channels]
+    if not all(math.isfinite(channel) for channel in channels):
+        raise ValueError("ColorPicker channels must be finite numbers")
+
+    normalized_input = all(0.0 <= channel <= 1.0 for channel in channels) and any(
+        not isinstance(channel, numbers.Integral) for channel in raw_channels
+    )
+    if normalized_input:
+        channels = [channel * 255.0 for channel in channels]
+    if len(channels) == 3 and alpha:
+        channels.append(255.0)
+    elif len(channels) == 4 and not alpha:
+        channels = channels[:3]
+    return tuple(max(0, min(255, int(round(channel)))) for channel in channels)
+
+
+def _color_hex(value: Sequence[int]) -> str:
+    r, g, b = (max(0, min(255, int(channel))) for channel in value[:3])
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
 def _copy_style(style: Mapping[str, object] | None) -> dict[str, object] | None:
     if style is None:
         return None
@@ -104,6 +139,7 @@ Callback = Callable[[], None]
 BoolCallback = Callable[[bool], None]
 FloatCallback = Callable[[float], None]
 StringCallback = Callable[[str], None]
+ColorCallback = Callable[[tuple[int, ...]], None]
 
 _ids = count(1)
 _AUTO_PARENT = object()
@@ -145,6 +181,7 @@ class Widget:
         key: str | None = None,
         class_: str | None = None,
         style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
         parent: "Container | None | object" = _AUTO_PARENT,
     ) -> None:
         if key is not None and (not isinstance(key, str) or not key):
@@ -155,6 +192,7 @@ class Widget:
         self.key = key
         self.class_ = class_
         self.style = _copy_style(style)
+        self.tooltip = None if tooltip is None else str(tooltip)
         self._live_handle: Any | None = None
         self.parent: Container | None = None
         if parent is _AUTO_PARENT:
@@ -198,10 +236,14 @@ class Widget:
             handle.enqueue_set_style(patch)
 
     def to_dict(self) -> dict[str, Any]:
+        props = self.props()
+        if self.tooltip:
+            props = dict(props)
+            props["tooltip"] = self.tooltip
         data = {
             "id": self.id,
             "type": self.kind,
-            "props": self.props(),
+            "props": props,
         }
         if self.key is not None:
             data["key"] = self.key
@@ -225,10 +267,18 @@ class Container(Widget, AbstractContextManager["Container"]):
         key: str | None = None,
         class_: str | None = None,
         style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
         parent: "Container | None | object" = _AUTO_PARENT,
     ) -> None:
         self.children: list[Widget] = []
-        super().__init__(id=id, key=key, class_=class_, style=style, parent=parent)
+        super().__init__(
+            id=id,
+            key=key,
+            class_=class_,
+            style=style,
+            tooltip=tooltip,
+            parent=parent,
+        )
 
     def add(self, child: Widget) -> Widget:
         if child.parent is self:
@@ -333,12 +383,13 @@ class Separator(Widget):
         key: str | None = None,
         class_: str | None = None,
         style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
         parent: Container | None | object = _AUTO_PARENT,
     ) -> None:
         if orientation not in {"auto", "horizontal", "vertical"}:
             raise ValueError("Separator orientation must be 'auto', 'horizontal', or 'vertical'")
         self.orientation = orientation
-        super().__init__(id=id, key=key, class_=class_, style=style, parent=parent)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
 
     def props(self) -> dict[str, Any]:
         return {"orientation": self.orientation}
@@ -356,6 +407,7 @@ class Spacer(Widget):
         key: str | None = None,
         class_: str | None = None,
         style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
         parent: Container | None | object = _AUTO_PARENT,
     ) -> None:
         if width is not None and float(width) < 0:
@@ -364,7 +416,7 @@ class Spacer(Widget):
             raise ValueError("Spacer height cannot be negative")
         self.width = None if width is None else float(width)
         self.height = None if height is None else float(height)
-        super().__init__(id=id, key=key, class_=class_, style=style, parent=parent)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
 
     def props(self) -> dict[str, Any]:
         return {
@@ -384,15 +436,162 @@ class StatusBar(Container):
         key: str | None = None,
         class_: str | None = None,
         style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
         parent: Container | None | object = _AUTO_PARENT,
     ) -> None:
         if float(height) <= 0:
             raise ValueError("StatusBar height must be greater than zero")
         self.height = float(height)
-        super().__init__(id=id, key=key, class_=class_, style=style, parent=parent)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
 
     def props(self) -> dict[str, Any]:
         return {"height": self.height}
+
+
+class MenuBar(Container):
+    kind = "menu_bar"
+
+    def __init__(
+        self,
+        *,
+        height: int | float = 34,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        if float(height) <= 0:
+            raise ValueError("MenuBar height must be greater than zero")
+        self.height = float(height)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def add(self, child: Widget) -> Widget:
+        if not isinstance(child, Menu):
+            raise TypeError("MenuBar can only contain Menu children")
+        return super().add(child)
+
+    def props(self) -> dict[str, Any]:
+        return {"height": self.height}
+
+
+class Menu(Container):
+    kind = "menu"
+
+    def __init__(
+        self,
+        label: str,
+        *,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.label = str(label)
+        if not self.label:
+            raise ValueError("Menu label cannot be empty")
+        self.disabled = bool(disabled)
+        actual_parent = _BuildContext.parent() if parent is _AUTO_PARENT else parent
+        if actual_parent is not None and not isinstance(actual_parent, MenuBar):
+            raise RuntimeError("Menu must be created directly inside a MenuBar context")
+        super().__init__(
+            id=id,
+            key=key,
+            class_=class_,
+            style=style,
+            tooltip=tooltip,
+            parent=actual_parent,
+        )
+
+    def add(self, child: Widget) -> Widget:
+        if not isinstance(child, MenuItem):
+            raise TypeError("Menu can only contain MenuItem children")
+        return super().add(child)
+
+    def props(self) -> dict[str, Any]:
+        return {"label": self.label, "disabled": self.disabled}
+
+
+class MenuItem(Widget):
+    kind = "menu_item"
+
+    def __init__(
+        self,
+        label: str,
+        *,
+        on_click: Callback | None = None,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.label = str(label)
+        if not self.label:
+            raise ValueError("MenuItem label cannot be empty")
+        self.on_click = on_click
+        self.disabled = bool(disabled)
+        actual_parent = _BuildContext.parent() if parent is _AUTO_PARENT else parent
+        if actual_parent is not None and not isinstance(actual_parent, (Menu, ContextMenu)):
+            raise RuntimeError("MenuItem must be created inside a Menu or ContextMenu context")
+        super().__init__(
+            id=id,
+            key=key,
+            class_=class_,
+            style=style,
+            tooltip=tooltip,
+            parent=actual_parent,
+        )
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "label": self.label,
+            "disabled": self.disabled,
+            "events": ["click"] if self.on_click and not self.disabled else [],
+        }
+
+
+class ContextMenu(Container):
+    kind = "context_menu"
+
+    def __init__(
+        self,
+        *,
+        target: Widget | str | None = None,
+        width: int | float = 220,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        if float(width) <= 0:
+            raise ValueError("ContextMenu width must be greater than zero")
+        if isinstance(target, Widget):
+            self.target = target.id
+        elif target is None:
+            self.target = None
+        else:
+            self.target = str(target)
+            if not self.target:
+                raise ValueError("ContextMenu target cannot be empty")
+        self.width = float(width)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def add(self, child: Widget) -> Widget:
+        if not isinstance(child, MenuItem):
+            raise TypeError("ContextMenu can only contain MenuItem children")
+        return super().add(child)
+
+    def props(self) -> dict[str, Any]:
+        return {"target": self.target, "width": self.width}
 
 
 class Tabs(Container):
@@ -408,12 +607,13 @@ class Tabs(Container):
         key: str | None = None,
         class_: str | None = None,
         style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
         parent: Container | None | object = _AUTO_PARENT,
     ) -> None:
         self.value = str(value) if value is not None else None
         self.on_change = on_change
         self.disabled = disabled
-        super().__init__(id=id, key=key, class_=class_, style=style, parent=parent)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
 
     def add(self, child: Widget) -> Widget:
         if not isinstance(child, Tab):
@@ -445,6 +645,7 @@ class Tab(Container):
         key: str | None = None,
         class_: str | None = None,
         style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
         parent: Container | None | object = _AUTO_PARENT,
     ) -> None:
         self.label = str(label)
@@ -455,7 +656,7 @@ class Tab(Container):
         actual_parent = _BuildContext.parent() if parent is _AUTO_PARENT else parent
         if actual_parent is not None and not isinstance(actual_parent, Tabs):
             raise RuntimeError("Tab must be created directly inside a Tabs context")
-        super().__init__(id=id, key=key, class_=class_, style=style, parent=actual_parent)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=actual_parent)
 
     def props(self) -> dict[str, Any]:
         return {
@@ -477,11 +678,12 @@ class Pages(Container):
         key: str | None = None,
         class_: str | None = None,
         style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
         parent: Container | None | object = _AUTO_PARENT,
     ) -> None:
         self.value = str(value) if value is not None else None
         self.on_change = on_change
-        super().__init__(id=id, key=key, class_=class_, style=style, parent=parent)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
 
     def add(self, child: Widget) -> Widget:
         if not isinstance(child, Page):
@@ -511,6 +713,7 @@ class Page(Container):
         key: str | None = None,
         class_: str | None = None,
         style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
         parent: Container | None | object = _AUTO_PARENT,
     ) -> None:
         self.value = str(value)
@@ -520,7 +723,7 @@ class Page(Container):
         actual_parent = _BuildContext.parent() if parent is _AUTO_PARENT else parent
         if actual_parent is not None and not isinstance(actual_parent, Pages):
             raise RuntimeError("Page must be created directly inside a Pages context")
-        super().__init__(id=id, key=key, class_=class_, style=style, parent=actual_parent)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=actual_parent)
 
     def props(self) -> dict[str, Any]:
         return {
@@ -541,13 +744,14 @@ class Sidebar(Container):
         key: str | None = None,
         class_: str | None = None,
         style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
         parent: Container | None | object = _AUTO_PARENT,
     ) -> None:
         if width <= 0:
             raise ValueError("Sidebar width must be greater than zero")
         self.title = title
         self.width = int(width)
-        super().__init__(id=id, key=key, class_=class_, style=style, parent=parent)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
 
     def props(self) -> dict[str, Any]:
         return {
@@ -569,6 +773,7 @@ class NavItem(Widget):
         key: str | None = None,
         class_: str | None = None,
         style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
         parent: Container | None | object = _AUTO_PARENT,
     ) -> None:
         self.label = str(label)
@@ -576,7 +781,7 @@ class NavItem(Widget):
         if not self.page:
             raise ValueError("NavItem page cannot be empty")
         self.disabled = disabled
-        super().__init__(id=id, key=key, class_=class_, style=style, parent=parent)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
 
     def props(self) -> dict[str, Any]:
         return {
@@ -598,16 +803,62 @@ class Panel(Container):
         key: str | None = None,
         class_: str | None = None,
         style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
         parent: Container | None | object = _AUTO_PARENT,
     ) -> None:
         self.title = title
         self.width = width
-        super().__init__(id=id, key=key, class_=class_, style=style, parent=parent)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
 
     def props(self) -> dict[str, Any]:
         return {
             "title": self.title,
             "width": self.width,
+        }
+
+
+class Modal(Container):
+    kind = "modal"
+
+    def __init__(
+        self,
+        title: str = "",
+        *,
+        open: bool = False,
+        width: int | float = 420,
+        height: int | float = 220,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        if float(width) <= 0 or float(height) <= 0:
+            raise ValueError("Modal width and height must be greater than zero")
+        self.title = title
+        self.open = bool(open)
+        self.width = float(width)
+        self.height = float(height)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def set_open(self, open: bool) -> None:
+        self.open = bool(open)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("open", self.open)
+
+    def show(self) -> None:
+        self.set_open(True)
+
+    def close(self) -> None:
+        self.set_open(False)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "title": self.title,
+            "open": self.open,
+            "width": self.width,
+            "height": self.height,
         }
 
 
@@ -622,13 +873,19 @@ class Label(Widget):
         key: str | None = None,
         class_: str | None = None,
         style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
         parent: Container | None | object = _AUTO_PARENT,
     ) -> None:
         self.text = text
-        super().__init__(id=id, key=key, class_=class_, style=style, parent=parent)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
 
     def props(self) -> dict[str, Any]:
         return {"text": self.text}
+
+    def set_value(self, value: object) -> None:
+        self.text = str(value)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("text", self.text)
 
 
 class Button(Widget):
@@ -644,12 +901,13 @@ class Button(Widget):
         key: str | None = None,
         class_: str | None = None,
         style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
         parent: Container | None | object = _AUTO_PARENT,
     ) -> None:
         self.text = text
         self.on_click = on_click
         self.disabled = disabled
-        super().__init__(id=id, key=key, class_=class_, style=style, parent=parent)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
 
     def click(self) -> None:
         if not self.disabled and self.on_click is not None:
@@ -677,13 +935,14 @@ class TextInput(Widget):
         key: str | None = None,
         class_: str | None = None,
         style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
         parent: Container | None | object = _AUTO_PARENT,
     ) -> None:
         self.value = value
         self.placeholder = placeholder
         self.on_change = on_change
         self.disabled = disabled
-        super().__init__(id=id, key=key, class_=class_, style=style, parent=parent)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
 
     def set_value(self, value: str) -> None:
         self.value = str(value)
@@ -714,6 +973,7 @@ class Slider(Widget):
         key: str | None = None,
         class_: str | None = None,
         style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
         parent: Container | None | object = _AUTO_PARENT,
     ) -> None:
         min_value = float(min)
@@ -734,7 +994,7 @@ class Slider(Widget):
         self.step = step_value
         self.on_change = on_change
         self.disabled = disabled
-        super().__init__(id=id, key=key, class_=class_, style=style, parent=parent)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
 
     def _clamp_value(self, value: float) -> float:
         value_f = float(value)
@@ -759,6 +1019,140 @@ class Slider(Widget):
         }
 
 
+class ProgressBar(Widget):
+    kind = "progress_bar"
+
+    def __init__(
+        self,
+        value: float = 0,
+        *,
+        min: float = 0,
+        max: float = 1,
+        label: str | None = None,
+        show_value: bool = False,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        min_value = float(min)
+        max_value = float(max)
+        if max_value < min_value:
+            raise ValueError("ProgressBar max must be greater than or equal to min")
+        self.min = min_value
+        self.max = max_value
+        self.value = self._clamp_value(float(value))
+        self.label = None if label is None else str(label)
+        self.show_value = bool(show_value)
+        self.disabled = disabled
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def _clamp_value(self, value: float) -> float:
+        if value < self.min:
+            return self.min
+        if value > self.max:
+            return self.max
+        return value
+
+    def _display_label(self) -> str | None:
+        if self.label is not None:
+            return self.label
+        if not self.show_value:
+            return None
+        span = self.max - self.min
+        t = 0.0 if span <= 0 else (self.value - self.min) / span
+        return f"{round(t * 100):.0f}%"
+
+    def set_value(self, value: float) -> None:
+        old_label = self._display_label()
+        self.value = self._clamp_value(float(value))
+        new_label = self._display_label()
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("value", self.value)
+            if old_label != new_label:
+                handle.enqueue_set_prop("label", new_label)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "value": self.value,
+            "min": self.min,
+            "max": self.max,
+            "label": self._display_label(),
+            "disabled": self.disabled,
+        }
+
+
+class NumberInput(Widget):
+    kind = "number_input"
+
+    def __init__(
+        self,
+        value: float = 0,
+        *,
+        min: float | None = None,
+        max: float | None = None,
+        step: float = 1,
+        on_change: FloatCallback | None = None,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        min_value = None if min is None else float(min)
+        max_value = None if max is None else float(max)
+        if min_value is not None and not math.isfinite(min_value):
+            raise ValueError("NumberInput min must be finite")
+        if max_value is not None and not math.isfinite(max_value):
+            raise ValueError("NumberInput max must be finite")
+        if min_value is not None and max_value is not None and max_value < min_value:
+            raise ValueError("NumberInput max must be greater than or equal to min")
+        step_value = float(step)
+        if step_value <= 0 or not math.isfinite(step_value):
+            raise ValueError("NumberInput step must be greater than zero")
+        self.min = min_value
+        self.max = max_value
+        self.step = step_value
+        value_f = float(value)
+        if not math.isfinite(value_f):
+            raise ValueError("NumberInput value must be finite")
+        self.value = self._clamp_value(value_f)
+        self.on_change = on_change
+        self.disabled = disabled
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def _clamp_value(self, value: float) -> float:
+        if self.min is not None and value < self.min:
+            return self.min
+        if self.max is not None and value > self.max:
+            return self.max
+        return value
+
+    def set_value(self, value: float) -> None:
+        value_f = float(value)
+        if not math.isfinite(value_f):
+            raise ValueError("NumberInput value must be finite")
+        self.value = self._clamp_value(value_f)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("value", self.value)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "value": self.value,
+            "min": self.min,
+            "max": self.max,
+            "step": self.step,
+            "text": _format_number(self.value),
+            "disabled": self.disabled,
+            "events": ["change"] if self.on_change and not self.disabled else [],
+        }
+
+
 class Dropdown(Widget):
     kind = "dropdown"
 
@@ -773,6 +1167,7 @@ class Dropdown(Widget):
         key: str | None = None,
         class_: str | None = None,
         style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
         parent: Container | None | object = _AUTO_PARENT,
     ) -> None:
         self.items = [str(item) for item in items]
@@ -784,7 +1179,7 @@ class Dropdown(Widget):
         self.value = selected
         self.on_change = on_change
         self.disabled = disabled
-        super().__init__(id=id, key=key, class_=class_, style=style, parent=parent)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
 
     def set_value(self, value: str) -> None:
         selected = str(value)
@@ -816,13 +1211,14 @@ class Checkbox(Widget):
         key: str | None = None,
         class_: str | None = None,
         style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
         parent: Container | None | object = _AUTO_PARENT,
     ) -> None:
         self.label = label
         self.checked = checked
         self.on_change = on_change
         self.disabled = disabled
-        super().__init__(id=id, key=key, class_=class_, style=style, parent=parent)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
 
     def set_checked(self, checked: bool) -> None:
         self.checked = bool(checked)
@@ -834,6 +1230,189 @@ class Checkbox(Widget):
             "label": self.label,
             "checked": self.checked,
             "disabled": self.disabled,
+        }
+
+
+class ColorPicker(Panel):
+    """Composite RGB/RGBA color picker built from DragonGUI controls.
+
+    Integer channels are treated as 0..255 values. Floating-point channels in
+    the 0.0..1.0 range are treated as normalized colors. The ``width`` argument
+    is treated as a preferred maximum width so the picker can shrink inside
+    narrow parent panels instead of overflowing them.
+    """
+
+    _CHANNEL_INDEX = {"r": 0, "g": 1, "b": 2, "a": 3}
+
+    def __init__(
+        self,
+        value: Sequence[object] = (255, 100, 0),
+        *,
+        alpha: bool = True,
+        on_change: ColorCallback | None = None,
+        title: str | None = "Color",
+        width: int | None = 320,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.alpha = bool(alpha)
+        self.value = _normalize_color_tuple(value, alpha=self.alpha)
+        self.on_change = on_change
+        self._sliders: dict[str, Slider] = {}
+        self._value_labels: dict[str, Label] = {}
+        base_style: dict[str, object] = {
+            "padding": 14,
+            "gap": 6,
+            "flex_grow": 0,
+            "flex_shrink": 1,
+        }
+        if width is not None:
+            base_style["max_width"] = int(width)
+        if style is not None:
+            base_style.update(_copy_style(style) or {})
+        super().__init__(
+            title,
+            width=None,
+            id=id,
+            key=key,
+            class_=class_,
+            style=base_style,
+            tooltip=tooltip,
+            parent=parent,
+        )
+
+        with self:
+            self._swatch = Button(
+                " ",
+                disabled=True,
+                style={
+                    "height": 36,
+                    "background": _color_hex(self.value),
+                    "border_color": "border",
+                    "border_width": 1,
+                    "disabled": {"opacity": 1.0},
+                },
+                tooltip="Current color preview",
+            )
+            self._add_channel("r", "R")
+            self._add_channel("g", "G")
+            self._add_channel("b", "B")
+            if self.alpha:
+                self._add_channel("a", "A")
+
+    def _add_channel(self, channel: str, label: str) -> None:
+        value = self.value[self._CHANNEL_INDEX[channel]]
+        with HLayout(style={"height": 32, "gap": 4}):
+            Label(
+                label,
+                style={
+                    "width": 26,
+                    "height": 32,
+                    "color": "text",
+                    "font_weight": 700,
+                    "text_align": "center",
+                },
+            )
+            slider = Slider(
+                value,
+                min=0,
+                max=255,
+                step=1,
+                on_change=lambda new_value, ch=channel: self._set_channel(ch, new_value),
+                style={"flex": 1},
+            )
+            value_label = Label(str(value), style={"width": 38, "text_align": "right"})
+        self._sliders[channel] = slider
+        self._value_labels[channel] = value_label
+
+    def _set_swatch_color(self) -> None:
+        style = dict(self._swatch.style or {})
+        style["background"] = _color_hex(self.value)
+        self._swatch.set_style(style)
+
+    def _set_channel(self, channel: str, value: float) -> None:
+        channels = list(self.value)
+        channels[self._CHANNEL_INDEX[channel]] = max(0, min(255, int(round(float(value)))))
+        self.value = tuple(channels)
+        self._value_labels[channel].set_value(str(self.value[self._CHANNEL_INDEX[channel]]))
+        self._set_swatch_color()
+        if self.on_change is not None:
+            self.on_change(self.value)
+
+    def set_value(self, value: Sequence[object]) -> None:
+        """Update the displayed color without invoking ``on_change``."""
+        self.value = _normalize_color_tuple(value, alpha=self.alpha)
+        for channel, slider in self._sliders.items():
+            channel_value = self.value[self._CHANNEL_INDEX[channel]]
+            slider.set_value(channel_value)
+            self._value_labels[channel].set_value(str(channel_value))
+        self._set_swatch_color()
+
+
+class Image(Widget):
+    kind = "image"
+
+    def __init__(
+        self,
+        path: object,
+        *,
+        fit: str = "contain",
+        width: int | float | None = None,
+        height: int | float | None = None,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.path = self._normalize_path(path)
+        self.fit = self._normalize_fit(fit)
+        self.width = None if width is None else float(width)
+        self.height = None if height is None else float(height)
+        if self.width is not None and self.width <= 0:
+            raise ValueError("Image width must be greater than zero")
+        if self.height is not None and self.height <= 0:
+            raise ValueError("Image height must be greater than zero")
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    @staticmethod
+    def _normalize_path(path: object) -> str:
+        text = str(path)
+        if not text:
+            raise ValueError("Image path must be a non-empty path")
+        return text
+
+    @staticmethod
+    def _normalize_fit(fit: str) -> str:
+        value = str(fit).strip().lower()
+        if value not in {"contain", "cover", "stretch"}:
+            raise ValueError("Image fit must be 'contain', 'cover', or 'stretch'")
+        return value
+
+    def set_path(self, path: object) -> None:
+        self.path = self._normalize_path(path)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("path", self.path)
+
+    def reload(self) -> None:
+        self.set_path(self.path)
+
+    def set_fit(self, fit: str) -> None:
+        self.fit = self._normalize_fit(fit)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("fit", self.fit)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "fit": self.fit,
+            "width": self.width,
+            "height": self.height,
         }
 
 
@@ -852,6 +1431,7 @@ class Scatter3D(Widget):
         key: str | None = None,
         class_: str | None = None,
         style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
         parent: Container | None | object = _AUTO_PARENT,
     ) -> None:
         self.frame = frame
@@ -860,7 +1440,7 @@ class Scatter3D(Widget):
         self.z = z
         self.colormap = _scatter_colormap(colormap)
         self.frame_summary = summarize_frame(frame)
-        super().__init__(id=id, key=key, class_=class_, style=style, parent=parent)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
 
     def set_points(self, frame: Any, *, x: str, y: str | None = None, z: str | None = None) -> None:
         self.frame = frame
@@ -927,6 +1507,7 @@ class DataFrameTable(Widget):
         key: str | None = None,
         class_: str | None = None,
         style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
         parent: Container | None | object = _AUTO_PARENT,
     ) -> None:
         page_size_i = int(page_size)
@@ -941,7 +1522,7 @@ class DataFrameTable(Widget):
         self.frame_summary = summarize_frame(frame)
         self.cells = extract_table_sample(frame, self.frame_summary, self.sample_rows)
         self.column_buffers = extract_table_column_buffers(frame, self.frame_summary)
-        super().__init__(id=id, key=key, class_=class_, style=style, parent=parent)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
         self.resource_id = f"{self.id}:table"
 
     def set_frame(self, frame: Any, *, sample_rows: int | None = None) -> None:
@@ -987,3 +1568,67 @@ class DataFrameTable(Widget):
 
     def props(self) -> dict[str, Any]:
         return self._table_payload()
+
+
+def alert(
+    title: str,
+    message: str,
+    *,
+    open: bool = True,
+    width: int | float = 420,
+    height: int | float = 200,
+    on_close: Callback | None = None,
+    parent: Container | None | object = _AUTO_PARENT,
+) -> Modal:
+    modal = Modal(title, open=open, width=width, height=height, parent=parent)
+    Label(message, parent=modal)
+    Spacer(parent=modal)
+
+    def close() -> None:
+        modal.close()
+        if on_close is not None:
+            on_close()
+
+    Button("OK", on_click=close, parent=modal, style={"width": 96, "text_align": "center"})
+    return modal
+
+
+def confirm(
+    title: str,
+    message: str,
+    *,
+    open: bool = True,
+    width: int | float = 460,
+    height: int | float = 220,
+    on_confirm: Callback | None = None,
+    on_cancel: Callback | None = None,
+    parent: Container | None | object = _AUTO_PARENT,
+) -> Modal:
+    modal = Modal(title, open=open, width=width, height=height, parent=parent)
+    Label(message, parent=modal)
+    Spacer(parent=modal)
+    with HLayout(parent=modal, style={"gap": 8, "height": 38}):
+
+        def cancel() -> None:
+            modal.close()
+            if on_cancel is not None:
+                on_cancel()
+
+        def accept() -> None:
+            modal.close()
+            if on_confirm is not None:
+                on_confirm()
+
+        Spacer()
+        Button("Cancel", on_click=cancel, style={"width": 104, "text_align": "center"})
+        Button(
+            "Confirm",
+            on_click=accept,
+            style={
+                "width": 112,
+                "text_align": "center",
+                "background": "danger",
+                "border_color": "danger",
+            },
+        )
+    return modal

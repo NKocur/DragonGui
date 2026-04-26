@@ -3,8 +3,11 @@ from __future__ import annotations
 import math
 from pathlib import Path
 from pprint import pprint
+import struct
 import sys
 import threading
+import tempfile
+import zlib
 
 if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
@@ -18,6 +21,38 @@ except ImportError as exc:  # pragma: no cover - manual demo guard
 
 
 ROWS = 80_000
+
+
+def make_demo_image() -> str:
+    width, height = 180, 108
+    rows = []
+    for y in range(height):
+        scanline = bytearray([0])
+        for x in range(width):
+            r = int(35 + 160 * x / max(1, width - 1))
+            g = int(55 + 150 * y / max(1, height - 1))
+            b = int(230 - 120 * x / max(1, width - 1))
+            a = 255
+            scanline.extend((r, g, b, a))
+        rows.append(bytes(scanline))
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + kind
+            + data
+            + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+        )
+
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk("IHDR".encode("ascii"), struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+        + chunk("IDAT".encode("ascii"), zlib.compress(b"".join(rows), 9))
+        + chunk("IEND".encode("ascii"), b"")
+    )
+    path = Path(tempfile.gettempdir()) / "dragongui_all_features_demo.png"
+    path.write_bytes(png)
+    return str(path)
 
 
 class DemoFrame:
@@ -76,6 +111,7 @@ stream_stop = threading.Event()
 stream_thread: threading.Thread | None = None
 demo_state = {"mode": "helix", "phase": 0.0, "style": 0, "children": 0}
 initial_frame = DemoFrame(mode="helix")
+demo_image_path = make_demo_image()
 
 
 def set_status(message: str) -> None:
@@ -139,6 +175,33 @@ def upload_buffer() -> None:
 def release_buffer() -> None:
     app.release_resource("demo:f32-buffer")
     set_status("Released demo:f32-buffer")
+
+
+def choose_csv() -> None:
+    dg.FileDialog.open_file(
+        title="Open CSV",
+        filters=[("CSV files", ["csv"])],
+        on_select=lambda path: set_status(f"Selected: {path}" if path else "Open CSV cancelled"),
+        app=app,
+    )
+
+
+def color_hex(color: tuple[int, ...]) -> str:
+    r, g, b = color[:3]
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def apply_demo_color(color: tuple[int, ...]) -> None:
+    selected = color_hex(color)
+    color_demo_button.set_style(
+        {
+            "height": 40,
+            "background": selected,
+            "border_color": selected,
+            "text_align": "center",
+        }
+    )
+    set_status(f"ColorPicker: {selected}")
 
 
 def print_snapshot() -> None:
@@ -216,6 +279,19 @@ def cycle_style() -> None:
     set_status("Applied live style patch")
 
 
+with dg.MenuBar(height=34, tooltip="MenuBar opens native overlay menus."):
+    with dg.Menu("File", tooltip="Top-level menus are keyboard focusable."):
+        dg.MenuItem("Open CSV...", on_click=choose_csv)
+        dg.MenuItem("Print Snapshot", on_click=print_snapshot)
+        dg.MenuItem("Upload Buffer", on_click=upload_buffer)
+        dg.MenuItem("Release Buffer", on_click=release_buffer)
+    with dg.Menu("Stream"):
+        dg.MenuItem("Start Scatter Stream", on_click=start_stream)
+        dg.MenuItem("Stop Scatter Stream", on_click=stop_stream)
+    with dg.Menu("Help"):
+        dg.MenuItem("About DragonGUI", on_click=lambda: about_modal.show())
+
+
 with dg.HLayout(style={"gap": 0}):
     with dg.Sidebar(width=230, style={"padding": 14, "gap": 10, "background": "surface"}):
         dg.Label("DragonGUI", style={"font_size": 20, "font_weight": "bold", "color": "accent"})
@@ -240,28 +316,83 @@ with dg.HLayout(style={"gap": 0}):
                         value="helix",
                         on_change=push_scatter,
                         key="scatter-mode",
+                        tooltip="Choose the generated point-cloud shape.",
                     )
                     dg.Dropdown(
                         ("Viridis", "Magma", "Plasma", "Cividis"),
                         value="Viridis",
                         on_change=set_scatter_colormap,
                         key="scatter-colormap",
+                        tooltip="Change the Scatter3D GPU colormap.",
                     )
-                    dg.Button("Push Scatter", on_click=lambda: push_scatter(mode.value))
-                    dg.Button("Start Stream", on_click=start_stream)
-                    dg.Button("Stop Stream", on_click=stop_stream)
-                    progress = dg.Slider(0.0, min=0, max=1, step=0.01, on_change=lambda v: set_status(f"Progress {v:.2f}"))
-                    dg.Checkbox("Use GPU point sprites", checked=True, on_change=lambda v: set_status(f"GPU sprites: {v}"))
+                    dg.Button("Push Scatter", on_click=lambda: push_scatter(mode.value), tooltip="Upload a new point buffer now.")
+                    dg.Button("Start Stream", on_click=start_stream, tooltip="Start a background thread that posts live scatter updates.")
+                    dg.Button("Stop Stream", on_click=stop_stream, tooltip="Stop the background scatter update thread.")
+                    progress = dg.ProgressBar(0.0, min=0, max=1, show_value=True, tooltip="ProgressBar supports live set_value updates.")
+                    dg.Checkbox(
+                        "Use GPU point sprites",
+                        checked=True,
+                        on_change=lambda v: set_status(f"GPU sprites: {v}"),
+                        tooltip="Checkbox hover and clicks include the full label row.",
+                    )
                     dg.Separator()
-                    dg.Label("Mouse drag/wheel orbits plot.")
-                scatter = dg.Scatter3D(initial_frame, x="x", y="y", z="z", colormap="viridis", key="main-scatter")
+                    dg.Label("Mouse drag/wheel orbits plot.", tooltip="Labels can show passive contextual help.")
+                scatter = dg.Scatter3D(
+                    initial_frame,
+                    x="x",
+                    y="y",
+                    z="z",
+                    colormap="viridis",
+                    key="main-scatter",
+                    tooltip="Native GPU scatter widget with live buffer updates.",
+                )
 
         with dg.Page("controls", title="Controls"):
             with dg.HLayout(style={"gap": 16, "padding": 14}):
                 with dg.Panel("Form controls", width=330, style={"padding": 14, "gap": 10}):
-                    dg.TextInput("editable text", placeholder="Type here", on_change=lambda v: set_status(f"Text: {v}"))
-                    dg.Dropdown(("Low", "Medium", "High"), value="Medium", on_change=lambda v: set_status(f"Dropdown: {v}"))
-                    dg.Slider(0.42, min=0, max=1, step=0.02, on_change=lambda v: set_status(f"Slider: {v:.2f}"))
+                    dg.TextInput(
+                        "editable text",
+                        placeholder="Type here",
+                        on_change=lambda v: set_status(f"Text: {v}"),
+                        tooltip="TextInput supports caret movement, selection focus, and live callbacks.",
+                    )
+                    dg.Dropdown(
+                        ("Low", "Medium", "High"),
+                        value="Medium",
+                        on_change=lambda v: set_status(f"Dropdown: {v}"),
+                        tooltip="Dropdown menus render as native overlays.",
+                    )
+                    dg.Slider(
+                        0.42,
+                        min=0,
+                        max=1,
+                        step=0.02,
+                        on_change=lambda v: set_status(f"Slider: {v:.2f}"),
+                        tooltip="Drag or click the track to change the value.",
+                    )
+                    dg.NumberInput(
+                        42,
+                        min=0,
+                        max=100,
+                        step=0.5,
+                        on_change=lambda v: set_status(f"Number: {v:g}"),
+                        tooltip="NumberInput supports text entry plus stepper buttons.",
+                    )
+                    color_demo_button = dg.Button(
+                        "Color target",
+                        style={
+                            "height": 40,
+                            "background": "#3fc7ff",
+                            "border_color": "#3fc7ff",
+                            "text_align": "center",
+                        },
+                    )
+                    dg.ColorPicker(
+                        (63, 199, 255),
+                        alpha=False,
+                        on_change=apply_demo_color,
+                        tooltip="ColorPicker is a composite widget built from sliders and a swatch.",
+                    )
                     dg.Checkbox("Enable analysis", checked=True, on_change=lambda v: set_status(f"Analysis: {v}"))
                     dg.Button("Regular Button", on_click=lambda: set_status("Button clicked"))
                     dg.Button("Disabled Button", disabled=True)
@@ -288,18 +419,24 @@ with dg.HLayout(style={"gap": 0}):
                     dg.Button("Load Wave Table", on_click=lambda: update_table("wave"))
                     dg.Button("Load Cloud Table", on_click=lambda: update_table("cloud"))
                     dg.Separator()
-                    dg.Button("Upload Buffer", on_click=upload_buffer)
-                    dg.Button("Release Buffer", on_click=release_buffer)
-                    dg.Button("Print Snapshot", on_click=print_snapshot)
+                    dg.Button("Upload Buffer", on_click=upload_buffer, tooltip="Create a named native buffer resource.")
+                    dg.Button("Release Buffer", on_click=release_buffer, tooltip="Release the named native buffer resource.")
+                    dg.Button("Confirm Reset", on_click=lambda: confirm_modal.show(), tooltip="Open a modal confirmation overlay.")
+                    dg.Button("Print Snapshot", on_click=print_snapshot, tooltip="Print runtime, layout, style, and resource diagnostics.")
                     dg.Label("Table is virtualized native UI.")
-                table = dg.DataFrameTable(DemoFrame(rows=40_000), page_size=90, key="main-table")
+                table = dg.DataFrameTable(
+                    DemoFrame(rows=40_000),
+                    page_size=90,
+                    key="main-table",
+                    tooltip="DataFrameTable virtualizes rows and columns in native code.",
+                )
 
         with dg.Page("live", title="Live Runtime"):
             with dg.HLayout(style={"gap": 16, "padding": 14}):
                 with dg.Panel("Live commands", width=310, style={"padding": 14, "gap": 10}):
-                    dg.Button("Replace Children", on_click=swap_children)
-                    dg.Button("Cycle Style", on_click=cycle_style)
-                    dg.Button("Print Snapshot", on_click=print_snapshot)
+                    dg.Button("Replace Children", on_click=swap_children, tooltip="Send ReplaceChildren to the native retained tree.")
+                    dg.Button("Cycle Style", on_click=cycle_style, tooltip="Send live style patches to existing widgets.")
+                    dg.Button("Print Snapshot", on_click=print_snapshot, tooltip="Inspect current retained runtime state.")
                     dg.Label("Commands wake the event loop.")
                     dg.Separator()
                     dg.Label("Includes ReplaceChildren.")
@@ -330,6 +467,13 @@ with dg.HLayout(style={"gap": 0}):
                 with dg.Panel("Live style preview", style={"padding": 16, "gap": 12, **styles[0]["panel"]}) as style_panel:
                     style_label = dg.Label("Styled label", style={"font_size": 16, **styles[0]["label"]})
                     style_button = dg.Button("Styled button", on_click=cycle_style, style={"height": 46, "width": 190, **styles[0]["button"]})
+                    dg.Image(
+                        demo_image_path,
+                        fit="cover",
+                        height=170,
+                        style={"border_color": "accent", "border_radius": 10},
+                        tooltip="Image renders PNG/JPEG files as native textured quads.",
+                    )
                     dg.Label("Button cycles this panel style.")
 
 with dg.StatusBar(height=40):
@@ -338,6 +482,27 @@ with dg.StatusBar(height=40):
     dg.Label(f"{ROWS:,} rows")
     dg.Spacer()
     dg.Label("All current widgets + live runtime")
+
+confirm_modal = dg.confirm(
+    "Reset Demo State",
+    "This modal blocks background input until it is closed.",
+    open=False,
+    on_confirm=lambda: set_status("Confirmed reset action"),
+    on_cancel=lambda: set_status("Cancelled reset action"),
+    parent=win,
+)
+
+about_modal = dg.alert(
+    "About DragonGUI",
+    "This demo uses native widgets, live commands, modals, menus, tables, and Scatter3D.",
+    open=False,
+    parent=win,
+)
+
+with dg.ContextMenu(target=table, width=230, parent=win):
+    dg.MenuItem("Print Snapshot", on_click=print_snapshot)
+    dg.MenuItem("Load Wave Table", on_click=lambda: update_table("wave"))
+    dg.MenuItem("Load Cloud Table", on_click=lambda: update_table("cloud"))
 
 try:
     result = app.run(win)

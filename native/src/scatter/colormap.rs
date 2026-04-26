@@ -167,9 +167,3 @@ static REDS: [[f32; 3]; 5] = [
     [0.796, 0.094, 0.114],
     [0.404, 0.000, 0.051],
 ];
-
-#[allow(dead_code)]
-pub const COLORMAP_NAMES: &[&str] = &[
-    "viridis", "plasma", "inferno", "magma", "coolwarm", "hot", "gray", "turbo", "cividis",
-    "blues", "greens", "reds",
-];

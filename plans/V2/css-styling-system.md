@@ -239,6 +239,11 @@ Initial type names:
 - `HLayout`
 - `VLayout`
 - `Panel`
+- `Modal`
+- `MenuBar`
+- `Menu`
+- `MenuItem`
+- `ContextMenu`
 - `Sidebar`
 - `StatusBar`
 - `Tabs`
@@ -249,13 +254,16 @@ Initial type names:
 - `Label`
 - `Button`
 - `TextInput`
+- `NumberInput`
 - `Slider`
+- `ProgressBar`
 - `Dropdown`
 - `Checkbox`
 - `Separator`
 - `Spacer`
 - `Scatter3D`
 - `DataFrameTable`
+- `Image`
 
 ### Class Selectors
 

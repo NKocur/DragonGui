@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import subprocess
 import sys
 import os
@@ -11,6 +12,7 @@ import pytest
 import dragongui as dg
 import dragongui.app as app_module
 import dragongui.dataframe as dataframe_module
+import dragongui.dialogs as dialogs_module
 import dragongui.widgets as widgets_module
 from dragongui.runtime import AppHandle, _collect_runtime_callbacks
 
@@ -104,6 +106,358 @@ def test_widget_style_and_class_serialize_as_v1_metadata() -> None:
         dg.Button("Bad", class_="", parent=None)
     with pytest.raises(TypeError, match="style"):
         dg.Button("Bad", style=["not", "a", "mapping"], parent=None)  # type: ignore[arg-type]
+
+
+def test_widget_tooltip_serializes_as_common_prop() -> None:
+    app = dg.App()
+    win = dg.Window("Tooltips")
+
+    label = dg.Label("Hover me", tooltip="Helpful detail", parent=win)
+    button = dg.Button("Run", tooltip="Starts the operation", parent=win)
+
+    children = app.document(win)["window"]["children"]
+
+    assert children[0]["id"] == label.id
+    assert children[0]["props"]["tooltip"] == "Helpful detail"
+    assert children[1]["id"] == button.id
+    assert children[1]["props"]["tooltip"] == "Starts the operation"
+
+
+def test_modal_serializes_and_live_open_updates() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.props: list[tuple[str, str, object]] = []
+
+        def enqueue_set_prop(self, widget_id: str, prop: str, value: object) -> None:
+            self.props.append((widget_id, prop, value))
+
+        def close(self) -> None:
+            pass
+
+    app = dg.App()
+    win = dg.Window("Modal")
+    modal = dg.Modal("Confirm", open=False, width=480, height=240, parent=win)
+    dg.Label("Continue?", parent=modal)
+    dg.Button("OK", parent=modal)
+
+    serialized = app.document(win)["window"]["children"][0]
+    assert serialized["type"] == "modal"
+    assert serialized["props"]["title"] == "Confirm"
+    assert serialized["props"]["open"] is False
+    assert serialized["props"]["width"] == 480.0
+    assert serialized["children"][0]["type"] == "label"
+
+    sender = Sender()
+    handle = AppHandle()
+    handle._bind_native_sender(sender)
+    modal._bind_live(handle.widget_handle(modal.id))
+
+    modal.show()
+    modal.close()
+
+    assert sender.props == [
+        (modal.id, "open", True),
+        (modal.id, "open", False),
+    ]
+
+
+def test_alert_and_confirm_build_modal_helpers() -> None:
+    app = dg.App()
+    win = dg.Window("Helpers")
+
+    alert = dg.alert("Notice", "Saved", open=True, parent=win)
+    confirm = dg.confirm("Delete", "Remove rows?", open=False, parent=win)
+
+    children = app.document(win)["window"]["children"]
+    assert children[0]["id"] == alert.id
+    assert children[0]["type"] == "modal"
+    assert children[0]["props"]["open"] is True
+    assert children[0]["children"][-1]["props"]["text"] == "OK"
+    assert children[1]["id"] == confirm.id
+    assert children[1]["props"]["open"] is False
+    assert children[1]["children"][-1]["children"][-1]["props"]["text"] == "Confirm"
+
+
+def test_file_dialog_sync_and_async_callback(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[object] = []
+
+    def fake_open_file_dialog(*, title: str | None = None, filters: object = None) -> str:
+        calls.append((title, filters))
+        return "J:/data/example.csv"
+
+    monkeypatch.setattr(dialogs_module._backend, "open_file_dialog", fake_open_file_dialog)
+
+    selected = dg.FileDialog.open_file(
+        title="Open CSV",
+        filters=[("CSV", ["csv"])],
+    )
+
+    assert selected == "J:/data/example.csv"
+    assert calls == [("Open CSV", [("CSV", ["csv"])])]
+
+    event = threading.Event()
+
+    class FakeApp:
+        def call_soon_threadsafe(self, fn: object) -> None:
+            assert callable(fn)
+            fn()
+            event.set()
+
+    dg.FileDialog.open_file(
+        on_select=lambda path: calls.append(("async", path)),
+        app=FakeApp(),
+    )
+
+    assert event.wait(1.0)
+    assert calls[-1] == ("async", "J:/data/example.csv")
+
+
+def test_file_dialog_filter_validation() -> None:
+    with pytest.raises(ValueError, match="filters"):
+        dg.FileDialog.open_file(filters=[("", ["csv"])])
+    with pytest.raises(ValueError, match="filters"):
+        dg.FileDialog.open_file(filters=[("CSV", [])])
+
+
+def test_file_dialog_helpers_delegate_to_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, object]] = []
+
+    def fake_open_files_dialog(*, title: str | None = None, filters: object = None) -> list[str]:
+        calls.append(("open_files", (title, filters)))
+        return ["a.csv", "b.csv"]
+
+    def fake_save_file_dialog(*, title: str | None = None, filters: object = None) -> str:
+        calls.append(("save_file", (title, filters)))
+        return "out.csv"
+
+    def fake_pick_folder_dialog(*, title: str | None = None) -> str:
+        calls.append(("pick_folder", title))
+        return "J:/data"
+
+    monkeypatch.setattr(dialogs_module._backend, "open_files_dialog", fake_open_files_dialog)
+    monkeypatch.setattr(dialogs_module._backend, "save_file_dialog", fake_save_file_dialog)
+    monkeypatch.setattr(dialogs_module._backend, "pick_folder_dialog", fake_pick_folder_dialog)
+
+    assert dg.FileDialog.open_files(title="Open", filters=[("CSV", ["csv"])]) == ["a.csv", "b.csv"]
+    assert dg.FileDialog.save_file(title="Save", filters=[("CSV", ["csv"])]) == "out.csv"
+    assert dg.FileDialog.pick_folder(title="Folder") == "J:/data"
+    assert calls == [
+        ("open_files", ("Open", [("CSV", ["csv"])])),
+        ("save_file", ("Save", [("CSV", ["csv"])])),
+        ("pick_folder", "Folder"),
+    ]
+
+
+def test_color_picker_serializes_and_updates_from_channel_callback() -> None:
+    calls: list[tuple[int, ...]] = []
+    picker = dg.ColorPicker(
+        (1.0, 0.5, 0.0),
+        alpha=False,
+        on_change=lambda value: calls.append(value),
+        parent=None,
+    )
+
+    serialized = picker.to_dict()
+    assert serialized["type"] == "panel"
+    assert serialized["props"]["title"] == "Color"
+    assert serialized["props"]["width"] is None
+    assert serialized["style"]["max_width"] == 320
+    assert serialized["style"]["flex_shrink"] == 1
+    assert serialized["style"]["gap"] == 6
+    assert serialized["children"][0]["type"] == "button"
+    assert serialized["children"][0]["style"]["background"] == "#ff8000"
+    assert serialized["children"][1]["style"]["height"] == 32
+    assert serialized["children"][1]["style"]["gap"] == 4
+    assert serialized["children"][1]["children"][0]["props"]["text"] == "R"
+    assert serialized["children"][1]["children"][0]["style"]["width"] == 26
+    assert serialized["children"][1]["children"][0]["style"]["height"] == 32
+    assert serialized["children"][1]["children"][0]["style"]["color"] == "text"
+    assert serialized["children"][1]["children"][0]["style"]["text_align"] == "center"
+    assert picker.value == (255, 128, 0)
+
+    _, change_cbs = _collect_runtime_callbacks(picker)
+    change_cbs[picker._sliders["g"].id](64)
+
+    assert picker.value == (255, 64, 0)
+    assert picker._value_labels["g"].text == "64"
+    assert picker._swatch.style is not None
+    assert picker._swatch.style["background"] == "#ff4000"
+    assert calls == [(255, 64, 0)]
+
+    picker.set_value((10, 20, 30, 40))
+    assert picker.value == (10, 20, 30)
+    assert picker._sliders["r"].value == 10
+    assert picker._value_labels["b"].text == "30"
+
+    assert dg.ColorPicker((1, 1, 1), alpha=False, parent=None).value == (1, 1, 1)
+    assert dg.ColorPicker((1.0, 1.0, 1.0), alpha=False, parent=None).value == (255, 255, 255)
+    assert dg.ColorPicker((0.0, 0.5, 1.0), alpha=True, parent=None).value == (0, 128, 255, 255)
+    assert "max_width" not in dg.ColorPicker((1, 2, 3), width=None, parent=None).to_dict()["style"]
+
+    with pytest.raises(ValueError, match="3 RGB or 4 RGBA"):
+        dg.ColorPicker((1, 2), parent=None)
+
+
+def test_image_serializes_validates_and_updates_live_props() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.props: list[tuple[str, str, object]] = []
+
+        def enqueue_set_prop(self, widget_id: str, prop: str, value: object) -> None:
+            self.props.append((widget_id, prop, value))
+
+        def close(self) -> None:
+            pass
+
+    image = dg.Image(
+        Path("examples/assets/demo.png"),
+        fit="cover",
+        width=320,
+        height=180,
+        id="hero-image",
+        parent=None,
+    )
+
+    serialized = image.to_dict()
+    assert serialized["type"] == "image"
+    assert Path(serialized["props"]["path"]).parts[-3:] == ("examples", "assets", "demo.png")
+    assert serialized["props"]["fit"] == "cover"
+    assert serialized["props"]["width"] == 320.0
+    assert serialized["props"]["height"] == 180.0
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+    image._bind_live(handle.widget_handle(image.id))
+
+    image.set_fit("stretch")
+    image.set_path("missing.png")
+    image.reload()
+
+    assert sender.props == [
+        ("hero-image", "fit", "stretch"),
+        ("hero-image", "path", "missing.png"),
+        ("hero-image", "path", "missing.png"),
+    ]
+
+    with pytest.raises(ValueError, match="fit"):
+        dg.Image("x.png", fit="tile", parent=None)
+    with pytest.raises(ValueError, match="width"):
+        dg.Image("x.png", width=0, parent=None)
+
+
+def test_progress_bar_serializes_and_clamps_value() -> None:
+    app = dg.App()
+    win = dg.Window("Progress")
+
+    progress = dg.ProgressBar(
+        1.4,
+        min=0,
+        max=1,
+        show_value=True,
+        style={"accent": "success"},
+        parent=win,
+    )
+
+    document = app.document(win)
+    serialized = document["window"]["children"][0]
+
+    assert progress.value == 1.0
+    assert serialized["type"] == "progress_bar"
+    assert serialized["props"]["value"] == 1.0
+    assert serialized["props"]["min"] == 0.0
+    assert serialized["props"]["max"] == 1.0
+    assert serialized["props"]["label"] == "100%"
+    assert serialized["style"]["accent"] == "success"
+
+    with pytest.raises(ValueError, match="max"):
+        dg.ProgressBar(0.5, min=1, max=0, parent=None)
+
+
+def test_progress_bar_set_value_updates_live_native_value_and_label() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.props: list[tuple[str, str, object]] = []
+
+        def enqueue_set_prop(self, widget_id: str, prop: str, value: object) -> None:
+            self.props.append((widget_id, prop, value))
+
+        def close(self) -> None:
+            pass
+
+    progress = dg.ProgressBar(0.1, id="progress", show_value=True, parent=None)
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+    progress._bind_live(handle.widget_handle(progress.id))
+
+    progress.set_value(0.42)
+
+    assert progress.value == 0.42
+    assert sender.props == [
+        ("progress", "value", 0.42),
+        ("progress", "label", "42%"),
+    ]
+
+
+def test_number_input_serializes_clamps_and_registers_callback() -> None:
+    calls: list[float] = []
+    app = dg.App()
+    win = dg.Window("Number")
+
+    number = dg.NumberInput(
+        12.5,
+        min=0,
+        max=10,
+        step=0.25,
+        on_change=lambda value: calls.append(value),
+        parent=win,
+    )
+
+    serialized = app.document(win)["window"]["children"][0]
+
+    assert number.value == 10.0
+    assert serialized["type"] == "number_input"
+    assert serialized["props"]["value"] == 10.0
+    assert serialized["props"]["min"] == 0.0
+    assert serialized["props"]["max"] == 10.0
+    assert serialized["props"]["step"] == 0.25
+    assert serialized["props"]["text"] == "10"
+    assert serialized["props"]["events"] == ["change"]
+
+    handle = AppHandle()
+    handle.register_widget_callbacks(number)
+    assert handle._invoke_change_callback(number.id, 7.25) is True
+    assert number.value == 7.25
+    assert calls == [7.25]
+
+    with pytest.raises(ValueError, match="step"):
+        dg.NumberInput(1, step=0, parent=None)
+    with pytest.raises(ValueError, match="max"):
+        dg.NumberInput(1, min=2, max=1, parent=None)
+
+
+def test_number_input_set_value_updates_live_native_value() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.props: list[tuple[str, str, object]] = []
+
+        def enqueue_set_prop(self, widget_id: str, prop: str, value: object) -> None:
+            self.props.append((widget_id, prop, value))
+
+        def close(self) -> None:
+            pass
+
+    number = dg.NumberInput(1, min=0, max=10, id="gain", parent=None)
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+    number._bind_live(handle.widget_handle(number.id))
+
+    number.set_value(14)
+
+    assert number.value == 10.0
+    assert sender.props == [("gain", "value", 10.0)]
 
 
 def test_widget_set_style_updates_python_state_and_live_native_style() -> None:
@@ -970,6 +1324,71 @@ def test_navigation_widgets_serialize_and_register_callbacks() -> None:
     change_cbs[tabs["id"]]("scatter")
 
     assert calls == [("page", "table"), ("tab", "scatter")]
+
+
+def test_menu_widgets_serialize_and_register_callbacks() -> None:
+    calls = []
+    app = dg.App()
+    win = dg.Window("Menus")
+
+    with dg.MenuBar(height=32, tooltip="Application menu"):
+        with dg.Menu("File"):
+            open_item = dg.MenuItem("Open", on_click=lambda: calls.append("open"))
+            dg.MenuItem("Disabled", disabled=True, on_click=lambda: calls.append("disabled"))
+        with dg.Menu("Help", disabled=True):
+            dg.MenuItem("About", on_click=lambda: calls.append("about"))
+
+    table = dg.DataFrameTable({"x": [1, 2]}, id="table", parent=win)
+    with dg.ContextMenu(target=table, width=240, parent=win):
+        inspect_item = dg.MenuItem("Inspect row", on_click=lambda: calls.append("inspect"))
+
+    document = app.document(win)
+    menu_bar = document["window"]["children"][0]
+    file_menu = menu_bar["children"][0]
+    context_menu = document["window"]["children"][2]
+
+    assert menu_bar["type"] == "menu_bar"
+    assert menu_bar["props"]["height"] == 32.0
+    assert menu_bar["props"]["tooltip"] == "Application menu"
+    assert file_menu["type"] == "menu"
+    assert file_menu["props"]["label"] == "File"
+    assert file_menu["children"][0]["type"] == "menu_item"
+    assert file_menu["children"][0]["props"]["events"] == ["click"]
+    assert file_menu["children"][1]["props"]["events"] == []
+    assert context_menu["type"] == "context_menu"
+    assert context_menu["props"]["target"] == "table"
+    assert context_menu["props"]["width"] == 240.0
+
+    click_cbs, _ = _collect_runtime_callbacks(win)
+    click_cbs[open_item.id]()
+    click_cbs[inspect_item.id]()
+
+    assert calls == ["open", "inspect"]
+
+
+def test_menu_validation() -> None:
+    dg.Window("Menu validation")
+
+    with pytest.raises(RuntimeError, match="MenuBar context"):
+        dg.Menu("Orphan")
+
+    with pytest.raises(RuntimeError, match="Menu or ContextMenu"):
+        dg.MenuItem("Orphan")
+
+    with dg.MenuBar():
+        with pytest.raises(ValueError, match="Menu label"):
+            dg.Menu("")
+
+    with dg.MenuBar():
+        with dg.Menu("File"):
+            with pytest.raises(ValueError, match="MenuItem label"):
+                dg.MenuItem("")
+
+    with pytest.raises(ValueError, match="ContextMenu width"):
+        dg.ContextMenu(width=0, parent=None)
+
+    with pytest.raises(ValueError, match="ContextMenu target"):
+        dg.ContextMenu(target="", parent=None)
 
 
 def test_navigation_validation() -> None:

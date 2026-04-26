@@ -396,8 +396,30 @@ Current implementation:
 - W0 is implemented: `Separator`, `Spacer`, and `StatusBar` exist in the
   Python API, serialize into the document, lay out in Rust, render with native
   primitives, and are covered in the multipage demo.
+- W1 is implemented for `NumberInput`: Python API, startup serialization,
+  native text/numeric state, text editing, steppers, clamping, invalid-entry
+  styling, keyboard adjustment, callbacks, and demo coverage.
+- W2 is implemented for `ProgressBar`: Python API, startup serialization,
+  native layout/rendering, centered optional label text, live `set_value`, and
+  demo coverage in `examples/all_features_demo.py`.
+- W3 is implemented for static text tooltips: `tooltip` is a common Python
+  widget prop, serializes through `WidgetNode`, participates in hover hit
+  testing, and renders as a native overlay clipped to the window.
+- W4 is implemented for basic modal dialogs: `Modal`, `dg.alert`, and
+  `dg.confirm` serialize to native nodes, render as centered overlays with a
+  scrim, block background input, support live open/close commands, and close on
+  Escape.
+- W5 is implemented for `MenuBar`, `Menu`, `MenuItem`, and target-based
+  `ContextMenu` popups.
+- W6 is implemented for native file open/save/folder dialogs through
+  `FileDialog`.
+- W7 is implemented for `ColorPicker` as a composite RGB/RGBA control.
+- W8 is implemented for local PNG/JPEG `Image` display through a textured quad
+  renderer.
 
 ### W0: Micro Layout Widgets
+
+Status: implemented.
 
 Deliver:
 
@@ -413,6 +435,8 @@ Acceptance:
 - No event behavior needed.
 
 ### W1: Number Input
+
+Status: implemented.
 
 Deliver:
 
@@ -431,6 +455,8 @@ Acceptance:
 
 ### W2: Progress Bar And Command Queue Hook
 
+Status: implemented.
+
 Deliver:
 
 - Python `ProgressBar`.
@@ -446,10 +472,12 @@ Acceptance:
 
 ### W3: Tooltips
 
+Status: implemented for static text tooltips. Hover delay remains polish.
+
 Deliver:
 
 - Common `tooltip` prop on all widgets.
-- Rust hover tracking and delayed overlay.
+- Rust hover tracking and overlay.
 - Text rendering in overlay.
 
 Acceptance:
@@ -459,6 +487,8 @@ Acceptance:
 - Tooltip stays within window bounds.
 
 ### W4: Modal Dialogs
+
+Status: implemented for basic alert/confirm workflows.
 
 Deliver:
 
@@ -475,6 +505,8 @@ Acceptance:
 
 ### W5: Menus And Context Menus
 
+Status: implemented for basic native menu bars and target-based context menus.
+
 Deliver:
 
 - `MenuBar`, `Menu`, `MenuItem`.
@@ -490,6 +522,8 @@ Acceptance:
 
 ### W6: File Dialog
 
+Status: implemented with native `rfd` dialogs exposed through Python helpers.
+
 Deliver:
 
 - Add Rust `rfd` dependency.
@@ -504,6 +538,9 @@ Acceptance:
 
 ### W7: Color Picker
 
+Status: implemented as a composite `Panel` with RGB/RGBA sliders, value labels,
+and a swatch preview.
+
 Deliver:
 
 - `ColorPicker` with RGBA channel controls.
@@ -517,6 +554,9 @@ Acceptance:
 - Theme/sample chart color can be changed in an example.
 
 ### W8: Image Display
+
+Status: implemented with a native textured-quad renderer for local PNG/JPEG
+paths, fit modes, and styled placeholder shells.
 
 Deliver:
 

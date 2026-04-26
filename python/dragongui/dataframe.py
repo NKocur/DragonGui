@@ -6,7 +6,6 @@ from typing import Any
 DEFAULT_TABLE_SAMPLE_ROWS = 2048
 MAX_CELL_CHARS = 80
 _MISSING = object()
-SUPPORTED_BUFFER_DTYPES = {"f32", "f64", "i32", "i64", "u32", "u64", "bool", "utf8"}
 
 
 @dataclass(frozen=True, slots=True)

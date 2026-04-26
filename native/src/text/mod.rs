@@ -8,10 +8,14 @@ use glyphon::{
 use crate::document::{WidgetKind, WidgetNode};
 use crate::events::WidgetState;
 use crate::layout::{LayoutResult, Rect};
+use crate::overlays::{
+    active_menu_overlay_rects, dropdown_overlay_rect, find_node, menu_popup_rect, tooltip_target,
+};
 use crate::resources::ResourceRegistry;
 use crate::style::{
-    FontFamily, TextAlign, VisualStyle, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP,
-    DROPDOWN_CHEVRON_WIDTH_LP, TAB_GAP_LP, TAB_TOP_INSET_LP,
+    number_stepper_width, FontFamily, TextAlign, VisualStyle, BORDER_WIDTH_LP, CHECKBOX_BOX_LP,
+    CHECKBOX_LEFT_PAD_LP, DROPDOWN_CHEVRON_WIDTH_LP, PANEL_ACCENT_WIDTH_LP, TAB_GAP_LP,
+    TAB_TOP_INSET_LP,
 };
 use crate::table;
 use crate::theme::Theme;
@@ -32,6 +36,7 @@ struct TextKey {
     font_size_milli: i32,
     line_height_milli: i32,
     width_milli: i32,
+    wrap: bool,
 }
 
 struct TextEntry {
@@ -112,6 +117,8 @@ impl TextRendererDg {
         let pad = theme.spacing * sf;
         let open_dropdown = state.open_dropdown.as_deref();
         let dropdown_overlay = dropdown_overlay_rect(layout, state, theme, sf);
+        let menu_overlays = active_menu_overlay_rects(tree, layout, state, theme, sf);
+        let tooltip_overlay = tooltip_target(tree, layout, theme, state, sf).map(|(_, rect)| rect);
 
         let mut entries = std::mem::take(&mut self.entries);
         let mut caret_positions = HashMap::new();
@@ -126,6 +133,8 @@ impl TextRendererDg {
             theme,
             open_dropdown,
             dropdown_overlay,
+            menu_overlays,
+            tooltip_overlay,
             &mut self.font_system,
             sf,
             pad,
@@ -141,6 +150,8 @@ impl TextRendererDg {
             theme,
             open_dropdown,
             dropdown_overlay,
+            menu_overlays,
+            tooltip_overlay,
             &mut self.font_system,
             sf,
             pad,
@@ -156,6 +167,29 @@ impl TextRendererDg {
             &mut self.font_system,
             sf,
             pad,
+            &mut cache,
+            &mut caret_positions,
+            &mut entries,
+        );
+        collect_menu_overlay_text(
+            tree,
+            layout,
+            state,
+            theme,
+            &mut self.font_system,
+            sf,
+            pad,
+            &mut cache,
+            &mut caret_positions,
+            &mut entries,
+        );
+        collect_tooltip_text(
+            tree,
+            layout,
+            state,
+            theme,
+            &mut self.font_system,
+            sf,
             &mut cache,
             &mut caret_positions,
             &mut entries,
@@ -231,6 +265,8 @@ fn collect_text(
     theme: &Theme,
     open_dropdown: Option<&str>,
     dropdown_overlay: Option<Rect>,
+    menu_overlays: [Option<Rect>; 2],
+    tooltip_overlay: Option<Rect>,
     font_system: &mut FontSystem,
     sf: f32,
     pad: f32,
@@ -238,6 +274,9 @@ fn collect_text(
     caret_positions: &mut HashMap<String, f32>,
     out: &mut Vec<TextEntry>,
 ) {
+    if node.kind == WidgetKind::Modal && !node.props.open.unwrap_or(false) {
+        return;
+    }
     let font_size = text_font_size(node, theme, sf);
     let line_height = text_line_height(font_size, theme, sf);
     let font_family = node.style.text.font_family.as_ref();
@@ -246,19 +285,23 @@ fn collect_text(
     let is_text_widget = matches!(
         node.kind,
         WidgetKind::Panel
+            | WidgetKind::Modal
             | WidgetKind::Sidebar
             | WidgetKind::Label
             | WidgetKind::Button
             | WidgetKind::Checkbox
             | WidgetKind::Dropdown
+            | WidgetKind::Menu
             | WidgetKind::TextInput
+            | WidgetKind::NumberInput
+            | WidgetKind::ProgressBar
             | WidgetKind::Tab
             | WidgetKind::NavItem
     );
 
     if is_text_widget {
         let mut caret = None;
-        if node.kind == WidgetKind::TextInput {
+        if matches!(node.kind, WidgetKind::TextInput | WidgetKind::NumberInput) {
             let value = state.text_for(&node.id).unwrap_or("");
             if value.is_empty() {
                 caret_positions.insert(node.id.clone(), 0.0);
@@ -275,14 +318,16 @@ fn collect_text(
         if let (Some((text, placeholder)), Some(r)) =
             (display_text(node, state), layout.rects.get(&node.id))
         {
-            if r.w > 0.0
-                && r.h > 0.0
-                && !is_obscured_by_dropdown(node, r, open_dropdown, dropdown_overlay)
-            {
+            if r.w > 0.0 && r.h > 0.0 {
                 let (left, top, clip_left, clip_top, clip_right, clip_bottom) = match node.kind {
-                    WidgetKind::Panel | WidgetKind::Sidebar => {
+                    WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal => {
                         let title_pad = panel_title_padding(node, theme, sf);
-                        let text_top = r.y + title_pad.top;
+                        let mut text_top = r.y + title_pad.top;
+                        if node.kind == WidgetKind::Modal {
+                            let min_top =
+                                r.y + (BORDER_WIDTH_LP + PANEL_ACCENT_WIDTH_LP + 2.0) * sf;
+                            text_top = text_top.max(min_top);
+                        }
                         (
                             r.x + title_pad.left,
                             text_top,
@@ -293,22 +338,14 @@ fn collect_text(
                         )
                     }
                     WidgetKind::Checkbox => {
-                        let scale = if theme.font_size > 0.0 {
-                            font_size / theme.font_size
-                        } else {
-                            1.0
-                        };
+                        let scale = text_scale(font_size, theme);
                         let box_size = CHECKBOX_BOX_LP * scale;
                         let left = r.x + CHECKBOX_LEFT_PAD_LP * scale + box_size + pad;
                         let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
                         (left, top, left, r.y, r.x + r.w - pad, r.y + r.h)
                     }
                     WidgetKind::Dropdown => {
-                        let scale = if theme.font_size > 0.0 {
-                            font_size / theme.font_size
-                        } else {
-                            1.0
-                        };
+                        let scale = text_scale(font_size, theme);
                         let chevron_w = DROPDOWN_CHEVRON_WIDTH_LP * scale;
                         let chevron_left = r.x + r.w - pad - chevron_w;
                         let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
@@ -321,12 +358,20 @@ fn collect_text(
                             r.y + r.h,
                         )
                     }
+                    WidgetKind::NumberInput => {
+                        let step_w = number_stepper_width(r.w, sf);
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        (
+                            r.x + pad,
+                            top,
+                            r.x + pad,
+                            r.y,
+                            r.x + r.w - step_w - pad * 0.5,
+                            r.y + r.h,
+                        )
+                    }
                     WidgetKind::Tab => {
-                        let scale = if theme.font_size > 0.0 {
-                            font_size / theme.font_size
-                        } else {
-                            1.0
-                        };
+                        let scale = text_scale(font_size, theme);
                         let left = r.x + pad + TAB_GAP_LP * scale * 0.5;
                         let top =
                             r.y + TAB_TOP_INSET_LP * scale + ((r.h - line_height) * 0.5).max(0.0);
@@ -339,50 +384,159 @@ fn collect_text(
                             r.y + r.h,
                         )
                     }
+                    WidgetKind::ProgressBar => {
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        (r.x + pad, top, r.x + pad, r.y, r.x + r.w - pad, r.y + r.h)
+                    }
                     _ => {
                         let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
                         (r.x + pad, top, r.x + pad, r.y, r.x + r.w - pad, r.y + r.h)
                     }
                 };
                 let color = text_color(node, state, theme, placeholder);
-                push_text_entry(
-                    font_system,
-                    out,
-                    text,
-                    font_size,
-                    line_height,
-                    font_family,
-                    font_weight,
-                    left,
-                    top,
-                    TextBounds {
-                        left: clip_left as i32,
-                        top: clip_top as i32,
-                        right: clip_right as i32,
-                        bottom: clip_bottom as i32,
-                    },
-                    color,
-                    align,
-                    cache,
-                    if placeholder { None } else { caret },
-                    caret_positions,
-                );
+                let align = if node.kind == WidgetKind::ProgressBar
+                    && node.style.text.text_align.is_none()
+                {
+                    TextAlign::Center
+                } else {
+                    align
+                };
+                let clip_rect = Rect {
+                    x: clip_left,
+                    y: clip_top,
+                    w: (clip_right - clip_left).max(0.0),
+                    h: (clip_bottom - clip_top).max(0.0),
+                };
+                if !is_obscured_by_overlay(
+                    node,
+                    &clip_rect,
+                    open_dropdown,
+                    dropdown_overlay,
+                    menu_overlays,
+                    tooltip_overlay,
+                ) {
+                    push_text_entry(
+                        font_system,
+                        out,
+                        text,
+                        font_size,
+                        line_height,
+                        font_family,
+                        font_weight,
+                        left,
+                        top,
+                        TextBounds {
+                            left: clip_left as i32,
+                            top: clip_top as i32,
+                            right: clip_right as i32,
+                            bottom: clip_bottom as i32,
+                        },
+                        color,
+                        align,
+                        cache,
+                        if placeholder { None } else { caret },
+                        caret_positions,
+                    );
+                }
+            }
+        }
+
+        if node.kind == WidgetKind::NumberInput {
+            if let Some(r) = layout.rects.get(&node.id) {
+                let step_w = number_stepper_width(r.w, sf);
+                if r.w > 0.0
+                    && r.h > 0.0
+                    && !is_obscured_by_overlay(
+                        node,
+                        &Rect {
+                            x: r.x + r.w - step_w,
+                            y: r.y,
+                            w: step_w,
+                            h: r.h,
+                        },
+                        open_dropdown,
+                        dropdown_overlay,
+                        menu_overlays,
+                        tooltip_overlay,
+                    )
+                {
+                    let step_x = r.x + r.w - step_w;
+                    let step_left = step_x + BORDER_WIDTH_LP * sf;
+                    let half_h = r.h * 0.5;
+                    let color = if state.is_disabled(&node.id) {
+                        glyph_color(theme.disabled)
+                    } else {
+                        glyph_color(theme.muted_text)
+                    };
+                    push_text_entry(
+                        font_system,
+                        out,
+                        "+",
+                        font_size,
+                        line_height,
+                        font_family,
+                        font_weight,
+                        step_left,
+                        r.y + ((half_h - line_height) * 0.5).max(0.0),
+                        TextBounds {
+                            left: step_left as i32,
+                            top: r.y as i32,
+                            right: (r.x + r.w) as i32,
+                            bottom: (r.y + half_h) as i32,
+                        },
+                        color,
+                        TextAlign::Center,
+                        cache,
+                        None,
+                        caret_positions,
+                    );
+                    push_text_entry(
+                        font_system,
+                        out,
+                        "-",
+                        font_size,
+                        line_height,
+                        font_family,
+                        font_weight,
+                        step_left,
+                        r.y + half_h + ((half_h - line_height) * 0.5).max(0.0),
+                        TextBounds {
+                            left: step_left as i32,
+                            top: (r.y + half_h) as i32,
+                            right: (r.x + r.w) as i32,
+                            bottom: (r.y + r.h) as i32,
+                        },
+                        color,
+                        TextAlign::Center,
+                        cache,
+                        None,
+                        caret_positions,
+                    );
+                }
             }
         }
 
         if node.kind == WidgetKind::Dropdown {
             if let Some(r) = layout.rects.get(&node.id) {
+                let scale = text_scale(font_size, theme);
+                let chevron_w = DROPDOWN_CHEVRON_WIDTH_LP * scale;
+                let chevron_left = r.x + r.w - pad - chevron_w;
                 if r.w > 0.0
                     && r.h > 0.0
-                    && !is_obscured_by_dropdown(node, r, open_dropdown, dropdown_overlay)
+                    && !is_obscured_by_overlay(
+                        node,
+                        &Rect {
+                            x: chevron_left,
+                            y: r.y,
+                            w: chevron_w,
+                            h: r.h,
+                        },
+                        open_dropdown,
+                        dropdown_overlay,
+                        menu_overlays,
+                        tooltip_overlay,
+                    )
                 {
-                    let scale = if theme.font_size > 0.0 {
-                        font_size / theme.font_size
-                    } else {
-                        1.0
-                    };
-                    let chevron_w = DROPDOWN_CHEVRON_WIDTH_LP * scale;
-                    let chevron_left = r.x + r.w - pad - chevron_w;
                     let color = if state.is_disabled(&node.id) {
                         glyph_color(theme.disabled)
                     } else {
@@ -413,53 +567,6 @@ fn collect_text(
                 }
             }
         }
-
-        if node.kind == WidgetKind::Checkbox
-            && state.checked.get(&node.id).copied().unwrap_or(false)
-        {
-            if let Some(r) = layout.rects.get(&node.id) {
-                if r.w > 0.0
-                    && r.h > 0.0
-                    && !is_obscured_by_dropdown(node, r, open_dropdown, dropdown_overlay)
-                {
-                    let scale = if theme.font_size > 0.0 {
-                        font_size / theme.font_size
-                    } else {
-                        1.0
-                    };
-                    let box_size = CHECKBOX_BOX_LP * scale;
-                    let box_x = r.x + CHECKBOX_LEFT_PAD_LP * scale;
-                    let box_y = r.y + (r.h - box_size) * 0.5;
-                    let color = if state.is_disabled(&node.id) {
-                        glyph_color(theme.surface_alt)
-                    } else {
-                        glyph_color(theme.text)
-                    };
-                    push_text_entry(
-                        font_system,
-                        out,
-                        "✓",
-                        font_size,
-                        line_height,
-                        font_family,
-                        font_weight,
-                        box_x + box_size * 0.24,
-                        r.y + ((r.h - line_height) * 0.5).max(0.0),
-                        TextBounds {
-                            left: box_x as i32,
-                            top: box_y as i32,
-                            right: (box_x + box_size) as i32,
-                            bottom: (box_y + box_size) as i32,
-                        },
-                        color,
-                        TextAlign::Center,
-                        cache,
-                        None,
-                        caret_positions,
-                    );
-                }
-            }
-        }
     }
 
     for child in &node.children {
@@ -470,6 +577,8 @@ fn collect_text(
             theme,
             open_dropdown,
             dropdown_overlay,
+            menu_overlays,
+            tooltip_overlay,
             font_system,
             sf,
             pad,
@@ -478,23 +587,6 @@ fn collect_text(
             out,
         );
     }
-}
-
-fn dropdown_overlay_rect(
-    layout: &LayoutResult,
-    state: &WidgetState,
-    theme: &Theme,
-    sf: f32,
-) -> Option<Rect> {
-    let id = state.open_dropdown.as_ref()?;
-    let r = layout.rects.get(id)?;
-    let items = state.dropdown_items.get(id)?;
-    Some(Rect {
-        x: r.x,
-        y: r.y + r.h,
-        w: r.w,
-        h: theme.control_height() * sf * items.len() as f32,
-    })
 }
 
 #[derive(Clone, Copy)]
@@ -515,16 +607,23 @@ fn panel_title_padding(node: &WidgetNode, theme: &Theme, sf: f32) -> PanelTitleP
     }
 }
 
-fn is_obscured_by_dropdown(
+fn is_obscured_by_overlay(
     node: &WidgetNode,
     r: &Rect,
     open_dropdown: Option<&str>,
     dropdown_overlay: Option<Rect>,
+    menu_overlays: [Option<Rect>; 2],
+    tooltip_overlay: Option<Rect>,
 ) -> bool {
     if open_dropdown == Some(node.id.as_str()) {
         return false;
     }
     dropdown_overlay.is_some_and(|overlay| rects_intersect(*r, overlay))
+        || menu_overlays
+            .iter()
+            .flatten()
+            .any(|overlay| rects_intersect(*r, *overlay))
+        || tooltip_overlay.is_some_and(|overlay| rects_intersect(*r, overlay))
 }
 
 fn rects_intersect(a: Rect, b: Rect) -> bool {
@@ -538,6 +637,14 @@ fn text_font_size(node: &WidgetNode, theme: &Theme, sf: f32) -> f32 {
         .unwrap_or(theme.font_size)
         .max(8.0)
         * sf
+}
+
+fn text_scale(font_size: f32, theme: &Theme) -> f32 {
+    if theme.font_size > 0.0 {
+        font_size / theme.font_size
+    } else {
+        1.0
+    }
 }
 
 fn text_line_height(font_size: f32, theme: &Theme, sf: f32) -> f32 {
@@ -606,11 +713,7 @@ fn collect_dropdown_overlay_text(
             let line_height = text_line_height(font_size, theme, sf);
             let font_family = node.style.text.font_family.as_ref();
             let font_weight = node.style.text.font_weight.unwrap_or(Weight::NORMAL.0);
-            let scale = if theme.font_size > 0.0 {
-                font_size / theme.font_size
-            } else {
-                1.0
-            };
+            let scale = text_scale(font_size, theme);
             let row_h = theme.control_height() * scale;
             for (idx, item) in items.iter().enumerate() {
                 let y = r.y + r.h + idx as f32 * row_h;
@@ -657,6 +760,155 @@ fn collect_dropdown_overlay_text(
     }
 }
 
+fn collect_menu_overlay_text(
+    tree: &WidgetNode,
+    layout: &LayoutResult,
+    state: &WidgetState,
+    theme: &Theme,
+    font_system: &mut FontSystem,
+    sf: f32,
+    pad: f32,
+    cache: &mut TextBufferCache,
+    caret_positions: &mut HashMap<String, f32>,
+    out: &mut Vec<TextEntry>,
+) {
+    if let Some(menu_id) = state.open_menu.as_deref() {
+        collect_single_menu_overlay_text(
+            tree,
+            layout,
+            state,
+            theme,
+            font_system,
+            sf,
+            pad,
+            cache,
+            caret_positions,
+            out,
+            menu_id,
+        );
+    }
+    if let Some(menu_id) = state.open_context_menu.as_deref() {
+        collect_single_menu_overlay_text(
+            tree,
+            layout,
+            state,
+            theme,
+            font_system,
+            sf,
+            pad,
+            cache,
+            caret_positions,
+            out,
+            menu_id,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_single_menu_overlay_text(
+    tree: &WidgetNode,
+    layout: &LayoutResult,
+    state: &WidgetState,
+    theme: &Theme,
+    font_system: &mut FontSystem,
+    sf: f32,
+    pad: f32,
+    cache: &mut TextBufferCache,
+    caret_positions: &mut HashMap<String, f32>,
+    out: &mut Vec<TextEntry>,
+    menu_id: &str,
+) {
+    let Some(rect) = menu_popup_rect(tree, layout, state, theme, sf, menu_id) else {
+        return;
+    };
+    let Some(items) = state.menu_items.get(menu_id) else {
+        return;
+    };
+    let Some(node) = find_node(tree, menu_id) else {
+        return;
+    };
+    let font_size = text_font_size(node, theme, sf);
+    let line_height = text_line_height(font_size, theme, sf);
+    let font_family = node.style.text.font_family.as_ref();
+    let font_weight = node.style.text.font_weight.unwrap_or(Weight::NORMAL.0);
+    let row_h = theme.control_height() * sf;
+    for (idx, item) in items.iter().enumerate() {
+        let y = rect.y + idx as f32 * row_h;
+        let disabled = item.disabled || state.is_disabled(&item.id);
+        let color = if disabled {
+            glyph_color(theme.muted_text)
+        } else {
+            glyph_color(theme.text)
+        };
+        push_text_entry(
+            font_system,
+            out,
+            &item.value,
+            font_size,
+            line_height,
+            font_family,
+            font_weight,
+            rect.x + pad,
+            y + ((row_h - line_height) * 0.5).max(0.0),
+            TextBounds {
+                left: (rect.x + pad) as i32,
+                top: y as i32,
+                right: (rect.x + rect.w - pad) as i32,
+                bottom: (y + row_h) as i32,
+            },
+            color,
+            TextAlign::Left,
+            cache,
+            None,
+            caret_positions,
+        );
+    }
+}
+
+fn collect_tooltip_text(
+    tree: &WidgetNode,
+    layout: &LayoutResult,
+    state: &WidgetState,
+    theme: &Theme,
+    font_system: &mut FontSystem,
+    sf: f32,
+    cache: &mut TextBufferCache,
+    caret_positions: &mut HashMap<String, f32>,
+    out: &mut Vec<TextEntry>,
+) {
+    let Some((node, rect)) = tooltip_target(tree, layout, theme, state, sf) else {
+        return;
+    };
+    let Some(text) = node.props.tooltip.as_deref() else {
+        return;
+    };
+    let pad = theme.spacing * sf * 1.25;
+    let font_size = (theme.font_size * sf).max(8.0 * sf);
+    let line_height = text_line_height(font_size, theme, sf);
+    let top = rect.y + pad;
+    push_wrapped_text_entry(
+        font_system,
+        out,
+        text,
+        font_size,
+        line_height,
+        None,
+        Weight::NORMAL.0,
+        rect.x + pad,
+        top,
+        TextBounds {
+            left: (rect.x + pad) as i32,
+            top: rect.y as i32,
+            right: (rect.x + rect.w - pad) as i32,
+            bottom: (rect.y + rect.h) as i32,
+        },
+        glyph_color(theme.text),
+        TextAlign::Left,
+        cache,
+        caret_positions,
+    );
+}
+
 fn collect_table_text(
     node: &WidgetNode,
     layout: &LayoutResult,
@@ -665,6 +917,8 @@ fn collect_table_text(
     theme: &Theme,
     open_dropdown: Option<&str>,
     dropdown_overlay: Option<Rect>,
+    menu_overlays: [Option<Rect>; 2],
+    tooltip_overlay: Option<Rect>,
     font_system: &mut FontSystem,
     sf: f32,
     pad: f32,
@@ -676,7 +930,14 @@ fn collect_table_text(
         if let (Some(r), Some(table_state)) = (layout.rects.get(&node.id), state.table(&node.id)) {
             if r.w > 0.0
                 && r.h > 0.0
-                && !is_obscured_by_dropdown(node, r, open_dropdown, dropdown_overlay)
+                && !is_obscured_by_overlay(
+                    node,
+                    r,
+                    open_dropdown,
+                    dropdown_overlay,
+                    menu_overlays,
+                    tooltip_overlay,
+                )
             {
                 let font_size = text_font_size(node, theme, sf);
                 let line_height = text_line_height(font_size, theme, sf);
@@ -841,6 +1102,8 @@ fn collect_table_text(
             theme,
             open_dropdown,
             dropdown_overlay,
+            menu_overlays,
+            tooltip_overlay,
             font_system,
             sf,
             pad,
@@ -853,7 +1116,7 @@ fn collect_table_text(
 
 fn display_text<'a>(node: &'a WidgetNode, state: &'a WidgetState) -> Option<(&'a str, bool)> {
     match node.kind {
-        WidgetKind::TextInput => {
+        WidgetKind::TextInput | WidgetKind::NumberInput => {
             let value = state.text_for(&node.id).unwrap_or("");
             if value.is_empty() {
                 state
@@ -894,6 +1157,82 @@ fn push_text_entry(
     caret: Option<(&str, usize)>,
     caret_positions: &mut HashMap<String, f32>,
 ) {
+    push_text_entry_impl(
+        font_system,
+        out,
+        text,
+        font_size,
+        line_height,
+        font_family,
+        font_weight,
+        left,
+        top,
+        clip,
+        color,
+        align,
+        false,
+        cache,
+        caret,
+        caret_positions,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_wrapped_text_entry(
+    font_system: &mut FontSystem,
+    out: &mut Vec<TextEntry>,
+    text: &str,
+    font_size: f32,
+    line_height: f32,
+    font_family: Option<&FontFamily>,
+    font_weight: u16,
+    left: f32,
+    top: f32,
+    clip: TextBounds,
+    color: Color,
+    align: TextAlign,
+    cache: &mut TextBufferCache,
+    caret_positions: &mut HashMap<String, f32>,
+) {
+    push_text_entry_impl(
+        font_system,
+        out,
+        text,
+        font_size,
+        line_height,
+        font_family,
+        font_weight,
+        left,
+        top,
+        clip,
+        color,
+        align,
+        true,
+        cache,
+        None,
+        caret_positions,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_text_entry_impl(
+    font_system: &mut FontSystem,
+    out: &mut Vec<TextEntry>,
+    text: &str,
+    font_size: f32,
+    line_height: f32,
+    font_family: Option<&FontFamily>,
+    font_weight: u16,
+    left: f32,
+    top: f32,
+    clip: TextBounds,
+    color: Color,
+    align: TextAlign,
+    wrap: bool,
+    cache: &mut TextBufferCache,
+    caret: Option<(&str, usize)>,
+    caret_positions: &mut HashMap<String, f32>,
+) {
     if clip.right <= clip.left
         || clip.bottom <= clip.top
         || left >= clip.right as f32
@@ -910,6 +1249,7 @@ fn push_text_entry(
         font_size_milli: (font_size * 1000.0).round() as i32,
         line_height_milli: (line_height * 1000.0).round() as i32,
         width_milli: (avail_w * 1000.0).round() as i32,
+        wrap,
     };
     let buf = cache
         .get_mut(&key)
@@ -917,7 +1257,7 @@ fn push_text_entry(
         .unwrap_or_else(|| {
             let mut buf = Buffer::new(font_system, Metrics::new(font_size, line_height));
             buf.set_size(font_system, Some(avail_w), None);
-            buf.set_wrap(font_system, Wrap::None);
+            buf.set_wrap(font_system, if wrap { Wrap::Word } else { Wrap::None });
             buf.set_text(
                 font_system,
                 text,

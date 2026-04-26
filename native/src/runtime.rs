@@ -20,12 +20,17 @@ use crate::commands::{
 };
 use crate::document::{self, NodeProps, ScatterSpec, WidgetKind, WidgetNode};
 use crate::error::DragonError;
-use crate::events::{hit_test, ChangeValue, SliderDrag, WidgetState};
+use crate::events::{
+    has_active_modal, hit_test, hit_test_hover, modal_blocks_point, ChangeValue, SliderDrag,
+    WidgetState,
+};
+use crate::image_widget::ImageRenderer;
 use crate::layout::compute_layout;
+use crate::overlays::menu_popup_width;
 use crate::primitives::PrimitivesRenderer;
 use crate::resources::ResourceRegistry;
 use crate::scatter::{self, PointInstance, ScatterWidget};
-use crate::style::NodeStyle;
+use crate::style::{number_stepper_width, NodeStyle};
 use crate::table::{self, TableHit};
 use crate::text::TextRendererDg;
 use crate::theme::Theme;
@@ -204,6 +209,18 @@ fn collect_widget_kinds(node: &WidgetNode, out: &mut HashMap<String, WidgetKind>
     }
 }
 
+fn find_widget<'a>(node: &'a WidgetNode, id: &str) -> Option<&'a WidgetNode> {
+    if node.id == id {
+        return Some(node);
+    }
+    for child in &node.children {
+        if let Some(found) = find_widget(child, id) {
+            return Some(found);
+        }
+    }
+    None
+}
+
 fn find_widget_mut<'a>(node: &'a mut WidgetNode, id: &str) -> Option<&'a mut WidgetNode> {
     if node.id == id {
         return Some(node);
@@ -212,6 +229,19 @@ fn find_widget_mut<'a>(node: &'a mut WidgetNode, id: &str) -> Option<&'a mut Wid
         if let Some(found) = find_widget_mut(child, id) {
             return Some(found);
         }
+    }
+    None
+}
+
+fn close_active_modal(node: &mut WidgetNode) -> Option<String> {
+    for child in node.children.iter_mut().rev() {
+        if let Some(id) = close_active_modal(child) {
+            return Some(id);
+        }
+    }
+    if node.kind == WidgetKind::Modal && node.props.open.unwrap_or(false) {
+        node.props.open = Some(false);
+        return Some(node.id.clone());
     }
     None
 }
@@ -282,15 +312,22 @@ fn widget_kind_name(kind: &WidgetKind) -> &'static str {
         WidgetKind::HLayout => "h_layout",
         WidgetKind::VLayout => "v_layout",
         WidgetKind::Panel => "panel",
+        WidgetKind::Modal => "modal",
         WidgetKind::Button => "button",
         WidgetKind::Checkbox => "checkbox",
         WidgetKind::Dropdown => "dropdown",
         WidgetKind::Label => "label",
         WidgetKind::Slider => "slider",
+        WidgetKind::NumberInput => "number_input",
+        WidgetKind::ProgressBar => "progress_bar",
         WidgetKind::TextInput => "text_input",
         WidgetKind::Separator => "separator",
         WidgetKind::Spacer => "spacer",
         WidgetKind::StatusBar => "status_bar",
+        WidgetKind::MenuBar => "menu_bar",
+        WidgetKind::Menu => "menu",
+        WidgetKind::MenuItem => "menu_item",
+        WidgetKind::ContextMenu => "context_menu",
         WidgetKind::Tabs => "tabs",
         WidgetKind::Tab => "tab",
         WidgetKind::Pages => "pages",
@@ -299,6 +336,7 @@ fn widget_kind_name(kind: &WidgetKind) -> &'static str {
         WidgetKind::NavItem => "nav_item",
         WidgetKind::Scatter3D => "scatter_3d",
         WidgetKind::DataFrameTable => "dataframe_table",
+        WidgetKind::Image => "image",
         WidgetKind::Unknown => "unknown",
     }
 }
@@ -323,6 +361,11 @@ fn props_snapshot(node: &WidgetNode) -> Value {
         "fixed_width": props.fixed_width,
         "fixed_height": props.fixed_height,
         "disabled": props.disabled,
+        "open": props.open,
+        "target": props.target.as_deref(),
+        "tooltip": props.tooltip.as_deref(),
+        "image_path": props.image_path.as_deref(),
+        "image_fit": props.image_fit.as_deref(),
         "checked": props.checked,
         "value": props.value,
         "min": props.min,
@@ -411,6 +454,12 @@ fn widget_state_snapshot(state: Option<&WidgetState>) -> Value {
         "hovered": state.hovered.as_deref(),
         "pressed": state.pressed.as_deref(),
         "open_dropdown": state.open_dropdown.as_deref(),
+        "dropdown_hover": state.dropdown_hover.as_ref().map(|(id, idx)| json!({"id": id, "index": idx})),
+        "open_menu": state.open_menu.as_deref(),
+        "open_context_menu": state.open_context_menu.as_deref(),
+        "context_menu_pos": state.context_menu_pos,
+        "menu_items_count": state.menu_items.iter().map(|(id, items)| (id.clone(), json!(items.len()))).collect::<Map<_, _>>(),
+        "context_targets": &state.context_targets,
         "active_tabs": &state.active_tabs,
         "active_pages": &state.active_pages,
         "tables": Value::Object(tables),
@@ -449,15 +498,28 @@ fn set_widget_text_prop(node: &mut WidgetNode, id: &str, prop: &str, value: Stri
         return false;
     };
     match (target.kind.clone(), prop) {
-        (WidgetKind::Label | WidgetKind::Button | WidgetKind::Checkbox, "text" | "label") => {
+        (
+            WidgetKind::Label
+            | WidgetKind::Button
+            | WidgetKind::Checkbox
+            | WidgetKind::NumberInput
+            | WidgetKind::ProgressBar,
+            "text" | "label",
+        ) => {
             target.props.text = Some(value);
             true
         }
-        (WidgetKind::Panel | WidgetKind::Page, "title") => {
+        (
+            WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal | WidgetKind::Page,
+            "title",
+        ) => {
             target.props.text = Some(value);
             true
         }
-        (WidgetKind::Tab | WidgetKind::NavItem, "label") => {
+        (
+            WidgetKind::Tab | WidgetKind::NavItem | WidgetKind::Menu | WidgetKind::MenuItem,
+            "label",
+        ) => {
             target.props.text = Some(value);
             true
         }
@@ -465,11 +527,37 @@ fn set_widget_text_prop(node: &mut WidgetNode, id: &str, prop: &str, value: Stri
     }
 }
 
+fn set_widget_open_prop(node: &mut WidgetNode, id: &str, open: bool) -> bool {
+    let Some(target) = find_widget_mut(node, id) else {
+        return false;
+    };
+    if target.kind != WidgetKind::Modal {
+        return false;
+    }
+    target.props.open = Some(open);
+    true
+}
+
 fn set_widget_class_prop(node: &mut WidgetNode, id: &str, value: Option<String>) -> bool {
     let Some(target) = find_widget_mut(node, id) else {
         return false;
     };
     target.class_name = value;
+    true
+}
+
+fn set_widget_image_prop(node: &mut WidgetNode, id: &str, prop: &str, value: String) -> bool {
+    let Some(target) = find_widget_mut(node, id) else {
+        return false;
+    };
+    if target.kind != WidgetKind::Image {
+        return false;
+    }
+    match prop {
+        "path" => target.props.image_path = (!value.is_empty()).then_some(value),
+        "fit" => target.props.image_fit = Some(value.to_ascii_lowercase()),
+        _ => return false,
+    }
     true
 }
 
@@ -827,6 +915,7 @@ struct WgpuState {
     scatter_widget_id: Option<String>,
     scatter_decode_scratch: Vec<PointInstance>,
     primitives: Option<PrimitivesRenderer>,
+    images: Option<ImageRenderer>,
     widget_tree: Option<WidgetNode>,
     widget_kinds: HashMap<String, WidgetKind>,
     caret_positions: HashMap<String, f32>,
@@ -915,6 +1004,11 @@ impl WgpuState {
             .as_ref()
             .map(|_| PrimitivesRenderer::new(&device, &queue, config.format, width, height));
 
+        let images = spec
+            .widget_tree
+            .as_ref()
+            .map(|_| ImageRenderer::new(&device, &queue, config.format, width, height));
+
         let text = spec
             .widget_tree
             .as_ref()
@@ -949,6 +1043,7 @@ impl WgpuState {
             scatter_widget_id,
             scatter_decode_scratch: Vec::new(),
             primitives,
+            images,
             widget_tree: spec.widget_tree,
             widget_kinds,
             caret_positions: HashMap::new(),
@@ -973,6 +1068,7 @@ impl WgpuState {
             widget_state,
             resources,
             primitives,
+            images,
             text,
             scatter,
             caret_positions,
@@ -1001,6 +1097,11 @@ impl WgpuState {
             } else {
                 s.set_layout_rect(0.0, 0.0, 0.0, 0.0, queue);
             }
+        }
+
+        if let Some(images) = images.as_mut() {
+            images.update_screen_size(queue, config.width, config.height);
+            images.rebuild(device, queue, tree, &layout);
         }
 
         if let Some(state) = widget_state.as_mut() {
@@ -1138,6 +1239,74 @@ impl WgpuState {
         hit_test(tree, layout, pos).filter(|(id, _)| !state.is_disabled(id))
     }
 
+    fn hit_test_hover(&self, pos: [f32; 2]) -> Option<(String, WidgetKind)> {
+        if let Some(id) = self.menu_item_at(pos) {
+            return Some((id, WidgetKind::MenuItem));
+        }
+        if self.menu_popup_contains(pos) {
+            return None;
+        }
+        let (tree, layout) = match (self.widget_tree.as_ref(), self.current_layout.as_ref()) {
+            (Some(t), Some(l)) => (t, l),
+            _ => return None,
+        };
+        let state = self.widget_state.as_ref()?;
+        hit_test_hover(tree, layout, pos).filter(|(id, _)| !state.is_disabled(id))
+    }
+
+    fn modal_blocks_point(&self, pos: [f32; 2]) -> bool {
+        let (tree, layout) = match (self.widget_tree.as_ref(), self.current_layout.as_ref()) {
+            (Some(t), Some(l)) => (t, l),
+            _ => return false,
+        };
+        modal_blocks_point(tree, layout, pos)
+    }
+
+    fn has_active_modal(&self) -> bool {
+        self.widget_tree
+            .as_ref()
+            .is_some_and(|tree| has_active_modal(tree))
+    }
+
+    fn close_active_modal(&mut self) -> Option<String> {
+        let tree = self.widget_tree.as_mut()?;
+        let closed = close_active_modal(tree)?;
+        if let Some(state) = &mut self.widget_state {
+            state.focus_widget(None);
+            state.pressed = None;
+            state.close_popups();
+        }
+        self.apply_layout();
+        Some(closed)
+    }
+
+    fn number_input_step_at(&self, pos: [f32; 2]) -> Option<(String, f32)> {
+        let state = self.widget_state.as_ref()?;
+        let layout = self.current_layout.as_ref()?;
+        for (id, kind) in &self.widget_kinds {
+            if kind != &WidgetKind::NumberInput || state.is_disabled(id) {
+                continue;
+            }
+            let rect = layout.rects.get(id)?;
+            let step_w = number_stepper_width(rect.w, self.scale_factor);
+            let step_x = rect.x + rect.w - step_w;
+            if pos[0] < step_x
+                || pos[0] >= rect.x + rect.w
+                || pos[1] < rect.y
+                || pos[1] >= rect.y + rect.h
+            {
+                continue;
+            }
+            let direction = if pos[1] < rect.y + rect.h * 0.5 {
+                1.0
+            } else {
+                -1.0
+            };
+            return Some((id.clone(), direction));
+        }
+        None
+    }
+
     /// Look up the kind of widget with `id` in the widget tree.
     fn widget_kind(&self, id: &str) -> Option<WidgetKind> {
         self.widget_kinds.get(id).cloned()
@@ -1173,10 +1342,16 @@ impl WgpuState {
                 WidgetKind::Label
                     | WidgetKind::Button
                     | WidgetKind::Panel
+                    | WidgetKind::Sidebar
                     | WidgetKind::Checkbox
+                    | WidgetKind::NumberInput
+                    | WidgetKind::ProgressBar
+                    | WidgetKind::Modal
                     | WidgetKind::Page
                     | WidgetKind::Tab
                     | WidgetKind::NavItem
+                    | WidgetKind::Menu
+                    | WidgetKind::MenuItem
             ) {
                 if let Some(tree) = self.widget_tree.as_mut() {
                     if set_widget_text_prop(tree, id, prop, text.clone()) {
@@ -1185,6 +1360,39 @@ impl WgpuState {
                 }
             }
         }
+        if kind == WidgetKind::Modal && prop == "open" {
+            let CommandValue::Bool(open) = value else {
+                eprintln!(
+                    "DragonGUI: ignoring unsupported live SetProp for widget {id:?} ({kind:?}).{prop}"
+                );
+                return None;
+            };
+            if let Some(tree) = self.widget_tree.as_mut() {
+                if set_widget_open_prop(tree, id, open) {
+                    return Some(Dirty::Layout);
+                }
+            }
+            return None;
+        }
+        if kind == WidgetKind::Image && matches!(prop, "path" | "fit") {
+            let CommandValue::Text(text) = value else {
+                eprintln!(
+                    "DragonGUI: ignoring unsupported live SetProp for widget {id:?} ({kind:?}).{prop}"
+                );
+                return None;
+            };
+            if prop == "path" {
+                if let Some(images) = self.images.as_mut() {
+                    images.forget_path(&text);
+                }
+            }
+            if let Some(tree) = self.widget_tree.as_mut() {
+                if set_widget_image_prop(tree, id, prop, text) {
+                    return Some(Dirty::Full);
+                }
+            }
+            return None;
+        }
         let state = self.widget_state.as_mut()?;
         match (kind, prop, value) {
             (WidgetKind::Checkbox, "checked", CommandValue::Bool(v)) => {
@@ -1192,6 +1400,14 @@ impl WgpuState {
                 Some(Dirty::Visual)
             }
             (WidgetKind::Slider, "value", CommandValue::Float(v)) => {
+                state.try_set_float(id, v)?;
+                Some(Dirty::Visual)
+            }
+            (WidgetKind::NumberInput, "value", CommandValue::Float(v)) => {
+                state.set_number_value(id, v)?;
+                Some(Dirty::Text)
+            }
+            (WidgetKind::ProgressBar, "value", CommandValue::Float(v)) => {
                 state.try_set_float(id, v)?;
                 Some(Dirty::Visual)
             }
@@ -1532,6 +1748,121 @@ impl WgpuState {
         }
     }
 
+    fn menu_item_at(&self, pos: [f32; 2]) -> Option<String> {
+        let state = self.widget_state.as_ref()?;
+        let menu_id = state
+            .open_menu
+            .as_deref()
+            .or(state.open_context_menu.as_deref())?;
+        let rect = self.menu_popup_rect(menu_id)?;
+        if !rect_contains_pos(&rect, pos) {
+            return None;
+        }
+        let row_h = self.theme.control_height() * self.scale_factor;
+        let idx = ((pos[1] - rect.y) / row_h).floor() as usize;
+        let item = state.menu_items.get(menu_id)?.get(idx)?;
+        if item.disabled || state.is_disabled(&item.id) {
+            None
+        } else {
+            Some(item.id.clone())
+        }
+    }
+
+    fn menu_popup_contains(&self, pos: [f32; 2]) -> bool {
+        let Some(state) = self.widget_state.as_ref() else {
+            return false;
+        };
+        state
+            .open_menu
+            .as_deref()
+            .or(state.open_context_menu.as_deref())
+            .and_then(|id| self.menu_popup_rect(id))
+            .is_some_and(|rect| rect_contains_pos(&rect, pos))
+    }
+
+    fn has_open_menu_popup(&self) -> bool {
+        self.widget_state
+            .as_ref()
+            .is_some_and(|state| state.open_menu.is_some() || state.open_context_menu.is_some())
+    }
+
+    fn close_popups(&mut self) -> bool {
+        let Some(state) = self.widget_state.as_mut() else {
+            return false;
+        };
+        let had_popup = state.open_dropdown.is_some()
+            || state.open_menu.is_some()
+            || state.open_context_menu.is_some();
+        state.close_popups();
+        if had_popup {
+            self.rebuild_visuals();
+        }
+        had_popup
+    }
+
+    fn open_context_menu_at(&mut self, menu_id: &str, pos: [f32; 2]) -> bool {
+        let opened = self
+            .widget_state
+            .as_mut()
+            .map(|state| state.open_context_menu(menu_id, pos))
+            .unwrap_or(false);
+        if opened {
+            self.rebuild_visuals();
+        }
+        opened
+    }
+
+    fn context_menu_for_pos(&self, pos: [f32; 2]) -> Option<String> {
+        let (target_id, _kind) = self.hit_test_ui(pos)?;
+        let state = self.widget_state.as_ref()?;
+        state.context_targets.get(&target_id).cloned()
+    }
+
+    fn menu_popup_rect(&self, id: &str) -> Option<crate::layout::Rect> {
+        let tree = self.widget_tree.as_ref()?;
+        let layout = self.current_layout.as_ref()?;
+        let state = self.widget_state.as_ref()?;
+        let items = state.menu_items.get(id)?;
+        if items.is_empty() {
+            return None;
+        }
+        let node = find_widget(tree, id)?;
+        let row_h = self.theme.control_height() * self.scale_factor;
+        let root = layout
+            .rects
+            .get(&tree.id)
+            .copied()
+            .unwrap_or(crate::layout::Rect {
+                x: 0.0,
+                y: 0.0,
+                w: self.config.width as f32,
+                h: self.config.height as f32,
+            });
+        let mut width = menu_popup_width(
+            items,
+            node.props.fixed_width,
+            &self.theme,
+            self.scale_factor,
+        );
+        let height = row_h * items.len() as f32;
+        let (mut x, mut y) = if node.kind == WidgetKind::Menu {
+            let r = layout.rects.get(id)?;
+            width = width.max(r.w);
+            (r.x, r.y + r.h)
+        } else {
+            let pos = state.context_menu_pos?;
+            (pos[0], pos[1])
+        };
+        x = x.clamp(root.x, (root.x + root.w - width).max(root.x));
+        y = y.clamp(root.y, (root.y + root.h - height).max(root.y));
+        Some(crate::layout::Rect {
+            x,
+            y,
+            w: width,
+            h: height,
+        })
+    }
+
     fn table_at(&self, pos: [f32; 2]) -> Option<String> {
         self.hit_test_ui(pos)
             .and_then(|(id, kind)| (kind == WidgetKind::DataFrameTable).then_some(id))
@@ -1575,7 +1906,7 @@ impl WgpuState {
 
     fn focused_text_input_rect(&self) -> Option<crate::layout::Rect> {
         let (id, kind) = self.focused_kind()?;
-        if kind != WidgetKind::TextInput {
+        if !matches!(kind, WidgetKind::TextInput | WidgetKind::NumberInput) {
             return None;
         }
         self.current_layout.as_ref()?.rects.get(&id).copied()
@@ -1657,6 +1988,9 @@ impl WgpuState {
             if let Some(prims) = &self.primitives {
                 prims.render(&mut pass);
             }
+            if let Some(images) = &self.images {
+                images.render(&mut pass);
+            }
 
             // 2. Scatter — uses depth buffer, restricted to its viewport rect.
             if let Some(s) = &self.scatter {
@@ -1684,6 +2018,10 @@ impl WgpuState {
 
         Ok(())
     }
+}
+
+fn rect_contains_pos(r: &crate::layout::Rect, pos: [f32; 2]) -> bool {
+    pos[0] >= r.x && pos[0] < r.x + r.w && pos[1] >= r.y && pos[1] < r.y + r.h
 }
 
 // ---------------------------------------------------------------------------
@@ -2476,7 +2814,7 @@ impl DragonApp {
     }
 
     fn activate_widget(&mut self, id: &str, kind: WidgetKind) {
-        let needs_text_rebuild = kind == WidgetKind::Dropdown;
+        let needs_text_rebuild = matches!(kind, WidgetKind::Dropdown | WidgetKind::Menu);
         let mut needs_layout_rebuild = false;
         let mut navigation_change: Option<(String, String)> = None;
         match kind {
@@ -2496,6 +2834,13 @@ impl DragonApp {
                 if let Some(gpu) = &mut self.gpu {
                     if let Some(ws) = &mut gpu.widget_state {
                         ws.toggle_dropdown(id);
+                    }
+                }
+            }
+            WidgetKind::Menu => {
+                if let Some(gpu) = &mut self.gpu {
+                    if let Some(ws) = &mut gpu.widget_state {
+                        ws.toggle_menu(id);
                     }
                 }
             }
@@ -2527,7 +2872,9 @@ impl DragonApp {
             } else if needs_text_rebuild {
                 gpu.rebuild_visuals();
             } else {
-                gpu.rebuild_primitives();
+                // Activation happens while hover/tooltip state may still be visible.
+                // Keep the text layer synchronized with primitive state changes.
+                gpu.rebuild_visuals();
             }
         }
         self.request_redraw();
@@ -2615,6 +2962,26 @@ impl DragonApp {
     }
 
     fn handle_keyboard_input(&mut self, event: winit::event::KeyEvent) {
+        if matches!(&event.logical_key, Key::Named(NamedKey::Escape)) {
+            if self.gpu.as_mut().is_some_and(WgpuState::close_popups) {
+                self.request_redraw();
+                return;
+            }
+            if let Some(closed) = self.gpu.as_mut().and_then(WgpuState::close_active_modal) {
+                self.set_focus(None);
+                self.record_runtime_command(
+                    "ModalClose",
+                    Some(closed),
+                    Some("escape".to_string()),
+                    Some(Dirty::Layout),
+                    "applied",
+                    true,
+                );
+                self.request_redraw();
+                return;
+            }
+        }
+
         if matches!(&event.logical_key, Key::Named(NamedKey::Tab)) {
             if let Some(gpu) = &mut self.gpu {
                 if let (Some(ws), Some(layout)) =
@@ -2633,6 +3000,11 @@ impl DragonApp {
             match kind {
                 WidgetKind::TextInput => {
                     if self.handle_text_input_key(&id, &event) {
+                        return;
+                    }
+                }
+                WidgetKind::NumberInput => {
+                    if self.handle_number_input_key(&id, &event) {
                         return;
                     }
                 }
@@ -2700,6 +3072,21 @@ impl DragonApp {
                         }
                         self.request_redraw();
                         return;
+                    }
+                    _ => {}
+                },
+                WidgetKind::Menu => match &event.logical_key {
+                    Key::Named(NamedKey::Enter)
+                    | Key::Named(NamedKey::Space)
+                    | Key::Named(NamedKey::ArrowDown) => {
+                        self.activate_widget(&id, WidgetKind::Menu);
+                        return;
+                    }
+                    Key::Named(NamedKey::Escape) => {
+                        if self.gpu.as_mut().is_some_and(WgpuState::close_popups) {
+                            self.request_redraw();
+                            return;
+                        }
                     }
                     _ => {}
                 },
@@ -2828,6 +3215,160 @@ impl DragonApp {
                 }
             }
         }
+    }
+
+    fn adjust_number_input(&mut self, id: &str, direction: f32) {
+        let changed = self
+            .gpu
+            .as_mut()
+            .and_then(|g| g.widget_state.as_mut())
+            .and_then(|ws| {
+                let old = ws.float_val.get(id).copied();
+                let value = ws.adjust_number(id, direction)?;
+                let changed = old
+                    .map(|old| (old - value).abs() > SLIDER_CHANGE_EPSILON)
+                    .unwrap_or(true);
+                changed.then_some(value)
+            });
+        if let Some(value) = changed {
+            self.emit_change(id, ChangeValue::Float(value));
+        }
+        if let Some(gpu) = &mut self.gpu {
+            gpu.rebuild_visuals();
+        }
+        self.request_redraw();
+    }
+
+    fn process_number_text_change(&mut self, id: &str) {
+        let changed = self
+            .gpu
+            .as_mut()
+            .and_then(|g| g.widget_state.as_mut())
+            .and_then(|ws| {
+                let old = ws.float_val.get(id).copied();
+                let value = ws.validate_number_text(id)??;
+                let changed = old
+                    .map(|old| (old - value).abs() > SLIDER_CHANGE_EPSILON)
+                    .unwrap_or(true);
+                changed.then_some(value)
+            });
+        if let Some(value) = changed {
+            self.emit_change(id, ChangeValue::Float(value));
+        }
+        if let Some(gpu) = &mut self.gpu {
+            gpu.rebuild_visuals();
+        }
+        self.request_redraw();
+    }
+
+    fn handle_number_input_key(&mut self, id: &str, event: &winit::event::KeyEvent) -> bool {
+        let mut changed_text = false;
+        let mut handled = true;
+        match &event.logical_key {
+            Key::Named(NamedKey::ArrowUp) => {
+                self.adjust_number_input(id, 1.0);
+                return true;
+            }
+            Key::Named(NamedKey::ArrowDown) => {
+                self.adjust_number_input(id, -1.0);
+                return true;
+            }
+            Key::Named(NamedKey::Enter) => {
+                let committed = self
+                    .gpu
+                    .as_mut()
+                    .and_then(|g| g.widget_state.as_mut())
+                    .and_then(|ws| {
+                        let value = ws.validate_number_text(id)??;
+                        ws.set_number_value(id, value)
+                    });
+                if let Some(value) = committed {
+                    self.emit_change(id, ChangeValue::Float(value));
+                }
+                if let Some(gpu) = &mut self.gpu {
+                    gpu.rebuild_visuals();
+                }
+                self.request_redraw();
+                return true;
+            }
+            Key::Named(NamedKey::Backspace) => {
+                changed_text = self
+                    .gpu
+                    .as_mut()
+                    .and_then(|g| g.widget_state.as_mut())
+                    .and_then(|ws| ws.backspace_text(id))
+                    .is_some();
+            }
+            Key::Named(NamedKey::Delete) => {
+                changed_text = self
+                    .gpu
+                    .as_mut()
+                    .and_then(|g| g.widget_state.as_mut())
+                    .and_then(|ws| ws.delete_text(id))
+                    .is_some();
+            }
+            Key::Named(NamedKey::ArrowLeft) => {
+                if let Some(gpu) = &mut self.gpu {
+                    if let Some(ws) = &mut gpu.widget_state {
+                        ws.move_text_cursor(id, -1);
+                    }
+                }
+            }
+            Key::Named(NamedKey::ArrowRight) => {
+                if let Some(gpu) = &mut self.gpu {
+                    if let Some(ws) = &mut gpu.widget_state {
+                        ws.move_text_cursor(id, 1);
+                    }
+                }
+            }
+            Key::Named(NamedKey::Home) => {
+                if let Some(gpu) = &mut self.gpu {
+                    if let Some(ws) = &mut gpu.widget_state {
+                        ws.move_text_cursor_home_end(id, false);
+                    }
+                }
+            }
+            Key::Named(NamedKey::End) => {
+                if let Some(gpu) = &mut self.gpu {
+                    if let Some(ws) = &mut gpu.widget_state {
+                        ws.move_text_cursor_home_end(id, true);
+                    }
+                }
+            }
+            Key::Named(NamedKey::Escape) => {
+                self.set_focus(None);
+                return true;
+            }
+            _ => {
+                handled = false;
+            }
+        }
+
+        if !handled
+            && !self.modifiers.control_key()
+            && !self.modifiers.alt_key()
+            && !self.modifiers.super_key()
+        {
+            if let Some(text) = event.text.as_deref().filter(|text| is_insert_text(text)) {
+                changed_text = self
+                    .gpu
+                    .as_mut()
+                    .and_then(|g| g.widget_state.as_mut())
+                    .and_then(|ws| ws.insert_text(id, text))
+                    .is_some();
+                handled = true;
+            }
+        }
+
+        if changed_text {
+            self.process_number_text_change(id);
+        } else if handled {
+            if let Some(gpu) = &mut self.gpu {
+                gpu.rebuild_visuals();
+            }
+            self.request_redraw();
+        }
+        handled
     }
 
     fn handle_text_input_key(&mut self, id: &str, event: &winit::event::KeyEvent) -> bool {
@@ -3035,23 +3576,78 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                 }
                                 // Rebuild to clear pressed / update checkbox.
                                 if let Some(gpu) = &mut self.gpu {
-                                    gpu.rebuild_primitives();
+                                    gpu.rebuild_visuals();
                                 }
                                 self.request_redraw();
                             }
                         } else {
                             // ── press ─────────────────────────────────────────
                             let pos = self.last_mouse_pos.unwrap_or([0.0, 0.0]);
-                            if let Some((id, idx)) =
-                                self.gpu.as_ref().and_then(|g| g.dropdown_option_at(pos))
+                            if self
+                                .gpu
+                                .as_ref()
+                                .map(|g| g.modal_blocks_point(pos))
+                                .unwrap_or(false)
+                            {
+                                self.set_focus(None);
+                                return;
+                            }
+                            let modal_active = self
+                                .gpu
+                                .as_ref()
+                                .map(WgpuState::has_active_modal)
+                                .unwrap_or(false);
+                            if !modal_active {
+                                if let Some(item_id) =
+                                    self.gpu.as_ref().and_then(|g| g.menu_item_at(pos))
+                                {
+                                    if let Some(gpu) = &mut self.gpu {
+                                        gpu.close_popups();
+                                    }
+                                    self.emit_click(&item_id);
+                                    self.request_redraw();
+                                    return;
+                                }
+
+                                let popup_open = self
+                                    .gpu
+                                    .as_ref()
+                                    .map(WgpuState::has_open_menu_popup)
+                                    .unwrap_or(false);
+                                if popup_open
+                                    && !self
+                                        .gpu
+                                        .as_ref()
+                                        .map(|g| g.menu_popup_contains(pos))
+                                        .unwrap_or(false)
+                                {
+                                    let over_menu = self
+                                        .gpu
+                                        .as_ref()
+                                        .and_then(|g| g.hit_test_ui(pos))
+                                        .is_some_and(|(_, kind)| kind == WidgetKind::Menu);
+                                    if let Some(gpu) = &mut self.gpu {
+                                        gpu.close_popups();
+                                    }
+                                    if !over_menu {
+                                        self.set_focus(None);
+                                        self.request_redraw();
+                                        return;
+                                    }
+                                }
+                            }
+                            if let Some((id, idx)) = (!modal_active)
+                                .then(|| self.gpu.as_ref().and_then(|g| g.dropdown_option_at(pos)))
+                                .flatten()
                             {
                                 self.set_focus(Some(id.clone()));
                                 self.select_dropdown_option(&id, idx);
                                 return;
                             }
 
-                            if let Some((id, hit)) =
-                                self.gpu.as_ref().and_then(|g| g.table_hit(pos))
+                            if let Some((id, hit)) = (!modal_active)
+                                .then(|| self.gpu.as_ref().and_then(|g| g.table_hit(pos)))
+                                .flatten()
                             {
                                 self.set_focus(Some(id.clone()));
                                 match hit {
@@ -3060,6 +3656,17 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                         self.select_table_cell(&id, row, col)
                                     }
                                 }
+                                return;
+                            }
+
+                            if let Some((id, direction)) = (!modal_active)
+                                .then(|| {
+                                    self.gpu.as_ref().and_then(|g| g.number_input_step_at(pos))
+                                })
+                                .flatten()
+                            {
+                                self.set_focus(Some(id.clone()));
+                                self.adjust_number_input(&id, direction);
                                 return;
                             }
 
@@ -3075,12 +3682,17 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                     if kind == WidgetKind::Slider {
                                         self.slider_drag = gpu.create_slider_drag(&id);
                                     }
-                                    gpu.rebuild_primitives();
+                                    gpu.rebuild_visuals();
                                 }
                                 if kind == WidgetKind::Slider {
                                     self.update_slider_drag(pos[0], true);
                                 }
                                 self.request_redraw();
+                                return;
+                            }
+
+                            if modal_active {
+                                self.set_focus(None);
                                 return;
                             }
 
@@ -3104,6 +3716,30 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                             self.pan_active = false;
                         } else {
                             let pos = self.last_mouse_pos.unwrap_or([0.0, 0.0]);
+                            if self
+                                .gpu
+                                .as_ref()
+                                .map(WgpuState::has_active_modal)
+                                .unwrap_or(false)
+                            {
+                                return;
+                            }
+                            if button == MouseButton::Right {
+                                if let Some(menu_id) =
+                                    self.gpu.as_ref().and_then(|g| g.context_menu_for_pos(pos))
+                                {
+                                    self.set_focus(None);
+                                    if let Some(gpu) = &mut self.gpu {
+                                        gpu.open_context_menu_at(&menu_id, pos);
+                                    }
+                                    self.request_redraw();
+                                    return;
+                                }
+                                if self.gpu.as_mut().is_some_and(WgpuState::close_popups) {
+                                    self.request_redraw();
+                                    return;
+                                }
+                            }
                             self.pan_active = self
                                 .gpu
                                 .as_ref()
@@ -3113,6 +3749,21 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                     }
 
                     _ => {}
+                }
+            }
+
+            WindowEvent::CursorLeft { .. } => {
+                self.last_mouse_pos = None;
+                if let Some(gpu) = &mut self.gpu {
+                    let cleared = gpu.widget_state.as_mut().is_some_and(|ws| {
+                        let had_hover = ws.hovered.take().is_some();
+                        let had_dropdown_hover = ws.dropdown_hover.take().is_some();
+                        had_hover || had_dropdown_hover
+                    });
+                    if cleared {
+                        gpu.rebuild_visuals();
+                        self.request_redraw();
+                    }
                 }
             }
 
@@ -3141,22 +3792,37 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
 
                 // Update hover state when no button is held.
                 if self.slider_drag.is_none() && !self.orbit_active && !self.pan_active {
-                    let new_hover = self
+                    let new_dropdown_hover = self
                         .gpu
                         .as_ref()
-                        .and_then(|g| g.hit_test_ui(new_pos))
-                        .map(|(id, _)| id);
+                        .and_then(|g| g.dropdown_option_at(new_pos));
+                    let new_hover = if new_dropdown_hover.is_some() {
+                        None
+                    } else {
+                        self.gpu
+                            .as_ref()
+                            .and_then(|g| g.hit_test_hover(new_pos))
+                            .map(|(id, _)| id)
+                    };
                     let old_hover = self
                         .gpu
                         .as_ref()
                         .and_then(|g| g.widget_state.as_ref())
                         .and_then(|ws| ws.hovered.clone());
-                    if new_hover != old_hover {
+                    let old_dropdown_hover = self
+                        .gpu
+                        .as_ref()
+                        .and_then(|g| g.widget_state.as_ref())
+                        .and_then(|ws| ws.dropdown_hover.clone());
+                    if new_hover != old_hover || new_dropdown_hover != old_dropdown_hover {
                         if let Some(gpu) = &mut self.gpu {
                             if let Some(ws) = &mut gpu.widget_state {
                                 ws.hovered = new_hover;
+                                ws.dropdown_hover = new_dropdown_hover;
                             }
-                            gpu.rebuild_primitives();
+                            // Hover can affect tooltip text, text suppression under overlays,
+                            // and pseudo-state foreground colours, not just primitive fills.
+                            gpu.rebuild_visuals();
                         }
                         self.request_redraw();
                     }
@@ -3166,6 +3832,14 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
             }
 
             WindowEvent::MouseWheel { delta, .. } => {
+                if self
+                    .gpu
+                    .as_ref()
+                    .map(WgpuState::has_active_modal)
+                    .unwrap_or(false)
+                {
+                    return;
+                }
                 let (scroll_x, scroll_y) = match delta {
                     MouseScrollDelta::LineDelta(x, y) => (x, y),
                     MouseScrollDelta::PixelDelta(pos) => (pos.x as f32 * 0.01, pos.y as f32 * 0.01),
@@ -3210,20 +3884,30 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
 
             WindowEvent::Ime(Ime::Commit(text)) => {
                 let focused = self.gpu.as_ref().and_then(|g| g.focused_kind());
-                if let Some((id, WidgetKind::TextInput)) = focused {
+                if let Some((id, kind)) = focused {
                     if is_insert_text(&text) {
                         let changed = self
                             .gpu
                             .as_mut()
                             .and_then(|g| g.widget_state.as_mut())
                             .and_then(|ws| ws.insert_text(&id, &text));
-                        if let Some(value) = changed {
-                            self.emit_change(&id, ChangeValue::Text(value));
+                        match kind {
+                            WidgetKind::TextInput => {
+                                if let Some(value) = changed {
+                                    self.emit_change(&id, ChangeValue::Text(value));
+                                }
+                                if let Some(gpu) = &mut self.gpu {
+                                    gpu.rebuild_visuals();
+                                }
+                                self.request_redraw();
+                            }
+                            WidgetKind::NumberInput => {
+                                if changed.is_some() {
+                                    self.process_number_text_change(&id);
+                                }
+                            }
+                            _ => {}
                         }
-                        if let Some(gpu) = &mut self.gpu {
-                            gpu.rebuild_visuals();
-                        }
-                        self.request_redraw();
                     }
                 }
             }

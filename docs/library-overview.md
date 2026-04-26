@@ -80,7 +80,7 @@ Rust owns:
 - Layout computation.
 - Text shaping and glyph rendering.
 - Primitive widget rendering.
-- Scatter and table rendering.
+- Scatter, table, and image rendering.
 - GPU buffers and retained resources.
 - Command draining and redraw invalidation.
 
@@ -126,6 +126,7 @@ updates instead of rebuilding the whole app.
 | Widget | Purpose |
 | --- | --- |
 | `Window` | Top-level native application window. Holds the root widget tree. |
+| `FileDialog` | Native open/save/folder picker helpers with synchronous or callback-based use. |
 
 ### Layout And Structure
 
@@ -134,6 +135,9 @@ updates instead of rebuilding the whole app.
 | `HLayout` | Horizontal flex container. |
 | `VLayout` | Vertical flex container. |
 | `Panel` | Framed titled container for controls and grouped content. |
+| `Modal` | Centered overlay container for blocking alert/confirm workflows. |
+| `MenuBar` | Horizontal application menu strip. |
+| `ContextMenu` | Targeted right-click popup menu container. |
 | `Sidebar` | Side navigation/container region. |
 | `StatusBar` | Bottom/status strip container. |
 | `Separator` | Visual divider. |
@@ -148,6 +152,8 @@ updates instead of rebuilding the whole app.
 | `Pages` | Page container paired with navigation state. |
 | `Page` | Individual page inside `Pages`. |
 | `NavItem` | Sidebar/page navigation item. |
+| `Menu` | Top-level menu inside a `MenuBar`. |
+| `MenuItem` | Clickable row inside `Menu` or `ContextMenu`. |
 
 ### Basic Controls
 
@@ -156,9 +162,12 @@ updates instead of rebuilding the whole app.
 | `Label` | Text display. |
 | `Button` | Clickable command control with `on_click`. |
 | `TextInput` | Editable single-line text input with `on_change`. |
+| `NumberInput` | Editable numeric input with min/max/step and `on_change`. |
 | `Slider` | Numeric drag control with range and `on_change`. |
+| `ProgressBar` | Non-interactive progress indicator with live `set_value`. |
 | `Dropdown` | Select one value from a list. |
 | `Checkbox` | Boolean toggle. |
+| `ColorPicker` | Composite RGB/RGBA picker with slider channels and swatch preview. |
 
 ### Data And GPU Widgets
 
@@ -166,6 +175,7 @@ updates instead of rebuilding the whole app.
 | --- | --- |
 | `Scatter3D` | GPU-rendered 3D point cloud/scatter widget. |
 | `DataFrameTable` | Native virtualized table for DataFrame-like data. |
+| `Image` | Textured image quad renderer for local PNG/JPEG files. |
 
 ## Widget Behavior
 
@@ -174,7 +184,15 @@ Current interaction support includes:
 - Button click callbacks.
 - Checkbox toggling.
 - Dropdown open/select behavior.
+- Number input typing, steppers, clamping, and callbacks.
 - Slider drag and value callbacks.
+- Composite ColorPicker updates with integer RGB/RGBA callbacks.
+- Progress bar live value updates.
+- Static text tooltips on hovered widgets through the common `tooltip` prop.
+- Modal overlays with background input blocking and Escape close.
+- Menu bar popups, menu item callbacks, and target-based context menus.
+- File open/save/folder dialogs through `FileDialog`.
+- PNG/JPEG image display with fit modes and styled placeholders.
 - Text input editing, caret positioning, and keyboard input.
 - Tab focus navigation.
 - Enter/Space activation for keyboard-focused controls.
@@ -549,8 +567,8 @@ DragonGUI intentionally does not currently include:
 - Full CSS selector engine.
 - CSS cascade/specificity/inheritance.
 - Full visual inspector.
-- Complete native desktop app feature set such as file dialogs, menu bars,
-  modal dialogs, context menus, image widgets, tooltips, and color pickers.
+- Broad native desktop platform coverage such as system trays, clipboard APIs,
+  drag-and-drop, printing, dock/taskbar integration, and accessibility.
 
 Some of these are planned or documented separately, but they are not part of the
 current core runtime.
@@ -574,6 +592,8 @@ DragonGUI currently provides:
 - Taffy-based layout.
 - Structured inline styling and theme tokens.
 - Native input/focus/hover/active behavior.
+- Native tooltip overlays.
+- Native modal overlays.
 - `wgpu` rendering.
 - Native text rendering through `glyphon`.
 - Primitive widgets and navigation widgets.

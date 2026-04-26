@@ -3,19 +3,29 @@
 from ._backend import BackendUnavailableError, backend_info, native_backend_available
 from .app import App
 from .components import ComponentCtx, ComponentInstance, StateSlot, component
+from .dialogs import FileDialog
 from .theme import Theme
 from .vdom import Patch, ResourceRef, VNode
 from .widgets import (
     Button,
     Checkbox,
+    ColorPicker,
     DataFrameTable,
     Dropdown,
     HLayout,
+    Image,
     Label,
+    ContextMenu,
+    Menu,
+    MenuBar,
+    MenuItem,
+    Modal,
     NavItem,
+    NumberInput,
     Page,
     Pages,
     Panel,
+    ProgressBar,
     Scatter3D,
     Separator,
     Sidebar,
@@ -27,6 +37,8 @@ from .widgets import (
     TextInput,
     VLayout,
     Window,
+    alert,
+    confirm,
 )
 
 __all__ = [
@@ -34,6 +46,7 @@ __all__ = [
     "BackendUnavailableError",
     "ComponentCtx",
     "ComponentInstance",
+    "FileDialog",
     "Patch",
     "ResourceRef",
     "StateSlot",
@@ -41,14 +54,23 @@ __all__ = [
     "VNode",
     "Button",
     "Checkbox",
+    "ColorPicker",
     "DataFrameTable",
     "Dropdown",
     "HLayout",
+    "Image",
     "Label",
+    "ContextMenu",
+    "Menu",
+    "MenuBar",
+    "MenuItem",
+    "Modal",
     "NavItem",
+    "NumberInput",
     "Page",
     "Pages",
     "Panel",
+    "ProgressBar",
     "Scatter3D",
     "Separator",
     "Sidebar",
@@ -60,8 +82,10 @@ __all__ = [
     "TextInput",
     "VLayout",
     "Window",
+    "alert",
     "backend_info",
     "component",
+    "confirm",
     "native_backend_available",
 ]
 

@@ -8,18 +8,9 @@ from .components import ComponentInstance, render_component_window
 from .runtime import AppHandle, _collect_runtime_callbacks
 from .theme import Theme
 from .widgets import (
-    Container,
-    Widget,
     Window,
+    _walk_widget_tree,
 )
-
-
-def _walk_widgets(widget: Widget) -> list[Widget]:
-    widgets = [widget]
-    if isinstance(widget, Container):
-        for child in widget.children:
-            widgets.extend(_walk_widgets(child))
-    return widgets
 
 
 @dataclass(slots=True)
@@ -50,7 +41,7 @@ class App:
             window = render_component_window(window)
         click_cbs, change_cbs = _collect_runtime_callbacks(window)
         handle = AppHandle()
-        widgets = _walk_widgets(window)
+        widgets = _walk_widget_tree(window)
         bind_live = native_event_loop_available()
         if bind_live:
             self._handle = handle

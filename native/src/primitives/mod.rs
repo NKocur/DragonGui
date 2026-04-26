@@ -3,13 +3,14 @@ use std::{borrow::Cow, collections::HashMap};
 use bytemuck::{Pod, Zeroable};
 
 use crate::document::{WidgetKind, WidgetNode};
-use crate::events::WidgetState;
-use crate::layout::LayoutResult;
+use crate::events::{NavigationItem, WidgetState};
+use crate::layout::{LayoutResult, Rect};
+use crate::overlays::{menu_popup_rect, tooltip_target};
 use crate::style::{
-    VisualStyle, BORDER_WIDTH_LP, CARET_WIDTH_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP,
-    FOCUS_RING_LP, PANEL_ACCENT_WIDTH_LP, SLIDER_THUMB_WIDTH_LP, SLIDER_TRACK_HEIGHT_LP,
-    SLIDER_TRACK_MARGIN_LP, TAB_ACTIVE_BAR_LP, TAB_GAP_LP, TAB_INACTIVE_BOTTOM_INSET_LP,
-    TAB_TOP_INSET_LP,
+    number_stepper_width, VisualStyle, BORDER_WIDTH_LP, CARET_WIDTH_LP, CHECKBOX_BOX_LP,
+    CHECKBOX_LEFT_PAD_LP, FOCUS_RING_LP, PANEL_ACCENT_WIDTH_LP, SLIDER_THUMB_WIDTH_LP,
+    SLIDER_TRACK_HEIGHT_LP, SLIDER_TRACK_MARGIN_LP, TAB_ACTIVE_BAR_LP, TAB_GAP_LP,
+    TAB_INACTIVE_BOTTOM_INSET_LP, TAB_TOP_INSET_LP,
 };
 use crate::table;
 use crate::theme::Theme;
@@ -227,6 +228,22 @@ impl PrimitivesRenderer {
             state,
             &mut self.instances,
         );
+        emit_menu_overlays(
+            tree,
+            layout,
+            theme,
+            scale_factor,
+            state,
+            &mut self.instances,
+        );
+        emit_tooltip_overlay(
+            tree,
+            layout,
+            theme,
+            scale_factor,
+            state,
+            &mut self.instances,
+        );
 
         self.rect_count = self.instances.len() as u32;
         if self.instances.is_empty() {
@@ -407,6 +424,9 @@ fn emit_rects(
     caret_positions: &HashMap<String, f32>,
     out: &mut Vec<RectInstance>,
 ) {
+    if node.kind == WidgetKind::Modal && !node.props.open.unwrap_or(false) {
+        return;
+    }
     let accent_w = PANEL_ACCENT_WIDTH_LP * sf;
 
     if let Some(r) = layout.rects.get(&node.id) {
@@ -440,6 +460,40 @@ fn emit_rects(
                 ));
             }
 
+            WidgetKind::Modal => {
+                let root = root_rect(layout).unwrap_or(Rect { x, y, w, h });
+                out.push(inst(
+                    [root.x, root.y, root.w, root.h],
+                    [0.0, 0.0, 0.0, 0.52],
+                    0.0,
+                ));
+                let shadow = 6.0 * sf;
+                out.push(inst(
+                    [x + shadow, y + shadow, w, h],
+                    [0.0, 0.0, 0.0, 0.35],
+                    radius,
+                ));
+                emit_bordered_rect(
+                    out,
+                    [x, y, w, h],
+                    styled_border.unwrap_or(theme.border),
+                    styled_bg.unwrap_or(theme.surface),
+                    radius,
+                    border_w,
+                );
+                let accent_h = (PANEL_ACCENT_WIDTH_LP * sf).max(border_w);
+                out.push(inst(
+                    [
+                        x + border_w,
+                        y + border_w,
+                        (w - border_w * 2.0).max(1.0),
+                        accent_h,
+                    ],
+                    styled_accent.unwrap_or(theme.accent),
+                    0.0,
+                ));
+            }
+
             WidgetKind::Sidebar => {
                 out.push(inst(
                     [x, y, w, h],
@@ -461,6 +515,19 @@ fn emit_rects(
                 ));
                 out.push(inst(
                     [x, y, w, border_w],
+                    styled_border.unwrap_or(theme.border),
+                    0.0,
+                ));
+            }
+
+            WidgetKind::MenuBar => {
+                out.push(inst(
+                    [x, y, w, h],
+                    styled_bg.unwrap_or(theme.surface),
+                    radius,
+                ));
+                out.push(inst(
+                    [x, y + h - border_w, w, border_w],
                     styled_border.unwrap_or(theme.border),
                     0.0,
                 ));
@@ -488,13 +555,25 @@ fn emit_rects(
                 ));
             }
 
-            WidgetKind::Button | WidgetKind::Dropdown => {
+            WidgetKind::Button | WidgetKind::Dropdown | WidgetKind::Menu => {
                 emit_focus_ring(node, theme, sf, state, [x, y, w, h], radius, out);
+                let menu_open =
+                    node.kind == WidgetKind::Menu && state.open_menu.as_deref() == Some(&node.id);
                 emit_bordered_rect(
                     out,
                     [x, y, w, h],
                     styled_border.unwrap_or_else(|| control_border(node, theme, state)),
-                    styled_bg.unwrap_or_else(|| control_fill(node, theme, state)),
+                    styled_bg.unwrap_or_else(|| {
+                        if menu_open {
+                            mix(
+                                theme.surface_alt,
+                                styled_accent.unwrap_or(theme.accent),
+                                0.24,
+                            )
+                        } else {
+                            control_fill(node, theme, state)
+                        }
+                    }),
                     radius,
                     border_w,
                 );
@@ -618,13 +697,8 @@ fn emit_rects(
                 if state.focused.as_deref() == Some(&node.id) && !state.is_disabled(&node.id) {
                     let pad = theme.spacing * sf;
                     let text_w = (w - pad * 2.0).max(1.0);
-                    let caret_x = x
-                        + pad
-                        + caret_positions
-                            .get(&node.id)
-                            .copied()
-                            .unwrap_or_else(|| text_w * state.caret_t(&node.id))
-                            .clamp(0.0, text_w);
+                    let caret_x =
+                        caret_x_for_node(x + pad, text_w, &node.id, state, caret_positions);
                     let caret_font_size = node.style.text.font_size.unwrap_or(theme.font_size) * sf;
                     let caret_h = (caret_font_size + 5.0 * sf).min((h - border_w * 2.0).max(1.0));
                     out.push(inst(
@@ -640,11 +714,99 @@ fn emit_rects(
                 }
             }
 
+            WidgetKind::NumberInput => {
+                emit_focus_ring(node, theme, sf, state, [x, y, w, h], radius, out);
+                let invalid = state.number_is_invalid(&node.id);
+                let fill = if state.is_disabled(&node.id) {
+                    styled_bg.unwrap_or_else(|| mix(theme.surface_alt, theme.disabled, 0.24))
+                } else if state.hovered.as_deref() == Some(&node.id)
+                    || state.focused.as_deref() == Some(&node.id)
+                {
+                    styled_bg.unwrap_or_else(|| mix(theme.surface, theme.surface_alt, 0.70))
+                } else {
+                    styled_bg.unwrap_or_else(|| mix(theme.surface, theme.surface_alt, 0.55))
+                };
+                emit_bordered_rect(
+                    out,
+                    [x, y, w, h],
+                    if invalid {
+                        theme.danger
+                    } else {
+                        styled_border.unwrap_or_else(|| control_border(node, theme, state))
+                    },
+                    fill,
+                    radius,
+                    border_w,
+                );
+                let step_w = number_stepper_width(w, sf);
+                let step_x = x + w - step_w;
+                let step_fill = if state.is_disabled(&node.id) {
+                    mix(theme.surface_alt, theme.disabled, 0.30)
+                } else if state.hovered.as_deref() == Some(&node.id)
+                    || state.focused.as_deref() == Some(&node.id)
+                {
+                    mix(
+                        theme.surface_alt,
+                        styled_accent.unwrap_or(theme.accent),
+                        0.16,
+                    )
+                } else {
+                    theme.surface_alt
+                };
+                out.push(inst(
+                    [step_x, y + border_w, border_w, h - border_w * 2.0],
+                    theme.border,
+                    0.0,
+                ));
+                out.push(inst(
+                    [
+                        step_x + border_w,
+                        y + border_w,
+                        (step_w - border_w).max(1.0),
+                        (h * 0.5 - border_w).max(1.0),
+                    ],
+                    step_fill,
+                    0.0,
+                ));
+                out.push(inst(
+                    [
+                        step_x + border_w,
+                        y + h * 0.5,
+                        (step_w - border_w).max(1.0),
+                        (h * 0.5 - border_w).max(1.0),
+                    ],
+                    step_fill,
+                    0.0,
+                ));
+                out.push(inst(
+                    [step_x, y + h * 0.5, step_w, border_w],
+                    theme.border,
+                    0.0,
+                ));
+                if state.focused.as_deref() == Some(&node.id) && !state.is_disabled(&node.id) {
+                    let pad = theme.spacing * sf;
+                    let text_w = (w - step_w - pad * 2.0).max(1.0);
+                    let caret_x =
+                        caret_x_for_node(x + pad, text_w, &node.id, state, caret_positions);
+                    let caret_font_size = node.style.text.font_size.unwrap_or(theme.font_size) * sf;
+                    let caret_h = (caret_font_size + 5.0 * sf).min((h - border_w * 2.0).max(1.0));
+                    out.push(inst(
+                        [
+                            caret_x,
+                            y + (h - caret_h) * 0.5,
+                            CARET_WIDTH_LP * sf,
+                            caret_h,
+                        ],
+                        if invalid { theme.danger } else { theme.focus },
+                        0.0,
+                    ));
+                }
+            }
+
             WidgetKind::Checkbox => {
                 let box_size = (CHECKBOX_BOX_LP * sf).min(h);
                 let box_x = x + CHECKBOX_LEFT_PAD_LP * sf;
                 let box_y = y + (h - box_size) * 0.5;
-                emit_focus_ring(node, theme, sf, state, [x, y, w, h], radius, out);
                 if !state.is_disabled(&node.id)
                     && (state.hovered.as_deref() == Some(&node.id)
                         || state.pressed.as_deref() == Some(&node.id)
@@ -657,6 +819,7 @@ fn emit_rects(
                     };
                     out.push(inst([x, y, w, h], row_fill, radius));
                 }
+                emit_focus_ring(node, theme, sf, state, [x, y, w, h], radius, out);
                 let checked = state.checked.get(&node.id).copied().unwrap_or(false);
                 let disabled = state.is_disabled(&node.id);
                 let fill = if checked {
@@ -686,6 +849,63 @@ fn emit_rects(
                     },
                     fill,
                     radius.min(box_size * 0.28),
+                    border_w,
+                );
+                if checked {
+                    let marker_size = (box_size * 0.42).max(3.0 * sf);
+                    let marker_x = box_x + (box_size - marker_size) * 0.5;
+                    let marker_y = box_y + (box_size - marker_size) * 0.5;
+                    let marker_color = if disabled {
+                        mix(theme.surface_alt, theme.disabled, 0.35)
+                    } else {
+                        theme.text
+                    };
+                    out.push(inst(
+                        [marker_x, marker_y, marker_size, marker_size],
+                        marker_color,
+                        marker_size * 0.5,
+                    ));
+                }
+            }
+
+            WidgetKind::ProgressBar => {
+                let track_fill = if state.is_disabled(&node.id) {
+                    styled_bg.unwrap_or_else(|| mix(theme.surface_alt, theme.disabled, 0.24))
+                } else {
+                    styled_bg.unwrap_or_else(|| mix(theme.surface, theme.surface_alt, 0.60))
+                };
+                emit_bordered_rect(
+                    out,
+                    [x, y, w, h],
+                    styled_border.unwrap_or(theme.border),
+                    track_fill,
+                    radius,
+                    border_w,
+                );
+                let inset = (border_w + 2.0 * sf).max(border_w);
+                let inner = inset_rect([x, y, w, h], inset);
+                let t = state.slider_t(&node.id);
+                let fill_w = inner[2] * t;
+                if fill_w > 0.5 {
+                    out.push(inst(
+                        [inner[0], inner[1], fill_w, inner[3]],
+                        if state.is_disabled(&node.id) {
+                            theme.disabled
+                        } else {
+                            styled_accent.unwrap_or(theme.accent)
+                        },
+                        fill_w.min(inner[3]) * 0.5,
+                    ));
+                }
+            }
+
+            WidgetKind::Image => {
+                emit_bordered_rect(
+                    out,
+                    [x, y, w, h],
+                    styled_border.unwrap_or(theme.border),
+                    styled_bg.unwrap_or(theme.surface_alt),
+                    radius,
                     border_w,
                 );
             }
@@ -846,6 +1066,8 @@ fn emit_rects(
             | WidgetKind::Page
             | WidgetKind::Spacer
             | WidgetKind::Label
+            | WidgetKind::ContextMenu
+            | WidgetKind::MenuItem
             | WidgetKind::Unknown => {}
         }
     }
@@ -853,6 +1075,119 @@ fn emit_rects(
     for child in &node.children {
         emit_rects(child, layout, theme, sf, state, caret_positions, out);
     }
+}
+
+fn caret_x_for_node(
+    left: f32,
+    text_width: f32,
+    id: &str,
+    state: &WidgetState,
+    caret_positions: &HashMap<String, f32>,
+) -> f32 {
+    left + caret_positions
+        .get(id)
+        .copied()
+        .unwrap_or_else(|| text_width * state.caret_t(id))
+        .clamp(0.0, text_width)
+}
+
+fn emit_menu_overlays(
+    tree: &WidgetNode,
+    layout: &LayoutResult,
+    theme: &Theme,
+    sf: f32,
+    state: &WidgetState,
+    out: &mut Vec<RectInstance>,
+) {
+    if let Some(menu_id) = state.open_menu.as_deref() {
+        if let Some(rect) = menu_popup_rect(tree, layout, state, theme, sf, menu_id) {
+            if let Some(items) = state.menu_items.get(menu_id) {
+                emit_menu_popup(rect, items, theme, sf, state, out);
+            }
+        }
+    }
+    if let Some(menu_id) = state.open_context_menu.as_deref() {
+        if let Some(rect) = menu_popup_rect(tree, layout, state, theme, sf, menu_id) {
+            if let Some(items) = state.menu_items.get(menu_id) {
+                emit_menu_popup(rect, items, theme, sf, state, out);
+            }
+        }
+    }
+}
+
+fn emit_menu_popup(
+    rect: Rect,
+    items: &[NavigationItem],
+    theme: &Theme,
+    sf: f32,
+    state: &WidgetState,
+    out: &mut Vec<RectInstance>,
+) {
+    if items.is_empty() || rect.w <= 0.0 || rect.h <= 0.0 {
+        return;
+    }
+    let radius = theme.radius * sf;
+    let border_w = BORDER_WIDTH_LP * sf;
+    let row_h = theme.control_height() * sf;
+    let shadow_offset = 3.0 * sf;
+    out.push(inst(
+        [
+            rect.x + shadow_offset,
+            rect.y + shadow_offset,
+            rect.w,
+            rect.h,
+        ],
+        [0.0, 0.0, 0.0, 0.30],
+        radius,
+    ));
+    emit_bordered_rect(
+        out,
+        [rect.x, rect.y, rect.w, rect.h],
+        mix(theme.border, theme.accent, 0.18),
+        theme.surface,
+        radius,
+        border_w,
+    );
+    for (idx, item) in items.iter().enumerate() {
+        let y = rect.y + idx as f32 * row_h;
+        let disabled = item.disabled || state.is_disabled(&item.id);
+        let color = if disabled {
+            mix(theme.surface, theme.disabled, 0.18)
+        } else if state.hovered.as_deref() == Some(&item.id) {
+            mix(theme.surface_alt, theme.accent, 0.24)
+        } else {
+            theme.surface_alt
+        };
+        out.push(inst(
+            [
+                rect.x + border_w,
+                y + border_w,
+                rect.w - border_w * 2.0,
+                row_h - border_w,
+            ],
+            color,
+            0.0,
+        ));
+    }
+}
+
+fn root_rect(layout: &LayoutResult) -> Option<Rect> {
+    let mut iter = layout.rects.values().copied();
+    let first = iter.next()?;
+    let (mut left, mut top, mut right, mut bottom) =
+        (first.x, first.y, first.x + first.w, first.y + first.h);
+    for r in iter {
+        left = left.min(r.x);
+        top = top.min(r.y);
+        right = right.max(r.x + r.w);
+        bottom = bottom.max(r.y + r.h);
+    }
+    Some(Rect {
+        x: left,
+        y: top,
+        w: (right - left).max(0.0),
+        h: (bottom - top).max(0.0),
+    })
 }
 
 fn emit_dropdown_overlays(
@@ -893,9 +1228,18 @@ fn emit_dropdown_overlays(
                 border_w,
             );
             let selected = state.dropdown_index.get(&node.id).copied().unwrap_or(0);
+            let hovered = state
+                .dropdown_hover
+                .as_ref()
+                .filter(|(id, _)| id == &node.id)
+                .map(|(_, idx)| *idx);
             for idx in 0..items.len() {
                 let y = r.y + r.h + idx as f32 * row_h;
-                let color = if idx == selected {
+                let color = if Some(idx) == hovered && idx == selected {
+                    mix(theme.surface_alt, theme.accent, 0.42)
+                } else if Some(idx) == hovered {
+                    mix(theme.surface_alt, theme.accent, 0.24)
+                } else if idx == selected {
                     mix(theme.surface_alt, theme.accent, 0.28)
                 } else {
                     theme.surface_alt
@@ -917,4 +1261,33 @@ fn emit_dropdown_overlays(
     for child in &node.children {
         emit_dropdown_overlays(child, layout, theme, sf, state, out);
     }
+}
+
+fn emit_tooltip_overlay(
+    tree: &WidgetNode,
+    layout: &LayoutResult,
+    theme: &Theme,
+    sf: f32,
+    state: &WidgetState,
+    out: &mut Vec<RectInstance>,
+) {
+    let Some((_node, rect)) = tooltip_target(tree, layout, theme, state, sf) else {
+        return;
+    };
+    let border_w = BORDER_WIDTH_LP * sf;
+    let radius = (theme.radius * sf).max(0.0);
+    let shadow = 4.0 * sf;
+    out.push(inst(
+        [rect.x + shadow, rect.y + shadow, rect.w, rect.h],
+        [0.0, 0.0, 0.0, 0.36],
+        radius,
+    ));
+    emit_bordered_rect(
+        out,
+        [rect.x, rect.y, rect.w, rect.h],
+        mix(theme.border, theme.accent, 0.18),
+        theme.surface_alt,
+        radius,
+        border_w,
+    );
 }

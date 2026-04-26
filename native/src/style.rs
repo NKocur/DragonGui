@@ -13,6 +13,12 @@ pub(crate) const SLIDER_TRACK_MARGIN_LP: f32 = 8.0;
 pub(crate) const SLIDER_TRACK_HEIGHT_LP: f32 = 4.0;
 pub(crate) const SLIDER_THUMB_WIDTH_LP: f32 = 16.0;
 
+pub(crate) const NUMBER_STEPPER_WIDTH_LP: f32 = 26.0;
+
+pub(crate) fn number_stepper_width(widget_width: f32, sf: f32) -> f32 {
+    (NUMBER_STEPPER_WIDTH_LP * sf).min(widget_width * 0.45)
+}
+
 pub(crate) const TAB_GAP_LP: f32 = 8.0;
 pub(crate) const TAB_TOP_INSET_LP: f32 = 4.0;
 pub(crate) const TAB_INACTIVE_BOTTOM_INSET_LP: f32 = 3.0;
@@ -20,7 +26,7 @@ pub(crate) const TAB_ACTIVE_BAR_LP: f32 = 3.0;
 
 use serde_json::Value;
 
-use crate::theme::{Color, Theme};
+use crate::theme::{parse_hex_color, Color, Theme};
 
 #[derive(Debug, Clone, Default)]
 pub struct NodeStyle {
@@ -314,17 +320,6 @@ fn color_ref(value: Option<&Value>) -> Option<ColorRef> {
         }
         _ => None,
     }
-}
-
-fn parse_hex_color(value: &str) -> Option<Color> {
-    let hex = value.trim_start_matches('#');
-    if hex.len() != 6 {
-        return None;
-    }
-    let r = u8::from_str_radix(&hex[0..2], 16).ok()? as f32 / 255.0;
-    let g = u8::from_str_radix(&hex[2..4], 16).ok()? as f32 / 255.0;
-    let b = u8::from_str_radix(&hex[4..6], 16).ok()? as f32 / 255.0;
-    Some([r, g, b, 1.0])
 }
 
 fn normalize_channel(value: f32) -> f32 {

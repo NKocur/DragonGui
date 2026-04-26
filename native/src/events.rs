@@ -97,6 +97,8 @@ pub struct WidgetState {
     pub text_placeholder: HashMap<String, String>,
     /// TextInput cursor byte offset keyed by widget id.
     pub text_cursor: HashMap<String, usize>,
+    /// NumberInput widgets whose edited text cannot currently be parsed.
+    pub invalid_numbers: HashSet<String>,
     /// Dropdown items keyed by widget id.
     pub dropdown_items: HashMap<String, Vec<String>>,
     /// Dropdown selected item index keyed by widget id.
@@ -113,6 +115,18 @@ pub struct WidgetState {
     pub pressed: Option<String>,
     /// Dropdown whose menu is currently open.
     pub open_dropdown: Option<String>,
+    /// Open dropdown item currently under the cursor, as (dropdown id, item index).
+    pub dropdown_hover: Option<(String, usize)>,
+    /// Menu items keyed by Menu or ContextMenu widget id.
+    pub menu_items: HashMap<String, Vec<NavigationItem>>,
+    /// Top-level menu whose popup is currently open.
+    pub open_menu: Option<String>,
+    /// Context menu target widget id to ContextMenu widget id.
+    pub context_targets: HashMap<String, String>,
+    /// Context menu whose popup is currently open.
+    pub open_context_menu: Option<String>,
+    /// Physical pixel position for the current context menu popup.
+    pub context_menu_pos: Option<[f32; 2]>,
     /// DataFrame table state keyed by widget id.
     pub tables: HashMap<String, TableState>,
     /// Tab child ids and route values keyed by Tabs widget id.
@@ -184,6 +198,43 @@ impl WidgetState {
     }
 
     /// Return the slider normalized position `t ∈ [0, 1]`.
+    pub fn set_number_value(&mut self, id: &str, v: f32) -> Option<f32> {
+        if !self.float_val.contains_key(id) && !self.float_range.contains_key(id) {
+            return None;
+        }
+        let value = self.set_float(id, v);
+        let text = format_number(value);
+        self.text_cursor.insert(id.to_string(), text.len());
+        self.text_val.insert(id.to_string(), text);
+        self.invalid_numbers.remove(id);
+        Some(value)
+    }
+
+    pub fn adjust_number(&mut self, id: &str, direction: f32) -> Option<f32> {
+        let current = self.float_val.get(id).copied()?;
+        let step = self.float_step.get(id).copied().unwrap_or(1.0).abs();
+        self.set_number_value(id, current + step * direction)
+    }
+
+    pub fn validate_number_text(&mut self, id: &str) -> Option<Option<f32>> {
+        let text = self.text_val.get(id)?.trim();
+        match text.parse::<f32>() {
+            Ok(value) if value.is_finite() => {
+                let value = self.set_float(id, value);
+                self.invalid_numbers.remove(id);
+                Some(Some(value))
+            }
+            _ => {
+                self.invalid_numbers.insert(id.to_string());
+                Some(None)
+            }
+        }
+    }
+
+    pub fn number_is_invalid(&self, id: &str) -> bool {
+        self.invalid_numbers.contains(id)
+    }
+
     pub fn slider_t(&self, id: &str) -> f32 {
         let v = self.float_val.get(id).copied().unwrap_or(0.0);
         let (min, max) = self.float_range.get(id).copied().unwrap_or((0.0, 1.0));
@@ -208,7 +259,17 @@ impl WidgetState {
             .is_some_and(|id| self.open_dropdown.as_deref() == Some(id))
         {
             self.open_dropdown = None;
+            self.dropdown_hover = None;
         }
+        if !self
+            .focused
+            .as_deref()
+            .is_some_and(|id| self.open_menu.as_deref() == Some(id))
+        {
+            self.open_menu = None;
+        }
+        self.open_context_menu = None;
+        self.context_menu_pos = None;
     }
 
     pub fn focus_next_visible(&mut self, layout: &LayoutResult, reverse: bool) {
@@ -219,7 +280,13 @@ impl WidgetState {
         let visible: Vec<String> = self
             .focus_order
             .iter()
-            .filter(|id| layout.rects.contains_key(*id) && !self.is_disabled(id))
+            .filter(|id| {
+                layout
+                    .rects
+                    .get(*id)
+                    .is_some_and(|r| r.w > 0.0 && r.h > 0.0)
+                    && !self.is_disabled(id)
+            })
             .cloned()
             .collect();
         if visible.is_empty() {
@@ -239,7 +306,7 @@ impl WidgetState {
                 (None, false) => offset - 1,
             };
             self.focused = Some(visible[idx].clone());
-            self.open_dropdown = None;
+            self.close_popups();
             return;
         }
     }
@@ -254,7 +321,7 @@ impl WidgetState {
         }
         self.text_cursor.insert(id.to_string(), value.len());
         self.text_val.insert(id.to_string(), value.clone());
-        self.open_dropdown = None;
+        self.close_popups();
         Some(value)
     }
 
@@ -272,7 +339,7 @@ impl WidgetState {
         let items = self.dropdown_items.get(id)?;
         let idx = items.iter().position(|item| item == value)?;
         self.dropdown_index.insert(id.to_string(), idx);
-        self.open_dropdown = None;
+        self.close_popups();
         Some(value.to_string())
     }
 
@@ -355,14 +422,24 @@ impl WidgetState {
     }
 
     pub fn set_dropdown_open(&mut self, id: Option<String>) {
+        self.dropdown_hover = None;
         self.open_dropdown = id.filter(|id| self.dropdown_items.contains_key(id));
+        if self.open_dropdown.is_some() {
+            self.open_menu = None;
+            self.open_context_menu = None;
+            self.context_menu_pos = None;
+        }
     }
 
     pub fn toggle_dropdown(&mut self, id: &str) {
+        self.dropdown_hover = None;
         if self.open_dropdown.as_deref() == Some(id) {
             self.open_dropdown = None;
         } else if self.dropdown_items.contains_key(id) {
             self.open_dropdown = Some(id.to_string());
+            self.open_menu = None;
+            self.open_context_menu = None;
+            self.context_menu_pos = None;
         }
     }
 
@@ -370,7 +447,7 @@ impl WidgetState {
         let items = self.dropdown_items.get(id)?;
         let value = items.get(idx)?.clone();
         self.dropdown_index.insert(id.to_string(), idx);
-        self.open_dropdown = None;
+        self.close_popups();
         Some(value)
     }
 
@@ -389,6 +466,38 @@ impl WidgetState {
         let value = items.get(next)?.clone();
         self.dropdown_index.insert(id.to_string(), next);
         Some(value)
+    }
+
+    pub fn close_popups(&mut self) {
+        self.open_dropdown = None;
+        self.dropdown_hover = None;
+        self.open_menu = None;
+        self.open_context_menu = None;
+        self.context_menu_pos = None;
+    }
+
+    pub fn toggle_menu(&mut self, id: &str) {
+        if self.open_menu.as_deref() == Some(id) {
+            self.open_menu = None;
+        } else if self.menu_items.contains_key(id) {
+            self.open_menu = Some(id.to_string());
+        }
+        self.open_dropdown = None;
+        self.dropdown_hover = None;
+        self.open_context_menu = None;
+        self.context_menu_pos = None;
+    }
+
+    pub fn open_context_menu(&mut self, id: &str, pos: [f32; 2]) -> bool {
+        if !self.menu_items.contains_key(id) {
+            return false;
+        }
+        self.open_dropdown = None;
+        self.dropdown_hover = None;
+        self.open_menu = None;
+        self.open_context_menu = Some(id.to_string());
+        self.context_menu_pos = Some(pos);
+        true
     }
 
     pub fn table(&self, id: &str) -> Option<&TableState> {
@@ -432,7 +541,7 @@ impl WidgetState {
         let parent = self.tab_parent.get(tab_id)?.clone();
         let value = self.tab_values.get(tab_id)?.clone();
         self.active_tabs.insert(parent.clone(), value.clone());
-        self.open_dropdown = None;
+        self.close_popups();
         Some((parent, value))
     }
 
@@ -443,7 +552,7 @@ impl WidgetState {
         let value = self.nav_targets.get(nav_id)?.clone();
         let pages_id = self.page_owner.get(&value)?.clone();
         self.active_pages.insert(pages_id.clone(), value.clone());
-        self.open_dropdown = None;
+        self.close_popups();
         Some((pages_id, value))
     }
 
@@ -457,7 +566,7 @@ impl WidgetState {
         let value = items[next].value.clone();
         self.active_tabs.insert(parent.clone(), value.clone());
         self.focused = Some(next_id.clone());
-        self.open_dropdown = None;
+        self.close_popups();
         Some((parent, value, next_id))
     }
 
@@ -478,7 +587,7 @@ impl WidgetState {
         let value = item.value.clone();
         self.active_tabs.insert(parent.clone(), value.clone());
         self.focused = Some(next_id.clone());
-        self.open_dropdown = None;
+        self.close_popups();
         Some((parent, value, next_id))
     }
 
@@ -500,7 +609,7 @@ impl WidgetState {
             .unwrap_or_else(|| nav_id.to_string());
         self.active_pages.insert(pages_id.clone(), value.clone());
         self.focused = Some(focus_id.clone());
-        self.open_dropdown = None;
+        self.close_popups();
         Some((pages_id, value, focus_id))
     }
 
@@ -530,7 +639,7 @@ impl WidgetState {
             .unwrap_or_else(|| nav_id.to_string());
         self.active_pages.insert(pages_id.clone(), value.clone());
         self.focused = Some(focus_id.clone());
-        self.open_dropdown = None;
+        self.close_popups();
         Some((pages_id, value, focus_id))
     }
 
@@ -620,6 +729,34 @@ fn collect_state(node: &WidgetNode, s: &mut WidgetState, parent: Option<&WidgetN
             s.float_step
                 .insert(node.id.clone(), node.props.step.unwrap_or(0.01));
         }
+        WidgetKind::NumberInput => {
+            let value = node.props.value.unwrap_or(0.0);
+            s.float_val.insert(node.id.clone(), value);
+            s.float_range.insert(
+                node.id.clone(),
+                (
+                    node.props.min.unwrap_or(f32::NEG_INFINITY),
+                    node.props.max.unwrap_or(f32::INFINITY),
+                ),
+            );
+            s.float_step
+                .insert(node.id.clone(), node.props.step.unwrap_or(1.0));
+            let text = node
+                .props
+                .text
+                .clone()
+                .unwrap_or_else(|| format_number(value));
+            s.text_cursor.insert(node.id.clone(), text.len());
+            s.text_val.insert(node.id.clone(), text);
+        }
+        WidgetKind::ProgressBar => {
+            s.float_val
+                .insert(node.id.clone(), node.props.value.unwrap_or(0.0));
+            s.float_range.insert(
+                node.id.clone(),
+                (node.props.min.unwrap_or(0.0), node.props.max.unwrap_or(1.0)),
+            );
+        }
         WidgetKind::TextInput => {
             let value = node.props.text.clone().unwrap_or_default();
             s.text_cursor.insert(node.id.clone(), value.len());
@@ -637,6 +774,28 @@ fn collect_state(node: &WidgetNode, s: &mut WidgetState, parent: Option<&WidgetN
             s.dropdown_items
                 .insert(node.id.clone(), node.props.items.clone());
             s.dropdown_index.insert(node.id.clone(), idx);
+        }
+        WidgetKind::Menu | WidgetKind::ContextMenu => {
+            let items: Vec<NavigationItem> = node
+                .children
+                .iter()
+                .filter(|child| child.kind == WidgetKind::MenuItem)
+                .filter_map(|child| {
+                    child.props.text.as_ref().map(|value| NavigationItem {
+                        id: child.id.clone(),
+                        value: value.clone(),
+                        disabled: child.props.disabled,
+                    })
+                })
+                .collect();
+            if !items.is_empty() {
+                s.menu_items.insert(node.id.clone(), items);
+            }
+            if node.kind == WidgetKind::ContextMenu {
+                if let Some(target) = &node.props.target {
+                    s.context_targets.insert(target.clone(), node.id.clone());
+                }
+            }
         }
         WidgetKind::DataFrameTable => {
             s.tables.insert(node.id.clone(), TableState::new(node));
@@ -784,13 +943,74 @@ pub fn hit_test(
     layout: &LayoutResult,
     pos: [f32; 2],
 ) -> Option<(String, WidgetKind)> {
+    if let Some(modal) = active_modal(tree) {
+        let r = layout.rects.get(&modal.id)?;
+        if !rect_contains(r, pos) {
+            return None;
+        }
+        return hit_test_with(modal, layout, pos, |node| is_interactive(&node.kind));
+    }
+    hit_test_with(tree, layout, pos, |node| is_interactive(&node.kind))
+}
+
+pub fn hit_test_hover(
+    tree: &WidgetNode,
+    layout: &LayoutResult,
+    pos: [f32; 2],
+) -> Option<(String, WidgetKind)> {
+    if let Some(modal) = active_modal(tree) {
+        let r = layout.rects.get(&modal.id)?;
+        if !rect_contains(r, pos) {
+            return None;
+        }
+        return hit_test_with(modal, layout, pos, |node| {
+            is_interactive(&node.kind) || node.props.tooltip.is_some()
+        });
+    }
+    hit_test_with(tree, layout, pos, |node| {
+        is_interactive(&node.kind) || node.props.tooltip.is_some()
+    })
+}
+
+pub fn modal_blocks_point(tree: &WidgetNode, layout: &LayoutResult, pos: [f32; 2]) -> bool {
+    let Some(modal) = active_modal(tree) else {
+        return false;
+    };
+    match layout.rects.get(&modal.id) {
+        Some(r) => !rect_contains(r, pos),
+        None => true,
+    }
+}
+
+pub fn has_active_modal(tree: &WidgetNode) -> bool {
+    active_modal(tree).is_some()
+}
+
+fn active_modal(node: &WidgetNode) -> Option<&WidgetNode> {
+    for child in node.children.iter().rev() {
+        if let Some(modal) = active_modal(child) {
+            return Some(modal);
+        }
+    }
+    (node.kind == WidgetKind::Modal && node.props.open.unwrap_or(false)).then_some(node)
+}
+
+fn hit_test_with<F>(
+    tree: &WidgetNode,
+    layout: &LayoutResult,
+    pos: [f32; 2],
+    accepts_node: F,
+) -> Option<(String, WidgetKind)>
+where
+    F: Fn(&WidgetNode) -> bool + Copy,
+{
     // Check children last-to-first (highest z-order first).
     for child in tree.children.iter().rev() {
-        if let Some(h) = hit_test(child, layout, pos) {
+        if let Some(h) = hit_test_with(child, layout, pos, accepts_node) {
             return Some(h);
         }
     }
-    if is_interactive(&tree.kind) {
+    if accepts_node(tree) {
         if let Some(r) = layout.rects.get(&tree.id) {
             if rect_contains(r, pos) {
                 return Some((tree.id.clone(), tree.kind.clone()));
@@ -806,7 +1026,9 @@ fn is_interactive(kind: &WidgetKind) -> bool {
         WidgetKind::Button
             | WidgetKind::Checkbox
             | WidgetKind::Dropdown
+            | WidgetKind::Menu
             | WidgetKind::Slider
+            | WidgetKind::NumberInput
             | WidgetKind::TextInput
             | WidgetKind::DataFrameTable
             | WidgetKind::Tab
@@ -841,6 +1063,25 @@ fn keep_visible(scroll: usize, selected: usize, visible_count: usize, total: usi
             .min(max_scroll)
     } else {
         scroll.min(max_scroll)
+    }
+}
+
+fn format_number(value: f32) -> String {
+    if value.fract().abs() < f32::EPSILON && value.abs() < 1.0e7 {
+        format!("{value:.0}")
+    } else {
+        let mut text = format!("{value:.6}");
+        while text.contains('.') && text.ends_with('0') {
+            text.pop();
+        }
+        if text.ends_with('.') {
+            text.pop();
+        }
+        if text == "-0" {
+            "0".to_string()
+        } else {
+            text
+        }
     }
 }
 
