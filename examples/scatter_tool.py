@@ -139,7 +139,13 @@ with dg.HLayout():
         dg.Checkbox("Disabled checkbox", checked=True, disabled=True)
 
     with dg.VLayout():
-        scatter = dg.Scatter3D(df, x="x", y="y", z="z")
+        scatter = dg.Scatter3D(
+            df,
+            x="x",
+            y="y",
+            z="z",
+            on_pick=lambda point: log_event("point", point.index),
+        )
         dg.Label("DataFrameTable: wheel scroll, Shift+wheel columns, click headers/cells")
         dg.DataFrameTable(df, page_size=80)
 

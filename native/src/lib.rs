@@ -15,6 +15,7 @@ pub(crate) mod style;
 pub(crate) mod table;
 pub(crate) mod text;
 pub(crate) mod theme;
+pub(crate) mod toast;
 
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict};

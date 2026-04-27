@@ -409,6 +409,12 @@ def set_scatter_colormap(name: str) -> None:
     set_status(f"Colormap: {name}")
 
 
+def pick_scatter_point(point: dg.ScatterPick) -> None:
+    set_status(
+        f"Scatter point {point.index}: ({point.x:.2f}, {point.y:.2f}, {point.z:.2f})"
+    )
+
+
 def start_stream() -> None:
     global stream_thread
     if stream_thread is not None and stream_thread.is_alive():
@@ -436,6 +442,12 @@ def update_table(mode: str) -> None:
     frame = DemoFrame(phase=demo_state["phase"] + 0.8, mode=mode, rows=40_000)
     table.set_frame(frame)
     set_status(f"Table frame swapped to {mode}")
+
+
+def select_table_cell(selection: dg.TableSelection) -> None:
+    set_status(
+        f"Table selected row {selection.row_index}, {selection.column}: {selection.value}"
+    )
 
 
 def upload_buffer() -> None:
@@ -615,6 +627,7 @@ with dg.HLayout(style={"gap": 0}):
                     y="y",
                     z="z",
                     colormap="viridis",
+                    on_pick=pick_scatter_point,
                     key="main-scatter",
                     tooltip="Native GPU scatter widget with live buffer updates.",
                 )
@@ -700,6 +713,7 @@ with dg.HLayout(style={"gap": 0}):
                 table = dg.DataFrameTable(
                     DemoFrame(rows=40_000),
                     page_size=90,
+                    on_select=select_table_cell,
                     key="main-table",
                     tooltip="DataFrameTable virtualizes rows and columns in native code.",
                 )

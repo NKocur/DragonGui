@@ -105,6 +105,8 @@ pub struct WidgetState {
     pub dropdown_index: HashMap<String, usize>,
     /// Disabled widgets keyed by widget id.
     pub disabled: HashSet<String>,
+    /// Collapsible expanded state keyed by widget id.
+    pub expanded: HashMap<String, bool>,
     /// Keyboard focus traversal order.
     pub focus_order: Vec<String>,
     /// Keyboard-focused widget id.
@@ -247,6 +249,27 @@ impl WidgetState {
 
     pub fn is_disabled(&self, id: &str) -> bool {
         self.disabled.contains(id)
+    }
+
+    pub fn is_expanded(&self, id: &str) -> bool {
+        self.expanded.get(id).copied().unwrap_or(true)
+    }
+
+    pub fn set_expanded(&mut self, id: &str, expanded: bool) -> Option<bool> {
+        if !self.expanded.contains_key(id) {
+            return None;
+        }
+        self.expanded.insert(id.to_string(), expanded);
+        self.close_popups();
+        Some(expanded)
+    }
+
+    pub fn toggle_expanded(&mut self, id: &str) -> Option<bool> {
+        if self.is_disabled(id) {
+            return None;
+        }
+        let current = self.expanded.get(id).copied()?;
+        self.set_expanded(id, !current)
     }
 
     pub fn focus_widget(&mut self, id: Option<String>) {
@@ -714,6 +737,9 @@ impl WidgetState {
 }
 
 fn collect_state(node: &WidgetNode, s: &mut WidgetState, parent: Option<&WidgetNode>) {
+    if node.kind == WidgetKind::Tooltip {
+        return;
+    }
     match node.kind {
         WidgetKind::Checkbox => {
             s.checked
@@ -757,7 +783,7 @@ fn collect_state(node: &WidgetNode, s: &mut WidgetState, parent: Option<&WidgetN
                 (node.props.min.unwrap_or(0.0), node.props.max.unwrap_or(1.0)),
             );
         }
-        WidgetKind::TextInput => {
+        WidgetKind::TextInput | WidgetKind::TextArea => {
             let value = node.props.text.clone().unwrap_or_default();
             s.text_cursor.insert(node.id.clone(), value.len());
             s.text_val.insert(node.id.clone(), value);
@@ -774,6 +800,10 @@ fn collect_state(node: &WidgetNode, s: &mut WidgetState, parent: Option<&WidgetN
             s.dropdown_items
                 .insert(node.id.clone(), node.props.items.clone());
             s.dropdown_index.insert(node.id.clone(), idx);
+        }
+        WidgetKind::Collapsible => {
+            s.expanded
+                .insert(node.id.clone(), node.props.expanded.unwrap_or(true));
         }
         WidgetKind::Menu | WidgetKind::ContextMenu => {
             let items: Vec<NavigationItem> = node
@@ -964,11 +994,15 @@ pub fn hit_test_hover(
             return None;
         }
         return hit_test_with(modal, layout, pos, |node| {
-            is_interactive(&node.kind) || node.props.tooltip.is_some()
+            is_interactive(&node.kind)
+                || node.props.tooltip.is_some()
+                || has_rich_tooltip_target(tree, &node.id)
         });
     }
     hit_test_with(tree, layout, pos, |node| {
-        is_interactive(&node.kind) || node.props.tooltip.is_some()
+        is_interactive(&node.kind)
+            || node.props.tooltip.is_some()
+            || has_rich_tooltip_target(tree, &node.id)
     })
 }
 
@@ -995,6 +1029,14 @@ fn active_modal(node: &WidgetNode) -> Option<&WidgetNode> {
     (node.kind == WidgetKind::Modal && node.props.open.unwrap_or(false)).then_some(node)
 }
 
+fn has_rich_tooltip_target(node: &WidgetNode, target: &str) -> bool {
+    (node.kind == WidgetKind::Tooltip && node.props.target.as_deref() == Some(target))
+        || node
+            .children
+            .iter()
+            .any(|child| has_rich_tooltip_target(child, target))
+}
+
 fn hit_test_with<F>(
     tree: &WidgetNode,
     layout: &LayoutResult,
@@ -1004,6 +1046,9 @@ fn hit_test_with<F>(
 where
     F: Fn(&WidgetNode) -> bool + Copy,
 {
+    if tree.kind == WidgetKind::Tooltip {
+        return None;
+    }
     // Check children last-to-first (highest z-order first).
     for child in tree.children.iter().rev() {
         if let Some(h) = hit_test_with(child, layout, pos, accepts_node) {
@@ -1030,7 +1075,9 @@ fn is_interactive(kind: &WidgetKind) -> bool {
             | WidgetKind::Slider
             | WidgetKind::NumberInput
             | WidgetKind::TextInput
+            | WidgetKind::TextArea
             | WidgetKind::DataFrameTable
+            | WidgetKind::Collapsible
             | WidgetKind::Tab
             | WidgetKind::NavItem
     )
@@ -1144,5 +1191,80 @@ impl SliderDrag {
     pub fn compute_value(&self, mouse_x: f32) -> f32 {
         let t = ((mouse_x - self.track_x) / self.track_w).clamp(0.0, 1.0);
         self.min + t * (self.max - self.min)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::document::NodeProps;
+
+    fn node(id: &str, kind: WidgetKind, props: NodeProps, children: Vec<WidgetNode>) -> WidgetNode {
+        WidgetNode {
+            id: id.to_string(),
+            key: None,
+            class_name: None,
+            kind,
+            props,
+            style_json: Default::default(),
+            inline_style: Default::default(),
+            style: Default::default(),
+            children,
+        }
+    }
+
+    #[test]
+    fn hover_hit_test_accepts_noninteractive_rich_tooltip_targets() {
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![
+                node(
+                    "progress",
+                    WidgetKind::ProgressBar,
+                    NodeProps::default(),
+                    vec![],
+                ),
+                node(
+                    "tip",
+                    WidgetKind::Tooltip,
+                    NodeProps {
+                        target: Some("progress".to_string()),
+                        ..NodeProps::default()
+                    },
+                    vec![node(
+                        "label",
+                        WidgetKind::Label,
+                        NodeProps::default(),
+                        vec![],
+                    )],
+                ),
+            ],
+        );
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "window".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 400.0,
+                h: 200.0,
+            },
+        );
+        layout.rects.insert(
+            "progress".to_string(),
+            Rect {
+                x: 20.0,
+                y: 20.0,
+                w: 160.0,
+                h: 34.0,
+            },
+        );
+        layout.rects.insert("tip".to_string(), Rect::default());
+
+        let hit = hit_test_hover(&root, &layout, [30.0, 30.0]);
+
+        assert_eq!(hit, Some(("progress".to_string(), WidgetKind::ProgressBar)));
     }
 }

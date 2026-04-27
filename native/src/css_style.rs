@@ -612,11 +612,13 @@ pub fn widget_kind_from_css_type(name: &str) -> Option<WidgetKind> {
         "HLayout" => Some(WidgetKind::HLayout),
         "VLayout" => Some(WidgetKind::VLayout),
         "Panel" => Some(WidgetKind::Panel),
+        "Collapsible" => Some(WidgetKind::Collapsible),
         "Modal" => Some(WidgetKind::Modal),
         "MenuBar" => Some(WidgetKind::MenuBar),
         "Menu" => Some(WidgetKind::Menu),
         "MenuItem" => Some(WidgetKind::MenuItem),
         "ContextMenu" => Some(WidgetKind::ContextMenu),
+        "Tooltip" => Some(WidgetKind::Tooltip),
         "Sidebar" => Some(WidgetKind::Sidebar),
         "StatusBar" => Some(WidgetKind::StatusBar),
         "Tabs" => Some(WidgetKind::Tabs),
@@ -627,6 +629,7 @@ pub fn widget_kind_from_css_type(name: &str) -> Option<WidgetKind> {
         "Label" => Some(WidgetKind::Label),
         "Button" => Some(WidgetKind::Button),
         "TextInput" => Some(WidgetKind::TextInput),
+        "TextArea" => Some(WidgetKind::TextArea),
         "NumberInput" => Some(WidgetKind::NumberInput),
         "Slider" => Some(WidgetKind::Slider),
         "ProgressBar" => Some(WidgetKind::ProgressBar),
@@ -647,11 +650,13 @@ pub fn css_type_name(kind: WidgetKind) -> Option<&'static str> {
         WidgetKind::HLayout => Some("HLayout"),
         WidgetKind::VLayout => Some("VLayout"),
         WidgetKind::Panel => Some("Panel"),
+        WidgetKind::Collapsible => Some("Collapsible"),
         WidgetKind::Modal => Some("Modal"),
         WidgetKind::MenuBar => Some("MenuBar"),
         WidgetKind::Menu => Some("Menu"),
         WidgetKind::MenuItem => Some("MenuItem"),
         WidgetKind::ContextMenu => Some("ContextMenu"),
+        WidgetKind::Tooltip => Some("Tooltip"),
         WidgetKind::Sidebar => Some("Sidebar"),
         WidgetKind::StatusBar => Some("StatusBar"),
         WidgetKind::Tabs => Some("Tabs"),
@@ -662,6 +667,7 @@ pub fn css_type_name(kind: WidgetKind) -> Option<&'static str> {
         WidgetKind::Label => Some("Label"),
         WidgetKind::Button => Some("Button"),
         WidgetKind::TextInput => Some("TextInput"),
+        WidgetKind::TextArea => Some("TextArea"),
         WidgetKind::NumberInput => Some("NumberInput"),
         WidgetKind::Slider => Some("Slider"),
         WidgetKind::ProgressBar => Some("ProgressBar"),
@@ -749,6 +755,80 @@ pub fn matched_rule_labels_for_tree(
     let mut ancestors = Vec::new();
     let mut out = BTreeMap::new();
     collect_matched_rule_labels(root, &rules, &mut ancestors, &mut out);
+    out
+}
+
+pub fn matched_part_rule_labels_for_tree(
+    root: &WidgetNode,
+    store: &StylesheetStore,
+) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
+    let rules = store.all_rules();
+    let mut ancestors = Vec::new();
+    let mut out = BTreeMap::new();
+    collect_matched_part_rule_labels(root, &rules, &mut ancestors, &mut out);
+    out
+}
+
+fn collect_matched_part_rule_labels(
+    node: &WidgetNode,
+    rules: &StylesheetRuleRefs<'_>,
+    ancestors: &mut Vec<AncestorSnapshot>,
+    out: &mut BTreeMap<String, BTreeMap<String, Vec<String>>>,
+) {
+    let labels = matched_part_rule_labels_for_node(node, rules, ancestors);
+    if !labels.is_empty() {
+        out.insert(node.id.clone(), labels);
+    }
+    ancestors.push(AncestorSnapshot::from_node(node));
+    for child in &node.children {
+        collect_matched_part_rule_labels(child, rules, ancestors, out);
+    }
+    ancestors.pop();
+}
+
+fn matched_part_rule_labels_for_node(
+    node: &WidgetNode,
+    rules: &StylesheetRuleRefs<'_>,
+    ancestors: &[AncestorSnapshot],
+) -> BTreeMap<String, Vec<String>> {
+    let classes = split_classes(node.class_name.as_deref());
+    let ancestor_classes: Vec<Vec<&str>> = ancestors
+        .iter()
+        .map(|ancestor| ancestor.classes.iter().map(String::as_str).collect())
+        .collect();
+    let style_ancestors: Vec<StyleAncestor<'_>> = ancestors
+        .iter()
+        .zip(ancestor_classes.iter())
+        .rev()
+        .map(|(ancestor, classes)| StyleAncestor {
+            id: ancestor.id.as_str(),
+            key: ancestor.key.as_deref(),
+            classes,
+            kind: ancestor.kind,
+        })
+        .collect();
+    let element = StyleElement {
+        id: node.id.as_str(),
+        key: node.key.as_deref(),
+        classes: &classes,
+        kind: node.kind,
+        ancestors: &style_ancestors,
+        pseudo: &STATIC_PSEUDO_CLASSES,
+    };
+    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for rule in rules.iter().filter(|rule| rule.selector.matches(&element)) {
+        let Some(part) = rule.selector.target_part() else {
+            continue;
+        };
+        if !widget_kind_supports_part(node.kind, part) {
+            continue;
+        }
+        out.entry(part.to_string()).or_default().push(format!(
+            "{}: {}",
+            rule.origin.label(),
+            rule.selector.label()
+        ));
+    }
     out
 }
 
@@ -854,6 +934,12 @@ fn apply_stylesheets_to_node(
                     );
                     continue;
                 }
+                record_stateful_part_layout_warnings(
+                    validation_warnings,
+                    seen_validation_warnings,
+                    rule,
+                    part,
+                );
             }
             matched.extend(rule.declarations.iter().map(|declaration| {
                 (
@@ -904,6 +990,48 @@ fn apply_stylesheets_to_node(
         );
     }
     ancestors.pop();
+}
+
+fn record_stateful_part_layout_warnings(
+    warnings: &mut Vec<DgStyleWarning>,
+    seen: &mut BTreeSet<String>,
+    rule: &DgStyleRule,
+    part: &str,
+) {
+    if rule.selector.target_pseudo_classes().is_empty() {
+        return;
+    }
+
+    for declaration in &rule.declarations {
+        let Some(property) = stateful_part_layout_property_name(&declaration.property) else {
+            continue;
+        };
+        let key = format!(
+            "{}|{}|{}|stateful-part-layout",
+            rule.selector.label(),
+            part,
+            property
+        );
+        if seen.insert(key) {
+            warnings.push(DgStyleWarning {
+                property: rule.selector.label(),
+                message: format!(
+                    "{property} on {selector} is ignored because part layout fields cannot vary by pseudo-state",
+                    selector = rule.selector.label()
+                ),
+            });
+        }
+    }
+}
+
+fn stateful_part_layout_property_name(property: &DgStyleProperty) -> Option<&'static str> {
+    match property {
+        DgStyleProperty::Layout(DgLayoutDeclaration::Width(_)) => Some("width"),
+        DgStyleProperty::Layout(DgLayoutDeclaration::Height(_)) => Some("height"),
+        DgStyleProperty::Layout(DgLayoutDeclaration::Padding(_)) => Some("padding"),
+        DgStyleProperty::Layout(DgLayoutDeclaration::Gap(_)) => Some("gap"),
+        _ => None,
+    }
 }
 
 fn record_unsupported_part_warning(
@@ -976,6 +1104,8 @@ fn record_unsupported_inline_part_warning(
 fn widget_kind_supports_part(kind: WidgetKind, part: &str) -> bool {
     match kind {
         WidgetKind::Panel => matches!(part, "accent"),
+        WidgetKind::Collapsible => matches!(part, "header" | "indicator" | "body"),
+        WidgetKind::Button => matches!(part, "badge"),
         WidgetKind::NumberInput => matches!(
             part,
             "field"
@@ -994,8 +1124,8 @@ fn widget_kind_supports_part(kind: WidgetKind, part: &str) -> bool {
         WidgetKind::Slider => matches!(part, "track" | "fill" | "thumb"),
         WidgetKind::ProgressBar => matches!(part, "track" | "fill" | "label"),
         WidgetKind::Tabs => matches!(part, "header"),
-        WidgetKind::Tab => matches!(part, "tab" | "accent"),
-        WidgetKind::NavItem => matches!(part, "item" | "accent"),
+        WidgetKind::Tab => matches!(part, "tab" | "accent" | "badge"),
+        WidgetKind::NavItem => matches!(part, "item" | "accent" | "badge"),
         WidgetKind::DataFrameTable => {
             matches!(part, "header" | "row" | "row-selected" | "grid-line")
         }
@@ -3071,6 +3201,12 @@ mod tests {
             hover_up.layout.width, None,
             "stateful part layout changes are ignored"
         );
+        let warnings = store.warnings();
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].property, ".numeric:hover::stepper-up");
+        assert!(warnings[0]
+            .message
+            .contains("width on .numeric:hover::stepper-up is ignored"));
     }
 
     #[test]

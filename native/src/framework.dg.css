@@ -8,6 +8,8 @@ Window {
 }
 
 Panel,
+Collapsible,
+Tooltip,
 Modal {
     background: surface;
     border: 1px solid border;
@@ -49,6 +51,7 @@ Dropdown:hover {
 Button:focus,
 Dropdown:focus,
 TextInput:focus,
+TextArea:focus,
 NumberInput:focus {
     border-color: focus;
 }
@@ -62,12 +65,14 @@ Dropdown:active {
 Button:disabled,
 Dropdown:disabled,
 TextInput:disabled,
+TextArea:disabled,
 NumberInput:disabled {
     border-color: disabled;
     opacity: 0.62;
 }
 
 TextInput,
+TextArea,
 NumberInput {
     border: 1px solid border;
     border-radius: var(--dg-radius);
@@ -76,6 +81,7 @@ NumberInput {
 }
 
 TextInput:hover,
+TextArea:hover,
 NumberInput:hover {
     border-color: accent;
 }

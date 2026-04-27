@@ -74,6 +74,7 @@ Supported pseudo-states:
 - `:active`
 - `:focus`
 - `:disabled`
+- `:checked`
 
 `class_` supports normal CSS whitespace splitting:
 
@@ -98,11 +99,13 @@ Type selectors use DragonGUI widget names:
 - `HLayout`
 - `VLayout`
 - `Panel`
+- `Collapsible`
 - `Modal`
 - `MenuBar`
 - `Menu`
 - `MenuItem`
 - `ContextMenu`
+- `Tooltip`
 - `Sidebar`
 - `StatusBar`
 - `Tabs`
@@ -113,6 +116,7 @@ Type selectors use DragonGUI widget names:
 - `Label`
 - `Button`
 - `TextInput`
+- `TextArea`
 - `NumberInput`
 - `Slider`
 - `Dropdown`
@@ -169,6 +173,10 @@ Supported visual properties:
 | `border-color` | theme token or hex color |
 | `border-width` | logical pixels |
 | `border-radius` | logical pixels |
+| `border-top-left-radius` | logical pixels |
+| `border-top-right-radius` | logical pixels |
+| `border-bottom-right-radius` | logical pixels |
+| `border-bottom-left-radius` | logical pixels |
 | `border` | `<width> solid <color>` only |
 | `opacity` | `0.0` to `1.0` |
 | `accent` | widget accent color |
@@ -226,6 +234,10 @@ NumberInput::stepper-up {
     border-top-right-radius: 10px;
 }
 
+NumberInput::field {
+    background: surface;
+}
+
 Checkbox:checked::indicator {
     background: success;
 }
@@ -240,14 +252,16 @@ Supported parts:
 | Widget | Parts |
 | --- | --- |
 | `Panel` | `accent` |
-| `NumberInput` | `stepper`, `stepper-up`, `stepper-down`, `stepper-divider` |
-| `Dropdown` | `chevron`, `menu`, `item`, `item-selected`, `item-hover` |
+| `Collapsible` | `header`, `indicator`, `body` |
+| `Button` | `badge` |
+| `NumberInput` | `field`, `stepper`, `stepper-up`, `stepper-down`, `stepper-divider`, `divider`, `caret` |
+| `Dropdown` | `field`, `chevron`, `menu`, `item`, `item-selected`, `item-hover` |
 | `Checkbox` | `row`, `box`, `indicator`, `label` |
 | `Slider` | `track`, `fill`, `thumb` |
 | `ProgressBar` | `track`, `fill`, `label` |
 | `Tabs` | `header` |
-| `Tab` | `tab`, `accent` |
-| `NavItem` | `item`, `accent` |
+| `Tab` | `tab`, `accent`, `badge` |
+| `NavItem` | `item`, `accent`, `badge` |
 | `DataFrameTable` | `header`, `row`, `row-selected`, `grid-line` |
 
 Part styles support the same visual and text properties as widgets. `Panel::accent`
@@ -268,8 +282,8 @@ matching geometry:
 
 | Property | Common Use |
 | --- | --- |
-| `width` | panel accent fill width from the left edge, checkbox boxes/indicators, number steppers, dropdown chevrons, slider thumbs, nav accents, grid lines |
-| `height` | checkbox boxes/indicators, slider tracks/thumbs, progress fills, tab headers, tab accents |
+| `width` | panel accent fill width from the left edge, checkbox boxes/indicators, number steppers/dividers/carets, dropdown chevrons, slider thumbs, nav accents, grid lines |
+| `height` | checkbox boxes/indicators, number stepper dividers/carets, slider tracks/thumbs, progress fills, tab headers, tab accents |
 | `padding` | dropdown rows, tab/nav/table text padding |
 | `gap` | reserved for future composite parts |
 
@@ -313,6 +327,8 @@ Inline part names accept both dashed and snake-case forms. These are equivalent:
 
 Inline part styles override stylesheet part rules, just like normal inline
 widget styles override normal stylesheet rules.
+Invalid inline part names raise a Python `ValueError` before the document is
+sent to the native backend.
 
 ## Variables
 
@@ -341,6 +357,7 @@ implemented.
 - stylesheet warning count
 - last stylesheet error
 - matched rules per widget
+- matched rules and computed fields per styled widget part
 - computed layout, visual, text, and widget style fields
 
 Unsupported CSS does not crash the app. The parser records warnings, skips the

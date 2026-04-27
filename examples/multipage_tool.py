@@ -70,9 +70,22 @@ with dg.HLayout():
         with dg.Page("explore", title="Explore"):
             with dg.Tabs(value="scatter", on_change=lambda value: log("tab", value)):
                 with dg.Tab("Scatter", value="scatter"):
-                    dg.Scatter3D(df, x="x", y="y", z="z")
+                    dg.Scatter3D(
+                        df,
+                        x="x",
+                        y="y",
+                        z="z",
+                        on_pick=lambda point: log("point", point.index),
+                    )
                 with dg.Tab("Table", value="table"):
-                    dg.DataFrameTable(df, page_size=80)
+                    dg.DataFrameTable(
+                        df,
+                        page_size=80,
+                        on_select=lambda selection: log(
+                            "table",
+                            f"{selection.row_index}:{selection.column}={selection.value}",
+                        ),
+                    )
                 with dg.Tab("Controls", value="controls"):
                     dg.Label("Tab state survives switching")
                     dg.Separator()
@@ -84,7 +97,13 @@ with dg.HLayout():
         with dg.Page("data", title="Data"):
             dg.Label("Full-page table")
             dg.Separator()
-            dg.DataFrameTable(df, page_size=100)
+            dg.DataFrameTable(
+                df,
+                page_size=100,
+                on_select=lambda row, column, value: log(
+                    "table", f"{row}:{column}={value}"
+                ),
+            )
 
         with dg.Page("settings", title="Settings"):
             dg.Label("Application settings")

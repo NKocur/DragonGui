@@ -22,8 +22,15 @@ app = dg.App(theme=dg.Theme.dark(accent="#3fc7ff"))
 win = dg.Window("DragonGUI DataFrame Table Demo", width=1200, height=800)
 
 with dg.VLayout():
+    status = dg.Label("Select a cell")
+
+    def show_selection(selection: dg.TableSelection) -> None:
+        status.set_value(
+            f"Selected row {selection.row_index}, {selection.column}: {selection.value}"
+        )
+
     dg.Label("Metadata-backed virtualized table")
-    dg.DataFrameTable(frame, page_size=80)
+    dg.DataFrameTable(frame, page_size=80, on_select=show_selection)
 
 try:
     result = app.run(win)

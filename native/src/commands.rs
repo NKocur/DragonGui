@@ -104,6 +104,15 @@ pub enum Command {
     ClearStylesheets {
         origin: StylesheetOrigin,
     },
+    ShowToast {
+        id: String,
+        message: String,
+        level: String,
+        duration_ms: Option<u64>,
+    },
+    DismissToast {
+        id: String,
+    },
     Invalidate {
         id: String,
         dirty: Dirty,
@@ -558,6 +567,40 @@ impl NativeCommandSender {
     fn enqueue_clear_stylesheets(&self, origin: String) -> PyResult<()> {
         let origin = stylesheet_origin_from_py(&origin)?;
         self.enqueue(Command::ClearStylesheets { origin })
+    }
+
+    #[pyo3(signature = (id, message, level, duration_ms=None))]
+    fn enqueue_show_toast(
+        &self,
+        id: String,
+        message: String,
+        level: String,
+        duration_ms: Option<u64>,
+    ) -> PyResult<()> {
+        if id.trim().is_empty() {
+            return Err(PyValueError::new_err("toast id cannot be empty"));
+        }
+        if message.trim().is_empty() {
+            return Err(PyValueError::new_err("toast message cannot be empty"));
+        }
+        if !matches!(level.as_str(), "info" | "success" | "warning" | "error") {
+            return Err(PyValueError::new_err(format!(
+                "unknown toast level: {level}"
+            )));
+        }
+        self.enqueue(Command::ShowToast {
+            id,
+            message,
+            level,
+            duration_ms,
+        })
+    }
+
+    fn enqueue_dismiss_toast(&self, id: String) -> PyResult<()> {
+        if id.trim().is_empty() {
+            return Err(PyValueError::new_err("toast id cannot be empty"));
+        }
+        self.enqueue(Command::DismissToast { id })
     }
 
     fn enqueue_drain_python_tasks(&self) -> PyResult<()> {

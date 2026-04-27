@@ -172,6 +172,7 @@ pub enum WidgetKind {
     HLayout,
     VLayout,
     Panel,
+    Collapsible,
     Modal,
     Button,
     Checkbox,
@@ -181,6 +182,7 @@ pub enum WidgetKind {
     NumberInput,
     ProgressBar,
     TextInput,
+    TextArea,
     Separator,
     Spacer,
     StatusBar,
@@ -188,6 +190,7 @@ pub enum WidgetKind {
     Menu,
     MenuItem,
     ContextMenu,
+    Tooltip,
     Tabs,
     Tab,
     Pages,
@@ -207,6 +210,7 @@ impl WidgetKind {
             "h_layout" => WidgetKind::HLayout,
             "v_layout" => WidgetKind::VLayout,
             "panel" => WidgetKind::Panel,
+            "collapsible" => WidgetKind::Collapsible,
             "modal" => WidgetKind::Modal,
             "button" => WidgetKind::Button,
             "checkbox" => WidgetKind::Checkbox,
@@ -216,6 +220,7 @@ impl WidgetKind {
             "number_input" => WidgetKind::NumberInput,
             "progress_bar" => WidgetKind::ProgressBar,
             "text_input" => WidgetKind::TextInput,
+            "text_area" => WidgetKind::TextArea,
             "separator" => WidgetKind::Separator,
             "spacer" => WidgetKind::Spacer,
             "status_bar" => WidgetKind::StatusBar,
@@ -223,6 +228,7 @@ impl WidgetKind {
             "menu" => WidgetKind::Menu,
             "menu_item" => WidgetKind::MenuItem,
             "context_menu" => WidgetKind::ContextMenu,
+            "tooltip" => WidgetKind::Tooltip,
             "tabs" => WidgetKind::Tabs,
             "tab" => WidgetKind::Tab,
             "pages" => WidgetKind::Pages,
@@ -258,8 +264,14 @@ pub struct NodeProps {
     pub step: Option<f32>,
     /// Display text for Label and Button widgets; label for Checkbox.
     pub text: Option<String>,
+    /// Optional inline badge text for selected controls.
+    pub badge: Option<String>,
     /// Placeholder text for TextInput.
     pub placeholder: Option<String>,
+    /// Preferred visible row count for TextArea.
+    pub rows: Option<u32>,
+    /// Whether TextArea wraps long lines.
+    pub wrap: Option<bool>,
     /// Dropdown choices.
     pub items: Vec<String>,
     /// Stable navigation key for Tabs, Tab, Pages, and Page nodes.
@@ -282,6 +294,8 @@ pub struct NodeProps {
     pub table_cells: Vec<Vec<String>>,
     /// Non-interactive disabled state.
     pub disabled: bool,
+    /// Collapsible container expanded state.
+    pub expanded: Option<bool>,
     /// Modal visibility state.
     pub open: Option<bool>,
     /// Context menu target widget id.
@@ -385,10 +399,17 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
     let min = props.get("min").and_then(|v| v.as_f64()).map(|v| v as f32);
     let max = props.get("max").and_then(|v| v.as_f64()).map(|v| v as f32);
     let step = props.get("step").and_then(|v| v.as_f64()).map(|v| v as f32);
+    let badge = props
+        .get("badge")
+        .and_then(|v| v.as_str())
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_string());
     let placeholder = props
         .get("placeholder")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+    let rows = props.get("rows").and_then(|v| v.as_u64()).map(|v| v as u32);
+    let wrap = props.get("wrap").and_then(|v| v.as_bool());
     let items = props
         .get("items")
         .and_then(|v| v.as_array())
@@ -455,6 +476,7 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         .get("disabled")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let expanded = props.get("expanded").and_then(|v| v.as_bool());
     let open = props.get("open").and_then(|v| v.as_bool());
     let target = props
         .get("target")
@@ -477,9 +499,11 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         .filter(|v| !v.is_empty())
         .map(|v| v.to_ascii_lowercase());
     let text_key = match kind {
-        WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal => "title",
+        WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal | WidgetKind::Collapsible => {
+            "title"
+        }
         WidgetKind::Checkbox => "label",
-        WidgetKind::Dropdown | WidgetKind::TextInput => "value",
+        WidgetKind::Dropdown | WidgetKind::TextInput | WidgetKind::TextArea => "value",
         WidgetKind::ProgressBar => "label",
         WidgetKind::Tab | WidgetKind::NavItem | WidgetKind::Menu | WidgetKind::MenuItem => "label",
         WidgetKind::Page => "title",
@@ -488,7 +512,7 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
     let text = props
         .get(text_key)
         .or_else(|| {
-            if *kind == WidgetKind::TextInput {
+            if matches!(kind, WidgetKind::TextInput | WidgetKind::TextArea) {
                 props.get("placeholder")
             } else {
                 None
@@ -506,7 +530,10 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         max,
         step,
         text,
+        badge,
         placeholder,
+        rows,
+        wrap,
         items,
         route_value,
         page,
@@ -518,6 +545,7 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         page_size,
         table_cells,
         disabled,
+        expanded,
         open,
         target,
         tooltip,

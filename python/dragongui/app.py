@@ -6,7 +6,7 @@ from typing import Any
 
 from ._backend import native_event_loop_available, run_document
 from .components import ComponentInstance, render_component_window
-from .runtime import AppHandle, _collect_runtime_callbacks
+from .runtime import AppHandle, ToastHandle, _collect_runtime_callbacks, _set_active_app_handle
 from .theme import Theme
 from .widgets import (
     Window,
@@ -80,6 +80,7 @@ class App:
                 widget._bind_live(handle.widget_handle(widget.id))
             for widget in widgets:
                 widget._queue_startup_resources()
+            _set_active_app_handle(handle)
         try:
             native_click_cbs = {} if component_runtime is not None and bind_live else click_cbs
             native_change_cbs = {} if component_runtime is not None and bind_live else change_cbs
@@ -95,6 +96,7 @@ class App:
                     component_runtime.detach()
                 for widget in widgets:
                     widget._unbind_live()
+                _set_active_app_handle(None)
                 handle._close()
                 self._handle = None
 
@@ -103,6 +105,18 @@ class App:
         if self._handle is None:
             raise RuntimeError("DragonGUI app is not running")
         self._handle.call_soon_threadsafe(fn)
+
+    def toast(
+        self,
+        message: object,
+        *,
+        level: str = "info",
+        duration: int | float | None = 3000,
+    ) -> ToastHandle:
+        """Show a non-blocking native toast while the app is live."""
+        if self._handle is None:
+            raise RuntimeError("DragonGUI app is not running")
+        return self._handle.toast(message, level=level, duration=duration)
 
     def debug_snapshot(self, timeout_ms: int = 1000) -> dict[str, Any]:
         """Return a JSON-safe snapshot of the live native runtime."""

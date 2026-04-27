@@ -18,11 +18,17 @@ rem -------------------------------------------------------------------------
 set "EXT_DEST=%ROOT%python\dragongui\_dragongui.pyd"
 set "EXT_RELEASE=%ROOT%native\target\x86_64-pc-windows-gnu\release\_dragongui.dll"
 set "EXT_DEBUG=%ROOT%native\target\x86_64-pc-windows-gnu\debug\_dragongui.dll"
+set "EXT_HOST_RELEASE=%ROOT%native\target\release\_dragongui.dll"
+set "EXT_HOST_DEBUG=%ROOT%native\target\debug\_dragongui.dll"
 
 if exist "%EXT_RELEASE%" (
     copy /Y "%EXT_RELEASE%" "%EXT_DEST%" >nul
 ) else if exist "%EXT_DEBUG%" (
     copy /Y "%EXT_DEBUG%" "%EXT_DEST%" >nul
+) else if exist "%EXT_HOST_RELEASE%" (
+    copy /Y "%EXT_HOST_RELEASE%" "%EXT_DEST%" >nul
+) else if exist "%EXT_HOST_DEBUG%" (
+    copy /Y "%EXT_HOST_DEBUG%" "%EXT_DEST%" >nul
 ) else (
     rem No native build found — run in Python-only dev fallback mode.
     rem Build first with: python -m maturin build --target x86_64-pc-windows-gnu

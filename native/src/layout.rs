@@ -5,8 +5,8 @@ use taffy::prelude::*;
 use crate::document::{WidgetKind, WidgetNode};
 use crate::events::WidgetState;
 use crate::style::{
-    tabs_header_height_for_style, DisplayStyle, FlexDirectionStyle, CHECKBOX_BOX_LP,
-    CHECKBOX_LEFT_PAD_LP,
+    badge_width_for_text, collapsible_header_height_for_style, tabs_header_height_for_style,
+    DisplayStyle, FlexDirectionStyle, BADGE_GAP_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP,
 };
 use crate::theme::Theme;
 
@@ -89,6 +89,7 @@ pub fn compute_layout(
         Some((window_w, window_h)),
         None,
         false,
+        state,
     );
 
     tree.compute_layout(
@@ -104,6 +105,7 @@ pub fn compute_layout(
     collect(&tree, root_id, root, 0.0, 0.0, &mut result);
     apply_navigation_layout(root, &mut result, scale_factor, theme, state);
     apply_modal_layout(root, &mut result, scale_factor, theme);
+    apply_tooltip_layout(root, &mut result, scale_factor, theme, state);
     compute_clips(root, &mut result);
     result
 }
@@ -120,8 +122,9 @@ fn build_node(
     size_override: Option<(f32, f32)>,
     parent_kind: Option<&WidgetKind>,
     layout_modal_children: bool,
+    state: Option<&WidgetState>,
 ) -> NodeId {
-    let mut style = style_for(node, sf, theme, parent_kind, layout_modal_children);
+    let mut style = style_for(node, sf, theme, parent_kind, layout_modal_children, state);
     if let Some((w, h)) = size_override {
         style.size = taffy::geometry::Size {
             width: Dimension::Length(w),
@@ -130,8 +133,13 @@ fn build_node(
     }
     let child_ids: Vec<NodeId> = if matches!(
         node.kind,
-        WidgetKind::Tabs | WidgetKind::Pages | WidgetKind::Menu | WidgetKind::ContextMenu
+        WidgetKind::Tabs
+            | WidgetKind::Pages
+            | WidgetKind::Menu
+            | WidgetKind::ContextMenu
+            | WidgetKind::Tooltip
     ) || (node.kind == WidgetKind::Modal && !layout_modal_children)
+        || (node.kind == WidgetKind::Collapsible && !collapsible_expanded(node, state))
     {
         Vec::new()
     } else {
@@ -146,6 +154,7 @@ fn build_node(
                     None,
                     Some(&node.kind),
                     layout_modal_children,
+                    state,
                 )
             })
             .collect()
@@ -169,6 +178,7 @@ fn style_for(
     theme: &Theme,
     parent_kind: Option<&WidgetKind>,
     layout_modal_children: bool,
+    state: Option<&WidgetState>,
 ) -> Style {
     let ctrl_h = node_control_height_lp(node, theme) * sf;
     let ctrl_gap = (theme.spacing * 0.75) * sf;
@@ -311,7 +321,49 @@ fn style_for(
             }
         }
 
+        WidgetKind::Collapsible => {
+            let expanded = collapsible_expanded(node, state);
+            let header_h = collapsible_header_height_for_style(&node.style, theme, sf);
+            let body_pad = if expanded { panel_pad } else { 0.0 };
+            Style {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                align_items: Some(AlignItems::Stretch),
+                flex_grow: 0.0,
+                flex_shrink: 0.0,
+                size: Size {
+                    width: Dimension::Auto,
+                    height: Dimension::Auto,
+                },
+                min_size: Size {
+                    width: Dimension::Length(0.0),
+                    height: Dimension::Length(header_h),
+                },
+                padding: taffy::geometry::Rect {
+                    left: LengthPercentage::Length(body_pad),
+                    right: LengthPercentage::Length(body_pad),
+                    top: LengthPercentage::Length(header_h + body_pad),
+                    bottom: LengthPercentage::Length(body_pad),
+                },
+                gap: taffy::geometry::Size {
+                    width: LengthPercentage::Length(0.0),
+                    height: LengthPercentage::Length(ctrl_gap),
+                },
+                ..Default::default()
+            }
+        }
+
         WidgetKind::Modal if !layout_modal_children => Style {
+            flex_grow: 0.0,
+            flex_shrink: 0.0,
+            size: Size {
+                width: Dimension::Length(0.0),
+                height: Dimension::Length(0.0),
+            },
+            ..Default::default()
+        },
+
+        WidgetKind::Tooltip => Style {
             flex_grow: 0.0,
             flex_shrink: 0.0,
             size: Size {
@@ -376,6 +428,15 @@ fn style_for(
             size: Size {
                 width: Dimension::Auto,
                 height: Dimension::Length(ctrl_h),
+            },
+            flex_shrink: 0.0,
+            ..Default::default()
+        },
+
+        WidgetKind::TextArea => Style {
+            size: Size {
+                width: Dimension::Auto,
+                height: Dimension::Length(text_area_height_lp(node, theme) * sf),
             },
             flex_shrink: 0.0,
             ..Default::default()
@@ -484,11 +545,22 @@ fn style_for(
         },
     };
     apply_intrinsic_leaf_width(&mut style, node, parent_kind, sf, theme);
-    apply_node_style(&mut style, node, sf);
-    if node.kind != WidgetKind::Modal || layout_modal_children {
+    if node.kind != WidgetKind::Tooltip {
+        apply_node_style(&mut style, node, sf);
+    }
+    if (node.kind != WidgetKind::Modal || layout_modal_children)
+        && node.kind != WidgetKind::Collapsible
+    {
         reserve_panel_title_space(&mut style, node, sf, theme);
     }
     style
+}
+
+fn collapsible_expanded(node: &WidgetNode, state: Option<&WidgetState>) -> bool {
+    state
+        .and_then(|state| state.expanded.get(&node.id).copied())
+        .or(node.props.expanded)
+        .unwrap_or(true)
 }
 
 fn reserve_panel_title_space(style: &mut Style, node: &WidgetNode, sf: f32, theme: &Theme) {
@@ -551,25 +623,36 @@ fn intrinsic_leaf_width(node: &WidgetNode, theme: &Theme) -> Option<f32> {
     let text = intrinsic_text(node);
     let text_w = text.map(|t| estimate_text_width(t, node_font_size_lp(node, theme)));
     let pad = theme.spacing * 2.0;
+    let badge_w = badge_extra_width(node, theme);
     match node.kind {
-        WidgetKind::Button => Some((text_w.unwrap_or(0.0) + pad).clamp(72.0, 240.0)),
+        WidgetKind::Button => Some((text_w.unwrap_or(0.0) + pad + badge_w).clamp(72.0, 280.0)),
         WidgetKind::Menu => {
             Some((text_w.unwrap_or(0.0) + pad + MENU_LABEL_WIDTH_SAFETY_LP).clamp(44.0, 180.0))
         }
         WidgetKind::Dropdown => Some((text_w.unwrap_or(0.0) + pad + 22.0).clamp(112.0, 260.0)),
         WidgetKind::NumberInput => Some((text_w.unwrap_or(0.0) + pad + 34.0).clamp(96.0, 220.0)),
         WidgetKind::TextInput => Some((text_w.unwrap_or(0.0) + pad).clamp(120.0, 280.0)),
+        WidgetKind::TextArea => Some((text_w.unwrap_or(0.0) + pad).clamp(180.0, 420.0)),
         WidgetKind::Checkbox => Some(
             (text_w.unwrap_or(0.0) + CHECKBOX_LEFT_PAD_LP + checkbox_box_width_lp(node) + pad)
                 .clamp(48.0, 280.0),
         ),
         WidgetKind::Label | WidgetKind::NavItem | WidgetKind::Tab => {
-            Some((text_w.unwrap_or(0.0) + pad).clamp(32.0, 280.0))
+            Some((text_w.unwrap_or(0.0) + pad + badge_w).clamp(32.0, 320.0))
         }
         WidgetKind::Slider => Some(140.0),
         WidgetKind::ProgressBar => Some(160.0),
         _ => None,
     }
+}
+
+fn badge_extra_width(node: &WidgetNode, theme: &Theme) -> f32 {
+    node.props
+        .badge
+        .as_deref()
+        .filter(|badge| !badge.is_empty())
+        .map(|badge| badge_width_for_text(&node.style, badge, theme, 1.0) + BADGE_GAP_LP)
+        .unwrap_or(0.0)
 }
 
 fn intrinsic_text(node: &WidgetNode) -> Option<&str> {
@@ -582,8 +665,19 @@ fn intrinsic_text(node: &WidgetNode) -> Option<&str> {
 }
 
 fn estimate_text_width(text: &str, font_size: f32) -> f32 {
-    let chars = text.chars().count() as f32;
+    let chars = text
+        .lines()
+        .map(|line| line.chars().count())
+        .max()
+        .unwrap_or(0) as f32;
     chars * font_size * 0.56
+}
+
+fn text_area_height_lp(node: &WidgetNode, theme: &Theme) -> f32 {
+    let rows = node.props.rows.unwrap_or(4).max(1) as f32;
+    let font_size = node_font_size_lp(node, theme);
+    let line_height = (font_size + 6.0).max(theme.font_size + 4.0);
+    rows * line_height + theme.spacing * 2.0
 }
 
 fn checkbox_box_width_lp(node: &WidgetNode) -> f32 {
@@ -825,6 +919,110 @@ fn apply_modal_layout(root: &WidgetNode, result: &mut LayoutResult, sf: f32, the
     }
 }
 
+fn apply_tooltip_layout(
+    root: &WidgetNode,
+    result: &mut LayoutResult,
+    sf: f32,
+    theme: &Theme,
+    state: Option<&WidgetState>,
+) {
+    let Some(state) = state else {
+        return;
+    };
+    let Some(hovered) = state.hovered.as_deref() else {
+        return;
+    };
+    let Some(tooltip) = active_tooltip(root, hovered) else {
+        return;
+    };
+    let Some(target) = result.rects.get(hovered).copied() else {
+        return;
+    };
+    let root_rect = result.rects.get(&root.id).copied().unwrap_or(Rect {
+        x: 0.0,
+        y: 0.0,
+        w: target.x + target.w,
+        h: target.y + target.h,
+    });
+    let margin = theme.spacing * sf;
+    let width = tooltip.props.fixed_width.unwrap_or(280.0).max(80.0) * sf;
+    let height = tooltip
+        .props
+        .fixed_height
+        .map(|height| height.max(32.0) * sf)
+        .unwrap_or_else(|| estimate_tooltip_height(tooltip, theme, sf));
+    let rect = place_tooltip_rect(target, root_rect, width, height, margin);
+    result.rects.insert(tooltip.id.clone(), rect);
+    layout_overlay_children(tooltip, rect, result, sf, theme, state);
+}
+
+fn active_tooltip<'a>(node: &'a WidgetNode, hovered: &str) -> Option<&'a WidgetNode> {
+    for child in node.children.iter().rev() {
+        if let Some(found) = active_tooltip(child, hovered) {
+            return Some(found);
+        }
+    }
+    (node.kind == WidgetKind::Tooltip && node.props.target.as_deref() == Some(hovered))
+        .then_some(node)
+}
+
+fn estimate_tooltip_height(node: &WidgetNode, theme: &Theme, sf: f32) -> f32 {
+    let pad = (theme.spacing + 2.0) * sf;
+    let gap = (theme.spacing * 0.75) * sf;
+    let child_count = node.children.len().max(1) as f32;
+    let child_height = node
+        .children
+        .iter()
+        .map(|child| estimated_node_height(child, theme, sf))
+        .sum::<f32>();
+    (child_height + pad * 2.0 + gap * (child_count - 1.0)).clamp(32.0 * sf, 320.0 * sf)
+}
+
+fn estimated_node_height(node: &WidgetNode, theme: &Theme, sf: f32) -> f32 {
+    match node.kind {
+        WidgetKind::TextArea => text_area_height_lp(node, theme) * sf,
+        WidgetKind::Panel | WidgetKind::VLayout | WidgetKind::HLayout => {
+            estimate_tooltip_height(node, theme, sf)
+        }
+        WidgetKind::Separator => 1.0 * sf,
+        WidgetKind::Spacer => node.props.fixed_height.unwrap_or(theme.spacing) * sf,
+        _ => node_control_height_lp(node, theme) * sf,
+    }
+}
+
+fn place_tooltip_rect(target: Rect, root: Rect, width: f32, height: f32, margin: f32) -> Rect {
+    let below_y = target.y + target.h + margin;
+    let above_y = target.y - height - margin;
+    let y = if below_y + height <= root.y + root.h - margin {
+        below_y
+    } else {
+        above_y
+    };
+    let x = target.x + target.w * 0.5 - width * 0.5;
+    clamp_rect_to_root(
+        Rect {
+            x,
+            y,
+            w: width,
+            h: height,
+        },
+        root,
+        margin,
+    )
+}
+
+fn clamp_rect_to_root(rect: Rect, root: Rect, margin: f32) -> Rect {
+    let min_x = root.x + margin;
+    let max_x = (root.x + root.w - rect.w - margin).max(min_x);
+    let min_y = root.y + margin;
+    let max_y = (root.y + root.h - rect.h - margin).max(min_y);
+    Rect {
+        x: rect.x.clamp(min_x, max_x),
+        y: rect.y.clamp(min_y, max_y),
+        ..rect
+    }
+}
+
 fn open_modals(node: &WidgetNode) -> Vec<&WidgetNode> {
     let mut out = Vec::new();
     collect_open_modals(node, &mut out);
@@ -874,6 +1072,7 @@ fn layout_modal(
         Some((modal_w, modal_h)),
         None,
         true,
+        None,
     );
     tree.compute_layout(
         root_id,
@@ -1024,6 +1223,45 @@ fn layout_region(
     }
 }
 
+fn layout_overlay_children(
+    container: &WidgetNode,
+    rect: Rect,
+    result: &mut LayoutResult,
+    sf: f32,
+    theme: &Theme,
+    state: &WidgetState,
+) {
+    if rect.w <= 0.0 || rect.h <= 0.0 || container.children.is_empty() {
+        return;
+    }
+    let synthetic = WidgetNode {
+        id: "__dg_tooltip_region".to_string(),
+        key: None,
+        class_name: None,
+        kind: WidgetKind::VLayout,
+        props: Default::default(),
+        style: container.style.clone(),
+        style_json: Default::default(),
+        inline_style: Default::default(),
+        children: container.children.clone(),
+    };
+    let sub = compute_layout(&synthetic, rect.w, rect.h, sf, theme, Some(state));
+    for (id, child_rect) in sub.rects {
+        if id == "__dg_tooltip_region" {
+            continue;
+        }
+        result.rects.insert(
+            id,
+            Rect {
+                x: child_rect.x + rect.x,
+                y: child_rect.y + rect.y,
+                w: child_rect.w,
+                h: child_rect.h,
+            },
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1083,6 +1321,196 @@ mod tests {
         assert_eq!(scatter.x, 280.0);
         assert_eq!(scatter.w, 920.0);
         assert_eq!(scatter.h, 800.0);
+    }
+
+    #[test]
+    fn inactive_tooltip_does_not_consume_window_flow() {
+        let mut tooltip = node(
+            "tip",
+            WidgetKind::Tooltip,
+            NodeProps {
+                target: Some("button".to_string()),
+                fixed_width: Some(260.0),
+                fixed_height: Some(120.0),
+                ..NodeProps::default()
+            },
+            vec![node(
+                "tip-label",
+                WidgetKind::Label,
+                NodeProps {
+                    text: Some("Details".to_string()),
+                    ..NodeProps::default()
+                },
+                vec![],
+            )],
+        );
+        tooltip.style.layout.padding = Some(12.0);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![
+                node(
+                    "content",
+                    WidgetKind::HLayout,
+                    NodeProps::default(),
+                    vec![node(
+                        "button",
+                        WidgetKind::Button,
+                        NodeProps::default(),
+                        vec![],
+                    )],
+                ),
+                tooltip,
+            ],
+        );
+
+        let layout = compute_layout(&root, 800.0, 600.0, 1.0, &Theme::dark(), None);
+        let content = layout.rects.get("content").unwrap();
+        let tip = layout.rects.get("tip").unwrap();
+
+        assert_eq!(content.h, 600.0);
+        assert_eq!(tip.w, 0.0);
+        assert_eq!(tip.h, 0.0);
+    }
+
+    #[test]
+    fn hovered_tooltip_gets_overlay_layout_and_children() {
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![
+                node(
+                    "content",
+                    WidgetKind::HLayout,
+                    NodeProps::default(),
+                    vec![node(
+                        "button",
+                        WidgetKind::Button,
+                        NodeProps::default(),
+                        vec![],
+                    )],
+                ),
+                node(
+                    "tip",
+                    WidgetKind::Tooltip,
+                    NodeProps {
+                        target: Some("button".to_string()),
+                        fixed_width: Some(260.0),
+                        fixed_height: Some(120.0),
+                        ..NodeProps::default()
+                    },
+                    vec![node(
+                        "tip-label",
+                        WidgetKind::Label,
+                        NodeProps {
+                            text: Some("Details".to_string()),
+                            ..NodeProps::default()
+                        },
+                        vec![],
+                    )],
+                ),
+            ],
+        );
+        let mut state = WidgetState::default();
+        state.hovered = Some("button".to_string());
+
+        let layout = compute_layout(&root, 800.0, 600.0, 1.0, &Theme::dark(), Some(&state));
+        let tip = layout.rects.get("tip").unwrap();
+        let label = layout.rects.get("tip-label").unwrap();
+
+        assert_eq!(tip.w, 260.0);
+        assert_eq!(tip.h, 120.0);
+        assert!(label.w > 0.0);
+        assert!(label.h > 0.0);
+        assert!(label.x >= tip.x);
+        assert!(label.y >= tip.y);
+    }
+
+    #[test]
+    fn collapsed_collapsible_hides_children_from_layout() {
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "section",
+                WidgetKind::Collapsible,
+                NodeProps {
+                    text: Some("Advanced".to_string()),
+                    expanded: Some(false),
+                    ..NodeProps::default()
+                },
+                vec![node(
+                    "child",
+                    WidgetKind::Button,
+                    NodeProps::default(),
+                    vec![],
+                )],
+            )],
+        );
+
+        let layout = compute_layout(&root, 400.0, 300.0, 1.0, &Theme::dark(), None);
+        let section = layout.rects.get("section").unwrap();
+
+        assert_eq!(section.h, Theme::dark().control_height());
+        assert!(!layout.rects.contains_key("child"));
+    }
+
+    #[test]
+    fn expanded_collapsible_lays_out_children_below_header() {
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "section",
+                WidgetKind::Collapsible,
+                NodeProps {
+                    text: Some("Advanced".to_string()),
+                    expanded: Some(true),
+                    ..NodeProps::default()
+                },
+                vec![node(
+                    "child",
+                    WidgetKind::Button,
+                    NodeProps::default(),
+                    vec![],
+                )],
+            )],
+        );
+
+        let layout = compute_layout(&root, 400.0, 300.0, 1.0, &Theme::dark(), None);
+        let section = layout.rects.get("section").unwrap();
+        let child = layout.rects.get("child").unwrap();
+
+        assert!(section.h > Theme::dark().control_height());
+        assert!(child.y >= section.y + Theme::dark().control_height());
+    }
+
+    #[test]
+    fn text_area_rows_drive_preferred_height() {
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "notes",
+                WidgetKind::TextArea,
+                NodeProps {
+                    text: Some("one\ntwo".to_string()),
+                    rows: Some(6),
+                    ..NodeProps::default()
+                },
+                vec![],
+            )],
+        );
+
+        let layout = compute_layout(&root, 400.0, 300.0, 1.0, &Theme::dark(), None);
+        let notes = layout.rects.get("notes").unwrap();
+
+        assert!(notes.h > Theme::dark().control_height() * 2.0);
     }
 
     #[test]

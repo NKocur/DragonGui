@@ -36,7 +36,59 @@ pub(crate) const TAB_TOP_INSET_LP: f32 = 4.0;
 pub(crate) const TAB_INACTIVE_BOTTOM_INSET_LP: f32 = 3.0;
 pub(crate) const TAB_ACTIVE_BAR_LP: f32 = 3.0;
 
+pub(crate) const BADGE_GAP_LP: f32 = 8.0;
+pub(crate) const BADGE_PAD_X_LP: f32 = 6.0;
+pub(crate) const BADGE_MIN_HEIGHT_LP: f32 = 16.0;
+
+pub(crate) fn badge_font_size_lp(style: &NodeStyle, theme: &Theme) -> f32 {
+    style
+        .parts
+        .parts
+        .get("badge")
+        .and_then(|part| part.text.font_size)
+        .unwrap_or_else(|| (theme.font_size - 2.0).max(10.0))
+        .max(8.0)
+}
+
+pub(crate) fn badge_height_for_style(style: &NodeStyle, theme: &Theme, sf: f32) -> f32 {
+    let height_lp = style
+        .parts
+        .parts
+        .get("badge")
+        .and_then(|part| part.layout.height)
+        .unwrap_or_else(|| (badge_font_size_lp(style, theme) + 6.0).max(BADGE_MIN_HEIGHT_LP));
+    (height_lp.max(1.0) * sf).max(1.0)
+}
+
+pub(crate) fn badge_width_for_text(style: &NodeStyle, badge: &str, theme: &Theme, sf: f32) -> f32 {
+    if let Some(width_lp) = style
+        .parts
+        .parts
+        .get("badge")
+        .and_then(|part| part.layout.width)
+    {
+        return (width_lp.max(1.0) * sf).max(1.0);
+    }
+    let font_size = badge_font_size_lp(style, theme);
+    let text_w = badge.chars().count() as f32 * font_size * 0.58;
+    ((text_w + BADGE_PAD_X_LP * 2.0).max(BADGE_MIN_HEIGHT_LP) * sf).max(1.0)
+}
+
 pub(crate) fn tabs_header_height_for_style(style: &NodeStyle, theme: &Theme, sf: f32) -> f32 {
+    let height_lp = style
+        .parts
+        .parts
+        .get("header")
+        .and_then(|part| part.layout.height)
+        .unwrap_or_else(|| theme.control_height());
+    (height_lp.max(1.0) * sf).max(1.0)
+}
+
+pub(crate) fn collapsible_header_height_for_style(
+    style: &NodeStyle,
+    theme: &Theme,
+    sf: f32,
+) -> f32 {
     let height_lp = style
         .parts
         .parts
@@ -48,6 +100,7 @@ pub(crate) fn tabs_header_height_for_style(style: &NodeStyle, theme: &Theme, sf:
 
 use serde_json::Value;
 
+use crate::events::WidgetState;
 use crate::theme::{parse_hex_color, Color, Theme};
 
 #[derive(Debug, Clone, Default)]
@@ -167,6 +220,84 @@ pub struct NodePartStyles {
     pub focus: BTreeMap<String, PartStyle>,
     pub disabled: BTreeMap<String, PartStyle>,
     pub checked: BTreeMap<String, PartStyle>,
+}
+
+pub(crate) fn base_part_style<'a>(style: &'a NodeStyle, part: &str) -> Option<&'a PartStyle> {
+    style.parts.parts.get(part)
+}
+
+pub(crate) fn checked_part_style_for_state<'a>(
+    style: &'a NodeStyle,
+    widget_id: &str,
+    state: &WidgetState,
+    part: &str,
+) -> Option<&'a PartStyle> {
+    if state.checked.get(widget_id).copied().unwrap_or(false) {
+        style.parts.checked.get(part)
+    } else {
+        None
+    }
+}
+
+pub(crate) fn state_part_style_for_state<'a>(
+    style: &'a NodeStyle,
+    widget_id: &str,
+    state: &WidgetState,
+    part: &str,
+) -> Option<&'a PartStyle> {
+    if state.is_disabled(widget_id) {
+        style.parts.disabled.get(part)
+    } else if state.pressed.as_deref() == Some(widget_id) {
+        style.parts.active.get(part)
+    } else if state.hovered.as_deref() == Some(widget_id) {
+        style.parts.hover.get(part)
+    } else if state.focused.as_deref() == Some(widget_id) {
+        style.parts.focus.get(part)
+    } else {
+        None
+    }
+}
+
+pub(crate) fn part_style_active_for_state(
+    style: &NodeStyle,
+    widget_id: &str,
+    state: &WidgetState,
+    part: &str,
+) -> bool {
+    base_part_style(style, part).is_some()
+        || checked_part_style_for_state(style, widget_id, state, part).is_some()
+        || state_part_style_for_state(style, widget_id, state, part).is_some()
+}
+
+pub(crate) fn part_visual_for_state(
+    style: &NodeStyle,
+    widget_id: &str,
+    state: &WidgetState,
+    part: &str,
+) -> VisualStyle {
+    let mut visual = base_part_style(style, part)
+        .map(|style| style.visual.clone())
+        .unwrap_or_default();
+    if let Some(checked) = checked_part_style_for_state(style, widget_id, state, part) {
+        visual = visual.merged(&checked.visual);
+    }
+    if let Some(pseudo) = state_part_style_for_state(style, widget_id, state, part) {
+        visual = visual.merged(&pseudo.visual);
+    }
+    visual
+}
+
+pub(crate) fn merged_part_visual_for_state(
+    style: &NodeStyle,
+    widget_id: &str,
+    state: &WidgetState,
+    parts: &[&str],
+) -> VisualStyle {
+    let mut visual = VisualStyle::default();
+    for part in parts {
+        visual = visual.merged(&part_visual_for_state(style, widget_id, state, part));
+    }
+    visual
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -687,5 +818,92 @@ mod tests {
             Some(ColorRef::Token("accent".to_string()))
         );
         assert_eq!(selected.text.font_weight, Some(700));
+    }
+
+    #[test]
+    fn resolves_part_visual_with_checked_then_pseudo_precedence() {
+        let mut style = NodeStyle::default();
+        style.parts.parts.insert(
+            "thumb".to_string(),
+            PartStyle {
+                visual: VisualStyle {
+                    background: Some(ColorRef::Token("base".to_string())),
+                    border_width: Some(1.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        style.parts.checked.insert(
+            "thumb".to_string(),
+            PartStyle {
+                visual: VisualStyle {
+                    border_width: Some(2.0),
+                    accent: Some(ColorRef::Token("checked".to_string())),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        style.parts.hover.insert(
+            "thumb".to_string(),
+            PartStyle {
+                visual: VisualStyle {
+                    background: Some(ColorRef::Token("hover".to_string())),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let mut state = WidgetState::default();
+        state.checked.insert("slider".to_string(), true);
+        state.hovered = Some("slider".to_string());
+
+        let visual = part_visual_for_state(&style, "slider", &state, "thumb");
+        assert_eq!(
+            visual.background,
+            Some(ColorRef::Token("hover".to_string()))
+        );
+        assert_eq!(visual.border_width, Some(2.0));
+        assert_eq!(visual.accent, Some(ColorRef::Token("checked".to_string())));
+        assert!(part_style_active_for_state(
+            &style, "slider", &state, "thumb"
+        ));
+    }
+
+    #[test]
+    fn resolves_disabled_part_style_before_pointer_state() {
+        let mut style = NodeStyle::default();
+        style.parts.hover.insert(
+            "field".to_string(),
+            PartStyle {
+                visual: VisualStyle {
+                    background: Some(ColorRef::Token("hover".to_string())),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        style.parts.disabled.insert(
+            "field".to_string(),
+            PartStyle {
+                visual: VisualStyle {
+                    background: Some(ColorRef::Token("disabled".to_string())),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let mut state = WidgetState::default();
+        state.hovered = Some("input".to_string());
+        state.disabled.insert("input".to_string());
+
+        let style = state_part_style_for_state(&style, "input", &state, "field").unwrap();
+        assert_eq!(
+            style.visual.background,
+            Some(ColorRef::Token("disabled".to_string()))
+        );
     }
 }

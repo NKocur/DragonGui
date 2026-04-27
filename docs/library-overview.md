@@ -126,7 +126,8 @@ updates instead of rebuilding the whole app.
 | Widget | Purpose |
 | --- | --- |
 | `Window` | Top-level native application window. Holds the root widget tree. |
-| `FileDialog` | Native open/save/folder picker helpers with synchronous or callback-based use. |
+| `FileDialog` | Native open/save/folder picker helpers with synchronous or callback-based use. Top-level helpers are also exported as `open_file_dialog`, `open_files_dialog`, `save_file_dialog`, and `pick_folder_dialog`. |
+| `toast` / `App.toast` | Live app helper for non-blocking native notification overlays. Returns a `ToastHandle` for update or dismiss. |
 
 ### Layout And Structure
 
@@ -135,7 +136,8 @@ updates instead of rebuilding the whole app.
 | `HLayout` | Horizontal flex container. |
 | `VLayout` | Vertical flex container. |
 | `Panel` | Framed titled container for controls and grouped content. |
-| `Modal` | Centered overlay container for blocking alert/confirm workflows. |
+| `Collapsible` | Expandable/collapsible vertical section for dense control groups. |
+| `Modal` | Centered overlay container for blocking alert/confirm workflows; prefer `show()` and `close()`. |
 | `MenuBar` | Horizontal application menu strip. |
 | `ContextMenu` | Targeted right-click popup menu container. |
 | `Sidebar` | Side navigation/container region. |
@@ -148,26 +150,28 @@ updates instead of rebuilding the whole app.
 | Widget | Purpose |
 | --- | --- |
 | `Tabs` | Tab strip container. |
-| `Tab` | Individual tab item. |
+| `Tab` | Individual tab item with optional badge text/count. |
 | `Pages` | Page container paired with navigation state. |
 | `Page` | Individual page inside `Pages`. |
-| `NavItem` | Sidebar/page navigation item. |
+| `NavItem` | Sidebar/page navigation item with optional badge text/count. |
 | `Menu` | Top-level menu inside a `MenuBar`. |
 | `MenuItem` | Clickable row inside `Menu` or `ContextMenu`. |
+| `Tooltip` | Rich hover overlay attached to a target widget. |
 
 ### Basic Controls
 
 | Widget | Purpose |
 | --- | --- |
 | `Label` | Text display. |
-| `Button` | Clickable command control with `on_click`. |
+| `Button` | Clickable command control with `on_click` and optional badge text/count. |
 | `TextInput` | Editable single-line text input with `on_change`. |
+| `TextArea` | Editable multiline text input with rows, wrapping, and `on_change`. |
 | `NumberInput` | Editable numeric input with min/max/step and `on_change`. |
 | `Slider` | Numeric drag control with range and `on_change`. |
 | `ProgressBar` | Non-interactive progress indicator with live `set_value`. |
 | `Dropdown` | Select one value from a list. |
 | `Checkbox` | Boolean toggle. |
-| `ColorPicker` | Composite RGB/RGBA picker with slider channels and swatch preview. |
+| `ColorPicker` | Composite RGB/RGBA picker with slider channels, swatch preview, and optional `set_value(..., notify=True)`. |
 
 ### Data And GPU Widgets
 
@@ -182,18 +186,22 @@ updates instead of rebuilding the whole app.
 Current interaction support includes:
 
 - Button click callbacks.
+- Inline badges on buttons, tabs, and navigation items.
 - Checkbox toggling.
 - Dropdown open/select behavior.
 - Number input typing, steppers, clamping, and callbacks.
 - Slider drag and value callbacks.
-- Composite ColorPicker updates with integer RGB/RGBA callbacks.
+- Composite ColorPicker updates with integer RGB/RGBA callbacks; programmatic `set_value` is silent unless `notify=True`.
 - Progress bar live value updates.
 - Static text tooltips on hovered widgets through the common `tooltip` prop.
+- Rich tooltip overlays with arbitrary DragonGUI children.
 - Modal overlays with background input blocking and Escape close.
+- Toast notification overlays for non-blocking status feedback.
+- Collapsible sections with pointer and keyboard toggling.
 - Menu bar popups, menu item callbacks, and target-based context menus.
-- File open/save/folder dialogs through `FileDialog`.
+- File open/save/folder dialogs through top-level helpers or `FileDialog`.
 - PNG/JPEG image display with fit modes and styled placeholders.
-- Text input editing, caret positioning, and keyboard input.
+- Text input and multiline text area editing, caret positioning, and keyboard input.
 - Tab focus navigation.
 - Enter/Space activation for keyboard-focused controls.
 - Sidebar/page navigation.
@@ -499,7 +507,8 @@ objects, extract bounded table samples, and pack NumPy-accessible columns.
 
 ## DataFrameTable
 
-`DataFrameTable` displays tabular data in the native renderer.
+`DataFrameTable` displays tabular data in the native renderer and can emit
+selection callbacks when a user clicks a cell.
 
 Current capabilities:
 
@@ -507,6 +516,7 @@ Current capabilities:
 - Extracts column names, dtypes, shape, and bounded samples.
 - Supports live table replacement.
 - Supports selected cell/header state.
+- Emits `on_select` with `TableSelection(row_index, column_index, column, value)`.
 - Supports scrolling by row and column.
 - Renders headers, grid/row backgrounds, visible cells, and selected regions.
 
@@ -524,6 +534,7 @@ Current capabilities:
 - Supports colormaps and point shader logic derived from DragonSci work.
 - Supports live colormap changes through `Scatter3D.set_colormap(...)`.
 - Can receive live point updates from Python.
+- Emits `on_pick` with `ScatterPick(index, x, y, z)` for point clicks.
 - Renders inside the same native window/layout tree as the rest of the UI.
 
 This is the core example of DragonGUI's intended moat: data widgets that are

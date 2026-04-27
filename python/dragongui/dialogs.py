@@ -79,6 +79,67 @@ class FileDialog:
         )
 
 
+def open_file_dialog(
+    *,
+    title: str | None = None,
+    filters: Sequence[tuple[str, Sequence[str]]] | None = None,
+    on_select: PathCallback | None = None,
+    app: object | None = None,
+) -> str | None:
+    """Open a native single-file picker.
+
+    This is a convenience wrapper around ``FileDialog.open_file``.
+    """
+    return FileDialog.open_file(
+        title=title,
+        filters=filters,
+        on_select=on_select,
+        app=app,
+    )
+
+
+def open_files_dialog(
+    *,
+    title: str | None = None,
+    filters: Sequence[tuple[str, Sequence[str]]] | None = None,
+    on_select: PathsCallback | None = None,
+    app: object | None = None,
+) -> list[str] | None:
+    """Open a native multi-file picker."""
+    return FileDialog.open_files(
+        title=title,
+        filters=filters,
+        on_select=on_select,
+        app=app,
+    )
+
+
+def save_file_dialog(
+    *,
+    title: str | None = None,
+    filters: Sequence[tuple[str, Sequence[str]]] | None = None,
+    on_select: PathCallback | None = None,
+    app: object | None = None,
+) -> str | None:
+    """Open a native save-file picker."""
+    return FileDialog.save_file(
+        title=title,
+        filters=filters,
+        on_select=on_select,
+        app=app,
+    )
+
+
+def pick_folder_dialog(
+    *,
+    title: str | None = None,
+    on_select: PathCallback | None = None,
+    app: object | None = None,
+) -> str | None:
+    """Open a native folder picker."""
+    return FileDialog.pick_folder(title=title, on_select=on_select, app=app)
+
+
 def _run_dialog(
     call: Callable[[], T],
     callback: Callable[[T], None] | None,

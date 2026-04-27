@@ -65,10 +65,6 @@ include = [
 exclude = [
   "**/__pycache__/**",
   "**/*.pyc",
-  "**/*.pyd",
-  "**/*.dll",
-  "**/*.so",
-  "**/*.dylib",
 ]
 
 [tool.pytest.ini_options]

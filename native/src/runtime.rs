@@ -19,7 +19,8 @@ use crate::commands::{
     Command, CommandBridge, CommandValue, Dirty, RuntimeEvent, ScatterTelemetry, TableColumnPacket,
 };
 use crate::css_style::{
-    apply_stylesheets_to_tree, matched_rule_labels_for_tree, StylesheetOrigin, StylesheetStore,
+    apply_stylesheets_to_tree, matched_part_rule_labels_for_tree, matched_rule_labels_for_tree,
+    StylesheetOrigin, StylesheetStore,
 };
 use crate::document::{self, NodeProps, ScatterSpec, WidgetKind, WidgetNode};
 use crate::error::DragonError;
@@ -34,13 +35,14 @@ use crate::primitives::PrimitivesRenderer;
 use crate::resources::ResourceRegistry;
 use crate::scatter::{self, PointInstance, ScatterWidget};
 use crate::style::{
-    number_stepper_width, number_stepper_width_for_style, ColorRef, DisplayStyle,
-    FlexDirectionStyle, FontFamily, LayoutStyle, NodeStyle, PartLayoutStyle, PartStyle, TextAlign,
-    TextStyle, VisualStyle, WidgetStyle,
+    collapsible_header_height_for_style, number_stepper_width, number_stepper_width_for_style,
+    ColorRef, DisplayStyle, FlexDirectionStyle, FontFamily, LayoutStyle, NodeStyle,
+    PartLayoutStyle, PartStyle, TextAlign, TextStyle, VisualStyle, WidgetStyle,
 };
 use crate::table::{self, TableHit};
 use crate::text::TextRendererDg;
 use crate::theme::Theme;
+use crate::toast::{ToastLevel, ToastOverlay};
 
 // ---------------------------------------------------------------------------
 // AppSpec — bundles everything parsed from the Python document
@@ -321,6 +323,7 @@ fn widget_kind_name(kind: &WidgetKind) -> &'static str {
         WidgetKind::HLayout => "h_layout",
         WidgetKind::VLayout => "v_layout",
         WidgetKind::Panel => "panel",
+        WidgetKind::Collapsible => "collapsible",
         WidgetKind::Modal => "modal",
         WidgetKind::Button => "button",
         WidgetKind::Checkbox => "checkbox",
@@ -330,6 +333,7 @@ fn widget_kind_name(kind: &WidgetKind) -> &'static str {
         WidgetKind::NumberInput => "number_input",
         WidgetKind::ProgressBar => "progress_bar",
         WidgetKind::TextInput => "text_input",
+        WidgetKind::TextArea => "text_area",
         WidgetKind::Separator => "separator",
         WidgetKind::Spacer => "spacer",
         WidgetKind::StatusBar => "status_bar",
@@ -337,6 +341,7 @@ fn widget_kind_name(kind: &WidgetKind) -> &'static str {
         WidgetKind::Menu => "menu",
         WidgetKind::MenuItem => "menu_item",
         WidgetKind::ContextMenu => "context_menu",
+        WidgetKind::Tooltip => "tooltip",
         WidgetKind::Tabs => "tabs",
         WidgetKind::Tab => "tab",
         WidgetKind::Pages => "pages",
@@ -514,41 +519,93 @@ fn part_layout_style_snapshot(style: &PartLayoutStyle) -> Value {
 }
 
 fn part_style_snapshot(style: &PartStyle) -> Value {
-    json!({
-        "layout": part_layout_style_snapshot(&style.layout),
-        "visual": visual_style_snapshot(&style.visual),
-        "text": text_style_snapshot(&style.text),
-    })
+    let mut map = Map::new();
+    insert_object_if_non_empty(
+        &mut map,
+        "layout",
+        part_layout_style_snapshot(&style.layout),
+    );
+    insert_object_if_non_empty(&mut map, "visual", visual_style_snapshot(&style.visual));
+    insert_object_if_non_empty(&mut map, "text", text_style_snapshot(&style.text));
+    Value::Object(map)
 }
 
-fn part_style_map_snapshot(map: &std::collections::BTreeMap<String, PartStyle>) -> Value {
+fn insert_object_if_non_empty(map: &mut Map<String, Value>, key: &str, value: Value) {
+    if value.as_object().is_some_and(|object| !object.is_empty()) {
+        map.insert(key.to_string(), value);
+    }
+}
+
+fn compact_part_styles_snapshot(
+    style: &NodeStyle,
+    matched_part_rules: Option<&std::collections::BTreeMap<String, Vec<String>>>,
+) -> Value {
+    let mut names = std::collections::BTreeSet::new();
+    names.extend(style.parts.parts.keys().cloned());
+    names.extend(style.parts.hover.keys().cloned());
+    names.extend(style.parts.active.keys().cloned());
+    names.extend(style.parts.focus.keys().cloned());
+    names.extend(style.parts.disabled.keys().cloned());
+    names.extend(style.parts.checked.keys().cloned());
+    if let Some(matched_part_rules) = matched_part_rules {
+        names.extend(matched_part_rules.keys().cloned());
+    }
+
     let mut out = Map::new();
-    for (name, style) in map {
-        out.insert(name.clone(), part_style_snapshot(style));
+    for name in names {
+        let mut part = Map::new();
+        if let Some(matched) = matched_part_rules.and_then(|rules| rules.get(&name)) {
+            if !matched.is_empty() {
+                part.insert("matched_rules".to_string(), json!(matched));
+            }
+        }
+        if let Some(base) = style.parts.parts.get(&name) {
+            if let Value::Object(base_map) = part_style_snapshot(base) {
+                part.extend(base_map);
+            }
+        }
+        insert_part_state_snapshot(&mut part, "hover", style.parts.hover.get(&name));
+        insert_part_state_snapshot(&mut part, "active", style.parts.active.get(&name));
+        insert_part_state_snapshot(&mut part, "focus", style.parts.focus.get(&name));
+        insert_part_state_snapshot(&mut part, "disabled", style.parts.disabled.get(&name));
+        insert_part_state_snapshot(&mut part, "checked", style.parts.checked.get(&name));
+        if !part.is_empty() {
+            out.insert(name, Value::Object(part));
+        }
     }
     Value::Object(out)
 }
 
-fn node_style_snapshot(style: &NodeStyle) -> Value {
-    json!({
-        "layout": layout_style_snapshot(&style.layout),
-        "visual": visual_style_snapshot(&style.visual),
-        "text": text_style_snapshot(&style.text),
-        "widget": widget_style_snapshot(&style.widget),
-        "parts": {
-            "base": part_style_map_snapshot(&style.parts.parts),
-            "hover": part_style_map_snapshot(&style.parts.hover),
-            "active": part_style_map_snapshot(&style.parts.active),
-            "focus": part_style_map_snapshot(&style.parts.focus),
-            "disabled": part_style_map_snapshot(&style.parts.disabled),
-            "checked": part_style_map_snapshot(&style.parts.checked),
-        },
-        "hover": visual_style_snapshot(&style.hover),
-        "active": visual_style_snapshot(&style.active),
-        "focus": visual_style_snapshot(&style.focus),
-        "disabled": visual_style_snapshot(&style.disabled),
-        "checked": visual_style_snapshot(&style.checked),
-    })
+fn insert_part_state_snapshot(map: &mut Map<String, Value>, key: &str, style: Option<&PartStyle>) {
+    let Some(style) = style else {
+        return;
+    };
+    insert_object_if_non_empty(map, key, part_style_snapshot(style));
+}
+
+fn node_style_snapshot(
+    style: &NodeStyle,
+    matched_part_rules: Option<&std::collections::BTreeMap<String, Vec<String>>>,
+) -> Value {
+    let mut map = Map::new();
+    map.insert("layout".to_string(), layout_style_snapshot(&style.layout));
+    map.insert("visual".to_string(), visual_style_snapshot(&style.visual));
+    map.insert("text".to_string(), text_style_snapshot(&style.text));
+    map.insert("widget".to_string(), widget_style_snapshot(&style.widget));
+    insert_object_if_non_empty(
+        &mut map,
+        "parts",
+        compact_part_styles_snapshot(style, matched_part_rules),
+    );
+    map.insert("hover".to_string(), visual_style_snapshot(&style.hover));
+    map.insert("active".to_string(), visual_style_snapshot(&style.active));
+    map.insert("focus".to_string(), visual_style_snapshot(&style.focus));
+    map.insert(
+        "disabled".to_string(),
+        visual_style_snapshot(&style.disabled),
+    );
+    map.insert("checked".to_string(), visual_style_snapshot(&style.checked));
+    Value::Object(map)
 }
 
 fn computed_styles_snapshot(root: Option<&WidgetNode>, store: &StylesheetStore) -> Value {
@@ -556,25 +613,30 @@ fn computed_styles_snapshot(root: Option<&WidgetNode>, store: &StylesheetStore) 
         return json!({});
     };
     let matched_rules = matched_rule_labels_for_tree(root, store);
+    let matched_part_rules = matched_part_rule_labels_for_tree(root, store);
     let mut out = Map::new();
-    collect_computed_styles_snapshot(root, &matched_rules, &mut out);
+    collect_computed_styles_snapshot(root, &matched_rules, &matched_part_rules, &mut out);
     Value::Object(out)
 }
 
 fn collect_computed_styles_snapshot(
     node: &WidgetNode,
     matched_rules: &std::collections::BTreeMap<String, Vec<String>>,
+    matched_part_rules: &std::collections::BTreeMap<
+        String,
+        std::collections::BTreeMap<String, Vec<String>>,
+    >,
     out: &mut Map<String, Value>,
 ) {
     out.insert(
         node.id.clone(),
         json!({
             "matched_rules": matched_rules.get(&node.id).cloned().unwrap_or_default(),
-            "style": node_style_snapshot(&node.style),
+            "style": node_style_snapshot(&node.style, matched_part_rules.get(&node.id)),
         }),
     );
     for child in &node.children {
-        collect_computed_styles_snapshot(child, matched_rules, out);
+        collect_computed_styles_snapshot(child, matched_rules, matched_part_rules, out);
     }
 }
 
@@ -582,9 +644,11 @@ fn props_snapshot(node: &WidgetNode) -> Value {
     let props = &node.props;
     json!({
         "text": props.text.as_deref(),
+        "badge": props.badge.as_deref(),
         "fixed_width": props.fixed_width,
         "fixed_height": props.fixed_height,
         "disabled": props.disabled,
+        "expanded": props.expanded,
         "open": props.open,
         "target": props.target.as_deref(),
         "tooltip": props.tooltip.as_deref(),
@@ -596,6 +660,8 @@ fn props_snapshot(node: &WidgetNode) -> Value {
         "max": props.max,
         "step": props.step,
         "placeholder": props.placeholder.as_deref(),
+        "rows": props.rows,
+        "wrap": props.wrap,
         "items_count": props.items.len(),
         "route_value": props.route_value.as_deref(),
         "page": props.page.as_deref(),
@@ -659,6 +725,11 @@ fn widget_state_snapshot(state: Option<&WidgetState>) -> Value {
                     "scroll_row": table.scroll_row,
                     "scroll_col": table.scroll_col,
                     "selected": table.selected.map(|(row, col)| json!([row, col])),
+                    "selected_cell": table.selected.map(|(row, col)| json!({
+                        "row_index": row,
+                        "column_index": col,
+                        "column": table.columns.get(col).map(String::as_str).unwrap_or(""),
+                    })),
                     "sort": sort,
                 }),
             )
@@ -666,6 +737,7 @@ fn widget_state_snapshot(state: Option<&WidgetState>) -> Value {
         .collect();
     json!({
         "checked": &state.checked,
+        "expanded": &state.expanded,
         "float_val": &state.float_val,
         "float_range": &state.float_range,
         "text_val": &state.text_val,
@@ -740,6 +812,10 @@ fn set_widget_text_prop(node: &mut WidgetNode, id: &str, prop: &str, value: Stri
             target.props.text = Some(value);
             true
         }
+        (WidgetKind::Collapsible, "title" | "text") => {
+            target.props.text = Some(value);
+            true
+        }
         (
             WidgetKind::Tab | WidgetKind::NavItem | WidgetKind::Menu | WidgetKind::MenuItem,
             "label",
@@ -762,12 +838,45 @@ fn set_widget_open_prop(node: &mut WidgetNode, id: &str, open: bool) -> bool {
     true
 }
 
+fn set_widget_expanded_prop(node: &mut WidgetNode, id: &str, expanded: bool) -> bool {
+    let Some(target) = find_widget_mut(node, id) else {
+        return false;
+    };
+    if target.kind != WidgetKind::Collapsible {
+        return false;
+    }
+    target.props.expanded = Some(expanded);
+    true
+}
+
 fn set_widget_class_prop(node: &mut WidgetNode, id: &str, value: Option<String>) -> bool {
     let Some(target) = find_widget_mut(node, id) else {
         return false;
     };
     target.class_name = value;
     true
+}
+
+fn set_widget_badge_prop(node: &mut WidgetNode, id: &str, badge: Option<String>) -> bool {
+    let Some(target) = find_widget_mut(node, id) else {
+        return false;
+    };
+    if !matches!(
+        target.kind,
+        WidgetKind::Button | WidgetKind::Tab | WidgetKind::NavItem
+    ) {
+        return false;
+    }
+    target.props.badge = badge.filter(|value| !value.is_empty());
+    true
+}
+
+fn format_badge_number(value: f32) -> String {
+    if value.is_finite() && value.fract().abs() < f32::EPSILON {
+        format!("{}", value as i64)
+    } else {
+        format!("{value}")
+    }
 }
 
 fn set_widget_image_prop(node: &mut WidgetNode, id: &str, prop: &str, value: String) -> bool {
@@ -963,6 +1072,160 @@ mod style_patch_tests {
         assert_eq!(value["dirty"], "visual");
         assert_eq!(value["outcome"], "applied");
         assert_eq!(value["requested_redraw"], true);
+    }
+
+    #[test]
+    fn computed_style_snapshot_omits_empty_part_styles() {
+        let tree = crate::document::parse_widget_node(&json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "run",
+                "type": "button",
+                "props": {"text": "Run"}
+            }]
+        }))
+        .unwrap();
+        let store = StylesheetStore::default();
+
+        let snapshot = computed_styles_snapshot(Some(&tree), &store);
+        let button_style = &snapshot["run"]["style"];
+
+        assert!(button_style["layout"].is_object());
+        assert!(button_style.get("parts").is_none());
+    }
+
+    #[test]
+    fn computed_style_snapshot_includes_part_matched_rules() {
+        let mut tree = crate::document::parse_widget_node(&json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "amount",
+                "type": "number_input",
+                "class": "numeric"
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                NumberInput::stepper { width: 34px; background: surface_alt; }
+                .numeric:hover::stepper-up { color: accent; }
+                "#,
+            )
+            .unwrap();
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+
+        let snapshot = computed_styles_snapshot(Some(&tree), &store);
+        let parts = &snapshot["amount"]["style"]["parts"];
+
+        assert_eq!(
+            parts["stepper"]["matched_rules"],
+            json!(["user: NumberInput::stepper"])
+        );
+        assert_eq!(parts["stepper"]["layout"]["width"], json!(34.0));
+        assert_eq!(
+            parts["stepper"]["visual"]["background"]["token"],
+            "surface_alt"
+        );
+        assert_eq!(
+            parts["stepper-up"]["matched_rules"],
+            json!(["user: .numeric:hover::stepper-up"])
+        );
+        assert_eq!(
+            parts["stepper-up"]["hover"]["text"]["color"]["token"],
+            "accent"
+        );
+        assert!(parts.get("base").is_none());
+        assert!(parts.get("hover").is_none());
+    }
+
+    #[test]
+    fn number_input_stepper_hit_test_uses_part_width() {
+        let default_tree = crate::document::parse_widget_node(&json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "amount",
+                "type": "number_input"
+            }]
+        }))
+        .unwrap();
+        let styled_tree = crate::document::parse_widget_node(&json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "amount",
+                "type": "number_input",
+                "style": {
+                    "parts": {
+                        "stepper": {"width": 40}
+                    }
+                }
+            }]
+        }))
+        .unwrap();
+        let mut widget_kinds = HashMap::new();
+        collect_widget_kinds(&styled_tree, &mut widget_kinds);
+        let state = WidgetState::from_tree(&styled_tree);
+        let mut layout = crate::layout::LayoutResult::default();
+        layout.rects.insert(
+            "amount".to_string(),
+            crate::layout::Rect {
+                x: 100.0,
+                y: 10.0,
+                w: 100.0,
+                h: 40.0,
+            },
+        );
+
+        assert_eq!(
+            number_input_step_at_pos(
+                Some(&default_tree),
+                &widget_kinds,
+                &state,
+                &layout,
+                1.0,
+                [165.0, 20.0],
+            ),
+            None
+        );
+        assert_eq!(
+            number_input_step_at_pos(
+                Some(&styled_tree),
+                &widget_kinds,
+                &state,
+                &layout,
+                1.0,
+                [165.0, 20.0],
+            ),
+            Some(("amount".to_string(), 1.0))
+        );
+        assert_eq!(
+            number_input_step_at_pos(
+                Some(&styled_tree),
+                &widget_kinds,
+                &state,
+                &layout,
+                1.0,
+                [165.0, 31.0],
+            ),
+            Some(("amount".to_string(), -1.0))
+        );
+        assert_eq!(
+            number_input_step_at_pos(
+                Some(&styled_tree),
+                &widget_kinds,
+                &state,
+                &layout,
+                1.0,
+                [159.9, 20.0],
+            ),
+            None
+        );
     }
 
     #[test]
@@ -1162,8 +1425,10 @@ struct WgpuState {
     images: Option<ImageRenderer>,
     widget_tree: Option<WidgetNode>,
     widget_kinds: HashMap<String, WidgetKind>,
-    caret_positions: HashMap<String, f32>,
+    caret_positions: HashMap<String, [f32; 2]>,
     resources: ResourceRegistry,
+    toasts: Vec<RuntimeToast>,
+    toast_overlays: Vec<ToastOverlay>,
     /// Mutable per-widget interactive state (checkbox, slider, hover, press).
     widget_state: Option<WidgetState>,
     /// Layout saved after each `apply_layout` call for hit testing.
@@ -1183,6 +1448,71 @@ struct ScatterMetrics {
     last_decode_ms: f64,
     last_upload_ms: f64,
     last_total_native_ms: f64,
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeToast {
+    id: String,
+    message: String,
+    level: ToastLevel,
+    duration: Option<Duration>,
+    created: Instant,
+}
+
+impl RuntimeToast {
+    fn expires_at(&self) -> Option<Instant> {
+        self.duration
+            .and_then(|duration| self.created.checked_add(duration))
+    }
+
+    fn is_expired(&self, now: Instant) -> bool {
+        self.expires_at().is_some_and(|deadline| now >= deadline)
+    }
+
+    fn overlay(&self) -> ToastOverlay {
+        ToastOverlay {
+            id: self.id.clone(),
+            message: self.message.clone(),
+            level: self.level,
+        }
+    }
+}
+
+fn number_input_step_at_pos(
+    widget_tree: Option<&WidgetNode>,
+    widget_kinds: &HashMap<String, WidgetKind>,
+    state: &WidgetState,
+    layout: &crate::layout::LayoutResult,
+    scale_factor: f32,
+    pos: [f32; 2],
+) -> Option<(String, f32)> {
+    for (id, kind) in widget_kinds {
+        if kind != &WidgetKind::NumberInput || state.is_disabled(id) {
+            continue;
+        }
+        let Some(rect) = layout.rects.get(id) else {
+            continue;
+        };
+        let step_w = widget_tree
+            .and_then(|tree| crate::overlays::find_node(tree, id))
+            .map(|node| number_stepper_width_for_style(&node.style, rect.w, scale_factor))
+            .unwrap_or_else(|| number_stepper_width(rect.w, scale_factor));
+        let step_x = rect.x + rect.w - step_w;
+        if pos[0] < step_x
+            || pos[0] >= rect.x + rect.w
+            || pos[1] < rect.y
+            || pos[1] >= rect.y + rect.h
+        {
+            continue;
+        }
+        let direction = if pos[1] < rect.y + rect.h * 0.5 {
+            1.0
+        } else {
+            -1.0
+        };
+        return Some((id.clone(), direction));
+    }
+    None
 }
 
 impl WgpuState {
@@ -1227,7 +1557,7 @@ impl WgpuState {
         let (depth_texture, depth_view) = create_depth_texture(&device, width, height);
         let theme = spec.theme.unwrap_or_else(Theme::dark);
 
-        let (scatter, upload_ms) = if let Some(scatter_spec) = spec.scatter {
+        let (scatter, upload_ms, scatter_points) = if let Some(scatter_spec) = spec.scatter {
             let mut s = ScatterWidget::new(&device, config.format, width, height);
             let t0 = Instant::now();
             let pts = if let Some(b64) = scatter_spec.data_b64 {
@@ -1238,9 +1568,9 @@ impl WgpuState {
             s.set_points(&device, &queue, &pts);
             s.update_camera(&queue);
             let ms = t0.elapsed().as_secs_f64() * 1000.0;
-            (Some(s), ms)
+            (Some(s), ms, pts)
         } else {
-            (None, 0.0)
+            (None, 0.0, Vec::new())
         };
 
         let primitives = spec
@@ -1286,13 +1616,15 @@ impl WgpuState {
             scale_factor,
             scatter,
             scatter_widget_id,
-            scatter_decode_scratch: Vec::new(),
+            scatter_decode_scratch: scatter_points,
             primitives,
             images,
             widget_tree: spec.widget_tree,
             widget_kinds,
             caret_positions: HashMap::new(),
             resources,
+            toasts: Vec::new(),
+            toast_overlays: Vec::new(),
             widget_state,
             current_layout: None,
             text,
@@ -1317,6 +1649,7 @@ impl WgpuState {
             text,
             scatter,
             caret_positions,
+            toast_overlays,
             device,
             queue,
             config,
@@ -1362,7 +1695,17 @@ impl WgpuState {
         let new_caret_positions =
             if let (Some(t), Some(state)) = (text.as_mut(), widget_state.as_ref()) {
                 t.update_screen(queue, config.width, config.height);
-                t.rebuild(tree, &layout, theme, *scale_factor, state, resources)
+                t.rebuild(
+                    tree,
+                    &layout,
+                    theme,
+                    *scale_factor,
+                    state,
+                    resources,
+                    toast_overlays,
+                    config.width as f32,
+                    config.height as f32,
+                )
             } else {
                 HashMap::new()
             };
@@ -1379,6 +1722,9 @@ impl WgpuState {
                 *scale_factor,
                 state,
                 caret_positions,
+                toast_overlays,
+                config.width as f32,
+                config.height as f32,
             );
         }
 
@@ -1396,6 +1742,8 @@ impl WgpuState {
             theme,
             scale_factor,
             caret_positions,
+            toast_overlays,
+            config,
             ..
         } = self;
 
@@ -1414,6 +1762,9 @@ impl WgpuState {
                 *scale_factor,
                 state,
                 caret_positions,
+                toast_overlays,
+                config.width as f32,
+                config.height as f32,
             );
         }
     }
@@ -1428,6 +1779,8 @@ impl WgpuState {
             scale_factor,
             caret_positions,
             resources,
+            toast_overlays,
+            config,
             ..
         } = self;
 
@@ -1437,7 +1790,17 @@ impl WgpuState {
             widget_state.as_ref(),
             text.as_mut(),
         ) {
-            *caret_positions = t.rebuild(tree, layout, theme, *scale_factor, state, resources);
+            *caret_positions = t.rebuild(
+                tree,
+                layout,
+                theme,
+                *scale_factor,
+                state,
+                resources,
+                toast_overlays,
+                config.width as f32,
+                config.height as f32,
+            );
         } else {
             caret_positions.clear();
         }
@@ -1474,6 +1837,24 @@ impl WgpuState {
             .unwrap_or(false)
     }
 
+    fn scatter_pick_payload(&self, pos: [f32; 2]) -> Option<(String, String)> {
+        let id = self.scatter_widget_id.as_ref()?.clone();
+        let (index, point) =
+            self.scatter
+                .as_ref()?
+                .pick_point(&self.scatter_decode_scratch, pos[0], pos[1], 8.0)?;
+        Some((
+            id,
+            json!({
+                "index": index,
+                "x": point.position[0],
+                "y": point.position[1],
+                "z": point.position[2],
+            })
+            .to_string(),
+        ))
+    }
+
     /// Hit test interactive UI widgets at physical pixel position `pos`.
     fn hit_test_ui(&self, pos: [f32; 2]) -> Option<(String, WidgetKind)> {
         let (tree, layout) = match (self.widget_tree.as_ref(), self.current_layout.as_ref()) {
@@ -1481,7 +1862,11 @@ impl WgpuState {
             _ => return None,
         };
         let state = self.widget_state.as_ref()?;
-        hit_test(tree, layout, pos).filter(|(id, _)| !state.is_disabled(id))
+        hit_test(tree, layout, pos)
+            .filter(|(id, kind)| {
+                kind != &WidgetKind::Collapsible || self.collapsible_header_contains(id, pos)
+            })
+            .filter(|(id, _)| !state.is_disabled(id))
     }
 
     fn hit_test_hover(&self, pos: [f32; 2]) -> Option<(String, WidgetKind)> {
@@ -1496,7 +1881,36 @@ impl WgpuState {
             _ => return None,
         };
         let state = self.widget_state.as_ref()?;
-        hit_test_hover(tree, layout, pos).filter(|(id, _)| !state.is_disabled(id))
+        hit_test_hover(tree, layout, pos)
+            .filter(|(id, kind)| {
+                kind != &WidgetKind::Collapsible || self.collapsible_header_contains(id, pos)
+            })
+            .filter(|(id, _)| !state.is_disabled(id))
+    }
+
+    fn collapsible_header_contains(&self, id: &str, pos: [f32; 2]) -> bool {
+        let Some(tree) = self.widget_tree.as_ref() else {
+            return false;
+        };
+        let Some(layout) = self.current_layout.as_ref() else {
+            return false;
+        };
+        let Some(node) = find_widget(tree, id) else {
+            return false;
+        };
+        let Some(rect) = layout.rects.get(id) else {
+            return false;
+        };
+        if node.kind != WidgetKind::Collapsible {
+            return false;
+        }
+        let header_h =
+            collapsible_header_height_for_style(&node.style, &self.theme, self.scale_factor)
+                .min(rect.h.max(0.0));
+        pos[0] >= rect.x
+            && pos[0] < rect.x + rect.w
+            && pos[1] >= rect.y
+            && pos[1] < rect.y + header_h
     }
 
     fn modal_blocks_point(&self, pos: [f32; 2]) -> bool {
@@ -1526,35 +1940,14 @@ impl WgpuState {
     }
 
     fn number_input_step_at(&self, pos: [f32; 2]) -> Option<(String, f32)> {
-        let state = self.widget_state.as_ref()?;
-        let layout = self.current_layout.as_ref()?;
-        for (id, kind) in &self.widget_kinds {
-            if kind != &WidgetKind::NumberInput || state.is_disabled(id) {
-                continue;
-            }
-            let rect = layout.rects.get(id)?;
-            let step_w = self
-                .widget_tree
-                .as_ref()
-                .and_then(|tree| crate::overlays::find_node(tree, id))
-                .map(|node| number_stepper_width_for_style(&node.style, rect.w, self.scale_factor))
-                .unwrap_or_else(|| number_stepper_width(rect.w, self.scale_factor));
-            let step_x = rect.x + rect.w - step_w;
-            if pos[0] < step_x
-                || pos[0] >= rect.x + rect.w
-                || pos[1] < rect.y
-                || pos[1] >= rect.y + rect.h
-            {
-                continue;
-            }
-            let direction = if pos[1] < rect.y + rect.h * 0.5 {
-                1.0
-            } else {
-                -1.0
-            };
-            return Some((id.clone(), direction));
-        }
-        None
+        number_input_step_at_pos(
+            self.widget_tree.as_ref(),
+            &self.widget_kinds,
+            self.widget_state.as_ref()?,
+            self.current_layout.as_ref()?,
+            self.scale_factor,
+            pos,
+        )
     }
 
     /// Look up the kind of widget with `id` in the widget tree.
@@ -1597,6 +1990,7 @@ impl WgpuState {
                     | WidgetKind::Checkbox
                     | WidgetKind::NumberInput
                     | WidgetKind::ProgressBar
+                    | WidgetKind::Collapsible
                     | WidgetKind::Modal
                     | WidgetKind::Page
                     | WidgetKind::Tab
@@ -1621,6 +2015,44 @@ impl WgpuState {
             if let Some(tree) = self.widget_tree.as_mut() {
                 if set_widget_open_prop(tree, id, open) {
                     return Some(Dirty::Layout);
+                }
+            }
+            return None;
+        }
+        if kind == WidgetKind::Collapsible && prop == "expanded" {
+            let CommandValue::Bool(expanded) = value else {
+                eprintln!(
+                    "DragonGUI: ignoring unsupported live SetProp for widget {id:?} ({kind:?}).{prop}"
+                );
+                return None;
+            };
+            if let Some(state) = self.widget_state.as_mut() {
+                state.set_expanded(id, expanded)?;
+            }
+            if let Some(tree) = self.widget_tree.as_mut() {
+                set_widget_expanded_prop(tree, id, expanded);
+            }
+            return Some(Dirty::Layout);
+        }
+        if matches!(
+            kind,
+            WidgetKind::Button | WidgetKind::Tab | WidgetKind::NavItem
+        ) && prop == "badge"
+        {
+            let badge = match value {
+                CommandValue::Text(text) => Some(text),
+                CommandValue::Float(value) => Some(format_badge_number(value)),
+                CommandValue::None => None,
+                other => {
+                    eprintln!(
+                        "DragonGUI: ignoring unsupported live badge value for widget {id:?}: {other:?}"
+                    );
+                    return None;
+                }
+            };
+            if let Some(tree) = self.widget_tree.as_mut() {
+                if set_widget_badge_prop(tree, id, badge) {
+                    return Some(Dirty::Text);
                 }
             }
             return None;
@@ -1666,7 +2098,7 @@ impl WgpuState {
                 state.set_dropdown_value(id, &v)?;
                 Some(Dirty::Text)
             }
-            (WidgetKind::TextInput, "value", CommandValue::Text(v)) => {
+            (WidgetKind::TextInput | WidgetKind::TextArea, "value", CommandValue::Text(v)) => {
                 state.set_text_value(id, v)?;
                 Some(Dirty::Text)
             }
@@ -1946,6 +2378,80 @@ impl WgpuState {
         self.apply_layout();
     }
 
+    fn show_toast(
+        &mut self,
+        id: String,
+        message: String,
+        level: ToastLevel,
+        duration_ms: Option<u64>,
+    ) {
+        let toast = RuntimeToast {
+            id,
+            message,
+            level,
+            duration: duration_ms.map(Duration::from_millis),
+            created: Instant::now(),
+        };
+        if let Some(existing) = self
+            .toasts
+            .iter_mut()
+            .find(|existing| existing.id == toast.id)
+        {
+            *existing = toast;
+        } else {
+            self.toasts.push(toast);
+        }
+        self.refresh_toast_overlays();
+    }
+
+    fn dismiss_toast(&mut self, id: &str) -> bool {
+        let before = self.toasts.len();
+        self.toasts.retain(|toast| toast.id != id);
+        let changed = self.toasts.len() != before;
+        if changed {
+            self.refresh_toast_overlays();
+        }
+        changed
+    }
+
+    fn expire_toasts(&mut self) -> bool {
+        let now = Instant::now();
+        let before = self.toasts.len();
+        self.toasts.retain(|toast| !toast.is_expired(now));
+        let changed = self.toasts.len() != before;
+        if changed {
+            self.refresh_toast_overlays();
+        }
+        changed
+    }
+
+    fn next_toast_deadline(&self) -> Option<Instant> {
+        self.toasts
+            .iter()
+            .filter_map(RuntimeToast::expires_at)
+            .min()
+    }
+
+    fn refresh_toast_overlays(&mut self) {
+        self.toast_overlays = self.toasts.iter().map(RuntimeToast::overlay).collect();
+    }
+
+    fn toast_snapshot(&self) -> Value {
+        let now = Instant::now();
+        json!({
+            "count": self.toasts.len(),
+            "items": self.toasts.iter().map(|toast| {
+                json!({
+                    "id": toast.id.as_str(),
+                    "message": toast.message.as_str(),
+                    "level": toast.level.as_str(),
+                    "duration_ms": toast.duration.map(|duration| duration.as_millis() as u64),
+                    "age_ms": now.saturating_duration_since(toast.created).as_millis() as u64,
+                })
+            }).collect::<Vec<_>>(),
+        })
+    }
+
     fn debug_snapshot_value(&self) -> Value {
         json!({
             "window": {
@@ -1965,6 +2471,7 @@ impl WgpuState {
             "tree": self.widget_tree.as_ref().map(node_snapshot),
             "layout": layout_snapshot(self.current_layout.as_ref()),
             "state": widget_state_snapshot(self.widget_state.as_ref()),
+            "toasts": self.toast_snapshot(),
             "renderer": {
                 "surface_format": format!("{:?}", self.config.format),
                 "has_primitives": self.primitives.is_some(),
@@ -2169,6 +2676,21 @@ impl WgpuState {
         table::hit(table_state, rect, metrics, pos).map(|hit| (id, hit))
     }
 
+    fn table_selection_payload(&self, id: &str, row: usize, col: usize) -> Option<String> {
+        let table_state = self.widget_state.as_ref()?.table(id)?;
+        let column = table_state.columns.get(col)?.clone();
+        let value = table::cell_text(table_state, &self.resources, row, col);
+        Some(
+            json!({
+                "row_index": row,
+                "column_index": col,
+                "column": column,
+                "value": value,
+            })
+            .to_string(),
+        )
+    }
+
     fn table_visible_counts(&self, id: &str) -> Option<(usize, usize)> {
         let layout = self.current_layout.as_ref()?;
         let state = self.widget_state.as_ref()?;
@@ -2199,7 +2721,10 @@ impl WgpuState {
 
     fn focused_text_input_rect(&self) -> Option<crate::layout::Rect> {
         let (id, kind) = self.focused_kind()?;
-        if !matches!(kind, WidgetKind::TextInput | WidgetKind::NumberInput) {
+        if !matches!(
+            kind,
+            WidgetKind::TextInput | WidgetKind::TextArea | WidgetKind::NumberInput
+        ) {
             return None;
         }
         self.current_layout.as_ref()?.rects.get(&id).copied()
@@ -2388,6 +2913,7 @@ struct DragonApp {
     change_cbs: HashMap<String, Box<dyn Fn(ChangeValue) + Send>>,
     /// Active slider drag session (pointer-down on a Slider widget).
     slider_drag: Option<SliderDrag>,
+    scatter_press_pos: Option<[f32; 2]>,
     /// Last slider value sent to Python during drag throttling.
     last_slider_emit: Option<SliderChangeDispatch>,
     /// Most recent slider value waiting for a throttled callback slot.
@@ -2421,6 +2947,7 @@ impl DragonApp {
             click_cbs: HashMap::new(),
             change_cbs: HashMap::new(),
             slider_drag: None,
+            scatter_press_pos: None,
             last_slider_emit: None,
             pending_slider_emit: None,
             pressed_id: None,
@@ -3014,6 +3541,61 @@ impl DragonApp {
                     redraw,
                 )
             }
+            Command::ShowToast {
+                id,
+                message,
+                level,
+                duration_ms,
+            } => {
+                let detail = Some(format!(
+                    "level={level}, duration_ms={}",
+                    duration_ms
+                        .map(|duration| duration.to_string())
+                        .unwrap_or_else(|| "persistent".to_string())
+                ));
+                let (outcome, redraw) = {
+                    let Some(gpu) = &mut self.gpu else {
+                        return self.record_runtime_command(
+                            "ShowToast",
+                            Some(id),
+                            detail,
+                            None,
+                            "gpu_not_ready",
+                            false,
+                        );
+                    };
+                    match ToastLevel::from_str(&level) {
+                        Some(level) => {
+                            gpu.show_toast(id.clone(), message, level, duration_ms);
+                            gpu.rebuild_visuals();
+                            ("applied".to_string(), true)
+                        }
+                        None => (format!("unknown_level: {level}"), false),
+                    }
+                };
+                self.record_runtime_command("ShowToast", Some(id), detail, None, &outcome, redraw)
+            }
+            Command::DismissToast { id } => {
+                let (outcome, redraw) = {
+                    let Some(gpu) = &mut self.gpu else {
+                        return self.record_runtime_command(
+                            "DismissToast",
+                            Some(id),
+                            None,
+                            None,
+                            "gpu_not_ready",
+                            false,
+                        );
+                    };
+                    if gpu.dismiss_toast(&id) {
+                        gpu.rebuild_visuals();
+                        ("dismissed".to_string(), true)
+                    } else {
+                        ("missing".to_string(), false)
+                    }
+                };
+                self.record_runtime_command("DismissToast", Some(id), None, None, &outcome, redraw)
+            }
             Command::DebugSnapshot { request_id } => {
                 self.record_runtime_command(
                     "DebugSnapshot",
@@ -3173,6 +3755,22 @@ impl DragonApp {
                     .unwrap_or(false);
                 self.emit_change(id, ChangeValue::Bool(new_val));
             }
+            WidgetKind::Collapsible => {
+                let new_val = self
+                    .gpu
+                    .as_mut()
+                    .and_then(|g| g.widget_state.as_mut())
+                    .and_then(|ws| ws.toggle_expanded(id));
+                if let Some(expanded) = new_val {
+                    if let Some(gpu) = &mut self.gpu {
+                        if let Some(tree) = gpu.widget_tree.as_mut() {
+                            set_widget_expanded_prop(tree, id, expanded);
+                        }
+                    }
+                    self.emit_change(id, ChangeValue::Bool(expanded));
+                    needs_layout_rebuild = true;
+                }
+            }
             WidgetKind::Dropdown => {
                 if let Some(gpu) = &mut self.gpu {
                     if let Some(ws) = &mut gpu.widget_state {
@@ -3251,11 +3849,16 @@ impl DragonApp {
     }
 
     fn select_table_cell(&mut self, id: &str, row: usize, col: usize) {
+        let mut payload = None;
         if let Some(gpu) = &mut self.gpu {
             if let Some(ws) = &mut gpu.widget_state {
                 ws.select_table_cell(id, row, col);
             }
+            payload = gpu.table_selection_payload(id, row, col);
             gpu.rebuild_visuals();
+        }
+        if let Some(payload) = payload {
+            self.emit_change(id, ChangeValue::Text(payload));
         }
         self.request_redraw();
     }
@@ -3342,7 +3945,12 @@ impl DragonApp {
         if let Some((id, kind)) = focused {
             match kind {
                 WidgetKind::TextInput => {
-                    if self.handle_text_input_key(&id, &event) {
+                    if self.handle_text_input_key(&id, &event, false) {
+                        return;
+                    }
+                }
+                WidgetKind::TextArea => {
+                    if self.handle_text_input_key(&id, &event, true) {
                         return;
                     }
                 }
@@ -3433,7 +4041,7 @@ impl DragonApp {
                     }
                     _ => {}
                 },
-                WidgetKind::Button | WidgetKind::Checkbox => {
+                WidgetKind::Button | WidgetKind::Checkbox | WidgetKind::Collapsible => {
                     if matches!(
                         &event.logical_key,
                         Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Space)
@@ -3714,7 +4322,12 @@ impl DragonApp {
         handled
     }
 
-    fn handle_text_input_key(&mut self, id: &str, event: &winit::event::KeyEvent) -> bool {
+    fn handle_text_input_key(
+        &mut self,
+        id: &str,
+        event: &winit::event::KeyEvent,
+        multiline: bool,
+    ) -> bool {
         let mut changed: Option<String> = None;
         let mut handled = true;
         match &event.logical_key {
@@ -3760,6 +4373,13 @@ impl DragonApp {
                     }
                 }
             }
+            Key::Named(NamedKey::Enter) if multiline => {
+                changed = self
+                    .gpu
+                    .as_mut()
+                    .and_then(|g| g.widget_state.as_mut())
+                    .and_then(|ws| ws.insert_text(id, "\n"));
+            }
             Key::Named(NamedKey::Escape) => {
                 self.set_focus(None);
                 return true;
@@ -3774,7 +4394,14 @@ impl DragonApp {
             && !self.modifiers.alt_key()
             && !self.modifiers.super_key()
         {
-            if let Some(text) = event.text.as_deref().filter(|text| is_insert_text(text)) {
+            let insertable = event.text.as_deref().filter(|text| {
+                if multiline {
+                    is_insert_multiline_text(text)
+                } else {
+                    is_insert_text(text)
+                }
+            });
+            if let Some(text) = insertable {
                 changed = self
                     .gpu
                     .as_mut()
@@ -3802,6 +4429,13 @@ fn is_insert_text(text: &str) -> bool {
         && !text
             .chars()
             .any(|ch| ch == '\r' || ch == '\n' || ch == '\t' || ch.is_control())
+}
+
+fn is_insert_multiline_text(text: &str) -> bool {
+    !text.is_empty()
+        && !text
+            .chars()
+            .any(|ch| ch == '\r' || ch == '\t' || (ch.is_control() && ch != '\n'))
 }
 
 impl ApplicationHandler<RuntimeEvent> for DragonApp {
@@ -3853,6 +4487,26 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
         }
     }
 
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let mut request_redraw = false;
+        let mut next_deadline = None;
+        if let Some(gpu) = &mut self.gpu {
+            if gpu.expire_toasts() {
+                gpu.rebuild_visuals();
+                request_redraw = true;
+            }
+            next_deadline = gpu.next_toast_deadline();
+        }
+        if request_redraw {
+            self.request_redraw();
+        }
+        if let Some(deadline) = next_deadline {
+            event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+        } else {
+            event_loop.set_control_flow(ControlFlow::Wait);
+        }
+    }
+
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => {
@@ -3888,6 +4542,8 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                     MouseButton::Left => {
                         if !pressed {
                             // ── release ───────────────────────────────────────
+                            let was_orbiting = self.orbit_active;
+                            let scatter_press = self.scatter_press_pos.take();
                             self.orbit_active = false;
                             let released_slider =
                                 self.slider_drag.as_ref().map(|drag| drag.widget_id.clone());
@@ -3895,6 +4551,24 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                 self.flush_slider_change(&id);
                             }
                             self.slider_drag = None;
+
+                            if was_orbiting {
+                                let pos = self.last_mouse_pos.unwrap_or([0.0, 0.0]);
+                                let moved2 = scatter_press
+                                    .map(|start| {
+                                        let dx = pos[0] - start[0];
+                                        let dy = pos[1] - start[1];
+                                        dx * dx + dy * dy
+                                    })
+                                    .unwrap_or(f32::INFINITY);
+                                if moved2 <= 16.0 {
+                                    if let Some((id, payload)) =
+                                        self.gpu.as_ref().and_then(|g| g.scatter_pick_payload(pos))
+                                    {
+                                        self.emit_change(&id, ChangeValue::Text(payload));
+                                    }
+                                }
+                            }
 
                             if let Some(pid) = self.pressed_id.take() {
                                 // Clear pressed visual state.
@@ -4048,6 +4722,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                             if over_scatter {
                                 self.set_focus(None);
                                 self.orbit_active = true;
+                                self.scatter_press_pos = Some(pos);
                             } else {
                                 self.set_focus(None);
                             }
@@ -4104,7 +4779,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                         had_hover || had_dropdown_hover
                     });
                     if cleared {
-                        gpu.rebuild_visuals();
+                        gpu.apply_layout();
                         self.request_redraw();
                     }
                 }
@@ -4163,9 +4838,9 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                 ws.hovered = new_hover;
                                 ws.dropdown_hover = new_dropdown_hover;
                             }
-                            // Hover can affect tooltip text, text suppression under overlays,
-                            // and pseudo-state foreground colours, not just primitive fills.
-                            gpu.rebuild_visuals();
+                            // Rich tooltip content participates in overlay layout, so hover
+                            // changes can affect rects as well as paint/text state.
+                            gpu.apply_layout();
                         }
                         self.request_redraw();
                     }
@@ -4228,7 +4903,11 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
             WindowEvent::Ime(Ime::Commit(text)) => {
                 let focused = self.gpu.as_ref().and_then(|g| g.focused_kind());
                 if let Some((id, kind)) = focused {
-                    if is_insert_text(&text) {
+                    let insertable = match kind {
+                        WidgetKind::TextArea => is_insert_multiline_text(&text),
+                        _ => is_insert_text(&text),
+                    };
+                    if insertable {
                         let changed = self
                             .gpu
                             .as_mut()
@@ -4236,6 +4915,15 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                             .and_then(|ws| ws.insert_text(&id, &text));
                         match kind {
                             WidgetKind::TextInput => {
+                                if let Some(value) = changed {
+                                    self.emit_change(&id, ChangeValue::Text(value));
+                                }
+                                if let Some(gpu) = &mut self.gpu {
+                                    gpu.rebuild_visuals();
+                                }
+                                self.request_redraw();
+                            }
+                            WidgetKind::TextArea => {
                                 if let Some(value) = changed {
                                     self.emit_change(&id, ChangeValue::Text(value));
                                 }

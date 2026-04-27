@@ -134,6 +134,39 @@ pub(crate) fn tooltip_target<'a>(
     Some((node, rect))
 }
 
+pub(crate) fn rich_tooltip_target<'a>(
+    tree: &'a WidgetNode,
+    layout: &LayoutResult,
+    state: &WidgetState,
+) -> Option<(&'a WidgetNode, Rect)> {
+    let hovered = state.hovered.as_deref()?;
+    let node = active_rich_tooltip(tree, hovered)?;
+    let rect = layout.rects.get(&node.id).copied()?;
+    Some((node, rect))
+}
+
+pub(crate) fn active_tooltip_overlay_rect(
+    tree: &WidgetNode,
+    layout: &LayoutResult,
+    theme: &Theme,
+    state: &WidgetState,
+    sf: f32,
+) -> Option<Rect> {
+    rich_tooltip_target(tree, layout, state)
+        .map(|(_, rect)| rect)
+        .or_else(|| tooltip_target(tree, layout, theme, state, sf).map(|(_, rect)| rect))
+}
+
+fn active_rich_tooltip<'a>(node: &'a WidgetNode, hovered: &str) -> Option<&'a WidgetNode> {
+    for child in node.children.iter().rev() {
+        if let Some(found) = active_rich_tooltip(child, hovered) {
+            return Some(found);
+        }
+    }
+    (node.kind == WidgetKind::Tooltip && node.props.target.as_deref() == Some(hovered))
+        .then_some(node)
+}
+
 pub(crate) fn estimate_text_width(text: &str, font_size: f32) -> f32 {
     text.chars()
         .map(|ch| char_width_factor(ch) * font_size)

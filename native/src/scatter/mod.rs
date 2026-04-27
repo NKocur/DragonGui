@@ -258,6 +258,49 @@ impl ScatterWidget {
         x >= left && x < right && y >= top && y < bottom
     }
 
+    pub fn pick_point(
+        &self,
+        points: &[PointInstance],
+        x: f32,
+        y: f32,
+        radius_px: f32,
+    ) -> Option<(usize, PointInstance)> {
+        if !self.contains_point(x, y) || self.width == 0 || self.height == 0 {
+            return None;
+        }
+        let local_x = x - self.offset[0];
+        let local_y = y - self.offset[1];
+        let view_proj = self.camera.view_proj();
+        let mut best: Option<(usize, PointInstance, f32, f32)> = None;
+        for (idx, point) in points.iter().copied().enumerate() {
+            let clip = view_proj
+                * glam::Vec4::new(point.position[0], point.position[1], point.position[2], 1.0);
+            if clip.w <= 0.0 {
+                continue;
+            }
+            let ndc = clip.truncate() / clip.w;
+            if ndc.x.abs() > 1.0 || ndc.y.abs() > 1.0 || ndc.z < 0.0 || ndc.z > 1.0 {
+                continue;
+            }
+            let screen_x = (ndc.x * 0.5 + 0.5) * self.width as f32;
+            let screen_y = (0.5 - ndc.y * 0.5) * self.height as f32;
+            let dx = screen_x - local_x;
+            let dy = screen_y - local_y;
+            let threshold = radius_px.max(point.size * 0.75);
+            let dist2 = dx * dx + dy * dy;
+            if dist2 > threshold * threshold {
+                continue;
+            }
+            match best {
+                Some((_, _, best_dist2, best_depth))
+                    if best_dist2 < dist2
+                        || ((best_dist2 - dist2).abs() <= f32::EPSILON && best_depth <= ndc.z) => {}
+                _ => best = Some((idx, point, dist2, ndc.z)),
+            }
+        }
+        best.map(|(idx, point, _, _)| (idx, point))
+    }
+
     /// Record draw commands into an active render pass.
     ///
     /// Applies a viewport and scissor rect so the scatter only draws within

@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import AbstractContextManager
+from dataclasses import dataclass
 from itertools import count
 import math
 import numbers
@@ -104,11 +105,68 @@ def _color_hex(value: Sequence[int]) -> str:
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
-def _copy_style(style: Mapping[str, object] | None) -> dict[str, object] | None:
+_SUPPORTED_PARTS_BY_KIND: dict[str, set[str]] = {
+    "panel": {"accent"},
+    "collapsible": {"header", "indicator", "body"},
+    "button": {"badge"},
+    "number_input": {
+        "field",
+        "stepper",
+        "stepper-up",
+        "stepper-down",
+        "stepper-divider",
+        "divider",
+        "caret",
+    },
+    "dropdown": {"field", "chevron", "menu", "item", "item-selected", "item-hover"},
+    "checkbox": {"row", "box", "indicator", "label"},
+    "slider": {"track", "fill", "thumb"},
+    "progress_bar": {"track", "fill", "label"},
+    "tabs": {"header"},
+    "tab": {"tab", "accent", "badge"},
+    "nav_item": {"item", "accent", "badge"},
+    "dataframe_table": {"header", "row", "row-selected", "grid-line"},
+}
+
+
+def _normalize_part_name(name: object) -> str:
+    if not isinstance(name, str):
+        raise TypeError("inline style part names must be strings")
+    normalized = name.strip().replace("_", "-").lower()
+    if not normalized:
+        raise ValueError("inline style part names must be non-empty")
+    return normalized
+
+
+def _validate_style_parts(style: Mapping[str, object], widget_kind: str) -> None:
+    if "parts" not in style:
+        return
+    parts = style["parts"]
+    if not isinstance(parts, Mapping):
+        raise TypeError("style['parts'] must be a mapping")
+    supported = _SUPPORTED_PARTS_BY_KIND.get(widget_kind, set())
+    for raw_name, part_style in parts.items():
+        name = _normalize_part_name(raw_name)
+        if name not in supported:
+            widget = widget_kind.replace("_", " ").title().replace(" ", "")
+            allowed = ", ".join(sorted(supported)) or "none"
+            raise ValueError(
+                f"{widget} has no CSS part {name!r}; supported parts: {allowed}"
+            )
+        if not isinstance(part_style, Mapping):
+            raise TypeError(f"style['parts'][{raw_name!r}] must be a mapping")
+
+
+def _copy_style(
+    style: Mapping[str, object] | None,
+    *,
+    widget_kind: str,
+) -> dict[str, object] | None:
     if style is None:
         return None
     if not isinstance(style, Mapping):
         raise TypeError("widget style must be a mapping")
+    _validate_style_parts(style, widget_kind)
     return dict(style)
 
 
@@ -140,6 +198,29 @@ BoolCallback = Callable[[bool], None]
 FloatCallback = Callable[[float], None]
 StringCallback = Callable[[str], None]
 ColorCallback = Callable[[tuple[int, ...]], None]
+BadgeValue = str | int | None
+
+
+@dataclass(frozen=True)
+class TableSelection:
+    row_index: int
+    column_index: int
+    column: str
+    value: object
+
+
+TableSelectCallback = Callable[[TableSelection], None]
+
+
+@dataclass(frozen=True)
+class ScatterPick:
+    index: int
+    x: float
+    y: float
+    z: float
+
+
+ScatterPickCallback = Callable[[ScatterPick], None]
 
 _ids = count(1)
 _AUTO_PARENT = object()
@@ -148,6 +229,18 @@ _AUTO_PARENT = object()
 def _route_value(label: str) -> str:
     value = re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_")
     return value or "page"
+
+
+def _badge_value(value: BadgeValue) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise TypeError("badge must be a str, int, or None")
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, str):
+        return value
+    raise TypeError("badge must be a str, int, or None")
 
 
 class _BuildContext:
@@ -191,7 +284,7 @@ class Widget:
         self.id = id or f"dg-{next(_ids)}"
         self.key = key
         self.class_ = class_
-        self.style = _copy_style(style)
+        self.style = _copy_style(style, widget_kind=self.kind)
         self.tooltip = None if tooltip is None else str(tooltip)
         self._live_handle: Any | None = None
         self.parent: Container | None = None
@@ -228,7 +321,7 @@ class Widget:
         pass
 
     def set_style(self, style: Mapping[str, object] | None) -> None:
-        new_style = _copy_style(style)
+        new_style = _copy_style(style, widget_kind=self.kind)
         patch = _style_patch(self.style, new_style)
         self.style = new_style
         handle = self._live()
@@ -594,6 +687,43 @@ class ContextMenu(Container):
         return {"target": self.target, "width": self.width}
 
 
+class Tooltip(Container):
+    kind = "tooltip"
+
+    def __init__(
+        self,
+        *,
+        target: Widget | str,
+        width: int | float = 280,
+        height: int | float | None = None,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        if isinstance(target, Widget):
+            self.target = target.id
+        else:
+            self.target = str(target)
+        if not self.target:
+            raise ValueError("Tooltip target cannot be empty")
+        self.width = float(width)
+        if self.width <= 0:
+            raise ValueError("Tooltip width must be greater than zero")
+        self.height = None if height is None else float(height)
+        if self.height is not None and self.height <= 0:
+            raise ValueError("Tooltip height must be greater than zero")
+        super().__init__(id=id, key=key, class_=class_, style=style, parent=parent)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "target": self.target,
+            "width": self.width,
+            "height": self.height,
+        }
+
+
 class Tabs(Container):
     kind = "tabs"
 
@@ -640,6 +770,7 @@ class Tab(Container):
         label: str,
         *,
         value: str | None = None,
+        badge: BadgeValue = None,
         disabled: bool = False,
         id: str | None = None,
         key: str | None = None,
@@ -652,6 +783,7 @@ class Tab(Container):
         self.value = str(value) if value is not None else _route_value(self.label)
         if not self.value:
             raise ValueError("Tab value cannot be empty")
+        self.badge = _badge_value(badge)
         self.disabled = disabled
         actual_parent = _BuildContext.parent() if parent is _AUTO_PARENT else parent
         if actual_parent is not None and not isinstance(actual_parent, Tabs):
@@ -662,8 +794,14 @@ class Tab(Container):
         return {
             "label": self.label,
             "value": self.value,
+            "badge": self.badge,
             "disabled": self.disabled,
         }
+
+    def set_badge(self, value: BadgeValue) -> None:
+        self.badge = _badge_value(value)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("badge", self.badge)
 
 
 class Pages(Container):
@@ -768,6 +906,7 @@ class NavItem(Widget):
         label: str,
         *,
         page: str,
+        badge: BadgeValue = None,
         disabled: bool = False,
         id: str | None = None,
         key: str | None = None,
@@ -780,6 +919,7 @@ class NavItem(Widget):
         self.page = str(page)
         if not self.page:
             raise ValueError("NavItem page cannot be empty")
+        self.badge = _badge_value(badge)
         self.disabled = disabled
         super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
 
@@ -787,8 +927,14 @@ class NavItem(Widget):
         return {
             "label": self.label,
             "page": self.page,
+            "badge": self.badge,
             "disabled": self.disabled,
         }
+
+    def set_badge(self, value: BadgeValue) -> None:
+        self.badge = _badge_value(value)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("badge", self.badge)
 
 
 class Panel(Container):
@@ -814,6 +960,54 @@ class Panel(Container):
         return {
             "title": self.title,
             "width": self.width,
+        }
+
+
+class Collapsible(Container):
+    kind = "collapsible"
+
+    def __init__(
+        self,
+        title: str,
+        *,
+        expanded: bool = True,
+        on_change: BoolCallback | None = None,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.title = str(title)
+        if not self.title:
+            raise ValueError("Collapsible title cannot be empty")
+        self.expanded = bool(expanded)
+        self.on_change = on_change
+        self.disabled = bool(disabled)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def set_expanded(self, expanded: bool) -> None:
+        self.expanded = bool(expanded)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("expanded", self.expanded)
+
+    def expand(self) -> None:
+        self.set_expanded(True)
+
+    def collapse(self) -> None:
+        self.set_expanded(False)
+
+    def toggle(self) -> None:
+        self.set_expanded(not self.expanded)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "title": self.title,
+            "expanded": self.expanded,
+            "disabled": self.disabled,
+            "events": ["change"] if self.on_change and not self.disabled else [],
         }
 
 
@@ -896,6 +1090,7 @@ class Button(Widget):
         text: str,
         *,
         on_click: Callback | None = None,
+        badge: BadgeValue = None,
         disabled: bool = False,
         id: str | None = None,
         key: str | None = None,
@@ -906,6 +1101,7 @@ class Button(Widget):
     ) -> None:
         self.text = text
         self.on_click = on_click
+        self.badge = _badge_value(badge)
         self.disabled = disabled
         super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
 
@@ -916,9 +1112,15 @@ class Button(Widget):
     def props(self) -> dict[str, Any]:
         return {
             "text": self.text,
+            "badge": self.badge,
             "disabled": self.disabled,
             "events": ["click"] if self.on_click and not self.disabled else [],
         }
+
+    def set_badge(self, value: BadgeValue) -> None:
+        self.badge = _badge_value(value)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("badge", self.badge)
 
 
 class TextInput(Widget):
@@ -953,6 +1155,51 @@ class TextInput(Widget):
         return {
             "value": self.value,
             "placeholder": self.placeholder,
+            "disabled": self.disabled,
+        }
+
+
+class TextArea(Widget):
+    kind = "text_area"
+
+    def __init__(
+        self,
+        value: str = "",
+        *,
+        placeholder: str = "",
+        rows: int = 4,
+        wrap: bool = True,
+        on_change: StringCallback | None = None,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        rows_i = int(rows)
+        if rows_i < 1:
+            raise ValueError("TextArea rows must be at least 1")
+        self.value = str(value)
+        self.placeholder = str(placeholder)
+        self.rows = rows_i
+        self.wrap = bool(wrap)
+        self.on_change = on_change
+        self.disabled = disabled
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def set_value(self, value: str) -> None:
+        self.value = str(value)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("value", self.value)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "value": self.value,
+            "placeholder": self.placeholder,
+            "rows": self.rows,
+            "wrap": self.wrap,
             "disabled": self.disabled,
         }
 
@@ -1273,7 +1520,7 @@ class ColorPicker(Panel):
         if width is not None:
             base_style["max_width"] = int(width)
         if style is not None:
-            base_style.update(_copy_style(style) or {})
+            base_style.update(_copy_style(style, widget_kind=self.kind) or {})
         super().__init__(
             title,
             width=None,
@@ -1343,14 +1590,21 @@ class ColorPicker(Panel):
         if self.on_change is not None:
             self.on_change(self.value)
 
-    def set_value(self, value: Sequence[object]) -> None:
-        """Update the displayed color without invoking ``on_change``."""
+    def set_value(self, value: Sequence[object], *, notify: bool = False) -> None:
+        """Update the displayed color.
+
+        By default this preserves the historical programmatic behavior and does
+        not invoke ``on_change``. Pass ``notify=True`` to call ``on_change``
+        after the internal sliders, labels, and swatch have been updated.
+        """
         self.value = _normalize_color_tuple(value, alpha=self.alpha)
         for channel, slider in self._sliders.items():
             channel_value = self.value[self._CHANNEL_INDEX[channel]]
             slider.set_value(channel_value)
             self._value_labels[channel].set_value(str(channel_value))
         self._set_swatch_color()
+        if notify and self.on_change is not None:
+            self.on_change(self.value)
 
 
 class Image(Widget):
@@ -1427,6 +1681,7 @@ class Scatter3D(Widget):
         y: str,
         z: str,
         colormap: str = "viridis",
+        on_pick: ScatterPickCallback | None = None,
         id: str | None = None,
         key: str | None = None,
         class_: str | None = None,
@@ -1440,6 +1695,8 @@ class Scatter3D(Widget):
         self.z = z
         self.colormap = _scatter_colormap(colormap)
         self.frame_summary = summarize_frame(frame)
+        self.on_pick = on_pick
+        self.pick: ScatterPick | None = None
         super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
 
     def set_points(self, frame: Any, *, x: str, y: str | None = None, z: str | None = None) -> None:
@@ -1487,6 +1744,7 @@ class Scatter3D(Widget):
             "y": self.y,
             "z": self.z,
             "colormap": self.colormap,
+            "events": ["change"] if self.on_pick is not None else [],
             # Packed float32 xyz triples (little-endian), base64-encoded.
             # None when frame has no addressable array attributes (mock frames,
             # dev-fallback mode, or numpy unavailable).
@@ -1503,6 +1761,7 @@ class DataFrameTable(Widget):
         *,
         page_size: int = 100,
         sample_rows: int = DEFAULT_TABLE_SAMPLE_ROWS,
+        on_select: TableSelectCallback | None = None,
         id: str | None = None,
         key: str | None = None,
         class_: str | None = None,
@@ -1522,6 +1781,8 @@ class DataFrameTable(Widget):
         self.frame_summary = summarize_frame(frame)
         self.cells = extract_table_sample(frame, self.frame_summary, self.sample_rows)
         self.column_buffers = extract_table_column_buffers(frame, self.frame_summary)
+        self.on_select = on_select
+        self.selection: TableSelection | None = None
         super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
         self.resource_id = f"{self.id}:table"
 
@@ -1567,7 +1828,9 @@ class DataFrameTable(Widget):
         }
 
     def props(self) -> dict[str, Any]:
-        return self._table_payload()
+        props = self._table_payload()
+        props["events"] = ["change"] if self.on_select is not None else []
+        return props
 
 
 def alert(

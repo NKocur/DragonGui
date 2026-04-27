@@ -5,15 +5,21 @@ use bytemuck::{Pod, Zeroable};
 use crate::document::{WidgetKind, WidgetNode};
 use crate::events::{NavigationItem, WidgetState};
 use crate::layout::{LayoutResult, Rect};
-use crate::overlays::{menu_popup_rect, tooltip_target};
+use crate::overlays::{menu_popup_rect, rich_tooltip_target, tooltip_target};
 use crate::style::{
-    number_stepper_width_for_style, tabs_header_height_for_style, VisualStyle, BORDER_WIDTH_LP,
-    CARET_WIDTH_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP, FOCUS_RING_LP, PANEL_ACCENT_WIDTH_LP,
-    SLIDER_THUMB_WIDTH_LP, SLIDER_TRACK_HEIGHT_LP, SLIDER_TRACK_MARGIN_LP, TAB_ACTIVE_BAR_LP,
-    TAB_GAP_LP, TAB_INACTIVE_BOTTOM_INSET_LP, TAB_TOP_INSET_LP,
+    badge_height_for_style, badge_width_for_text, collapsible_header_height_for_style,
+    merged_part_visual_for_state as style_merged_part_visual_for_state,
+    number_stepper_width_for_style,
+    part_style_active_for_state as style_part_style_active_for_state,
+    part_visual_for_state as style_part_visual_for_state, tabs_header_height_for_style,
+    VisualStyle, BORDER_WIDTH_LP, CARET_WIDTH_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP,
+    FOCUS_RING_LP, PANEL_ACCENT_WIDTH_LP, SLIDER_THUMB_WIDTH_LP, SLIDER_TRACK_HEIGHT_LP,
+    SLIDER_TRACK_MARGIN_LP, TAB_ACTIVE_BAR_LP, TAB_GAP_LP, TAB_INACTIVE_BOTTOM_INSET_LP,
+    TAB_TOP_INSET_LP,
 };
 use crate::table;
 use crate::theme::Theme;
+use crate::toast::{toast_colors, toast_rect, ToastOverlay};
 
 // ---------------------------------------------------------------------------
 // Per-instance GPU data
@@ -213,7 +219,10 @@ impl PrimitivesRenderer {
         theme: &Theme,
         scale_factor: f32,
         state: &WidgetState,
-        caret_positions: &HashMap<String, f32>,
+        caret_positions: &HashMap<String, [f32; 2]>,
+        toasts: &[ToastOverlay],
+        window_w: f32,
+        window_h: f32,
     ) {
         self.instances.clear();
         emit_rects(
@@ -247,6 +256,15 @@ impl PrimitivesRenderer {
             theme,
             scale_factor,
             state,
+            caret_positions,
+            &mut self.instances,
+        );
+        emit_toast_overlays(
+            toasts,
+            theme,
+            scale_factor,
+            window_w,
+            window_h,
             &mut self.instances,
         );
 
@@ -380,74 +398,15 @@ fn visual_for<'a>(node: &'a WidgetNode, state: &WidgetState) -> Cow<'a, VisualSt
 }
 
 fn part_visual_for(node: &WidgetNode, state: &WidgetState, part: &str) -> VisualStyle {
-    let mut visual = node
-        .style
-        .parts
-        .parts
-        .get(part)
-        .map(|style| style.visual.clone())
-        .unwrap_or_default();
-    if state.checked.get(&node.id).copied().unwrap_or(false) {
-        if let Some(checked) = node
-            .style
-            .parts
-            .checked
-            .get(part)
-            .map(|style| &style.visual)
-        {
-            visual = visual.merged(checked);
-        }
-    }
-    let pseudo = if state.is_disabled(&node.id) {
-        node.style
-            .parts
-            .disabled
-            .get(part)
-            .map(|style| &style.visual)
-    } else if state.pressed.as_deref() == Some(node.id.as_str()) {
-        node.style.parts.active.get(part).map(|style| &style.visual)
-    } else if state.hovered.as_deref() == Some(node.id.as_str()) {
-        node.style.parts.hover.get(part).map(|style| &style.visual)
-    } else if state.focused.as_deref() == Some(node.id.as_str()) {
-        node.style.parts.focus.get(part).map(|style| &style.visual)
-    } else {
-        None
-    };
-
-    if let Some(pseudo) = pseudo {
-        visual = visual.merged(pseudo);
-    }
-    visual
+    style_part_visual_for_state(&node.style, &node.id, state, part)
 }
 
 fn part_style_active_for_state(node: &WidgetNode, state: &WidgetState, part: &str) -> bool {
-    if node.style.parts.parts.contains_key(part) {
-        return true;
-    }
-    if state.checked.get(&node.id).copied().unwrap_or(false)
-        && node.style.parts.checked.contains_key(part)
-    {
-        return true;
-    }
-    if state.is_disabled(&node.id) {
-        node.style.parts.disabled.contains_key(part)
-    } else if state.pressed.as_deref() == Some(node.id.as_str()) {
-        node.style.parts.active.contains_key(part)
-    } else if state.hovered.as_deref() == Some(node.id.as_str()) {
-        node.style.parts.hover.contains_key(part)
-    } else if state.focused.as_deref() == Some(node.id.as_str()) {
-        node.style.parts.focus.contains_key(part)
-    } else {
-        false
-    }
+    style_part_style_active_for_state(&node.style, &node.id, state, part)
 }
 
 fn merged_part_visual_for(node: &WidgetNode, state: &WidgetState, parts: &[&str]) -> VisualStyle {
-    let mut visual = VisualStyle::default();
-    for part in parts {
-        visual = visual.merged(&part_visual_for(node, state, part));
-    }
-    visual
+    style_merged_part_visual_for_state(&node.style, &node.id, state, parts)
 }
 
 fn resolve_color(color: &Option<crate::style::ColorRef>, theme: &Theme) -> Option<[f32; 4]> {
@@ -598,9 +557,12 @@ fn emit_rects(
     theme: &Theme,
     sf: f32,
     state: &WidgetState,
-    caret_positions: &HashMap<String, f32>,
+    caret_positions: &HashMap<String, [f32; 2]>,
     out: &mut Vec<RectInstance>,
 ) {
+    if node.kind == WidgetKind::Tooltip {
+        return;
+    }
     if node.kind == WidgetKind::Modal && !node.props.open.unwrap_or(false) {
         return;
     }
@@ -656,6 +618,112 @@ fn emit_rects(
                             accent_fill,
                             inner_radii,
                             [-1.0, -1.0, accent_w, inner_h + 1.0],
+                        ));
+                    }
+                }
+            }
+
+            WidgetKind::Collapsible => {
+                let expanded = state.is_expanded(&node.id);
+                let header_visual = part_visual_for(node, state, "header");
+                let body_visual = part_visual_for(node, state, "body");
+                let header_h = collapsible_header_height_for_style(&node.style, theme, sf).min(h);
+                let fill = styled_bg.unwrap_or(theme.surface);
+                emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], radii, out);
+                emit_bordered_rect_radii(
+                    out,
+                    [x, y, w, h],
+                    styled_border.unwrap_or_else(|| control_border(node, theme, state)),
+                    fill,
+                    radii,
+                    border_w,
+                );
+                let header_fill = resolve_color(&header_visual.background, theme)
+                    .map(|color| apply_opacity(color, header_visual.opacity))
+                    .unwrap_or_else(|| {
+                        if state.pressed.as_deref() == Some(node.id.as_str()) {
+                            mix(
+                                theme.surface_alt,
+                                styled_accent.unwrap_or(theme.accent),
+                                0.24,
+                            )
+                        } else if state.hovered.as_deref() == Some(node.id.as_str())
+                            || state.focused.as_deref() == Some(node.id.as_str())
+                        {
+                            mix(
+                                theme.surface_alt,
+                                styled_accent.unwrap_or(theme.accent),
+                                0.14,
+                            )
+                        } else {
+                            theme.surface_alt
+                        }
+                    });
+                push_masked_rect(
+                    out,
+                    [x, y, w, h],
+                    header_fill,
+                    radii,
+                    [
+                        x + border_w,
+                        y + border_w,
+                        (w - border_w * 2.0).max(1.0),
+                        (header_h - border_w).max(1.0),
+                    ],
+                );
+                if expanded && h > header_h + border_w {
+                    let body_fill = resolve_color(&body_visual.background, theme)
+                        .map(|color| apply_opacity(color, body_visual.opacity));
+                    if let Some(body_fill) = body_fill {
+                        push_masked_rect(
+                            out,
+                            [x, y, w, h],
+                            body_fill,
+                            radii,
+                            [
+                                x + border_w,
+                                y + header_h,
+                                (w - border_w * 2.0).max(1.0),
+                                (h - header_h - border_w).max(1.0),
+                            ],
+                        );
+                    }
+                    out.push(inst(
+                        [
+                            x + border_w,
+                            y + header_h,
+                            (w - border_w * 2.0).max(1.0),
+                            border_w.max(1.0),
+                        ],
+                        resolve_color(&header_visual.border_color, theme)
+                            .or(styled_border)
+                            .unwrap_or(theme.border),
+                        0.0,
+                    ));
+                }
+                if part_style_active_for_state(node, state, "indicator") {
+                    let indicator_visual = part_visual_for(node, state, "indicator");
+                    if let Some(indicator_fill) = resolve_color(&indicator_visual.background, theme)
+                        .map(|color| apply_opacity(color, indicator_visual.opacity))
+                    {
+                        let size = node
+                            .style
+                            .parts
+                            .parts
+                            .get("indicator")
+                            .and_then(|part| part.layout.width)
+                            .unwrap_or(16.0)
+                            .max(1.0)
+                            * sf;
+                        out.push(inst_radii(
+                            [
+                                x + theme.spacing * sf,
+                                y + (header_h - size) * 0.5,
+                                size,
+                                size,
+                            ],
+                            indicator_fill,
+                            visual_radii_with_fallback(&indicator_visual, [size * 0.5; 4], sf),
                         ));
                     }
                 }
@@ -798,6 +866,13 @@ fn emit_rects(
                     radii,
                     border_w,
                 );
+                if node.kind == WidgetKind::Button {
+                    if let Some(rect) =
+                        badge_rect(node, [x, y, w, h], theme, sf, theme.spacing * sf)
+                    {
+                        emit_badge_pill(node, theme, sf, state, rect, out);
+                    }
+                }
             }
 
             WidgetKind::Tab => {
@@ -916,6 +991,9 @@ fn emit_rects(
                         ));
                     }
                 }
+                if let Some(rect) = badge_rect(node, [x, y, w, h], theme, sf, gap) {
+                    emit_badge_pill(node, theme, sf, state, rect, out);
+                }
             }
 
             WidgetKind::NavItem => {
@@ -976,9 +1054,12 @@ fn emit_rects(
                         visual_radii_with_fallback(&accent_visual, [bar_w * 0.5; 4], sf);
                     out.push(inst_radii(accent_rect, accent_fill, accent_radii));
                 }
+                if let Some(rect) = badge_rect(node, [x, y, w, h], theme, sf, theme.spacing * sf) {
+                    emit_badge_pill(node, theme, sf, state, rect, out);
+                }
             }
 
-            WidgetKind::TextInput => {
+            WidgetKind::TextInput | WidgetKind::TextArea => {
                 emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], radii, out);
                 let fill = if state.is_disabled(&node.id) {
                     styled_bg.unwrap_or_else(|| mix(theme.surface_alt, theme.disabled, 0.24))
@@ -1002,17 +1083,17 @@ fn emit_rects(
                 {
                     let pad = theme.spacing * sf;
                     let text_w = (w - pad * 2.0).max(1.0);
-                    let caret_x =
-                        caret_x_for_node(x + pad, text_w, &node.id, state, caret_positions);
+                    let caret_xy =
+                        caret_xy_for_node(x + pad, text_w, &node.id, state, caret_positions);
                     let caret_font_size = node.style.text.font_size.unwrap_or(theme.font_size) * sf;
                     let caret_h = (caret_font_size + 5.0 * sf).min((h - border_w * 2.0).max(1.0));
+                    let caret_y = if node.kind == WidgetKind::TextArea {
+                        (y + pad + caret_xy[1]).min(y + h - border_w - caret_h)
+                    } else {
+                        y + (h - caret_h) * 0.5
+                    };
                     out.push(inst(
-                        [
-                            caret_x,
-                            y + (h - caret_h) * 0.5,
-                            CARET_WIDTH_LP * sf,
-                            caret_h,
-                        ],
+                        [caret_xy[0], caret_y, CARET_WIDTH_LP * sf, caret_h],
                         theme.focus,
                         0.0,
                     ));
@@ -1022,6 +1103,7 @@ fn emit_rects(
             WidgetKind::NumberInput => {
                 emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], radii, out);
                 let invalid = state.number_is_invalid(&node.id);
+                let field_visual = part_visual_for(node, state, "field");
                 let fill = if state.is_disabled(&node.id) {
                     styled_bg.unwrap_or_else(|| mix(theme.surface_alt, theme.disabled, 0.24))
                 } else if state.hovered.as_deref() == Some(node.id.as_str())
@@ -1045,6 +1127,46 @@ fn emit_rects(
                 );
                 let step_w = number_stepper_width_for_style(&node.style, w, sf);
                 let step_x = x + w - step_w;
+                let field_rect = [
+                    x + border_w,
+                    y + border_w,
+                    (step_x - x - border_w).max(1.0),
+                    (h - border_w * 2.0).max(1.0),
+                ];
+                let field_border_w = field_visual
+                    .border_width
+                    .map(|width| (width.max(0.0) * sf).max(0.0))
+                    .unwrap_or(0.0);
+                let field_has_border = field_border_w > 0.0 || field_visual.border_color.is_some();
+                let field_fill = resolve_color(&field_visual.background, theme)
+                    .map(|color| apply_opacity(color, field_visual.opacity))
+                    .or_else(|| field_has_border.then_some(fill));
+                if let Some(field_fill) = field_fill {
+                    let field_radii = visual_radii_with_fallback(
+                        &field_visual,
+                        [
+                            (radii[0] - border_w).max(0.0),
+                            0.0,
+                            0.0,
+                            (radii[3] - border_w).max(0.0),
+                        ],
+                        sf,
+                    );
+                    if field_border_w > 0.0 || field_visual.border_color.is_some() {
+                        emit_bordered_rect_radii(
+                            out,
+                            field_rect,
+                            resolve_color(&field_visual.border_color, theme)
+                                .map(|color| apply_opacity(color, field_visual.opacity))
+                                .unwrap_or(field_fill),
+                            field_fill,
+                            field_radii,
+                            field_border_w.max(border_w),
+                        );
+                    } else {
+                        out.push(inst_radii(field_rect, field_fill, field_radii));
+                    }
+                }
                 let step_fill = if state.is_disabled(&node.id) {
                     mix(theme.surface_alt, theme.disabled, 0.30)
                 } else if state.hovered.as_deref() == Some(node.id.as_str())
@@ -1063,7 +1185,12 @@ fn emit_rects(
                     stepper_visual.merged(&part_visual_for(node, state, "stepper-up"));
                 let stepper_down_visual =
                     stepper_visual.merged(&part_visual_for(node, state, "stepper-down"));
-                let divider_visual = part_visual_for(node, state, "stepper-divider");
+                let stepper_divider_visual = part_visual_for(node, state, "stepper-divider");
+                let divider_visual = if part_style_active_for_state(node, state, "divider") {
+                    part_visual_for(node, state, "divider")
+                } else {
+                    stepper_divider_visual.clone()
+                };
                 let step_up_fill = resolve_color(&stepper_up_visual.background, theme)
                     .map(|color| apply_opacity(color, stepper_up_visual.opacity))
                     .unwrap_or(step_fill);
@@ -1074,6 +1201,35 @@ fn emit_rects(
                     .or_else(|| resolve_color(&divider_visual.border_color, theme))
                     .map(|color| apply_opacity(color, divider_visual.opacity))
                     .unwrap_or(theme.border);
+                let stepper_divider_color =
+                    resolve_color(&stepper_divider_visual.background, theme)
+                        .or_else(|| resolve_color(&stepper_divider_visual.border_color, theme))
+                        .map(|color| apply_opacity(color, stepper_divider_visual.opacity))
+                        .unwrap_or(divider_color);
+                let divider_w = divider_visual
+                    .border_width
+                    .or_else(|| {
+                        node.style
+                            .parts
+                            .parts
+                            .get("divider")
+                            .and_then(|part| part.layout.width)
+                    })
+                    .map(|width| (width.max(0.0) * sf).max(0.0))
+                    .unwrap_or(border_w)
+                    .max(1.0);
+                let stepper_divider_h = stepper_divider_visual
+                    .border_width
+                    .or_else(|| {
+                        node.style
+                            .parts
+                            .parts
+                            .get("stepper-divider")
+                            .and_then(|part| part.layout.height)
+                    })
+                    .map(|height| (height.max(0.0) * sf).max(0.0))
+                    .unwrap_or(border_w)
+                    .max(1.0);
                 let step_up_radii = visual_radii_with_fallback(
                     &stepper_up_visual,
                     [0.0, (radii[1] - border_w).max(0.0), 0.0, 0.0],
@@ -1085,7 +1241,7 @@ fn emit_rects(
                     sf,
                 );
                 out.push(inst(
-                    [step_x, y + border_w, border_w, h - border_w * 2.0],
+                    [step_x, y + border_w, divider_w, h - border_w * 2.0],
                     divider_color,
                     0.0,
                 ));
@@ -1110,8 +1266,8 @@ fn emit_rects(
                     step_down_radii,
                 ));
                 out.push(inst(
-                    [step_x, y + h * 0.5, step_w, border_w],
-                    divider_color,
+                    [step_x, y + h * 0.5, step_w, stepper_divider_h],
+                    stepper_divider_color,
                     0.0,
                 ));
                 if state.focused.as_deref() == Some(node.id.as_str())
@@ -1120,17 +1276,35 @@ fn emit_rects(
                     let pad = theme.spacing * sf;
                     let text_w = (w - step_w - pad * 2.0).max(1.0);
                     let caret_x =
-                        caret_x_for_node(x + pad, text_w, &node.id, state, caret_positions);
+                        caret_xy_for_node(x + pad, text_w, &node.id, state, caret_positions)[0];
                     let caret_font_size = node.style.text.font_size.unwrap_or(theme.font_size) * sf;
-                    let caret_h = (caret_font_size + 5.0 * sf).min((h - border_w * 2.0).max(1.0));
+                    let caret_visual = part_visual_for(node, state, "caret");
+                    let caret_w = node
+                        .style
+                        .parts
+                        .parts
+                        .get("caret")
+                        .and_then(|part| part.layout.width)
+                        .map(|width| (width.max(1.0) * sf).max(1.0))
+                        .unwrap_or(CARET_WIDTH_LP * sf);
+                    let caret_h = node
+                        .style
+                        .parts
+                        .parts
+                        .get("caret")
+                        .and_then(|part| part.layout.height)
+                        .map(|height| (height.max(1.0) * sf).max(1.0))
+                        .unwrap_or_else(|| {
+                            (caret_font_size + 5.0 * sf).min((h - border_w * 2.0).max(1.0))
+                        });
+                    let caret_color = resolve_color(&caret_visual.background, theme)
+                        .or_else(|| resolve_color(&caret_visual.foreground, theme))
+                        .or_else(|| resolve_color(&caret_visual.border_color, theme))
+                        .map(|color| apply_opacity(color, caret_visual.opacity))
+                        .unwrap_or(if invalid { theme.danger } else { theme.focus });
                     out.push(inst(
-                        [
-                            caret_x,
-                            y + (h - caret_h) * 0.5,
-                            CARET_WIDTH_LP * sf,
-                            caret_h,
-                        ],
-                        if invalid { theme.danger } else { theme.focus },
+                        [caret_x, y + (h - caret_h) * 0.5, caret_w, caret_h],
+                        caret_color,
                         0.0,
                     ));
                 }
@@ -1635,6 +1809,7 @@ fn emit_rects(
             | WidgetKind::Label
             | WidgetKind::ContextMenu
             | WidgetKind::MenuItem
+            | WidgetKind::Tooltip
             | WidgetKind::Unknown => {}
         }
     }
@@ -1644,18 +1819,72 @@ fn emit_rects(
     }
 }
 
-fn caret_x_for_node(
+fn caret_xy_for_node(
     left: f32,
     text_width: f32,
     id: &str,
     state: &WidgetState,
-    caret_positions: &HashMap<String, f32>,
-) -> f32 {
-    left + caret_positions
-        .get(id)
-        .copied()
-        .unwrap_or_else(|| text_width * state.caret_t(id))
-        .clamp(0.0, text_width)
+    caret_positions: &HashMap<String, [f32; 2]>,
+) -> [f32; 2] {
+    let fallback = [text_width * state.caret_t(id), 0.0];
+    let xy = caret_positions.get(id).copied().unwrap_or(fallback);
+    [left + xy[0].clamp(0.0, text_width), xy[1].max(0.0)]
+}
+
+fn badge_rect(
+    node: &WidgetNode,
+    rect: [f32; 4],
+    theme: &Theme,
+    sf: f32,
+    right_inset: f32,
+) -> Option<[f32; 4]> {
+    let badge = node
+        .props
+        .badge
+        .as_deref()
+        .filter(|badge| !badge.is_empty())?;
+    let badge_w = badge_width_for_text(&node.style, badge, theme, sf);
+    let badge_h = badge_height_for_style(&node.style, theme, sf).min((rect[3] - 4.0 * sf).max(1.0));
+    let x = rect[0] + rect[2] - right_inset - badge_w;
+    let y = rect[1] + (rect[3] - badge_h) * 0.5;
+    if x <= rect[0] || badge_w <= 0.0 || badge_h <= 0.0 {
+        return None;
+    }
+    Some([x, y, badge_w, badge_h])
+}
+
+fn emit_badge_pill(
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    state: &WidgetState,
+    rect: [f32; 4],
+    out: &mut Vec<RectInstance>,
+) {
+    let visual = part_visual_for(node, state, "badge");
+    let fill = apply_opacity(
+        resolve_color(&visual.background, theme)
+            .or(resolve_color(&visual.foreground, theme))
+            .unwrap_or(theme.accent),
+        visual.opacity,
+    );
+    let border_w = visual
+        .border_width
+        .map(|width| (width.max(0.0) * sf).max(0.0))
+        .unwrap_or(0.0);
+    let radii = visual_radii_with_fallback(&visual, [rect[3] * 0.5; 4], sf);
+    if border_w > 0.0 {
+        emit_bordered_rect_radii(
+            out,
+            rect,
+            resolve_color(&visual.border_color, theme).unwrap_or(fill),
+            fill,
+            radii,
+            border_w,
+        );
+    } else {
+        out.push(inst_radii(rect, fill, radii));
+    }
 }
 
 fn emit_menu_overlays(
@@ -1862,13 +2091,34 @@ fn emit_tooltip_overlay(
     theme: &Theme,
     sf: f32,
     state: &WidgetState,
+    caret_positions: &HashMap<String, [f32; 2]>,
     out: &mut Vec<RectInstance>,
 ) {
+    if let Some((node, rect)) = rich_tooltip_target(tree, layout, state) {
+        emit_tooltip_surface(node, rect, theme, sf, state, out);
+        for child in &node.children {
+            emit_rects(child, layout, theme, sf, state, caret_positions, out);
+        }
+        return;
+    }
     let Some((_node, rect)) = tooltip_target(tree, layout, theme, state, sf) else {
         return;
     };
+    emit_tooltip_surface(_node, rect, theme, sf, state, out);
+}
+
+fn emit_tooltip_surface(
+    node: &WidgetNode,
+    rect: Rect,
+    theme: &Theme,
+    sf: f32,
+    state: &WidgetState,
+    out: &mut Vec<RectInstance>,
+) {
     let border_w = BORDER_WIDTH_LP * sf;
-    let radius = (theme.radius * sf).max(0.0);
+    let visual = visual_for(node, state);
+    let radius_lp = visual.border_radius.unwrap_or(theme.radius).max(0.0);
+    let radius = radius_lp * sf;
     let shadow = 4.0 * sf;
     out.push(inst(
         [rect.x + shadow, rect.y + shadow, rect.w, rect.h],
@@ -1878,9 +2128,185 @@ fn emit_tooltip_overlay(
     emit_bordered_rect(
         out,
         [rect.x, rect.y, rect.w, rect.h],
-        mix(theme.border, theme.accent, 0.18),
-        theme.surface_alt,
+        resolve_color(&visual.border_color, theme)
+            .map(|color| apply_opacity(color, visual.opacity))
+            .unwrap_or_else(|| mix(theme.border, theme.accent, 0.18)),
+        resolve_color(&visual.background, theme)
+            .map(|color| apply_opacity(color, visual.opacity))
+            .unwrap_or(theme.surface_alt),
         radius,
-        border_w,
+        visual
+            .border_width
+            .map(|width| width.max(0.0) * sf)
+            .unwrap_or(border_w),
     );
+}
+
+fn emit_toast_overlays(
+    toasts: &[ToastOverlay],
+    theme: &Theme,
+    sf: f32,
+    window_w: f32,
+    window_h: f32,
+    out: &mut Vec<RectInstance>,
+) {
+    let border_w = BORDER_WIDTH_LP * sf;
+    let radius = (theme.radius * sf).max(0.0);
+    let shadow = 4.0 * sf;
+    for (idx, toast) in toasts.iter().enumerate() {
+        let rect = toast_rect(idx, &toast.message, window_w, window_h, sf);
+        if rect.w <= 0.0 || rect.h <= 0.0 {
+            continue;
+        }
+        let colors = toast_colors(toast.level, theme);
+        out.push(inst(
+            [rect.x + shadow, rect.y + shadow, rect.w, rect.h],
+            [0.0, 0.0, 0.0, 0.36],
+            radius,
+        ));
+        emit_bordered_rect(
+            out,
+            [rect.x, rect.y, rect.w, rect.h],
+            colors.border,
+            colors.fill,
+            radius,
+            border_w,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::document::NodeProps;
+    use crate::style::{ColorRef, PartLayoutStyle, PartStyle};
+
+    fn node(id: &str, kind: WidgetKind) -> WidgetNode {
+        WidgetNode {
+            id: id.to_string(),
+            key: None,
+            class_name: None,
+            kind,
+            props: NodeProps::default(),
+            style_json: Default::default(),
+            inline_style: Default::default(),
+            style: Default::default(),
+            children: Vec::new(),
+        }
+    }
+
+    fn rgba(r: f32, g: f32, b: f32) -> ColorRef {
+        ColorRef::Rgba([r, g, b, 1.0])
+    }
+
+    fn has_rect(out: &[RectInstance], color: [f32; 4], rect: [f32; 4]) -> bool {
+        out.iter()
+            .any(|inst| inst.color == color && inst.rect == rect)
+    }
+
+    #[test]
+    fn number_input_internal_parts_emit_distinct_primitives() {
+        let mut number = node("amount", WidgetKind::NumberInput);
+        number.style.visual.border_width = Some(1.0);
+        number.style.parts.parts.insert(
+            "field".to_string(),
+            PartStyle {
+                visual: VisualStyle {
+                    background: Some(rgba(0.10, 0.20, 0.30)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        number.style.parts.parts.insert(
+            "divider".to_string(),
+            PartStyle {
+                layout: PartLayoutStyle {
+                    width: Some(3.0),
+                    ..Default::default()
+                },
+                visual: VisualStyle {
+                    background: Some(rgba(0.40, 0.50, 0.60)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        number.style.parts.parts.insert(
+            "stepper-divider".to_string(),
+            PartStyle {
+                layout: PartLayoutStyle {
+                    height: Some(2.0),
+                    ..Default::default()
+                },
+                visual: VisualStyle {
+                    background: Some(rgba(0.70, 0.80, 0.90)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        number.style.parts.parts.insert(
+            "caret".to_string(),
+            PartStyle {
+                layout: PartLayoutStyle {
+                    width: Some(4.0),
+                    height: Some(20.0),
+                    ..Default::default()
+                },
+                visual: VisualStyle {
+                    background: Some(rgba(0.90, 0.10, 0.20)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "amount".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 120.0,
+                h: 40.0,
+            },
+        );
+        let mut state = WidgetState::default();
+        state.focused = Some("amount".to_string());
+        let mut caret_positions = HashMap::new();
+        caret_positions.insert("amount".to_string(), [12.0, 0.0]);
+        let mut out = Vec::new();
+
+        emit_rects(
+            &number,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &state,
+            &caret_positions,
+            &mut out,
+        );
+
+        assert!(has_rect(
+            &out,
+            [0.10, 0.20, 0.30, 1.0],
+            [1.0, 1.0, 93.0, 38.0]
+        ));
+        assert!(has_rect(
+            &out,
+            [0.40, 0.50, 0.60, 1.0],
+            [94.0, 1.0, 3.0, 38.0]
+        ));
+        assert!(has_rect(
+            &out,
+            [0.70, 0.80, 0.90, 1.0],
+            [94.0, 20.0, 26.0, 2.0]
+        ));
+        assert!(has_rect(
+            &out,
+            [0.90, 0.10, 0.20, 1.0],
+            [20.0, 10.0, 4.0, 20.0]
+        ));
+    }
 }

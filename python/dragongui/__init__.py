@@ -3,12 +3,21 @@
 from ._backend import BackendUnavailableError, backend_info, native_backend_available
 from .app import App
 from .components import ComponentCtx, ComponentInstance, StateSlot, component
-from .dialogs import FileDialog
+from .dialogs import (
+    FileDialog,
+    open_file_dialog,
+    open_files_dialog,
+    pick_folder_dialog,
+    save_file_dialog,
+)
+from .notifications import toast
+from .runtime import ToastHandle
 from .theme import Theme
 from .vdom import Patch, ResourceRef, VNode
 from .widgets import (
     Button,
     Checkbox,
+    Collapsible,
     ColorPicker,
     DataFrameTable,
     Dropdown,
@@ -27,6 +36,7 @@ from .widgets import (
     Panel,
     ProgressBar,
     Scatter3D,
+    ScatterPick,
     Separator,
     Sidebar,
     Slider,
@@ -34,7 +44,10 @@ from .widgets import (
     StatusBar,
     Tab,
     Tabs,
+    TableSelection,
+    TextArea,
     TextInput,
+    Tooltip,
     VLayout,
     Window,
     alert,
@@ -51,9 +64,11 @@ __all__ = [
     "ResourceRef",
     "StateSlot",
     "Theme",
+    "ToastHandle",
     "VNode",
     "Button",
     "Checkbox",
+    "Collapsible",
     "ColorPicker",
     "DataFrameTable",
     "Dropdown",
@@ -72,6 +87,7 @@ __all__ = [
     "Panel",
     "ProgressBar",
     "Scatter3D",
+    "ScatterPick",
     "Separator",
     "Sidebar",
     "Slider",
@@ -79,14 +95,22 @@ __all__ = [
     "StatusBar",
     "Tab",
     "Tabs",
+    "TableSelection",
+    "TextArea",
     "TextInput",
+    "Tooltip",
     "VLayout",
     "Window",
     "alert",
     "backend_info",
     "component",
     "confirm",
+    "open_file_dialog",
+    "open_files_dialog",
+    "pick_folder_dialog",
+    "save_file_dialog",
     "native_backend_available",
+    "toast",
 ]
 
 __version__ = "0.1.0"
