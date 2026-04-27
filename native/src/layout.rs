@@ -10,6 +10,8 @@ use crate::style::{
 };
 use crate::theme::Theme;
 
+const MENU_LABEL_WIDTH_SAFETY_LP: f32 = 6.0;
+
 // ---------------------------------------------------------------------------
 // Public result type
 // ---------------------------------------------------------------------------
@@ -551,7 +553,9 @@ fn intrinsic_leaf_width(node: &WidgetNode, theme: &Theme) -> Option<f32> {
     let pad = theme.spacing * 2.0;
     match node.kind {
         WidgetKind::Button => Some((text_w.unwrap_or(0.0) + pad).clamp(72.0, 240.0)),
-        WidgetKind::Menu => Some((text_w.unwrap_or(0.0) + pad).clamp(44.0, 180.0)),
+        WidgetKind::Menu => {
+            Some((text_w.unwrap_or(0.0) + pad + MENU_LABEL_WIDTH_SAFETY_LP).clamp(44.0, 180.0))
+        }
         WidgetKind::Dropdown => Some((text_w.unwrap_or(0.0) + pad + 22.0).clamp(112.0, 260.0)),
         WidgetKind::NumberInput => Some((text_w.unwrap_or(0.0) + pad + 34.0).clamp(96.0, 220.0)),
         WidgetKind::TextInput => Some((text_w.unwrap_or(0.0) + pad).clamp(120.0, 280.0)),
@@ -1467,6 +1471,40 @@ mod tests {
         assert!(
             !layout.rects.contains_key("open"),
             "menu item should be popup-only, not normal layout"
+        );
+    }
+
+    #[test]
+    fn menu_intrinsic_width_keeps_label_glyphs_inside_clip() {
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "menu-bar",
+                WidgetKind::MenuBar,
+                NodeProps::default(),
+                vec![node(
+                    "debug",
+                    WidgetKind::Menu,
+                    NodeProps {
+                        text: Some("Debug".to_string()),
+                        ..NodeProps::default()
+                    },
+                    vec![],
+                )],
+            )],
+        );
+
+        let theme = Theme::dark();
+        let layout = compute_layout(&root, 240.0, 80.0, 1.0, &theme, None);
+        let debug = layout.rects.get("debug").unwrap();
+        let text_w = estimate_text_width("Debug", theme.font_size);
+        let available_text_w = debug.w - theme.spacing * 2.0;
+
+        assert!(
+            available_text_w >= text_w + MENU_LABEL_WIDTH_SAFETY_LP - 0.5,
+            "menu label can clip: rect={debug:?}, available={available_text_w}, estimated={text_w}"
         );
     }
 
