@@ -1,0 +1,111 @@
+:root {
+    --dg-radius: 6px;
+    --dg-font-size: 14px;
+}
+
+Window {
+    background: background;
+}
+
+Panel,
+Modal {
+    background: surface;
+    border: 1px solid border;
+    border-radius: var(--dg-radius);
+    accent: accent;
+}
+
+Sidebar,
+StatusBar,
+MenuBar,
+Tabs {
+    background: surface;
+    border-color: border;
+    border-width: 1px;
+}
+
+Separator,
+Scatter3D {
+    background: border;
+    border-color: border;
+    border-width: 1px;
+}
+
+Button,
+Dropdown {
+    background: surface_alt;
+    border: 1px solid border;
+    border-radius: var(--dg-radius);
+    accent: accent;
+    color: text;
+}
+
+Button:hover,
+Dropdown:hover {
+    background: accent_mix_20;
+    border-color: accent;
+}
+
+Button:focus,
+Dropdown:focus,
+TextInput:focus,
+NumberInput:focus {
+    border-color: focus;
+}
+
+Button:active,
+Dropdown:active {
+    background: accent_dark;
+    border-color: accent_dark;
+}
+
+Button:disabled,
+Dropdown:disabled,
+TextInput:disabled,
+NumberInput:disabled {
+    border-color: disabled;
+    opacity: 0.62;
+}
+
+TextInput,
+NumberInput {
+    border: 1px solid border;
+    border-radius: var(--dg-radius);
+    accent: accent;
+    color: text;
+}
+
+TextInput:hover,
+NumberInput:hover {
+    border-color: accent;
+}
+
+Checkbox {
+    border-radius: var(--dg-radius);
+    accent: accent;
+    color: text;
+}
+
+Slider {
+    track-color: border;
+    thumb-color: accent;
+    accent: accent;
+}
+
+ProgressBar,
+Image {
+    border: 1px solid border;
+    border-radius: var(--dg-radius);
+    accent: accent;
+}
+
+Image {
+    background: surface_alt;
+}
+
+Tab,
+NavItem,
+Menu {
+    border-radius: var(--dg-radius);
+    accent: accent;
+}

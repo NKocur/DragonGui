@@ -1,3 +1,4 @@
+use crate::document::WidgetNode;
 use crate::events::{SortDirection, TableState};
 use crate::layout::Rect;
 use crate::resources::ResourceRegistry;
@@ -32,6 +33,17 @@ pub fn metrics(theme: &Theme, sf: f32) -> TableMetrics {
         index_w: 64.0 * sf,
         col_w: 140.0 * sf,
     }
+}
+
+pub fn metrics_for_node(node: &WidgetNode, theme: &Theme, sf: f32) -> TableMetrics {
+    let mut metrics = metrics(theme, sf);
+    if let Some(header_h) = node.style.widget.table_header_height {
+        metrics.header_h = (header_h * sf).max(1.0);
+    }
+    if let Some(row_h) = node.style.widget.table_row_height {
+        metrics.row_h = (row_h * sf).max(1.0);
+    }
+    metrics
 }
 
 pub fn visible(table: &TableState, rect: &Rect, metrics: TableMetrics) -> VisibleTable {

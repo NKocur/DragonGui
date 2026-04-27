@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 pub(crate) const FOCUS_RING_LP: f32 = 2.0;
 pub(crate) const PANEL_ACCENT_WIDTH_LP: f32 = 3.0;
 pub(crate) const BORDER_WIDTH_LP: f32 = 1.0;
@@ -19,10 +21,30 @@ pub(crate) fn number_stepper_width(widget_width: f32, sf: f32) -> f32 {
     (NUMBER_STEPPER_WIDTH_LP * sf).min(widget_width * 0.45)
 }
 
+pub(crate) fn number_stepper_width_for_style(style: &NodeStyle, widget_width: f32, sf: f32) -> f32 {
+    let width_lp = style
+        .parts
+        .parts
+        .get("stepper")
+        .and_then(|part| part.layout.width)
+        .unwrap_or(NUMBER_STEPPER_WIDTH_LP);
+    (width_lp.max(1.0) * sf).min(widget_width * 0.45)
+}
+
 pub(crate) const TAB_GAP_LP: f32 = 8.0;
 pub(crate) const TAB_TOP_INSET_LP: f32 = 4.0;
 pub(crate) const TAB_INACTIVE_BOTTOM_INSET_LP: f32 = 3.0;
 pub(crate) const TAB_ACTIVE_BAR_LP: f32 = 3.0;
+
+pub(crate) fn tabs_header_height_for_style(style: &NodeStyle, theme: &Theme, sf: f32) -> f32 {
+    let height_lp = style
+        .parts
+        .parts
+        .get("header")
+        .and_then(|part| part.layout.height)
+        .unwrap_or_else(|| theme.control_height());
+    (height_lp.max(1.0) * sf).max(1.0)
+}
 
 use serde_json::Value;
 
@@ -33,10 +55,13 @@ pub struct NodeStyle {
     pub layout: LayoutStyle,
     pub visual: VisualStyle,
     pub text: TextStyle,
+    pub widget: WidgetStyle,
+    pub parts: NodePartStyles,
     pub hover: VisualStyle,
     pub active: VisualStyle,
     pub focus: VisualStyle,
     pub disabled: VisualStyle,
+    pub checked: VisualStyle,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -82,10 +107,19 @@ pub struct VisualStyle {
     pub border_color: Option<ColorRef>,
     pub border_width: Option<f32>,
     pub border_radius: Option<f32>,
+    pub corner_radii: CornerRadii,
     pub accent: Option<ColorRef>,
     pub track_color: Option<ColorRef>,
     pub thumb_color: Option<ColorRef>,
     pub opacity: Option<f32>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct CornerRadii {
+    pub top_left: Option<f32>,
+    pub top_right: Option<f32>,
+    pub bottom_right: Option<f32>,
+    pub bottom_left: Option<f32>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,6 +136,37 @@ pub struct TextStyle {
     pub font_weight: Option<u16>,
     pub color: Option<ColorRef>,
     pub text_align: Option<TextAlign>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct WidgetStyle {
+    pub table_row_height: Option<f32>,
+    pub table_header_height: Option<f32>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PartLayoutStyle {
+    pub width: Option<f32>,
+    pub height: Option<f32>,
+    pub padding: Option<f32>,
+    pub gap: Option<f32>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PartStyle {
+    pub layout: PartLayoutStyle,
+    pub visual: VisualStyle,
+    pub text: TextStyle,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct NodePartStyles {
+    pub parts: BTreeMap<String, PartStyle>,
+    pub hover: BTreeMap<String, PartStyle>,
+    pub active: BTreeMap<String, PartStyle>,
+    pub focus: BTreeMap<String, PartStyle>,
+    pub disabled: BTreeMap<String, PartStyle>,
+    pub checked: BTreeMap<String, PartStyle>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -129,10 +194,13 @@ impl NodeStyle {
         parse_layout(map, &mut style.layout);
         parse_visual(map, &mut style.visual);
         parse_text(map, &mut style.text);
+        parse_widget(map, &mut style.widget);
+        parse_parts(map.get("parts"), &mut style.parts);
         style.hover = nested_visual(map.get("hover"));
         style.active = nested_visual(map.get("active"));
         style.focus = nested_visual(map.get("focus"));
         style.disabled = nested_visual(map.get("disabled"));
+        style.checked = nested_visual(map.get("checked"));
         style
     }
 }
@@ -148,6 +216,7 @@ impl VisualStyle {
                 .or_else(|| self.border_color.clone()),
             border_width: other.border_width.or(self.border_width),
             border_radius: other.border_radius.or(self.border_radius),
+            corner_radii: self.corner_radii.merged(&other.corner_radii),
             accent: other.accent.clone().or_else(|| self.accent.clone()),
             track_color: other
                 .track_color
@@ -159,6 +228,33 @@ impl VisualStyle {
                 .or_else(|| self.thumb_color.clone()),
             opacity: other.opacity.or(self.opacity),
         }
+    }
+}
+
+impl CornerRadii {
+    pub fn merged(&self, other: &CornerRadii) -> CornerRadii {
+        CornerRadii {
+            top_left: other.top_left.or(self.top_left),
+            top_right: other.top_right.or(self.top_right),
+            bottom_right: other.bottom_right.or(self.bottom_right),
+            bottom_left: other.bottom_left.or(self.bottom_left),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.top_left.is_none()
+            && self.top_right.is_none()
+            && self.bottom_right.is_none()
+            && self.bottom_left.is_none()
+    }
+
+    pub fn resolve(&self, uniform_radius: f32) -> [f32; 4] {
+        [
+            self.top_left.unwrap_or(uniform_radius),
+            self.top_right.unwrap_or(uniform_radius),
+            self.bottom_right.unwrap_or(uniform_radius),
+            self.bottom_left.unwrap_or(uniform_radius),
+        ]
     }
 }
 
@@ -206,6 +302,14 @@ fn parse_visual(map: &serde_json::Map<String, Value>, out: &mut VisualStyle) {
     out.border_color = color_ref(map.get("border_color"));
     out.border_width = number(map.get("border_width"));
     out.border_radius = number(map.get("border_radius"));
+    out.corner_radii.top_left = number(map.get("border_top_left_radius"))
+        .or_else(|| number(map.get("border-top-left-radius")));
+    out.corner_radii.top_right = number(map.get("border_top_right_radius"))
+        .or_else(|| number(map.get("border-top-right-radius")));
+    out.corner_radii.bottom_right = number(map.get("border_bottom_right_radius"))
+        .or_else(|| number(map.get("border-bottom-right-radius")));
+    out.corner_radii.bottom_left = number(map.get("border_bottom_left_radius"))
+        .or_else(|| number(map.get("border-bottom-left-radius")));
     out.accent = color_ref(map.get("accent"));
     out.track_color = color_ref(map.get("track_color"));
     out.thumb_color = color_ref(map.get("thumb_color"));
@@ -224,6 +328,100 @@ fn parse_text(map: &serde_json::Map<String, Value>, out: &mut TextStyle) {
         .get("text_align")
         .and_then(Value::as_str)
         .and_then(parse_text_align);
+}
+
+fn parse_widget(map: &serde_json::Map<String, Value>, out: &mut WidgetStyle) {
+    out.table_row_height =
+        number(map.get("table_row_height")).or_else(|| number(map.get("table-row-height")));
+    out.table_header_height =
+        number(map.get("table_header_height")).or_else(|| number(map.get("table-header-height")));
+}
+
+fn parse_parts(value: Option<&Value>, out: &mut NodePartStyles) {
+    let Some(Value::Object(parts)) = value else {
+        return;
+    };
+    for (name, value) in parts {
+        let Some(name) = normalize_part_name(name) else {
+            continue;
+        };
+        let Value::Object(map) = value else {
+            continue;
+        };
+        let base = part_style_from_map(map);
+        if !part_style_is_empty(&base) {
+            out.parts.insert(name.clone(), base);
+        }
+        parse_part_pseudo(map.get("hover"), &mut out.hover, &name);
+        parse_part_pseudo(map.get("active"), &mut out.active, &name);
+        parse_part_pseudo(map.get("focus"), &mut out.focus, &name);
+        parse_part_pseudo(map.get("disabled"), &mut out.disabled, &name);
+        parse_part_pseudo(map.get("checked"), &mut out.checked, &name);
+    }
+}
+
+fn parse_part_pseudo(
+    value: Option<&Value>,
+    out: &mut BTreeMap<String, PartStyle>,
+    part_name: &str,
+) {
+    let Some(Value::Object(map)) = value else {
+        return;
+    };
+    let style = part_style_from_map(map);
+    if !part_style_is_empty(&style) {
+        out.insert(part_name.to_string(), style);
+    }
+}
+
+fn part_style_from_map(map: &serde_json::Map<String, Value>) -> PartStyle {
+    let mut style = PartStyle::default();
+    parse_part_layout(map, &mut style.layout);
+    parse_visual(map, &mut style.visual);
+    parse_text(map, &mut style.text);
+    style
+}
+
+fn parse_part_layout(map: &serde_json::Map<String, Value>, out: &mut PartLayoutStyle) {
+    out.width = number(map.get("width"));
+    out.height = number(map.get("height"));
+    out.padding = number(map.get("padding"));
+    out.gap = number(map.get("gap"));
+}
+
+fn normalize_part_name(name: &str) -> Option<String> {
+    let normalized = name.trim().replace('_', "-").to_ascii_lowercase();
+    (!normalized.is_empty()).then_some(normalized)
+}
+
+fn part_style_is_empty(style: &PartStyle) -> bool {
+    style.layout.width.is_none()
+        && style.layout.height.is_none()
+        && style.layout.padding.is_none()
+        && style.layout.gap.is_none()
+        && visual_style_is_empty(&style.visual)
+        && text_style_is_empty(&style.text)
+}
+
+fn visual_style_is_empty(style: &VisualStyle) -> bool {
+    style.background.is_none()
+        && style.foreground.is_none()
+        && style.border_color.is_none()
+        && style.border_width.is_none()
+        && style.border_radius.is_none()
+        && style.corner_radii.is_empty()
+        && style.accent.is_none()
+        && style.track_color.is_none()
+        && style.thumb_color.is_none()
+        && style.opacity.is_none()
+}
+
+fn text_style_is_empty(style: &TextStyle) -> bool {
+    style.font_size.is_none()
+        && style.font_family.is_none()
+        && style.font_weight.is_none()
+        && style.color.is_none()
+        && style.text_align.is_none()
 }
 
 fn nested_visual(value: Option<&Value>) -> VisualStyle {
@@ -376,6 +574,8 @@ mod tests {
             "background": "surface_alt",
             "border_color": "#33ffaa",
             "border_radius": 9,
+            "border_top_right_radius": 12,
+            "border-bottom-left-radius": 4,
             "track_color": "border",
             "thumb_color": "accent",
             "font_size": 18,
@@ -398,6 +598,18 @@ mod tests {
                 0xaa as f32 / 255.0,
                 1.0
             ]))
+        );
+        assert_eq!(style.visual.border_radius, Some(9.0));
+        assert_eq!(style.visual.corner_radii.top_left, None);
+        assert_eq!(style.visual.corner_radii.top_right, Some(12.0));
+        assert_eq!(style.visual.corner_radii.bottom_right, None);
+        assert_eq!(style.visual.corner_radii.bottom_left, Some(4.0));
+        assert_eq!(
+            style
+                .visual
+                .corner_radii
+                .resolve(style.visual.border_radius.unwrap()),
+            [9.0, 12.0, 9.0, 4.0]
         );
         assert_eq!(
             style.hover.background,
@@ -423,5 +635,57 @@ mod tests {
             Some(ColorRef::Token("accent".to_string()))
         );
         assert_eq!(style.text.text_align, Some(TextAlign::Center));
+    }
+
+    #[test]
+    fn parses_inline_part_styles_and_normalizes_part_names() {
+        let style = NodeStyle::from_json(Some(&json!({
+            "border_radius": 10,
+            "parts": {
+                "stepper_up": {
+                    "background": "surface_alt",
+                    "width": 32,
+                    "border_top_right_radius": 10,
+                    "color": "accent",
+                    "hover": {
+                        "background": "accent_mix_20",
+                        "color": "text"
+                    }
+                },
+                "row-selected": {
+                    "background": "accent",
+                    "font_weight": 700
+                }
+            }
+        })));
+
+        let stepper = style.parts.parts.get("stepper-up").unwrap();
+        assert_eq!(stepper.layout.width, Some(32.0));
+        assert_eq!(
+            stepper.visual.background,
+            Some(ColorRef::Token("surface_alt".to_string()))
+        );
+        assert_eq!(stepper.visual.corner_radii.top_right, Some(10.0));
+        assert_eq!(
+            stepper.text.color,
+            Some(ColorRef::Token("accent".to_string()))
+        );
+
+        let stepper_hover = style.parts.hover.get("stepper-up").unwrap();
+        assert_eq!(
+            stepper_hover.visual.background,
+            Some(ColorRef::Token("accent_mix_20".to_string()))
+        );
+        assert_eq!(
+            stepper_hover.text.color,
+            Some(ColorRef::Token("text".to_string()))
+        );
+
+        let selected = style.parts.parts.get("row-selected").unwrap();
+        assert_eq!(
+            selected.visual.background,
+            Some(ColorRef::Token("accent".to_string()))
+        );
+        assert_eq!(selected.text.font_weight, Some(700));
     }
 }

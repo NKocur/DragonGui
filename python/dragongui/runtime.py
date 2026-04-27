@@ -194,6 +194,12 @@ class AppHandle:
     def release_resource(self, resource_id: str) -> None:
         self._send_or_queue_native("enqueue_release_resource", _resource_id(resource_id))
 
+    def enqueue_set_stylesheet(self, css: str) -> None:
+        self._send_or_queue_native("enqueue_set_stylesheet", "user", _stylesheet_css(css))
+
+    def enqueue_clear_stylesheets(self) -> None:
+        self._send_or_queue_native("enqueue_clear_stylesheets", "user")
+
     def debug_snapshot(self, timeout_ms: int = 1000) -> dict[str, Any]:
         """Return a JSON-safe snapshot of the live native runtime."""
         with self._lock:
@@ -374,6 +380,14 @@ def _table_json(table: object) -> str:
     if not isinstance(table, Mapping):
         raise TypeError("table update must be a mapping")
     return json.dumps(dict(table), separators=(",", ":"), sort_keys=True)
+
+
+def _stylesheet_css(css: object) -> str:
+    if not isinstance(css, str):
+        raise TypeError("css must be a string")
+    if not css.strip():
+        raise ValueError("css must be a non-empty string")
+    return css
 
 
 def _resource_id(value: object) -> str:

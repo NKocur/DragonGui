@@ -5,15 +5,18 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::document::{WidgetKind, WidgetNode};
 use crate::layout::{LayoutResult, Rect};
+use crate::style::BORDER_WIDTH_LP;
+use crate::theme::Theme;
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable)]
 struct ImageInstance {
     rect: [f32; 4],
     uv: [f32; 4],
+    radii: [f32; 4],
 }
 
-static IMAGE_ATTRS: [wgpu::VertexAttribute; 2] = [
+static IMAGE_ATTRS: [wgpu::VertexAttribute; 3] = [
     wgpu::VertexAttribute {
         format: wgpu::VertexFormat::Float32x4,
         offset: 0,
@@ -23,6 +26,11 @@ static IMAGE_ATTRS: [wgpu::VertexAttribute; 2] = [
         format: wgpu::VertexFormat::Float32x4,
         offset: 16,
         shader_location: 1,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 32,
+        shader_location: 2,
     },
 ];
 
@@ -241,9 +249,11 @@ impl ImageRenderer {
         queue: &wgpu::Queue,
         tree: &WidgetNode,
         layout: &LayoutResult,
+        theme: &Theme,
+        sf: f32,
     ) {
         let mut specs = Vec::new();
-        collect_image_specs(tree, layout, &mut specs);
+        collect_image_specs(tree, layout, theme, sf, &mut specs);
 
         let active_paths: HashSet<String> = specs.iter().map(|spec| spec.path.clone()).collect();
         self.images.retain(|path, _| active_paths.contains(path));
@@ -282,7 +292,10 @@ impl ImageRenderer {
             if rect[2] <= 0.0 || rect[3] <= 0.0 {
                 continue;
             }
-            self.instances.push(ImageInstance { rect, uv });
+            let radii = spec
+                .radii
+                .map(|radius| radius.min(rect[2] * 0.5).min(rect[3] * 0.5));
+            self.instances.push(ImageInstance { rect, uv, radii });
             self.draws.push(ImageDraw { path: spec.path });
         }
 
@@ -333,22 +346,60 @@ struct ImageSpec {
     path: String,
     rect: Rect,
     fit: ImageFit,
+    radii: [f32; 4],
 }
 
-fn collect_image_specs(node: &WidgetNode, layout: &LayoutResult, out: &mut Vec<ImageSpec>) {
+fn collect_image_specs(
+    node: &WidgetNode,
+    layout: &LayoutResult,
+    theme: &Theme,
+    sf: f32,
+    out: &mut Vec<ImageSpec>,
+) {
     if node.kind == WidgetKind::Image {
-        if let (Some(path), Some(rect)) =
-            (node.props.image_path.as_ref(), layout.rects.get(&node.id))
-        {
+        if let (Some(path), Some(rect)) = (
+            node.props.image_path.as_ref(),
+            layout.visible_rect(&node.id),
+        ) {
+            let border_w = node
+                .style
+                .visual
+                .border_width
+                .unwrap_or(BORDER_WIDTH_LP)
+                .max(0.0)
+                * sf;
+            let content = inset_rect(rect, border_w);
+            let radius = node
+                .style
+                .visual
+                .border_radius
+                .unwrap_or(theme.radius)
+                .max(0.0);
+            let radii = node
+                .style
+                .visual
+                .corner_radii
+                .resolve(radius)
+                .map(|radius| (radius.max(0.0) * sf - border_w).max(0.0));
             out.push(ImageSpec {
                 path: path.clone(),
-                rect: *rect,
+                rect: content,
                 fit: ImageFit::from_node(node),
+                radii,
             });
         }
     }
     for child in &node.children {
-        collect_image_specs(child, layout, out);
+        collect_image_specs(child, layout, theme, sf, out);
+    }
+}
+
+fn inset_rect(rect: Rect, inset: f32) -> Rect {
+    Rect {
+        x: rect.x + inset,
+        y: rect.y + inset,
+        w: (rect.w - inset * 2.0).max(0.0),
+        h: (rect.h - inset * 2.0).max(0.0),
     }
 }
 

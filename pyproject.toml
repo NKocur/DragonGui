@@ -53,8 +53,11 @@ strip = true
 include = [
   { path = "THIRD_PARTY_NOTICES.md", format = "sdist" },
   { path = "THIRD_PARTY_NOTICES.md", format = "wheel" },
+  { path = "docs/*.md", format = "sdist" },
   { path = "examples/*.py", format = "sdist" },
   { path = "plans/*.md", format = "sdist" },
+  { path = "plans/V2/*.md", format = "sdist" },
+  { path = "tools/*.py", format = "sdist" },
   { path = "tests/*.py", format = "sdist" },
   { path = "benches/*.py", format = "sdist" },
   { path = "start.bat", format = "sdist" },

@@ -1065,6 +1065,8 @@ The CSS effort succeeds when:
 
 Possible future work:
 
+- Widget part selectors such as `NumberInput::stepper` and
+  `Slider::thumb`. See `plans/V2/css-styling-system-part-2-widget-parts.md`.
 - Descendant selectors.
 - Attribute selectors for `key`.
 - `:checked`, `:selected`, `:open`.

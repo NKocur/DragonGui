@@ -108,6 +108,70 @@ def test_widget_style_and_class_serialize_as_v1_metadata() -> None:
         dg.Button("Bad", style=["not", "a", "mapping"], parent=None)  # type: ignore[arg-type]
 
 
+def test_app_stylesheet_serializes_startup_stylesheets() -> None:
+    app = dg.App()
+    app.stylesheet("Button { border-radius: 4px; }")
+    app.stylesheet(".primary { background: accent; }")
+    win = dg.Window("CSS")
+
+    document = app.document(win)
+
+    assert document["stylesheets"] == [
+        {"origin": "user", "source": "Button { border-radius: 4px; }"},
+        {"origin": "user", "source": ".primary { background: accent; }"},
+    ]
+
+    with pytest.raises(TypeError, match="css"):
+        app.stylesheet(123)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="non-empty"):
+        app.stylesheet("  ")
+
+    app.clear_stylesheets()
+    assert "stylesheets" not in app.document(win)
+
+
+def test_app_load_stylesheet_and_live_stylesheet_updates() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.stylesheets: list[tuple[str, str]] = []
+            self.cleared: list[str] = []
+
+        def enqueue_set_stylesheet(self, origin: str, css: str) -> None:
+            self.stylesheets.append((origin, css))
+
+        def enqueue_clear_stylesheets(self, origin: str) -> None:
+            self.cleared.append(origin)
+
+        def close(self) -> None:
+            pass
+
+    css_path = Path(".test-cache") / "app_stylesheet_test.dg.css"
+    css_path.parent.mkdir(exist_ok=True)
+    css_path.write_text("Button { border-radius: 4px; }", encoding="utf-8")
+    app = dg.App()
+    try:
+        app.load_stylesheet(css_path)
+    finally:
+        css_path.unlink(missing_ok=True)
+
+    assert app.document(dg.Window("CSS"))["stylesheets"] == [
+        {"origin": "user", "source": "Button { border-radius: 4px; }"}
+    ]
+
+    sender = Sender()
+    app._handle = AppHandle()
+    app._handle._bind_native_sender(sender)
+    try:
+        app.stylesheet("Button { background: accent; }")
+        app.clear_stylesheets()
+    finally:
+        app._handle._close()
+        app._handle = None
+
+    assert sender.stylesheets == [("user", "Button { background: accent; }")]
+    assert sender.cleared == ["user"]
+
+
 def test_widget_tooltip_serializes_as_common_prop() -> None:
     app = dg.App()
     win = dg.Window("Tooltips")
@@ -491,11 +555,20 @@ def test_widget_set_style_updates_python_state_and_live_native_style() -> None:
     assert button.style == {"background": "accent", "border_radius": 8}
     assert sender.styles == [("run", '{"background":"accent","border_radius":8}')]
 
+    button.set_style({"parts": {"stepper_up": {"background": "danger", "width": 32}}})
+    assert button.style == {
+        "parts": {"stepper_up": {"background": "danger", "width": 32}}
+    }
+    assert sender.styles[-1] == (
+        "run",
+        '{"background":null,"border_radius":null,"parts":{"stepper_up":{"background":"danger","width":32}}}',
+    )
+
     button.set_style(None)
     assert "style" not in button.to_dict()
     assert sender.styles[-1] == (
         "run",
-        '{"background":null,"border_radius":null}',
+        '{"parts":null}',
     )
 
     with pytest.raises(TypeError, match="style"):

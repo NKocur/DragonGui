@@ -1,6 +1,7 @@
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
+use crate::css_style::{StylesheetOrigin, StylesheetStore};
 use crate::style::NodeStyle;
 use crate::theme::{parse_hex_color as parse_hex_color_str, Theme};
 
@@ -124,6 +125,39 @@ pub fn parse_theme_from_doc(doc: &serde_json::Value) -> Option<Theme> {
 
 fn parse_hex_color(v: Option<&serde_json::Value>) -> Option<[f32; 4]> {
     parse_hex_color_str(v?.as_str()?)
+}
+
+pub fn parse_stylesheets_from_doc(doc: &serde_json::Value) -> StylesheetStore {
+    let mut store = StylesheetStore::default();
+    let Some(stylesheets) = doc.get("stylesheets").and_then(|value| value.as_array()) else {
+        return store;
+    };
+    for stylesheet in stylesheets {
+        let source = stylesheet
+            .get("source")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default();
+        if source.trim().is_empty() {
+            continue;
+        }
+        let origin = match stylesheet
+            .get("origin")
+            .and_then(|value| value.as_str())
+            .unwrap_or("user")
+        {
+            "framework" => StylesheetOrigin::Framework,
+            "theme" => StylesheetOrigin::Theme,
+            "user" => StylesheetOrigin::User,
+            other => {
+                eprintln!("DragonGUI: ignoring stylesheet with unsupported origin {other:?}");
+                continue;
+            }
+        };
+        if let Err(error) = store.set_stylesheet(origin, source) {
+            eprintln!("DragonGUI: ignoring invalid stylesheet: {error}");
+        }
+    }
+    store
 }
 
 // ---------------------------------------------------------------------------
@@ -275,6 +309,8 @@ pub struct WidgetNode {
     /// Raw structured style map retained so live style patches can merge and
     /// reparse computed style without rebuilding the whole document.
     pub style_json: Map<String, Value>,
+    /// Parsed inline style, kept separate from the computed stylesheet result.
+    pub inline_style: NodeStyle,
     pub style: NodeStyle,
     pub children: Vec<WidgetNode>,
 }
@@ -301,7 +337,8 @@ pub fn parse_widget_node(v: &serde_json::Value) -> Option<WidgetNode> {
     let props_val = v.get("props").unwrap_or(&serde_json::Value::Null);
     let props = parse_props(&kind, props_val);
     let style_json = style_map_from_value(v.get("style"));
-    let style = NodeStyle::from_json(Some(&Value::Object(style_json.clone())));
+    let inline_style = NodeStyle::from_json(Some(&Value::Object(style_json.clone())));
+    let style = inline_style.clone();
     let children = v
         .get("children")
         .and_then(|c| c.as_array())
@@ -314,6 +351,7 @@ pub fn parse_widget_node(v: &serde_json::Value) -> Option<WidgetNode> {
         kind,
         props,
         style_json,
+        inline_style,
         style,
         children,
     })
@@ -551,5 +589,30 @@ mod tests {
         assert_eq!(image.props.image_fit.as_deref(), Some("cover"));
         assert_eq!(image.props.fixed_width, Some(160.0));
         assert_eq!(image.props.fixed_height, Some(90.0));
+    }
+
+    #[test]
+    fn parse_stylesheets_from_doc_populates_user_store() {
+        let doc = json!({
+            "stylesheets": [{
+                "origin": "user",
+                "source": ":root { --radius: 4px; } Button { border-radius: var(--radius); }"
+            }],
+            "window": {
+                "id": "window",
+                "type": "window",
+                "props": {"title": "Styles", "width": 320, "height": 240}
+            }
+        });
+
+        let store = parse_stylesheets_from_doc(&doc);
+
+        assert_eq!(store.rules(StylesheetOrigin::User).len(), 1);
+        assert_eq!(
+            store.variables().get("--radius"),
+            Some(&crate::css_style::DgCssValue::Length(
+                crate::css_style::DgCssLength::LogicalPx(4.0)
+            ))
+        );
     }
 }

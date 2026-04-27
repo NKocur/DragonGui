@@ -7,8 +7,8 @@ and custom GPU widgets.
 
 The library is currently pre-alpha. It already supports a usable set of native
 widgets, live updates from Python callbacks and background threads, structured
-styling, themes, reactive Python components, GPU scatter rendering, and
-DataFrame-style tables.
+inline styles, a CSS styling subset, themes, reactive Python components, GPU
+scatter rendering, and DataFrame-style tables.
 
 ## What DragonGUI Does
 
@@ -280,7 +280,14 @@ marks dirty state, and requests a redraw when needed.
 
 ## Styling And Theming
 
-DragonGUI uses structured inline styles, not CSS strings.
+DragonGUI supports two styling paths:
+
+- Structured inline `style={...}` dictionaries for local widget overrides.
+- A DragonGUI CSS subset loaded with `app.stylesheet(...)` or
+  `app.load_stylesheet(...)` for app-wide design systems.
+
+Inline styles keep the highest precedence over stylesheets, so existing apps
+remain compatible.
 
 Example:
 
@@ -299,8 +306,34 @@ dg.Panel(
 )
 ```
 
-`class_` is currently a semantic/debug label. It is retained in metadata and
-debug output, but it does not trigger selector-based styling yet.
+CSS example:
+
+```python
+app.stylesheet("""
+Panel.controls {
+    width: 340px;
+    padding: 14px;
+    gap: 10px;
+    background: surface;
+    border: 1px solid border;
+    border-radius: 6px;
+}
+
+Panel.controls > Button {
+    height: 34px;
+}
+
+Button:hover {
+    background: accent_mix_20;
+}
+""")
+```
+
+Supported CSS selectors include type selectors, class selectors, explicit id
+selectors, direct-child selectors, and the `:hover`, `:active`, `:focus`, and
+`:disabled` pseudo-states. Text properties inherit down the widget tree.
+
+See `docs/css-styling.md` for the full supported CSS subset.
 
 Supported layout style concepts include:
 
@@ -398,7 +431,7 @@ Major backend systems:
 | Document parsing | `native/src/document.rs` | Converts Python widget documents into typed Rust nodes. |
 | Layout | `native/src/layout.rs` | Taffy-based layout and widget rect computation. |
 | Events | `native/src/events.rs` | Hit testing, focus, active/hover state, widget interactions. |
-| Styles | `native/src/style.rs`, `native/src/theme.rs` | Style parsing, pseudo-state merging, token resolution. |
+| Styles | `native/src/style.rs`, `native/src/css_style.rs`, `native/src/theme.rs`, `native/src/framework.dg.css` | Inline style parsing, CSS parsing/cascade, pseudo-state merging, token resolution. |
 | Primitive rendering | `native/src/primitives/` | Instanced rounded rectangles, controls, table shapes, overlays. |
 | Text rendering | `native/src/text/` | Text layout, glyph caching, widget labels, table/dropdown text. |
 | Tables | `native/src/table.rs`, `native/src/resources.rs` | Table metrics, visible ranges, data resources. |
@@ -415,6 +448,9 @@ Native dependencies currently include:
 - `bytemuck`
 - `serde` / `serde_json`
 - `base64`
+- `lightningcss`
+- `image`
+- `rfd`
 - `pollster`
 - `thiserror`
 
@@ -539,6 +575,9 @@ installation.
 Current examples cover:
 
 - Full feature showcase: `examples/all_features_demo.py`
+- CSS all-features demo: `examples/all_features_css_demo.py`
+- CSS design system demo: `examples/css_design_system_demo.py`
+- CSS showcase: `examples/css_showcase.py`
 - Scatter tool: `examples/scatter_tool.py`
 - Table tool: `examples/table_tool.py`
 - Live table updates: `examples/live_table_tool.py`
@@ -564,8 +603,8 @@ DragonGUI intentionally does not currently include:
 - HTML parser.
 - Webview frontend.
 - JavaScript runtime.
-- Full CSS selector engine.
-- CSS cascade/specificity/inheritance.
+- Browser-complete CSS behavior.
+- Descendant selectors, media queries, transitions, or scoped CSS variables.
 - Full visual inspector.
 - Broad native desktop platform coverage such as system trays, clipboard APIs,
   drag-and-drop, printing, dock/taskbar integration, and accessibility.
@@ -591,6 +630,8 @@ DragonGUI currently provides:
 - A retained Rust widget/render tree.
 - Taffy-based layout.
 - Structured inline styling and theme tokens.
+- CSS stylesheets with cascade, specificity, pseudo-states, and text
+  inheritance.
 - Native input/focus/hover/active behavior.
 - Native tooltip overlays.
 - Native modal overlays.

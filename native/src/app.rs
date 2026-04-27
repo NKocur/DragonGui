@@ -3,6 +3,7 @@ use pyo3::types::{PyAny, PyDict};
 use std::collections::HashMap;
 
 use crate::commands::{CommandBridge, NativeCommandSender};
+use crate::css_style::apply_stylesheets_to_tree;
 use crate::document::{self, StartupDoc, WidgetNode};
 use crate::error::DragonError;
 use crate::events::ChangeValue;
@@ -26,8 +27,14 @@ pub fn run_app_impl(
         serde_json::from_str(&json_str).map_err(|e| DragonError::ParseError(e.to_string()))?;
 
     let scatter_spec = document::find_scatter_in_doc(&raw);
-    let widget_tree: Option<WidgetNode> = document::parse_widget_tree(&raw);
     let python_theme: Option<Theme> = document::parse_theme_from_doc(&raw);
+    let effective_theme = python_theme.clone().unwrap_or_else(Theme::dark);
+    let mut stylesheets = document::parse_stylesheets_from_doc(&raw);
+    stylesheets.install_framework_defaults(&effective_theme);
+    let mut widget_tree: Option<WidgetNode> = document::parse_widget_tree(&raw);
+    if let Some(tree) = &mut widget_tree {
+        apply_stylesheets_to_tree(tree, &mut stylesheets);
+    }
 
     let doc: StartupDoc =
         serde_json::from_value(raw).map_err(|e| DragonError::ParseError(e.to_string()))?;
@@ -88,6 +95,7 @@ pub fn run_app_impl(
         scatter: scatter_spec,
         widget_tree,
         theme: python_theme,
+        stylesheets,
         click_callbacks: click_cbs,
         change_callbacks: change_cbs,
         command_bridge,

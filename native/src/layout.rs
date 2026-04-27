@@ -4,7 +4,10 @@ use taffy::prelude::*;
 
 use crate::document::{WidgetKind, WidgetNode};
 use crate::events::WidgetState;
-use crate::style::{DisplayStyle, FlexDirectionStyle, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP};
+use crate::style::{
+    tabs_header_height_for_style, DisplayStyle, FlexDirectionStyle, CHECKBOX_BOX_LP,
+    CHECKBOX_LEFT_PAD_LP,
+};
 use crate::theme::Theme;
 
 // ---------------------------------------------------------------------------
@@ -20,10 +23,39 @@ pub struct Rect {
     pub h: f32,
 }
 
-/// Maps each widget `id` to its computed pixel rect.
+impl Rect {
+    pub fn intersect(self, other: Rect) -> Option<Rect> {
+        let left = self.x.max(other.x);
+        let top = self.y.max(other.y);
+        let right = (self.x + self.w).min(other.x + other.w);
+        let bottom = (self.y + self.h).min(other.y + other.h);
+        if right <= left || bottom <= top {
+            return None;
+        }
+        Some(Rect {
+            x: left,
+            y: top,
+            w: right - left,
+            h: bottom - top,
+        })
+    }
+}
+
+/// Maps each widget `id` to its computed pixel rect and visible clipped rect.
 #[derive(Debug, Default)]
 pub struct LayoutResult {
     pub rects: HashMap<String, Rect>,
+    pub clips: HashMap<String, Rect>,
+}
+
+impl LayoutResult {
+    pub fn visible_rect(&self, id: &str) -> Option<Rect> {
+        self.clips
+            .get(id)
+            .copied()
+            .or_else(|| self.rects.get(id).copied())
+            .filter(|rect| rect.w > 0.0 && rect.h > 0.0)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -70,6 +102,7 @@ pub fn compute_layout(
     collect(&tree, root_id, root, 0.0, 0.0, &mut result);
     apply_navigation_layout(root, &mut result, scale_factor, theme, state);
     apply_modal_layout(root, &mut result, scale_factor, theme);
+    compute_clips(root, &mut result);
     result
 }
 
@@ -135,7 +168,7 @@ fn style_for(
     parent_kind: Option<&WidgetKind>,
     layout_modal_children: bool,
 ) -> Style {
-    let ctrl_h = theme.control_height() * sf;
+    let ctrl_h = node_control_height_lp(node, theme) * sf;
     let ctrl_gap = (theme.spacing * 0.75) * sf;
     let panel_pad = (theme.spacing + 2.0) * sf;
     let mut style = match node.kind {
@@ -148,6 +181,10 @@ fn style_for(
                 width: Dimension::Auto,
                 height: Dimension::Auto,
             },
+            min_size: Size {
+                width: Dimension::Length(0.0),
+                height: Dimension::Length(0.0),
+            },
             ..Default::default()
         },
 
@@ -157,8 +194,12 @@ fn style_for(
             align_items: Some(AlignItems::Stretch),
             flex_grow: 1.0,
             size: Size {
-                width: Dimension::Percent(1.0),
-                height: Dimension::Percent(1.0),
+                width: Dimension::Auto,
+                height: Dimension::Auto,
+            },
+            min_size: Size {
+                width: Dimension::Length(0.0),
+                height: Dimension::Length(0.0),
             },
             ..Default::default()
         },
@@ -169,8 +210,12 @@ fn style_for(
             align_items: Some(AlignItems::Stretch),
             flex_grow: 1.0,
             size: Size {
-                width: Dimension::Percent(1.0),
-                height: Dimension::Percent(1.0),
+                width: Dimension::Auto,
+                height: Dimension::Auto,
+            },
+            min_size: Size {
+                width: Dimension::Length(0.0),
+                height: Dimension::Length(0.0),
             },
             ..Default::default()
         },
@@ -209,8 +254,8 @@ fn style_for(
                 height: Dimension::Length(
                     node.props
                         .fixed_height
-                        .unwrap_or_else(|| theme.control_height())
-                        .max(theme.control_height())
+                        .unwrap_or_else(|| node_control_height_lp(node, theme))
+                        .max(node_control_height_lp(node, theme))
                         * sf,
                 ),
             },
@@ -461,12 +506,7 @@ fn reserve_panel_title_space(style: &mut Style, node: &WidgetNode, sf: f32, them
 }
 
 fn panel_title_line_height_lp(node: &WidgetNode, theme: &Theme) -> f32 {
-    let font_size = node
-        .style
-        .text
-        .font_size
-        .unwrap_or(theme.font_size)
-        .max(8.0);
+    let font_size = node_font_size_lp(node, theme);
     (font_size + 5.0).max(theme.font_size + 3.0)
 }
 
@@ -507,7 +547,7 @@ fn apply_intrinsic_leaf_width(
 
 fn intrinsic_leaf_width(node: &WidgetNode, theme: &Theme) -> Option<f32> {
     let text = intrinsic_text(node);
-    let text_w = text.map(|t| estimate_text_width(t, theme.font_size));
+    let text_w = text.map(|t| estimate_text_width(t, node_font_size_lp(node, theme)));
     let pad = theme.spacing * 2.0;
     match node.kind {
         WidgetKind::Button => Some((text_w.unwrap_or(0.0) + pad).clamp(72.0, 240.0)),
@@ -516,7 +556,7 @@ fn intrinsic_leaf_width(node: &WidgetNode, theme: &Theme) -> Option<f32> {
         WidgetKind::NumberInput => Some((text_w.unwrap_or(0.0) + pad + 34.0).clamp(96.0, 220.0)),
         WidgetKind::TextInput => Some((text_w.unwrap_or(0.0) + pad).clamp(120.0, 280.0)),
         WidgetKind::Checkbox => Some(
-            (text_w.unwrap_or(0.0) + CHECKBOX_LEFT_PAD_LP + CHECKBOX_BOX_LP + pad)
+            (text_w.unwrap_or(0.0) + CHECKBOX_LEFT_PAD_LP + checkbox_box_width_lp(node) + pad)
                 .clamp(48.0, 280.0),
         ),
         WidgetKind::Label | WidgetKind::NavItem | WidgetKind::Tab => {
@@ -542,6 +582,29 @@ fn estimate_text_width(text: &str, font_size: f32) -> f32 {
     chars * font_size * 0.56
 }
 
+fn checkbox_box_width_lp(node: &WidgetNode) -> f32 {
+    node.style
+        .parts
+        .parts
+        .get("box")
+        .and_then(|part| part.layout.width)
+        .unwrap_or(CHECKBOX_BOX_LP)
+        .max(1.0)
+}
+
+fn node_font_size_lp(node: &WidgetNode, theme: &Theme) -> f32 {
+    node.style
+        .text
+        .font_size
+        .unwrap_or(theme.font_size)
+        .max(8.0)
+}
+
+fn node_control_height_lp(node: &WidgetNode, theme: &Theme) -> f32 {
+    let font_size = node_font_size_lp(node, theme);
+    (font_size + theme.spacing * 2.0 + 4.0).max(28.0)
+}
+
 fn apply_node_style(style: &mut Style, node: &WidgetNode, sf: f32) {
     let layout = &node.style.layout;
     if let Some(display) = layout.display {
@@ -564,6 +627,12 @@ fn apply_node_style(style: &mut Style, node: &WidgetNode, sf: f32) {
     }
     if let Some(height) = layout.height {
         style.size.height = Dimension::Length(height * sf);
+    }
+    if (layout.width.is_some() || layout.height.is_some()) && layout.flex_grow.is_none() {
+        style.flex_grow = 0.0;
+    }
+    if (layout.width.is_some() || layout.height.is_some()) && layout.flex_shrink.is_none() {
+        style.flex_shrink = 0.0;
     }
     if let Some(width) = layout.min_width {
         style.min_size.width = Dimension::Length(width * sf);
@@ -698,6 +767,30 @@ fn collect(
     }
 }
 
+fn compute_clips(root: &WidgetNode, result: &mut LayoutResult) {
+    result.clips.clear();
+    let Some(root_rect) = result.rects.get(&root.id).copied() else {
+        return;
+    };
+    compute_node_clips(root, result, root_rect);
+}
+
+fn compute_node_clips(node: &WidgetNode, result: &mut LayoutResult, parent_clip: Rect) {
+    let Some(rect) = result.rects.get(&node.id).copied() else {
+        return;
+    };
+    let clip = rect.intersect(parent_clip).unwrap_or(Rect {
+        x: rect.x,
+        y: rect.y,
+        w: 0.0,
+        h: 0.0,
+    });
+    result.clips.insert(node.id.clone(), clip);
+    for child in &node.children {
+        compute_node_clips(child, result, clip);
+    }
+}
+
 fn apply_navigation_layout(
     node: &WidgetNode,
     result: &mut LayoutResult,
@@ -808,7 +901,7 @@ fn layout_tabs(
         return;
     }
 
-    let header_h = theme.control_height() * sf;
+    let header_h = tabs_header_height_for_style(&node.style, theme, sf);
     let tab_w = (r.w / tabs.len() as f32).max(1.0);
     for (idx, tab) in tabs.iter().enumerate() {
         result.rects.insert(
@@ -907,6 +1000,7 @@ fn layout_region(
         props: Default::default(),
         style: Default::default(),
         style_json: Default::default(),
+        inline_style: Default::default(),
         children: children.to_vec(),
     };
     let sub = compute_layout(&synthetic, rect.w, rect.h, sf, theme, state);
@@ -939,6 +1033,7 @@ mod tests {
             kind,
             props,
             style_json: Default::default(),
+            inline_style: Default::default(),
             style: Default::default(),
             children,
         }
@@ -987,6 +1082,64 @@ mod tests {
     }
 
     #[test]
+    fn window_body_flexes_between_menu_and_status_bars() {
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![
+                node(
+                    "menu",
+                    WidgetKind::MenuBar,
+                    NodeProps::default(),
+                    vec![node(
+                        "file",
+                        WidgetKind::Menu,
+                        NodeProps {
+                            text: Some("File".to_string()),
+                            ..NodeProps::default()
+                        },
+                        vec![],
+                    )],
+                ),
+                node(
+                    "body",
+                    WidgetKind::HLayout,
+                    NodeProps::default(),
+                    vec![node(
+                        "content",
+                        WidgetKind::Panel,
+                        NodeProps::default(),
+                        vec![],
+                    )],
+                ),
+                node(
+                    "status",
+                    WidgetKind::StatusBar,
+                    NodeProps::default(),
+                    vec![],
+                ),
+            ],
+        );
+
+        let layout = compute_layout(&root, 1000.0, 800.0, 1.0, &Theme::dark(), None);
+        let menu = layout.rects.get("menu").unwrap();
+        let body = layout.rects.get("body").unwrap();
+        let content = layout.rects.get("content").unwrap();
+        let status = layout.rects.get("status").unwrap();
+
+        assert_eq!(menu.y, 0.0);
+        assert_eq!(body.y, menu.h);
+        assert_eq!(status.y, 800.0 - status.h);
+        assert_eq!(body.h, 800.0 - menu.h - status.h);
+        assert_eq!(content.h, body.h);
+        assert!(
+            status.y + status.h <= 800.0,
+            "status bar overflowed window: status={status:?}"
+        );
+    }
+
+    #[test]
     fn row_controls_keep_intrinsic_text_width() {
         let root = node(
             "window",
@@ -1026,6 +1179,118 @@ mod tests {
 
         assert!(apply.w >= 72.0, "button collapsed to {:?}", apply);
         assert!(mode.w >= 112.0, "dropdown collapsed to {:?}", mode);
+    }
+
+    #[test]
+    fn styled_font_size_increases_intrinsic_leaf_height_and_width() {
+        let mut tall = node(
+            "headline",
+            WidgetKind::Label,
+            NodeProps {
+                text: Some("Large headline".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        tall.style.text.font_size = Some(30.0);
+        let height_root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![tall],
+        );
+        let height_layout = compute_layout(&height_root, 600.0, 240.0, 1.0, &Theme::dark(), None);
+        let headline = height_layout.rects.get("headline").unwrap();
+
+        assert!(
+            headline.h >= 50.0,
+            "large CSS font-size should increase label height: {headline:?}"
+        );
+
+        let mut wide = node(
+            "wide",
+            WidgetKind::Label,
+            NodeProps {
+                text: Some("Large headline".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        wide.style.text.font_size = Some(30.0);
+        let mut narrow = node(
+            "narrow",
+            WidgetKind::Label,
+            NodeProps {
+                text: Some("Large headline".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        narrow.style.text.font_size = Some(12.0);
+        let width_root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "row",
+                WidgetKind::HLayout,
+                NodeProps::default(),
+                vec![wide, narrow],
+            )],
+        );
+        let width_layout = compute_layout(&width_root, 800.0, 120.0, 1.0, &Theme::dark(), None);
+        let wide = width_layout.rects.get("wide").unwrap();
+        let narrow = width_layout.rects.get("narrow").unwrap();
+        assert!(
+            wide.w > narrow.w,
+            "large CSS font-size should increase intrinsic text width: wide={wide:?} narrow={narrow:?}"
+        );
+    }
+
+    #[test]
+    fn checkbox_intrinsic_width_uses_styled_box_width() {
+        let mut normal = node(
+            "normal",
+            WidgetKind::Checkbox,
+            NodeProps {
+                text: Some("Network".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        normal.style.text.font_size = Some(12.0);
+
+        let mut switch = normal.clone();
+        switch.id = "switch".to_string();
+        switch
+            .style
+            .parts
+            .parts
+            .entry("box".to_string())
+            .or_default()
+            .layout
+            .width = Some(36.0);
+
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "row",
+                WidgetKind::HLayout,
+                NodeProps::default(),
+                vec![normal, switch],
+            )],
+        );
+
+        let layout = compute_layout(&root, 480.0, 120.0, 1.0, &Theme::dark(), None);
+        let normal = layout.rects.get("normal").unwrap();
+        let switch = layout.rects.get("switch").unwrap();
+
+        assert!(
+            switch.w >= normal.w + 18.0,
+            "styled switch checkbox did not reserve its wider box: normal={normal:?} switch={switch:?}"
+        );
     }
 
     #[test]
@@ -1238,6 +1503,79 @@ mod tests {
 
         assert_eq!(panel.w, 300.0);
         assert_eq!(scatter.x, 316.0);
+    }
+
+    #[test]
+    fn explicit_style_width_does_not_grow_without_explicit_flex_grow() {
+        let mut fixed = node("fixed", WidgetKind::Panel, NodeProps::default(), vec![]);
+        fixed.style.layout.width = Some(320.0);
+        let flexible = node("flexible", WidgetKind::Panel, NodeProps::default(), vec![]);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "row",
+                WidgetKind::HLayout,
+                NodeProps::default(),
+                vec![fixed, flexible],
+            )],
+        );
+
+        let layout = compute_layout(&root, 900.0, 400.0, 1.0, &Theme::dark(), None);
+        let fixed = layout.rects.get("fixed").unwrap();
+        let flexible = layout.rects.get("flexible").unwrap();
+
+        assert_eq!(fixed.w, 320.0);
+        assert_eq!(flexible.x, 320.0);
+        assert_eq!(flexible.w, 580.0);
+    }
+
+    #[test]
+    fn child_visible_clip_does_not_escape_fixed_height_parent() {
+        let mut panel = node(
+            "panel",
+            WidgetKind::Panel,
+            NodeProps::default(),
+            vec![
+                node(
+                    "first",
+                    WidgetKind::Label,
+                    NodeProps {
+                        text: Some("First".to_string()),
+                        ..NodeProps::default()
+                    },
+                    vec![],
+                ),
+                node(
+                    "second",
+                    WidgetKind::Label,
+                    NodeProps {
+                        text: Some("Second".to_string()),
+                        ..NodeProps::default()
+                    },
+                    vec![],
+                ),
+            ],
+        );
+        panel.style.layout.height = Some(40.0);
+        panel.style.layout.padding = Some(0.0);
+        panel.style.layout.gap = Some(0.0);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![panel],
+        );
+
+        let layout = compute_layout(&root, 300.0, 200.0, 1.0, &Theme::dark(), None);
+        let panel = layout.rects.get("panel").unwrap();
+        let second = layout.clips.get("second").unwrap();
+
+        assert!(
+            second.y + second.h <= panel.y + panel.h,
+            "child visible clip escaped parent: panel={panel:?} second_clip={second:?}"
+        );
     }
 
     #[test]

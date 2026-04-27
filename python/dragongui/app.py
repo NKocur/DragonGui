@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from ._backend import native_event_loop_available, run_document
@@ -21,6 +22,7 @@ class App:
     theme: Theme | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     _handle: AppHandle | None = field(default=None, init=False, repr=False)
+    _stylesheets: list[str] = field(default_factory=list, init=False, repr=False)
 
     def document(self, window: Window) -> dict[str, Any]:
         doc: dict[str, Any] = {
@@ -32,7 +34,33 @@ class App:
         }
         if self.theme is not None:
             doc["theme"] = self.theme.to_dict()
+        if self._stylesheets:
+            doc["stylesheets"] = [
+                {"origin": "user", "source": css} for css in self._stylesheets
+            ]
         return doc
+
+    def stylesheet(self, css: str) -> None:
+        if not isinstance(css, str):
+            raise TypeError("css must be a string")
+        if not css.strip():
+            raise ValueError("css must be a non-empty string")
+        if self._handle is not None:
+            self._handle.enqueue_set_stylesheet(css)
+            return
+        self._stylesheets.append(css)
+
+    def load_stylesheet(self, path: str | Path) -> None:
+        """Load a user stylesheet from disk."""
+        css = Path(path).read_text(encoding="utf-8")
+        self.stylesheet(css)
+
+    def clear_stylesheets(self) -> None:
+        """Clear user stylesheets queued for startup or applied to a live app."""
+        if self._handle is not None:
+            self._handle.enqueue_clear_stylesheets()
+            return
+        self._stylesheets.clear()
 
     def run(self, window: Window | ComponentInstance) -> dict[str, Any]:
         """Start the native event loop for a window."""

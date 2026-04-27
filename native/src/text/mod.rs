@@ -13,9 +13,9 @@ use crate::overlays::{
 };
 use crate::resources::ResourceRegistry;
 use crate::style::{
-    number_stepper_width, FontFamily, TextAlign, VisualStyle, BORDER_WIDTH_LP, CHECKBOX_BOX_LP,
-    CHECKBOX_LEFT_PAD_LP, DROPDOWN_CHEVRON_WIDTH_LP, PANEL_ACCENT_WIDTH_LP, TAB_GAP_LP,
-    TAB_TOP_INSET_LP,
+    number_stepper_width_for_style, FontFamily, TextAlign, VisualStyle, BORDER_WIDTH_LP,
+    CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP, DROPDOWN_CHEVRON_WIDTH_LP, PANEL_ACCENT_WIDTH_LP,
+    TAB_GAP_LP,
 };
 use crate::table;
 use crate::theme::Theme;
@@ -277,11 +277,28 @@ fn collect_text(
     if node.kind == WidgetKind::Modal && !node.props.open.unwrap_or(false) {
         return;
     }
-    let font_size = text_font_size(node, theme, sf);
+    let primary_part_text = match node.kind {
+        WidgetKind::ProgressBar => node.style.parts.parts.get("label").map(|part| &part.text),
+        WidgetKind::Tab => node.style.parts.parts.get("tab").map(|part| &part.text),
+        WidgetKind::NavItem => node.style.parts.parts.get("item").map(|part| &part.text),
+        _ => None,
+    };
+    let font_size = primary_part_text
+        .and_then(|text| text.font_size)
+        .map(|font_size| font_size.max(8.0) * sf)
+        .unwrap_or_else(|| text_font_size(node, theme, sf));
     let line_height = text_line_height(font_size, theme, sf);
-    let font_family = node.style.text.font_family.as_ref();
-    let font_weight = node.style.text.font_weight.unwrap_or(Weight::NORMAL.0);
-    let align = node.style.text.text_align.unwrap_or(TextAlign::Left);
+    let font_family = primary_part_text
+        .and_then(|text| text.font_family.as_ref())
+        .or(node.style.text.font_family.as_ref());
+    let font_weight = primary_part_text
+        .and_then(|text| text.font_weight)
+        .or(node.style.text.font_weight)
+        .unwrap_or(Weight::NORMAL.0);
+    let align = primary_part_text
+        .and_then(|text| text.text_align)
+        .or(node.style.text.text_align)
+        .unwrap_or(TextAlign::Left);
     let is_text_widget = matches!(
         node.kind,
         WidgetKind::Panel
@@ -319,6 +336,7 @@ fn collect_text(
             (display_text(node, state), layout.rects.get(&node.id))
         {
             if r.w > 0.0 && r.h > 0.0 {
+                let node_clip = layout.visible_rect(&node.id);
                 let (left, top, clip_left, clip_top, clip_right, clip_bottom) = match node.kind {
                     WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal => {
                         let title_pad = panel_title_padding(node, theme, sf);
@@ -338,15 +356,20 @@ fn collect_text(
                         )
                     }
                     WidgetKind::Checkbox => {
-                        let scale = text_scale(font_size, theme);
-                        let box_size = CHECKBOX_BOX_LP * scale;
-                        let left = r.x + CHECKBOX_LEFT_PAD_LP * scale + box_size + pad;
+                        let box_w = node
+                            .style
+                            .parts
+                            .parts
+                            .get("box")
+                            .and_then(|part| part.layout.width)
+                            .map(|width| width.max(1.0) * sf)
+                            .unwrap_or(CHECKBOX_BOX_LP * sf);
+                        let left = r.x + CHECKBOX_LEFT_PAD_LP * sf + box_w + pad;
                         let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
                         (left, top, left, r.y, r.x + r.w - pad, r.y + r.h)
                     }
                     WidgetKind::Dropdown => {
-                        let scale = text_scale(font_size, theme);
-                        let chevron_w = DROPDOWN_CHEVRON_WIDTH_LP * scale;
+                        let chevron_w = dropdown_chevron_width(node, font_size, theme, sf);
                         let chevron_left = r.x + r.w - pad - chevron_w;
                         let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
                         (
@@ -359,7 +382,7 @@ fn collect_text(
                         )
                     }
                     WidgetKind::NumberInput => {
-                        let step_w = number_stepper_width(r.w, sf);
+                        let step_w = number_stepper_width_for_style(&node.style, r.w, sf);
                         let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
                         (
                             r.x + pad,
@@ -372,15 +395,15 @@ fn collect_text(
                     }
                     WidgetKind::Tab => {
                         let scale = text_scale(font_size, theme);
-                        let left = r.x + pad + TAB_GAP_LP * scale * 0.5;
-                        let top =
-                            r.y + TAB_TOP_INSET_LP * scale + ((r.h - line_height) * 0.5).max(0.0);
+                        let tab_pad = part_padding(node, &["tab"], pad, sf);
+                        let left = r.x + tab_pad + TAB_GAP_LP * scale * 0.5;
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
                         (
                             left,
                             top,
                             left,
                             r.y,
-                            r.x + r.w - pad - TAB_GAP_LP * scale * 0.5,
+                            r.x + r.w - tab_pad - TAB_GAP_LP * scale * 0.5,
                             r.y + r.h,
                         )
                     }
@@ -388,12 +411,66 @@ fn collect_text(
                         let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
                         (r.x + pad, top, r.x + pad, r.y, r.x + r.w - pad, r.y + r.h)
                     }
+                    WidgetKind::NavItem => {
+                        let item_pad = part_padding(node, &["item"], pad, sf);
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        (
+                            r.x + item_pad,
+                            top,
+                            r.x + item_pad,
+                            r.y,
+                            r.x + r.w - item_pad,
+                            r.y + r.h,
+                        )
+                    }
                     _ => {
                         let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
                         (r.x + pad, top, r.x + pad, r.y, r.x + r.w - pad, r.y + r.h)
                     }
                 };
-                let color = text_color(node, state, theme, placeholder);
+                let color = if node.kind == WidgetKind::Dropdown && !placeholder {
+                    part_text_color(
+                        node,
+                        state,
+                        theme,
+                        &["field"],
+                        text_color(node, state, theme, placeholder),
+                    )
+                } else if node.kind == WidgetKind::Checkbox && !placeholder {
+                    part_text_color(
+                        node,
+                        state,
+                        theme,
+                        &["label"],
+                        text_color(node, state, theme, placeholder),
+                    )
+                } else if node.kind == WidgetKind::ProgressBar && !placeholder {
+                    part_text_color(
+                        node,
+                        state,
+                        theme,
+                        &["label"],
+                        text_color(node, state, theme, placeholder),
+                    )
+                } else if node.kind == WidgetKind::Tab && !placeholder {
+                    part_text_color(
+                        node,
+                        state,
+                        theme,
+                        &["tab"],
+                        text_color(node, state, theme, placeholder),
+                    )
+                } else if node.kind == WidgetKind::NavItem && !placeholder {
+                    part_text_color(
+                        node,
+                        state,
+                        theme,
+                        &["item"],
+                        text_color(node, state, theme, placeholder),
+                    )
+                } else {
+                    text_color(node, state, theme, placeholder)
+                };
                 let align = if node.kind == WidgetKind::ProgressBar
                     && node.style.text.text_align.is_none()
                 {
@@ -401,59 +478,71 @@ fn collect_text(
                 } else {
                     align
                 };
-                let clip_rect = Rect {
-                    x: clip_left,
-                    y: clip_top,
-                    w: (clip_right - clip_left).max(0.0),
-                    h: (clip_bottom - clip_top).max(0.0),
-                };
-                if !is_obscured_by_overlay(
-                    node,
-                    &clip_rect,
-                    open_dropdown,
-                    dropdown_overlay,
-                    menu_overlays,
-                    tooltip_overlay,
-                ) {
-                    push_text_entry(
-                        font_system,
-                        out,
-                        text,
-                        font_size,
-                        line_height,
-                        font_family,
-                        font_weight,
-                        left,
-                        top,
-                        TextBounds {
-                            left: clip_left as i32,
-                            top: clip_top as i32,
-                            right: clip_right as i32,
-                            bottom: clip_bottom as i32,
-                        },
-                        color,
-                        align,
-                        cache,
-                        if placeholder { None } else { caret },
-                        caret_positions,
-                    );
+                let clip_rect = node_clip.and_then(|node_clip| {
+                    (Rect {
+                        x: clip_left,
+                        y: clip_top,
+                        w: (clip_right - clip_left).max(0.0),
+                        h: (clip_bottom - clip_top).max(0.0),
+                    })
+                    .intersect(node_clip)
+                });
+                if let Some(clip_rect) = clip_rect {
+                    if !is_obscured_by_overlay(
+                        node,
+                        &clip_rect,
+                        open_dropdown,
+                        dropdown_overlay,
+                        menu_overlays,
+                        tooltip_overlay,
+                    ) {
+                        push_text_entry(
+                            font_system,
+                            out,
+                            text,
+                            font_size,
+                            line_height,
+                            font_family,
+                            font_weight,
+                            left,
+                            top,
+                            TextBounds {
+                                left: clip_rect.x as i32,
+                                top: clip_rect.y as i32,
+                                right: (clip_rect.x + clip_rect.w) as i32,
+                                bottom: (clip_rect.y + clip_rect.h) as i32,
+                            },
+                            color,
+                            align,
+                            cache,
+                            if placeholder { None } else { caret },
+                            caret_positions,
+                        );
+                    }
                 }
             }
         }
 
         if node.kind == WidgetKind::NumberInput {
             if let Some(r) = layout.rects.get(&node.id) {
-                let step_w = number_stepper_width(r.w, sf);
+                let Some(node_clip) = layout.visible_rect(&node.id) else {
+                    return;
+                };
+                let step_w = number_stepper_width_for_style(&node.style, r.w, sf);
+                let step_rect = Rect {
+                    x: r.x + r.w - step_w,
+                    y: r.y,
+                    w: step_w,
+                    h: r.h,
+                };
+                let Some(step_clip) = step_rect.intersect(node_clip) else {
+                    return;
+                };
                 if r.w > 0.0
                     && r.h > 0.0
                     && !is_obscured_by_overlay(
                         node,
-                        &Rect {
-                            x: r.x + r.w - step_w,
-                            y: r.y,
-                            w: step_w,
-                            h: r.h,
-                        },
+                        &step_clip,
                         open_dropdown,
                         dropdown_overlay,
                         menu_overlays,
@@ -463,11 +552,8 @@ fn collect_text(
                     let step_x = r.x + r.w - step_w;
                     let step_left = step_x + BORDER_WIDTH_LP * sf;
                     let half_h = r.h * 0.5;
-                    let color = if state.is_disabled(&node.id) {
-                        glyph_color(theme.disabled)
-                    } else {
-                        glyph_color(theme.muted_text)
-                    };
+                    let up_color = number_stepper_text_color(node, state, theme, "stepper-up");
+                    let down_color = number_stepper_text_color(node, state, theme, "stepper-down");
                     push_text_entry(
                         font_system,
                         out,
@@ -479,12 +565,12 @@ fn collect_text(
                         step_left,
                         r.y + ((half_h - line_height) * 0.5).max(0.0),
                         TextBounds {
-                            left: step_left as i32,
-                            top: r.y as i32,
-                            right: (r.x + r.w) as i32,
-                            bottom: (r.y + half_h) as i32,
+                            left: step_clip.x as i32,
+                            top: step_clip.y as i32,
+                            right: (step_clip.x + step_clip.w) as i32,
+                            bottom: (r.y + half_h).min(step_clip.y + step_clip.h) as i32,
                         },
-                        color,
+                        up_color,
                         TextAlign::Center,
                         cache,
                         None,
@@ -501,12 +587,12 @@ fn collect_text(
                         step_left,
                         r.y + half_h + ((half_h - line_height) * 0.5).max(0.0),
                         TextBounds {
-                            left: step_left as i32,
-                            top: (r.y + half_h) as i32,
-                            right: (r.x + r.w) as i32,
-                            bottom: (r.y + r.h) as i32,
+                            left: step_clip.x as i32,
+                            top: (r.y + half_h).max(step_clip.y) as i32,
+                            right: (step_clip.x + step_clip.w) as i32,
+                            bottom: (step_clip.y + step_clip.h) as i32,
                         },
-                        color,
+                        down_color,
                         TextAlign::Center,
                         cache,
                         None,
@@ -518,30 +604,38 @@ fn collect_text(
 
         if node.kind == WidgetKind::Dropdown {
             if let Some(r) = layout.rects.get(&node.id) {
-                let scale = text_scale(font_size, theme);
-                let chevron_w = DROPDOWN_CHEVRON_WIDTH_LP * scale;
+                let Some(node_clip) = layout.visible_rect(&node.id) else {
+                    return;
+                };
+                let chevron_w = dropdown_chevron_width(node, font_size, theme, sf);
                 let chevron_left = r.x + r.w - pad - chevron_w;
+                let chevron_rect = Rect {
+                    x: chevron_left,
+                    y: r.y,
+                    w: chevron_w,
+                    h: r.h,
+                };
+                let Some(chevron_clip) = chevron_rect.intersect(node_clip) else {
+                    return;
+                };
                 if r.w > 0.0
                     && r.h > 0.0
                     && !is_obscured_by_overlay(
                         node,
-                        &Rect {
-                            x: chevron_left,
-                            y: r.y,
-                            w: chevron_w,
-                            h: r.h,
-                        },
+                        &chevron_clip,
                         open_dropdown,
                         dropdown_overlay,
                         menu_overlays,
                         tooltip_overlay,
                     )
                 {
-                    let color = if state.is_disabled(&node.id) {
-                        glyph_color(theme.disabled)
-                    } else {
-                        glyph_color(theme.muted_text)
-                    };
+                    let color = part_text_color(
+                        node,
+                        state,
+                        theme,
+                        &["chevron"],
+                        glyph_color(theme.muted_text),
+                    );
                     push_text_entry(
                         font_system,
                         out,
@@ -553,10 +647,10 @@ fn collect_text(
                         chevron_left,
                         r.y + ((r.h - line_height) * 0.5).max(0.0),
                         TextBounds {
-                            left: chevron_left as i32,
-                            top: r.y as i32,
-                            right: (r.x + r.w - pad) as i32,
-                            bottom: (r.y + r.h) as i32,
+                            left: chevron_clip.x as i32,
+                            top: chevron_clip.y as i32,
+                            right: (chevron_clip.x + chevron_clip.w) as i32,
+                            bottom: (chevron_clip.y + chevron_clip.h) as i32,
                         },
                         color,
                         TextAlign::Center,
@@ -651,6 +745,16 @@ fn text_line_height(font_size: f32, theme: &Theme, sf: f32) -> f32 {
     (font_size + 5.0 * sf).max((theme.font_size + 3.0) * sf)
 }
 
+fn dropdown_chevron_width(node: &WidgetNode, font_size: f32, theme: &Theme, sf: f32) -> f32 {
+    node.style
+        .parts
+        .parts
+        .get("chevron")
+        .and_then(|part| part.layout.width)
+        .map(|width| width.max(1.0) * sf)
+        .unwrap_or_else(|| DROPDOWN_CHEVRON_WIDTH_LP * text_scale(font_size, theme))
+}
+
 fn text_color(node: &WidgetNode, state: &WidgetState, theme: &Theme, placeholder: bool) -> Color {
     let state_visual = state_visual_for(node, state);
     let base = if let Some(color) = state_visual.and_then(|visual| visual.foreground.as_ref()) {
@@ -681,15 +785,151 @@ fn text_color(node: &WidgetNode, state: &WidgetState, theme: &Theme, placeholder
 fn state_visual_for<'a>(node: &'a WidgetNode, state: &WidgetState) -> Option<&'a VisualStyle> {
     if state.is_disabled(&node.id) {
         Some(&node.style.disabled)
-    } else if state.pressed.as_deref() == Some(&node.id) {
+    } else if state.pressed.as_deref() == Some(node.id.as_str()) {
         Some(&node.style.active)
-    } else if state.hovered.as_deref() == Some(&node.id) {
+    } else if state.hovered.as_deref() == Some(node.id.as_str()) {
         Some(&node.style.hover)
-    } else if state.focused.as_deref() == Some(&node.id) {
+    } else if state.focused.as_deref() == Some(node.id.as_str()) {
         Some(&node.style.focus)
+    } else if state.checked.get(&node.id).copied().unwrap_or(false) {
+        Some(&node.style.checked)
     } else {
         None
     }
+}
+
+fn part_style_text_color(style: &crate::style::PartStyle, theme: &Theme) -> Option<Color> {
+    let color = style
+        .text
+        .color
+        .as_ref()
+        .or(style.visual.foreground.as_ref())?;
+    let mut resolved = color.resolve(theme);
+    if let Some(opacity) = style.visual.opacity {
+        resolved[3] *= opacity.clamp(0.0, 1.0);
+    }
+    Some(glyph_color(resolved))
+}
+
+fn part_text_color(
+    node: &WidgetNode,
+    state: &WidgetState,
+    theme: &Theme,
+    parts: &[&str],
+    default: Color,
+) -> Color {
+    let fallback = if state.is_disabled(&node.id) {
+        glyph_color(theme.disabled)
+    } else {
+        default
+    };
+    let state_map = if state.is_disabled(&node.id) {
+        Some(&node.style.parts.disabled)
+    } else if state.pressed.as_deref() == Some(node.id.as_str()) {
+        Some(&node.style.parts.active)
+    } else if state.hovered.as_deref() == Some(node.id.as_str()) {
+        Some(&node.style.parts.hover)
+    } else if state.focused.as_deref() == Some(node.id.as_str()) {
+        Some(&node.style.parts.focus)
+    } else {
+        None
+    };
+
+    for part in parts {
+        if let Some(color) = state_map
+            .and_then(|map| map.get(*part))
+            .and_then(|style| part_style_text_color(style, theme))
+        {
+            return color;
+        }
+    }
+    if state.checked.get(&node.id).copied().unwrap_or(false) {
+        for part in parts {
+            if let Some(color) = node
+                .style
+                .parts
+                .checked
+                .get(*part)
+                .and_then(|style| part_style_text_color(style, theme))
+            {
+                return color;
+            }
+        }
+    }
+    for part in parts {
+        if let Some(color) = node
+            .style
+            .parts
+            .parts
+            .get(*part)
+            .and_then(|style| part_style_text_color(style, theme))
+        {
+            return color;
+        }
+    }
+    fallback
+}
+
+fn part_text_style<'a>(
+    node: &'a WidgetNode,
+    parts: &[&str],
+) -> Option<&'a crate::style::TextStyle> {
+    parts
+        .iter()
+        .find_map(|part| node.style.parts.parts.get(*part).map(|style| &style.text))
+}
+
+fn part_font_size(node: &WidgetNode, parts: &[&str], fallback: f32, sf: f32) -> f32 {
+    part_text_style(node, parts)
+        .and_then(|style| style.font_size)
+        .map(|font_size| font_size.max(8.0) * sf)
+        .unwrap_or(fallback)
+}
+
+fn part_font_family<'a>(
+    node: &'a WidgetNode,
+    parts: &[&str],
+    fallback: Option<&'a FontFamily>,
+) -> Option<&'a FontFamily> {
+    part_text_style(node, parts)
+        .and_then(|style| style.font_family.as_ref())
+        .or(fallback)
+}
+
+fn part_font_weight(node: &WidgetNode, parts: &[&str], fallback: u16) -> u16 {
+    part_text_style(node, parts)
+        .and_then(|style| style.font_weight)
+        .unwrap_or(fallback)
+}
+
+fn part_padding(node: &WidgetNode, parts: &[&str], default: f32, sf: f32) -> f32 {
+    for part in parts {
+        if let Some(padding) = node
+            .style
+            .parts
+            .parts
+            .get(*part)
+            .and_then(|style| style.layout.padding)
+        {
+            return (padding.max(0.0) * sf).max(0.0);
+        }
+    }
+    default
+}
+
+fn number_stepper_text_color(
+    node: &WidgetNode,
+    state: &WidgetState,
+    theme: &Theme,
+    part: &str,
+) -> Color {
+    part_text_color(
+        node,
+        state,
+        theme,
+        &[part, "stepper"],
+        glyph_color(theme.muted_text),
+    )
 }
 
 fn collect_dropdown_overlay_text(
@@ -704,7 +944,8 @@ fn collect_dropdown_overlay_text(
     caret_positions: &mut HashMap<String, f32>,
     out: &mut Vec<TextEntry>,
 ) {
-    if node.kind == WidgetKind::Dropdown && state.open_dropdown.as_deref() == Some(&node.id) {
+    if node.kind == WidgetKind::Dropdown && state.open_dropdown.as_deref() == Some(node.id.as_str())
+    {
         if let (Some(r), Some(items)) = (
             layout.rects.get(&node.id),
             state.dropdown_items.get(&node.id),
@@ -715,9 +956,26 @@ fn collect_dropdown_overlay_text(
             let font_weight = node.style.text.font_weight.unwrap_or(Weight::NORMAL.0);
             let scale = text_scale(font_size, theme);
             let row_h = theme.control_height() * scale;
+            let selected = state.dropdown_index.get(&node.id).copied().unwrap_or(0);
+            let hovered = state
+                .dropdown_hover
+                .as_ref()
+                .filter(|(id, _)| id == &node.id)
+                .map(|(_, idx)| *idx);
             for (idx, item) in items.iter().enumerate() {
                 let y = r.y + r.h + idx as f32 * row_h;
-                let color = glyph_color(theme.text);
+                let part_names: &[&str] = if Some(idx) == hovered && idx == selected {
+                    &["item-hover", "item-selected", "item"]
+                } else if Some(idx) == hovered {
+                    &["item-hover", "item"]
+                } else if idx == selected {
+                    &["item-selected", "item"]
+                } else {
+                    &["item"]
+                };
+                let item_pad = part_padding(node, part_names, pad, sf);
+                let color =
+                    part_text_color(node, state, theme, part_names, glyph_color(theme.text));
                 push_text_entry(
                     font_system,
                     out,
@@ -726,12 +984,12 @@ fn collect_dropdown_overlay_text(
                     line_height,
                     font_family,
                     font_weight,
-                    r.x + pad,
+                    r.x + item_pad,
                     y + ((row_h - line_height) * 0.5).max(0.0),
                     TextBounds {
-                        left: (r.x + pad) as i32,
+                        left: (r.x + item_pad) as i32,
                         top: y as i32,
-                        right: (r.x + r.w - pad) as i32,
+                        right: (r.x + r.w - item_pad) as i32,
                         bottom: (y + row_h) as i32,
                     },
                     color,
@@ -927,12 +1185,13 @@ fn collect_table_text(
     out: &mut Vec<TextEntry>,
 ) {
     if node.kind == WidgetKind::DataFrameTable {
-        if let (Some(r), Some(table_state)) = (layout.rects.get(&node.id), state.table(&node.id)) {
+        if let (Some(r), Some(table_state)) = (layout.visible_rect(&node.id), state.table(&node.id))
+        {
             if r.w > 0.0
                 && r.h > 0.0
                 && !is_obscured_by_overlay(
                     node,
-                    r,
+                    &r,
                     open_dropdown,
                     dropdown_overlay,
                     menu_overlays,
@@ -940,34 +1199,47 @@ fn collect_table_text(
                 )
             {
                 let font_size = text_font_size(node, theme, sf);
-                let line_height = text_line_height(font_size, theme, sf);
                 let font_family = node.style.text.font_family.as_ref();
                 let font_weight = node.style.text.font_weight.unwrap_or(Weight::NORMAL.0);
-                let metrics = table::metrics(theme, font_size / theme.font_size.max(1.0));
-                let visible = table::visible(table_state, r, metrics);
+                let metrics = table::metrics_for_node(node, theme, sf);
+                let visible = table::visible(table_state, &r, metrics);
                 let table_text_color = text_color(node, state, theme, false);
                 let muted = glyph_color(theme.muted_text);
-                let table_right = r.x + r.w;
                 let table_bottom = r.y + r.h;
                 let header_bottom = (r.y + metrics.header_h).min(table_bottom);
+                let table_radii = table_text_radii(node, theme, sf);
+                let header_parts = &["header"];
+                let header_font_size = part_font_size(node, header_parts, font_size, sf);
+                let header_line_height = text_line_height(header_font_size, theme, sf);
+                let header_font_family = part_font_family(node, header_parts, font_family);
+                let header_font_weight = part_font_weight(node, header_parts, font_weight);
+                let header_color =
+                    part_text_color(node, state, theme, header_parts, table_text_color);
+                let header_muted = part_text_color(node, state, theme, header_parts, muted);
+                let index_header_bounds = table_text_bounds(
+                    r,
+                    Rect {
+                        x: r.x,
+                        y: r.y,
+                        w: metrics.index_w,
+                        h: header_h_for_bounds(metrics.header_h, r.h),
+                    },
+                    pad,
+                    table_radii,
+                );
 
                 push_text_entry(
                     font_system,
                     out,
                     "#",
-                    font_size,
-                    line_height,
-                    font_family,
-                    font_weight,
-                    r.x + pad,
-                    r.y + ((metrics.header_h - line_height) * 0.5).max(0.0),
-                    TextBounds {
-                        left: (r.x + pad) as i32,
-                        top: r.y as i32,
-                        right: (r.x + metrics.index_w - pad).min(table_right - pad) as i32,
-                        bottom: header_bottom as i32,
-                    },
-                    muted,
+                    header_font_size,
+                    header_line_height,
+                    header_font_family,
+                    header_font_weight,
+                    index_header_bounds.left as f32,
+                    r.y + ((metrics.header_h - header_line_height) * 0.5).max(0.0),
+                    clamp_text_bounds_bottom(index_header_bounds, header_bottom),
+                    header_muted,
                     TextAlign::Left,
                     cache,
                     None,
@@ -976,7 +1248,7 @@ fn collect_table_text(
 
                 for col_offset in 0..visible.col_count {
                     let col = visible.first_col + col_offset;
-                    let Some((col_x, col_right)) = table::column_bounds(r, metrics, col_offset)
+                    let Some((col_x, col_right)) = table::column_bounds(&r, metrics, col_offset)
                     else {
                         continue;
                     };
@@ -991,23 +1263,29 @@ fn collect_table_text(
                     } else {
                         std::borrow::Cow::Owned(format!("{name}{sort_suffix}"))
                     };
+                    let bounds = table_text_bounds(
+                        r,
+                        Rect {
+                            x: col_x,
+                            y: r.y,
+                            w: col_right - col_x,
+                            h: header_h_for_bounds(metrics.header_h, r.h),
+                        },
+                        pad,
+                        table_radii,
+                    );
                     push_text_entry(
                         font_system,
                         out,
                         label.as_ref(),
-                        font_size,
-                        line_height,
-                        font_family,
-                        font_weight,
-                        col_x + pad,
-                        r.y + ((metrics.header_h - line_height) * 0.5).max(0.0),
-                        TextBounds {
-                            left: (col_x + pad) as i32,
-                            top: r.y as i32,
-                            right: (col_right - pad) as i32,
-                            bottom: header_bottom as i32,
-                        },
-                        table_text_color,
+                        header_font_size,
+                        header_line_height,
+                        header_font_family,
+                        header_font_weight,
+                        bounds.left as f32,
+                        r.y + ((metrics.header_h - header_line_height) * 0.5).max(0.0),
+                        clamp_text_bounds_bottom(bounds, header_bottom),
+                        header_color,
                         TextAlign::Left,
                         cache,
                         None,
@@ -1017,7 +1295,7 @@ fn collect_table_text(
 
                 for row_offset in 0..visible.row_count {
                     let row = visible.first_row + row_offset;
-                    let Some((row_y, row_bottom)) = table::row_bounds(r, metrics, row_offset)
+                    let Some((row_y, row_bottom)) = table::row_bounds(&r, metrics, row_offset)
                     else {
                         continue;
                     };
@@ -1035,23 +1313,45 @@ fn collect_table_text(
                         continue;
                     }
 
+                    let selected = table_state
+                        .selected
+                        .is_some_and(|(selected_row, _)| selected_row == row);
+                    let row_parts: &[&str] = if selected {
+                        &["row-selected", "row"]
+                    } else {
+                        &["row"]
+                    };
+                    let row_font_size = part_font_size(node, row_parts, font_size, sf);
+                    let row_line_height = text_line_height(row_font_size, theme, sf);
+                    let row_font_family = part_font_family(node, row_parts, font_family);
+                    let row_font_weight = part_font_weight(node, row_parts, font_weight);
+                    let row_text_color =
+                        part_text_color(node, state, theme, row_parts, table_text_color);
+                    let row_muted = part_text_color(node, state, theme, row_parts, muted);
+                    let row_index_bounds = table_text_bounds(
+                        r,
+                        Rect {
+                            x: r.x,
+                            y: row_y,
+                            w: metrics.index_w,
+                            h: row_bottom - row_y,
+                        },
+                        pad,
+                        table_radii,
+                    );
+
                     push_text_entry(
                         font_system,
                         out,
                         &row.to_string(),
-                        font_size,
-                        line_height,
-                        font_family,
-                        font_weight,
-                        r.x + pad,
-                        row_y + ((metrics.row_h - line_height) * 0.5).max(0.0),
-                        TextBounds {
-                            left: (r.x + pad) as i32,
-                            top: row_y as i32,
-                            right: (r.x + metrics.index_w - pad).min(table_right - pad) as i32,
-                            bottom: row_bottom as i32,
-                        },
-                        muted,
+                        row_font_size,
+                        row_line_height,
+                        row_font_family,
+                        row_font_weight,
+                        row_index_bounds.left as f32,
+                        row_y + ((metrics.row_h - row_line_height) * 0.5).max(0.0),
+                        row_index_bounds,
+                        row_muted,
                         TextAlign::Left,
                         cache,
                         None,
@@ -1060,28 +1360,35 @@ fn collect_table_text(
 
                     for col_offset in 0..visible.col_count {
                         let col = visible.first_col + col_offset;
-                        let Some((col_x, col_right)) = table::column_bounds(r, metrics, col_offset)
+                        let Some((col_x, col_right)) =
+                            table::column_bounds(&r, metrics, col_offset)
                         else {
                             continue;
                         };
                         let value = table::cell_text(table_state, resources, row, col);
+                        let bounds = table_text_bounds(
+                            r,
+                            Rect {
+                                x: col_x,
+                                y: row_y,
+                                w: col_right - col_x,
+                                h: row_bottom - row_y,
+                            },
+                            pad,
+                            table_radii,
+                        );
                         push_text_entry(
                             font_system,
                             out,
                             &value,
-                            font_size,
-                            line_height,
-                            font_family,
-                            font_weight,
-                            col_x + pad,
-                            row_y + ((metrics.row_h - line_height) * 0.5).max(0.0),
-                            TextBounds {
-                                left: (col_x + pad) as i32,
-                                top: row_y as i32,
-                                right: (col_right - pad) as i32,
-                                bottom: row_bottom as i32,
-                            },
-                            table_text_color,
+                            row_font_size,
+                            row_line_height,
+                            row_font_family,
+                            row_font_weight,
+                            bounds.left as f32,
+                            row_y + ((metrics.row_h - row_line_height) * 0.5).max(0.0),
+                            bounds,
+                            row_text_color,
                             TextAlign::Left,
                             cache,
                             None,
@@ -1111,6 +1418,68 @@ fn collect_table_text(
             caret_positions,
             out,
         );
+    }
+}
+
+fn table_text_radii(node: &WidgetNode, theme: &Theme, sf: f32) -> [f32; 4] {
+    let radius = node
+        .style
+        .visual
+        .border_radius
+        .unwrap_or(theme.radius)
+        .max(0.0);
+    node.style
+        .visual
+        .corner_radii
+        .resolve(radius)
+        .map(|radius| radius.max(0.0) * sf)
+}
+
+fn header_h_for_bounds(header_h: f32, table_h: f32) -> f32 {
+    header_h.min(table_h).max(0.0)
+}
+
+fn clamp_text_bounds_bottom(mut bounds: TextBounds, bottom: f32) -> TextBounds {
+    bounds.bottom = bounds.bottom.min(bottom as i32);
+    bounds
+}
+
+fn table_text_bounds(table: Rect, cell: Rect, pad: f32, radii: [f32; 4]) -> TextBounds {
+    let table_right = table.x + table.w;
+    let table_bottom = table.y + table.h;
+    let cell_right = cell.x + cell.w;
+    let cell_bottom = cell.y + cell.h;
+    let max_radius = table.w.min(table.h) * 0.5;
+    let [tl, tr, br, bl] = radii.map(|radius| radius.min(max_radius).max(0.0));
+
+    let mut left = (cell.x + pad).max(table.x);
+    let mut right = (cell_right - pad).min(table_right);
+    let top = cell.y.max(table.y);
+    let bottom = cell_bottom.min(table_bottom);
+
+    let touches_left = cell.x <= table.x + 0.5;
+    let touches_right = cell_right >= table_right - 0.5;
+    if touches_left && cell.y < table.y + tl {
+        left = left.max(table.x + tl);
+    }
+    if touches_left && cell_bottom > table_bottom - bl {
+        left = left.max(table.x + bl);
+    }
+    if touches_right && cell.y < table.y + tr {
+        right = right.min(table_right - tr);
+    }
+    if touches_right && cell_bottom > table_bottom - br {
+        right = right.min(table_right - br);
+    }
+    if right <= left {
+        right = (left + 1.0).min(table_right);
+    }
+
+    TextBounds {
+        left: left.ceil() as i32,
+        top: top.ceil() as i32,
+        right: right.floor() as i32,
+        bottom: bottom.floor() as i32,
     }
 }
 
@@ -1388,6 +1757,7 @@ mod tests {
             kind,
             props: NodeProps::default(),
             style_json: Default::default(),
+            inline_style: Default::default(),
             style: Default::default(),
             children: Vec::new(),
         }
@@ -1404,5 +1774,62 @@ mod tests {
         assert_eq!(padding.left, 16.0);
         assert_eq!(padding.right, 20.0);
         assert_eq!(padding.top, 16.0);
+    }
+
+    #[test]
+    fn table_text_bounds_avoid_rounded_corners() {
+        let table = Rect {
+            x: 10.0,
+            y: 20.0,
+            w: 200.0,
+            h: 120.0,
+        };
+        let top_left_cell = Rect {
+            x: 10.0,
+            y: 20.0,
+            w: 42.0,
+            h: 30.0,
+        };
+        let bottom_right_cell = Rect {
+            x: 168.0,
+            y: 112.0,
+            w: 42.0,
+            h: 28.0,
+        };
+
+        let top_bounds = table_text_bounds(table, top_left_cell, 6.0, [18.0, 18.0, 18.0, 18.0]);
+        let bottom_bounds =
+            table_text_bounds(table, bottom_right_cell, 6.0, [18.0, 18.0, 18.0, 18.0]);
+
+        assert_eq!(top_bounds.left, 28);
+        assert_eq!(bottom_bounds.right, 192);
+    }
+
+    #[test]
+    fn tab_text_is_vertically_centered_without_extra_top_offset() {
+        let mut tab = node("debug", WidgetKind::Tab);
+        tab.style.text.font_size = Some(14.0);
+        tab.style.parts.parts.insert(
+            "tab".to_string(),
+            crate::style::PartStyle {
+                layout: crate::style::PartLayoutStyle {
+                    padding: Some(8.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        let r = Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 90.0,
+            h: 30.0,
+        };
+        let theme = Theme::dark();
+        let font_size = text_font_size(&tab, &theme, 1.0);
+        let line_height = text_line_height(font_size, &theme, 1.0);
+        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+
+        assert_eq!(top, 5.5);
     }
 }

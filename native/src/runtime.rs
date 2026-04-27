@@ -18,6 +18,9 @@ use winit::window::{Window, WindowId};
 use crate::commands::{
     Command, CommandBridge, CommandValue, Dirty, RuntimeEvent, ScatterTelemetry, TableColumnPacket,
 };
+use crate::css_style::{
+    apply_stylesheets_to_tree, matched_rule_labels_for_tree, StylesheetOrigin, StylesheetStore,
+};
 use crate::document::{self, NodeProps, ScatterSpec, WidgetKind, WidgetNode};
 use crate::error::DragonError;
 use crate::events::{
@@ -30,7 +33,11 @@ use crate::overlays::menu_popup_width;
 use crate::primitives::PrimitivesRenderer;
 use crate::resources::ResourceRegistry;
 use crate::scatter::{self, PointInstance, ScatterWidget};
-use crate::style::{number_stepper_width, NodeStyle};
+use crate::style::{
+    number_stepper_width, number_stepper_width_for_style, ColorRef, DisplayStyle,
+    FlexDirectionStyle, FontFamily, LayoutStyle, NodeStyle, PartLayoutStyle, PartStyle, TextAlign,
+    TextStyle, VisualStyle, WidgetStyle,
+};
 use crate::table::{self, TableHit};
 use crate::text::TextRendererDg;
 use crate::theme::Theme;
@@ -47,6 +54,8 @@ pub struct AppSpec {
     pub widget_tree: Option<WidgetNode>,
     /// Python-provided theme overrides; `None` → use `Theme::dark()` defaults.
     pub theme: Option<Theme>,
+    /// Parsed startup stylesheets. Cascade/render integration is added in later CSS milestones.
+    pub stylesheets: StylesheetStore,
     /// Button on_click callbacks keyed by widget id.
     pub click_callbacks: HashMap<String, Box<dyn Fn() + Send>>,
     /// Checkbox / Slider on_change callbacks keyed by widget id.
@@ -179,7 +188,7 @@ fn find_visible_scatter_id<'a>(
     node: &'a WidgetNode,
     layout: &crate::layout::LayoutResult,
 ) -> Option<&'a str> {
-    if node.kind == WidgetKind::Scatter3D && layout.rects.contains_key(&node.id) {
+    if node.kind == WidgetKind::Scatter3D && layout.visible_rect(&node.id).is_some() {
         return Some(&node.id);
     }
     for child in &node.children {
@@ -352,6 +361,221 @@ fn rect_json(rect: crate::layout::Rect) -> Value {
 
 fn color_json(color: [f32; 4]) -> Value {
     json!([color[0], color[1], color[2], color[3]])
+}
+
+fn color_ref_json(color: &ColorRef) -> Value {
+    match color {
+        ColorRef::Rgba(color) => json!({ "rgba": color_json(*color) }),
+        ColorRef::Token(token) => json!({ "token": token }),
+    }
+}
+
+fn display_style_name(display: DisplayStyle) -> &'static str {
+    match display {
+        DisplayStyle::Flex => "flex",
+        DisplayStyle::Block => "block",
+        DisplayStyle::None => "none",
+    }
+}
+
+fn flex_direction_name(direction: FlexDirectionStyle) -> &'static str {
+    match direction {
+        FlexDirectionStyle::Row => "row",
+        FlexDirectionStyle::Column => "column",
+        FlexDirectionStyle::RowReverse => "row_reverse",
+        FlexDirectionStyle::ColumnReverse => "column_reverse",
+    }
+}
+
+fn text_align_name(align: TextAlign) -> &'static str {
+    match align {
+        TextAlign::Left => "left",
+        TextAlign::Center => "center",
+        TextAlign::Right => "right",
+    }
+}
+
+fn font_family_json(font_family: &FontFamily) -> Value {
+    match font_family {
+        FontFamily::Serif => json!("serif"),
+        FontFamily::SansSerif => json!("sans_serif"),
+        FontFamily::Monospace => json!("monospace"),
+        FontFamily::Cursive => json!("cursive"),
+        FontFamily::Fantasy => json!("fantasy"),
+        FontFamily::Name(name) => json!(name),
+    }
+}
+
+fn insert_number(map: &mut Map<String, Value>, key: &str, value: Option<f32>) {
+    if let Some(value) = value {
+        map.insert(key.to_string(), json!(value));
+    }
+}
+
+fn insert_color_ref(map: &mut Map<String, Value>, key: &str, value: &Option<ColorRef>) {
+    if let Some(value) = value {
+        map.insert(key.to_string(), color_ref_json(value));
+    }
+}
+
+fn layout_style_snapshot(style: &LayoutStyle) -> Value {
+    let mut map = Map::new();
+    if let Some(value) = style.display {
+        map.insert("display".to_string(), json!(display_style_name(value)));
+    }
+    if let Some(value) = style.flex_direction {
+        map.insert(
+            "flex_direction".to_string(),
+            json!(flex_direction_name(value)),
+        );
+    }
+    insert_number(&mut map, "width", style.width);
+    insert_number(&mut map, "height", style.height);
+    insert_number(&mut map, "min_width", style.min_width);
+    insert_number(&mut map, "min_height", style.min_height);
+    insert_number(&mut map, "max_width", style.max_width);
+    insert_number(&mut map, "max_height", style.max_height);
+    insert_number(&mut map, "padding", style.padding);
+    insert_number(&mut map, "padding_left", style.padding_left);
+    insert_number(&mut map, "padding_right", style.padding_right);
+    insert_number(&mut map, "padding_top", style.padding_top);
+    insert_number(&mut map, "padding_bottom", style.padding_bottom);
+    insert_number(&mut map, "margin", style.margin);
+    insert_number(&mut map, "gap", style.gap);
+    insert_number(&mut map, "flex_grow", style.flex_grow);
+    insert_number(&mut map, "flex_shrink", style.flex_shrink);
+    Value::Object(map)
+}
+
+fn visual_style_snapshot(style: &VisualStyle) -> Value {
+    let mut map = Map::new();
+    insert_color_ref(&mut map, "background", &style.background);
+    insert_color_ref(&mut map, "foreground", &style.foreground);
+    insert_color_ref(&mut map, "border_color", &style.border_color);
+    insert_number(&mut map, "border_width", style.border_width);
+    insert_number(&mut map, "border_radius", style.border_radius);
+    insert_number(
+        &mut map,
+        "border_top_left_radius",
+        style.corner_radii.top_left,
+    );
+    insert_number(
+        &mut map,
+        "border_top_right_radius",
+        style.corner_radii.top_right,
+    );
+    insert_number(
+        &mut map,
+        "border_bottom_right_radius",
+        style.corner_radii.bottom_right,
+    );
+    insert_number(
+        &mut map,
+        "border_bottom_left_radius",
+        style.corner_radii.bottom_left,
+    );
+    insert_color_ref(&mut map, "accent", &style.accent);
+    insert_color_ref(&mut map, "track_color", &style.track_color);
+    insert_color_ref(&mut map, "thumb_color", &style.thumb_color);
+    insert_number(&mut map, "opacity", style.opacity);
+    Value::Object(map)
+}
+
+fn text_style_snapshot(style: &TextStyle) -> Value {
+    let mut map = Map::new();
+    insert_number(&mut map, "font_size", style.font_size);
+    if let Some(value) = &style.font_family {
+        map.insert("font_family".to_string(), font_family_json(value));
+    }
+    if let Some(value) = style.font_weight {
+        map.insert("font_weight".to_string(), json!(value));
+    }
+    insert_color_ref(&mut map, "color", &style.color);
+    if let Some(value) = style.text_align {
+        map.insert("text_align".to_string(), json!(text_align_name(value)));
+    }
+    Value::Object(map)
+}
+
+fn widget_style_snapshot(style: &WidgetStyle) -> Value {
+    let mut map = Map::new();
+    insert_number(&mut map, "table_row_height", style.table_row_height);
+    insert_number(&mut map, "table_header_height", style.table_header_height);
+    Value::Object(map)
+}
+
+fn part_layout_style_snapshot(style: &PartLayoutStyle) -> Value {
+    let mut map = Map::new();
+    insert_number(&mut map, "width", style.width);
+    insert_number(&mut map, "height", style.height);
+    insert_number(&mut map, "padding", style.padding);
+    insert_number(&mut map, "gap", style.gap);
+    Value::Object(map)
+}
+
+fn part_style_snapshot(style: &PartStyle) -> Value {
+    json!({
+        "layout": part_layout_style_snapshot(&style.layout),
+        "visual": visual_style_snapshot(&style.visual),
+        "text": text_style_snapshot(&style.text),
+    })
+}
+
+fn part_style_map_snapshot(map: &std::collections::BTreeMap<String, PartStyle>) -> Value {
+    let mut out = Map::new();
+    for (name, style) in map {
+        out.insert(name.clone(), part_style_snapshot(style));
+    }
+    Value::Object(out)
+}
+
+fn node_style_snapshot(style: &NodeStyle) -> Value {
+    json!({
+        "layout": layout_style_snapshot(&style.layout),
+        "visual": visual_style_snapshot(&style.visual),
+        "text": text_style_snapshot(&style.text),
+        "widget": widget_style_snapshot(&style.widget),
+        "parts": {
+            "base": part_style_map_snapshot(&style.parts.parts),
+            "hover": part_style_map_snapshot(&style.parts.hover),
+            "active": part_style_map_snapshot(&style.parts.active),
+            "focus": part_style_map_snapshot(&style.parts.focus),
+            "disabled": part_style_map_snapshot(&style.parts.disabled),
+            "checked": part_style_map_snapshot(&style.parts.checked),
+        },
+        "hover": visual_style_snapshot(&style.hover),
+        "active": visual_style_snapshot(&style.active),
+        "focus": visual_style_snapshot(&style.focus),
+        "disabled": visual_style_snapshot(&style.disabled),
+        "checked": visual_style_snapshot(&style.checked),
+    })
+}
+
+fn computed_styles_snapshot(root: Option<&WidgetNode>, store: &StylesheetStore) -> Value {
+    let Some(root) = root else {
+        return json!({});
+    };
+    let matched_rules = matched_rule_labels_for_tree(root, store);
+    let mut out = Map::new();
+    collect_computed_styles_snapshot(root, &matched_rules, &mut out);
+    Value::Object(out)
+}
+
+fn collect_computed_styles_snapshot(
+    node: &WidgetNode,
+    matched_rules: &std::collections::BTreeMap<String, Vec<String>>,
+    out: &mut Map<String, Value>,
+) {
+    out.insert(
+        node.id.clone(),
+        json!({
+            "matched_rules": matched_rules.get(&node.id).cloned().unwrap_or_default(),
+            "style": node_style_snapshot(&node.style),
+        }),
+    );
+    for child in &node.children {
+        collect_computed_styles_snapshot(child, matched_rules, out);
+    }
 }
 
 fn props_snapshot(node: &WidgetNode) -> Value {
@@ -574,6 +798,9 @@ fn merge_style_patch(target: &mut Map<String, Value>, patch: &Map<String, Value>
 fn style_patch_dirty(patch: &Map<String, Value>) -> Dirty {
     let mut dirty = Dirty::Visual;
     for (key, value) in patch {
+        if key == "parts" {
+            return Dirty::Layout;
+        }
         if is_layout_style_key(key) {
             return Dirty::Layout;
         }
@@ -605,6 +832,10 @@ fn is_layout_style_key(key: &str) -> bool {
             | "padding_bottom"
             | "margin"
             | "gap"
+            | "table_row_height"
+            | "table-header-height"
+            | "table_header_height"
+            | "table-row-height"
     )
 }
 
@@ -616,7 +847,7 @@ fn is_text_style_key(key: &str) -> bool {
 }
 
 fn pseudo_style_value_changes_text(key: &str, value: &Value) -> bool {
-    if !matches!(key, "hover" | "active" | "focus" | "disabled") {
+    if !matches!(key, "hover" | "active" | "focus" | "disabled" | "checked") {
         return false;
     }
     let Some(map) = value.as_object() else {
@@ -677,6 +908,18 @@ mod style_patch_tests {
         assert_eq!(
             style_patch_dirty(json!({"hover": {"color": "accent"}}).as_object().unwrap()),
             Dirty::Text
+        );
+        assert_eq!(
+            style_patch_dirty(json!({"checked": {"color": "accent"}}).as_object().unwrap()),
+            Dirty::Text
+        );
+        assert_eq!(
+            style_patch_dirty(
+                json!({"parts": {"stepper": {"background": "accent"}}})
+                    .as_object()
+                    .unwrap()
+            ),
+            Dirty::Layout
         );
         assert_eq!(
             style_patch_dirty(
@@ -910,6 +1153,7 @@ struct WgpuState {
     _depth_texture: wgpu::Texture,
     depth_view: wgpu::TextureView,
     theme: Theme,
+    stylesheets: StylesheetStore,
     scale_factor: f32,
     scatter: Option<ScatterWidget>,
     scatter_widget_id: Option<String>,
@@ -1038,6 +1282,7 @@ impl WgpuState {
             _depth_texture: depth_texture,
             depth_view,
             theme,
+            stylesheets: spec.stylesheets,
             scale_factor,
             scatter,
             scatter_widget_id,
@@ -1091,7 +1336,7 @@ impl WgpuState {
 
         if let Some(s) = scatter {
             if let Some(scatter_id) = find_visible_scatter_id(tree, &layout) {
-                if let Some(r) = layout.rects.get(scatter_id) {
+                if let Some(r) = layout.visible_rect(scatter_id) {
                     s.set_layout_rect(r.x, r.y, r.w, r.h, queue);
                 }
             } else {
@@ -1101,7 +1346,7 @@ impl WgpuState {
 
         if let Some(images) = images.as_mut() {
             images.update_screen_size(queue, config.width, config.height);
-            images.rebuild(device, queue, tree, &layout);
+            images.rebuild(device, queue, tree, &layout, theme, *scale_factor);
         }
 
         if let Some(state) = widget_state.as_mut() {
@@ -1288,7 +1533,12 @@ impl WgpuState {
                 continue;
             }
             let rect = layout.rects.get(id)?;
-            let step_w = number_stepper_width(rect.w, self.scale_factor);
+            let step_w = self
+                .widget_tree
+                .as_ref()
+                .and_then(|tree| crate::overlays::find_node(tree, id))
+                .map(|node| number_stepper_width_for_style(&node.style, rect.w, self.scale_factor))
+                .unwrap_or_else(|| number_stepper_width(rect.w, self.scale_factor));
             let step_x = rect.x + rect.w - step_w;
             if pos[0] < step_x
                 || pos[0] >= rect.x + rect.w
@@ -1331,7 +1581,8 @@ impl WgpuState {
             };
             if let Some(tree) = self.widget_tree.as_mut() {
                 if set_widget_class_prop(tree, id, class_name) {
-                    return Some(Dirty::Visual);
+                    self.reapply_stylesheets();
+                    return Some(Dirty::Full);
                 }
             }
             return None;
@@ -1454,8 +1705,11 @@ impl WgpuState {
             return Ok(None);
         };
         merge_style_patch(&mut node.style_json, patch);
-        node.style = NodeStyle::from_json(Some(&Value::Object(node.style_json.clone())));
-        Ok(Some(style_patch_dirty(patch)))
+        node.inline_style =
+            crate::style::NodeStyle::from_json(Some(&Value::Object(node.style_json.clone())));
+        let dirty = style_patch_dirty(patch);
+        self.reapply_stylesheets();
+        Ok(Some(dirty))
     }
 
     fn rebuild_retained_maps(&mut self) {
@@ -1671,6 +1925,27 @@ impl WgpuState {
         }
     }
 
+    fn reapply_stylesheets(&mut self) {
+        if let Some(tree) = &mut self.widget_tree {
+            apply_stylesheets_to_tree(tree, &mut self.stylesheets);
+        }
+    }
+
+    fn set_stylesheet(&mut self, origin: StylesheetOrigin, css: &str) -> Result<(), String> {
+        self.stylesheets
+            .set_stylesheet(origin, css)
+            .map_err(|error| error.to_string())?;
+        self.reapply_stylesheets();
+        self.apply_layout();
+        Ok(())
+    }
+
+    fn clear_stylesheets(&mut self, origin: StylesheetOrigin) {
+        self.stylesheets.clear(origin);
+        self.reapply_stylesheets();
+        self.apply_layout();
+    }
+
     fn debug_snapshot_value(&self) -> Value {
         json!({
             "window": {
@@ -1679,6 +1954,14 @@ impl WgpuState {
                 "scale_factor": self.scale_factor,
             },
             "theme": theme_snapshot(&self.theme),
+            "stylesheets": {
+                "framework_rules": self.stylesheets.rules(crate::css_style::StylesheetOrigin::Framework).len(),
+                "theme_rules": self.stylesheets.rules(crate::css_style::StylesheetOrigin::Theme).len(),
+                "user_rules": self.stylesheets.rules(crate::css_style::StylesheetOrigin::User).len(),
+                "warning_count": self.stylesheets.warnings().len(),
+                "last_error": self.stylesheets.last_error.as_deref(),
+            },
+            "computed_styles": computed_styles_snapshot(self.widget_tree.as_ref(), &self.stylesheets),
             "tree": self.widget_tree.as_ref().map(node_snapshot),
             "layout": layout_snapshot(self.current_layout.as_ref()),
             "state": widget_state_snapshot(self.widget_state.as_ref()),
@@ -1877,7 +2160,12 @@ impl WgpuState {
         let state = self.widget_state.as_ref()?;
         let table_state = state.table(&id)?;
         let rect = layout.rects.get(&id)?;
-        let metrics = table::metrics(&self.theme, self.scale_factor);
+        let metrics = self
+            .widget_tree
+            .as_ref()
+            .and_then(|root| crate::overlays::find_node(root, &id))
+            .map(|node| table::metrics_for_node(node, &self.theme, self.scale_factor))
+            .unwrap_or_else(|| table::metrics(&self.theme, self.scale_factor));
         table::hit(table_state, rect, metrics, pos).map(|hit| (id, hit))
     }
 
@@ -1886,7 +2174,12 @@ impl WgpuState {
         let state = self.widget_state.as_ref()?;
         let table_state = state.table(id)?;
         let rect = layout.rects.get(id)?;
-        let metrics = table::metrics(&self.theme, self.scale_factor);
+        let metrics = self
+            .widget_tree
+            .as_ref()
+            .and_then(|root| crate::overlays::find_node(root, id))
+            .map(|node| table::metrics_for_node(node, &self.theme, self.scale_factor))
+            .unwrap_or_else(|| table::metrics(&self.theme, self.scale_factor));
         let visible = table::visible(table_state, rect, metrics);
         Some((visible.row_count, visible.col_count))
     }
@@ -2420,6 +2713,7 @@ impl DragonApp {
                     };
                     match gpu.apply_replace_children(&id, &children_json) {
                         Ok(true) => {
+                            gpu.reapply_stylesheets();
                             gpu.apply_layout();
                             (Some(Dirty::Full), "applied".to_string(), true)
                         }
@@ -2459,6 +2753,7 @@ impl DragonApp {
                     };
                     match gpu.apply_replace_node(&id, &node_json) {
                         Ok(true) => {
+                            gpu.reapply_stylesheets();
                             gpu.apply_layout();
                             (Some(Dirty::Full), "applied".to_string(), true)
                         }
@@ -2666,6 +2961,54 @@ impl DragonApp {
                     "ReleaseResource",
                     Some(id),
                     None,
+                    dirty,
+                    &outcome,
+                    redraw,
+                )
+            }
+            Command::SetStylesheet { origin, css } => {
+                let detail = Some(format!("origin={origin:?}, css_bytes={}", css.len()));
+                let (dirty, outcome, redraw) = {
+                    let Some(gpu) = &mut self.gpu else {
+                        return self.record_runtime_command(
+                            "SetStylesheet",
+                            None,
+                            detail,
+                            None,
+                            "gpu_not_ready",
+                            false,
+                        );
+                    };
+                    match gpu.set_stylesheet(origin, &css) {
+                        Ok(()) => (Some(Dirty::Full), "applied".to_string(), true),
+                        Err(err) => {
+                            eprintln!("DragonGUI: failed to apply stylesheet: {err}");
+                            (None, format!("error: {err}"), false)
+                        }
+                    }
+                };
+                self.record_runtime_command("SetStylesheet", None, detail, dirty, &outcome, redraw)
+            }
+            Command::ClearStylesheets { origin } => {
+                let detail = Some(format!("origin={origin:?}"));
+                let (dirty, outcome, redraw) = {
+                    let Some(gpu) = &mut self.gpu else {
+                        return self.record_runtime_command(
+                            "ClearStylesheets",
+                            None,
+                            detail,
+                            None,
+                            "gpu_not_ready",
+                            false,
+                        );
+                    };
+                    gpu.clear_stylesheets(origin);
+                    (Some(Dirty::Full), "applied".to_string(), true)
+                };
+                self.record_runtime_command(
+                    "ClearStylesheets",
+                    None,
+                    detail,
                     dirty,
                     &outcome,
                     redraw,
@@ -3567,7 +3910,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                     .as_ref()
                                     .and_then(|g| g.hit_test_ui(pos))
                                     .map(|(id, _)| id);
-                                if over.as_deref() == Some(&pid) {
+                                if over.as_deref() == Some(pid.as_str()) {
                                     if let Some(kind) =
                                         self.gpu.as_ref().and_then(|g| g.widget_kind(&pid))
                                     {

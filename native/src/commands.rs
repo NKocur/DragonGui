@@ -11,6 +11,8 @@ use pyo3::prelude::*;
 use pyo3::types::PyAny;
 use winit::event_loop::EventLoopProxy;
 
+use crate::css_style::{parse_stylesheet, StylesheetOrigin};
+
 /// User event sent into the winit loop when the Python/Rust runtime bridge has
 /// work waiting.  Keep this small and cloneable; all payloads stay in the
 /// command queue.
@@ -94,6 +96,13 @@ pub enum Command {
     },
     ReleaseResource {
         id: String,
+    },
+    SetStylesheet {
+        origin: StylesheetOrigin,
+        css: String,
+    },
+    ClearStylesheets {
+        origin: StylesheetOrigin,
     },
     Invalidate {
         id: String,
@@ -536,6 +545,21 @@ impl NativeCommandSender {
         self.enqueue(Command::ReleaseResource { id })
     }
 
+    fn enqueue_set_stylesheet(&self, origin: String, css: String) -> PyResult<()> {
+        let origin = stylesheet_origin_from_py(&origin)?;
+        if css.trim().is_empty() {
+            return Err(PyValueError::new_err("stylesheet CSS cannot be empty"));
+        }
+        parse_stylesheet(&css, origin)
+            .map_err(|err| PyValueError::new_err(format!("invalid DragonGUI stylesheet: {err}")))?;
+        self.enqueue(Command::SetStylesheet { origin, css })
+    }
+
+    fn enqueue_clear_stylesheets(&self, origin: String) -> PyResult<()> {
+        let origin = stylesheet_origin_from_py(&origin)?;
+        self.enqueue(Command::ClearStylesheets { origin })
+    }
+
     fn enqueue_drain_python_tasks(&self) -> PyResult<()> {
         self.enqueue(Command::DrainPythonTasks)
     }
@@ -572,6 +596,20 @@ fn now_epoch_ms() -> f64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs_f64() * 1000.0)
         .unwrap_or(0.0)
+}
+
+fn stylesheet_origin_from_py(origin: &str) -> PyResult<StylesheetOrigin> {
+    match origin {
+        "framework" => Ok(StylesheetOrigin::Framework),
+        "theme" => Ok(StylesheetOrigin::Theme),
+        "user" => Ok(StylesheetOrigin::User),
+        "inline" => Err(PyValueError::new_err(
+            "inline styles are not stored as stylesheets",
+        )),
+        _ => Err(PyValueError::new_err(format!(
+            "unknown stylesheet origin: {origin}"
+        ))),
+    }
 }
 
 fn normalize_colormap(value: Option<String>) -> String {
@@ -699,10 +737,21 @@ mod tests {
             })
             .unwrap();
         queue
+            .push(Command::SetStylesheet {
+                origin: StylesheetOrigin::User,
+                css: "Button { border-radius: 4px; }".to_string(),
+            })
+            .unwrap();
+        queue
+            .push(Command::ClearStylesheets {
+                origin: StylesheetOrigin::User,
+            })
+            .unwrap();
+        queue
             .push(Command::DebugSnapshot { request_id: 7 })
             .unwrap();
 
-        assert_eq!(queue.len(), 10);
+        assert_eq!(queue.len(), 12);
         assert_eq!(
             queue.drain(),
             vec![
@@ -747,6 +796,13 @@ mod tests {
                 },
                 Command::ReleaseResource {
                     id: "buffer".to_string(),
+                },
+                Command::SetStylesheet {
+                    origin: StylesheetOrigin::User,
+                    css: "Button { border-radius: 4px; }".to_string(),
+                },
+                Command::ClearStylesheets {
+                    origin: StylesheetOrigin::User,
                 },
                 Command::DebugSnapshot { request_id: 7 },
             ]
