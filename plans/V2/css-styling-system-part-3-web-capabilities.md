@@ -33,8 +33,8 @@ not only recolored.
 The most important visible gaps today are:
 
 - Flat surfaces with no elevation.
-- Only first-slice gradients; no intermediate stop interpolation, repeating
-  gradients, or multiple background layers yet.
+- Only first-slice gradients; intermediate stop interpolation, first-slice
+  repeating gradients, and comma-separated background layers have landed.
 - No transition easing.
 - Limited typography controls.
 - Limited color syntax.
@@ -42,7 +42,8 @@ The most important visible gaps today are:
 - First interactive state selector and selector-chain slices landed for
   `:open`, `:expanded`, `:collapsed`, `:selected`, descendant selectors,
   multi-level child chains, `[key="..."]`, and simple structural child
-  selectors; selector functions are still pending.
+  selectors. Selector functions have landed for compound selector arguments,
+  including target pseudo-state arguments.
 
 The first implementation slices should prioritize features that visibly improve
 existing demos with low architectural risk.
@@ -482,14 +483,14 @@ Initial supported subset:
 - Linear angle in `deg`.
 - `to bottom`, `to right`, and direct angle forms.
 - Color stops with optional percent positions.
-- Radial circle centered in the rect.
+- Radial circle centered in the rect or positioned with `circle at <x> <y>`.
 
 Deferred:
 
-- Repeating gradients.
 - Complex radial sizing keywords.
-- Multiple background layers.
 - Background images.
+- Advanced background layer options such as positioning, sizing, and blend
+  modes.
 
 ### Renderer
 
@@ -575,8 +576,9 @@ Improve selector expressiveness:
   `:nth-child(n)`.
 
 Status note: descendant selectors, multi-level child chains, `[key="..."]`,
-`:first-child`, `:last-child`, and simple `:nth-child(...)` have landed.
-Selector functions are still pending.
+`:first-child`, `:last-child`, simple `:nth-child(...)`, and selector
+functions with compound selector arguments have landed. Target pseudo-state
+arguments inside selector functions have also landed.
 
 ### Implementation Notes
 
@@ -606,6 +608,8 @@ Needed model changes:
 - `Panel > HLayout > Button` works.
 - `[key="primary-action"]` works.
 - `Button:not(:disabled)` works.
+- `:is(Button, Label).callout` works.
+- `:where(.quiet)` works with zero specificity.
 - `Button:is(:hover, :focus)` works.
 - Unsupported complex selectors warn clearly.
 
@@ -764,12 +768,16 @@ Keep visual lengths like `border-radius` as logical px only for now.
 
 ### Calc Support
 
-Start with:
+Started with a conservative first slice:
 
 - Addition and subtraction.
-- Multiplication/division by scalar.
-- Variables inside calc only when they resolve to compatible numeric/length
-  values.
+- Multiplication/division by scalar for one length term.
+- Compatible single-unit expressions that lower to all pixels or all percent.
+- Mixed pixel/percent expressions when the parent axis is definite.
+
+Still pending:
+
+- Mixed percent/pixel expressions in fully auto-sized parent axes.
 
 Examples:
 
@@ -778,8 +786,8 @@ Panel.main {
     width: calc(100% - 280px);
 }
 
-Window {
-    padding: calc(var(--space, 8px) * 2);
+Panel.sidebar {
+    min-width: calc(220px + 40px);
 }
 ```
 
@@ -788,10 +796,16 @@ Window {
 - `width: 50%` works for normal containers.
 - `height: 100%` works where parent size is definite.
 - `width: auto` maps to Taffy auto where supported.
-- `calc(100% - 240px)` works for width.
+- `calc(20% + 30%)` and `calc(220px + 40px)` work for sizing properties.
+- `calc(100% - 240px)` works when the parent axis is definite.
 - Unsupported calc unit combinations warn clearly.
 
 ## CSS3-10: CSS Grid
+
+Status: In progress. First Taffy-backed grid slice landed for `display: grid`,
+`grid-template-columns`, `grid-template-rows`, `grid-column`, `grid-row`,
+`column-gap`, and `row-gap`. Track parsing currently supports px, percent,
+`fr`, `auto`, and small-count `repeat(n, ...)`.
 
 ### Scope
 
@@ -813,6 +827,7 @@ Defer:
 - Subgrid.
 - Auto-placement edge cases.
 - Complex repeat syntax beyond a small safe subset.
+- `minmax()`, `fit-content()`, `auto-fit`, and `auto-fill`.
 
 ### Implementation Notes
 
@@ -838,11 +853,16 @@ Panel.sidebar {
 ### Acceptance Criteria
 
 - A dashboard demo can place sidebar, header, main content, and inspector using
-  CSS grid.
+  CSS grid. First demo slice added to `examples/css_web_capabilities_demo.py`.
 - Grid layout coexists with existing flex containers.
 - Unsupported grid syntax warns instead of silently mislaying widgets.
 
 ## CSS3-11: Overflow And Scroll Containers
+
+Status: In progress. First public overflow slice landed for `overflow`,
+`overflow-x`, and `overflow-y`. `visible` lets children escape normal container
+clipping, `hidden` clips, and `auto` / `scroll` opt containers into the
+existing vertical scroll path.
 
 ### Scope
 
@@ -864,6 +884,13 @@ This is not only a layout property. It requires:
 - Table clipping compatibility.
 - Input hit-testing clipped to visible region.
 - Scroll state per widget.
+
+First slice limitations:
+
+- No horizontal scroll offset yet.
+- No CSS scrollbar styling.
+- Overlay clipping remains renderer-managed and top-layer content is not
+  clipped by normal containers.
 
 ### Overlay Pass Policy
 
@@ -941,6 +968,13 @@ Scatter3D and complex overlays can be deferred.
 
 ## CSS3-13: Positioning And Z-Index
 
+Status: In progress. First `position: relative` slice landed for paint-only
+logical-pixel offsets through `top`, `right`, `bottom`, and `left`. First
+`z-index` slice landed as local sibling ordering for normal widget surfaces and
+text. First `position: absolute` slice landed for explicit/intrinsic-size
+children placed by layout insets inside a parent layout context. `relative`
+layout and hit testing still use the unoffset widget rectangle.
+
 ### Scope
 
 Add explicit positioning:
@@ -965,7 +999,8 @@ This is a major layout model extension. It can conflict with:
 
 1. Implement `position: relative` as paint offset only.
 2. Add `z-index` within a local stacking context for siblings.
-3. Add `position: absolute` within positioned parent.
+3. Add `position: absolute` within positioned parent. Implemented as a first
+   slice for explicit/intrinsic-size children.
 4. Add `position: fixed` only after root/window coordinate behavior is stable.
 
 ### Acceptance Criteria
@@ -1150,9 +1185,13 @@ Why first:
 
 Status: In progress. `box-shadow` first slice landed for single non-inset
 shadows on rect-backed surfaces. First `linear-gradient()` and
-`radial-gradient()` slices landed for rect-backed backgrounds using first/last
-stop rendering. Intermediate stop interpolation, repeating gradients, and
-multiple background layers are still pending.
+`radial-gradient()` slices landed for rect-backed backgrounds. Gradient
+rendering now interpolates up to four stop colors, sampling longer gradients
+down to four GPU stops. First-slice repeating gradients have landed for
+explicit final stop ranges. Comma-separated background layers now paint
+back-to-front, enabling radial glow overlays on linear bases. `background-noise`
+has landed as a low-amplitude procedural dither/noise pass for softening
+gradient banding on rect-backed backgrounds.
 
 Implement:
 
@@ -1171,7 +1210,8 @@ Status: In progress. Public state selectors landed for `:open`, `:expanded`,
 `:collapsed`, and `:selected` with whole-widget and part styling. Selector
 chains also landed for descendants, deeper direct-child chains, `[key="..."]`,
 `:first-child`, `:last-child`, and simple `:nth-child(...)`. Selector
-functions are still pending.
+functions have landed for compound selector arguments, including target
+pseudo-state arguments.
 
 Implement:
 
@@ -1184,7 +1224,8 @@ Implement:
 - `[key="..."]`. Implemented.
 - Structural child selectors. Implemented for `:first-child`, `:last-child`,
   integer `:nth-child(n)`, `:nth-child(odd)`, and `:nth-child(even)`.
-- Selector functions such as `:not()`, `:is()`, and `:where()`. Pending.
+- Selector functions such as `:not()`, `:is()`, and `:where()`. Implemented
+  for compound selector arguments, including target pseudo-state arguments.
 
 Why third:
 
@@ -1193,11 +1234,27 @@ Why third:
 
 ### Milestone D: Motion
 
+Status: In progress. First CSS transition slice landed for parser/style-model
+support, debug snapshots, whole-widget hover paint transitions, and
+whole-widget `:open` / `:selected` paint transitions for tracked widgets. First
+paint-only transform slice also landed for `translate`, `scale`, and `rotate`
+on rect-backed widget surfaces. Runtime support currently interpolates solid
+color, numeric visual fields, and transform fields. Stylesheet changes, inline
+style patches, full layout rebuilds, and widget replacement paths now cancel
+active style transition progress. `transition-property` is honored for hover,
+`:open`, and `:selected` transitions, with unlisted visual fields snapping to
+the current state. Layout, text scale/rotate, child subtree transforms, image
+texture transforms, and expanded/collapsed state-change transitions remain
+pending.
+
 Implement:
 
-- Paint-only CSS transitions.
-- Timing functions.
-- Paint-only transforms.
+- Paint-only CSS transitions. First whole-widget hover, `:open`, and
+  `:selected` slices implemented.
+- Timing functions. Implemented for `linear`, `ease`, `ease-in`, `ease-out`,
+  and `ease-in-out`.
+- Paint-only transforms. First rect-surface slice implemented for
+  `translate`, `scale`, and `rotate`; text follows translate only.
 
 Why fourth:
 
@@ -1207,12 +1264,21 @@ Why fourth:
 
 ### Milestone E: Responsive Layout
 
+Status: In progress. First percent/auto sizing slice landed for `width`,
+`height`, `min-width`, `min-height`, `max-width`, and `max-height`, carrying
+typed layout values through CSS lowering into Taffy. First `calc()` sizing slice
+landed for pixel, percent, and mixed pixel/percent sizing expressions when the
+parent axis is definite. `var()` terms inside `calc()` are supported for
+lengths and scalar multipliers/divisors. Mixed-unit calc in fully auto-sized
+parent axes and percent/auto support for margin/padding remain pending.
+
 Implement:
 
-- Percent sizing.
-- `auto` sizing.
-- `calc()`.
-- CSS Grid.
+- Percent sizing. First sizing-property slice implemented.
+- `auto` sizing. First sizing-property slice implemented.
+- `calc()`. First sizing slice implemented, including mixed pixel/percent
+  expressions when the parent axis is definite.
+- CSS Grid. First Taffy-backed track and placement slice implemented.
 
 Why fifth:
 
@@ -1223,9 +1289,10 @@ Why fifth:
 
 Implement:
 
-- General `overflow`.
-- Scroll state.
-- Clip stack.
+- General `overflow`. First visible/hidden/auto/scroll slice implemented.
+- Scroll state. Existing vertical scroll state now works for opted-in
+  containers.
+- Clip stack. First explicit visible/hidden child clip behavior implemented.
 
 Why separate:
 
@@ -1235,7 +1302,9 @@ Why separate:
 
 Evaluate and implement selectively:
 
-- Positioning and z-index.
+- Positioning and z-index. First paint-only relative positioning, local sibling
+  `z-index`, and layout-backed `position: absolute` slices implemented;
+  `fixed` positioning and full stacking contexts remain pending.
 - `@keyframes`.
 - Backdrop filter.
 - Generated content.

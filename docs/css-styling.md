@@ -64,8 +64,12 @@ Button { ... }                  /* type */
 .primary { ... }                /* class */
 Button.primary { ... }          /* type + class */
 #run-button { ... }             /* explicit widget id */
+[key="primary-action"] { ... }  /* explicit widget key */
+Panel Button { ... }            /* descendant */
 Panel.controls > Button { ... } /* direct child */
+Panel > HLayout > Button { ... }/* child chain */
 Button:hover { ... }            /* pseudo-state */
+Button:not(.ghost) { ... }      /* selector function */
 ```
 
 Supported pseudo-states:
@@ -86,10 +90,10 @@ Then either `.primary`, `.danger`, or `Button.primary.danger` can match.
 
 Unsupported selector forms produce warnings and are ignored. Examples:
 
-- Descendant selectors such as `Panel Button`.
-- Attribute selectors such as `[key="main"]`.
+- Attribute selectors other than `[key="main"]`.
 - Universal selectors such as `*`.
-- Multi-level child chains such as `Panel > HLayout > Button`.
+- Ancestor pseudo-states inside selector functions, such as `Panel:is(:hover) Button`.
+- Browser pseudo-elements such as `::before` and `::after`.
 
 ## Widget Type Names
 
@@ -147,17 +151,17 @@ Supported layout properties:
 
 | CSS | Notes |
 | --- | --- |
-| `display` | `flex`, `block`, `none` |
+| `display` | `flex`, `grid`, `block`, `none` |
 | `flex-direction` | `row`, `column`, `row-reverse`, `column-reverse` |
 | `flex` | maps to `flex-grow` |
 | `flex-grow` | non-negative number |
 | `flex-shrink` | non-negative number |
-| `width` | logical pixels only |
-| `height` | logical pixels only |
-| `min-width` | logical pixels only |
-| `min-height` | logical pixels only |
-| `max-width` | logical pixels only |
-| `max-height` | logical pixels only |
+| `width` | logical pixels, percent, `auto` |
+| `height` | logical pixels, percent, `auto` |
+| `min-width` | logical pixels, percent, `auto` |
+| `min-height` | logical pixels, percent, `auto` |
+| `max-width` | logical pixels, percent, `auto` |
+| `max-height` | logical pixels, percent, `auto` |
 | `padding` | one to four logical-pixel values |
 | `padding-left` | logical pixels only |
 | `padding-right` | logical pixels only |
@@ -165,10 +169,30 @@ Supported layout properties:
 | `padding-bottom` | logical pixels only |
 | `margin` | uniform margin only |
 | `gap` | logical pixels only |
+| `row-gap` | logical pixels only |
+| `column-gap` | logical pixels only |
+| `grid-template-columns` | first-slice grid track list |
+| `grid-template-rows` | first-slice grid track list |
+| `grid-column` | line or span placement |
+| `grid-row` | line or span placement |
+| `overflow` | `visible`, `hidden`, `scroll`, `auto` |
+| `overflow-x` | `visible`, `hidden`, `scroll`, `auto` |
+| `overflow-y` | `visible`, `hidden`, `scroll`, `auto` |
 
-Percent lengths and `auto` currently warn and are ignored for these properties.
-DragonGUI uses Taffy internally, but the public CSS subset keeps V2 sizing
-explicit until percent behavior is fully designed.
+Percent lengths, `auto`, and first-slice `calc()` are supported for the sizing
+properties above. `calc()` currently supports addition, subtraction, and simple
+scalar multiply/divide for pixel and percent terms, such as
+`calc(220px + 40px)`, `calc(20% + 30%)`, or `calc(100% - 240px)`. Mixed
+percent/pixel expressions resolve when the parent axis has a definite size.
+Other layout lengths such as padding, margin, and gap still require logical
+pixels.
+
+First-slice CSS Grid supports `display: grid`, track lists using px, percent,
+`fr`, `auto`, and simple `repeat(n, ...)`, plus `grid-column` and `grid-row`
+placements such as `1`, `2 / 4`, and `1 / span 2`.
+
+First-slice overflow supports explicit clipping with `hidden`, child escape
+with `visible`, and vertical scroll opt-in with `auto` or `scroll`.
 
 ## Visual Properties
 
@@ -241,6 +265,7 @@ NumberInput::stepper {
 NumberInput::stepper-up {
     background: accent;
     border-top-right-radius: 10px;
+    border-bottom-right-radius: 10px;
 }
 
 NumberInput::field {
@@ -254,7 +279,7 @@ Checkbox:checked::indicator {
 
 Pseudo-states are widget-level in this slice. For example,
 `NumberInput:hover::stepper-up` means "when the whole number input is hovered,
-style the upper stepper part."
+style the right-side increment stepper part."
 
 Supported parts:
 

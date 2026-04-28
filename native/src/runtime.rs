@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -29,7 +29,7 @@ use crate::events::{
     WidgetState,
 };
 use crate::image_widget::ImageRenderer;
-use crate::layout::compute_layout;
+use crate::layout::{compute_layout, is_scroll_container_node, scroll_container_max_y};
 use crate::overlays::menu_popup_width;
 use crate::primitives::PrimitivesRenderer;
 use crate::resources::ResourceRegistry;
@@ -37,8 +37,10 @@ use crate::scatter::{self, PointInstance, ScatterWidget};
 use crate::style::{
     collapsible_header_height_for_style, number_stepper_width, number_stepper_width_for_style,
     BackgroundPaint, BoxShadow, ColorRef, DisplayStyle, FlexDirectionStyle, FontFamily, FontStyle,
-    FontVariantNumeric, LayoutStyle, LineHeight, NodeStyle, PartLayoutStyle, PartStyle, TextAlign,
-    TextOverflow, TextSpacing, TextStyle, TextTransform, VisualStyle, WidgetStyle,
+    FontVariantNumeric, GridLineStyle, GridPlacementStyle, GridTrackSize, LayoutLength,
+    LayoutStyle, LineHeight, NodeStyle, OverflowStyle, PartLayoutStyle, PartStyle, PositionStyle,
+    TextAlign, TextOverflow, TextSpacing, TextStyle, TextTransform, TransitionStyle,
+    TransitionTimingFunction, VisualStyle, WidgetStyle,
 };
 use crate::table::{self, TableHit};
 use crate::text::TextRendererDg;
@@ -233,6 +235,36 @@ fn find_widget<'a>(node: &'a WidgetNode, id: &str) -> Option<&'a WidgetNode> {
     None
 }
 
+fn scroll_container_at_pos(
+    node: &WidgetNode,
+    layout: &crate::layout::LayoutResult,
+    state: &WidgetState,
+    pos: [f32; 2],
+) -> Option<String> {
+    if node.kind == WidgetKind::Tooltip {
+        return None;
+    }
+    for child in node.children.iter().rev() {
+        if let Some(id) = scroll_container_at_pos(child, layout, state, pos) {
+            return Some(id);
+        }
+    }
+    if !is_scroll_container_node(node) || state.is_disabled(&node.id) {
+        return None;
+    }
+    let rect = layout.visible_rect(&node.id)?;
+    if pos[0] < rect.x || pos[0] >= rect.x + rect.w || pos[1] < rect.y || pos[1] >= rect.y + rect.h
+    {
+        return None;
+    }
+    let max_scroll = layout
+        .scroll_max_y
+        .get(&node.id)
+        .copied()
+        .unwrap_or_else(|| scroll_container_max_y(node, layout));
+    (max_scroll > 0.0).then(|| node.id.clone())
+}
+
 fn find_widget_mut<'a>(node: &'a mut WidgetNode, id: &str) -> Option<&'a mut WidgetNode> {
     if node.id == id {
         return Some(node);
@@ -382,6 +414,7 @@ fn color_ref_json(color: &ColorRef) -> Value {
 fn display_style_name(display: DisplayStyle) -> &'static str {
     match display {
         DisplayStyle::Flex => "flex",
+        DisplayStyle::Grid => "grid",
         DisplayStyle::Block => "block",
         DisplayStyle::None => "none",
     }
@@ -393,6 +426,23 @@ fn flex_direction_name(direction: FlexDirectionStyle) -> &'static str {
         FlexDirectionStyle::Column => "column",
         FlexDirectionStyle::RowReverse => "row_reverse",
         FlexDirectionStyle::ColumnReverse => "column_reverse",
+    }
+}
+
+fn overflow_style_name(value: OverflowStyle) -> &'static str {
+    match value {
+        OverflowStyle::Visible => "visible",
+        OverflowStyle::Hidden => "hidden",
+        OverflowStyle::Scroll => "scroll",
+        OverflowStyle::Auto => "auto",
+    }
+}
+
+fn position_style_name(value: PositionStyle) -> &'static str {
+    match value {
+        PositionStyle::Static => "static",
+        PositionStyle::Relative => "relative",
+        PositionStyle::Absolute => "absolute",
     }
 }
 
@@ -465,6 +515,56 @@ fn insert_number(map: &mut Map<String, Value>, key: &str, value: Option<f32>) {
     }
 }
 
+fn insert_layout_length(
+    map: &mut Map<String, Value>,
+    key: &str,
+    value: Option<LayoutLength>,
+    legacy_px: Option<f32>,
+) {
+    match value {
+        Some(LayoutLength::LogicalPx(value)) => {
+            map.insert(key.to_string(), json!(value));
+        }
+        Some(LayoutLength::Percent(value)) => {
+            map.insert(key.to_string(), json!({ "percent": value }));
+        }
+        Some(LayoutLength::Calc(value)) => {
+            map.insert(
+                key.to_string(),
+                json!({ "calc": { "percent": value.percent, "px": value.px } }),
+            );
+        }
+        Some(LayoutLength::Auto) => {
+            map.insert(key.to_string(), json!("auto"));
+        }
+        None => insert_number(map, key, legacy_px),
+    }
+}
+
+fn grid_track_json(value: GridTrackSize) -> Value {
+    match value {
+        GridTrackSize::LogicalPx(value) => json!(value),
+        GridTrackSize::Percent(value) => json!({ "percent": value }),
+        GridTrackSize::Fraction(value) => json!({ "fr": value }),
+        GridTrackSize::Auto => json!("auto"),
+    }
+}
+
+fn grid_line_json(value: GridLineStyle) -> Value {
+    match value {
+        GridLineStyle::Auto => json!("auto"),
+        GridLineStyle::Line(value) => json!(value),
+        GridLineStyle::Span(value) => json!({ "span": value }),
+    }
+}
+
+fn grid_placement_json(value: GridPlacementStyle) -> Value {
+    json!({
+        "start": grid_line_json(value.start),
+        "end": grid_line_json(value.end),
+    })
+}
+
 fn insert_color_ref(map: &mut Map<String, Value>, key: &str, value: &Option<ColorRef>) {
     if let Some(value) = value {
         map.insert(key.to_string(), color_ref_json(value));
@@ -482,12 +582,32 @@ fn layout_style_snapshot(style: &LayoutStyle) -> Value {
             json!(flex_direction_name(value)),
         );
     }
-    insert_number(&mut map, "width", style.width);
-    insert_number(&mut map, "height", style.height);
-    insert_number(&mut map, "min_width", style.min_width);
-    insert_number(&mut map, "min_height", style.min_height);
-    insert_number(&mut map, "max_width", style.max_width);
-    insert_number(&mut map, "max_height", style.max_height);
+    insert_layout_length(&mut map, "width", style.width_value, style.width);
+    insert_layout_length(&mut map, "height", style.height_value, style.height);
+    insert_layout_length(
+        &mut map,
+        "min_width",
+        style.min_width_value,
+        style.min_width,
+    );
+    insert_layout_length(
+        &mut map,
+        "min_height",
+        style.min_height_value,
+        style.min_height,
+    );
+    insert_layout_length(
+        &mut map,
+        "max_width",
+        style.max_width_value,
+        style.max_width,
+    );
+    insert_layout_length(
+        &mut map,
+        "max_height",
+        style.max_height_value,
+        style.max_height,
+    );
     insert_number(&mut map, "padding", style.padding);
     insert_number(&mut map, "padding_left", style.padding_left);
     insert_number(&mut map, "padding_right", style.padding_right);
@@ -495,8 +615,47 @@ fn layout_style_snapshot(style: &LayoutStyle) -> Value {
     insert_number(&mut map, "padding_bottom", style.padding_bottom);
     insert_number(&mut map, "margin", style.margin);
     insert_number(&mut map, "gap", style.gap);
+    insert_number(&mut map, "row_gap", style.row_gap);
+    insert_number(&mut map, "column_gap", style.column_gap);
+    if let Some(value) = style.overflow {
+        map.insert("overflow".to_string(), json!(overflow_style_name(value)));
+    }
+    if let Some(value) = style.overflow_x {
+        map.insert("overflow_x".to_string(), json!(overflow_style_name(value)));
+    }
+    if let Some(value) = style.overflow_y {
+        map.insert("overflow_y".to_string(), json!(overflow_style_name(value)));
+    }
+    if let Some(value) = style.position {
+        map.insert("position".to_string(), json!(position_style_name(value)));
+    }
+    insert_number(&mut map, "top", style.top);
+    insert_number(&mut map, "right", style.right);
+    insert_number(&mut map, "bottom", style.bottom);
+    insert_number(&mut map, "left", style.left);
+    if let Some(value) = style.z_index {
+        map.insert("z_index".to_string(), json!(value));
+    }
     insert_number(&mut map, "flex_grow", style.flex_grow);
     insert_number(&mut map, "flex_shrink", style.flex_shrink);
+    if let Some(value) = &style.grid_template_columns {
+        map.insert(
+            "grid_template_columns".to_string(),
+            Value::Array(value.iter().copied().map(grid_track_json).collect()),
+        );
+    }
+    if let Some(value) = &style.grid_template_rows {
+        map.insert(
+            "grid_template_rows".to_string(),
+            Value::Array(value.iter().copied().map(grid_track_json).collect()),
+        );
+    }
+    if let Some(value) = style.grid_column {
+        map.insert("grid_column".to_string(), grid_placement_json(value));
+    }
+    if let Some(value) = style.grid_row {
+        map.insert("grid_row".to_string(), grid_placement_json(value));
+    }
     Value::Object(map)
 }
 
@@ -536,10 +695,23 @@ fn visual_style_snapshot(style: &VisualStyle) -> Value {
     insert_color_ref(&mut map, "track_color", &style.track_color);
     insert_color_ref(&mut map, "thumb_color", &style.thumb_color);
     insert_number(&mut map, "opacity", style.opacity);
+    insert_number(&mut map, "background_noise", style.background_noise);
     if let Some(shadows) = &style.box_shadows {
         map.insert(
             "box_shadow".to_string(),
             Value::Array(shadows.iter().map(box_shadow_json).collect()),
+        );
+    }
+    if let Some(transform) = style.transform {
+        map.insert(
+            "transform".to_string(),
+            json!({
+                "translate_x": transform.translate_x,
+                "translate_y": transform.translate_y,
+                "scale_x": transform.scale_x,
+                "scale_y": transform.scale_y,
+                "rotate_deg": transform.rotate_deg,
+            }),
         );
     }
     Value::Object(map)
@@ -547,9 +719,17 @@ fn visual_style_snapshot(style: &VisualStyle) -> Value {
 
 fn background_paint_json(paint: &BackgroundPaint) -> Option<Value> {
     match paint {
-        BackgroundPaint::Color(_) => None,
+        BackgroundPaint::Color(color) => Some(json!({
+            "type": "color",
+            "color": color_ref_json(color),
+        })),
+        BackgroundPaint::Layers(layers) => Some(json!({
+            "type": "layers",
+            "layers": layers.iter().filter_map(background_paint_json).collect::<Vec<_>>(),
+        })),
         BackgroundPaint::LinearGradient(gradient) => Some(json!({
             "type": "linear_gradient",
+            "repeating": gradient.repeating,
             "angle_deg": gradient.angle_deg,
             "stops": gradient.stops.iter().map(|stop| {
                 json!({
@@ -560,6 +740,8 @@ fn background_paint_json(paint: &BackgroundPaint) -> Option<Value> {
         })),
         BackgroundPaint::RadialGradient(gradient) => Some(json!({
             "type": "radial_gradient",
+            "repeating": gradient.repeating,
+            "center": gradient.center,
             "stops": gradient.stops.iter().map(|stop| {
                 json!({
                     "color": color_ref_json(&stop.color),
@@ -579,6 +761,62 @@ fn box_shadow_json(shadow: &BoxShadow) -> Value {
         "color": color_ref_json(&shadow.color),
         "inset": shadow.inset,
     })
+}
+
+fn transition_style_snapshot(style: &TransitionStyle) -> Value {
+    let mut map = Map::new();
+    if let Some(properties) = &style.properties {
+        map.insert(
+            "property".to_string(),
+            Value::Array(
+                properties
+                    .iter()
+                    .map(|property| json!(transition_property_name(*property)))
+                    .collect(),
+            ),
+        );
+    }
+    if let Some(duration) = style.duration_ms {
+        map.insert("duration_ms".to_string(), json!(duration));
+    }
+    if let Some(delay) = style.delay_ms {
+        map.insert("delay_ms".to_string(), json!(delay));
+    }
+    if let Some(timing) = style.timing_function {
+        map.insert(
+            "timing_function".to_string(),
+            json!(transition_timing_name(timing)),
+        );
+    }
+    Value::Object(map)
+}
+
+fn transition_property_name(property: crate::style::TransitionProperty) -> &'static str {
+    match property {
+        crate::style::TransitionProperty::All => "all",
+        crate::style::TransitionProperty::Background => "background",
+        crate::style::TransitionProperty::Foreground => "foreground",
+        crate::style::TransitionProperty::BorderColor => "border-color",
+        crate::style::TransitionProperty::BorderWidth => "border-width",
+        crate::style::TransitionProperty::BorderRadius => "border-radius",
+        crate::style::TransitionProperty::Opacity => "opacity",
+        crate::style::TransitionProperty::Color => "color",
+        crate::style::TransitionProperty::Accent => "accent",
+        crate::style::TransitionProperty::TrackColor => "track-color",
+        crate::style::TransitionProperty::ThumbColor => "thumb-color",
+        crate::style::TransitionProperty::BoxShadow => "box-shadow",
+        crate::style::TransitionProperty::Transform => "transform",
+    }
+}
+
+fn transition_timing_name(timing: TransitionTimingFunction) -> &'static str {
+    match timing {
+        TransitionTimingFunction::Linear => "linear",
+        TransitionTimingFunction::Ease => "ease",
+        TransitionTimingFunction::EaseIn => "ease-in",
+        TransitionTimingFunction::EaseOut => "ease-out",
+        TransitionTimingFunction::EaseInOut => "ease-in-out",
+    }
 }
 
 fn text_style_snapshot(style: &TextStyle) -> Value {
@@ -722,6 +960,11 @@ fn node_style_snapshot(
     map.insert("visual".to_string(), visual_style_snapshot(&style.visual));
     map.insert("text".to_string(), text_style_snapshot(&style.text));
     map.insert("widget".to_string(), widget_style_snapshot(&style.widget));
+    insert_object_if_non_empty(
+        &mut map,
+        "transition",
+        transition_style_snapshot(&style.transition),
+    );
     insert_object_if_non_empty(
         &mut map,
         "parts",
@@ -887,12 +1130,16 @@ fn widget_state_snapshot(state: Option<&WidgetState>) -> Value {
         "text_val": &state.text_val,
         "text_cursor": &state.text_cursor,
         "text_scroll_y": &state.text_scroll_y,
+        "container_scroll_y": &state.container_scroll_y,
         "dropdown_index": &state.dropdown_index,
         "dropdown_items_count": state.dropdown_items.iter().map(|(id, items)| (id.clone(), json!(items.len()))).collect::<Map<_, _>>(),
         "disabled": state.disabled.iter().cloned().collect::<Vec<_>>(),
         "focus_order": &state.focus_order,
         "focused": state.focused.as_deref(),
         "hovered": state.hovered.as_deref(),
+        "hover_t": &state.hover_t,
+        "open_t": &state.open_t,
+        "selected_t": &state.selected_t,
         "pressed": state.pressed.as_deref(),
         "open_dropdown": state.open_dropdown.as_deref(),
         "dropdown_hover": state.dropdown_hover.as_ref().map(|(id, idx)| json!({"id": id, "index": idx})),
@@ -1297,6 +1544,97 @@ mod style_patch_tests {
     }
 
     #[test]
+    fn computed_style_snapshot_includes_transition_fields() {
+        let mut tree = crate::document::parse_widget_node(&json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "run",
+                "type": "button",
+                "props": {"text": "Run"}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                "Button { transition: background 180ms ease-out 25ms; }",
+            )
+            .unwrap();
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+
+        let snapshot = computed_styles_snapshot(Some(&tree), &store);
+        let transition = &snapshot["run"]["style"]["transition"];
+
+        assert_eq!(transition["property"], json!(["background"]));
+        assert_eq!(transition["duration_ms"], json!(180));
+        assert_eq!(transition["delay_ms"], json!(25));
+        assert_eq!(transition["timing_function"], json!("ease-out"));
+    }
+
+    #[test]
+    fn clear_style_transition_state_removes_runtime_progress() {
+        let mut transitions = HashMap::from([(
+            "run".to_string(),
+            HoverTransition {
+                start: Instant::now(),
+                duration: Duration::from_millis(120),
+                delay: Duration::ZERO,
+                from: 0.0,
+                to: 1.0,
+                timing: TransitionTimingFunction::EaseOut,
+            },
+        )]);
+        let mut open_transitions = HashMap::from([(
+            "mode".to_string(),
+            HoverTransition {
+                start: Instant::now(),
+                duration: Duration::from_millis(120),
+                delay: Duration::ZERO,
+                from: 1.0,
+                to: 0.0,
+                timing: TransitionTimingFunction::EaseOut,
+            },
+        )]);
+        let mut selected_transitions = HashMap::from([(
+            "tab-a".to_string(),
+            HoverTransition {
+                start: Instant::now(),
+                duration: Duration::from_millis(120),
+                delay: Duration::ZERO,
+                from: 1.0,
+                to: 0.0,
+                timing: TransitionTimingFunction::EaseOut,
+            },
+        )]);
+        let mut state = WidgetState::default();
+        state.hover_t.insert("run".to_string(), 0.5);
+        state.open_t.insert("mode".to_string(), 0.5);
+        state.selected_t.insert("tab-a".to_string(), 0.5);
+        let mut state = Some(state);
+
+        assert!(clear_style_transition_state(
+            &mut transitions,
+            &mut open_transitions,
+            &mut selected_transitions,
+            &mut state
+        ));
+        assert!(transitions.is_empty());
+        assert!(open_transitions.is_empty());
+        assert!(selected_transitions.is_empty());
+        assert!(state.as_ref().unwrap().hover_t.is_empty());
+        assert!(state.as_ref().unwrap().open_t.is_empty());
+        assert!(state.as_ref().unwrap().selected_t.is_empty());
+        assert!(!clear_style_transition_state(
+            &mut transitions,
+            &mut open_transitions,
+            &mut selected_transitions,
+            &mut state
+        ));
+    }
+
+    #[test]
     fn computed_style_snapshot_includes_part_matched_rules() {
         let mut tree = crate::document::parse_widget_node(&json!({
             "id": "root",
@@ -1412,7 +1750,29 @@ mod style_patch_tests {
                 &state,
                 &layout,
                 1.0,
-                [165.0, 31.0],
+                [185.0, 20.0],
+            ),
+            Some(("amount".to_string(), 1.0))
+        );
+        assert_eq!(
+            number_input_step_at_pos(
+                Some(&styled_tree),
+                &widget_kinds,
+                &state,
+                &layout,
+                1.0,
+                [150.0, 20.0],
+            ),
+            None
+        );
+        assert_eq!(
+            number_input_step_at_pos(
+                Some(&styled_tree),
+                &widget_kinds,
+                &state,
+                &layout,
+                1.0,
+                [135.0, 20.0],
             ),
             Some(("amount".to_string(), -1.0))
         );
@@ -1636,7 +1996,22 @@ struct WgpuState {
     current_layout: Option<crate::layout::LayoutResult>,
     /// Text renderer (Label, Button labels).
     text: Option<TextRendererDg>,
+    hover_transitions: HashMap<String, HoverTransition>,
+    open_transitions: HashMap<String, HoverTransition>,
+    open_state_snapshot: HashSet<String>,
+    selected_transitions: HashMap<String, HoverTransition>,
+    selected_state_snapshot: HashSet<String>,
     scatter_metrics: ScatterMetrics,
+}
+
+#[derive(Debug, Clone)]
+struct HoverTransition {
+    start: Instant,
+    duration: Duration,
+    delay: Duration,
+    from: f32,
+    to: f32,
+    timing: TransitionTimingFunction,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1687,6 +2062,91 @@ impl RuntimeToast {
     }
 }
 
+fn transition_config(
+    style: &TransitionStyle,
+) -> Option<(Duration, Duration, TransitionTimingFunction)> {
+    if style.properties.as_ref().is_some_and(Vec::is_empty) {
+        return None;
+    }
+    let duration_ms = style.duration_ms?;
+    if duration_ms == 0 {
+        return None;
+    }
+    Some((
+        Duration::from_millis(duration_ms),
+        Duration::from_millis(style.delay_ms.unwrap_or(0)),
+        style
+            .timing_function
+            .unwrap_or(TransitionTimingFunction::Ease),
+    ))
+}
+
+fn ease_transition(t: f32, timing: TransitionTimingFunction) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    match timing {
+        TransitionTimingFunction::Linear => t,
+        TransitionTimingFunction::Ease => t * t * (3.0 - 2.0 * t),
+        TransitionTimingFunction::EaseIn => t * t,
+        TransitionTimingFunction::EaseOut => 1.0 - (1.0 - t) * (1.0 - t),
+        TransitionTimingFunction::EaseInOut => {
+            if t < 0.5 {
+                2.0 * t * t
+            } else {
+                1.0 - (-2.0 * t + 2.0).powi(2) * 0.5
+            }
+        }
+    }
+}
+
+fn clear_style_transition_state(
+    hover_transitions: &mut HashMap<String, HoverTransition>,
+    open_transitions: &mut HashMap<String, HoverTransition>,
+    selected_transitions: &mut HashMap<String, HoverTransition>,
+    widget_state: &mut Option<WidgetState>,
+) -> bool {
+    let had_transitions = !hover_transitions.is_empty()
+        || !open_transitions.is_empty()
+        || !selected_transitions.is_empty();
+    hover_transitions.clear();
+    open_transitions.clear();
+    selected_transitions.clear();
+    let had_progress = widget_state.as_mut().is_some_and(|state| {
+        let had_hover = !std::mem::take(&mut state.hover_t).is_empty();
+        let had_open = !std::mem::take(&mut state.open_t).is_empty();
+        let had_selected = !std::mem::take(&mut state.selected_t).is_empty();
+        had_hover || had_open || had_selected
+    });
+    had_transitions || had_progress
+}
+
+fn collect_open_widget_ids(
+    node: &WidgetNode,
+    state: Option<&WidgetState>,
+    out: &mut HashSet<String>,
+) {
+    if state.is_some_and(|state| state.is_open_widget(&node.id))
+        || (node.kind == WidgetKind::Modal && node.props.open == Some(true))
+    {
+        out.insert(node.id.clone());
+    }
+    for child in &node.children {
+        collect_open_widget_ids(child, state, out);
+    }
+}
+
+fn collect_selected_widget_ids(
+    node: &WidgetNode,
+    state: Option<&WidgetState>,
+    out: &mut HashSet<String>,
+) {
+    if state.is_some_and(|state| state.is_selected_widget(&node.id)) {
+        out.insert(node.id.clone());
+    }
+    for child in &node.children {
+        collect_selected_widget_ids(child, state, out);
+    }
+}
+
 fn number_input_step_at_pos(
     widget_tree: Option<&WidgetNode>,
     widget_kinds: &HashMap<String, WidgetKind>,
@@ -1706,20 +2166,15 @@ fn number_input_step_at_pos(
             .and_then(|tree| crate::overlays::find_node(tree, id))
             .map(|node| number_stepper_width_for_style(&node.style, rect.w, scale_factor))
             .unwrap_or_else(|| number_stepper_width(rect.w, scale_factor));
-        let step_x = rect.x + rect.w - step_w;
-        if pos[0] < step_x
-            || pos[0] >= rect.x + rect.w
-            || pos[1] < rect.y
-            || pos[1] >= rect.y + rect.h
-        {
+        if pos[1] < rect.y || pos[1] >= rect.y + rect.h {
             continue;
         }
-        let direction = if pos[1] < rect.y + rect.h * 0.5 {
-            1.0
-        } else {
-            -1.0
-        };
-        return Some((id.clone(), direction));
+        if pos[0] >= rect.x && pos[0] < rect.x + step_w {
+            return Some((id.clone(), -1.0));
+        }
+        if pos[0] >= rect.x + rect.w - step_w && pos[0] < rect.x + rect.w {
+            return Some((id.clone(), 1.0));
+        }
     }
     None
 }
@@ -1802,6 +2257,14 @@ impl WgpuState {
             resources.sync_from_tree(tree);
         }
         let widget_state = spec.widget_tree.as_ref().map(WidgetState::from_tree);
+        let mut open_state_snapshot = HashSet::new();
+        if let Some(tree) = &spec.widget_tree {
+            collect_open_widget_ids(tree, widget_state.as_ref(), &mut open_state_snapshot);
+        }
+        let mut selected_state_snapshot = HashSet::new();
+        if let Some(tree) = &spec.widget_tree {
+            collect_selected_widget_ids(tree, widget_state.as_ref(), &mut selected_state_snapshot);
+        }
         let mut widget_kinds = HashMap::new();
         if let Some(tree) = &spec.widget_tree {
             collect_widget_kinds(tree, &mut widget_kinds);
@@ -1837,6 +2300,11 @@ impl WgpuState {
             widget_state,
             current_layout: None,
             text,
+            hover_transitions: HashMap::new(),
+            open_transitions: HashMap::new(),
+            open_state_snapshot,
+            selected_transitions: HashMap::new(),
+            selected_state_snapshot,
             scatter_metrics: ScatterMetrics::default(),
         };
 
@@ -1847,6 +2315,8 @@ impl WgpuState {
 
     /// Recompute layout and push scatter viewport + primitives + text to GPU.
     fn apply_layout(&mut self) {
+        self.sync_open_transitions();
+        self.sync_selected_transitions();
         // Destructure to get separate borrows of each field.
         let WgpuState {
             widget_tree,
@@ -2024,8 +2494,351 @@ impl WgpuState {
 
     /// Rebuild state-dependent primitive and text buffers without recomputing layout.
     fn rebuild_visuals(&mut self) {
+        self.sync_open_transitions();
+        self.sync_selected_transitions();
         self.rebuild_text();
         self.rebuild_primitives();
+    }
+
+    fn current_open_widget_ids(&self) -> HashSet<String> {
+        let mut open = HashSet::new();
+        if let Some(tree) = self.widget_tree.as_ref() {
+            collect_open_widget_ids(tree, self.widget_state.as_ref(), &mut open);
+        }
+        open
+    }
+
+    fn sync_open_transitions(&mut self) -> bool {
+        let current = self.current_open_widget_ids();
+        if current == self.open_state_snapshot {
+            return false;
+        }
+        let old = std::mem::replace(&mut self.open_state_snapshot, current.clone());
+        let mut changed = false;
+        for id in old.difference(&current) {
+            changed |= self.start_open_transition(id, 0.0);
+        }
+        for id in current.difference(&old) {
+            changed |= self.start_open_transition(id, 1.0);
+        }
+        changed
+    }
+
+    fn current_selected_widget_ids(&self) -> HashSet<String> {
+        let mut selected = HashSet::new();
+        if let Some(tree) = self.widget_tree.as_ref() {
+            collect_selected_widget_ids(tree, self.widget_state.as_ref(), &mut selected);
+        }
+        selected
+    }
+
+    fn sync_selected_transitions(&mut self) -> bool {
+        let current = self.current_selected_widget_ids();
+        if current == self.selected_state_snapshot {
+            return false;
+        }
+        let old = std::mem::replace(&mut self.selected_state_snapshot, current.clone());
+        let mut changed = false;
+        for id in old.difference(&current) {
+            changed |= self.start_selected_transition(id, 0.0);
+        }
+        for id in current.difference(&old) {
+            changed |= self.start_selected_transition(id, 1.0);
+        }
+        changed
+    }
+
+    fn update_hover_state(
+        &mut self,
+        new_hover: Option<String>,
+        new_dropdown_hover: Option<(String, usize)>,
+    ) -> bool {
+        let (old_hover, old_dropdown_hover) = self
+            .widget_state
+            .as_ref()
+            .map(|state| (state.hovered.clone(), state.dropdown_hover.clone()))
+            .unwrap_or_default();
+        if new_hover == old_hover && new_dropdown_hover == old_dropdown_hover {
+            return false;
+        }
+
+        if let Some(id) = old_hover
+            .as_deref()
+            .filter(|id| Some(*id) != new_hover.as_deref())
+        {
+            self.start_hover_transition(id, 0.0);
+        }
+        if let Some(id) = new_hover
+            .as_deref()
+            .filter(|id| Some(*id) != old_hover.as_deref())
+        {
+            self.start_hover_transition(id, 1.0);
+        }
+        if let Some(state) = &mut self.widget_state {
+            state.hovered = new_hover;
+            state.dropdown_hover = new_dropdown_hover;
+        }
+        true
+    }
+
+    fn start_hover_transition(&mut self, id: &str, to: f32) {
+        let Some((duration, delay, timing)) = self.hover_transition_config(id) else {
+            self.hover_transitions.remove(id);
+            if let Some(state) = &mut self.widget_state {
+                state.hover_t.remove(id);
+            }
+            return;
+        };
+        let from = self
+            .widget_state
+            .as_ref()
+            .and_then(|state| state.hover_t.get(id).copied())
+            .unwrap_or(if to >= 0.5 { 0.0 } else { 1.0 });
+        if let Some(state) = &mut self.widget_state {
+            state.hover_t.insert(id.to_string(), from);
+        }
+        self.hover_transitions.insert(
+            id.to_string(),
+            HoverTransition {
+                start: Instant::now(),
+                duration,
+                delay,
+                from,
+                to,
+                timing,
+            },
+        );
+    }
+
+    fn start_open_transition(&mut self, id: &str, to: f32) -> bool {
+        let Some((duration, delay, timing)) = self.open_transition_config(id) else {
+            self.open_transitions.remove(id);
+            if let Some(state) = &mut self.widget_state {
+                state.open_t.remove(id);
+            }
+            return false;
+        };
+        let from = self
+            .widget_state
+            .as_ref()
+            .and_then(|state| state.open_t.get(id).copied())
+            .unwrap_or(if to >= 0.5 { 0.0 } else { 1.0 });
+        if let Some(state) = &mut self.widget_state {
+            state.open_t.insert(id.to_string(), from);
+        }
+        self.open_transitions.insert(
+            id.to_string(),
+            HoverTransition {
+                start: Instant::now(),
+                duration,
+                delay,
+                from,
+                to,
+                timing,
+            },
+        );
+        true
+    }
+
+    fn start_selected_transition(&mut self, id: &str, to: f32) -> bool {
+        let Some((duration, delay, timing)) = self.selected_transition_config(id) else {
+            self.selected_transitions.remove(id);
+            if let Some(state) = &mut self.widget_state {
+                state.selected_t.remove(id);
+            }
+            return false;
+        };
+        let from = self
+            .widget_state
+            .as_ref()
+            .and_then(|state| state.selected_t.get(id).copied())
+            .unwrap_or(if to >= 0.5 { 0.0 } else { 1.0 });
+        if let Some(state) = &mut self.widget_state {
+            state.selected_t.insert(id.to_string(), from);
+        }
+        self.selected_transitions.insert(
+            id.to_string(),
+            HoverTransition {
+                start: Instant::now(),
+                duration,
+                delay,
+                from,
+                to,
+                timing,
+            },
+        );
+        true
+    }
+
+    fn hover_transition_config(
+        &self,
+        id: &str,
+    ) -> Option<(Duration, Duration, TransitionTimingFunction)> {
+        let tree = self.widget_tree.as_ref()?;
+        let node = find_widget(tree, id)?;
+        transition_config(&node.style.transition)
+    }
+
+    fn open_transition_config(
+        &self,
+        id: &str,
+    ) -> Option<(Duration, Duration, TransitionTimingFunction)> {
+        let tree = self.widget_tree.as_ref()?;
+        let node = find_widget(tree, id)?;
+        transition_config(&node.style.transition)
+    }
+
+    fn selected_transition_config(
+        &self,
+        id: &str,
+    ) -> Option<(Duration, Duration, TransitionTimingFunction)> {
+        let tree = self.widget_tree.as_ref()?;
+        let node = find_widget(tree, id)?;
+        transition_config(&node.style.transition)
+    }
+
+    fn tick_hover_transitions(&mut self) -> bool {
+        if self.hover_transitions.is_empty() {
+            return false;
+        }
+        let now = Instant::now();
+        let ids: Vec<String> = self.hover_transitions.keys().cloned().collect();
+        let mut finished = Vec::new();
+        let mut changed = false;
+        for id in ids {
+            let Some(transition) = self.hover_transitions.get(&id) else {
+                continue;
+            };
+            let elapsed = now.saturating_duration_since(transition.start);
+            let raw_t = if elapsed < transition.delay {
+                0.0
+            } else {
+                let active = elapsed - transition.delay;
+                (active.as_secs_f32() / transition.duration.as_secs_f32()).clamp(0.0, 1.0)
+            };
+            let eased = ease_transition(raw_t, transition.timing);
+            let value = transition.from + (transition.to - transition.from) * eased;
+            if let Some(state) = &mut self.widget_state {
+                state.hover_t.insert(id.clone(), value.clamp(0.0, 1.0));
+            }
+            changed = true;
+            if raw_t >= 1.0 {
+                finished.push(id);
+            }
+        }
+        for id in finished {
+            let Some(transition) = self.hover_transitions.remove(&id) else {
+                continue;
+            };
+            if let Some(state) = &mut self.widget_state {
+                state.hover_t.remove(&id);
+                if transition.to > 0.0 {
+                    state.hover_t.insert(id, 1.0);
+                }
+            }
+        }
+        changed
+    }
+
+    fn tick_open_transitions(&mut self) -> bool {
+        if self.open_transitions.is_empty() {
+            return false;
+        }
+        let now = Instant::now();
+        let ids: Vec<String> = self.open_transitions.keys().cloned().collect();
+        let mut finished = Vec::new();
+        let mut changed = false;
+        for id in ids {
+            let Some(transition) = self.open_transitions.get(&id) else {
+                continue;
+            };
+            let elapsed = now.saturating_duration_since(transition.start);
+            let raw_t = if elapsed < transition.delay {
+                0.0
+            } else {
+                let active = elapsed - transition.delay;
+                (active.as_secs_f32() / transition.duration.as_secs_f32()).clamp(0.0, 1.0)
+            };
+            let eased = ease_transition(raw_t, transition.timing);
+            let value = transition.from + (transition.to - transition.from) * eased;
+            if let Some(state) = &mut self.widget_state {
+                state.open_t.insert(id.clone(), value.clamp(0.0, 1.0));
+            }
+            changed = true;
+            if raw_t >= 1.0 {
+                finished.push(id);
+            }
+        }
+        for id in finished {
+            let Some(transition) = self.open_transitions.remove(&id) else {
+                continue;
+            };
+            if let Some(state) = &mut self.widget_state {
+                state.open_t.remove(&id);
+                if transition.to > 0.0 {
+                    state.open_t.insert(id, 1.0);
+                }
+            }
+        }
+        changed
+    }
+
+    fn tick_selected_transitions(&mut self) -> bool {
+        if self.selected_transitions.is_empty() {
+            return false;
+        }
+        let now = Instant::now();
+        let ids: Vec<String> = self.selected_transitions.keys().cloned().collect();
+        let mut finished = Vec::new();
+        let mut changed = false;
+        for id in ids {
+            let Some(transition) = self.selected_transitions.get(&id) else {
+                continue;
+            };
+            let elapsed = now.saturating_duration_since(transition.start);
+            let raw_t = if elapsed < transition.delay {
+                0.0
+            } else {
+                let active = elapsed - transition.delay;
+                (active.as_secs_f32() / transition.duration.as_secs_f32()).clamp(0.0, 1.0)
+            };
+            let eased = ease_transition(raw_t, transition.timing);
+            let value = transition.from + (transition.to - transition.from) * eased;
+            if let Some(state) = &mut self.widget_state {
+                state.selected_t.insert(id.clone(), value.clamp(0.0, 1.0));
+            }
+            changed = true;
+            if raw_t >= 1.0 {
+                finished.push(id);
+            }
+        }
+        for id in finished {
+            let Some(transition) = self.selected_transitions.remove(&id) else {
+                continue;
+            };
+            if let Some(state) = &mut self.widget_state {
+                state.selected_t.remove(&id);
+                if transition.to > 0.0 {
+                    state.selected_t.insert(id, 1.0);
+                }
+            }
+        }
+        changed
+    }
+
+    fn cancel_hover_transitions(&mut self) -> bool {
+        clear_style_transition_state(
+            &mut self.hover_transitions,
+            &mut self.open_transitions,
+            &mut self.selected_transitions,
+            &mut self.widget_state,
+        )
+    }
+
+    fn has_style_transitions(&self) -> bool {
+        !self.hover_transitions.is_empty()
+            || !self.open_transitions.is_empty()
+            || !self.selected_transitions.is_empty()
     }
 
     fn resize(&mut self, width: u32, height: u32) {
@@ -2623,6 +3436,9 @@ impl WgpuState {
     }
 
     fn rebuild_for_dirty(&mut self, dirty: Dirty) {
+        if matches!(dirty, Dirty::Layout | Dirty::Full) {
+            self.cancel_hover_transitions();
+        }
         match dirty {
             Dirty::Layout | Dirty::Full => self.apply_layout(),
             Dirty::Text => self.rebuild_visuals(),
@@ -2632,6 +3448,7 @@ impl WgpuState {
     }
 
     fn reapply_stylesheets(&mut self) {
+        self.cancel_hover_transitions();
         if let Some(tree) = &mut self.widget_tree {
             apply_stylesheets_to_tree(tree, &mut self.stylesheets);
         }
@@ -2955,6 +3772,13 @@ impl WgpuState {
             .and_then(|(id, kind)| (kind == WidgetKind::TextArea).then_some(id))
     }
 
+    fn scroll_container_at(&self, pos: [f32; 2]) -> Option<String> {
+        let tree = self.widget_tree.as_ref()?;
+        let layout = self.current_layout.as_ref()?;
+        let state = self.widget_state.as_ref()?;
+        scroll_container_at_pos(tree, layout, state, pos)
+    }
+
     fn text_area_scroll_geometry(&self, id: &str) -> Option<(f32, f32)> {
         let tree = self.widget_tree.as_ref()?;
         let layout = self.current_layout.as_ref()?;
@@ -2980,6 +3804,36 @@ impl WgpuState {
             .unwrap_or(false);
         if changed {
             self.rebuild_visuals();
+        }
+        changed
+    }
+
+    fn scroll_container(&mut self, id: &str, wheel_y: f32) -> bool {
+        let Some(tree) = self.widget_tree.as_ref() else {
+            return false;
+        };
+        let Some(layout) = self.current_layout.as_ref() else {
+            return false;
+        };
+        let Some(node) = find_widget(tree, id) else {
+            return false;
+        };
+        let max_scroll = layout
+            .scroll_max_y
+            .get(id)
+            .copied()
+            .unwrap_or_else(|| scroll_container_max_y(node, layout));
+        if max_scroll <= 0.0 {
+            return false;
+        }
+        let delta_y = -wheel_y * self.theme.control_height() * self.scale_factor * 0.75;
+        let changed = self
+            .widget_state
+            .as_mut()
+            .map(|state| state.scroll_container(id, delta_y, max_scroll))
+            .unwrap_or(false);
+        if changed {
+            self.apply_layout();
         }
         changed
     }
@@ -5008,7 +5862,27 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                 gpu.rebuild_visuals();
                 request_redraw = true;
             }
+            if gpu.tick_hover_transitions() {
+                gpu.rebuild_visuals();
+                request_redraw = true;
+            }
+            if gpu.tick_open_transitions() {
+                gpu.rebuild_visuals();
+                request_redraw = true;
+            }
+            if gpu.tick_selected_transitions() {
+                gpu.rebuild_visuals();
+                request_redraw = true;
+            }
             next_deadline = gpu.next_toast_deadline();
+            if gpu.has_style_transitions() {
+                let transition_deadline = Instant::now() + Duration::from_millis(16);
+                next_deadline = Some(
+                    next_deadline
+                        .map(|deadline| deadline.min(transition_deadline))
+                        .unwrap_or(transition_deadline),
+                );
+            }
         }
         if request_redraw {
             self.request_redraw();
@@ -5286,11 +6160,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
             WindowEvent::CursorLeft { .. } => {
                 self.last_mouse_pos = None;
                 if let Some(gpu) = &mut self.gpu {
-                    let cleared = gpu.widget_state.as_mut().is_some_and(|ws| {
-                        let had_hover = ws.hovered.take().is_some();
-                        let had_dropdown_hover = ws.dropdown_hover.take().is_some();
-                        had_hover || had_dropdown_hover
-                    });
+                    let cleared = gpu.update_hover_state(None, None);
                     if cleared {
                         gpu.apply_layout();
                         self.request_redraw();
@@ -5347,10 +6217,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                         .and_then(|ws| ws.dropdown_hover.clone());
                     if new_hover != old_hover || new_dropdown_hover != old_dropdown_hover {
                         if let Some(gpu) = &mut self.gpu {
-                            if let Some(ws) = &mut gpu.widget_state {
-                                ws.hovered = new_hover;
-                                ws.dropdown_hover = new_dropdown_hover;
-                            }
+                            gpu.update_hover_state(new_hover, new_dropdown_hover);
                             // Rich tooltip content participates in overlay layout, so hover
                             // changes can affect rects as well as paint/text state.
                             gpu.apply_layout();
@@ -5396,6 +6263,20 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                             0
                         };
                         self.scroll_table(&id, row_delta, col_delta);
+                        return;
+                    }
+                    if let Some(id) = self
+                        .gpu
+                        .as_ref()
+                        .and_then(|gpu| gpu.scroll_container_at(pos))
+                    {
+                        if self
+                            .gpu
+                            .as_mut()
+                            .is_some_and(|gpu| gpu.scroll_container(&id, scroll_y))
+                        {
+                            self.request_redraw();
+                        }
                         return;
                     }
                 }

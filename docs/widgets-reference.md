@@ -68,11 +68,12 @@ Styles can be loaded before `app.run(...)` or while the app is live.
 | Child chain | `Window > Panel > HLayout > Button` | Multi-level direct-child chains are supported. |
 | Pseudo-state | `Button:hover` | Supported pseudo-states are listed below. |
 | Structural child | `Button:first-child` | Matches by sibling position. |
+| Selector function | `Button:not(.ghost)` | `:not(...)`, `:is(...)`, and `:where(...)` support compound selector lists. |
 | Widget part | `NumberInput::stepper` | Part hooks style renderer-owned sub-elements. |
 
 Unsupported selector forms warn and are ignored: attribute selectors other than
-`[key="..."]`, universal selectors, browser pseudo-elements, and selector
-functions such as `:not(...)`, `:is(...)`, and `:where(...)`.
+`[key="..."]`, universal selectors, browser pseudo-elements, and dynamic
+pseudo-states inside selector functions such as `:is(:hover, .primary)`.
 `:nth-child(...)` supports integer indexes plus `odd` and `even`.
 
 ### Supported Pseudo-States
@@ -119,7 +120,9 @@ Layout properties:
 Visual properties:
 
 - `background` / `background-color` (`background` also accepts
-  `linear-gradient(...)` and `radial-gradient(...)`)
+  `linear-gradient(...)`, `radial-gradient(...)`, and comma-separated paint
+  layers)
+- `background-noise`
 - `foreground`
 - `border-color`
 - `border-width`
@@ -177,13 +180,26 @@ Supported color values:
 Supported background paint values:
 
 - Solid colors through the color syntax above.
-- `linear-gradient(...)` and centered `radial-gradient(...)` on `background`
-  for rect-backed widget surfaces. The first implementation uses the first and
-  last color stops.
+- `linear-gradient(...)`, `radial-gradient(...)`, and comma-separated paint
+  layers on `background` for rect-backed widget surfaces. The renderer supports
+  up to four stop colors per rect instance.
+- Subtle procedural gradient noise through `background-noise`, usually with
+  values around `0.01..0.03`.
 
-Supported length values are logical pixels. Unitless numbers and `px` values
-are accepted. Percent lengths and `auto` warn and are ignored for the current
-CSS subset.
+Supported length values are logical pixels for most properties. Unitless
+numbers and `px` values are accepted. Percent lengths, `auto`, and compatible
+`calc()` expressions are currently supported for `width`, `height`,
+`min-width`, `min-height`, `max-width`, and `max-height`. Mixed percent/pixel
+`calc()` expressions resolve when the parent axis has a definite size.
+
+First-slice CSS Grid is available through CSS with `display: grid`,
+`grid-template-columns`, `grid-template-rows`, `grid-column`, `grid-row`,
+`row-gap`, and `column-gap`. Track lists support px, percent, `fr`, `auto`, and
+simple `repeat(n, ...)`.
+
+First-slice overflow is available through CSS with `overflow`, `overflow-x`,
+and `overflow-y`. `visible` lets children escape container clipping, `hidden`
+clips children, and `auto`/`scroll` opt containers into vertical scrolling.
 
 ### Inline Part Styles
 
@@ -430,6 +446,9 @@ Options:
 | --- | --- |
 | `title` | Optional panel title. |
 | `width` | Preferred panel width. |
+
+Overflowing panel children scroll vertically with the mouse wheel. The panel
+frame and title stay in place while child widgets are clipped to the panel.
 
 CSS:
 
@@ -1052,6 +1071,8 @@ CSS:
 - Type selector: `NumberInput`.
 - Parts: `field`, `stepper`, `stepper-up`, `stepper-down`,
   `stepper-divider`, `divider`, `caret`.
+- `stepper-down` styles the left/decrement side. `stepper-up` styles the
+  right/increment side.
 - Per-corner radius properties are useful for making stepper buttons match the
   input shape.
 

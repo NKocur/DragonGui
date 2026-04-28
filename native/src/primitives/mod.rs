@@ -4,22 +4,26 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::css_style::{computed_style_for_virtual_element, StylesheetStore};
 use crate::document::{WidgetKind, WidgetNode};
-use crate::events::{NavigationItem, WidgetState};
-use crate::layout::{LayoutResult, Rect};
+use crate::events::{NavigationItem, SortDirection, WidgetState};
+use crate::layout::{scroll_container_max_y, LayoutResult, Rect};
 use crate::overlays::{menu_popup_rect, rich_tooltip_target, tooltip_target};
 use crate::style::{
-    badge_height_for_style, badge_width_for_text, collapsible_header_height_for_style,
+    badge_height_for_style, badge_width_for_text, base_part_style, checked_part_style_for_state,
+    collapsed_part_style_for_state, collapsible_header_height_for_style,
+    expanded_part_style_for_state,
     merged_part_visual_for_state as style_merged_part_visual_for_state,
-    number_stepper_width_for_style,
+    number_stepper_width_for_style, open_part_style_for_state,
     part_style_active_for_state as style_part_style_active_for_state,
-    part_visual_for_state as style_part_visual_for_state, tabs_header_height_for_style,
-    uniform_layout_padding, BackgroundPaint, NodeStyle, VisualStyle, BORDER_WIDTH_LP,
-    CARET_WIDTH_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP, FOCUS_RING_LP, PANEL_ACCENT_WIDTH_LP,
+    part_visual_for_state as style_part_visual_for_state, selected_part_style_for_state,
+    state_part_style_for_state, tabs_header_height_for_style, uniform_layout_padding,
+    BackgroundPaint, ColorRef, NodeStyle, PartStyle, PositionStyle, TransformStyle,
+    TransitionProperty, VisualStyle, BORDER_WIDTH_LP, CARET_WIDTH_LP, CHECKBOX_BOX_LP,
+    CHECKBOX_LEFT_PAD_LP, DROPDOWN_CHEVRON_WIDTH_LP, FOCUS_RING_LP, PANEL_ACCENT_WIDTH_LP,
     SLIDER_THUMB_WIDTH_LP, SLIDER_TRACK_HEIGHT_LP, SLIDER_TRACK_MARGIN_LP, TAB_ACTIVE_BAR_LP,
     TAB_GAP_LP, TAB_INACTIVE_BOTTOM_INSET_LP, TAB_TOP_INSET_LP,
 };
 use crate::table;
-use crate::theme::Theme;
+use crate::theme::{Color, Theme};
 use crate::toast::{toast_colors, toast_rect, toast_stack_index, ToastOverlay};
 
 // ---------------------------------------------------------------------------
@@ -38,15 +42,25 @@ pub struct RectInstance {
     pub radii: [f32; 4],
     /// Local clip bounds: left, top, right, bottom in rect-local pixels.
     pub clip: [f32; 4],
-    /// x: edge softness, y: shape inset, z: shadow mode flag, w: reserved.
+    /// x: edge softness, y: shape inset, z: shadow mode flag, w: shape kind.
     pub params: [f32; 4],
     /// Secondary RGBA colour for gradient paints.
     pub color2: [f32; 4],
-    /// x: paint kind, y/z: linear-gradient direction, w: reserved.
+    /// x: paint kind, y/z: linear-gradient direction, w: gradient stop count or shape option.
     pub paint: [f32; 4],
+    /// x/y: pixel translation, z/w: scale.
+    pub transform: [f32; 4],
+    /// x: rotation in radians around rect center.
+    pub transform2: [f32; 4], // x rotation radians, y background noise strength
+    /// Third RGBA colour for multi-stop gradient paints.
+    pub color3: [f32; 4],
+    /// Fourth RGBA colour for multi-stop gradient paints.
+    pub color4: [f32; 4],
+    /// Gradient stop positions for color, color2, color3, and color4.
+    pub gradient_stops: [f32; 4],
 }
 
-static RECT_ATTRS: [wgpu::VertexAttribute; 7] = [
+static RECT_ATTRS: [wgpu::VertexAttribute; 12] = [
     wgpu::VertexAttribute {
         format: wgpu::VertexFormat::Float32x4,
         offset: 0,
@@ -81,6 +95,31 @@ static RECT_ATTRS: [wgpu::VertexAttribute; 7] = [
         format: wgpu::VertexFormat::Float32x4,
         offset: 96,
         shader_location: 6,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 112,
+        shader_location: 7,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 128,
+        shader_location: 8,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 144,
+        shader_location: 9,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 160,
+        shader_location: 10,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 176,
+        shader_location: 11,
     },
 ];
 
@@ -359,6 +398,44 @@ fn inst_radii_clipped(
         params: [1.0, 0.0, 0.0, 0.0],
         color2: color,
         paint: [0.0, 0.0, 0.0, 0.0],
+        transform: [0.0, 0.0, 1.0, 1.0],
+        transform2: [0.0, 0.0, 0.0, 0.0],
+        color3: color,
+        color4: color,
+        gradient_stops: [0.0, 1.0, 1.0, 1.0],
+    }
+}
+
+fn inst_rounded_triangle(rect: [f32; 4], color: [f32; 4], up: bool, radius: f32) -> RectInstance {
+    inst_rounded_triangle_clipped(
+        rect,
+        color,
+        up,
+        radius,
+        [-1.0, -1.0, rect[2] + 1.0, rect[3] + 1.0],
+    )
+}
+
+fn inst_rounded_triangle_clipped(
+    rect: [f32; 4],
+    color: [f32; 4],
+    up: bool,
+    radius: f32,
+    clip: [f32; 4],
+) -> RectInstance {
+    RectInstance {
+        rect,
+        color,
+        radii: [radius; 4],
+        clip,
+        params: [1.0, 0.0, 0.0, 1.0],
+        color2: color,
+        paint: [0.0, 0.0, 0.0, if up { 1.0 } else { 0.0 }],
+        transform: [0.0, 0.0, 1.0, 1.0],
+        transform2: [0.0, 0.0, 0.0, 0.0],
+        color3: color,
+        color4: color,
+        gradient_stops: [0.0, 1.0, 1.0, 1.0],
     }
 }
 
@@ -371,13 +448,19 @@ fn inst_shadow(rect: [f32; 4], color: [f32; 4], radii: [f32; 4], blur: f32) -> R
         params: [blur.max(1.0), blur.max(0.0), 1.0, 0.0],
         color2: color,
         paint: [0.0, 0.0, 0.0, 0.0],
+        transform: [0.0, 0.0, 1.0, 1.0],
+        transform2: [0.0, 0.0, 0.0, 0.0],
+        color3: color,
+        color4: color,
+        gradient_stops: [0.0, 1.0, 1.0, 1.0],
     }
 }
 
 fn inst_linear_gradient(
     rect: [f32; 4],
-    start: [f32; 4],
-    end: [f32; 4],
+    colors: [[f32; 4]; 4],
+    stops: [f32; 4],
+    count: f32,
     radii: [f32; 4],
     angle_deg: f32,
 ) -> RectInstance {
@@ -385,29 +468,41 @@ fn inst_linear_gradient(
     let dir = [angle.sin(), -angle.cos()];
     RectInstance {
         rect,
-        color: start,
+        color: colors[0],
         radii,
         clip: [-1.0, -1.0, rect[2] + 1.0, rect[3] + 1.0],
         params: [1.0, 0.0, 0.0, 0.0],
-        color2: end,
-        paint: [1.0, dir[0], dir[1], 0.0],
+        color2: colors[1],
+        paint: [1.0, dir[0], dir[1], count],
+        transform: [0.0, 0.0, 1.0, 1.0],
+        transform2: [0.0, 0.0, 0.0, 0.0],
+        color3: colors[2],
+        color4: colors[3],
+        gradient_stops: stops,
     }
 }
 
 fn inst_radial_gradient(
     rect: [f32; 4],
-    center: [f32; 4],
-    edge: [f32; 4],
+    colors: [[f32; 4]; 4],
+    stops: [f32; 4],
+    count: f32,
     radii: [f32; 4],
+    center: [f32; 2],
 ) -> RectInstance {
     RectInstance {
         rect,
-        color: center,
+        color: colors[0],
         radii,
         clip: [-1.0, -1.0, rect[2] + 1.0, rect[3] + 1.0],
         params: [1.0, 0.0, 0.0, 0.0],
-        color2: edge,
-        paint: [2.0, 0.0, 0.0, 0.0],
+        color2: colors[1],
+        paint: [2.0, center[0], center[1], count],
+        transform: [0.0, 0.0, 1.0, 1.0],
+        transform2: [0.0, 0.0, 0.0, 0.0],
+        color3: colors[2],
+        color4: colors[3],
+        gradient_stops: stops,
     }
 }
 
@@ -428,6 +523,61 @@ fn push_masked_rect(
         rect[1] + rect[3] - mask_rect[1],
     ];
     out.push(inst_radii_clipped(mask_rect, color, radii, clip));
+}
+
+fn apply_transform_to_instances(
+    instances: &mut [RectInstance],
+    transform: Option<TransformStyle>,
+    sf: f32,
+) {
+    let Some(transform) = transform.filter(|transform| !transform.is_identity()) else {
+        return;
+    };
+    let encoded = [
+        transform.translate_x * sf,
+        transform.translate_y * sf,
+        transform.scale_x,
+        transform.scale_y,
+    ];
+    let rotation = transform.rotate_deg.to_radians();
+    for instance in instances {
+        instance.transform = encoded;
+        instance.transform2[0] = rotation;
+    }
+}
+
+fn apply_background_noise_to_instances(instances: &mut [RectInstance], noise: Option<f32>) {
+    let Some(noise) = noise
+        .map(|value| value.clamp(0.0, 0.25))
+        .filter(|value| *value > 0.0)
+    else {
+        return;
+    };
+    for instance in instances {
+        if instance.params[2] < 0.5 && instance.paint[0] > 0.5 {
+            instance.transform2[1] = noise;
+        }
+    }
+}
+
+fn paint_transform_for_node(
+    node: &WidgetNode,
+    visual_transform: Option<TransformStyle>,
+) -> Option<TransformStyle> {
+    let mut transform = visual_transform.unwrap_or_default();
+    if node.style.layout.position == Some(PositionStyle::Relative) {
+        transform.translate_x += node.style.layout.left.unwrap_or(0.0);
+        transform.translate_x -= node.style.layout.right.unwrap_or(0.0);
+        transform.translate_y += node.style.layout.top.unwrap_or(0.0);
+        transform.translate_y -= node.style.layout.bottom.unwrap_or(0.0);
+    }
+    (!transform.is_identity()).then_some(transform)
+}
+
+fn stacking_children(node: &WidgetNode) -> Vec<(usize, &WidgetNode)> {
+    let mut children: Vec<_> = node.children.iter().enumerate().collect();
+    children.sort_by_key(|(index, child)| (child.style.layout.z_index.unwrap_or(0), *index));
+    children
 }
 
 fn inset_radii(radii: [f32; 4], inset: f32) -> [f32; 4] {
@@ -457,16 +607,81 @@ fn darken(color: [f32; 4], t: f32) -> [f32; 4] {
     mix(color, [0.0, 0.0, 0.0, color[3]], t)
 }
 
-fn visual_for<'a>(node: &'a WidgetNode, state: &WidgetState) -> Cow<'a, VisualStyle> {
+fn visual_for<'a>(
+    node: &'a WidgetNode,
+    state: &WidgetState,
+    theme: &Theme,
+) -> Cow<'a, VisualStyle> {
     let base = &node.style.visual;
     let mut visual = base.clone();
     let mut changed = false;
-    merge_semantic_visual_states(&mut visual, node, state, &mut changed);
-    if state.pressed.as_deref() == Some(node.id.as_str()) {
-        visual = visual.merged(&node.style.active);
+    merge_checked_visual_state(&mut visual, node, state, &mut changed);
+    if let Some(t) = state.open_t.get(&node.id).copied() {
+        let base_state = visual.clone();
+        let open = visual.merged(&node.style.open);
+        let current_state = if node_is_open(node, state) {
+            &open
+        } else {
+            &base_state
+        };
+        visual = interpolate_visual_style(
+            &base_state,
+            &open,
+            current_state,
+            t,
+            theme,
+            node.style.transition.properties.as_deref(),
+        );
+        changed = true;
+    } else if node_is_open(node, state) {
+        visual = visual.merged(&node.style.open);
+        changed = true;
+    }
+    merge_expansion_visual_states(&mut visual, node, state, &mut changed);
+    if let Some(t) = state.selected_t.get(&node.id).copied() {
+        let base_state = visual.clone();
+        let selected = visual.merged(&node.style.selected);
+        let current_state = if state.is_selected_widget(&node.id) {
+            &selected
+        } else {
+            &base_state
+        };
+        visual = interpolate_visual_style(
+            &base_state,
+            &selected,
+            current_state,
+            t,
+            theme,
+            node.style.transition.properties.as_deref(),
+        );
+        changed = true;
+    } else if state.is_selected_widget(&node.id) {
+        visual = visual.merged(&node.style.selected);
+        changed = true;
+    }
+    if let Some(t) = state.hover_t.get(&node.id).copied() {
+        let base_state = visual.clone();
+        let hover = visual.merged(&node.style.hover);
+        let current_state = if state.hovered.as_deref() == Some(node.id.as_str()) {
+            &hover
+        } else {
+            &base_state
+        };
+        visual = interpolate_visual_style(
+            &base_state,
+            &hover,
+            current_state,
+            t,
+            theme,
+            node.style.transition.properties.as_deref(),
+        );
         changed = true;
     } else if state.hovered.as_deref() == Some(node.id.as_str()) {
         visual = visual.merged(&node.style.hover);
+        changed = true;
+    }
+    if state.pressed.as_deref() == Some(node.id.as_str()) {
+        visual = visual.merged(&node.style.active);
         changed = true;
     } else if state.focused.as_deref() == Some(node.id.as_str()) {
         visual = visual.merged(&node.style.focus);
@@ -483,7 +698,192 @@ fn visual_for<'a>(node: &'a WidgetNode, state: &WidgetState) -> Cow<'a, VisualSt
     }
 }
 
-fn merge_semantic_visual_states(
+fn interpolate_visual_style(
+    from: &VisualStyle,
+    to: &VisualStyle,
+    instant: &VisualStyle,
+    t: f32,
+    theme: &Theme,
+    properties: Option<&[TransitionProperty]>,
+) -> VisualStyle {
+    let t = t.clamp(0.0, 1.0);
+    VisualStyle {
+        background: if transition_allows(properties, TransitionProperty::Background) {
+            interpolate_color_ref(&from.background, &to.background, t, theme)
+        } else {
+            instant.background.clone()
+        },
+        background_paint: if transition_allows(properties, TransitionProperty::Background) {
+            interpolate_background_paint(&from.background_paint, &to.background_paint, t, theme)
+        } else {
+            instant.background_paint.clone()
+        },
+        foreground: if transition_allows_any(
+            properties,
+            &[TransitionProperty::Foreground, TransitionProperty::Color],
+        ) {
+            interpolate_color_ref(&from.foreground, &to.foreground, t, theme)
+        } else {
+            instant.foreground.clone()
+        },
+        border_color: if transition_allows(properties, TransitionProperty::BorderColor) {
+            interpolate_color_ref(&from.border_color, &to.border_color, t, theme)
+        } else {
+            instant.border_color.clone()
+        },
+        border_width: if transition_allows(properties, TransitionProperty::BorderWidth) {
+            interpolate_option_f32(from.border_width, to.border_width, t)
+        } else {
+            instant.border_width
+        },
+        border_radius: if transition_allows(properties, TransitionProperty::BorderRadius) {
+            interpolate_option_f32(from.border_radius, to.border_radius, t)
+        } else {
+            instant.border_radius
+        },
+        corner_radii: if transition_allows(properties, TransitionProperty::BorderRadius) {
+            crate::style::CornerRadii {
+                top_left: interpolate_option_f32(
+                    from.corner_radii.top_left,
+                    to.corner_radii.top_left,
+                    t,
+                ),
+                top_right: interpolate_option_f32(
+                    from.corner_radii.top_right,
+                    to.corner_radii.top_right,
+                    t,
+                ),
+                bottom_right: interpolate_option_f32(
+                    from.corner_radii.bottom_right,
+                    to.corner_radii.bottom_right,
+                    t,
+                ),
+                bottom_left: interpolate_option_f32(
+                    from.corner_radii.bottom_left,
+                    to.corner_radii.bottom_left,
+                    t,
+                ),
+            }
+        } else {
+            instant.corner_radii
+        },
+        accent: if transition_allows(properties, TransitionProperty::Accent) {
+            interpolate_color_ref(&from.accent, &to.accent, t, theme)
+        } else {
+            instant.accent.clone()
+        },
+        track_color: if transition_allows(properties, TransitionProperty::TrackColor) {
+            interpolate_color_ref(&from.track_color, &to.track_color, t, theme)
+        } else {
+            instant.track_color.clone()
+        },
+        thumb_color: if transition_allows(properties, TransitionProperty::ThumbColor) {
+            interpolate_color_ref(&from.thumb_color, &to.thumb_color, t, theme)
+        } else {
+            instant.thumb_color.clone()
+        },
+        opacity: if transition_allows(properties, TransitionProperty::Opacity) {
+            interpolate_option_f32(from.opacity, to.opacity, t)
+        } else {
+            instant.opacity
+        },
+        background_noise: if transition_allows(properties, TransitionProperty::Background) {
+            interpolate_option_f32(from.background_noise, to.background_noise, t)
+        } else {
+            instant.background_noise
+        },
+        box_shadows: if transition_allows(properties, TransitionProperty::BoxShadow) {
+            if t < 0.5 {
+                from.box_shadows.clone()
+            } else {
+                to.box_shadows.clone()
+            }
+        } else {
+            instant.box_shadows.clone()
+        },
+        transform: if transition_allows(properties, TransitionProperty::Transform) {
+            interpolate_transform(from.transform, to.transform, t)
+        } else {
+            instant.transform
+        },
+    }
+}
+
+fn transition_allows(
+    properties: Option<&[TransitionProperty]>,
+    property: TransitionProperty,
+) -> bool {
+    properties.is_none_or(|properties| {
+        properties.contains(&TransitionProperty::All) || properties.contains(&property)
+    })
+}
+
+fn transition_allows_any(
+    properties: Option<&[TransitionProperty]>,
+    candidates: &[TransitionProperty],
+) -> bool {
+    properties.is_none_or(|properties| {
+        properties.contains(&TransitionProperty::All)
+            || candidates
+                .iter()
+                .any(|candidate| properties.contains(candidate))
+    })
+}
+
+fn interpolate_background_paint(
+    from: &Option<BackgroundPaint>,
+    to: &Option<BackgroundPaint>,
+    t: f32,
+    theme: &Theme,
+) -> Option<BackgroundPaint> {
+    match (from, to) {
+        (Some(BackgroundPaint::Color(a)), Some(BackgroundPaint::Color(b))) => Some(
+            BackgroundPaint::Color(ColorRef::Rgba(mix(a.resolve(theme), b.resolve(theme), t))),
+        ),
+        _ if t < 0.5 => from.clone(),
+        _ => to.clone(),
+    }
+}
+
+fn interpolate_color_ref(
+    from: &Option<ColorRef>,
+    to: &Option<ColorRef>,
+    t: f32,
+    theme: &Theme,
+) -> Option<ColorRef> {
+    match (from, to) {
+        (Some(a), Some(b)) => Some(ColorRef::Rgba(mix(a.resolve(theme), b.resolve(theme), t))),
+        _ if t < 0.5 => from.clone(),
+        _ => to.clone(),
+    }
+}
+
+fn interpolate_option_f32(from: Option<f32>, to: Option<f32>, t: f32) -> Option<f32> {
+    match (from, to) {
+        (Some(a), Some(b)) => Some(a + (b - a) * t),
+        _ if t < 0.5 => from,
+        _ => to,
+    }
+}
+
+fn interpolate_transform(
+    from: Option<TransformStyle>,
+    to: Option<TransformStyle>,
+    t: f32,
+) -> Option<TransformStyle> {
+    let from = from.unwrap_or_default();
+    let to = to.unwrap_or_default();
+    let transform = TransformStyle {
+        translate_x: from.translate_x + (to.translate_x - from.translate_x) * t,
+        translate_y: from.translate_y + (to.translate_y - from.translate_y) * t,
+        scale_x: from.scale_x + (to.scale_x - from.scale_x) * t,
+        scale_y: from.scale_y + (to.scale_y - from.scale_y) * t,
+        rotate_deg: from.rotate_deg + (to.rotate_deg - from.rotate_deg) * t,
+    };
+    (!transform.is_identity()).then_some(transform)
+}
+
+fn merge_checked_visual_state(
     visual: &mut VisualStyle,
     node: &WidgetNode,
     state: &WidgetState,
@@ -493,20 +893,20 @@ fn merge_semantic_visual_states(
         *visual = visual.merged(&node.style.checked);
         *changed = true;
     }
-    if node_is_open(node, state) {
-        *visual = visual.merged(&node.style.open);
-        *changed = true;
-    }
+}
+
+fn merge_expansion_visual_states(
+    visual: &mut VisualStyle,
+    node: &WidgetNode,
+    state: &WidgetState,
+    changed: &mut bool,
+) {
     if state.is_expanded_widget(&node.id) {
         *visual = visual.merged(&node.style.expanded);
         *changed = true;
     }
     if state.is_collapsed_widget(&node.id) {
         *visual = visual.merged(&node.style.collapsed);
-        *changed = true;
-    }
-    if state.is_selected_widget(&node.id) {
-        *visual = visual.merged(&node.style.selected);
         *changed = true;
     }
 }
@@ -535,14 +935,18 @@ fn resolve_color(color: &Option<crate::style::ColorRef>, theme: &Theme) -> Optio
 #[derive(Debug, Clone)]
 enum FillPaint {
     Solid([f32; 4]),
+    Layers(Vec<FillPaint>),
     LinearGradient {
-        start: [f32; 4],
-        end: [f32; 4],
+        colors: [[f32; 4]; 4],
+        stops: [f32; 4],
+        count: f32,
         angle_deg: f32,
     },
     RadialGradient {
-        center: [f32; 4],
-        edge: [f32; 4],
+        colors: [[f32; 4]; 4],
+        stops: [f32; 4],
+        count: f32,
+        center: [f32; 2],
     },
 }
 
@@ -551,6 +955,283 @@ fn apply_opacity(mut color: [f32; 4], opacity: Option<f32>) -> [f32; 4] {
         color[3] *= opacity.clamp(0.0, 1.0);
     }
     color
+}
+
+fn part_style_mark_color(style: &PartStyle, theme: &Theme) -> Option<Color> {
+    let color = style
+        .text
+        .color
+        .as_ref()
+        .or(style.visual.foreground.as_ref())?;
+    let mut resolved = color.resolve(theme);
+    if let Some(opacity) = style.visual.opacity {
+        resolved[3] *= opacity.clamp(0.0, 1.0);
+    }
+    Some(resolved)
+}
+
+fn number_stepper_mark_color(
+    node: &WidgetNode,
+    state: &WidgetState,
+    theme: &Theme,
+    part: &str,
+) -> Color {
+    let fallback = if state.is_disabled(&node.id) {
+        theme.disabled
+    } else {
+        theme.muted_text
+    };
+    let parts = [part, "stepper"];
+    for part in parts {
+        if let Some(color) = state_part_style_for_state(&node.style, &node.id, state, part)
+            .and_then(|style| part_style_mark_color(style, theme))
+        {
+            return color;
+        }
+    }
+    for part in parts {
+        if let Some(color) = checked_part_style_for_state(&node.style, &node.id, state, part)
+            .and_then(|style| part_style_mark_color(style, theme))
+        {
+            return color;
+        }
+    }
+    for part in parts {
+        if let Some(color) = open_part_style_for_state(&node.style, &node.id, state, part)
+            .and_then(|style| part_style_mark_color(style, theme))
+        {
+            return color;
+        }
+    }
+    for part in parts {
+        if let Some(color) = expanded_part_style_for_state(&node.style, &node.id, state, part)
+            .and_then(|style| part_style_mark_color(style, theme))
+        {
+            return color;
+        }
+    }
+    for part in parts {
+        if let Some(color) = collapsed_part_style_for_state(&node.style, &node.id, state, part)
+            .and_then(|style| part_style_mark_color(style, theme))
+        {
+            return color;
+        }
+    }
+    for part in parts {
+        if let Some(color) = selected_part_style_for_state(&node.style, &node.id, state, part)
+            .and_then(|style| part_style_mark_color(style, theme))
+        {
+            return color;
+        }
+    }
+    for part in parts {
+        if let Some(color) =
+            base_part_style(&node.style, part).and_then(|style| part_style_mark_color(style, theme))
+        {
+            return color;
+        }
+    }
+    fallback
+}
+
+fn single_part_mark_color(
+    node: &WidgetNode,
+    state: &WidgetState,
+    theme: &Theme,
+    part: &str,
+    fallback: Color,
+) -> Color {
+    let fallback = if state.is_disabled(&node.id) {
+        theme.disabled
+    } else {
+        fallback
+    };
+    state_part_style_for_state(&node.style, &node.id, state, part)
+        .and_then(|style| part_style_mark_color(style, theme))
+        .or_else(|| {
+            checked_part_style_for_state(&node.style, &node.id, state, part)
+                .and_then(|style| part_style_mark_color(style, theme))
+        })
+        .or_else(|| {
+            open_part_style_for_state(&node.style, &node.id, state, part)
+                .and_then(|style| part_style_mark_color(style, theme))
+        })
+        .or_else(|| {
+            expanded_part_style_for_state(&node.style, &node.id, state, part)
+                .and_then(|style| part_style_mark_color(style, theme))
+        })
+        .or_else(|| {
+            collapsed_part_style_for_state(&node.style, &node.id, state, part)
+                .and_then(|style| part_style_mark_color(style, theme))
+        })
+        .or_else(|| {
+            selected_part_style_for_state(&node.style, &node.id, state, part)
+                .and_then(|style| part_style_mark_color(style, theme))
+        })
+        .or_else(|| {
+            base_part_style(&node.style, part).and_then(|style| part_style_mark_color(style, theme))
+        })
+        .unwrap_or(fallback)
+}
+
+fn emit_stepper_mark(
+    out: &mut Vec<RectInstance>,
+    rect: [f32; 4],
+    color: Color,
+    plus: bool,
+    sf: f32,
+) {
+    let [x, y, w, h] = rect;
+    if w <= 0.0 || h <= 0.0 {
+        return;
+    }
+    let stroke = (1.5 * sf).max(1.0).min(h * 0.18);
+    let mark = w.min(h).mul_add(0.34, 0.0).max(stroke * 3.0);
+    let cx = x + w * 0.5;
+    let cy = y + h * 0.5;
+    let radius = stroke * 0.5;
+    out.push(inst_radii(
+        [cx - mark * 0.5, cy - stroke * 0.5, mark, stroke],
+        color,
+        [radius; 4],
+    ));
+    if plus {
+        out.push(inst_radii(
+            [cx - stroke * 0.5, cy - mark * 0.5, stroke, mark],
+            color,
+            [radius; 4],
+        ));
+    }
+}
+
+fn dropdown_chevron_width_for_style(node: &WidgetNode, sf: f32) -> f32 {
+    node.style
+        .parts
+        .parts
+        .get("chevron")
+        .and_then(|part| part.layout.width)
+        .map(|width| width.max(1.0) * sf)
+        .unwrap_or(DROPDOWN_CHEVRON_WIDTH_LP * sf)
+}
+
+fn emit_dropdown_chevron(
+    out: &mut Vec<RectInstance>,
+    rect: [f32; 4],
+    color: Color,
+    open: bool,
+    sf: f32,
+) {
+    emit_triangle_chevron(out, rect, color, open, sf, None);
+}
+
+fn emit_triangle_chevron(
+    out: &mut Vec<RectInstance>,
+    rect: [f32; 4],
+    color: Color,
+    open: bool,
+    sf: f32,
+    clip: Option<Rect>,
+) {
+    let [x, y, w, h] = rect;
+    if w <= 0.0 || h <= 0.0 {
+        return;
+    }
+    let mark_w = w.min(10.0 * sf).max(6.0 * sf);
+    let mark_h = (mark_w * 0.64).max(4.0 * sf);
+    let cx = x + w * 0.5;
+    let cy = y + h * 0.5;
+    let radius = (1.1 * sf).max(0.75);
+    let mark_rect = [cx - mark_w * 0.5, cy - mark_h * 0.5, mark_w, mark_h];
+    if let Some(clip) = clip {
+        let mark = Rect {
+            x: mark_rect[0],
+            y: mark_rect[1],
+            w: mark_rect[2],
+            h: mark_rect[3],
+        };
+        let Some(visible) = mark.intersect(clip) else {
+            return;
+        };
+        let clip_bounds = [
+            visible.x - mark.x,
+            visible.y - mark.y,
+            visible.x + visible.w - mark.x,
+            visible.y + visible.h - mark.y,
+        ];
+        out.push(inst_rounded_triangle_clipped(
+            mark_rect,
+            color,
+            open,
+            radius,
+            clip_bounds,
+        ));
+    } else {
+        out.push(inst_rounded_triangle(mark_rect, color, open, radius));
+    }
+}
+
+fn collapsible_indicator_width_for_style(node: &WidgetNode, sf: f32) -> f32 {
+    node.style
+        .parts
+        .parts
+        .get("indicator")
+        .and_then(|part| part.layout.width)
+        .map(|width| width.max(1.0) * sf)
+        .unwrap_or(DROPDOWN_CHEVRON_WIDTH_LP * sf)
+}
+
+fn emit_collapsible_indicator(
+    out: &mut Vec<RectInstance>,
+    rect: [f32; 4],
+    color: Color,
+    expanded: bool,
+    sf: f32,
+    clip: Option<Rect>,
+) {
+    emit_triangle_chevron(out, rect, color, expanded, sf, clip);
+}
+
+fn emit_panel_scrollbar(
+    node: &WidgetNode,
+    layout: &LayoutResult,
+    state: &WidgetState,
+    theme: &Theme,
+    sf: f32,
+    rect: [f32; 4],
+    out: &mut Vec<RectInstance>,
+) {
+    let max_scroll = layout
+        .scroll_max_y
+        .get(&node.id)
+        .copied()
+        .unwrap_or_else(|| scroll_container_max_y(node, layout));
+    if max_scroll <= 0.0 {
+        return;
+    }
+    let [x, y, w, h] = rect;
+    if w <= 0.0 || h <= 0.0 {
+        return;
+    }
+    let scroll_y = layout
+        .scroll_y
+        .get(&node.id)
+        .copied()
+        .unwrap_or_else(|| state.container_scroll_y(&node.id, max_scroll));
+    let content_h = h + max_scroll;
+    let track_w = (4.0 * sf).max(2.0);
+    let margin = (3.0 * sf).max(2.0);
+    let track_h = (h - margin * 2.0).max(1.0);
+    let thumb_h = (track_h * (h / content_h).clamp(0.0, 1.0))
+        .max(18.0 * sf)
+        .min(track_h);
+    let travel = (track_h - thumb_h).max(0.0);
+    let thumb_y = y + margin + travel * (scroll_y / max_scroll).clamp(0.0, 1.0);
+    let thumb = [x + w - margin - track_w, thumb_y, track_w, thumb_h];
+    out.push(inst_radii(
+        thumb,
+        with_alpha(mix(theme.surface_alt, theme.muted_text, 0.45), 0.58),
+        [track_w * 0.5; 4],
+    ));
 }
 
 fn resolve_overlay_opacity(style: &NodeStyle, base_opacity: f32) -> f32 {
@@ -573,29 +1254,169 @@ fn resolve_background_paint(visual: &VisualStyle, theme: &Theme, fallback: [f32;
         Some(BackgroundPaint::Color(color)) => {
             FillPaint::Solid(apply_opacity(color.resolve(theme), visual.opacity))
         }
-        Some(BackgroundPaint::LinearGradient(gradient)) if gradient.stops.len() >= 2 => {
-            let first = gradient.stops.first().expect("checked length");
-            let last = gradient.stops.last().expect("checked length");
+        Some(BackgroundPaint::Layers(layers)) if !layers.is_empty() => FillPaint::Layers(
+            layers
+                .iter()
+                .map(|paint| resolve_background_paint_layer(paint, visual, theme, fallback))
+                .collect(),
+        ),
+        Some(paint) => resolve_background_paint_layer(paint, visual, theme, fallback),
+        None => FillPaint::Solid(
+            resolve_color(&visual.background, theme)
+                .map(|color| apply_opacity(color, visual.opacity))
+                .unwrap_or(fallback),
+        ),
+    }
+}
+
+fn resolve_background_paint_layer(
+    paint: &BackgroundPaint,
+    visual: &VisualStyle,
+    theme: &Theme,
+    fallback: [f32; 4],
+) -> FillPaint {
+    match paint {
+        BackgroundPaint::Color(color) => {
+            FillPaint::Solid(apply_opacity(color.resolve(theme), visual.opacity))
+        }
+        BackgroundPaint::LinearGradient(gradient) if gradient.stops.len() >= 2 => {
+            let (colors, stops, count) =
+                resolve_gradient_stops(&gradient.stops, theme, visual.opacity);
             FillPaint::LinearGradient {
-                start: apply_opacity(first.color.resolve(theme), visual.opacity),
-                end: apply_opacity(last.color.resolve(theme), visual.opacity),
+                colors,
+                stops,
+                count: signed_gradient_stop_count(count, gradient.repeating),
                 angle_deg: gradient.angle_deg,
             }
         }
-        Some(BackgroundPaint::RadialGradient(gradient)) if gradient.stops.len() >= 2 => {
-            let first = gradient.stops.first().expect("checked length");
-            let last = gradient.stops.last().expect("checked length");
+        BackgroundPaint::RadialGradient(gradient) if gradient.stops.len() >= 2 => {
+            let (colors, stops, count) =
+                resolve_gradient_stops(&gradient.stops, theme, visual.opacity);
             FillPaint::RadialGradient {
-                center: apply_opacity(first.color.resolve(theme), visual.opacity),
-                edge: apply_opacity(last.color.resolve(theme), visual.opacity),
+                colors,
+                stops,
+                count: signed_gradient_stop_count(count, gradient.repeating),
+                center: gradient.center,
             }
         }
+        BackgroundPaint::Layers(layers) if !layers.is_empty() => FillPaint::Layers(
+            layers
+                .iter()
+                .map(|paint| resolve_background_paint_layer(paint, visual, theme, fallback))
+                .collect(),
+        ),
         _ => FillPaint::Solid(
             resolve_color(&visual.background, theme)
                 .map(|color| apply_opacity(color, visual.opacity))
                 .unwrap_or(fallback),
         ),
     }
+}
+
+fn signed_gradient_stop_count(count: u32, repeating: bool) -> f32 {
+    let count = count.max(2) as f32;
+    if repeating {
+        -count
+    } else {
+        count
+    }
+}
+
+fn resolve_gradient_stops(
+    stops: &[crate::style::GradientStop],
+    theme: &Theme,
+    opacity: Option<f32>,
+) -> ([[f32; 4]; 4], [f32; 4], u32) {
+    let resolved: Vec<([f32; 4], f32)> = normalize_gradient_stops(stops, theme, opacity);
+    if resolved.len() <= 4 {
+        let mut colors = [[0.0, 0.0, 0.0, 0.0]; 4];
+        let mut positions = [0.0, 1.0, 1.0, 1.0];
+        for (index, (color, position)) in resolved.iter().enumerate() {
+            colors[index] = *color;
+            positions[index] = *position;
+        }
+        let last = resolved
+            .last()
+            .map(|(color, _)| *color)
+            .unwrap_or(colors[0]);
+        for color in colors.iter_mut().skip(resolved.len()) {
+            *color = last;
+        }
+        return (colors, positions, resolved.len().max(2) as u32);
+    }
+
+    let sample_positions = [0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0];
+    let mut colors = [[0.0, 0.0, 0.0, 0.0]; 4];
+    for (index, position) in sample_positions.iter().enumerate() {
+        colors[index] = gradient_color_at(&resolved, *position);
+    }
+    (colors, sample_positions, 4)
+}
+
+fn normalize_gradient_stops(
+    stops: &[crate::style::GradientStop],
+    theme: &Theme,
+    opacity: Option<f32>,
+) -> Vec<([f32; 4], f32)> {
+    let len = stops.len();
+    let mut positions: Vec<Option<f32>> = stops
+        .iter()
+        .map(|stop| stop.position.map(|position| position.clamp(0.0, 1.0)))
+        .collect();
+    if len == 0 {
+        return Vec::new();
+    }
+    positions[0] = Some(positions[0].unwrap_or(0.0));
+    positions[len - 1] = Some(positions[len - 1].unwrap_or(1.0));
+
+    let mut index = 0usize;
+    while index < len {
+        if positions[index].is_some() {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < len && positions[index].is_none() {
+            index += 1;
+        }
+        let previous = positions[start - 1].unwrap_or(0.0);
+        let next = positions[index].unwrap_or(1.0);
+        let span = (index - start + 1) as f32;
+        for stop_index in start..index {
+            let t = (stop_index - start + 1) as f32 / span;
+            positions[stop_index] = Some(previous + (next - previous) * t);
+        }
+    }
+
+    let mut previous = 0.0;
+    stops
+        .iter()
+        .zip(positions)
+        .map(|(stop, position)| {
+            let position = position.unwrap_or(previous).max(previous).clamp(0.0, 1.0);
+            previous = position;
+            (apply_opacity(stop.color.resolve(theme), opacity), position)
+        })
+        .collect()
+}
+
+fn gradient_color_at(stops: &[([f32; 4], f32)], position: f32) -> [f32; 4] {
+    if stops.is_empty() {
+        return [0.0, 0.0, 0.0, 0.0];
+    }
+    let position = position.clamp(0.0, 1.0);
+    if position <= stops[0].1 {
+        return stops[0].0;
+    }
+    for pair in stops.windows(2) {
+        let (left_color, left_pos) = pair[0];
+        let (right_color, right_pos) = pair[1];
+        if position <= right_pos {
+            let span = (right_pos - left_pos).abs().max(0.0001);
+            return mix(left_color, right_color, (position - left_pos) / span);
+        }
+    }
+    stops.last().map(|(color, _)| *color).unwrap_or(stops[0].0)
 }
 
 fn emit_paint_rect_radii(
@@ -606,14 +1427,27 @@ fn emit_paint_rect_radii(
 ) {
     match paint {
         FillPaint::Solid(color) => out.push(inst_radii(rect, color, radii)),
-        FillPaint::LinearGradient {
-            start,
-            end,
-            angle_deg,
-        } => out.push(inst_linear_gradient(rect, start, end, radii, angle_deg)),
-        FillPaint::RadialGradient { center, edge } => {
-            out.push(inst_radial_gradient(rect, center, edge, radii))
+        FillPaint::Layers(layers) => {
+            for layer in layers.iter().rev() {
+                emit_paint_rect_radii(out, rect, layer.clone(), radii);
+            }
         }
+        FillPaint::LinearGradient {
+            colors,
+            stops,
+            count,
+            angle_deg,
+        } => out.push(inst_linear_gradient(
+            rect, colors, stops, count, radii, angle_deg,
+        )),
+        FillPaint::RadialGradient {
+            colors,
+            stops,
+            count,
+            center,
+        } => out.push(inst_radial_gradient(
+            rect, colors, stops, count, radii, center,
+        )),
     }
 }
 
@@ -848,8 +1682,9 @@ fn emit_rects(
         return;
     }
     if let Some(r) = layout.visible_rect(&node.id) {
+        let own_primitive_start = out.len();
         let [x, y, w, h] = [r.x, r.y, r.w, r.h];
-        let visual = visual_for(node, state);
+        let visual = visual_for(node, state, theme);
         let border_w = visual.border_width.unwrap_or(BORDER_WIDTH_LP).max(0.0) * sf;
         let radius_lp = visual.border_radius.unwrap_or(theme.radius).max(0.0);
         let radius = radius_lp * sf;
@@ -989,32 +1824,28 @@ fn emit_rects(
                         0.0,
                     ));
                 }
-                if part_style_active_for_state(node, state, "indicator") {
-                    let indicator_visual = part_visual_for(node, state, "indicator");
-                    if let Some(indicator_fill) = resolve_color(&indicator_visual.background, theme)
-                        .map(|color| apply_opacity(color, indicator_visual.opacity))
-                    {
-                        let size = node
-                            .style
-                            .parts
-                            .parts
-                            .get("indicator")
-                            .and_then(|part| part.layout.width)
-                            .unwrap_or(16.0)
-                            .max(1.0)
-                            * sf;
-                        out.push(inst_radii(
-                            [
-                                x + theme.spacing * sf,
-                                y + (header_h - size) * 0.5,
-                                size,
-                                size,
-                            ],
-                            indicator_fill,
-                            visual_radii_with_fallback(&indicator_visual, [size * 0.5; 4], sf),
-                        ));
-                    }
-                }
+                let full_rect = layout
+                    .rects
+                    .get(&node.id)
+                    .copied()
+                    .unwrap_or(Rect { x, y, w, h });
+                let full_header_h =
+                    collapsible_header_height_for_style(&node.style, theme, sf).min(full_rect.h);
+                let indicator_w = collapsible_indicator_width_for_style(node, sf);
+                let indicator_rect = [
+                    full_rect.x + theme.spacing * sf,
+                    full_rect.y,
+                    indicator_w,
+                    full_header_h,
+                ];
+                emit_collapsible_indicator(
+                    out,
+                    indicator_rect,
+                    single_part_mark_color(node, state, theme, "indicator", theme.muted_text),
+                    expanded,
+                    sf,
+                    layout.visible_rect(&node.id),
+                );
             }
 
             WidgetKind::Modal => {
@@ -1142,24 +1973,69 @@ fn emit_rects(
                 }
             }
 
-            WidgetKind::Button | WidgetKind::Dropdown | WidgetKind::Menu => {
+            WidgetKind::Menu => {
+                let menu_radius_lp = visual.border_radius.unwrap_or(4.0).max(0.0);
+                let menu_radii = visual_radii(&visual, menu_radius_lp, sf);
+                emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], menu_radii, out);
+                let menu_open = state.open_menu.as_deref() == Some(node.id.as_str());
+                let menu_fill = if visual.background_paint.is_some() {
+                    Some(resolve_background_paint(&visual, theme, theme.surface_alt))
+                } else {
+                    styled_bg
+                        .or_else(|| {
+                            if state.is_disabled(&node.id) {
+                                None
+                            } else if menu_open {
+                                Some(mix(
+                                    theme.surface_alt,
+                                    styled_accent.unwrap_or(theme.accent),
+                                    0.24,
+                                ))
+                            } else if state.pressed.as_deref() == Some(node.id.as_str()) {
+                                Some(mix(
+                                    theme.surface_alt,
+                                    styled_accent.unwrap_or(theme.accent),
+                                    0.20,
+                                ))
+                            } else if state.hovered.as_deref() == Some(node.id.as_str())
+                                || state.focused.as_deref() == Some(node.id.as_str())
+                            {
+                                Some(mix(
+                                    theme.surface_alt,
+                                    styled_accent.unwrap_or(theme.accent),
+                                    0.14,
+                                ))
+                            } else {
+                                None
+                            }
+                        })
+                        .map(FillPaint::Solid)
+                };
+                let menu_border_w = visual
+                    .border_width
+                    .map(|width| (width.max(0.0) * sf).max(0.0))
+                    .unwrap_or(0.0);
+                if menu_border_w > 0.0 {
+                    let fill = menu_fill.unwrap_or(FillPaint::Solid([0.0, 0.0, 0.0, 0.0]));
+                    emit_bordered_paint_rect_radii(
+                        out,
+                        [x, y, w, h],
+                        styled_border.unwrap_or(theme.border),
+                        fill,
+                        menu_radii,
+                        menu_border_w,
+                    );
+                } else if let Some(fill) = menu_fill {
+                    emit_paint_rect_radii(out, [x, y, w, h], fill, menu_radii);
+                }
+            }
+
+            WidgetKind::Button | WidgetKind::Dropdown => {
                 emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], radii, out);
-                let menu_open = node.kind == WidgetKind::Menu
-                    && state.open_menu.as_deref() == Some(node.id.as_str());
                 let fill = if visual.background_paint.is_some() {
                     resolve_background_paint(&visual, theme, control_fill(node, theme, state))
                 } else {
-                    FillPaint::Solid(styled_bg.unwrap_or_else(|| {
-                        if menu_open {
-                            mix(
-                                theme.surface_alt,
-                                styled_accent.unwrap_or(theme.accent),
-                                0.24,
-                            )
-                        } else {
-                            control_fill(node, theme, state)
-                        }
-                    }))
+                    FillPaint::Solid(styled_bg.unwrap_or_else(|| control_fill(node, theme, state)))
                 };
                 emit_bordered_paint_rect_radii(
                     out,
@@ -1175,6 +2051,16 @@ fn emit_rects(
                     {
                         emit_badge_pill(node, theme, sf, state, rect, out);
                     }
+                } else if node.kind == WidgetKind::Dropdown {
+                    let chevron_w = dropdown_chevron_width_for_style(node, sf);
+                    let chevron_rect = [x + w - theme.spacing * sf - chevron_w, y, chevron_w, h];
+                    emit_dropdown_chevron(
+                        out,
+                        chevron_rect,
+                        single_part_mark_color(node, state, theme, "chevron", theme.muted_text),
+                        state.open_dropdown.as_deref() == Some(node.id.as_str()),
+                        sf,
+                    );
                 }
             }
 
@@ -1227,7 +2113,7 @@ fn emit_rects(
                 let vw = (w - gap).max(1.0);
                 let vh = (h - top - bottom).max(1.0);
                 let vr = radius.min(vh * 0.35);
-                let tab_radii = visual_radii_with_fallback(&tab_visual, [vr; 4], sf);
+                let tab_radii = visual_radii_with_fallback(&tab_visual, [vr, vr, 0.0, 0.0], sf);
                 emit_focus_ring_radii(node, theme, sf, state, [vx, vy, vw, vh], tab_radii, out);
                 let fill = if active {
                     resolve_color(&tab_visual.background, theme)
@@ -1291,12 +2177,7 @@ fn emit_rects(
                         .border_width
                         .map(|width| (width.max(0.0) * sf).max(0.0))
                         .unwrap_or(0.0);
-                    let accent_rect = [
-                        vx + tab_border_w,
-                        y + h - bar_h,
-                        (vw - 2.0 * tab_border_w).max(1.0),
-                        bar_h,
-                    ];
+                    let accent_rect = [vx, vy + vh - bar_h, vw, bar_h];
                     let accent_fill = apply_opacity(
                         resolve_color(&accent_visual.background, theme)
                             .or(resolve_color(&accent_visual.foreground, theme))
@@ -1379,16 +2260,46 @@ fn emit_rects(
                         .and_then(|part| part.layout.width)
                         .map(|width| (width.max(1.0) * sf).max(1.0))
                         .unwrap_or(PANEL_ACCENT_WIDTH_LP * sf);
-                    let accent_rect = [x, y, bar_w.min(w.max(1.0)), h];
+                    let accent_border_w = accent_visual
+                        .border_width
+                        .map(|width| (width.max(0.0) * sf).max(0.0))
+                        .unwrap_or(0.0);
+                    let inset = item_border_w.max(accent_border_w);
+                    let accent_rect = [
+                        x + inset,
+                        y + inset,
+                        bar_w.min((w - inset * 2.0).max(1.0)),
+                        (h - inset * 2.0).max(1.0),
+                    ];
                     let accent_fill = apply_opacity(
                         resolve_color(&accent_visual.background, theme)
                             .or(resolve_color(&accent_visual.foreground, theme))
                             .unwrap_or_else(|| styled_accent.unwrap_or(theme.accent)),
                         accent_visual.opacity,
                     );
-                    let accent_radii =
-                        visual_radii_with_fallback(&accent_visual, [bar_w * 0.5; 4], sf);
-                    out.push(inst_radii(accent_rect, accent_fill, accent_radii));
+                    let accent_radii = visual_radii_with_fallback(
+                        &accent_visual,
+                        [
+                            (item_radii[0] - inset).max(0.0),
+                            0.0,
+                            0.0,
+                            (item_radii[3] - inset).max(0.0),
+                        ],
+                        sf,
+                    );
+                    if accent_border_w > 0.0 {
+                        emit_bordered_rect_radii(
+                            out,
+                            accent_rect,
+                            resolve_color(&accent_visual.border_color, theme)
+                                .unwrap_or(accent_fill),
+                            accent_fill,
+                            accent_radii,
+                            accent_border_w,
+                        );
+                    } else {
+                        out.push(inst_radii(accent_rect, accent_fill, accent_radii));
+                    }
                 }
                 if let Some(rect) = badge_rect(node, [x, y, w, h], theme, sf, theme.spacing * sf) {
                     emit_badge_pill(node, theme, sf, state, rect, out);
@@ -1481,11 +2392,12 @@ fn emit_rects(
                     border_w,
                 );
                 let step_w = number_stepper_width_for_style(&node.style, w, sf);
-                let step_x = x + w - step_w;
+                let left_step_x = x;
+                let right_step_x = x + w - step_w;
                 let field_rect = [
-                    x + border_w,
+                    x + step_w + border_w,
                     y + border_w,
-                    (step_x - x - border_w).max(1.0),
+                    (w - step_w * 2.0 - border_w * 2.0).max(1.0),
                     (h - border_w * 2.0).max(1.0),
                 ];
                 let field_border_w = field_visual
@@ -1497,16 +2409,8 @@ fn emit_rects(
                     .map(|color| apply_opacity(color, field_visual.opacity))
                     .or_else(|| field_has_border.then_some(fill_solid));
                 if let Some(field_fill) = field_fill {
-                    let field_radii = visual_radii_with_fallback(
-                        &field_visual,
-                        [
-                            (radii[0] - border_w).max(0.0),
-                            0.0,
-                            0.0,
-                            (radii[3] - border_w).max(0.0),
-                        ],
-                        sf,
-                    );
+                    let field_radii =
+                        visual_radii_with_fallback(&field_visual, [0.0, 0.0, 0.0, 0.0], sf);
                     if field_border_w > 0.0 || field_visual.border_color.is_some() {
                         emit_bordered_rect_radii(
                             out,
@@ -1541,7 +2445,8 @@ fn emit_rects(
                 let stepper_down_visual =
                     stepper_visual.merged(&part_visual_for(node, state, "stepper-down"));
                 let stepper_divider_visual = part_visual_for(node, state, "stepper-divider");
-                let divider_visual = if part_style_active_for_state(node, state, "divider") {
+                let divider_part_active = part_style_active_for_state(node, state, "divider");
+                let divider_visual = if divider_part_active {
                     part_visual_for(node, state, "divider")
                 } else {
                     stepper_divider_visual.clone()
@@ -1564,74 +2469,98 @@ fn emit_rects(
                 let divider_w = divider_visual
                     .border_width
                     .or_else(|| {
+                        let part_name = if divider_part_active {
+                            "divider"
+                        } else {
+                            "stepper-divider"
+                        };
                         node.style
                             .parts
                             .parts
-                            .get("divider")
-                            .and_then(|part| part.layout.width)
+                            .get(part_name)
+                            .and_then(|part| part.layout.width.or(part.layout.height))
                     })
                     .map(|width| (width.max(0.0) * sf).max(0.0))
                     .unwrap_or(border_w)
                     .max(1.0);
-                let stepper_divider_h = stepper_divider_visual
-                    .border_width
-                    .or_else(|| {
-                        node.style
-                            .parts
-                            .parts
-                            .get("stepper-divider")
-                            .and_then(|part| part.layout.height)
-                    })
-                    .map(|height| (height.max(0.0) * sf).max(0.0))
-                    .unwrap_or(border_w)
-                    .max(1.0);
                 let step_up_radii = visual_radii_with_fallback(
                     &stepper_up_visual,
-                    [0.0, (radii[1] - border_w).max(0.0), 0.0, 0.0],
+                    [
+                        0.0,
+                        (radii[1] - border_w).max(0.0),
+                        (radii[2] - border_w).max(0.0),
+                        0.0,
+                    ],
                     sf,
                 );
                 let step_down_radii = visual_radii_with_fallback(
                     &stepper_down_visual,
-                    [0.0, 0.0, (radii[2] - border_w).max(0.0), 0.0],
+                    [
+                        (radii[0] - border_w).max(0.0),
+                        0.0,
+                        0.0,
+                        (radii[3] - border_w).max(0.0),
+                    ],
                     sf,
                 );
+                let step_inner_y = y + border_w;
+                let step_inner_h = (h - border_w * 2.0).max(1.0);
+                let step_up_rect = [
+                    right_step_x,
+                    step_inner_y,
+                    (step_w - border_w).max(1.0),
+                    step_inner_h,
+                ];
+                let step_down_rect = [
+                    left_step_x + border_w,
+                    step_inner_y,
+                    (step_w - border_w).max(1.0),
+                    step_inner_h,
+                ];
+                out.push(inst_radii(step_down_rect, step_down_fill, step_down_radii));
+                out.push(inst_radii(step_up_rect, step_up_fill, step_up_radii));
                 out.push(inst(
-                    [step_x, y + border_w, divider_w, h - border_w * 2.0],
+                    [
+                        x + step_w - divider_w * 0.5,
+                        y + border_w,
+                        divider_w,
+                        h - border_w * 2.0,
+                    ],
                     divider_color,
                     0.0,
                 ));
-                out.push(inst_radii(
-                    [
-                        step_x + border_w,
-                        y + border_w,
-                        (step_w - border_w).max(1.0),
-                        (h * 0.5 - border_w).max(1.0),
-                    ],
-                    step_up_fill,
-                    step_up_radii,
-                ));
-                out.push(inst_radii(
-                    [
-                        step_x + border_w,
-                        y + h * 0.5,
-                        (step_w - border_w).max(1.0),
-                        (h * 0.5 - border_w).max(1.0),
-                    ],
-                    step_down_fill,
-                    step_down_radii,
-                ));
                 out.push(inst(
-                    [step_x, y + h * 0.5, step_w, stepper_divider_h],
+                    [
+                        x + w - step_w - divider_w * 0.5,
+                        y + border_w,
+                        divider_w,
+                        h - border_w * 2.0,
+                    ],
                     stepper_divider_color,
                     0.0,
                 ));
+                emit_stepper_mark(
+                    out,
+                    step_down_rect,
+                    number_stepper_mark_color(node, state, theme, "stepper-down"),
+                    false,
+                    sf,
+                );
+                emit_stepper_mark(
+                    out,
+                    step_up_rect,
+                    number_stepper_mark_color(node, state, theme, "stepper-up"),
+                    true,
+                    sf,
+                );
                 if state.focused.as_deref() == Some(node.id.as_str())
                     && !state.is_disabled(&node.id)
                 {
                     let pad = theme.spacing * sf;
-                    let text_w = (w - step_w - pad * 2.0).max(1.0);
+                    let text_left = x + step_w + pad;
+                    let text_w = (w - step_w * 2.0 - pad * 2.0).max(1.0);
                     let caret_x =
-                        caret_xy_for_node(x + pad, text_w, &node.id, state, caret_positions)[0];
+                        caret_xy_for_node(text_left, text_w, &node.id, state, caret_positions)[0];
                     let caret_font_size = node.style.text.font_size.unwrap_or(theme.font_size) * sf;
                     let caret_visual = part_visual_for(node, state, "caret");
                     let caret_w = node
@@ -2052,6 +2981,45 @@ fn emit_rects(
                         }
                     }
 
+                    if let Some((sort_col, direction)) = table_state.sort {
+                        if sort_col >= visible.first_col
+                            && sort_col < visible.first_col + visible.col_count
+                            && header_h > 0.0
+                        {
+                            if let Some((_, col_right)) =
+                                table::column_bounds(&r, metrics, sort_col - visible.first_col)
+                            {
+                                let indicator_w = DROPDOWN_CHEVRON_WIDTH_LP * sf;
+                                let inset = (theme.spacing * 0.5 * sf).max(2.0 * sf);
+                                let marker_right = col_right.min(table_right) - inset;
+                                let marker_x = marker_right - indicator_w;
+                                if marker_x > x + metrics.index_w && marker_right > marker_x {
+                                    let color = single_part_mark_color(
+                                        node,
+                                        state,
+                                        theme,
+                                        "header",
+                                        theme.muted_text,
+                                    );
+                                    let clip = Rect {
+                                        x,
+                                        y,
+                                        w,
+                                        h: header_h,
+                                    };
+                                    emit_triangle_chevron(
+                                        out,
+                                        [marker_x, y, indicator_w, header_h],
+                                        color,
+                                        matches!(direction, SortDirection::Asc),
+                                        sf,
+                                        Some(clip),
+                                    );
+                                }
+                            }
+                        }
+                    }
+
                     let row_fill = resolve_color(&row_visual.background, theme)
                         .or_else(|| resolve_color(&row_visual.foreground, theme))
                         .map(|color| apply_opacity(color, row_visual.opacity));
@@ -2168,10 +3136,24 @@ fn emit_rects(
             | WidgetKind::Toast
             | WidgetKind::Unknown => {}
         }
+        apply_transform_to_instances(
+            &mut out[own_primitive_start..],
+            paint_transform_for_node(node, visual.transform),
+            sf,
+        );
+        apply_background_noise_to_instances(
+            &mut out[own_primitive_start..],
+            visual.background_noise,
+        );
     }
 
-    for child in &node.children {
+    for (_, child) in stacking_children(node) {
         emit_rects(child, layout, theme, sf, state, caret_positions, out);
+    }
+    if node.kind == WidgetKind::Panel {
+        if let Some(r) = layout.visible_rect(&node.id) {
+            emit_panel_scrollbar(node, layout, state, theme, sf, [r.x, r.y, r.w, r.h], out);
+        }
     }
 }
 
@@ -2502,7 +3484,7 @@ fn emit_tooltip_surface(
     out: &mut Vec<RectInstance>,
 ) {
     let border_w = BORDER_WIDTH_LP * sf;
-    let visual = visual_for(node, state);
+    let visual = visual_for(node, state, theme);
     let radius_lp = visual.border_radius.unwrap_or(theme.radius).max(0.0);
     let radius = radius_lp * sf;
     if visual.box_shadows.is_some() {
@@ -2675,7 +3657,7 @@ mod tests {
     use crate::document::NodeProps;
     use crate::style::{
         BackgroundPaint, BoxShadow, ColorRef, GradientStop, LinearGradient, PartLayoutStyle,
-        PartStyle, RadialGradient,
+        PartStyle, RadialGradient, TextStyle,
     };
 
     fn node(id: &str, kind: WidgetKind) -> WidgetNode {
@@ -2747,6 +3729,7 @@ mod tests {
         panel.style.visual.background_paint =
             Some(BackgroundPaint::LinearGradient(LinearGradient {
                 angle_deg: 180.0,
+                repeating: false,
                 stops: vec![
                     GradientStop {
                         color: ColorRef::Rgba([1.0, 0.0, 0.0, 1.0]),
@@ -2788,7 +3771,235 @@ mod tests {
         assert_eq!(fill.color, [1.0, 0.0, 0.0, 1.0]);
         assert_eq!(fill.color2, [0.0, 0.0, 1.0, 1.0]);
         assert_eq!(fill.paint[0], 1.0);
+        assert_eq!(fill.paint[3], 2.0);
+        assert_eq!(fill.gradient_stops, [0.0, 1.0, 1.0, 1.0]);
         assert!((fill.paint[2] - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn multi_stop_linear_gradient_emits_stop_data() {
+        let mut panel = node("panel", WidgetKind::Panel);
+        panel.style.visual.background_paint =
+            Some(BackgroundPaint::LinearGradient(LinearGradient {
+                angle_deg: 90.0,
+                repeating: false,
+                stops: vec![
+                    GradientStop {
+                        color: ColorRef::Rgba([1.0, 0.0, 0.0, 1.0]),
+                        position: Some(0.0),
+                    },
+                    GradientStop {
+                        color: ColorRef::Rgba([0.0, 1.0, 0.0, 1.0]),
+                        position: Some(0.25),
+                    },
+                    GradientStop {
+                        color: ColorRef::Rgba([0.0, 0.0, 1.0, 1.0]),
+                        position: Some(1.0),
+                    },
+                ],
+            }));
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 50.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &panel,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let fill = out
+            .iter()
+            .find(|inst| inst.paint[0] == 1.0)
+            .expect("gradient fill instance");
+        assert_eq!(fill.color, [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(fill.color2, [0.0, 1.0, 0.0, 1.0]);
+        assert_eq!(fill.color3, [0.0, 0.0, 1.0, 1.0]);
+        assert_eq!(fill.color4, [0.0, 0.0, 1.0, 1.0]);
+        assert_eq!(fill.gradient_stops, [0.0, 0.25, 1.0, 1.0]);
+        assert_eq!(fill.paint[3], 3.0);
+    }
+
+    #[test]
+    fn repeating_linear_gradient_marks_negative_stop_count() {
+        let mut panel = node("panel", WidgetKind::Panel);
+        panel.style.visual.background_paint =
+            Some(BackgroundPaint::LinearGradient(LinearGradient {
+                angle_deg: 90.0,
+                repeating: true,
+                stops: vec![
+                    GradientStop {
+                        color: ColorRef::Rgba([1.0, 1.0, 1.0, 0.18]),
+                        position: Some(0.0),
+                    },
+                    GradientStop {
+                        color: ColorRef::Rgba([1.0, 1.0, 1.0, 0.18]),
+                        position: Some(0.08),
+                    },
+                    GradientStop {
+                        color: ColorRef::Rgba([0.0, 0.0, 0.0, 0.0]),
+                        position: Some(0.08),
+                    },
+                    GradientStop {
+                        color: ColorRef::Rgba([0.0, 0.0, 0.0, 0.0]),
+                        position: Some(0.16),
+                    },
+                ],
+            }));
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 50.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &panel,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let fill = out
+            .iter()
+            .find(|inst| inst.paint[0] == 1.0)
+            .expect("repeating gradient fill instance");
+        assert_eq!(fill.paint[3], -4.0);
+        assert_eq!(fill.gradient_stops, [0.0, 0.08, 0.08, 0.16]);
+    }
+
+    #[test]
+    fn layered_gradient_background_emits_back_to_front_instances() {
+        let mut panel = node("panel", WidgetKind::Panel);
+        panel.style.visual.background_paint = Some(BackgroundPaint::Layers(vec![
+            BackgroundPaint::RadialGradient(RadialGradient {
+                repeating: false,
+                center: [0.2, 0.25],
+                stops: vec![
+                    GradientStop {
+                        color: ColorRef::Rgba([1.0, 1.0, 1.0, 0.18]),
+                        position: Some(0.0),
+                    },
+                    GradientStop {
+                        color: ColorRef::Rgba([0.0, 0.0, 0.0, 0.0]),
+                        position: Some(0.65),
+                    },
+                ],
+            }),
+            BackgroundPaint::LinearGradient(LinearGradient {
+                angle_deg: 135.0,
+                repeating: false,
+                stops: vec![
+                    GradientStop {
+                        color: ColorRef::Rgba([0.1, 0.2, 0.3, 1.0]),
+                        position: Some(0.0),
+                    },
+                    GradientStop {
+                        color: ColorRef::Rgba([0.0, 0.0, 0.1, 1.0]),
+                        position: Some(1.0),
+                    },
+                ],
+            }),
+        ]));
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 50.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &panel,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let paints: Vec<f32> = out
+            .iter()
+            .filter_map(|inst| (inst.paint[0] > 0.5).then_some(inst.paint[0]))
+            .collect();
+        assert_eq!(paints, vec![1.0, 2.0]);
+    }
+
+    #[test]
+    fn background_noise_reaches_rect_instances() {
+        let mut panel = node("panel", WidgetKind::Panel);
+        panel.style.visual.background_paint =
+            Some(BackgroundPaint::LinearGradient(LinearGradient {
+                angle_deg: 135.0,
+                repeating: false,
+                stops: vec![
+                    GradientStop {
+                        color: ColorRef::Rgba([0.1, 0.2, 0.3, 1.0]),
+                        position: Some(0.0),
+                    },
+                    GradientStop {
+                        color: ColorRef::Rgba([0.0, 0.0, 0.1, 1.0]),
+                        position: Some(1.0),
+                    },
+                ],
+            }));
+        panel.style.visual.background_noise = Some(0.035);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 50.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &panel,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let fill = out
+            .iter()
+            .find(|inst| inst.paint[0] == 1.0)
+            .expect("gradient fill instance");
+        assert_eq!(fill.transform2[1], 0.035);
     }
 
     #[test]
@@ -2796,6 +4007,8 @@ mod tests {
         let mut panel = node("panel", WidgetKind::Panel);
         panel.style.visual.background_paint =
             Some(BackgroundPaint::RadialGradient(RadialGradient {
+                repeating: false,
+                center: [0.5, 0.5],
                 stops: vec![
                     GradientStop {
                         color: ColorRef::Rgba([1.0, 1.0, 1.0, 1.0]),
@@ -2836,6 +4049,9 @@ mod tests {
             .expect("radial gradient fill instance");
         assert_eq!(fill.color, [1.0, 1.0, 1.0, 1.0]);
         assert_eq!(fill.color2, [0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(fill.paint[1], 0.5);
+        assert_eq!(fill.paint[2], 0.5);
+        assert_eq!(fill.paint[3], 2.0);
     }
 
     #[test]
@@ -2847,7 +4063,8 @@ mod tests {
             ..Default::default()
         };
 
-        let visual = visual_for(&dropdown, &state);
+        let theme = Theme::dark();
+        let visual = visual_for(&dropdown, &state, &theme);
         assert_eq!(visual.border_color, Some(rgba(0.2, 0.4, 0.6)));
 
         let mut tab = node("tab-a", WidgetKind::Tab);
@@ -2863,8 +4080,732 @@ mod tests {
             .active_tabs
             .insert("tabs".to_string(), "a".to_string());
 
-        let visual = visual_for(&tab, &state);
+        let theme = Theme::dark();
+        let visual = visual_for(&tab, &state, &theme);
         assert_eq!(visual.background, Some(rgba(0.3, 0.5, 0.7)));
+    }
+
+    #[test]
+    fn hover_transition_progress_interpolates_visual_fields() {
+        let mut button = node("run", WidgetKind::Button);
+        button.style.visual.background = Some(ColorRef::Rgba([0.0, 0.0, 0.0, 1.0]));
+        button.style.visual.border_width = Some(1.0);
+        button.style.hover.background = Some(ColorRef::Rgba([1.0, 1.0, 1.0, 1.0]));
+        button.style.hover.border_width = Some(3.0);
+        let mut state = WidgetState::default();
+        state.hover_t.insert("run".to_string(), 0.5);
+
+        let theme = Theme::dark();
+        let visual = visual_for(&button, &state, &theme);
+
+        assert_eq!(
+            visual.background,
+            Some(ColorRef::Rgba([0.5, 0.5, 0.5, 1.0]))
+        );
+        assert_eq!(visual.border_width, Some(2.0));
+    }
+
+    #[test]
+    fn transition_property_limits_hover_interpolation() {
+        let mut button = node("run", WidgetKind::Button);
+        button.style.visual.background = Some(ColorRef::Rgba([0.0, 0.0, 0.0, 1.0]));
+        button.style.visual.border_width = Some(1.0);
+        button.style.hover.background = Some(ColorRef::Rgba([1.0, 1.0, 1.0, 1.0]));
+        button.style.hover.border_width = Some(3.0);
+        button.style.transition.properties = Some(vec![TransitionProperty::Background]);
+
+        let theme = Theme::dark();
+        let mut entering = WidgetState {
+            hovered: Some("run".to_string()),
+            ..Default::default()
+        };
+        entering.hover_t.insert("run".to_string(), 0.5);
+        let visual = visual_for(&button, &entering, &theme);
+        assert_eq!(
+            visual.background,
+            Some(ColorRef::Rgba([0.5, 0.5, 0.5, 1.0]))
+        );
+        assert_eq!(visual.border_width, Some(3.0));
+
+        let mut leaving = WidgetState::default();
+        leaving.hover_t.insert("run".to_string(), 0.5);
+        let visual = visual_for(&button, &leaving, &theme);
+        assert_eq!(
+            visual.background,
+            Some(ColorRef::Rgba([0.5, 0.5, 0.5, 1.0]))
+        );
+        assert_eq!(visual.border_width, Some(1.0));
+    }
+
+    #[test]
+    fn open_transition_progress_interpolates_visual_fields() {
+        let mut dropdown = node("mode", WidgetKind::Dropdown);
+        dropdown.style.visual.background = Some(ColorRef::Rgba([0.0, 0.0, 0.0, 1.0]));
+        dropdown.style.visual.border_width = Some(1.0);
+        dropdown.style.open.background = Some(ColorRef::Rgba([0.0, 0.5, 1.0, 1.0]));
+        dropdown.style.open.border_width = Some(3.0);
+        let mut state = WidgetState {
+            open_dropdown: Some("mode".to_string()),
+            ..Default::default()
+        };
+        state.open_t.insert("mode".to_string(), 0.5);
+
+        let theme = Theme::dark();
+        let visual = visual_for(&dropdown, &state, &theme);
+
+        assert_eq!(
+            visual.background,
+            Some(ColorRef::Rgba([0.0, 0.25, 0.5, 1.0]))
+        );
+        assert_eq!(visual.border_width, Some(2.0));
+    }
+
+    #[test]
+    fn selected_transition_progress_interpolates_visual_fields() {
+        let mut tab = node("tab-a", WidgetKind::Tab);
+        tab.style.visual.background = Some(ColorRef::Rgba([0.0, 0.0, 0.0, 1.0]));
+        tab.style.visual.border_width = Some(1.0);
+        tab.style.selected.background = Some(ColorRef::Rgba([0.6, 0.2, 0.0, 1.0]));
+        tab.style.selected.border_width = Some(3.0);
+        let mut state = WidgetState::default();
+        state
+            .tab_parent
+            .insert("tab-a".to_string(), "tabs".to_string());
+        state
+            .tab_values
+            .insert("tab-a".to_string(), "a".to_string());
+        state
+            .active_tabs
+            .insert("tabs".to_string(), "a".to_string());
+        state.selected_t.insert("tab-a".to_string(), 0.5);
+
+        let theme = Theme::dark();
+        let visual = visual_for(&tab, &state, &theme);
+
+        assert_eq!(
+            visual.background,
+            Some(ColorRef::Rgba([0.3, 0.1, 0.0, 1.0]))
+        );
+        assert_eq!(visual.border_width, Some(2.0));
+    }
+
+    #[test]
+    fn transform_style_is_encoded_on_widget_primitives() {
+        let mut button = node("run", WidgetKind::Button);
+        button.style.visual.transform = Some(TransformStyle {
+            translate_x: 3.0,
+            translate_y: -2.0,
+            scale_x: 1.05,
+            scale_y: 0.95,
+            rotate_deg: 5.0,
+        });
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "run".to_string(),
+            Rect {
+                x: 10.0,
+                y: 10.0,
+                w: 100.0,
+                h: 30.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &button,
+            &layout,
+            &Theme::dark(),
+            2.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let surface = out.last().expect("button surface primitive");
+        assert_eq!(surface.transform, [6.0, -4.0, 1.05, 0.95]);
+        assert!((surface.transform2[0] - 5.0_f32.to_radians()).abs() < 0.001);
+    }
+
+    #[test]
+    fn relative_position_offsets_widget_primitives() {
+        let mut badge = node("badge", WidgetKind::Badge);
+        badge.style.layout.position = Some(PositionStyle::Relative);
+        badge.style.layout.left = Some(8.0);
+        badge.style.layout.top = Some(-6.0);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "badge".to_string(),
+            Rect {
+                x: 10.0,
+                y: 10.0,
+                w: 80.0,
+                h: 24.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &badge,
+            &layout,
+            &Theme::dark(),
+            1.5,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let surface = out.last().expect("badge surface primitive");
+        assert_eq!(surface.transform, [12.0, -9.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn z_index_orders_sibling_widget_primitives() {
+        let mut back = node("back", WidgetKind::Badge);
+        back.style.visual.background = Some(rgba(1.0, 0.0, 0.0));
+        back.style.layout.z_index = Some(2);
+        let mut front = node("front", WidgetKind::Badge);
+        front.style.visual.background = Some(rgba(0.0, 1.0, 0.0));
+        front.style.layout.z_index = Some(1);
+        let mut parent = node("parent", WidgetKind::VLayout);
+        parent.children = vec![back, front];
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "parent".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 100.0,
+            },
+        );
+        layout.rects.insert(
+            "back".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 40.0,
+                h: 20.0,
+            },
+        );
+        layout.rects.insert(
+            "front".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 40.0,
+                h: 20.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &parent,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let badge_fills: Vec<_> = out
+            .iter()
+            .filter(|instance| instance.rect[2] == 40.0 && instance.rect[3] == 20.0)
+            .map(|instance| instance.color)
+            .collect();
+        assert_eq!(badge_fills[0], [0.0, 1.0, 0.0, 1.0]);
+        assert_eq!(badge_fills[1], [1.0, 0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn dropdown_chevron_emits_rounded_triangle_mark() {
+        let mut dropdown = node("mode", WidgetKind::Dropdown);
+        dropdown.style.parts.parts.insert(
+            "chevron".to_string(),
+            PartStyle {
+                layout: PartLayoutStyle {
+                    width: Some(12.0),
+                    ..Default::default()
+                },
+                text: TextStyle {
+                    color: Some(rgba(0.20, 0.30, 0.40)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "mode".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 120.0,
+                h: 32.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &dropdown,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let chevron_marks: Vec<_> = out
+            .iter()
+            .filter(|inst| inst.color == [0.20, 0.30, 0.40, 1.0])
+            .collect();
+        assert_eq!(chevron_marks.len(), 1);
+        assert_eq!(chevron_marks[0].params[3], 1.0);
+        assert_eq!(chevron_marks[0].paint[3], 0.0);
+        assert!(chevron_marks[0].radii[0] > 0.0);
+    }
+
+    #[test]
+    fn open_dropdown_chevron_flips_up() {
+        let mut dropdown = node("mode", WidgetKind::Dropdown);
+        dropdown.style.parts.parts.insert(
+            "chevron".to_string(),
+            PartStyle {
+                text: TextStyle {
+                    color: Some(rgba(0.20, 0.30, 0.40)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "mode".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 120.0,
+                h: 32.0,
+            },
+        );
+        let state = WidgetState {
+            open_dropdown: Some("mode".to_string()),
+            ..Default::default()
+        };
+        let mut out = Vec::new();
+
+        emit_rects(
+            &dropdown,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &state,
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let chevron_marks: Vec<_> = out
+            .iter()
+            .filter(|inst| inst.color == [0.20, 0.30, 0.40, 1.0])
+            .collect();
+        assert_eq!(chevron_marks.len(), 1);
+        assert_eq!(chevron_marks[0].params[3], 1.0);
+        assert_eq!(chevron_marks[0].paint[3], 1.0);
+        assert!(chevron_marks[0].radii[0] > 0.0);
+    }
+
+    #[test]
+    fn collapsible_indicator_uses_rounded_triangle_mark() {
+        let mut collapsible = node("advanced", WidgetKind::Collapsible);
+        collapsible.style.parts.parts.insert(
+            "indicator".to_string(),
+            PartStyle {
+                text: TextStyle {
+                    color: Some(rgba(0.20, 0.30, 0.40)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "advanced".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 180.0,
+                h: 40.0,
+            },
+        );
+        let mut state = WidgetState::default();
+        state.expanded.insert("advanced".to_string(), false);
+        let mut out = Vec::new();
+
+        emit_rects(
+            &collapsible,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &state,
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let collapsed_marks: Vec<_> = out
+            .iter()
+            .filter(|inst| inst.color == [0.20, 0.30, 0.40, 1.0])
+            .collect();
+        assert_eq!(collapsed_marks.len(), 1);
+        assert_eq!(collapsed_marks[0].params[3], 1.0);
+        assert_eq!(collapsed_marks[0].paint[3], 0.0);
+
+        state.expanded.insert("advanced".to_string(), true);
+        out.clear();
+        emit_rects(
+            &collapsible,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &state,
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let expanded_marks: Vec<_> = out
+            .iter()
+            .filter(|inst| inst.color == [0.20, 0.30, 0.40, 1.0])
+            .collect();
+        assert_eq!(expanded_marks.len(), 1);
+        assert_eq!(expanded_marks[0].params[3], 1.0);
+        assert_eq!(expanded_marks[0].paint[3], 1.0);
+    }
+
+    #[test]
+    fn sorted_table_header_uses_rounded_triangle_mark() {
+        let mut table = node("table", WidgetKind::DataFrameTable);
+        table.style.parts.parts.insert(
+            "header".to_string(),
+            PartStyle {
+                text: TextStyle {
+                    color: Some(rgba(0.20, 0.30, 0.40)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "table".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 320.0,
+                h: 120.0,
+            },
+        );
+        let mut state = WidgetState::default();
+        state.tables.insert(
+            "table".to_string(),
+            crate::events::TableState {
+                columns: vec!["alpha".to_string(), "beta".to_string()],
+                dtypes: vec!["f64".to_string(), "f64".to_string()],
+                rows: 4,
+                resource_id: None,
+                page_size: 100,
+                scroll_row: 0,
+                scroll_col: 0,
+                selected: None,
+                sort: Some((1, SortDirection::Asc)),
+                row_order: None,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &table,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &state,
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let marks: Vec<_> = out
+            .iter()
+            .filter(|inst| inst.color == [0.20, 0.30, 0.40, 1.0])
+            .collect();
+        assert_eq!(marks.len(), 1);
+        assert_eq!(marks[0].params[3], 1.0);
+        assert_eq!(marks[0].paint[3], 1.0);
+    }
+
+    #[test]
+    fn clipped_collapsible_indicator_keeps_full_widget_position() {
+        let mut collapsible = node("advanced", WidgetKind::Collapsible);
+        collapsible.style.parts.parts.insert(
+            "indicator".to_string(),
+            PartStyle {
+                text: TextStyle {
+                    color: Some(rgba(0.20, 0.30, 0.40)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "advanced".to_string(),
+            Rect {
+                x: 0.0,
+                y: 30.0,
+                w: 180.0,
+                h: 40.0,
+            },
+        );
+        layout.clips.insert(
+            "advanced".to_string(),
+            Rect {
+                x: 0.0,
+                y: 30.0,
+                w: 180.0,
+                h: 20.0,
+            },
+        );
+        let mut state = WidgetState::default();
+        state.expanded.insert("advanced".to_string(), false);
+        let mut out = Vec::new();
+
+        emit_rects(
+            &collapsible,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &state,
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let mark = out
+            .iter()
+            .find(|inst| inst.color == [0.20, 0.30, 0.40, 1.0])
+            .expect("collapsible indicator should be emitted");
+        assert_eq!(mark.params[3], 1.0);
+        assert!(mark.rect[1] > 40.0);
+        assert!(
+            mark.clip[3] < mark.rect[3],
+            "indicator should be locally clipped"
+        );
+    }
+
+    #[test]
+    fn active_tab_uses_top_only_radii_and_square_accent() {
+        let mut tab = node("tab-a", WidgetKind::Tab);
+        tab.style.parts.parts.insert(
+            "accent".to_string(),
+            PartStyle {
+                visual: VisualStyle {
+                    background: Some(rgba(0.11, 0.22, 0.33)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "tab-a".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 120.0,
+                h: 36.0,
+            },
+        );
+        let mut state = WidgetState::default();
+        state
+            .tab_parent
+            .insert("tab-a".to_string(), "tabs".to_string());
+        state
+            .tab_values
+            .insert("tab-a".to_string(), "a".to_string());
+        state
+            .active_tabs
+            .insert("tabs".to_string(), "a".to_string());
+        let mut out = Vec::new();
+
+        emit_rects(
+            &tab,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &state,
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let accent = out
+            .iter()
+            .find(|inst| inst.color == [0.11, 0.22, 0.33, 1.0])
+            .expect("active tab accent should be emitted");
+        assert_eq!(accent.radii, [0.0; 4]);
+
+        let tab_surface = out
+            .iter()
+            .find(|inst| inst.rect == [4.0, 4.0, 112.0, 32.0])
+            .expect("active tab body should be emitted");
+        assert!(tab_surface.radii[0] > 0.0);
+        assert!(tab_surface.radii[1] > 0.0);
+        assert_eq!(tab_surface.radii[2], 0.0);
+        assert_eq!(tab_surface.radii[3], 0.0);
+    }
+
+    #[test]
+    fn active_nav_item_accent_uses_item_left_radii() {
+        let mut nav = node("nav-overview", WidgetKind::NavItem);
+        nav.style.parts.parts.insert(
+            "item".to_string(),
+            PartStyle {
+                visual: VisualStyle {
+                    border_radius: Some(8.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        nav.style.parts.parts.insert(
+            "accent".to_string(),
+            PartStyle {
+                layout: PartLayoutStyle {
+                    width: Some(5.0),
+                    ..Default::default()
+                },
+                visual: VisualStyle {
+                    background: Some(rgba(0.11, 0.22, 0.33)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "nav-overview".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 180.0,
+                h: 36.0,
+            },
+        );
+        let mut state = WidgetState::default();
+        state
+            .nav_targets
+            .insert("nav-overview".to_string(), "overview".to_string());
+        state
+            .page_owner
+            .insert("overview".to_string(), "pages".to_string());
+        state
+            .active_pages
+            .insert("pages".to_string(), "overview".to_string());
+        let mut out = Vec::new();
+
+        emit_rects(
+            &nav,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &state,
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let accent = out
+            .iter()
+            .find(|inst| inst.color == [0.11, 0.22, 0.33, 1.0])
+            .expect("active nav item accent should be emitted");
+        assert_eq!(accent.rect, [0.0, 0.0, 5.0, 36.0]);
+        assert_eq!(accent.radii, [8.0, 0.0, 0.0, 8.0]);
+    }
+
+    #[test]
+    fn top_level_menu_is_flat_until_interactive() {
+        let menu = node("file-menu", WidgetKind::Menu);
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "file-menu".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 64.0,
+                h: 30.0,
+            },
+        );
+        let theme = Theme::dark();
+        let mut out = Vec::new();
+
+        emit_rects(
+            &menu,
+            &layout,
+            &theme,
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        assert!(
+            out.is_empty(),
+            "default closed menu should not render like a normal button"
+        );
+
+        let mut open_state = WidgetState {
+            open_menu: Some("file-menu".to_string()),
+            ..Default::default()
+        };
+        emit_rects(
+            &menu,
+            &layout,
+            &theme,
+            1.0,
+            &open_state,
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let open_fill = mix(theme.surface_alt, theme.accent, 0.24);
+        let active = out
+            .iter()
+            .find(|inst| inst.color == open_fill)
+            .expect("open menu should emit a subtle menu-bar highlight");
+        assert_eq!(active.rect, [0.0, 0.0, 64.0, 30.0]);
+        assert_eq!(active.radii, [4.0; 4]);
+        assert!(!out.iter().any(|inst| inst.color == theme.border));
+
+        open_state.open_menu = None;
+        open_state.hovered = Some("file-menu".to_string());
+        out.clear();
+        emit_rects(
+            &menu,
+            &layout,
+            &theme,
+            1.0,
+            &open_state,
+            &HashMap::new(),
+            &mut out,
+        );
+        assert!(out
+            .iter()
+            .any(|inst| inst.color == mix(theme.surface_alt, theme.accent, 0.14)));
     }
 
     #[test]
@@ -2904,6 +4845,26 @@ mod tests {
                 },
                 visual: VisualStyle {
                     background: Some(rgba(0.70, 0.80, 0.90)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        number.style.parts.parts.insert(
+            "stepper-up".to_string(),
+            PartStyle {
+                text: TextStyle {
+                    color: Some(rgba(0.11, 0.22, 0.33)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        number.style.parts.parts.insert(
+            "stepper-down".to_string(),
+            PartStyle {
+                text: TextStyle {
+                    color: Some(rgba(0.44, 0.55, 0.66)),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -2954,23 +4915,35 @@ mod tests {
         assert!(has_rect(
             &out,
             [0.10, 0.20, 0.30, 1.0],
-            [1.0, 1.0, 93.0, 38.0]
+            [27.0, 1.0, 66.0, 38.0]
         ));
         assert!(has_rect(
             &out,
             [0.40, 0.50, 0.60, 1.0],
-            [94.0, 1.0, 3.0, 38.0]
+            [24.5, 1.0, 3.0, 38.0]
         ));
         assert!(has_rect(
             &out,
             [0.70, 0.80, 0.90, 1.0],
-            [94.0, 20.0, 26.0, 2.0]
+            [92.5, 1.0, 3.0, 38.0]
         ));
         assert!(has_rect(
             &out,
             [0.90, 0.10, 0.20, 1.0],
-            [20.0, 10.0, 4.0, 20.0]
+            [46.0, 10.0, 4.0, 20.0]
         ));
+        assert_eq!(
+            out.iter()
+                .filter(|inst| inst.color == [0.11, 0.22, 0.33, 1.0])
+                .count(),
+            2
+        );
+        assert_eq!(
+            out.iter()
+                .filter(|inst| inst.color == [0.44, 0.55, 0.66, 1.0])
+                .count(),
+            1
+        );
     }
 
     #[test]

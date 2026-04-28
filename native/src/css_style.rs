@@ -14,10 +14,12 @@ use lightningcss::traits::ToCss;
 
 use crate::document::{WidgetKind, WidgetNode};
 use crate::style::{
-    BackgroundPaint, BoxShadow, ColorRef, DisplayStyle, FlexDirectionStyle, FontFamily, FontStyle,
-    FontVariantNumeric, GradientStop, LayoutStyle, LineHeight, LinearGradient, NodePartStyles,
-    NodeStyle, PartLayoutStyle, PartStyle, RadialGradient, TextAlign, TextOverflow, TextSpacing,
-    TextStyle, TextTransform, VisualStyle,
+    BackgroundPaint, BoxShadow, CalcLength, ColorRef, DisplayStyle, FlexDirectionStyle, FontFamily,
+    FontStyle, FontVariantNumeric, GradientStop, GridLineStyle, GridPlacementStyle, GridTrackSize,
+    LayoutLength, LayoutStyle, LineHeight, LinearGradient, NodePartStyles, NodeStyle,
+    OverflowStyle, PartLayoutStyle, PartStyle, PositionStyle, RadialGradient, TextAlign,
+    TextOverflow, TextSpacing, TextStyle, TextTransform, TransformStyle, TransitionProperty,
+    TransitionStyle, TransitionTimingFunction, VisualStyle,
 };
 use crate::theme::{parse_hex_color, Color, Theme};
 
@@ -143,6 +145,7 @@ pub enum DgStyleProperty {
     Visual(DgVisualDeclaration),
     Text(DgTextDeclaration),
     Widget(DgWidgetDeclaration),
+    Transition(DgTransitionDeclaration),
     CustomProperty { name: String, value: DgCssValue },
 }
 
@@ -166,6 +169,21 @@ pub enum DgLayoutDeclaration {
     PaddingBottom(DgCssLength),
     Margin(DgBoxEdges<DgCssLength>),
     Gap(DgCssLength),
+    RowGap(DgCssLength),
+    ColumnGap(DgCssLength),
+    GridTemplateColumns(Vec<DgGridTrackSize>),
+    GridTemplateRows(Vec<DgGridTrackSize>),
+    GridColumn(DgGridPlacement),
+    GridRow(DgGridPlacement),
+    Overflow(DgCssKeyword),
+    OverflowX(DgCssKeyword),
+    OverflowY(DgCssKeyword),
+    Position(DgCssKeyword),
+    Top(DgCssLength),
+    Right(DgCssLength),
+    Bottom(DgCssLength),
+    Left(DgCssLength),
+    ZIndex(DgCssNumber),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -185,7 +203,9 @@ pub enum DgVisualDeclaration {
     Accent(DgCssColor),
     TrackColor(DgCssColor),
     ThumbColor(DgCssColor),
+    BackgroundNoise(DgCssNumber),
     BoxShadow(Vec<DgBoxShadow>),
+    Transform(TransformStyle),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -210,6 +230,15 @@ pub enum DgWidgetDeclaration {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum DgTransitionDeclaration {
+    Property(Vec<TransitionProperty>),
+    Duration(u64),
+    Delay(u64),
+    TimingFunction(TransitionTimingFunction),
+    Shorthand(TransitionStyle),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum DgCssValue {
     Number(DgCssNumber),
     Length(DgCssLength),
@@ -226,7 +255,29 @@ pub enum DgCssLength {
     LogicalPx(f32),
     Em(f32),
     Percent(f32),
+    Calc(CalcLength),
     Auto,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DgGridTrackSize {
+    LogicalPx(f32),
+    Percent(f32),
+    Fraction(f32),
+    Auto,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DgGridLine {
+    Auto,
+    Line(i16),
+    Span(u16),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DgGridPlacement {
+    pub start: DgGridLine,
+    pub end: DgGridLine,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -243,19 +294,24 @@ pub enum DgCssColor {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DgBackgroundPaint {
+    Color(DgCssColor),
     LinearGradient(DgLinearGradient),
     RadialGradient(DgRadialGradient),
+    Layers(Vec<DgBackgroundPaint>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DgLinearGradient {
     pub angle_deg: f32,
     pub stops: Vec<DgGradientStop>,
+    pub repeating: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DgRadialGradient {
     pub stops: Vec<DgGradientStop>,
+    pub repeating: bool,
+    pub center: [f32; 2],
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -356,12 +412,22 @@ impl DgSelector {
         }
     }
 
+    #[cfg(test)]
     fn target_pseudo_classes(&self) -> &[DgPseudoClass] {
         match self {
             DgSelector::Root => &[],
             DgSelector::Compound(selector) => &selector.pseudo,
             DgSelector::Child { child, .. } => &child.pseudo,
             DgSelector::Chain(chain) => &chain.target.pseudo,
+        }
+    }
+
+    fn target_contains_state_pseudo(&self) -> bool {
+        match self {
+            DgSelector::Root => false,
+            DgSelector::Compound(selector) => selector.contains_state_pseudo(),
+            DgSelector::Child { child, .. } => child.contains_state_pseudo(),
+            DgSelector::Chain(chain) => chain.target.contains_state_pseudo(),
         }
     }
 
@@ -448,6 +514,7 @@ pub struct DgCompoundSelector {
     pub classes: Vec<String>,
     pub pseudo: Vec<DgPseudoClass>,
     pub structural: Vec<DgStructuralPseudo>,
+    pub functions: Vec<DgSelectorFunction>,
     pub part: Option<String>,
 }
 
@@ -486,12 +553,23 @@ impl DgCompoundSelector {
         self
     }
 
+    pub fn with_function(mut self, function: DgSelectorFunction) -> Self {
+        self.functions.push(function);
+        self
+    }
+
     pub fn with_part(mut self, part: impl Into<String>) -> Self {
         self.part = Some(part.into());
         self
     }
 
     pub fn specificity(&self) -> Specificity {
+        let function_specificity = self
+            .functions
+            .iter()
+            .fold(Specificity::ZERO, |specificity, function| {
+                specificity.add(function.specificity())
+            });
         Specificity {
             ids: u16::from(self.id.is_some()),
             classes: (self.classes.len()
@@ -501,6 +579,7 @@ impl DgCompoundSelector {
             .min(u16::MAX as usize) as u16,
             types: u16::from(self.type_selector.is_some()),
         }
+        .add(function_specificity)
     }
 
     fn matches_element(&self, element: &StyleElement<'_>) -> bool {
@@ -513,12 +592,20 @@ impl DgCompoundSelector {
                 .structural
                 .iter()
                 .all(|pseudo| pseudo.matches_element(element))
+            && self
+                .functions
+                .iter()
+                .all(|function| function.matches_element(element))
     }
 
     fn matches_ancestor(&self, ancestor: &StyleAncestor<'_>) -> bool {
         self.pseudo.is_empty()
             && self.structural.is_empty()
             && self.matches_identity(ancestor.id, ancestor.key, ancestor.classes, ancestor.kind)
+            && self
+                .functions
+                .iter()
+                .all(|function| function.matches_ancestor(ancestor))
     }
 
     fn matches_identity(
@@ -544,6 +631,14 @@ impl DgCompoundSelector {
         self.classes
             .iter()
             .all(|expected| classes.iter().any(|class| class == expected))
+    }
+
+    fn contains_state_pseudo(&self) -> bool {
+        !self.pseudo.is_empty()
+            || self
+                .functions
+                .iter()
+                .any(DgSelectorFunction::contains_state_pseudo)
     }
 
     fn label(&self) -> String {
@@ -572,6 +667,10 @@ impl DgCompoundSelector {
             label.push(':');
             label.push_str(&structural.label());
         }
+        for function in &self.functions {
+            label.push(':');
+            label.push_str(&function.label());
+        }
         if let Some(part) = &self.part {
             label.push_str("::");
             label.push_str(part);
@@ -582,6 +681,80 @@ impl DgCompoundSelector {
             label
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DgSelectorFunction {
+    pub kind: DgSelectorFunctionKind,
+    pub selectors: Vec<DgCompoundSelector>,
+}
+
+impl DgSelectorFunction {
+    fn specificity(&self) -> Specificity {
+        match self.kind {
+            DgSelectorFunctionKind::Where => Specificity::ZERO,
+            DgSelectorFunctionKind::Not | DgSelectorFunctionKind::Is => self
+                .selectors
+                .iter()
+                .map(DgCompoundSelector::specificity)
+                .max()
+                .unwrap_or(Specificity::ZERO),
+        }
+    }
+
+    fn matches_element(&self, element: &StyleElement<'_>) -> bool {
+        match self.kind {
+            DgSelectorFunctionKind::Not => !self
+                .selectors
+                .iter()
+                .any(|selector| selector.matches_element(element)),
+            DgSelectorFunctionKind::Is | DgSelectorFunctionKind::Where => self
+                .selectors
+                .iter()
+                .any(|selector| selector.matches_element(element)),
+        }
+    }
+
+    fn matches_ancestor(&self, ancestor: &StyleAncestor<'_>) -> bool {
+        match self.kind {
+            DgSelectorFunctionKind::Not => !self
+                .selectors
+                .iter()
+                .any(|selector| selector.matches_ancestor(ancestor)),
+            DgSelectorFunctionKind::Is | DgSelectorFunctionKind::Where => self
+                .selectors
+                .iter()
+                .any(|selector| selector.matches_ancestor(ancestor)),
+        }
+    }
+
+    fn contains_state_pseudo(&self) -> bool {
+        self.selectors
+            .iter()
+            .any(DgCompoundSelector::contains_state_pseudo)
+    }
+
+    fn label(&self) -> String {
+        let name = match self.kind {
+            DgSelectorFunctionKind::Not => "not",
+            DgSelectorFunctionKind::Is => "is",
+            DgSelectorFunctionKind::Where => "where",
+        };
+        let selectors = self
+            .selectors
+            .iter()
+            .map(DgCompoundSelector::label)
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{name}({selectors})")
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DgSelectorFunctionKind {
+    Not,
+    Is,
+    Where,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -684,6 +857,7 @@ pub enum DgStylePropertyName {
     Visual(DgVisualPropertyName),
     Text(DgTextPropertyName),
     Widget(DgWidgetPropertyName),
+    Transition(DgTransitionPropertyName),
     BorderShorthand,
     CustomProperty(String),
 }
@@ -708,6 +882,21 @@ pub enum DgLayoutPropertyName {
     PaddingBottom,
     Margin,
     Gap,
+    RowGap,
+    ColumnGap,
+    GridTemplateColumns,
+    GridTemplateRows,
+    GridColumn,
+    GridRow,
+    Overflow,
+    OverflowX,
+    OverflowY,
+    Position,
+    Top,
+    Right,
+    Bottom,
+    Left,
+    ZIndex,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -726,6 +915,8 @@ pub enum DgVisualPropertyName {
     Accent,
     TrackColor,
     ThumbColor,
+    BackgroundNoise,
+    Transform,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -749,6 +940,15 @@ pub enum DgWidgetPropertyName {
     TableHeaderHeight,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DgTransitionPropertyName {
+    Transition,
+    Property,
+    Duration,
+    TimingFunction,
+    Delay,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DgStyleWarning {
     pub property: String,
@@ -769,7 +969,8 @@ impl DgStylePropertyName {
     ///
     /// Layout: display, flex-direction, flex, flex-grow, flex-shrink, width,
     /// height, min-width, min-height, max-width, max-height, padding,
-    /// padding-left, padding-right, padding-top, padding-bottom, margin, gap.
+    /// padding-left, padding-right, padding-top, padding-bottom, margin, gap,
+    /// overflow, position, top, right, bottom, left.
     ///
     /// Visual: background, background-color, foreground, border-color,
     /// border-width, border-radius, border-top-left-radius,
@@ -806,6 +1007,21 @@ impl DgStylePropertyName {
             "padding-bottom" => Ok(Self::Layout(DgLayoutPropertyName::PaddingBottom)),
             "margin" => Ok(Self::Layout(DgLayoutPropertyName::Margin)),
             "gap" => Ok(Self::Layout(DgLayoutPropertyName::Gap)),
+            "row-gap" => Ok(Self::Layout(DgLayoutPropertyName::RowGap)),
+            "column-gap" => Ok(Self::Layout(DgLayoutPropertyName::ColumnGap)),
+            "grid-template-columns" => Ok(Self::Layout(DgLayoutPropertyName::GridTemplateColumns)),
+            "grid-template-rows" => Ok(Self::Layout(DgLayoutPropertyName::GridTemplateRows)),
+            "grid-column" => Ok(Self::Layout(DgLayoutPropertyName::GridColumn)),
+            "grid-row" => Ok(Self::Layout(DgLayoutPropertyName::GridRow)),
+            "overflow" => Ok(Self::Layout(DgLayoutPropertyName::Overflow)),
+            "overflow-x" => Ok(Self::Layout(DgLayoutPropertyName::OverflowX)),
+            "overflow-y" => Ok(Self::Layout(DgLayoutPropertyName::OverflowY)),
+            "position" => Ok(Self::Layout(DgLayoutPropertyName::Position)),
+            "top" => Ok(Self::Layout(DgLayoutPropertyName::Top)),
+            "right" => Ok(Self::Layout(DgLayoutPropertyName::Right)),
+            "bottom" => Ok(Self::Layout(DgLayoutPropertyName::Bottom)),
+            "left" => Ok(Self::Layout(DgLayoutPropertyName::Left)),
+            "z-index" => Ok(Self::Layout(DgLayoutPropertyName::ZIndex)),
             "background" | "background-color" => Ok(Self::Visual(DgVisualPropertyName::Background)),
             "foreground" => Ok(Self::Visual(DgVisualPropertyName::Foreground)),
             "border-color" => Ok(Self::Visual(DgVisualPropertyName::BorderColor)),
@@ -827,6 +1043,8 @@ impl DgStylePropertyName {
             "accent" => Ok(Self::Visual(DgVisualPropertyName::Accent)),
             "track-color" => Ok(Self::Visual(DgVisualPropertyName::TrackColor)),
             "thumb-color" => Ok(Self::Visual(DgVisualPropertyName::ThumbColor)),
+            "background-noise" => Ok(Self::Visual(DgVisualPropertyName::BackgroundNoise)),
+            "transform" => Ok(Self::Visual(DgVisualPropertyName::Transform)),
             "color" => Ok(Self::Text(DgTextPropertyName::Color)),
             "font-size" => Ok(Self::Text(DgTextPropertyName::FontSize)),
             "font-family" => Ok(Self::Text(DgTextPropertyName::FontFamily)),
@@ -838,6 +1056,13 @@ impl DgStylePropertyName {
             "font-style" => Ok(Self::Text(DgTextPropertyName::FontStyle)),
             "font-variant-numeric" => Ok(Self::Text(DgTextPropertyName::FontVariantNumeric)),
             "text-overflow" => Ok(Self::Text(DgTextPropertyName::TextOverflow)),
+            "transition" => Ok(Self::Transition(DgTransitionPropertyName::Transition)),
+            "transition-property" => Ok(Self::Transition(DgTransitionPropertyName::Property)),
+            "transition-duration" => Ok(Self::Transition(DgTransitionPropertyName::Duration)),
+            "transition-timing-function" => {
+                Ok(Self::Transition(DgTransitionPropertyName::TimingFunction))
+            }
+            "transition-delay" => Ok(Self::Transition(DgTransitionPropertyName::Delay)),
             "table-row-height" => Ok(Self::Widget(DgWidgetPropertyName::TableRowHeight)),
             "table-header-height" => Ok(Self::Widget(DgWidgetPropertyName::TableHeaderHeight)),
             _ => Err(DgStyleWarning::unsupported_property(name)),
@@ -995,6 +1220,38 @@ fn node_css_classes(node: &WidgetNode) -> Vec<&str> {
     classes
 }
 
+fn selector_match_slots(
+    selector: &DgSelector,
+    base_element: &StyleElement<'_>,
+) -> Vec<Option<DgPseudoClass>> {
+    if !selector.target_contains_state_pseudo() {
+        return selector
+            .matches(base_element)
+            .then_some(vec![None])
+            .unwrap_or_default();
+    }
+
+    let mut slots = Vec::new();
+    let base = StyleElement {
+        pseudo: &[],
+        ..*base_element
+    };
+    if selector.matches(&base) {
+        slots.push(None);
+    }
+    for pseudo in STATIC_PSEUDO_CLASSES {
+        let pseudos = [pseudo];
+        let state = StyleElement {
+            pseudo: &pseudos,
+            ..*base_element
+        };
+        if selector.matches(&state) {
+            slots.push(Some(pseudo));
+        }
+    }
+    slots
+}
+
 pub fn apply_stylesheets_to_tree(root: &mut WidgetNode, store: &mut StylesheetStore) {
     let mut ancestors = Vec::new();
     let mut validation_warnings = Vec::new();
@@ -1050,32 +1307,28 @@ pub fn computed_style_for_virtual_element(
         classes,
         kind,
         ancestors: &[],
-        pseudo: &STATIC_PSEUDO_CLASSES,
+        pseudo: &[],
         sibling_index: None,
         sibling_count: None,
     };
     let mut matched = Vec::new();
     for rule in rules.iter() {
-        if rule.selector.matches(&element) && rule.selector.target_part().is_none() {
-            matched.extend(rule.declarations.iter().map(|declaration| {
-                (
-                    rule.cascade_key(declaration),
-                    rule.selector.target_pseudo_classes(),
-                    &declaration.property,
-                )
-            }));
+        let slots = selector_match_slots(&rule.selector, &element);
+        if !slots.is_empty() && rule.selector.target_part().is_none() {
+            for slot in slots {
+                matched.extend(rule.declarations.iter().map(|declaration| {
+                    (rule.cascade_key(declaration), slot, &declaration.property)
+                }));
+            }
         }
     }
     matched.sort_by_key(|(key, _, _)| *key);
 
     let mut computed = NodeStyle::default();
-    for (_, pseudo_classes, property) in matched {
-        if pseudo_classes.is_empty() {
-            apply_property_to_style(&mut computed, property);
-        } else {
-            for pseudo in pseudo_classes {
-                apply_property_to_pseudo_style(&mut computed, *pseudo, property);
-            }
+    for (_, slot, property) in matched {
+        match slot {
+            Some(pseudo) => apply_property_to_pseudo_style(&mut computed, pseudo, property),
+            None => apply_property_to_style(&mut computed, property),
         }
     }
     computed
@@ -1138,12 +1391,15 @@ fn matched_part_rule_labels_for_node(
         classes: &classes,
         kind: node.kind,
         ancestors: &style_ancestors,
-        pseudo: &STATIC_PSEUDO_CLASSES,
+        pseudo: &[],
         sibling_index,
         sibling_count,
     };
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for rule in rules.iter().filter(|rule| rule.selector.matches(&element)) {
+    for rule in rules
+        .iter()
+        .filter(|rule| !selector_match_slots(&rule.selector, &element).is_empty())
+    {
         let Some(part) = rule.selector.target_part() else {
             continue;
         };
@@ -1208,13 +1464,13 @@ fn matched_rule_labels_for_node(
         classes: &classes,
         kind: node.kind,
         ancestors: &style_ancestors,
-        pseudo: &STATIC_PSEUDO_CLASSES,
+        pseudo: &[],
         sibling_index,
         sibling_count,
     };
     rules
         .iter()
-        .filter(|rule| rule.selector.matches(&element))
+        .filter(|rule| !selector_match_slots(&rule.selector, &element).is_empty())
         .map(|rule| format!("{}: {}", rule.origin.label(), rule.selector.label()))
         .collect()
 }
@@ -1251,16 +1507,17 @@ fn apply_stylesheets_to_node(
         classes: &classes,
         kind: node.kind,
         ancestors: &style_ancestors,
-        pseudo: &STATIC_PSEUDO_CLASSES,
+        pseudo: &[],
         sibling_index,
         sibling_count,
     };
-    // Pseudo-state selectors are intentionally matched against a static pseudo
-    // set here. Their declarations are precomputed into hover/active/focus/
-    // disabled style slots, and live widget state decides which slot is active.
+    // Pseudo-state selectors are matched against base and single-state contexts
+    // here. Their declarations are precomputed into hover/active/focus/disabled
+    // style slots, and live widget state decides which slot is active.
     let mut matched = Vec::new();
     for rule in rules.iter() {
-        if rule.selector.matches(&element) {
+        let slots = selector_match_slots(&rule.selector, &element);
+        if !slots.is_empty() {
             if let Some(part) = rule.selector.target_part() {
                 if !widget_kind_supports_part(node.kind, part) {
                     record_unsupported_part_warning(
@@ -1279,28 +1536,33 @@ fn apply_stylesheets_to_node(
                     part,
                 );
             }
-            matched.extend(rule.declarations.iter().map(|declaration| {
-                (
-                    rule.cascade_key(declaration),
-                    rule.selector.target_pseudo_classes(),
-                    rule.selector.target_part(),
-                    &declaration.property,
-                )
-            }));
+            for slot in slots {
+                matched.extend(rule.declarations.iter().map(|declaration| {
+                    (
+                        rule.cascade_key(declaration),
+                        slot,
+                        rule.selector.target_part(),
+                        &declaration.property,
+                    )
+                }));
+            }
         }
     }
     matched.sort_by_key(|(key, _, _, _)| *key);
 
     let mut computed = NodeStyle::default();
-    for (_, pseudo_classes, part, property) in matched {
+    for (_, slot, part, property) in matched {
         if let Some(part) = part {
-            apply_property_to_part_style(&mut computed, part, pseudo_classes, property);
-        } else if pseudo_classes.is_empty() {
-            apply_property_to_style(&mut computed, property);
-        } else {
-            for pseudo in pseudo_classes {
-                apply_property_to_pseudo_style(&mut computed, *pseudo, property);
+            match slot {
+                Some(pseudo) => {
+                    apply_property_to_part_style(&mut computed, part, &[pseudo], property)
+                }
+                None => apply_property_to_part_style(&mut computed, part, &[], property),
             }
+        } else if let Some(pseudo) = slot {
+            apply_property_to_pseudo_style(&mut computed, pseudo, property);
+        } else {
+            apply_property_to_style(&mut computed, property);
         }
     }
     merge_node_style(&mut computed, &node.inline_style);
@@ -1339,7 +1601,7 @@ fn record_stateful_part_layout_warnings(
     rule: &DgStyleRule,
     part: &str,
 ) {
-    if rule.selector.target_pseudo_classes().is_empty() {
+    if !rule.selector.target_contains_state_pseudo() {
         return;
     }
 
@@ -1483,6 +1745,7 @@ fn merge_node_style(base: &mut NodeStyle, overlay: &NodeStyle) {
     merge_visual_style(&mut base.visual, &overlay.visual);
     merge_text_style(&mut base.text, &overlay.text);
     merge_widget_style(&mut base.widget, &overlay.widget);
+    merge_transition_style(&mut base.transition, &overlay.transition);
     merge_node_part_styles(&mut base.parts, &overlay.parts);
     merge_visual_style(&mut base.hover, &overlay.hover);
     merge_visual_style(&mut base.active, &overlay.active);
@@ -1504,6 +1767,12 @@ fn merge_layout_style(base: &mut LayoutStyle, overlay: &LayoutStyle) {
     base.min_height = overlay.min_height.or(base.min_height);
     base.max_width = overlay.max_width.or(base.max_width);
     base.max_height = overlay.max_height.or(base.max_height);
+    base.width_value = overlay.width_value.or(base.width_value);
+    base.height_value = overlay.height_value.or(base.height_value);
+    base.min_width_value = overlay.min_width_value.or(base.min_width_value);
+    base.min_height_value = overlay.min_height_value.or(base.min_height_value);
+    base.max_width_value = overlay.max_width_value.or(base.max_width_value);
+    base.max_height_value = overlay.max_height_value.or(base.max_height_value);
     base.padding = overlay.padding.or(base.padding);
     base.padding_left = overlay.padding_left.or(base.padding_left);
     base.padding_right = overlay.padding_right.or(base.padding_right);
@@ -1511,8 +1780,29 @@ fn merge_layout_style(base: &mut LayoutStyle, overlay: &LayoutStyle) {
     base.padding_bottom = overlay.padding_bottom.or(base.padding_bottom);
     base.margin = overlay.margin.or(base.margin);
     base.gap = overlay.gap.or(base.gap);
+    base.row_gap = overlay.row_gap.or(base.row_gap);
+    base.column_gap = overlay.column_gap.or(base.column_gap);
+    base.overflow = overlay.overflow.or(base.overflow);
+    base.overflow_x = overlay.overflow_x.or(base.overflow_x);
+    base.overflow_y = overlay.overflow_y.or(base.overflow_y);
+    base.position = overlay.position.or(base.position);
+    base.top = overlay.top.or(base.top);
+    base.right = overlay.right.or(base.right);
+    base.bottom = overlay.bottom.or(base.bottom);
+    base.left = overlay.left.or(base.left);
+    base.z_index = overlay.z_index.or(base.z_index);
     base.flex_grow = overlay.flex_grow.or(base.flex_grow);
     base.flex_shrink = overlay.flex_shrink.or(base.flex_shrink);
+    base.grid_template_columns = overlay
+        .grid_template_columns
+        .clone()
+        .or_else(|| base.grid_template_columns.clone());
+    base.grid_template_rows = overlay
+        .grid_template_rows
+        .clone()
+        .or_else(|| base.grid_template_rows.clone());
+    base.grid_column = overlay.grid_column.or(base.grid_column);
+    base.grid_row = overlay.grid_row.or(base.grid_row);
 }
 
 fn merge_visual_style(base: &mut VisualStyle, overlay: &VisualStyle) {
@@ -1539,6 +1829,19 @@ fn merge_text_style(base: &mut TextStyle, overlay: &TextStyle) {
 fn merge_widget_style(base: &mut crate::style::WidgetStyle, overlay: &crate::style::WidgetStyle) {
     base.table_row_height = overlay.table_row_height.or(base.table_row_height);
     base.table_header_height = overlay.table_header_height.or(base.table_header_height);
+}
+
+fn merge_transition_style(
+    base: &mut crate::style::TransitionStyle,
+    overlay: &crate::style::TransitionStyle,
+) {
+    base.properties = overlay
+        .properties
+        .clone()
+        .or_else(|| base.properties.clone());
+    base.duration_ms = overlay.duration_ms.or(base.duration_ms);
+    base.delay_ms = overlay.delay_ms.or(base.delay_ms);
+    base.timing_function = overlay.timing_function.or(base.timing_function);
 }
 
 fn merge_node_part_styles(base: &mut NodePartStyles, overlay: &NodePartStyles) {
@@ -1608,6 +1911,9 @@ fn apply_property_to_style(style: &mut NodeStyle, property: &DgStyleProperty) {
         DgStyleProperty::Widget(declaration) => {
             apply_widget_declaration(&mut style.widget, declaration)
         }
+        DgStyleProperty::Transition(declaration) => {
+            apply_transition_declaration(&mut style.transition, declaration)
+        }
         DgStyleProperty::CustomProperty { .. } => {}
     }
 }
@@ -1636,6 +1942,7 @@ fn apply_property_to_pseudo_style(
         DgStyleProperty::Layout(_)
         | DgStyleProperty::Text(_)
         | DgStyleProperty::Widget(_)
+        | DgStyleProperty::Transition(_)
         | DgStyleProperty::CustomProperty { .. } => {}
     }
 }
@@ -1680,6 +1987,7 @@ fn apply_property_to_part(style: &mut PartStyle, property: &DgStyleProperty, sta
         DgStyleProperty::Text(declaration) => apply_text_declaration(&mut style.text, declaration),
         DgStyleProperty::Layout(_)
         | DgStyleProperty::Widget(_)
+        | DgStyleProperty::Transition(_)
         | DgStyleProperty::CustomProperty { .. } => {}
     }
 }
@@ -1708,12 +2016,30 @@ fn apply_layout_declaration(style: &mut LayoutStyle, declaration: &DgLayoutDecla
         DgLayoutDeclaration::Flex(value) => style.flex_grow = Some(value.0.max(0.0)),
         DgLayoutDeclaration::FlexGrow(value) => style.flex_grow = Some(value.0.max(0.0)),
         DgLayoutDeclaration::FlexShrink(value) => style.flex_shrink = Some(value.0.max(0.0)),
-        DgLayoutDeclaration::Width(value) => style.width = length_px(value),
-        DgLayoutDeclaration::Height(value) => style.height = length_px(value),
-        DgLayoutDeclaration::MinWidth(value) => style.min_width = length_px(value),
-        DgLayoutDeclaration::MinHeight(value) => style.min_height = length_px(value),
-        DgLayoutDeclaration::MaxWidth(value) => style.max_width = length_px(value),
-        DgLayoutDeclaration::MaxHeight(value) => style.max_height = length_px(value),
+        DgLayoutDeclaration::Width(value) => {
+            style.width = length_px(value);
+            style.width_value = layout_length(value);
+        }
+        DgLayoutDeclaration::Height(value) => {
+            style.height = length_px(value);
+            style.height_value = layout_length(value);
+        }
+        DgLayoutDeclaration::MinWidth(value) => {
+            style.min_width = length_px(value);
+            style.min_width_value = layout_length(value);
+        }
+        DgLayoutDeclaration::MinHeight(value) => {
+            style.min_height = length_px(value);
+            style.min_height_value = layout_length(value);
+        }
+        DgLayoutDeclaration::MaxWidth(value) => {
+            style.max_width = length_px(value);
+            style.max_width_value = layout_length(value);
+        }
+        DgLayoutDeclaration::MaxHeight(value) => {
+            style.max_height = length_px(value);
+            style.max_height_value = layout_length(value);
+        }
         DgLayoutDeclaration::Padding(edges) => {
             style.padding_top = length_px(&edges.top);
             style.padding_right = length_px(&edges.right);
@@ -1731,6 +2057,53 @@ fn apply_layout_declaration(style: &mut LayoutStyle, declaration: &DgLayoutDecla
             }
         }
         DgLayoutDeclaration::Gap(value) => style.gap = length_px(value),
+        DgLayoutDeclaration::RowGap(value) => style.row_gap = length_px(value),
+        DgLayoutDeclaration::ColumnGap(value) => style.column_gap = length_px(value),
+        DgLayoutDeclaration::GridTemplateColumns(value) => {
+            style.grid_template_columns = Some(value.iter().map(grid_track_from_css).collect())
+        }
+        DgLayoutDeclaration::GridTemplateRows(value) => {
+            style.grid_template_rows = Some(value.iter().map(grid_track_from_css).collect())
+        }
+        DgLayoutDeclaration::GridColumn(value) => {
+            style.grid_column = Some(grid_placement_from_css(value))
+        }
+        DgLayoutDeclaration::GridRow(value) => {
+            style.grid_row = Some(grid_placement_from_css(value))
+        }
+        DgLayoutDeclaration::Overflow(value) => style.overflow = overflow_from_keyword(value),
+        DgLayoutDeclaration::OverflowX(value) => style.overflow_x = overflow_from_keyword(value),
+        DgLayoutDeclaration::OverflowY(value) => style.overflow_y = overflow_from_keyword(value),
+        DgLayoutDeclaration::Position(value) => style.position = position_from_keyword(value),
+        DgLayoutDeclaration::Top(value) => style.top = length_px(value),
+        DgLayoutDeclaration::Right(value) => style.right = length_px(value),
+        DgLayoutDeclaration::Bottom(value) => style.bottom = length_px(value),
+        DgLayoutDeclaration::Left(value) => style.left = length_px(value),
+        DgLayoutDeclaration::ZIndex(value) => style.z_index = Some(value.0.round() as i32),
+    }
+}
+
+fn grid_track_from_css(value: &DgGridTrackSize) -> GridTrackSize {
+    match value {
+        DgGridTrackSize::LogicalPx(value) => GridTrackSize::LogicalPx(*value),
+        DgGridTrackSize::Percent(value) => GridTrackSize::Percent(*value),
+        DgGridTrackSize::Fraction(value) => GridTrackSize::Fraction(*value),
+        DgGridTrackSize::Auto => GridTrackSize::Auto,
+    }
+}
+
+fn grid_placement_from_css(value: &DgGridPlacement) -> GridPlacementStyle {
+    GridPlacementStyle {
+        start: grid_line_from_css(value.start),
+        end: grid_line_from_css(value.end),
+    }
+}
+
+fn grid_line_from_css(value: DgGridLine) -> GridLineStyle {
+    match value {
+        DgGridLine::Auto => GridLineStyle::Auto,
+        DgGridLine::Line(value) => GridLineStyle::Line(value),
+        DgGridLine::Span(value) => GridLineStyle::Span(value),
     }
 }
 
@@ -1777,9 +2150,13 @@ fn apply_visual_declaration(style: &mut VisualStyle, declaration: &DgVisualDecla
         DgVisualDeclaration::ThumbColor(value) => {
             style.thumb_color = Some(color_ref_from_css(value))
         }
+        DgVisualDeclaration::BackgroundNoise(value) => {
+            style.background_noise = Some(value.0.clamp(0.0, 0.25))
+        }
         DgVisualDeclaration::BoxShadow(value) => {
             style.box_shadows = Some(value.iter().filter_map(box_shadow_from_css).collect());
         }
+        DgVisualDeclaration::Transform(value) => style.transform = Some(*value),
     }
 }
 
@@ -1817,13 +2194,81 @@ fn apply_widget_declaration(
     }
 }
 
+fn apply_transition_declaration(
+    style: &mut TransitionStyle,
+    declaration: &DgTransitionDeclaration,
+) {
+    match declaration {
+        DgTransitionDeclaration::Property(value) => style.properties = Some(value.clone()),
+        DgTransitionDeclaration::Duration(value) => style.duration_ms = Some(*value),
+        DgTransitionDeclaration::Delay(value) => style.delay_ms = Some(*value),
+        DgTransitionDeclaration::TimingFunction(value) => style.timing_function = Some(*value),
+        DgTransitionDeclaration::Shorthand(value) => {
+            if value.properties.is_some() {
+                style.properties = value.properties.clone();
+            }
+            if value.duration_ms.is_some() {
+                style.duration_ms = value.duration_ms;
+            }
+            if value.delay_ms.is_some() {
+                style.delay_ms = value.delay_ms;
+            }
+            if value.timing_function.is_some() {
+                style.timing_function = value.timing_function;
+            }
+        }
+    }
+}
+
 fn display_from_keyword(value: &DgCssKeyword) -> Option<DisplayStyle> {
     match value.0.trim().to_ascii_lowercase().as_str() {
         "flex" => Some(DisplayStyle::Flex),
+        "grid" => Some(DisplayStyle::Grid),
         "block" => Some(DisplayStyle::Block),
         "none" => Some(DisplayStyle::None),
         _ => None,
     }
+}
+
+fn overflow_from_keyword(value: &DgCssKeyword) -> Option<OverflowStyle> {
+    match value.0.trim().to_ascii_lowercase().as_str() {
+        "visible" => Some(OverflowStyle::Visible),
+        "hidden" | "clip" => Some(OverflowStyle::Hidden),
+        "scroll" => Some(OverflowStyle::Scroll),
+        "auto" => Some(OverflowStyle::Auto),
+        _ => None,
+    }
+}
+
+fn parse_overflow_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<DgCssKeyword, DgStyleWarning> {
+    let keyword = DgCssKeyword(resolve_keyword(value, variables));
+    overflow_from_keyword(&keyword)
+        .map(|_| keyword)
+        .ok_or_else(|| parse_warning(name, value, "overflow value"))
+}
+
+fn position_from_keyword(value: &DgCssKeyword) -> Option<PositionStyle> {
+    match value.0.trim().to_ascii_lowercase().as_str() {
+        "static" => Some(PositionStyle::Static),
+        "relative" => Some(PositionStyle::Relative),
+        "absolute" => Some(PositionStyle::Absolute),
+        _ => None,
+    }
+}
+
+fn parse_position_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<DgCssKeyword, DgStyleWarning> {
+    let keyword = DgCssKeyword(resolve_keyword(value, variables));
+    position_from_keyword(&keyword)
+        .map(|_| keyword)
+        .ok_or_else(|| parse_warning(name, value, "position value"))
 }
 
 fn flex_direction_from_keyword(value: &DgCssKeyword) -> Option<FlexDirectionStyle> {
@@ -1883,7 +2328,7 @@ fn text_spacing_from_css(value: &DgCssLength) -> Option<TextSpacing> {
     match value {
         DgCssLength::LogicalPx(value) => Some(TextSpacing::LogicalPx(*value)),
         DgCssLength::Em(value) => Some(TextSpacing::Em(*value)),
-        DgCssLength::Percent(_) | DgCssLength::Auto => None,
+        DgCssLength::Percent(_) | DgCssLength::Calc(_) | DgCssLength::Auto => None,
     }
 }
 
@@ -1894,9 +2339,9 @@ fn line_height_from_css(value: &DgLineHeight) -> Option<LineHeight> {
             Some(LineHeight::LogicalPx(value.max(0.0)))
         }
         DgLineHeight::Length(DgCssLength::Em(value)) => Some(LineHeight::Multiplier(*value)),
-        DgLineHeight::Length(DgCssLength::Percent(_)) | DgLineHeight::Length(DgCssLength::Auto) => {
-            None
-        }
+        DgLineHeight::Length(DgCssLength::Percent(_))
+        | DgLineHeight::Length(DgCssLength::Calc(_))
+        | DgLineHeight::Length(DgCssLength::Auto) => None,
     }
 }
 
@@ -1920,9 +2365,17 @@ fn color_ref_from_css(value: &DgCssColor) -> ColorRef {
 
 fn background_paint_from_css(value: &DgBackgroundPaint) -> BackgroundPaint {
     match value {
+        DgBackgroundPaint::Color(color) => BackgroundPaint::Color(color_ref_from_css(color)),
+        DgBackgroundPaint::Layers(layers) => BackgroundPaint::Layers(
+            layers
+                .iter()
+                .map(background_paint_from_css)
+                .collect::<Vec<_>>(),
+        ),
         DgBackgroundPaint::LinearGradient(gradient) => {
             BackgroundPaint::LinearGradient(LinearGradient {
                 angle_deg: gradient.angle_deg,
+                repeating: gradient.repeating,
                 stops: gradient
                     .stops
                     .iter()
@@ -1935,6 +2388,8 @@ fn background_paint_from_css(value: &DgBackgroundPaint) -> BackgroundPaint {
         }
         DgBackgroundPaint::RadialGradient(gradient) => {
             BackgroundPaint::RadialGradient(RadialGradient {
+                repeating: gradient.repeating,
+                center: gradient.center,
                 stops: gradient
                     .stops
                     .iter()
@@ -1962,7 +2417,19 @@ fn box_shadow_from_css(value: &DgBoxShadow) -> Option<BoxShadow> {
 fn length_px(value: &DgCssLength) -> Option<f32> {
     match value {
         DgCssLength::LogicalPx(value) => Some(*value),
-        DgCssLength::Em(_) | DgCssLength::Percent(_) | DgCssLength::Auto => None,
+        DgCssLength::Em(_) | DgCssLength::Percent(_) | DgCssLength::Calc(_) | DgCssLength::Auto => {
+            None
+        }
+    }
+}
+
+fn layout_length(value: &DgCssLength) -> Option<LayoutLength> {
+    match value {
+        DgCssLength::LogicalPx(value) => Some(LayoutLength::LogicalPx(*value)),
+        DgCssLength::Percent(value) => Some(LayoutLength::Percent(*value)),
+        DgCssLength::Calc(value) => Some(LayoutLength::Calc(*value)),
+        DgCssLength::Auto => Some(LayoutLength::Auto),
+        DgCssLength::Em(_) => None,
     }
 }
 
@@ -2263,6 +2730,9 @@ fn lower_declaration(
         DgStylePropertyName::Visual(property) => lower_visual(name, property, value, variables),
         DgStylePropertyName::Text(property) => lower_text(name, property, value, variables),
         DgStylePropertyName::Widget(property) => lower_widget(name, property, value, variables),
+        DgStylePropertyName::Transition(property) => {
+            lower_transition(name, property, value, variables)
+        }
     }
 }
 
@@ -2289,22 +2759,22 @@ fn lower_layout(
             DgLayoutDeclaration::FlexShrink(parse_number_value(name, value, variables)?)
         }
         DgLayoutPropertyName::Width => {
-            DgLayoutDeclaration::Width(parse_px_length_value(name, value, variables)?)
+            DgLayoutDeclaration::Width(parse_layout_length_value(name, value, variables)?)
         }
         DgLayoutPropertyName::Height => {
-            DgLayoutDeclaration::Height(parse_px_length_value(name, value, variables)?)
+            DgLayoutDeclaration::Height(parse_layout_length_value(name, value, variables)?)
         }
         DgLayoutPropertyName::MinWidth => {
-            DgLayoutDeclaration::MinWidth(parse_px_length_value(name, value, variables)?)
+            DgLayoutDeclaration::MinWidth(parse_layout_length_value(name, value, variables)?)
         }
         DgLayoutPropertyName::MinHeight => {
-            DgLayoutDeclaration::MinHeight(parse_px_length_value(name, value, variables)?)
+            DgLayoutDeclaration::MinHeight(parse_layout_length_value(name, value, variables)?)
         }
         DgLayoutPropertyName::MaxWidth => {
-            DgLayoutDeclaration::MaxWidth(parse_px_length_value(name, value, variables)?)
+            DgLayoutDeclaration::MaxWidth(parse_layout_length_value(name, value, variables)?)
         }
         DgLayoutPropertyName::MaxHeight => {
-            DgLayoutDeclaration::MaxHeight(parse_px_length_value(name, value, variables)?)
+            DgLayoutDeclaration::MaxHeight(parse_layout_length_value(name, value, variables)?)
         }
         DgLayoutPropertyName::Padding => {
             DgLayoutDeclaration::Padding(parse_px_box_edges(name, value, variables)?)
@@ -2335,6 +2805,51 @@ fn lower_layout(
         }
         DgLayoutPropertyName::Gap => {
             DgLayoutDeclaration::Gap(parse_px_length_value(name, value, variables)?)
+        }
+        DgLayoutPropertyName::RowGap => {
+            DgLayoutDeclaration::RowGap(parse_px_length_value(name, value, variables)?)
+        }
+        DgLayoutPropertyName::ColumnGap => {
+            DgLayoutDeclaration::ColumnGap(parse_px_length_value(name, value, variables)?)
+        }
+        DgLayoutPropertyName::GridTemplateColumns => DgLayoutDeclaration::GridTemplateColumns(
+            parse_grid_template_value(name, value, variables)?,
+        ),
+        DgLayoutPropertyName::GridTemplateRows => DgLayoutDeclaration::GridTemplateRows(
+            parse_grid_template_value(name, value, variables)?,
+        ),
+        DgLayoutPropertyName::GridColumn => {
+            DgLayoutDeclaration::GridColumn(parse_grid_placement_value(name, value)?)
+        }
+        DgLayoutPropertyName::GridRow => {
+            DgLayoutDeclaration::GridRow(parse_grid_placement_value(name, value)?)
+        }
+        DgLayoutPropertyName::Overflow => {
+            DgLayoutDeclaration::Overflow(parse_overflow_value(name, value, variables)?)
+        }
+        DgLayoutPropertyName::OverflowX => {
+            DgLayoutDeclaration::OverflowX(parse_overflow_value(name, value, variables)?)
+        }
+        DgLayoutPropertyName::OverflowY => {
+            DgLayoutDeclaration::OverflowY(parse_overflow_value(name, value, variables)?)
+        }
+        DgLayoutPropertyName::Position => {
+            DgLayoutDeclaration::Position(parse_position_value(name, value, variables)?)
+        }
+        DgLayoutPropertyName::Top => {
+            DgLayoutDeclaration::Top(parse_px_length_value(name, value, variables)?)
+        }
+        DgLayoutPropertyName::Right => {
+            DgLayoutDeclaration::Right(parse_px_length_value(name, value, variables)?)
+        }
+        DgLayoutPropertyName::Bottom => {
+            DgLayoutDeclaration::Bottom(parse_px_length_value(name, value, variables)?)
+        }
+        DgLayoutPropertyName::Left => {
+            DgLayoutDeclaration::Left(parse_px_length_value(name, value, variables)?)
+        }
+        DgLayoutPropertyName::ZIndex => {
+            DgLayoutDeclaration::ZIndex(parse_number_value(name, value, variables)?)
         }
     };
     Ok(Some(DgStyleProperty::Layout(declaration)))
@@ -2393,6 +2908,12 @@ fn lower_visual(
         }
         DgVisualPropertyName::ThumbColor => {
             DgVisualDeclaration::ThumbColor(parse_color_value(name, value, variables)?)
+        }
+        DgVisualPropertyName::BackgroundNoise => {
+            DgVisualDeclaration::BackgroundNoise(parse_number_value(name, value, variables)?)
+        }
+        DgVisualPropertyName::Transform => {
+            DgVisualDeclaration::Transform(parse_transform_value(name, value, variables)?)
         }
     };
     Ok(Some(DgStyleProperty::Visual(declaration)))
@@ -2471,6 +2992,287 @@ fn lower_widget(
     Ok(Some(DgStyleProperty::Widget(declaration)))
 }
 
+fn lower_transition(
+    name: &str,
+    property: DgTransitionPropertyName,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<Option<DgStyleProperty>, DgStyleWarning> {
+    let declaration = match property {
+        DgTransitionPropertyName::Transition => {
+            DgTransitionDeclaration::Shorthand(parse_transition_shorthand(name, value, variables)?)
+        }
+        DgTransitionPropertyName::Property => DgTransitionDeclaration::Property(
+            parse_transition_property_list(name, value, variables)?,
+        ),
+        DgTransitionPropertyName::Duration => {
+            DgTransitionDeclaration::Duration(parse_time_ms_value(name, value, variables)?)
+        }
+        DgTransitionPropertyName::Delay => {
+            DgTransitionDeclaration::Delay(parse_time_ms_value(name, value, variables)?)
+        }
+        DgTransitionPropertyName::TimingFunction => {
+            let keyword = resolve_keyword(value, variables);
+            let timing = transition_timing_from_keyword(&keyword)
+                .ok_or_else(|| parse_warning(name, value, "transition timing function"))?;
+            DgTransitionDeclaration::TimingFunction(timing)
+        }
+    };
+    Ok(Some(DgStyleProperty::Transition(declaration)))
+}
+
+fn parse_transition_shorthand(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<TransitionStyle, DgStyleWarning> {
+    let value = resolve_keyword(value, variables);
+    let first = split_selector_list(&value)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| value.clone())
+        .trim()
+        .to_string();
+    if first.eq_ignore_ascii_case("none") {
+        return Ok(TransitionStyle {
+            properties: Some(Vec::new()),
+            duration_ms: Some(0),
+            delay_ms: Some(0),
+            timing_function: None,
+        });
+    }
+
+    let mut style = TransitionStyle::default();
+    let mut saw_duration = false;
+    for token in first.split_whitespace() {
+        if let Some(timing) = transition_timing_from_keyword(token) {
+            style.timing_function = Some(timing);
+            continue;
+        }
+        if let Some(time) = parse_time_ms(token) {
+            if !saw_duration {
+                style.duration_ms = Some(time);
+                saw_duration = true;
+            } else {
+                style.delay_ms = Some(time);
+            }
+            continue;
+        }
+        if let Some(property) = transition_property_from_keyword(token) {
+            style.properties.get_or_insert_with(Vec::new).push(property);
+            continue;
+        }
+        return Err(parse_warning(name, value.as_str(), "transition shorthand"));
+    }
+    if style.duration_ms.is_none() {
+        return Err(parse_warning(name, value.as_str(), "transition duration"));
+    }
+    Ok(style)
+}
+
+fn parse_transition_property_list(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<Vec<TransitionProperty>, DgStyleWarning> {
+    let value = resolve_keyword(value, variables);
+    if value.trim().eq_ignore_ascii_case("none") {
+        return Ok(Vec::new());
+    }
+    let mut properties = Vec::new();
+    for property in split_selector_list(&value) {
+        let Some(property) = transition_property_from_keyword(&property) else {
+            return Err(parse_warning(
+                name,
+                value.as_str(),
+                "transition property list",
+            ));
+        };
+        properties.push(property);
+    }
+    if properties.is_empty() {
+        Err(parse_warning(
+            name,
+            value.as_str(),
+            "transition property list",
+        ))
+    } else {
+        Ok(properties)
+    }
+}
+
+fn parse_time_ms_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<u64, DgStyleWarning> {
+    let value = resolve_keyword(value, variables);
+    let first = value.split(',').next().unwrap_or(value.as_str()).trim();
+    parse_time_ms(first).ok_or_else(|| parse_warning(name, value.as_str(), "time"))
+}
+
+fn parse_time_ms(value: &str) -> Option<u64> {
+    let value = value.trim().to_ascii_lowercase();
+    if let Some(ms) = value.strip_suffix("ms") {
+        return ms
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .map(|v| v.max(0.0).round() as u64);
+    }
+    if let Some(seconds) = value.strip_suffix('s') {
+        return seconds
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .map(|v| (v.max(0.0) * 1000.0).round() as u64);
+    }
+    None
+}
+
+fn transition_timing_from_keyword(value: &str) -> Option<TransitionTimingFunction> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "linear" => Some(TransitionTimingFunction::Linear),
+        "ease" => Some(TransitionTimingFunction::Ease),
+        "ease-in" => Some(TransitionTimingFunction::EaseIn),
+        "ease-out" => Some(TransitionTimingFunction::EaseOut),
+        "ease-in-out" => Some(TransitionTimingFunction::EaseInOut),
+        _ => None,
+    }
+}
+
+fn transition_property_from_keyword(value: &str) -> Option<TransitionProperty> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "all" => Some(TransitionProperty::All),
+        "background" | "background-color" => Some(TransitionProperty::Background),
+        "foreground" => Some(TransitionProperty::Foreground),
+        "border-color" => Some(TransitionProperty::BorderColor),
+        "border-width" => Some(TransitionProperty::BorderWidth),
+        "border-radius" => Some(TransitionProperty::BorderRadius),
+        "opacity" => Some(TransitionProperty::Opacity),
+        "color" => Some(TransitionProperty::Color),
+        "accent" => Some(TransitionProperty::Accent),
+        "track-color" => Some(TransitionProperty::TrackColor),
+        "thumb-color" => Some(TransitionProperty::ThumbColor),
+        "box-shadow" => Some(TransitionProperty::BoxShadow),
+        "transform" => Some(TransitionProperty::Transform),
+        _ => None,
+    }
+}
+
+fn parse_transform_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<TransformStyle, DgStyleWarning> {
+    let value = resolve_keyword(value, variables);
+    if value.trim().eq_ignore_ascii_case("none") {
+        return Ok(TransformStyle::default());
+    }
+    let transform = parse_transform_functions(&value)
+        .ok_or_else(|| parse_warning(name, value.as_str(), "transform"))?;
+    Ok(transform)
+}
+
+fn parse_transform_functions(value: &str) -> Option<TransformStyle> {
+    let mut rest = value.trim();
+    let mut transform = TransformStyle::default();
+    while !rest.is_empty() {
+        rest = rest.trim_start();
+        let open = rest.find('(')?;
+        let name = rest[..open].trim().to_ascii_lowercase();
+        let after_open = &rest[open + 1..];
+        let close = after_open.find(')')?;
+        let args = &after_open[..close];
+        apply_transform_function(&mut transform, &name, args)?;
+        rest = after_open[close + 1..].trim_start();
+    }
+    Some(transform)
+}
+
+fn apply_transform_function(transform: &mut TransformStyle, name: &str, args: &str) -> Option<()> {
+    match name {
+        "translate" => {
+            let args = split_transform_args(args);
+            let x = parse_transform_length(args.first()?)?;
+            let y = args
+                .get(1)
+                .and_then(|value| parse_transform_length(value))
+                .unwrap_or(0.0);
+            transform.translate_x += x;
+            transform.translate_y += y;
+        }
+        "translatex" => {
+            transform.translate_x += parse_transform_length(args)?;
+        }
+        "translatey" => {
+            transform.translate_y += parse_transform_length(args)?;
+        }
+        "scale" => {
+            let args = split_transform_args(args);
+            let x = parse_transform_number(args.first()?)?;
+            let y = args
+                .get(1)
+                .and_then(|value| parse_transform_number(value))
+                .unwrap_or(x);
+            transform.scale_x *= x;
+            transform.scale_y *= y;
+        }
+        "scalex" => {
+            transform.scale_x *= parse_transform_number(args)?;
+        }
+        "scaley" => {
+            transform.scale_y *= parse_transform_number(args)?;
+        }
+        "rotate" => {
+            transform.rotate_deg += parse_transform_angle(args)?;
+        }
+        _ => return None,
+    }
+    Some(())
+}
+
+fn split_transform_args(args: &str) -> Vec<&str> {
+    if args.contains(',') {
+        args.split(',')
+            .map(str::trim)
+            .filter(|arg| !arg.is_empty())
+            .collect()
+    } else {
+        args.split_whitespace().collect()
+    }
+}
+
+fn parse_transform_length(value: &str) -> Option<f32> {
+    let value = value.trim().to_ascii_lowercase();
+    if let Some(px) = value.strip_suffix("px") {
+        return px.trim().parse().ok();
+    }
+    value.parse().ok()
+}
+
+fn parse_transform_number(value: &str) -> Option<f32> {
+    value.trim().parse().ok()
+}
+
+fn parse_transform_angle(value: &str) -> Option<f32> {
+    let value = value.trim().to_ascii_lowercase();
+    if let Some(deg) = value.strip_suffix("deg") {
+        return deg.trim().parse().ok();
+    }
+    if let Some(rad) = value.strip_suffix("rad") {
+        return rad
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .map(|radians| radians.to_degrees());
+    }
+    if let Some(turn) = value.strip_suffix("turn") {
+        return turn.trim().parse::<f32>().ok().map(|turns| turns * 360.0);
+    }
+    value.parse().ok()
+}
+
 fn parse_selector(selector: &str, warnings: &mut Vec<DgStyleWarning>) -> Option<DgSelector> {
     let selector = selector.trim();
     if selector == ":root" {
@@ -2518,7 +3320,9 @@ fn parse_selector(selector: &str, warnings: &mut Vec<DgStyleWarning>) -> Option<
             return None;
         }
         if idx + 1 != parts.len()
-            && (!compound.pseudo.is_empty() || !compound.structural.is_empty())
+            && (!compound.pseudo.is_empty()
+                || !compound.structural.is_empty()
+                || compound.contains_state_pseudo())
         {
             warnings.push(DgStyleWarning {
                 property: selector.to_string(),
@@ -2632,20 +3436,20 @@ fn push_selector_chain_part(parts: &mut Vec<String>, current: &mut String) -> Op
 
 fn parse_compound_selector(selector: &str) -> Option<DgCompoundSelector> {
     let selector = selector.trim();
-    if selector.is_empty() || selector.contains(' ') {
+    if selector.is_empty() || contains_top_level_whitespace(selector) {
         return None;
     }
-    let (selector, part) = match selector.split_once("::") {
+    let (selector, part) = match split_target_part(selector)? {
         Some((target, part)) => {
-            if target.is_empty() || part.contains("::") || !is_part_name(part) {
+            if target.is_empty() || !is_part_name(part) {
                 return None;
             }
-            (target, Some(part.to_string()))
+            (target, Some(part))
         }
         None => (selector, None),
     };
     let mut compound = DgCompoundSelector::new();
-    compound.part = part;
+    compound.part = part.map(str::to_string);
     let mut rest = selector;
 
     if let Some(type_len) = rest
@@ -2666,6 +3470,11 @@ fn parse_compound_selector(selector: &str) -> Option<DgCompoundSelector> {
             let value = &rest[1..close];
             parse_attribute_selector(value, &mut compound)?;
             rest = &rest[close + 1..];
+        } else if prefix == ":" {
+            let next = pseudo_selector_len(rest)?;
+            let value = &rest[1..next];
+            parse_pseudo_selector(value, &mut compound)?;
+            rest = &rest[next..];
         } else {
             let next = tail
                 .find(['.', '#', ':', '['])
@@ -2678,13 +3487,117 @@ fn parse_compound_selector(selector: &str) -> Option<DgCompoundSelector> {
             match prefix {
                 "." => compound.classes.push(value.to_string()),
                 "#" => compound.id = Some(value.to_string()),
-                ":" => parse_pseudo_selector(value, &mut compound)?,
                 _ => return None,
             }
             rest = &rest[next..];
         }
     }
     Some(compound)
+}
+
+fn contains_top_level_whitespace(value: &str) -> bool {
+    let mut bracket_depth = 0usize;
+    let mut paren_depth = 0usize;
+    let mut quote: Option<char> = None;
+    for ch in value.chars() {
+        if let Some(quote_ch) = quote {
+            if ch == quote_ch {
+                quote = None;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            '[' => bracket_depth += 1,
+            ']' => bracket_depth = bracket_depth.saturating_sub(1),
+            '(' => paren_depth += 1,
+            ')' => paren_depth = paren_depth.saturating_sub(1),
+            _ if ch.is_ascii_whitespace() && bracket_depth == 0 && paren_depth == 0 => {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn split_target_part(selector: &str) -> Option<Option<(&str, &str)>> {
+    let mut bracket_depth = 0usize;
+    let mut paren_depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut chars = selector.char_indices().peekable();
+
+    while let Some((idx, ch)) = chars.next() {
+        if let Some(quote_ch) = quote {
+            if ch == quote_ch {
+                quote = None;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            '[' => bracket_depth += 1,
+            ']' => bracket_depth = bracket_depth.checked_sub(1)?,
+            '(' => paren_depth += 1,
+            ')' => paren_depth = paren_depth.checked_sub(1)?,
+            ':' if bracket_depth == 0 && paren_depth == 0 => {
+                if chars.peek().is_some_and(|(_, next)| *next == ':') {
+                    chars.next();
+                    let target = &selector[..idx];
+                    let part = &selector[idx + 2..];
+                    if part.contains("::") {
+                        return None;
+                    }
+                    return Some(Some((target, part)));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if quote.is_some() || bracket_depth != 0 || paren_depth != 0 {
+        return None;
+    }
+    Some(None)
+}
+
+fn pseudo_selector_len(rest: &str) -> Option<usize> {
+    let tail = rest.strip_prefix(':')?;
+    let name_len = tail
+        .char_indices()
+        .take_while(|(_, ch)| ch.is_ascii_alphanumeric() || *ch == '-')
+        .map(|(idx, ch)| idx + ch.len_utf8())
+        .last()?;
+    let after_name = &tail[name_len..];
+    if !after_name.starts_with('(') {
+        return Some(1 + name_len);
+    }
+
+    let mut quote: Option<char> = None;
+    let mut depth = 0usize;
+    for (idx, ch) in after_name.char_indices() {
+        if let Some(quote_ch) = quote {
+            if ch == quote_ch {
+                quote = None;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(1 + name_len + idx + ch.len_utf8());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn parse_attribute_selector(value: &str, compound: &mut DgCompoundSelector) -> Option<()> {
@@ -2727,7 +3640,31 @@ fn parse_pseudo_selector(value: &str, compound: &mut DgCompoundSelector) -> Opti
         compound.structural.push(structural);
         return Some(());
     }
+    if let Some(function) = parse_selector_function(value) {
+        compound.functions.push(function);
+        return Some(());
+    }
     None
+}
+
+fn parse_selector_function(value: &str) -> Option<DgSelectorFunction> {
+    let (kind, inner) = if let Some(inner) = value.strip_prefix("not(") {
+        (DgSelectorFunctionKind::Not, inner.strip_suffix(')')?)
+    } else if let Some(inner) = value.strip_prefix("is(") {
+        (DgSelectorFunctionKind::Is, inner.strip_suffix(')')?)
+    } else if let Some(inner) = value.strip_prefix("where(") {
+        (DgSelectorFunctionKind::Where, inner.strip_suffix(')')?)
+    } else {
+        return None;
+    };
+    let selectors = split_selector_list(inner)
+        .into_iter()
+        .map(|selector| parse_compound_selector(&selector))
+        .collect::<Option<Vec<_>>>()?;
+    if selectors.is_empty() || selectors.iter().any(|selector| selector.part.is_some()) {
+        return None;
+    }
+    Some(DgSelectorFunction { kind, selectors })
 }
 
 fn parse_pseudo(value: &str) -> Option<DgPseudoClass> {
@@ -2770,12 +3707,58 @@ fn parse_structural_pseudo(value: &str) -> Option<DgStructuralPseudo> {
 }
 
 fn split_selector_list(selector: &str) -> Vec<String> {
-    selector
-        .split(',')
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-        .map(str::to_string)
-        .collect()
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut bracket_depth = 0usize;
+    let mut paren_depth = 0usize;
+    let mut quote: Option<char> = None;
+
+    for ch in selector.chars() {
+        if let Some(quote_ch) = quote {
+            current.push(ch);
+            if ch == quote_ch {
+                quote = None;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' | '\'' => {
+                quote = Some(ch);
+                current.push(ch);
+            }
+            '[' => {
+                bracket_depth += 1;
+                current.push(ch);
+            }
+            ']' => {
+                bracket_depth = bracket_depth.saturating_sub(1);
+                current.push(ch);
+            }
+            '(' => {
+                paren_depth += 1;
+                current.push(ch);
+            }
+            ')' => {
+                paren_depth = paren_depth.saturating_sub(1);
+                current.push(ch);
+            }
+            ',' if bracket_depth == 0 && paren_depth == 0 => {
+                let part = current.trim();
+                if !part.is_empty() {
+                    parts.push(part.to_string());
+                }
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    let part = current.trim();
+    if !part.is_empty() {
+        parts.push(part.to_string());
+    }
+    parts
 }
 
 fn split_declaration(declaration: &str) -> Option<(&str, &str)> {
@@ -2889,7 +3872,7 @@ fn parse_letter_spacing_value(
     let length = parse_length(&value).ok_or_else(|| parse_warning(name, &value, "length"))?;
     match length {
         DgCssLength::LogicalPx(_) | DgCssLength::Em(_) => Ok(length),
-        DgCssLength::Percent(_) | DgCssLength::Auto => {
+        DgCssLength::Percent(_) | DgCssLength::Calc(_) | DgCssLength::Auto => {
             Err(parse_warning(name, &value, "px or em length"))
         }
     }
@@ -2905,7 +3888,7 @@ fn parse_line_height_value(
         Some(DgCssValue::Length(length)) => {
             return match length {
                 DgCssLength::LogicalPx(_) | DgCssLength::Em(_) => Ok(DgLineHeight::Length(length)),
-                DgCssLength::Percent(_) | DgCssLength::Auto => {
+                DgCssLength::Percent(_) | DgCssLength::Calc(_) | DgCssLength::Auto => {
                     Err(parse_warning(name, value, "number or px length"))
                 }
             };
@@ -2920,7 +3903,7 @@ fn parse_line_height_value(
     let length = parse_length(value).ok_or_else(|| parse_warning(name, value, "line height"))?;
     match length {
         DgCssLength::LogicalPx(_) | DgCssLength::Em(_) => Ok(DgLineHeight::Length(length)),
-        DgCssLength::Percent(_) | DgCssLength::Auto => {
+        DgCssLength::Percent(_) | DgCssLength::Calc(_) | DgCssLength::Auto => {
             Err(parse_warning(name, value, "number or px length"))
         }
     }
@@ -2937,7 +3920,8 @@ fn parse_length_value(
         Some(_) => return Err(parse_warning(name, value, "length")),
         None => {}
     }
-    parse_length(value).ok_or_else(|| parse_warning(name, value, "length"))
+    parse_length_with_variables(value, Some(variables))
+        .ok_or_else(|| parse_warning(name, value, "length"))
 }
 
 fn parse_px_length_value(
@@ -2947,6 +3931,152 @@ fn parse_px_length_value(
 ) -> Result<DgCssLength, DgStyleWarning> {
     let length = parse_length_value(name, value, variables)?;
     require_logical_px(name, value, length)
+}
+
+fn parse_grid_template_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<Vec<DgGridTrackSize>, DgStyleWarning> {
+    let value = resolve_keyword(value, variables);
+    if value.trim().eq_ignore_ascii_case("none") {
+        return Ok(Vec::new());
+    }
+    let mut tracks = Vec::new();
+    for token in split_value_tokens(&value) {
+        if let Some(repeated) = parse_grid_repeat(token) {
+            tracks.extend(repeated?);
+        } else {
+            tracks.push(parse_grid_track_size(name, token)?);
+        }
+    }
+    if tracks.is_empty() {
+        return Err(parse_warning(name, &value, "grid track list"));
+    }
+    Ok(tracks)
+}
+
+fn parse_grid_repeat(token: &str) -> Option<Result<Vec<DgGridTrackSize>, DgStyleWarning>> {
+    let token = token.trim();
+    if !token
+        .get(..7)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("repeat("))
+        || !token.ends_with(')')
+    {
+        return None;
+    }
+    let inner = &token[7..token.len() - 1];
+    let parts = split_top_level_commas(inner);
+    if parts.len() != 2 {
+        return Some(Err(parse_warning("repeat", token, "repeat(count, tracks)")));
+    }
+    let count = match parts[0].trim().parse::<usize>() {
+        Ok(count) if count > 0 && count <= 32 => count,
+        _ => return Some(Err(parse_warning("repeat", token, "positive repeat count"))),
+    };
+    let parsed: Result<Vec<_>, _> = split_value_tokens(parts[1])
+        .iter()
+        .map(|track| parse_grid_track_size("repeat", track))
+        .collect();
+    Some(parsed.map(|tracks| {
+        let mut repeated = Vec::with_capacity(tracks.len() * count);
+        for _ in 0..count {
+            repeated.extend(tracks.iter().copied());
+        }
+        repeated
+    }))
+}
+
+fn parse_grid_track_size(name: &str, value: &str) -> Result<DgGridTrackSize, DgStyleWarning> {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("auto") {
+        return Ok(DgGridTrackSize::Auto);
+    }
+    if let Some(fr) = value.strip_suffix("fr") {
+        return fr
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .map(DgGridTrackSize::Fraction)
+            .ok_or_else(|| parse_warning(name, value, "positive fr track"));
+    }
+    match parse_length(value) {
+        Some(DgCssLength::LogicalPx(value)) => Ok(DgGridTrackSize::LogicalPx(value)),
+        Some(DgCssLength::Percent(value)) => Ok(DgGridTrackSize::Percent(value)),
+        Some(DgCssLength::Calc(calc)) if calc.percent == 0.0 => {
+            Ok(DgGridTrackSize::LogicalPx(calc.px))
+        }
+        Some(DgCssLength::Calc(calc)) if calc.px == 0.0 => {
+            Ok(DgGridTrackSize::Percent(calc.percent))
+        }
+        _ => Err(parse_warning(
+            name,
+            value,
+            "px, percent, fr, auto grid track",
+        )),
+    }
+}
+
+fn parse_grid_placement_value(name: &str, value: &str) -> Result<DgGridPlacement, DgStyleWarning> {
+    let parts: Vec<_> = value.split('/').map(str::trim).collect();
+    match parts.as_slice() {
+        [single] => {
+            let start = parse_grid_line(name, single)?;
+            Ok(DgGridPlacement {
+                start,
+                end: DgGridLine::Auto,
+            })
+        }
+        [start, end] => Ok(DgGridPlacement {
+            start: parse_grid_line(name, start)?,
+            end: parse_grid_line(name, end)?,
+        }),
+        _ => Err(parse_warning(name, value, "grid placement")),
+    }
+}
+
+fn parse_grid_line(name: &str, value: &str) -> Result<DgGridLine, DgStyleWarning> {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("auto") {
+        return Ok(DgGridLine::Auto);
+    }
+    let lower = value.to_ascii_lowercase();
+    if let Some(span) = lower.strip_prefix("span ") {
+        return span
+            .trim()
+            .parse::<u16>()
+            .ok()
+            .filter(|value| *value > 0)
+            .map(DgGridLine::Span)
+            .ok_or_else(|| parse_warning(name, value, "positive grid span"));
+    }
+    value
+        .parse::<i16>()
+        .ok()
+        .filter(|value| *value != 0)
+        .map(DgGridLine::Line)
+        .ok_or_else(|| parse_warning(name, value, "grid line number, span, or auto"))
+}
+
+fn parse_layout_length_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<DgCssLength, DgStyleWarning> {
+    let length = parse_length_value(name, value, variables)?;
+    match length {
+        DgCssLength::LogicalPx(_)
+        | DgCssLength::Percent(_)
+        | DgCssLength::Calc(_)
+        | DgCssLength::Auto => Ok(length),
+        DgCssLength::Em(_) => Err(DgStyleWarning {
+            property: name.to_string(),
+            message: format!(
+                "`em` lengths are only supported for text spacing in DragonGUI CSS: {value:?}"
+            ),
+        }),
+    }
 }
 
 fn require_logical_px(
@@ -2966,6 +4096,12 @@ fn require_logical_px(
             property: name.to_string(),
             message: format!(
                 "percentage lengths are not supported for {name:?} in DragonGUI CSS V1: {source:?}"
+            ),
+        }),
+        DgCssLength::Calc(_) => Err(DgStyleWarning {
+            property: name.to_string(),
+            message: format!(
+                "calc() lengths are only supported for width/height sizing properties in DragonGUI CSS: {source:?}"
             ),
         }),
         DgCssLength::Auto => Err(DgStyleWarning {
@@ -3048,14 +4184,45 @@ fn parse_background_paint_value(
     variables: &BTreeMap<String, DgCssValue>,
 ) -> Result<Option<DgBackgroundPaint>, DgStyleWarning> {
     let value = resolve_keyword(value, variables);
+    let layers = split_top_level_commas(&value);
+    if layers.len() > 1 {
+        let mut paints = Vec::with_capacity(layers.len());
+        for layer in layers {
+            let paint = match parse_single_background_paint(layer, variables)? {
+                Some(paint) => paint,
+                None => {
+                    DgBackgroundPaint::Color(parse_color_value("background", layer, variables)?)
+                }
+            };
+            paints.push(paint);
+        }
+        return Ok(Some(DgBackgroundPaint::Layers(paints)));
+    }
+    parse_single_background_paint(&value, variables)
+}
+
+fn parse_single_background_paint(
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<Option<DgBackgroundPaint>, DgStyleWarning> {
     if let Some(args) = function_args(&value, "linear-gradient") {
         return Ok(Some(DgBackgroundPaint::LinearGradient(
-            parse_linear_gradient(args, variables)?,
+            parse_linear_gradient(args, variables, false)?,
+        )));
+    }
+    if let Some(args) = function_args(&value, "repeating-linear-gradient") {
+        return Ok(Some(DgBackgroundPaint::LinearGradient(
+            parse_linear_gradient(args, variables, true)?,
         )));
     }
     if let Some(args) = function_args(&value, "radial-gradient") {
         return Ok(Some(DgBackgroundPaint::RadialGradient(
-            parse_radial_gradient(args, variables)?,
+            parse_radial_gradient(args, variables, false)?,
+        )));
+    }
+    if let Some(args) = function_args(&value, "repeating-radial-gradient") {
+        return Ok(Some(DgBackgroundPaint::RadialGradient(
+            parse_radial_gradient(args, variables, true)?,
         )));
     }
     Ok(None)
@@ -3064,6 +4231,7 @@ fn parse_background_paint_value(
 fn parse_linear_gradient(
     args: &str,
     variables: &BTreeMap<String, DgCssValue>,
+    repeating: bool,
 ) -> Result<DgLinearGradient, DgStyleWarning> {
     let parts = split_top_level_commas(args);
     if parts.len() < 2 {
@@ -3087,14 +4255,19 @@ fn parse_linear_gradient(
     }
     let mut stops = Vec::with_capacity(stop_parts.len());
     for part in stop_parts {
-        stops.push(parse_gradient_stop(part, variables)?);
+        stops.extend(parse_gradient_stops(part, variables)?);
     }
-    Ok(DgLinearGradient { angle_deg, stops })
+    Ok(DgLinearGradient {
+        angle_deg,
+        stops,
+        repeating,
+    })
 }
 
 fn parse_radial_gradient(
     args: &str,
     variables: &BTreeMap<String, DgCssValue>,
+    repeating: bool,
 ) -> Result<DgRadialGradient, DgStyleWarning> {
     let parts = split_top_level_commas(args);
     if parts.len() < 2 {
@@ -3104,10 +4277,10 @@ fn parse_radial_gradient(
             "radial-gradient with at least two color stops",
         ));
     }
-    let stop_parts = if is_supported_radial_gradient_shape(parts[0]) {
-        &parts[1..]
+    let (center, stop_parts) = if let Some(center) = parse_radial_gradient_shape(parts[0]) {
+        (center, &parts[1..])
     } else {
-        &parts[..]
+        ([0.5, 0.5], &parts[..])
     };
     if stop_parts.len() < 2 {
         return Err(parse_warning(
@@ -3118,16 +4291,50 @@ fn parse_radial_gradient(
     }
     let mut stops = Vec::with_capacity(stop_parts.len());
     for part in stop_parts {
-        stops.push(parse_gradient_stop(part, variables)?);
+        stops.extend(parse_gradient_stops(part, variables)?);
     }
-    Ok(DgRadialGradient { stops })
+    Ok(DgRadialGradient {
+        stops,
+        repeating,
+        center,
+    })
 }
 
-fn is_supported_radial_gradient_shape(value: &str) -> bool {
-    matches!(
-        value.trim().to_ascii_lowercase().as_str(),
-        "circle" | "circle at center"
-    )
+fn parse_radial_gradient_shape(value: &str) -> Option<[f32; 2]> {
+    let value = value.trim().to_ascii_lowercase();
+    if value == "circle" {
+        return Some([0.5, 0.5]);
+    }
+    if let Some(position) = value.strip_prefix("circle at ") {
+        return parse_radial_gradient_center(position);
+    }
+    if let Some(position) = value.strip_prefix("at ") {
+        return parse_radial_gradient_center(position);
+    }
+    None
+}
+
+fn parse_radial_gradient_center(value: &str) -> Option<[f32; 2]> {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("center") {
+        return Some([0.5, 0.5]);
+    }
+    let tokens = split_value_tokens(value);
+    match tokens.as_slice() {
+        [single] => parse_radial_center_axis(single).map(|axis| [axis, 0.5]),
+        [x, y] => Some([parse_radial_center_axis(x)?, parse_radial_center_axis(y)?]),
+        _ => None,
+    }
+}
+
+fn parse_radial_center_axis(value: &str) -> Option<f32> {
+    let value = value.trim().to_ascii_lowercase();
+    match value.as_str() {
+        "left" | "top" => Some(0.0),
+        "center" => Some(0.5),
+        "right" | "bottom" => Some(1.0),
+        _ => parse_gradient_stop_position(&value).ok(),
+    }
 }
 
 fn parse_linear_gradient_direction(value: &str) -> Option<f32> {
@@ -3153,21 +4360,33 @@ fn parse_linear_gradient_direction(value: &str) -> Option<f32> {
     }
 }
 
-fn parse_gradient_stop(
+fn parse_gradient_stops(
     value: &str,
     variables: &BTreeMap<String, DgCssValue>,
-) -> Result<DgGradientStop, DgStyleWarning> {
+) -> Result<Vec<DgGradientStop>, DgStyleWarning> {
     let tokens = split_value_tokens(value);
-    if tokens.is_empty() || tokens.len() > 2 {
+    if tokens.is_empty() || tokens.len() > 3 {
         return Err(parse_warning("background", value, "gradient color stop"));
     }
     let color = parse_color_value("background", tokens[0], variables)?;
-    let position = tokens
+    let first_position = tokens
         .get(1)
         .map(|value| parse_gradient_stop_position(value))
         .transpose()
         .map_err(|_| parse_warning("background", value, "gradient stop position"))?;
-    Ok(DgGradientStop { color, position })
+    let mut stops = vec![DgGradientStop {
+        color: color.clone(),
+        position: first_position,
+    }];
+    if let Some(second) = tokens.get(2) {
+        let position = parse_gradient_stop_position(second)
+            .map_err(|_| parse_warning("background", value, "gradient stop position"))?;
+        stops.push(DgGradientStop {
+            color,
+            position: Some(position),
+        });
+    }
+    Ok(stops)
 }
 
 fn parse_gradient_stop_position(value: &str) -> Result<f32, ()> {
@@ -3385,7 +4604,231 @@ fn parse_css_hex_color(value: &str) -> Option<Color> {
     parse_hex_color(value)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ParsedCalcTerm {
+    percent: f32,
+    px: f32,
+}
+
+fn parse_calc_length(
+    value: &str,
+    variables: Option<&BTreeMap<String, DgCssValue>>,
+) -> Option<DgCssLength> {
+    let value = value.trim();
+    let prefix = value.get(..5)?;
+    if !prefix.eq_ignore_ascii_case("calc(") || !value.ends_with(')') {
+        return None;
+    }
+    let inner = value.get(5..value.len() - 1)?.trim();
+    if inner.is_empty() {
+        return None;
+    }
+
+    let mut percent = 0.0;
+    let mut px = 0.0;
+    let mut index = 0;
+    let mut parsed_any = false;
+
+    while index < inner.len() {
+        index = skip_ascii_whitespace(inner, index);
+        let mut sign = 1.0;
+        if let Some((next_index, ch)) = char_at(inner, index) {
+            if ch == '+' || ch == '-' {
+                sign = if ch == '-' { -1.0 } else { 1.0 };
+                index = next_index;
+            }
+        }
+
+        let start = skip_ascii_whitespace(inner, index);
+        index = start;
+        index = calc_term_end(inner, index)?;
+
+        let term = inner.get(start..index)?.trim();
+        if term.is_empty() {
+            return None;
+        }
+        let parsed = parse_calc_term(term, variables)?;
+        percent += sign * parsed.percent;
+        px += sign * parsed.px;
+        parsed_any = true;
+    }
+
+    parsed_any.then_some(DgCssLength::Calc(CalcLength { percent, px }))
+}
+
+fn parse_calc_term(
+    value: &str,
+    variables: Option<&BTreeMap<String, DgCssValue>>,
+) -> Option<ParsedCalcTerm> {
+    if let Some(index) = find_top_level_operator(value, '*') {
+        let left = value.get(..index)?.trim();
+        let right = value.get(index + 1..)?.trim();
+        let left_length = parse_calc_factor_length(left, variables);
+        let right_length = parse_calc_factor_length(right, variables);
+        let left_number = parse_calc_factor_number(left, variables);
+        let right_number = parse_calc_factor_number(right, variables);
+        return match (left_length, right_length, left_number, right_number) {
+            (Some(length), _, None, Some(number)) => Some(scale_calc_term(length, number)),
+            (_, Some(length), Some(number), None) => Some(scale_calc_term(length, number)),
+            _ => None,
+        };
+    }
+
+    if let Some(index) = find_top_level_operator(value, '/') {
+        let left = value.get(..index)?.trim();
+        let right = value.get(index + 1..)?.trim();
+        let length = parse_calc_factor_length(left, variables)?;
+        let number = parse_calc_factor_number(right, variables)?;
+        if number == 0.0 {
+            return None;
+        }
+        return Some(scale_calc_term(length, 1.0 / number));
+    }
+
+    parse_calc_factor_length(value, variables)
+}
+
+fn parse_calc_factor_length(
+    value: &str,
+    variables: Option<&BTreeMap<String, DgCssValue>>,
+) -> Option<ParsedCalcTerm> {
+    let length = if let Some(variables) = variables {
+        match resolve_variable(value, variables) {
+            Some(DgCssValue::Length(length)) => Some(length),
+            Some(DgCssValue::Number(number)) => Some(DgCssLength::LogicalPx(number.0)),
+            Some(DgCssValue::Keyword(keyword)) => parse_simple_length(&keyword.0),
+            Some(DgCssValue::String(value)) => parse_simple_length(&value),
+            Some(DgCssValue::Color(_)) => None,
+            None => parse_simple_length(value),
+        }
+    } else {
+        parse_simple_length(value)
+    }?;
+
+    match length {
+        DgCssLength::LogicalPx(value) => Some(ParsedCalcTerm {
+            percent: 0.0,
+            px: value,
+        }),
+        DgCssLength::Percent(value) => Some(ParsedCalcTerm {
+            percent: value,
+            px: 0.0,
+        }),
+        DgCssLength::Em(_) | DgCssLength::Calc(_) | DgCssLength::Auto => None,
+    }
+}
+
+fn parse_calc_factor_number(
+    value: &str,
+    variables: Option<&BTreeMap<String, DgCssValue>>,
+) -> Option<f32> {
+    if let Some(variables) = variables {
+        match resolve_variable(value, variables) {
+            Some(DgCssValue::Number(number)) => return Some(number.0),
+            Some(DgCssValue::Keyword(keyword)) => return keyword.0.trim().parse().ok(),
+            Some(DgCssValue::String(value)) => return value.trim().parse().ok(),
+            Some(DgCssValue::Length(_) | DgCssValue::Color(_)) => return None,
+            None => {}
+        }
+    }
+    value.trim().parse().ok()
+}
+
+fn scale_calc_term(value: ParsedCalcTerm, scale: f32) -> ParsedCalcTerm {
+    ParsedCalcTerm {
+        percent: value.percent * scale,
+        px: value.px * scale,
+    }
+}
+
+fn find_top_level_operator(value: &str, operator: char) -> Option<usize> {
+    let mut previous_was_exponent = false;
+    let mut paren_depth = 0usize;
+    let mut quote: Option<char> = None;
+    for (index, ch) in value.char_indices() {
+        if let Some(quote_ch) = quote {
+            if ch == quote_ch {
+                quote = None;
+            }
+            previous_was_exponent = false;
+            continue;
+        }
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            '(' => paren_depth = paren_depth.saturating_add(1),
+            ')' => paren_depth = paren_depth.saturating_sub(1),
+            _ => {
+                if ch == operator && paren_depth == 0 && !previous_was_exponent {
+                    return Some(index);
+                }
+            }
+        }
+        previous_was_exponent = ch == 'e' || ch == 'E';
+    }
+    None
+}
+
+fn calc_term_end(value: &str, mut index: usize) -> Option<usize> {
+    let mut paren_depth = 0usize;
+    let mut quote: Option<char> = None;
+    while let Some((next_index, ch)) = char_at(value, index) {
+        if let Some(quote_ch) = quote {
+            if ch == quote_ch {
+                quote = None;
+            }
+            index = next_index;
+            continue;
+        }
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            '(' => paren_depth = paren_depth.saturating_add(1),
+            ')' => paren_depth = paren_depth.checked_sub(1)?,
+            '+' | '-' if paren_depth == 0 && !is_exponent_sign(value, index) => break,
+            _ => {}
+        }
+        index = next_index;
+    }
+    (quote.is_none() && paren_depth == 0).then_some(index)
+}
+
+fn skip_ascii_whitespace(value: &str, mut index: usize) -> usize {
+    while let Some((next_index, ch)) = char_at(value, index) {
+        if !ch.is_ascii_whitespace() {
+            break;
+        }
+        index = next_index;
+    }
+    index
+}
+
+fn char_at(value: &str, index: usize) -> Option<(usize, char)> {
+    let ch = value.get(index..)?.chars().next()?;
+    Some((index + ch.len_utf8(), ch))
+}
+
+fn is_exponent_sign(value: &str, index: usize) -> bool {
+    value
+        .get(..index)
+        .and_then(|prefix| prefix.chars().next_back())
+        .is_some_and(|ch| ch == 'e' || ch == 'E')
+}
+
 fn parse_length(value: &str) -> Option<DgCssLength> {
+    parse_length_with_variables(value, None)
+}
+
+fn parse_length_with_variables(
+    value: &str,
+    variables: Option<&BTreeMap<String, DgCssValue>>,
+) -> Option<DgCssLength> {
+    let value = value.trim();
+    if let Some(calc) = parse_calc_length(value, variables) {
+        return Some(calc);
+    }
+    parse_simple_length(value)
+}
+
+fn parse_simple_length(value: &str) -> Option<DgCssLength> {
     let value = value.trim();
     if value.eq_ignore_ascii_case("auto") {
         return Some(DgCssLength::Auto);
@@ -3618,6 +5061,10 @@ mod tests {
                 "box-shadow",
                 DgStylePropertyName::Visual(DgVisualPropertyName::BoxShadow),
             ),
+            (
+                "transform",
+                DgStylePropertyName::Visual(DgVisualPropertyName::Transform),
+            ),
             ("border", DgStylePropertyName::BorderShorthand),
             (
                 "color",
@@ -3646,6 +5093,26 @@ mod tests {
             (
                 "text-overflow",
                 DgStylePropertyName::Text(DgTextPropertyName::TextOverflow),
+            ),
+            (
+                "transition",
+                DgStylePropertyName::Transition(DgTransitionPropertyName::Transition),
+            ),
+            (
+                "transition-property",
+                DgStylePropertyName::Transition(DgTransitionPropertyName::Property),
+            ),
+            (
+                "transition-duration",
+                DgStylePropertyName::Transition(DgTransitionPropertyName::Duration),
+            ),
+            (
+                "transition-timing-function",
+                DgStylePropertyName::Transition(DgTransitionPropertyName::TimingFunction),
+            ),
+            (
+                "transition-delay",
+                DgStylePropertyName::Transition(DgTransitionPropertyName::Delay),
             ),
             (
                 "table-row-height",
@@ -3969,6 +5436,100 @@ mod tests {
     }
 
     #[test]
+    fn selector_matching_supports_not_is_and_where_functions() {
+        let classes = ["primary"];
+        let element = StyleElement {
+            id: "run",
+            key: None,
+            classes: &classes,
+            kind: WidgetKind::Button,
+            ancestors: &[],
+            pseudo: &[],
+            sibling_index: Some(1),
+            sibling_count: Some(3),
+        };
+        let not_ghost = DgSelector::Compound(
+            DgCompoundSelector::new()
+                .with_type(WidgetKind::Button)
+                .with_function(DgSelectorFunction {
+                    kind: DgSelectorFunctionKind::Not,
+                    selectors: vec![DgCompoundSelector::new().with_class("ghost")],
+                }),
+        );
+        let is_button_or_label =
+            DgSelector::Compound(DgCompoundSelector::new().with_function(DgSelectorFunction {
+                kind: DgSelectorFunctionKind::Is,
+                selectors: vec![
+                    DgCompoundSelector::new().with_type(WidgetKind::Button),
+                    DgCompoundSelector::new().with_type(WidgetKind::Label),
+                ],
+            }));
+        let where_primary =
+            DgSelector::Compound(DgCompoundSelector::new().with_function(DgSelectorFunction {
+                kind: DgSelectorFunctionKind::Where,
+                selectors: vec![DgCompoundSelector::new().with_class("primary")],
+            }));
+
+        assert!(not_ghost.matches(&element));
+        assert!(is_button_or_label.matches(&element));
+        assert!(where_primary.matches(&element));
+        assert_eq!(not_ghost.specificity(), Specificity::new(0, 1, 1));
+        assert_eq!(is_button_or_label.specificity(), Specificity::new(0, 0, 1));
+        assert_eq!(where_primary.specificity(), Specificity::ZERO);
+    }
+
+    #[test]
+    fn selector_matching_supports_dynamic_pseudos_in_functions() {
+        let classes = ["primary"];
+        let base = StyleElement {
+            id: "run",
+            key: None,
+            classes: &classes,
+            kind: WidgetKind::Button,
+            ancestors: &[],
+            pseudo: &[],
+            sibling_index: None,
+            sibling_count: None,
+        };
+        let hover_pseudos = [DgPseudoClass::Hover];
+        let hover = StyleElement {
+            pseudo: &hover_pseudos,
+            ..base
+        };
+        let disabled_pseudos = [DgPseudoClass::Disabled];
+        let disabled = StyleElement {
+            pseudo: &disabled_pseudos,
+            ..base
+        };
+        let not_disabled = DgSelector::Compound(
+            DgCompoundSelector::new()
+                .with_type(WidgetKind::Button)
+                .with_function(DgSelectorFunction {
+                    kind: DgSelectorFunctionKind::Not,
+                    selectors: vec![DgCompoundSelector::new().with_pseudo(DgPseudoClass::Disabled)],
+                }),
+        );
+        let is_hover_or_focus =
+            DgSelector::Compound(DgCompoundSelector::new().with_function(DgSelectorFunction {
+                kind: DgSelectorFunctionKind::Is,
+                selectors: vec![
+                    DgCompoundSelector::new().with_pseudo(DgPseudoClass::Hover),
+                    DgCompoundSelector::new().with_pseudo(DgPseudoClass::Focus),
+                ],
+            }));
+
+        assert!(not_disabled.matches(&base));
+        assert!(not_disabled.matches(&hover));
+        assert!(!not_disabled.matches(&disabled));
+        assert!(!is_hover_or_focus.matches(&base));
+        assert!(is_hover_or_focus.matches(&hover));
+        assert_eq!(
+            selector_match_slots(&is_hover_or_focus, &base),
+            vec![Some(DgPseudoClass::Hover), Some(DgPseudoClass::Focus)]
+        );
+    }
+
+    #[test]
     fn matched_rule_labels_reports_selectors_per_widget() {
         let tree = crate::document::parse_widget_node(&serde_json::json!({
             "id": "root",
@@ -4047,12 +5608,14 @@ mod tests {
             Panel Button[key="primary-action"] { color: white; }
             Window > Panel.controls > HLayout.toolbar > Button.primary { background: accent; }
             Panel > Button:nth-child(even) { border-color: accent; }
+            Panel > :is(Button, Label).callout:not(.muted) { color: accent; }
+            :where(.quiet, [key="secondary-action"]) { opacity: 0.8; }
             "#,
             StylesheetOrigin::User,
         )
         .unwrap();
 
-        assert_eq!(parsed.rules.len(), 3);
+        assert_eq!(parsed.rules.len(), 5);
         assert_eq!(
             parsed.rules[0].selector.label(),
             "Panel Button[key=\"primary-action\"]"
@@ -4077,6 +5640,19 @@ mod tests {
             parsed.rules[2].selector.specificity(),
             Specificity::new(0, 1, 2)
         );
+        assert_eq!(
+            parsed.rules[3].selector.label(),
+            "Panel > .callout:is(Button, Label):not(.muted)"
+        );
+        assert_eq!(
+            parsed.rules[3].selector.specificity(),
+            Specificity::new(0, 2, 2)
+        );
+        assert_eq!(
+            parsed.rules[4].selector.label(),
+            ":where(.quiet, [key=\"secondary-action\"])"
+        );
+        assert_eq!(parsed.rules[4].selector.specificity(), Specificity::ZERO);
     }
 
     #[test]
@@ -4147,6 +5723,71 @@ mod tests {
             second.style.visual.background,
             Some(ColorRef::Token("danger".to_string()))
         );
+    }
+
+    #[test]
+    fn stylesheet_cascade_applies_selector_functions() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "panel",
+                "type": "panel",
+                "children": [
+                    {"id": "run", "type": "button", "class": "callout", "props": {"text": "Run"}},
+                    {"id": "ghost", "type": "button", "class": "ghost callout", "props": {"text": "Ghost"}},
+                    {"id": "note", "type": "label", "class": "callout quiet", "props": {"text": "Note"}}
+                ]
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Button:not(.ghost) { background: accent; }
+                :is(Button, Label).callout { color: white; }
+                :where(.quiet) { border-radius: 9px; }
+                Button:is(:hover, :focus) { border-color: accent; }
+                Button:not(:disabled) { border-width: 2px; }
+                "#,
+            )
+            .unwrap();
+
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+        let panel = &tree.children[0];
+        let run = &panel.children[0];
+        let ghost = &panel.children[1];
+        let note = &panel.children[2];
+
+        assert_eq!(
+            run.style.visual.background,
+            Some(ColorRef::Token("accent".to_string()))
+        );
+        assert_ne!(
+            ghost.style.visual.background,
+            Some(ColorRef::Token("accent".to_string()))
+        );
+        assert_eq!(
+            run.style.text.color,
+            Some(ColorRef::Rgba([1.0, 1.0, 1.0, 1.0]))
+        );
+        assert_eq!(
+            note.style.text.color,
+            Some(ColorRef::Rgba([1.0, 1.0, 1.0, 1.0]))
+        );
+        assert_eq!(note.style.visual.border_radius, Some(9.0));
+        assert_eq!(
+            run.style.hover.border_color,
+            Some(ColorRef::Token("accent".to_string()))
+        );
+        assert_eq!(
+            run.style.focus.border_color,
+            Some(ColorRef::Token("accent".to_string()))
+        );
+        assert_eq!(run.style.visual.border_width, Some(2.0));
+        assert_ne!(run.style.disabled.border_width, Some(2.0));
     }
 
     #[test]
@@ -4451,7 +6092,7 @@ mod tests {
     #[test]
     fn unsupported_css_lengths_are_reported_as_warnings() {
         let parsed = parse_stylesheet(
-            "Button { width: 50%; height: auto; border-radius: 4px; }",
+            "Button { letter-spacing: 50%; border-radius: 50%; }",
             StylesheetOrigin::User,
         )
         .unwrap();
@@ -4459,20 +6100,320 @@ mod tests {
         assert!(parsed
             .warnings
             .iter()
-            .any(|warning| warning.property == "width"
-                && warning.message.contains("percentage lengths")));
+            .any(|warning| warning.property == "letter-spacing"
+                && warning.message.contains("px or em length")));
         assert!(parsed
             .warnings
             .iter()
-            .any(|warning| warning.property == "height" && warning.message.contains("auto")));
+            .any(|warning| warning.property == "border-radius"
+                && warning.message.contains("percentage lengths")));
+    }
+
+    #[test]
+    fn layout_percent_and_auto_lengths_parse_without_warning() {
+        let parsed = parse_stylesheet(
+            "Panel { width: 50%; height: auto; min-width: 25%; max-height: 100%; }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
         assert!(parsed.rules[0].declarations.iter().any(|declaration| {
             matches!(
                 declaration.property,
-                DgStyleProperty::Visual(DgVisualDeclaration::BorderRadius(DgCssLength::LogicalPx(
-                    4.0
+                DgStyleProperty::Layout(DgLayoutDeclaration::Width(DgCssLength::Percent(50.0)))
+            )
+        }));
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::Height(DgCssLength::Auto))
+            )
+        }));
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::MaxHeight(DgCssLength::Percent(
+                    100.0
                 )))
             )
         }));
+    }
+
+    #[test]
+    fn layout_calc_lengths_parse_for_single_unit_expressions() {
+        let parsed = parse_stylesheet(
+            "Panel { width: calc(20% + 30%); min-width: calc(220px + 40px); height: calc(80px * 2); max-height: calc(100% / 2); }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::Width(DgCssLength::Calc(
+                    CalcLength {
+                        percent: 50.0,
+                        px: 0.0
+                    }
+                ))) | DgStyleProperty::Layout(DgLayoutDeclaration::Width(DgCssLength::Percent(
+                    50.0
+                )))
+            )
+        }));
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::MinWidth(DgCssLength::Calc(
+                    CalcLength {
+                        percent: 0.0,
+                        px: 260.0
+                    }
+                ))) | DgStyleProperty::Layout(DgLayoutDeclaration::MinWidth(
+                    DgCssLength::LogicalPx(260.0)
+                ))
+            )
+        }));
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::Height(DgCssLength::Calc(
+                    CalcLength {
+                        percent: 0.0,
+                        px: 160.0
+                    }
+                ))) | DgStyleProperty::Layout(DgLayoutDeclaration::Height(DgCssLength::LogicalPx(
+                    160.0
+                )))
+            )
+        }));
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::MaxHeight(DgCssLength::Calc(
+                    CalcLength {
+                        percent: 50.0,
+                        px: 0.0
+                    }
+                ))) | DgStyleProperty::Layout(DgLayoutDeclaration::MaxHeight(
+                    DgCssLength::Percent(50.0)
+                ))
+            )
+        }));
+    }
+
+    #[test]
+    fn layout_calc_lengths_can_use_variables() {
+        let parsed = parse_stylesheet(
+            ":root { --sidebar: 240px; --scale: 2; --fallback-side: 32px; } Panel { width: calc(100% - var(--sidebar)); min-width: calc(var(--missing, 220px) + 40px); height: calc(var(--fallback-side) * var(--scale)); }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::Width(DgCssLength::Calc(
+                    CalcLength {
+                        percent: 100.0,
+                        px: -240.0
+                    }
+                )))
+            )
+        }));
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::MinWidth(DgCssLength::Calc(
+                    CalcLength {
+                        percent: 0.0,
+                        px: 260.0
+                    }
+                ))) | DgStyleProperty::Layout(DgLayoutDeclaration::MinWidth(
+                    DgCssLength::LogicalPx(260.0)
+                ))
+            )
+        }));
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::Height(DgCssLength::Calc(
+                    CalcLength {
+                        percent: 0.0,
+                        px: 64.0
+                    }
+                ))) | DgStyleProperty::Layout(DgLayoutDeclaration::Height(DgCssLength::LogicalPx(
+                    64.0
+                )))
+            )
+        }));
+    }
+
+    #[test]
+    fn mixed_calc_layout_lengths_parse_for_sizing_properties() {
+        let parsed = parse_stylesheet(
+            "Panel { width: calc(100% - 240px); border-radius: calc(50% + 2px); }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(!parsed
+            .warnings
+            .iter()
+            .any(|warning| warning.property == "width"));
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::Width(DgCssLength::Calc(
+                    CalcLength {
+                        percent: 100.0,
+                        px: -240.0
+                    }
+                )))
+            )
+        }));
+        assert!(parsed
+            .warnings
+            .iter()
+            .any(|warning| warning.property == "border-radius"
+                && warning
+                    .message
+                    .contains("calc() lengths are only supported")));
+    }
+
+    #[test]
+    fn grid_layout_properties_parse() {
+        let parsed = parse_stylesheet(
+            "Panel.dashboard { display: grid; grid-template-columns: 180px 1fr 2fr; grid-template-rows: auto 48px; column-gap: 10px; row-gap: 12px; } Panel.sidebar { grid-column: 1; grid-row: 1 / span 2; }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.warnings.is_empty());
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::Display(DgCssKeyword(ref value)))
+                    if value == "grid"
+            )
+        }));
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::GridTemplateColumns(ref tracks))
+                    if tracks == &vec![
+                        DgGridTrackSize::LogicalPx(180.0),
+                        DgGridTrackSize::Fraction(1.0),
+                        DgGridTrackSize::Fraction(2.0),
+                    ]
+            )
+        }));
+        assert!(parsed.rules[1].declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::GridRow(DgGridPlacement {
+                    start: DgGridLine::Line(1),
+                    end: DgGridLine::Span(2),
+                }))
+            )
+        }));
+    }
+
+    #[test]
+    fn grid_repeat_expands_small_count() {
+        let parsed = parse_stylesheet(
+            "Panel { display: grid; grid-template-columns: repeat(2, 1fr 80px); }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.warnings.is_empty());
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::GridTemplateColumns(ref tracks))
+                    if tracks == &vec![
+                        DgGridTrackSize::Fraction(1.0),
+                        DgGridTrackSize::LogicalPx(80.0),
+                        DgGridTrackSize::Fraction(1.0),
+                        DgGridTrackSize::LogicalPx(80.0),
+                    ]
+            )
+        }));
+    }
+
+    #[test]
+    fn overflow_properties_parse_and_validate() {
+        let parsed = parse_stylesheet(
+            "Panel { overflow: auto; overflow-x: visible; overflow-y: hidden; } Panel.bad { overflow: banana; }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::Overflow(DgCssKeyword(ref value)))
+                    if value == "auto"
+            )
+        }));
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::OverflowX(DgCssKeyword(ref value)))
+                    if value == "visible"
+            )
+        }));
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::OverflowY(DgCssKeyword(ref value)))
+                    if value == "hidden"
+            )
+        }));
+        assert!(parsed
+            .warnings
+            .iter()
+            .any(|warning| warning.property == "overflow"
+                && warning.message.contains("overflow value")));
+    }
+
+    #[test]
+    fn position_properties_parse_and_validate() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [
+                {"id": "badge", "type": "badge", "class": "float", "props": {"text": "Offset"}},
+                {"id": "pin", "type": "badge", "class": "pin", "props": {"text": "Pinned"}}
+            ]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+            "Badge.float { position: relative; top: -6px; left: 8px; z-index: 3; } Badge.pin { position: absolute; top: 8px; right: 10px; } Badge.bad { position: fixed; }",
+            )
+            .unwrap();
+
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+        let badge = &tree.children[0];
+        assert_eq!(badge.style.layout.position, Some(PositionStyle::Relative));
+        assert_eq!(badge.style.layout.top, Some(-6.0));
+        assert_eq!(badge.style.layout.left, Some(8.0));
+        assert_eq!(badge.style.layout.z_index, Some(3));
+        let pin = &tree.children[1];
+        assert_eq!(pin.style.layout.position, Some(PositionStyle::Absolute));
+        assert_eq!(pin.style.layout.top, Some(8.0));
+        assert_eq!(pin.style.layout.right, Some(10.0));
+        assert!(store
+            .warnings()
+            .iter()
+            .any(|warning| warning.property == "position"
+                && warning.message.contains("position value")));
     }
 
     #[test]
@@ -4701,7 +6642,7 @@ mod tests {
     #[test]
     fn radial_gradient_background_parses_to_background_paint() {
         let parsed = parse_stylesheet(
-            "Panel.hero { background: radial-gradient(circle, rgba(255, 255, 255, 0.25), transparent); }",
+            "Panel.hero { background: radial-gradient(circle at 20% 35%, rgba(255, 255, 255, 0.25), transparent); }",
             StylesheetOrigin::User,
         )
         .unwrap();
@@ -4716,6 +6657,7 @@ mod tests {
                 _ => None,
             })
             .expect("radial gradient background paint");
+        assert_eq!(gradient.center, [0.2, 0.35]);
         assert_eq!(gradient.stops.len(), 2);
         assert!(matches!(
             gradient.stops[0].color,
@@ -4725,6 +6667,182 @@ mod tests {
             gradient.stops[1].color,
             DgCssColor::Rgba(color) if color[3].abs() < 0.001
         ));
+    }
+
+    #[test]
+    fn repeating_gradients_parse_to_background_paint() {
+        let parsed = parse_stylesheet(
+            "Panel.a { background: repeating-linear-gradient(90deg, #ff0000 0%, #ff0000 8%, transparent 8%, transparent 16%); } Panel.b { background: repeating-radial-gradient(circle, rgba(255,255,255,0.2) 0%, transparent 20%); }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        let linear = parsed.rules[0]
+            .declarations
+            .iter()
+            .find_map(|declaration| match &declaration.property {
+                DgStyleProperty::Visual(DgVisualDeclaration::BackgroundPaint(
+                    DgBackgroundPaint::LinearGradient(gradient),
+                )) => Some(gradient),
+                _ => None,
+            })
+            .expect("repeating linear gradient");
+        assert!(linear.repeating);
+        assert_eq!(linear.stops.len(), 4);
+
+        let radial = parsed.rules[1]
+            .declarations
+            .iter()
+            .find_map(|declaration| match &declaration.property {
+                DgStyleProperty::Visual(DgVisualDeclaration::BackgroundPaint(
+                    DgBackgroundPaint::RadialGradient(gradient),
+                )) => Some(gradient),
+                _ => None,
+            })
+            .expect("repeating radial gradient");
+        assert!(radial.repeating);
+        assert_eq!(radial.stops.len(), 2);
+    }
+
+    #[test]
+    fn layered_gradient_background_parses_to_background_paint() {
+        let parsed = parse_stylesheet(
+            "Panel.hero { background: radial-gradient(circle at 22% 18%, rgba(255,255,255,0.18) 0%, transparent 55%), linear-gradient(135deg, #172235 0%, #0f1724 100%); }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        let layers = parsed.rules[0]
+            .declarations
+            .iter()
+            .find_map(|declaration| match &declaration.property {
+                DgStyleProperty::Visual(DgVisualDeclaration::BackgroundPaint(
+                    DgBackgroundPaint::Layers(layers),
+                )) => Some(layers),
+                _ => None,
+            })
+            .expect("layered gradient background");
+        assert_eq!(layers.len(), 2);
+        assert!(matches!(
+            layers[0],
+            DgBackgroundPaint::RadialGradient(DgRadialGradient {
+                center: [0.22, 0.18],
+                ..
+            })
+        ));
+        assert!(matches!(layers[1], DgBackgroundPaint::LinearGradient(_)));
+    }
+
+    #[test]
+    fn background_noise_parses_and_clamps_to_visual_style() {
+        let parsed = parse_stylesheet(
+            "Panel.hero { background-noise: 0.035; } Panel.loud { background-noise: 1; }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+
+        let mut hero = NodeStyle::default();
+        apply_property_to_style(&mut hero, &parsed.rules[0].declarations[0].property);
+        assert_eq!(hero.visual.background_noise, Some(0.035));
+
+        let mut loud = NodeStyle::default();
+        apply_property_to_style(&mut loud, &parsed.rules[1].declarations[0].property);
+        assert_eq!(loud.visual.background_noise, Some(0.25));
+    }
+
+    #[test]
+    fn transition_declarations_parse_to_transition_style() {
+        let parsed = parse_stylesheet(
+            r#"
+            Button {
+                transition-property: background, border-color;
+                transition-duration: 180ms;
+                transition-timing-function: ease-out;
+                transition-delay: 25ms;
+            }
+            "#,
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+        let mut style = NodeStyle::default();
+        for declaration in &parsed.rules[0].declarations {
+            apply_property_to_style(&mut style, &declaration.property);
+        }
+
+        assert_eq!(
+            style.transition.properties,
+            Some(vec![
+                TransitionProperty::Background,
+                TransitionProperty::BorderColor,
+            ])
+        );
+        assert_eq!(style.transition.duration_ms, Some(180));
+        assert_eq!(style.transition.delay_ms, Some(25));
+        assert_eq!(
+            style.transition.timing_function,
+            Some(TransitionTimingFunction::EaseOut)
+        );
+    }
+
+    #[test]
+    fn transition_shorthand_parses_first_transition_item() {
+        let parsed = parse_stylesheet(
+            "Button { transition: background 0.2s ease-in-out 50ms; }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+        let mut style = NodeStyle::default();
+        apply_property_to_style(&mut style, &parsed.rules[0].declarations[0].property);
+
+        assert_eq!(
+            style.transition.properties,
+            Some(vec![TransitionProperty::Background])
+        );
+        assert_eq!(style.transition.duration_ms, Some(200));
+        assert_eq!(style.transition.delay_ms, Some(50));
+        assert_eq!(
+            style.transition.timing_function,
+            Some(TransitionTimingFunction::EaseInOut)
+        );
+    }
+
+    #[test]
+    fn transition_property_rejects_unknown_names() {
+        let parsed = parse_stylesheet(
+            "Button { transition-property: background, grid-template-columns; }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed
+            .rules
+            .first()
+            .is_none_or(|rule| rule.declarations.is_empty()));
+        assert!(parsed
+            .warnings
+            .iter()
+            .any(|warning| warning.property == "transition-property"));
+    }
+
+    #[test]
+    fn transform_declaration_parses_to_visual_style() {
+        let parsed = parse_stylesheet(
+            "Button:hover { transform: translateY(-2px) scale(1.02) rotate(1deg); }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+        let mut style = NodeStyle::default();
+        apply_property_to_style(&mut style, &parsed.rules[0].declarations[0].property);
+
+        let transform = style.visual.transform.expect("transform declaration");
+        assert_eq!(transform.translate_y, -2.0);
+        assert_eq!(transform.scale_x, 1.02);
+        assert_eq!(transform.scale_y, 1.02);
+        assert_eq!(transform.rotate_deg, 1.0);
     }
 
     #[test]
@@ -4921,6 +7039,10 @@ mod tests {
         let button = &tree.children[0].children[0];
 
         assert_eq!(button.style.layout.width, Some(120.0));
+        assert_eq!(
+            button.style.layout.width_value,
+            Some(LayoutLength::LogicalPx(120.0))
+        );
         assert_eq!(button.style.visual.border_width, Some(2.0));
         assert_eq!(
             button.style.visual.background,

@@ -23,9 +23,9 @@ use crate::style::{
     collapsible_header_height_for_style, expanded_part_style_for_state,
     number_stepper_width_for_style, open_part_style_for_state, selected_part_style_for_state,
     state_part_style_for_state, uniform_layout_padding, FontFamily, FontStyle, FontVariantNumeric,
-    LineHeight, NodeStyle, TextAlign, TextOverflow, TextSpacing, TextStyle, TextTransform,
-    VisualStyle, BADGE_GAP_LP, BORDER_WIDTH_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP,
-    DROPDOWN_CHEVRON_WIDTH_LP, PANEL_ACCENT_WIDTH_LP, TAB_GAP_LP,
+    LineHeight, NodeStyle, PositionStyle, TextAlign, TextOverflow, TextSpacing, TextStyle,
+    TextTransform, TransformStyle, VisualStyle, BADGE_GAP_LP, BORDER_WIDTH_LP, CHECKBOX_BOX_LP,
+    CHECKBOX_LEFT_PAD_LP, DROPDOWN_CHEVRON_WIDTH_LP, PANEL_ACCENT_WIDTH_LP, TAB_GAP_LP,
 };
 use crate::table;
 use crate::theme::Theme;
@@ -388,7 +388,13 @@ fn collect_text(
     let font_size = primary_part_text
         .and_then(|text| text.font_size)
         .map(|font_size| font_size.max(8.0) * sf)
-        .unwrap_or_else(|| text_font_size(node, theme, sf));
+        .unwrap_or_else(|| {
+            if matches!(node.kind, WidgetKind::Badge | WidgetKind::Tag) {
+                badge_font_size_lp(&node.style, theme) * sf
+            } else {
+                text_font_size(node, theme, sf)
+            }
+        });
     let line_height =
         text_line_height_from_styles(primary_part_text, &node.style.text, font_size, theme, sf);
     let font_family = primary_part_text
@@ -423,6 +429,7 @@ fn collect_text(
             | WidgetKind::Tab
             | WidgetKind::NavItem
     );
+    let own_text_start = out.len();
 
     if is_text_widget {
         let mut caret = None;
@@ -528,10 +535,11 @@ fn collect_text(
                     WidgetKind::NumberInput => {
                         let step_w = number_stepper_width_for_style(&node.style, r.w, sf);
                         let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        let text_left = r.x + step_w + pad;
                         (
-                            r.x + pad,
+                            text_left,
                             top,
-                            r.x + pad,
+                            text_left,
                             r.y,
                             r.x + r.w - step_w - pad * 0.5,
                             r.y + r.h,
@@ -758,214 +766,14 @@ fn collect_text(
                 tooltip_overlay,
             );
         }
-
-        if node.kind == WidgetKind::NumberInput {
-            if let Some(r) = layout.rects.get(&node.id) {
-                let Some(node_clip) = layout.visible_rect(&node.id) else {
-                    return;
-                };
-                let step_w = number_stepper_width_for_style(&node.style, r.w, sf);
-                let step_rect = Rect {
-                    x: r.x + r.w - step_w,
-                    y: r.y,
-                    w: step_w,
-                    h: r.h,
-                };
-                let Some(step_clip) = step_rect.intersect(node_clip) else {
-                    return;
-                };
-                if r.w > 0.0
-                    && r.h > 0.0
-                    && !is_obscured_by_overlay(
-                        node,
-                        &step_clip,
-                        open_dropdown,
-                        dropdown_overlay,
-                        menu_overlays,
-                        tooltip_overlay,
-                    )
-                {
-                    let step_x = r.x + r.w - step_w;
-                    let step_left = step_x + BORDER_WIDTH_LP * sf;
-                    let half_h = r.h * 0.5;
-                    let up_color = number_stepper_text_color(node, state, theme, "stepper-up");
-                    let down_color = number_stepper_text_color(node, state, theme, "stepper-down");
-                    push_text_entry(
-                        font_system,
-                        out,
-                        "+",
-                        font_size,
-                        line_height,
-                        font_family,
-                        font_weight,
-                        step_left,
-                        r.y + ((half_h - line_height) * 0.5).max(0.0),
-                        TextBounds {
-                            left: step_clip.x as i32,
-                            top: step_clip.y as i32,
-                            right: (step_clip.x + step_clip.w) as i32,
-                            bottom: (r.y + half_h).min(step_clip.y + step_clip.h) as i32,
-                        },
-                        up_color,
-                        TextAlign::Center,
-                        cache,
-                        None,
-                        caret_positions,
-                        text_options,
-                    );
-                    push_text_entry(
-                        font_system,
-                        out,
-                        "-",
-                        font_size,
-                        line_height,
-                        font_family,
-                        font_weight,
-                        step_left,
-                        r.y + half_h + ((half_h - line_height) * 0.5).max(0.0),
-                        TextBounds {
-                            left: step_clip.x as i32,
-                            top: (r.y + half_h).max(step_clip.y) as i32,
-                            right: (step_clip.x + step_clip.w) as i32,
-                            bottom: (step_clip.y + step_clip.h) as i32,
-                        },
-                        down_color,
-                        TextAlign::Center,
-                        cache,
-                        None,
-                        caret_positions,
-                        text_options,
-                    );
-                }
-            }
-        }
-
-        if node.kind == WidgetKind::Dropdown {
-            if let Some(r) = layout.rects.get(&node.id) {
-                let Some(node_clip) = layout.visible_rect(&node.id) else {
-                    return;
-                };
-                let chevron_w = dropdown_chevron_width(node, font_size, theme, sf);
-                let chevron_left = r.x + r.w - pad - chevron_w;
-                let chevron_rect = Rect {
-                    x: chevron_left,
-                    y: r.y,
-                    w: chevron_w,
-                    h: r.h,
-                };
-                let Some(chevron_clip) = chevron_rect.intersect(node_clip) else {
-                    return;
-                };
-                if r.w > 0.0
-                    && r.h > 0.0
-                    && !is_obscured_by_overlay(
-                        node,
-                        &chevron_clip,
-                        open_dropdown,
-                        dropdown_overlay,
-                        menu_overlays,
-                        tooltip_overlay,
-                    )
-                {
-                    let color = part_text_color(
-                        node,
-                        state,
-                        theme,
-                        &["chevron"],
-                        glyph_color(theme.muted_text),
-                    );
-                    push_text_entry(
-                        font_system,
-                        out,
-                        "v",
-                        font_size,
-                        line_height,
-                        font_family,
-                        font_weight,
-                        chevron_left,
-                        r.y + ((r.h - line_height) * 0.5).max(0.0),
-                        TextBounds {
-                            left: chevron_clip.x as i32,
-                            top: chevron_clip.y as i32,
-                            right: (chevron_clip.x + chevron_clip.w) as i32,
-                            bottom: (chevron_clip.y + chevron_clip.h) as i32,
-                        },
-                        color,
-                        TextAlign::Center,
-                        cache,
-                        None,
-                        caret_positions,
-                        text_options,
-                    );
-                }
-            }
-        }
-
-        if node.kind == WidgetKind::Collapsible {
-            if let Some(r) = layout.rects.get(&node.id) {
-                let Some(node_clip) = layout.visible_rect(&node.id) else {
-                    return;
-                };
-                let header_h = collapsible_header_height_for_style(&node.style, theme, sf).min(r.h);
-                let indicator_w = node
-                    .style
-                    .parts
-                    .parts
-                    .get("indicator")
-                    .and_then(|part| part.layout.width)
-                    .unwrap_or(16.0)
-                    .max(1.0)
-                    * sf;
-                let indicator_rect = Rect {
-                    x: r.x + pad,
-                    y: r.y,
-                    w: indicator_w,
-                    h: header_h,
-                };
-                let Some(indicator_clip) = indicator_rect.intersect(node_clip) else {
-                    return;
-                };
-                if r.w > 0.0 && header_h > 0.0 {
-                    let color = part_text_color(
-                        node,
-                        state,
-                        theme,
-                        &["indicator"],
-                        glyph_color(theme.muted_text),
-                    );
-                    push_text_entry(
-                        font_system,
-                        out,
-                        if state.is_expanded(&node.id) {
-                            "v"
-                        } else {
-                            ">"
-                        },
-                        font_size,
-                        line_height,
-                        font_family,
-                        font_weight,
-                        indicator_rect.x,
-                        r.y + ((header_h - line_height) * 0.5).max(0.0),
-                        TextBounds {
-                            left: indicator_clip.x as i32,
-                            top: indicator_clip.y as i32,
-                            right: (indicator_clip.x + indicator_clip.w) as i32,
-                            bottom: (indicator_clip.y + indicator_clip.h) as i32,
-                        },
-                        color,
-                        TextAlign::Center,
-                        cache,
-                        None,
-                        caret_positions,
-                        text_options,
-                    );
-                }
-            }
-        }
+        apply_translate_to_text_entries(
+            &mut out[own_text_start..],
+            visual_transform_for_text(node, state),
+            sf,
+        );
     }
 
-    for child in &node.children {
+    for (_, child) in stacking_children(node) {
         collect_text(
             child,
             layout,
@@ -1261,6 +1069,56 @@ fn state_visual_for(node: &WidgetNode, state: &WidgetState) -> Option<VisualStyl
     changed.then_some(visual)
 }
 
+fn visual_transform_for_text(node: &WidgetNode, state: &WidgetState) -> Option<TransformStyle> {
+    let mut visual = node.style.visual.clone();
+    if let Some(state_visual) = state_visual_for(node, state) {
+        visual = visual.merged(&state_visual);
+    }
+    paint_transform_for_text(node, visual.transform)
+}
+
+fn paint_transform_for_text(
+    node: &WidgetNode,
+    visual_transform: Option<TransformStyle>,
+) -> Option<TransformStyle> {
+    let mut transform = visual_transform.unwrap_or_default();
+    if node.style.layout.position == Some(PositionStyle::Relative) {
+        transform.translate_x += node.style.layout.left.unwrap_or(0.0);
+        transform.translate_x -= node.style.layout.right.unwrap_or(0.0);
+        transform.translate_y += node.style.layout.top.unwrap_or(0.0);
+        transform.translate_y -= node.style.layout.bottom.unwrap_or(0.0);
+    }
+    (!transform.is_identity()).then_some(transform)
+}
+
+fn stacking_children(node: &WidgetNode) -> Vec<(usize, &WidgetNode)> {
+    let mut children: Vec<_> = node.children.iter().enumerate().collect();
+    children.sort_by_key(|(index, child)| (child.style.layout.z_index.unwrap_or(0), *index));
+    children
+}
+
+fn apply_translate_to_text_entries(
+    entries: &mut [TextEntry],
+    transform: Option<TransformStyle>,
+    sf: f32,
+) {
+    let Some(transform) =
+        transform.filter(|transform| transform.translate_x != 0.0 || transform.translate_y != 0.0)
+    else {
+        return;
+    };
+    let dx = transform.translate_x * sf;
+    let dy = transform.translate_y * sf;
+    for entry in entries {
+        entry.left += dx;
+        entry.top += dy;
+        entry.clip.left += dx.round() as i32;
+        entry.clip.right += dx.round() as i32;
+        entry.clip.top += dy.round() as i32;
+        entry.clip.bottom += dy.round() as i32;
+    }
+}
+
 fn node_is_open(node: &WidgetNode, state: &WidgetState) -> bool {
     state.is_open_widget(&node.id)
         || (node.kind == WidgetKind::Modal && node.props.open == Some(true))
@@ -1524,21 +1382,6 @@ fn contrast_glyph_color(bg: [f32; 4]) -> Color {
     }
 }
 
-fn number_stepper_text_color(
-    node: &WidgetNode,
-    state: &WidgetState,
-    theme: &Theme,
-    part: &str,
-) -> Color {
-    part_text_color(
-        node,
-        state,
-        theme,
-        &[part, "stepper"],
-        glyph_color(theme.muted_text),
-    )
-}
-
 fn collect_dropdown_overlay_text(
     node: &WidgetNode,
     layout: &LayoutResult,
@@ -1611,7 +1454,7 @@ fn collect_dropdown_overlay_text(
         }
     }
 
-    for child in &node.children {
+    for (_, child) in stacking_children(node) {
         collect_dropdown_overlay_text(
             child,
             layout,
@@ -1815,7 +1658,7 @@ fn collect_rich_tooltip_text(
     let Some((node, _rect)) = rich_tooltip_target(tree, layout, state) else {
         return;
     };
-    for child in &node.children {
+    for (_, child) in stacking_children(node) {
         collect_text(
             child,
             layout,
@@ -2000,13 +1843,7 @@ fn collect_table_text(
                         .get(col)
                         .map(String::as_str)
                         .unwrap_or("");
-                    let sort_suffix = table::sort_suffix(table_state, col);
-                    let label = if sort_suffix.is_empty() {
-                        std::borrow::Cow::Borrowed(name)
-                    } else {
-                        std::borrow::Cow::Owned(format!("{name}{sort_suffix}"))
-                    };
-                    let bounds = table_text_bounds(
+                    let mut bounds = table_text_bounds(
                         r,
                         Rect {
                             x: col_x,
@@ -2017,6 +1854,13 @@ fn collect_table_text(
                         pad,
                         table_radii,
                     );
+                    if table_state
+                        .sort
+                        .is_some_and(|(sort_col, _)| sort_col == col)
+                    {
+                        let reserve = (DROPDOWN_CHEVRON_WIDTH_LP * sf + pad).ceil() as i32;
+                        bounds.right = (bounds.right - reserve).max(bounds.left + 1);
+                    }
                     let bounds = clamp_text_bounds_bottom(bounds, header_bottom);
                     if !text_bounds_obscured_by_overlay(
                         node,
@@ -2029,7 +1873,7 @@ fn collect_table_text(
                         push_text_entry(
                             font_system,
                             out,
-                            label.as_ref(),
+                            name,
                             header_font_size,
                             header_line_height,
                             header_font_family,
@@ -2163,7 +2007,7 @@ fn collect_table_text(
         }
     }
 
-    for child in &node.children {
+    for (_, child) in stacking_children(node) {
         collect_table_text(
             child,
             layout,

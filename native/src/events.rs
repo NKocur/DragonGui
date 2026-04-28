@@ -101,6 +101,8 @@ pub struct WidgetState {
     pub text_cursor: HashMap<String, usize>,
     /// TextArea vertical scroll offset in physical pixels keyed by widget id.
     pub text_scroll_y: HashMap<String, f32>,
+    /// Scrollable container vertical offset in physical pixels keyed by widget id.
+    pub container_scroll_y: HashMap<String, f32>,
     /// NumberInput widgets whose edited text cannot currently be parsed.
     pub invalid_numbers: HashSet<String>,
     /// Dropdown items keyed by widget id.
@@ -117,6 +119,12 @@ pub struct WidgetState {
     pub focused: Option<String>,
     /// Widget currently under the cursor (interactive widgets only).
     pub hovered: Option<String>,
+    /// Hover animation progress keyed by widget id, where 0.0 is base and 1.0 is hover.
+    pub hover_t: HashMap<String, f32>,
+    /// Open animation progress keyed by widget id, where 0.0 is closed and 1.0 is open.
+    pub open_t: HashMap<String, f32>,
+    /// Selected animation progress keyed by widget id, where 0.0 is unselected and 1.0 is selected.
+    pub selected_t: HashMap<String, f32>,
     /// Widget that received a pointer-down (not yet released).
     pub pressed: Option<String>,
     /// Dropdown whose menu is currently open.
@@ -512,6 +520,32 @@ impl WidgetState {
             return false;
         }
         self.text_scroll_y.insert(id.to_string(), next);
+        true
+    }
+
+    pub fn container_scroll_y(&self, id: &str, max_scroll: f32) -> f32 {
+        self.container_scroll_y
+            .get(id)
+            .copied()
+            .unwrap_or(0.0)
+            .clamp(0.0, max_scroll.max(0.0))
+    }
+
+    pub fn scroll_container(&mut self, id: &str, delta_y: f32, max_scroll: f32) -> bool {
+        let max_scroll = max_scroll.max(0.0);
+        let current = self
+            .container_scroll_y
+            .get(id)
+            .copied()
+            .unwrap_or(0.0)
+            .clamp(0.0, max_scroll);
+        let next = (current + delta_y).clamp(0.0, max_scroll);
+        if (next - current).abs() <= f32::EPSILON {
+            self.container_scroll_y.insert(id.to_string(), next);
+            return false;
+        }
+        self.container_scroll_y.insert(id.to_string(), next);
+        self.close_popups();
         true
     }
 
@@ -1261,8 +1295,8 @@ where
         }
     }
     if accepts_node(tree) {
-        if let Some(r) = layout.rects.get(&tree.id) {
-            if rect_contains(r, pos) {
+        if let Some(r) = layout.visible_rect(&tree.id) {
+            if rect_contains(&r, pos) {
                 return Some((tree.id.clone(), tree.kind.clone()));
             }
         }
@@ -1516,6 +1550,55 @@ mod tests {
         let hit = hit_test_hover(&root, &layout, [30.0, 30.0]);
 
         assert_eq!(hit, Some(("progress".to_string(), WidgetKind::ProgressBar)));
+    }
+
+    #[test]
+    fn hit_test_ignores_clipped_widget_area() {
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "button",
+                WidgetKind::Button,
+                NodeProps::default(),
+                vec![],
+            )],
+        );
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "window".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 200.0,
+                h: 80.0,
+            },
+        );
+        layout.rects.insert(
+            "button".to_string(),
+            Rect {
+                x: 0.0,
+                y: 60.0,
+                w: 120.0,
+                h: 40.0,
+            },
+        );
+        layout.clips.insert(
+            "button".to_string(),
+            Rect {
+                x: 0.0,
+                y: 60.0,
+                w: 120.0,
+                h: 20.0,
+            },
+        );
+
+        assert_eq!(
+            hit_test(&root, &layout, [20.0, 70.0]),
+            Some(("button".to_string(), WidgetKind::Button))
+        );
+        assert_eq!(hit_test(&root, &layout, [20.0, 90.0]), None);
     }
 
     #[test]

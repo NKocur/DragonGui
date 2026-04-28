@@ -1,5 +1,5 @@
 use crate::document::WidgetNode;
-use crate::events::{SortDirection, TableState};
+use crate::events::TableState;
 use crate::layout::Rect;
 use crate::resources::ResourceRegistry;
 use crate::theme::Theme;
@@ -117,14 +117,6 @@ pub fn hit(
     })
 }
 
-pub fn sort_suffix(table: &TableState, col: usize) -> &'static str {
-    match table.sort {
-        Some((sort_col, SortDirection::Asc)) if sort_col == col => " ^",
-        Some((sort_col, SortDirection::Desc)) if sort_col == col => " v",
-        _ => "",
-    }
-}
-
 pub fn placeholder_cell(table: &TableState, row: usize, col: usize) -> String {
     let dtype = table.dtypes.get(col).map(String::as_str).unwrap_or("");
     if dtype.is_empty() {
@@ -157,6 +149,7 @@ pub fn cell_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::events::SortDirection;
 
     #[test]
     fn row_bounds_clamp_partial_rows_to_table_rect() {

@@ -37,7 +37,7 @@ pub(crate) const TAB_INACTIVE_BOTTOM_INSET_LP: f32 = 3.0;
 pub(crate) const TAB_ACTIVE_BAR_LP: f32 = 3.0;
 
 pub(crate) const BADGE_GAP_LP: f32 = 8.0;
-pub(crate) const BADGE_PAD_X_LP: f32 = 6.0;
+pub(crate) const BADGE_PAD_X_LP: f32 = 8.0;
 pub(crate) const BADGE_MIN_HEIGHT_LP: f32 = 16.0;
 
 pub(crate) fn badge_font_size_lp(style: &NodeStyle, theme: &Theme) -> f32 {
@@ -46,6 +46,7 @@ pub(crate) fn badge_font_size_lp(style: &NodeStyle, theme: &Theme) -> f32 {
         .parts
         .get("badge")
         .and_then(|part| part.text.font_size)
+        .or(style.text.font_size)
         .unwrap_or_else(|| (theme.font_size - 2.0).max(10.0))
         .max(8.0)
 }
@@ -70,7 +71,7 @@ pub(crate) fn badge_width_for_text(style: &NodeStyle, badge: &str, theme: &Theme
         return (width_lp.max(1.0) * sf).max(1.0);
     }
     let font_size = badge_font_size_lp(style, theme);
-    let text_w = badge.chars().count() as f32 * font_size * 0.58;
+    let text_w = badge.chars().count() as f32 * font_size * 0.68;
     ((text_w + BADGE_PAD_X_LP * 2.0).max(BADGE_MIN_HEIGHT_LP) * sf).max(1.0)
 }
 
@@ -119,6 +120,7 @@ pub struct NodeStyle {
     pub visual: VisualStyle,
     pub text: TextStyle,
     pub widget: WidgetStyle,
+    pub transition: TransitionStyle,
     pub parts: NodePartStyles,
     pub hover: VisualStyle,
     pub active: VisualStyle,
@@ -131,6 +133,40 @@ pub struct NodeStyle {
     pub selected: VisualStyle,
 }
 
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct TransitionStyle {
+    pub properties: Option<Vec<TransitionProperty>>,
+    pub duration_ms: Option<u64>,
+    pub delay_ms: Option<u64>,
+    pub timing_function: Option<TransitionTimingFunction>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TransitionProperty {
+    All,
+    Background,
+    Foreground,
+    BorderColor,
+    BorderWidth,
+    BorderRadius,
+    Opacity,
+    Color,
+    Accent,
+    TrackColor,
+    ThumbColor,
+    BoxShadow,
+    Transform,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TransitionTimingFunction {
+    Linear,
+    Ease,
+    EaseIn,
+    EaseOut,
+    EaseInOut,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct LayoutStyle {
     pub display: Option<DisplayStyle>,
@@ -141,6 +177,12 @@ pub struct LayoutStyle {
     pub min_height: Option<f32>,
     pub max_width: Option<f32>,
     pub max_height: Option<f32>,
+    pub width_value: Option<LayoutLength>,
+    pub height_value: Option<LayoutLength>,
+    pub min_width_value: Option<LayoutLength>,
+    pub min_height_value: Option<LayoutLength>,
+    pub max_width_value: Option<LayoutLength>,
+    pub max_height_value: Option<LayoutLength>,
     pub padding: Option<f32>,
     pub padding_left: Option<f32>,
     pub padding_right: Option<f32>,
@@ -148,13 +190,43 @@ pub struct LayoutStyle {
     pub padding_bottom: Option<f32>,
     pub margin: Option<f32>,
     pub gap: Option<f32>,
+    pub row_gap: Option<f32>,
+    pub column_gap: Option<f32>,
+    pub overflow: Option<OverflowStyle>,
+    pub overflow_x: Option<OverflowStyle>,
+    pub overflow_y: Option<OverflowStyle>,
+    pub position: Option<PositionStyle>,
+    pub top: Option<f32>,
+    pub right: Option<f32>,
+    pub bottom: Option<f32>,
+    pub left: Option<f32>,
+    pub z_index: Option<i32>,
     pub flex_grow: Option<f32>,
     pub flex_shrink: Option<f32>,
+    pub grid_template_columns: Option<Vec<GridTrackSize>>,
+    pub grid_template_rows: Option<Vec<GridTrackSize>>,
+    pub grid_column: Option<GridPlacementStyle>,
+    pub grid_row: Option<GridPlacementStyle>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct CalcLength {
+    pub percent: f32,
+    pub px: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LayoutLength {
+    LogicalPx(f32),
+    Percent(f32),
+    Calc(CalcLength),
+    Auto,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DisplayStyle {
     Flex,
+    Grid,
     Block,
     None,
 }
@@ -165,6 +237,42 @@ pub enum FlexDirectionStyle {
     Column,
     RowReverse,
     ColumnReverse,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverflowStyle {
+    Visible,
+    Hidden,
+    Scroll,
+    Auto,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PositionStyle {
+    Static,
+    Relative,
+    Absolute,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum GridTrackSize {
+    LogicalPx(f32),
+    Percent(f32),
+    Fraction(f32),
+    Auto,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GridLineStyle {
+    Auto,
+    Line(i16),
+    Span(u16),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GridPlacementStyle {
+    pub start: GridLineStyle,
+    pub end: GridLineStyle,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -180,7 +288,40 @@ pub struct VisualStyle {
     pub track_color: Option<ColorRef>,
     pub thumb_color: Option<ColorRef>,
     pub opacity: Option<f32>,
+    pub background_noise: Option<f32>,
     pub box_shadows: Option<Vec<BoxShadow>>,
+    pub transform: Option<TransformStyle>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TransformStyle {
+    pub translate_x: f32,
+    pub translate_y: f32,
+    pub scale_x: f32,
+    pub scale_y: f32,
+    pub rotate_deg: f32,
+}
+
+impl Default for TransformStyle {
+    fn default() -> Self {
+        Self {
+            translate_x: 0.0,
+            translate_y: 0.0,
+            scale_x: 1.0,
+            scale_y: 1.0,
+            rotate_deg: 0.0,
+        }
+    }
+}
+
+impl TransformStyle {
+    pub fn is_identity(&self) -> bool {
+        self.translate_x == 0.0
+            && self.translate_y == 0.0
+            && self.scale_x == 1.0
+            && self.scale_y == 1.0
+            && self.rotate_deg == 0.0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -188,17 +329,21 @@ pub enum BackgroundPaint {
     Color(ColorRef),
     LinearGradient(LinearGradient),
     RadialGradient(RadialGradient),
+    Layers(Vec<BackgroundPaint>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LinearGradient {
     pub angle_deg: f32,
     pub stops: Vec<GradientStop>,
+    pub repeating: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RadialGradient {
     pub stops: Vec<GradientStop>,
+    pub repeating: bool,
+    pub center: [f32; 2],
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -492,6 +637,7 @@ impl NodeStyle {
         parse_visual(map, &mut style.visual);
         parse_text(map, &mut style.text);
         parse_widget(map, &mut style.widget);
+        parse_transition(map, &mut style.transition);
         parse_parts(map.get("parts"), &mut style.parts);
         style.hover = nested_visual(map.get("hover"));
         style.active = nested_visual(map.get("active"));
@@ -532,10 +678,12 @@ impl VisualStyle {
                 .clone()
                 .or_else(|| self.thumb_color.clone()),
             opacity: other.opacity.or(self.opacity),
+            background_noise: other.background_noise.or(self.background_noise),
             box_shadows: other
                 .box_shadows
                 .clone()
                 .or_else(|| self.box_shadows.clone()),
+            transform: other.transform.or(self.transform),
         }
     }
 }
@@ -594,6 +742,12 @@ fn parse_layout(map: &serde_json::Map<String, Value>, out: &mut LayoutStyle) {
     out.min_height = number(map.get("min_height"));
     out.max_width = number(map.get("max_width"));
     out.max_height = number(map.get("max_height"));
+    out.width_value = out.width.map(LayoutLength::LogicalPx);
+    out.height_value = out.height.map(LayoutLength::LogicalPx);
+    out.min_width_value = out.min_width.map(LayoutLength::LogicalPx);
+    out.min_height_value = out.min_height.map(LayoutLength::LogicalPx);
+    out.max_width_value = out.max_width.map(LayoutLength::LogicalPx);
+    out.max_height_value = out.max_height.map(LayoutLength::LogicalPx);
     out.padding = number(map.get("padding"));
     out.padding_left = number(map.get("padding_left"));
     out.padding_right = number(map.get("padding_right"));
@@ -601,6 +755,19 @@ fn parse_layout(map: &serde_json::Map<String, Value>, out: &mut LayoutStyle) {
     out.padding_bottom = number(map.get("padding_bottom"));
     out.margin = number(map.get("margin"));
     out.gap = number(map.get("gap"));
+    out.row_gap = number(map.get("row_gap")).or_else(|| number(map.get("row-gap")));
+    out.column_gap = number(map.get("column_gap")).or_else(|| number(map.get("column-gap")));
+    out.overflow = text_value(map, "overflow", "overflow").and_then(parse_overflow);
+    out.overflow_x = text_value(map, "overflow_x", "overflow-x").and_then(parse_overflow);
+    out.overflow_y = text_value(map, "overflow_y", "overflow-y").and_then(parse_overflow);
+    out.position = text_value(map, "position", "position").and_then(parse_position);
+    out.top = number(map.get("top"));
+    out.right = number(map.get("right"));
+    out.bottom = number(map.get("bottom"));
+    out.left = number(map.get("left"));
+    out.z_index = number(map.get("z_index"))
+        .or_else(|| number(map.get("z-index")))
+        .map(|value| value.round() as i32);
     out.flex_grow = number(map.get("flex_grow")).or_else(|| number(map.get("flex")));
     out.flex_shrink = number(map.get("flex_shrink"));
 }
@@ -624,7 +791,11 @@ fn parse_visual(map: &serde_json::Map<String, Value>, out: &mut VisualStyle) {
     out.track_color = color_ref(map.get("track_color"));
     out.thumb_color = color_ref(map.get("thumb_color"));
     out.opacity = number(map.get("opacity")).map(|v| v.clamp(0.0, 1.0));
+    out.background_noise = number(map.get("background_noise"))
+        .or_else(|| number(map.get("background-noise")))
+        .map(|v| v.clamp(0.0, 0.25));
     out.box_shadows = value_for_keys(map, "box_shadow", "box-shadow").and_then(parse_box_shadows);
+    out.transform = map.get("transform").and_then(parse_transform_style);
 }
 
 fn parse_text(map: &serde_json::Map<String, Value>, out: &mut TextStyle) {
@@ -656,6 +827,33 @@ fn parse_widget(map: &serde_json::Map<String, Value>, out: &mut WidgetStyle) {
         number(map.get("table_row_height")).or_else(|| number(map.get("table-row-height")));
     out.table_header_height =
         number(map.get("table_header_height")).or_else(|| number(map.get("table-header-height")));
+}
+
+fn parse_transition(map: &serde_json::Map<String, Value>, out: &mut TransitionStyle) {
+    if let Some(duration) = value_for_keys(map, "transition_duration", "transition-duration")
+        .and_then(parse_duration_ms)
+    {
+        out.duration_ms = Some(duration);
+    }
+    if let Some(delay) =
+        value_for_keys(map, "transition_delay", "transition-delay").and_then(parse_duration_ms)
+    {
+        out.delay_ms = Some(delay);
+    }
+    if let Some(timing) = text_value(
+        map,
+        "transition_timing_function",
+        "transition-timing-function",
+    )
+    .and_then(parse_transition_timing_function)
+    {
+        out.timing_function = Some(timing);
+    }
+    if let Some(properties) = value_for_keys(map, "transition_property", "transition-property")
+        .and_then(parse_transition_properties)
+    {
+        out.properties = Some(properties);
+    }
 }
 
 fn parse_parts(value: Option<&Value>, out: &mut NodePartStyles) {
@@ -740,7 +938,9 @@ fn visual_style_is_empty(style: &VisualStyle) -> bool {
         && style.track_color.is_none()
         && style.thumb_color.is_none()
         && style.opacity.is_none()
+        && style.background_noise.is_none()
         && style.box_shadows.is_none()
+        && style.transform.is_none()
 }
 
 fn text_style_is_empty(style: &TextStyle) -> bool {
@@ -867,6 +1067,216 @@ fn parse_box_shadow_object(map: &serde_json::Map<String, Value>) -> Option<BoxSh
     })
 }
 
+fn parse_duration_ms(value: &Value) -> Option<u64> {
+    if let Some(n) = value.as_f64() {
+        return Some(n.max(0.0).round() as u64);
+    }
+    let text = value.as_str()?.trim().to_ascii_lowercase();
+    if let Some(ms) = text.strip_suffix("ms") {
+        return ms
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .map(|v| v.max(0.0).round() as u64);
+    }
+    if let Some(seconds) = text.strip_suffix('s') {
+        return seconds
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .map(|v| (v.max(0.0) * 1000.0).round() as u64);
+    }
+    text.parse::<f32>().ok().map(|v| v.max(0.0).round() as u64)
+}
+
+fn parse_transition_properties(value: &Value) -> Option<Vec<TransitionProperty>> {
+    match value {
+        Value::String(text) => {
+            let properties: Vec<_> = text
+                .split(',')
+                .filter_map(parse_transition_property)
+                .collect();
+            (!properties.is_empty()).then_some(properties)
+        }
+        Value::Array(items) => {
+            let properties: Vec<_> = items
+                .iter()
+                .filter_map(Value::as_str)
+                .filter_map(parse_transition_property)
+                .collect();
+            (!properties.is_empty()).then_some(properties)
+        }
+        _ => None,
+    }
+}
+
+fn parse_transition_property(value: &str) -> Option<TransitionProperty> {
+    match value.trim().to_ascii_lowercase().replace('_', "-").as_str() {
+        "all" => Some(TransitionProperty::All),
+        "background" | "background-color" => Some(TransitionProperty::Background),
+        "foreground" => Some(TransitionProperty::Foreground),
+        "border-color" => Some(TransitionProperty::BorderColor),
+        "border-width" => Some(TransitionProperty::BorderWidth),
+        "border-radius" => Some(TransitionProperty::BorderRadius),
+        "opacity" => Some(TransitionProperty::Opacity),
+        "color" => Some(TransitionProperty::Color),
+        "accent" => Some(TransitionProperty::Accent),
+        "track-color" => Some(TransitionProperty::TrackColor),
+        "thumb-color" => Some(TransitionProperty::ThumbColor),
+        "box-shadow" => Some(TransitionProperty::BoxShadow),
+        _ => None,
+    }
+}
+
+fn parse_transition_timing_function(value: &str) -> Option<TransitionTimingFunction> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "linear" => Some(TransitionTimingFunction::Linear),
+        "ease" => Some(TransitionTimingFunction::Ease),
+        "ease-in" | "ease_in" => Some(TransitionTimingFunction::EaseIn),
+        "ease-out" | "ease_out" => Some(TransitionTimingFunction::EaseOut),
+        "ease-in-out" | "ease_in_out" => Some(TransitionTimingFunction::EaseInOut),
+        _ => None,
+    }
+}
+
+fn parse_transform_style(value: &Value) -> Option<TransformStyle> {
+    match value {
+        Value::String(text) => parse_transform_functions(text),
+        Value::Object(map) => {
+            let mut transform = TransformStyle::default();
+            if let Some(value) =
+                number(map.get("translate_x")).or_else(|| number(map.get("translate-x")))
+            {
+                transform.translate_x = value;
+            }
+            if let Some(value) =
+                number(map.get("translate_y")).or_else(|| number(map.get("translate-y")))
+            {
+                transform.translate_y = value;
+            }
+            if let Some(value) = number(map.get("scale")) {
+                transform.scale_x = value;
+                transform.scale_y = value;
+            }
+            if let Some(value) = number(map.get("scale_x")).or_else(|| number(map.get("scale-x"))) {
+                transform.scale_x = value;
+            }
+            if let Some(value) = number(map.get("scale_y")).or_else(|| number(map.get("scale-y"))) {
+                transform.scale_y = value;
+            }
+            if let Some(value) = number(map.get("rotate")).or_else(|| number(map.get("rotate_deg")))
+            {
+                transform.rotate_deg = value;
+            }
+            (!transform.is_identity()).then_some(transform)
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn parse_transform_functions(value: &str) -> Option<TransformStyle> {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("none") {
+        return None;
+    }
+    let mut rest = value;
+    let mut transform = TransformStyle::default();
+    while !rest.trim().is_empty() {
+        rest = rest.trim_start();
+        let open = rest.find('(')?;
+        let name = rest[..open].trim().to_ascii_lowercase();
+        let after_open = &rest[open + 1..];
+        let close = after_open.find(')')?;
+        let args = &after_open[..close];
+        apply_transform_function(&mut transform, &name, args)?;
+        rest = &after_open[close + 1..];
+    }
+    (!transform.is_identity()).then_some(transform)
+}
+
+fn apply_transform_function(transform: &mut TransformStyle, name: &str, args: &str) -> Option<()> {
+    match name {
+        "translate" => {
+            let args = split_transform_args(args);
+            let x = parse_transform_length(args.first()?)?;
+            let y = args
+                .get(1)
+                .and_then(|value| parse_transform_length(value))
+                .unwrap_or(0.0);
+            transform.translate_x += x;
+            transform.translate_y += y;
+        }
+        "translatex" => {
+            transform.translate_x += parse_transform_length(args)?;
+        }
+        "translatey" => {
+            transform.translate_y += parse_transform_length(args)?;
+        }
+        "scale" => {
+            let args = split_transform_args(args);
+            let x = parse_transform_number(args.first()?)?;
+            let y = args
+                .get(1)
+                .and_then(|value| parse_transform_number(value))
+                .unwrap_or(x);
+            transform.scale_x *= x;
+            transform.scale_y *= y;
+        }
+        "scalex" => {
+            transform.scale_x *= parse_transform_number(args)?;
+        }
+        "scaley" => {
+            transform.scale_y *= parse_transform_number(args)?;
+        }
+        "rotate" => {
+            transform.rotate_deg += parse_transform_angle(args)?;
+        }
+        _ => return None,
+    }
+    Some(())
+}
+
+fn split_transform_args(args: &str) -> Vec<&str> {
+    if args.contains(',') {
+        args.split(',')
+            .map(str::trim)
+            .filter(|arg| !arg.is_empty())
+            .collect()
+    } else {
+        args.split_whitespace().collect()
+    }
+}
+
+fn parse_transform_length(value: &str) -> Option<f32> {
+    let value = value.trim().to_ascii_lowercase();
+    if let Some(px) = value.strip_suffix("px") {
+        return px.trim().parse().ok();
+    }
+    value.parse().ok()
+}
+
+fn parse_transform_number(value: &str) -> Option<f32> {
+    value.trim().parse().ok()
+}
+
+fn parse_transform_angle(value: &str) -> Option<f32> {
+    let value = value.trim().to_ascii_lowercase();
+    if let Some(deg) = value.strip_suffix("deg") {
+        return deg.trim().parse().ok();
+    }
+    if let Some(rad) = value.strip_suffix("rad") {
+        return rad
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .map(|radians| radians.to_degrees());
+    }
+    if let Some(turn) = value.strip_suffix("turn") {
+        return turn.trim().parse::<f32>().ok().map(|turns| turns * 360.0);
+    }
+    value.parse().ok()
+}
+
 fn value_for_keys<'a>(
     map: &'a serde_json::Map<String, Value>,
     snake: &str,
@@ -886,6 +1296,7 @@ fn text_value<'a>(
 fn parse_display(value: &str) -> Option<DisplayStyle> {
     match value.trim().to_ascii_lowercase().as_str() {
         "flex" => Some(DisplayStyle::Flex),
+        "grid" => Some(DisplayStyle::Grid),
         "block" => Some(DisplayStyle::Block),
         "none" => Some(DisplayStyle::None),
         _ => None,
@@ -898,6 +1309,25 @@ fn parse_flex_direction(value: &str) -> Option<FlexDirectionStyle> {
         "column" => Some(FlexDirectionStyle::Column),
         "row_reverse" | "row-reverse" => Some(FlexDirectionStyle::RowReverse),
         "column_reverse" | "column-reverse" => Some(FlexDirectionStyle::ColumnReverse),
+        _ => None,
+    }
+}
+
+fn parse_overflow(value: &str) -> Option<OverflowStyle> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "visible" => Some(OverflowStyle::Visible),
+        "hidden" | "clip" => Some(OverflowStyle::Hidden),
+        "scroll" => Some(OverflowStyle::Scroll),
+        "auto" => Some(OverflowStyle::Auto),
+        _ => None,
+    }
+}
+
+fn parse_position(value: &str) -> Option<PositionStyle> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "static" => Some(PositionStyle::Static),
+        "relative" => Some(PositionStyle::Relative),
+        "absolute" => Some(PositionStyle::Absolute),
         _ => None,
     }
 }
@@ -1024,6 +1454,11 @@ mod tests {
             "font_weight": "bold",
             "color": "accent",
             "text_align": "center",
+            "transition_property": ["background", "border-color"],
+            "transition_duration": "180ms",
+            "transition_delay": "0.05s",
+            "transition_timing_function": "ease-out",
+            "transform": "translateY(-2px) scale(1.02) rotate(1deg)",
             "hover": {"background": "accent_mix_20", "color": "success"}
         })));
 
@@ -1076,6 +1511,24 @@ mod tests {
             Some(ColorRef::Token("accent".to_string()))
         );
         assert_eq!(style.text.text_align, Some(TextAlign::Center));
+        assert_eq!(
+            style.transition.properties,
+            Some(vec![
+                TransitionProperty::Background,
+                TransitionProperty::BorderColor
+            ])
+        );
+        assert_eq!(style.transition.duration_ms, Some(180));
+        assert_eq!(style.transition.delay_ms, Some(50));
+        assert_eq!(
+            style.transition.timing_function,
+            Some(TransitionTimingFunction::EaseOut)
+        );
+        let transform = style.visual.transform.expect("parsed transform");
+        assert_eq!(transform.translate_y, -2.0);
+        assert_eq!(transform.scale_x, 1.02);
+        assert_eq!(transform.scale_y, 1.02);
+        assert_eq!(transform.rotate_deg, 1.0);
     }
 
     #[test]

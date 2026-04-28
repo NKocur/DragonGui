@@ -1,12 +1,15 @@
 use std::collections::HashMap;
 
 use taffy::prelude::*;
+use taffy::style::Overflow;
 
 use crate::document::{WidgetKind, WidgetNode};
 use crate::events::WidgetState;
 use crate::style::{
     badge_width_for_text, collapsible_header_height_for_style, tabs_header_height_for_style,
-    DisplayStyle, FlexDirectionStyle, BADGE_GAP_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP,
+    DisplayStyle, FlexDirectionStyle, GridLineStyle, GridPlacementStyle, GridTrackSize,
+    LayoutLength, LineHeight, OverflowStyle, PositionStyle, BADGE_GAP_LP, CHECKBOX_BOX_LP,
+    CHECKBOX_LEFT_PAD_LP,
 };
 use crate::theme::Theme;
 
@@ -48,6 +51,9 @@ impl Rect {
 pub struct LayoutResult {
     pub rects: HashMap<String, Rect>,
     pub clips: HashMap<String, Rect>,
+    pub scroll_y: HashMap<String, f32>,
+    pub scroll_max_y: HashMap<String, f32>,
+    pub scale_factor: f32,
 }
 
 impl LayoutResult {
@@ -88,6 +94,7 @@ pub fn compute_layout(
         theme,
         Some((window_w, window_h)),
         None,
+        None,
         false,
         state,
     );
@@ -101,12 +108,16 @@ pub fn compute_layout(
     )
     .expect("taffy layout failed");
 
-    let mut result = LayoutResult::default();
+    let mut result = LayoutResult {
+        scale_factor,
+        ..LayoutResult::default()
+    };
     collect(&tree, root_id, root, 0.0, 0.0, &mut result);
     apply_navigation_layout(root, &mut result, scale_factor, theme, state);
     apply_modal_layout(root, &mut result, scale_factor, theme);
     apply_tooltip_layout(root, &mut result, scale_factor, theme, state);
-    compute_clips(root, &mut result);
+    apply_scroll_offsets(root, &mut result, state);
+    compute_clips(root, &mut result, scale_factor, theme);
     result
 }
 
@@ -120,17 +131,27 @@ fn build_node(
     sf: f32,
     theme: &Theme,
     size_override: Option<(f32, f32)>,
+    parent_size: Option<(f32, f32)>,
     parent_kind: Option<&WidgetKind>,
     layout_modal_children: bool,
     state: Option<&WidgetState>,
 ) -> NodeId {
-    let mut style = style_for(node, sf, theme, parent_kind, layout_modal_children, state);
+    let mut style = style_for(
+        node,
+        sf,
+        theme,
+        parent_size,
+        parent_kind,
+        layout_modal_children,
+        state,
+    );
     if let Some((w, h)) = size_override {
         style.size = taffy::geometry::Size {
             width: Dimension::Length(w),
             height: Dimension::Length(h),
         };
     }
+    let child_parent_size = definite_content_size(&style).or(parent_size);
     let child_ids: Vec<NodeId> = if matches!(
         node.kind,
         WidgetKind::Tabs
@@ -153,6 +174,7 @@ fn build_node(
                     sf,
                     theme,
                     None,
+                    child_parent_size,
                     Some(&node.kind),
                     layout_modal_children,
                     state,
@@ -177,6 +199,7 @@ fn style_for(
     node: &WidgetNode,
     sf: f32,
     theme: &Theme,
+    parent_size: Option<(f32, f32)>,
     parent_kind: Option<&WidgetKind>,
     layout_modal_children: bool,
     state: Option<&WidgetState>,
@@ -556,7 +579,7 @@ fn style_for(
     };
     apply_intrinsic_leaf_width(&mut style, node, parent_kind, sf, theme);
     if !matches!(node.kind, WidgetKind::Tooltip | WidgetKind::Toast) {
-        apply_node_style(&mut style, node, sf);
+        apply_node_style(&mut style, node, sf, parent_size);
     }
     if (node.kind != WidgetKind::Modal || layout_modal_children)
         && node.kind != WidgetKind::Collapsible
@@ -591,7 +614,11 @@ fn reserve_panel_title_space(style: &mut Style, node: &WidgetNode, sf: f32, them
 
 fn panel_title_line_height_lp(node: &WidgetNode, theme: &Theme) -> f32 {
     let font_size = node_font_size_lp(node, theme);
-    (font_size + 5.0).max(theme.font_size + 3.0)
+    match node.style.text.line_height {
+        Some(LineHeight::Multiplier(value)) => (font_size * value.max(0.1)).max(1.0),
+        Some(LineHeight::LogicalPx(value)) => value.max(1.0),
+        None => (font_size + 5.0).max(theme.font_size + 3.0),
+    }
 }
 
 fn panel_title_gap_lp(node: &WidgetNode, theme: &Theme) -> f32 {
@@ -599,6 +626,16 @@ fn panel_title_gap_lp(node: &WidgetNode, theme: &Theme) -> f32 {
         .layout
         .gap
         .unwrap_or(theme.spacing * 0.75)
+        .max(0.0)
+}
+
+fn panel_title_top_padding_lp(node: &WidgetNode, theme: &Theme) -> f32 {
+    let default = theme.spacing + 2.0;
+    let layout = &node.style.layout;
+    layout
+        .padding_top
+        .or(layout.padding)
+        .unwrap_or(default)
         .max(0.0)
 }
 
@@ -610,8 +647,11 @@ fn apply_intrinsic_leaf_width(
     theme: &Theme,
 ) {
     if node.style.layout.width.is_some()
+        || node.style.layout.width_value.is_some()
         || node.style.layout.min_width.is_some()
+        || node.style.layout.min_width_value.is_some()
         || node.style.layout.max_width.is_some()
+        || node.style.layout.max_width_value.is_some()
     {
         return;
     }
@@ -636,9 +676,12 @@ fn intrinsic_leaf_width(node: &WidgetNode, theme: &Theme) -> Option<f32> {
     let badge_w = badge_extra_width(node, theme);
     match node.kind {
         WidgetKind::Button => Some((text_w.unwrap_or(0.0) + pad + badge_w).clamp(72.0, 280.0)),
-        WidgetKind::Badge | WidgetKind::Tag => {
-            Some((text_w.unwrap_or(0.0) + theme.spacing * 1.5).clamp(24.0, 220.0))
-        }
+        WidgetKind::Badge | WidgetKind::Tag => node
+            .props
+            .text
+            .as_deref()
+            .filter(|text| !text.is_empty())
+            .map(|text| badge_width_for_text(&node.style, text, theme, 1.0).clamp(24.0, 220.0)),
         WidgetKind::Menu => {
             Some((text_w.unwrap_or(0.0) + pad + MENU_LABEL_WIDTH_SAFETY_LP).clamp(44.0, 180.0))
         }
@@ -716,11 +759,17 @@ fn node_control_height_lp(node: &WidgetNode, theme: &Theme) -> f32 {
     (font_size + theme.spacing * 2.0 + 4.0).max(28.0)
 }
 
-fn apply_node_style(style: &mut Style, node: &WidgetNode, sf: f32) {
+fn apply_node_style(
+    style: &mut Style,
+    node: &WidgetNode,
+    sf: f32,
+    parent_size: Option<(f32, f32)>,
+) {
     let layout = &node.style.layout;
     if let Some(display) = layout.display {
         style.display = match display {
             DisplayStyle::Flex => Display::Flex,
+            DisplayStyle::Grid => Display::Grid,
             DisplayStyle::Block => Display::Block,
             DisplayStyle::None => Display::None,
         };
@@ -733,29 +782,69 @@ fn apply_node_style(style: &mut Style, node: &WidgetNode, sf: f32) {
             FlexDirectionStyle::ColumnReverse => FlexDirection::ColumnReverse,
         };
     }
-    if let Some(width) = layout.width {
-        style.size.width = Dimension::Length(width * sf);
+    if let Some(width) = layout_dimension(
+        layout.width_value,
+        layout.width,
+        sf,
+        parent_size.map(|size| size.0),
+    ) {
+        style.size.width = width;
     }
-    if let Some(height) = layout.height {
-        style.size.height = Dimension::Length(height * sf);
+    if let Some(height) = layout_dimension(
+        layout.height_value,
+        layout.height,
+        sf,
+        parent_size.map(|size| size.1),
+    ) {
+        style.size.height = height;
     }
-    if (layout.width.is_some() || layout.height.is_some()) && layout.flex_grow.is_none() {
+    if (layout.width.is_some()
+        || layout.height.is_some()
+        || layout.width_value.is_some()
+        || layout.height_value.is_some())
+        && layout.flex_grow.is_none()
+    {
         style.flex_grow = 0.0;
     }
-    if (layout.width.is_some() || layout.height.is_some()) && layout.flex_shrink.is_none() {
+    if (layout.width.is_some()
+        || layout.height.is_some()
+        || layout.width_value.is_some()
+        || layout.height_value.is_some())
+        && layout.flex_shrink.is_none()
+    {
         style.flex_shrink = 0.0;
     }
-    if let Some(width) = layout.min_width {
-        style.min_size.width = Dimension::Length(width * sf);
+    if let Some(width) = layout_dimension(
+        layout.min_width_value,
+        layout.min_width,
+        sf,
+        parent_size.map(|size| size.0),
+    ) {
+        style.min_size.width = width;
     }
-    if let Some(height) = layout.min_height {
-        style.min_size.height = Dimension::Length(height * sf);
+    if let Some(height) = layout_dimension(
+        layout.min_height_value,
+        layout.min_height,
+        sf,
+        parent_size.map(|size| size.1),
+    ) {
+        style.min_size.height = height;
     }
-    if let Some(width) = layout.max_width {
-        style.max_size.width = Dimension::Length(width * sf);
+    if let Some(width) = layout_dimension(
+        layout.max_width_value,
+        layout.max_width,
+        sf,
+        parent_size.map(|size| size.0),
+    ) {
+        style.max_size.width = width;
     }
-    if let Some(height) = layout.max_height {
-        style.max_size.height = Dimension::Length(height * sf);
+    if let Some(height) = layout_dimension(
+        layout.max_height_value,
+        layout.max_height,
+        sf,
+        parent_size.map(|size| size.1),
+    ) {
+        style.max_size.height = height;
     }
     if let Some(grow) = layout.flex_grow {
         style.flex_grow = grow.max(0.0);
@@ -767,6 +856,53 @@ fn apply_node_style(style: &mut Style, node: &WidgetNode, sf: f32) {
         style.gap = taffy::geometry::Size {
             width: LengthPercentage::Length(gap * sf),
             height: LengthPercentage::Length(gap * sf),
+        };
+    }
+    if let Some(column_gap) = layout.column_gap {
+        style.gap.width = LengthPercentage::Length(column_gap * sf);
+    }
+    if let Some(row_gap) = layout.row_gap {
+        style.gap.height = LengthPercentage::Length(row_gap * sf);
+    }
+    if let Some(tracks) = &layout.grid_template_columns {
+        style.grid_template_columns = tracks
+            .iter()
+            .map(|track| grid_track_size(*track, sf))
+            .collect();
+    }
+    if let Some(tracks) = &layout.grid_template_rows {
+        style.grid_template_rows = tracks
+            .iter()
+            .map(|track| grid_track_size(*track, sf))
+            .collect();
+    }
+    if let Some(placement) = layout.grid_column {
+        style.grid_column = grid_placement(placement);
+    }
+    if let Some(placement) = layout.grid_row {
+        style.grid_row = grid_placement(placement);
+    }
+    if layout.position == Some(PositionStyle::Absolute) {
+        style.position = taffy::style::Position::Absolute;
+        if let Some(left) = layout.left {
+            style.inset.left = LengthPercentageAuto::Length(left * sf);
+        }
+        if let Some(right) = layout.right {
+            style.inset.right = LengthPercentageAuto::Length(right * sf);
+        }
+        if let Some(top) = layout.top {
+            style.inset.top = LengthPercentageAuto::Length(top * sf);
+        }
+        if let Some(bottom) = layout.bottom {
+            style.inset.bottom = LengthPercentageAuto::Length(bottom * sf);
+        }
+    }
+    let overflow_x = layout.overflow_x.or(layout.overflow);
+    let overflow_y = layout.overflow_y.or(layout.overflow);
+    if overflow_x.is_some() || overflow_y.is_some() {
+        style.overflow = taffy::geometry::Point {
+            x: taffy_overflow(overflow_x.unwrap_or(OverflowStyle::Hidden)),
+            y: taffy_overflow(overflow_y.unwrap_or(OverflowStyle::Hidden)),
         };
     }
     if let Some(margin) = layout.margin {
@@ -818,10 +954,95 @@ fn apply_node_style(style: &mut Style, node: &WidgetNode, sf: f32) {
     }
 }
 
+fn taffy_overflow(value: OverflowStyle) -> Overflow {
+    match value {
+        OverflowStyle::Visible => Overflow::Visible,
+        OverflowStyle::Hidden => Overflow::Hidden,
+        OverflowStyle::Scroll | OverflowStyle::Auto => Overflow::Scroll,
+    }
+}
+
+fn grid_track_size(value: GridTrackSize, sf: f32) -> TrackSizingFunction {
+    match value {
+        GridTrackSize::LogicalPx(value) => track_size_fixed(LengthPercentage::Length(value * sf)),
+        GridTrackSize::Percent(value) => track_size_fixed(LengthPercentage::Percent(value / 100.0)),
+        GridTrackSize::Fraction(value) => {
+            TrackSizingFunction::Single(NonRepeatedTrackSizingFunction {
+                min: MinTrackSizingFunction::Auto,
+                max: MaxTrackSizingFunction::Fraction(value),
+            })
+        }
+        GridTrackSize::Auto => TrackSizingFunction::Single(NonRepeatedTrackSizingFunction {
+            min: MinTrackSizingFunction::Auto,
+            max: MaxTrackSizingFunction::Auto,
+        }),
+    }
+}
+
+fn track_size_fixed(value: LengthPercentage) -> TrackSizingFunction {
+    TrackSizingFunction::Single(NonRepeatedTrackSizingFunction {
+        min: MinTrackSizingFunction::Fixed(value),
+        max: MaxTrackSizingFunction::Fixed(value),
+    })
+}
+
+fn grid_placement(value: GridPlacementStyle) -> taffy::geometry::Line<GridPlacement> {
+    taffy::geometry::Line {
+        start: grid_line(value.start),
+        end: grid_line(value.end),
+    }
+}
+
+fn grid_line(value: GridLineStyle) -> GridPlacement {
+    match value {
+        GridLineStyle::Auto => GridPlacement::Auto,
+        GridLineStyle::Line(value) => GridPlacement::from_line_index(value),
+        GridLineStyle::Span(value) => GridPlacement::from_span(value),
+    }
+}
+
 fn lp_value(value: LengthPercentage) -> f32 {
     match value {
         LengthPercentage::Length(v) => v,
         LengthPercentage::Percent(_) => 0.0,
+    }
+}
+
+fn definite_content_size(style: &Style) -> Option<(f32, f32)> {
+    let width = definite_dimension(style.size.width)?;
+    let height = definite_dimension(style.size.height)?;
+    let padding_x = lp_value(style.padding.left) + lp_value(style.padding.right);
+    let padding_y = lp_value(style.padding.top) + lp_value(style.padding.bottom);
+    Some(((width - padding_x).max(0.0), (height - padding_y).max(0.0)))
+}
+
+fn definite_dimension(value: Dimension) -> Option<f32> {
+    match value {
+        Dimension::Length(value) => Some(value),
+        Dimension::Percent(_) | Dimension::Auto => None,
+    }
+}
+
+fn layout_dimension(
+    value: Option<LayoutLength>,
+    legacy_px: Option<f32>,
+    sf: f32,
+    parent_axis_size: Option<f32>,
+) -> Option<Dimension> {
+    match value {
+        Some(LayoutLength::LogicalPx(value)) => Some(Dimension::Length(value * sf)),
+        Some(LayoutLength::Percent(value)) => Some(Dimension::Percent(value / 100.0)),
+        Some(LayoutLength::Calc(value)) if value.percent == 0.0 => {
+            Some(Dimension::Length(value.px * sf))
+        }
+        Some(LayoutLength::Calc(value)) if value.px == 0.0 => {
+            Some(Dimension::Percent(value.percent / 100.0))
+        }
+        Some(LayoutLength::Calc(value)) => parent_axis_size.map(|parent| {
+            Dimension::Length((parent * (value.percent / 100.0) + value.px * sf).max(0.0))
+        }),
+        Some(LayoutLength::Auto) => Some(Dimension::Auto),
+        None => legacy_px.map(|value| Dimension::Length(value * sf)),
     }
 }
 
@@ -878,15 +1099,21 @@ fn collect(
     }
 }
 
-fn compute_clips(root: &WidgetNode, result: &mut LayoutResult) {
+fn compute_clips(root: &WidgetNode, result: &mut LayoutResult, sf: f32, theme: &Theme) {
     result.clips.clear();
     let Some(root_rect) = result.rects.get(&root.id).copied() else {
         return;
     };
-    compute_node_clips(root, result, root_rect);
+    compute_node_clips(root, result, root_rect, sf, theme);
 }
 
-fn compute_node_clips(node: &WidgetNode, result: &mut LayoutResult, parent_clip: Rect) {
+fn compute_node_clips(
+    node: &WidgetNode,
+    result: &mut LayoutResult,
+    parent_clip: Rect,
+    sf: f32,
+    theme: &Theme,
+) {
     let Some(rect) = result.rects.get(&node.id).copied() else {
         return;
     };
@@ -897,8 +1124,165 @@ fn compute_node_clips(node: &WidgetNode, result: &mut LayoutResult, parent_clip:
         h: 0.0,
     });
     result.clips.insert(node.id.clone(), clip);
+    let child_clip = scroll_container_child_clip(node, result, clip, sf, theme)
+        .unwrap_or_else(|| child_clip_for_overflow(node, parent_clip, clip));
     for child in &node.children {
-        compute_node_clips(child, result, clip);
+        compute_node_clips(child, result, child_clip, sf, theme);
+    }
+}
+
+pub(crate) fn is_scroll_container_kind(kind: &WidgetKind) -> bool {
+    matches!(kind, WidgetKind::Panel)
+}
+
+pub(crate) fn is_scroll_container_node(node: &WidgetNode) -> bool {
+    match node_overflow_y(node) {
+        Some(OverflowStyle::Scroll | OverflowStyle::Auto) => true,
+        Some(OverflowStyle::Visible | OverflowStyle::Hidden) => false,
+        None => is_scroll_container_kind(&node.kind),
+    }
+}
+
+pub(crate) fn scroll_container_max_y(node: &WidgetNode, result: &LayoutResult) -> f32 {
+    if !is_scroll_container_node(node) {
+        return 0.0;
+    }
+    let Some(rect) = result.rects.get(&node.id).copied() else {
+        return 0.0;
+    };
+    let Some(content) = scroll_content_bounds(node, result) else {
+        return 0.0;
+    };
+    (content.1 - (rect.y + rect.h)).max(0.0)
+}
+
+fn scroll_container_child_clip(
+    node: &WidgetNode,
+    result: &LayoutResult,
+    clip: Rect,
+    sf: f32,
+    theme: &Theme,
+) -> Option<Rect> {
+    if !is_scroll_container_node(node)
+        || !node
+            .props
+            .text
+            .as_deref()
+            .is_some_and(|text| !text.is_empty())
+    {
+        return None;
+    }
+    let rect = result.rects.get(&node.id).copied()?;
+    let title_inset = (panel_title_top_padding_lp(node, theme)
+        + panel_title_line_height_lp(node, theme)
+        + panel_title_gap_lp(node, theme))
+        * sf;
+    let content_top = rect.y + title_inset;
+    let content = Rect {
+        x: rect.x,
+        y: content_top,
+        w: rect.w,
+        h: (rect.y + rect.h - content_top).max(0.0),
+    };
+    clip.intersect(content).or(Some(Rect {
+        x: clip.x,
+        y: content_top.max(clip.y),
+        w: 0.0,
+        h: 0.0,
+    }))
+}
+
+fn child_clip_for_overflow(node: &WidgetNode, parent_clip: Rect, node_clip: Rect) -> Rect {
+    match node_overflow_y(node).or_else(|| node_overflow_x(node)) {
+        Some(OverflowStyle::Visible) => parent_clip,
+        _ => node_clip,
+    }
+}
+
+fn node_overflow_x(node: &WidgetNode) -> Option<OverflowStyle> {
+    node.style.layout.overflow_x.or(node.style.layout.overflow)
+}
+
+fn node_overflow_y(node: &WidgetNode) -> Option<OverflowStyle> {
+    node.style.layout.overflow_y.or(node.style.layout.overflow)
+}
+
+fn scroll_content_bounds(node: &WidgetNode, result: &LayoutResult) -> Option<(f32, f32)> {
+    let mut top = f32::INFINITY;
+    let mut bottom = f32::NEG_INFINITY;
+    for child in &node.children {
+        if let Some(rect) = result.rects.get(&child.id) {
+            top = top.min(rect.y);
+            bottom = bottom.max(rect.y + rect.h);
+        }
+    }
+    if top.is_finite() {
+        let scale_factor = if result.scale_factor > 0.0 {
+            result.scale_factor
+        } else {
+            1.0
+        };
+        bottom += scroll_container_bottom_padding_lp(node) * scale_factor;
+        Some((top, bottom))
+    } else {
+        None
+    }
+}
+
+fn scroll_container_bottom_padding_lp(node: &WidgetNode) -> f32 {
+    node.style
+        .layout
+        .padding_bottom
+        .or(node.style.layout.padding)
+        .unwrap_or(10.0)
+        .max(0.0)
+}
+
+fn apply_scroll_offsets(root: &WidgetNode, result: &mut LayoutResult, state: Option<&WidgetState>) {
+    let Some(state) = state else {
+        return;
+    };
+    apply_node_scroll_offsets(root, result, state);
+}
+
+fn apply_node_scroll_offsets(node: &WidgetNode, result: &mut LayoutResult, state: &WidgetState) {
+    if is_scroll_container_node(node) {
+        let max_scroll = scroll_container_max_y(node, result);
+        let scroll_y = state.container_scroll_y(&node.id, max_scroll);
+        result.scroll_max_y.insert(node.id.clone(), max_scroll);
+        result.scroll_y.insert(node.id.clone(), scroll_y);
+        if scroll_y > 0.0 {
+            for child in &node.children {
+                translate_subtree(child, result, 0.0, -scroll_y);
+            }
+        }
+    }
+    for child in &node.children {
+        apply_node_scroll_offsets(child, result, state);
+    }
+}
+
+fn translate_subtree(node: &WidgetNode, result: &mut LayoutResult, dx: f32, dy: f32) {
+    if let Some(rect) = result.rects.get_mut(&node.id) {
+        rect.x += dx;
+        rect.y += dy;
+    }
+    for child in &node.children {
+        translate_subtree(child, result, dx, dy);
+    }
+}
+
+fn undo_scroll_offsets(node: &WidgetNode, result: &mut LayoutResult) {
+    if is_scroll_container_node(node) {
+        let scroll_y = result.scroll_y.get(&node.id).copied().unwrap_or(0.0);
+        if scroll_y > 0.0 {
+            for child in &node.children {
+                translate_subtree(child, result, 0.0, scroll_y);
+            }
+        }
+    }
+    for child in &node.children {
+        undo_scroll_offsets(child, result);
     }
 }
 
@@ -1084,6 +1468,7 @@ fn layout_modal(
         theme,
         Some((modal_w, modal_h)),
         None,
+        None,
         true,
         None,
     );
@@ -1219,7 +1604,8 @@ fn layout_region(
         inline_style: Default::default(),
         children: children.to_vec(),
     };
-    let sub = compute_layout(&synthetic, rect.w, rect.h, sf, theme, state);
+    let mut sub = compute_layout(&synthetic, rect.w, rect.h, sf, theme, state);
+    undo_scroll_offsets(&synthetic, &mut sub);
     for (id, child_rect) in sub.rects {
         if id == "__dg_nav_region" {
             continue;
@@ -1258,7 +1644,8 @@ fn layout_overlay_children(
         inline_style: Default::default(),
         children: container.children.clone(),
     };
-    let sub = compute_layout(&synthetic, rect.w, rect.h, sf, theme, Some(state));
+    let mut sub = compute_layout(&synthetic, rect.w, rect.h, sf, theme, Some(state));
+    undo_scroll_offsets(&synthetic, &mut sub);
     for (id, child_rect) in sub.rects {
         if id == "__dg_tooltip_region" {
             continue;
@@ -1861,6 +2248,47 @@ mod tests {
     }
 
     #[test]
+    fn titled_panel_reservation_uses_custom_title_line_height() {
+        let mut panel = node(
+            "panel",
+            WidgetKind::Panel,
+            NodeProps {
+                text: Some("Tall title".to_string()),
+                ..NodeProps::default()
+            },
+            vec![node(
+                "button",
+                WidgetKind::Button,
+                NodeProps {
+                    text: Some("Child".to_string()),
+                    ..NodeProps::default()
+                },
+                vec![],
+            )],
+        );
+        panel.style.layout.padding = Some(0.0);
+        panel.style.layout.gap = Some(0.0);
+        panel.style.layout.height = Some(100.0);
+        panel.style.text.line_height = Some(LineHeight::LogicalPx(44.0));
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![panel],
+        );
+
+        let layout = compute_layout(&root, 240.0, 100.0, 1.0, &Theme::dark(), None);
+        let panel = layout.rects.get("panel").unwrap();
+        let button = layout.rects.get("button").unwrap();
+
+        assert_eq!(layout.scroll_max_y.get("panel").copied(), None);
+        assert!(
+            button.y >= panel.y + 44.0,
+            "custom title line-height was not reserved: panel={panel:?} button={button:?}"
+        );
+    }
+
+    #[test]
     fn status_bar_labels_keep_intrinsic_text_width() {
         let root = node(
             "window",
@@ -2056,6 +2484,189 @@ mod tests {
     }
 
     #[test]
+    fn absolute_position_child_uses_insets_without_consuming_flow() {
+        let flow = node("flow", WidgetKind::Label, NodeProps::default(), vec![]);
+        let mut pin = node("pin", WidgetKind::Badge, NodeProps::default(), vec![]);
+        pin.style.layout.position = Some(PositionStyle::Absolute);
+        pin.style.layout.top = Some(14.0);
+        pin.style.layout.right = Some(18.0);
+        pin.style.layout.width = Some(64.0);
+        pin.style.layout.height = Some(20.0);
+
+        let mut panel = node(
+            "panel",
+            WidgetKind::Panel,
+            NodeProps::default(),
+            vec![flow, pin],
+        );
+        panel.style.layout.width = Some(320.0);
+        panel.style.layout.height = Some(180.0);
+        panel.style.layout.flex_grow = Some(0.0);
+        panel.style.layout.flex_shrink = Some(0.0);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![panel],
+        );
+
+        let layout = compute_layout(&root, 640.0, 360.0, 1.0, &Theme::dark(), None);
+        let panel = layout.rects.get("panel").unwrap();
+        let flow = layout.rects.get("flow").unwrap();
+        let pin = layout.rects.get("pin").unwrap();
+
+        assert_eq!(panel.w, 320.0);
+        assert_eq!(panel.h, 180.0);
+        assert_eq!(pin.w, 64.0);
+        assert_eq!(pin.h, 20.0);
+        assert_eq!(pin.x, panel.x + panel.w - 18.0 - pin.w);
+        assert_eq!(pin.y, panel.y + 14.0);
+        assert!(
+            flow.y < pin.y,
+            "absolute child should not push the flow child down: flow={flow:?} pin={pin:?}"
+        );
+    }
+
+    #[test]
+    fn percent_style_width_uses_parent_space() {
+        let mut left = node("left", WidgetKind::Panel, NodeProps::default(), vec![]);
+        left.style.layout.width_value = Some(LayoutLength::Percent(50.0));
+        let right = node("right", WidgetKind::Panel, NodeProps::default(), vec![]);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "row",
+                WidgetKind::HLayout,
+                NodeProps::default(),
+                vec![left, right],
+            )],
+        );
+
+        let layout = compute_layout(&root, 800.0, 400.0, 1.0, &Theme::dark(), None);
+        let left = layout.rects.get("left").unwrap();
+
+        assert_eq!(left.w, 400.0);
+    }
+
+    #[test]
+    fn calc_style_width_lowers_when_expression_is_single_unit() {
+        let mut left = node("left", WidgetKind::Panel, NodeProps::default(), vec![]);
+        left.style.layout.width_value = Some(LayoutLength::Calc(crate::style::CalcLength {
+            percent: 0.0,
+            px: 280.0,
+        }));
+        let mut right = node("right", WidgetKind::Panel, NodeProps::default(), vec![]);
+        right.style.layout.width_value = Some(LayoutLength::Calc(crate::style::CalcLength {
+            percent: 50.0,
+            px: 0.0,
+        }));
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "row",
+                WidgetKind::HLayout,
+                NodeProps::default(),
+                vec![left, right],
+            )],
+        );
+
+        let layout = compute_layout(&root, 800.0, 400.0, 1.0, &Theme::dark(), None);
+        let left = layout.rects.get("left").unwrap();
+        let right = layout.rects.get("right").unwrap();
+
+        assert_eq!(left.w, 280.0);
+        assert_eq!(right.w, 400.0);
+    }
+
+    #[test]
+    fn mixed_calc_style_width_resolves_against_definite_parent_space() {
+        let mut left = node("left", WidgetKind::Panel, NodeProps::default(), vec![]);
+        left.style.layout.width_value = Some(LayoutLength::Calc(crate::style::CalcLength {
+            percent: 100.0,
+            px: -240.0,
+        }));
+        let mut right = node("right", WidgetKind::Panel, NodeProps::default(), vec![]);
+        right.style.layout.width_value = Some(LayoutLength::LogicalPx(240.0));
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "row",
+                WidgetKind::HLayout,
+                NodeProps::default(),
+                vec![left, right],
+            )],
+        );
+
+        let layout = compute_layout(&root, 800.0, 400.0, 1.0, &Theme::dark(), None);
+        let left = layout.rects.get("left").unwrap();
+        let right = layout.rects.get("right").unwrap();
+
+        assert_eq!(left.w, 560.0);
+        assert_eq!(right.w, 240.0);
+    }
+
+    #[test]
+    fn grid_layout_places_children_on_template_tracks() {
+        let mut grid = node("grid", WidgetKind::Panel, NodeProps::default(), vec![]);
+        grid.style.layout.display = Some(DisplayStyle::Grid);
+        grid.style.layout.width_value = Some(LayoutLength::LogicalPx(600.0));
+        grid.style.layout.height_value = Some(LayoutLength::LogicalPx(220.0));
+        grid.style.layout.padding = Some(0.0);
+        grid.style.layout.gap = Some(0.0);
+        grid.style.layout.grid_template_columns = Some(vec![
+            GridTrackSize::LogicalPx(180.0),
+            GridTrackSize::Fraction(1.0),
+            GridTrackSize::Fraction(2.0),
+        ]);
+        grid.style.layout.grid_template_rows = Some(vec![
+            GridTrackSize::LogicalPx(80.0),
+            GridTrackSize::LogicalPx(120.0),
+        ]);
+
+        let mut sidebar = node("sidebar", WidgetKind::Panel, NodeProps::default(), vec![]);
+        sidebar.style.layout.grid_column = Some(GridPlacementStyle {
+            start: GridLineStyle::Line(1),
+            end: GridLineStyle::Line(2),
+        });
+        sidebar.style.layout.grid_row = Some(GridPlacementStyle {
+            start: GridLineStyle::Line(1),
+            end: GridLineStyle::Span(2),
+        });
+        let mut main = node("main", WidgetKind::Panel, NodeProps::default(), vec![]);
+        main.style.layout.grid_column = Some(GridPlacementStyle {
+            start: GridLineStyle::Line(2),
+            end: GridLineStyle::Line(4),
+        });
+        main.style.layout.grid_row = Some(GridPlacementStyle {
+            start: GridLineStyle::Line(1),
+            end: GridLineStyle::Line(2),
+        });
+        grid.children = vec![sidebar, main];
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![grid],
+        );
+
+        let layout = compute_layout(&root, 800.0, 400.0, 1.0, &Theme::dark(), None);
+        let sidebar = layout.rects.get("sidebar").unwrap();
+        let main = layout.rects.get("main").unwrap();
+
+        assert_eq!(sidebar.w, 180.0);
+        assert_eq!(sidebar.h, 200.0);
+        assert_eq!(main.x, 180.0);
+        assert_eq!(main.w, 420.0);
+        assert_eq!(main.h, 80.0);
+    }
+
+    #[test]
     fn child_visible_clip_does_not_escape_fixed_height_parent() {
         let mut panel = node(
             "panel",
@@ -2099,6 +2710,331 @@ mod tests {
         assert!(
             second.y + second.h <= panel.y + panel.h,
             "child visible clip escaped parent: panel={panel:?} second_clip={second:?}"
+        );
+    }
+
+    #[test]
+    fn panel_scroll_offset_moves_children_and_preserves_clip() {
+        let mut panel = node(
+            "panel",
+            WidgetKind::Panel,
+            NodeProps::default(),
+            vec![
+                node("first", WidgetKind::Button, NodeProps::default(), vec![]),
+                node("second", WidgetKind::Button, NodeProps::default(), vec![]),
+                node("third", WidgetKind::Button, NodeProps::default(), vec![]),
+                node("fourth", WidgetKind::Button, NodeProps::default(), vec![]),
+            ],
+        );
+        panel.style.layout.padding = Some(0.0);
+        panel.style.layout.gap = Some(0.0);
+        panel.style.layout.height = Some(100.0);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![panel],
+        );
+        let unscrolled = compute_layout(&root, 240.0, 100.0, 1.0, &Theme::dark(), None);
+        let mut state = WidgetState::default();
+        state.container_scroll_y.insert("panel".to_string(), 40.0);
+
+        let scrolled = compute_layout(&root, 240.0, 100.0, 1.0, &Theme::dark(), Some(&state));
+
+        let first_before = unscrolled.rects.get("first").unwrap();
+        let first_after = scrolled.rects.get("first").unwrap();
+        let panel = scrolled.rects.get("panel").unwrap();
+        let first_clip = scrolled.clips.get("first").unwrap();
+
+        let applied_scroll = scrolled.scroll_y.get("panel").copied().unwrap_or(0.0);
+        assert_eq!(first_after.y, first_before.y - applied_scroll);
+        assert_eq!(panel.y, 0.0);
+        if first_clip.h > 0.0 {
+            assert!(first_clip.y >= panel.y);
+            assert!(first_clip.y + first_clip.h <= panel.y + panel.h);
+        }
+        assert!(scroll_container_max_y(root.children.first().unwrap(), &unscrolled) > 0.0);
+        assert_eq!(scrolled.scroll_y.get("panel").copied(), Some(36.0));
+        assert_eq!(scrolled.scroll_max_y.get("panel").copied(), Some(36.0));
+    }
+
+    #[test]
+    fn panel_scroll_range_preserves_bottom_padding() {
+        let mut panel = node(
+            "panel",
+            WidgetKind::Panel,
+            NodeProps::default(),
+            vec![
+                node("first", WidgetKind::Button, NodeProps::default(), vec![]),
+                node("second", WidgetKind::Button, NodeProps::default(), vec![]),
+                node("third", WidgetKind::Button, NodeProps::default(), vec![]),
+                node("fourth", WidgetKind::Button, NodeProps::default(), vec![]),
+            ],
+        );
+        panel.style.layout.padding = Some(14.0);
+        panel.style.layout.gap = Some(0.0);
+        panel.style.layout.height = Some(100.0);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![panel],
+        );
+        let mut state = WidgetState::default();
+        state.container_scroll_y.insert("panel".to_string(), 999.0);
+
+        let layout = compute_layout(&root, 240.0, 100.0, 1.0, &Theme::dark(), Some(&state));
+        let panel = layout.rects.get("panel").unwrap();
+        let fourth = layout.rects.get("fourth").unwrap();
+
+        assert_eq!(layout.scroll_max_y.get("panel").copied(), Some(64.0));
+        assert_eq!(layout.scroll_y.get("panel").copied(), Some(64.0));
+        assert_eq!(panel.y + panel.h - (fourth.y + fourth.h), 14.0);
+    }
+
+    #[test]
+    fn overflow_visible_allows_child_clip_to_escape_parent() {
+        let mut child = node("child", WidgetKind::Panel, NodeProps::default(), vec![]);
+        child.style.layout.height_value = Some(LayoutLength::LogicalPx(90.0));
+        let mut panel = node(
+            "panel",
+            WidgetKind::Panel,
+            NodeProps::default(),
+            vec![child],
+        );
+        panel.style.layout.height_value = Some(LayoutLength::LogicalPx(40.0));
+        panel.style.layout.padding = Some(0.0);
+        panel.style.layout.overflow = Some(OverflowStyle::Visible);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![panel],
+        );
+
+        let layout = compute_layout(&root, 200.0, 120.0, 1.0, &Theme::dark(), None);
+        let panel = layout.rects.get("panel").unwrap();
+        let child_clip = layout.clips.get("child").unwrap();
+
+        assert!(child_clip.y + child_clip.h > panel.y + panel.h);
+    }
+
+    #[test]
+    fn overflow_auto_opts_non_panel_container_into_scroll() {
+        let mut scroller = node(
+            "scroller",
+            WidgetKind::VLayout,
+            NodeProps::default(),
+            vec![
+                node("first", WidgetKind::Button, NodeProps::default(), vec![]),
+                node("second", WidgetKind::Button, NodeProps::default(), vec![]),
+                node("third", WidgetKind::Button, NodeProps::default(), vec![]),
+                node("fourth", WidgetKind::Button, NodeProps::default(), vec![]),
+            ],
+        );
+        scroller.style.layout.height_value = Some(LayoutLength::LogicalPx(70.0));
+        scroller.style.layout.overflow_y = Some(OverflowStyle::Auto);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![scroller],
+        );
+        let mut state = WidgetState::default();
+        state
+            .container_scroll_y
+            .insert("scroller".to_string(), 20.0);
+
+        let layout = compute_layout(&root, 240.0, 100.0, 1.0, &Theme::dark(), Some(&state));
+
+        assert!(layout.scroll_max_y.get("scroller").copied().unwrap_or(0.0) > 0.0);
+        assert_eq!(layout.scroll_y.get("scroller").copied(), Some(20.0));
+    }
+
+    #[test]
+    fn titled_scroll_panel_clips_children_below_title() {
+        let mut panel = node(
+            "panel",
+            WidgetKind::Panel,
+            NodeProps {
+                text: Some("Form controls".to_string()),
+                ..NodeProps::default()
+            },
+            vec![
+                node("first", WidgetKind::Button, NodeProps::default(), vec![]),
+                node("second", WidgetKind::Button, NodeProps::default(), vec![]),
+                node("third", WidgetKind::Button, NodeProps::default(), vec![]),
+                node("fourth", WidgetKind::Button, NodeProps::default(), vec![]),
+            ],
+        );
+        panel.style.layout.padding = Some(0.0);
+        panel.style.layout.gap = Some(0.0);
+        panel.style.layout.height = Some(100.0);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![panel],
+        );
+        let mut state = WidgetState::default();
+        state.container_scroll_y.insert("panel".to_string(), 40.0);
+        let theme = Theme::dark();
+
+        let layout = compute_layout(&root, 240.0, 100.0, 1.0, &theme, Some(&state));
+
+        let panel = layout.rects.get("panel").unwrap();
+        let title_bottom = panel.y
+            + panel_title_top_padding_lp(root.children.first().unwrap(), &theme)
+            + panel_title_line_height_lp(root.children.first().unwrap(), &theme)
+            + panel_title_gap_lp(root.children.first().unwrap(), &theme);
+
+        let mut saw_visible_child = false;
+        for id in ["first", "second", "third", "fourth"] {
+            let clip = layout.clips.get(id).unwrap();
+            if clip.h > 0.0 {
+                saw_visible_child = true;
+                assert!(
+                    clip.y >= title_bottom,
+                    "{id} clip overlapped title: {clip:?}"
+                );
+                assert!(clip.y >= panel.y);
+            }
+        }
+        assert!(saw_visible_child);
+    }
+
+    #[test]
+    fn page_panel_scroll_offset_is_applied_once() {
+        let mut panel = node(
+            "form",
+            WidgetKind::Panel,
+            NodeProps {
+                text: Some("Form controls".to_string()),
+                fixed_width: Some(330.0),
+                ..NodeProps::default()
+            },
+            vec![
+                node(
+                    "tags",
+                    WidgetKind::HLayout,
+                    NodeProps::default(),
+                    vec![
+                        node(
+                            "live",
+                            WidgetKind::Badge,
+                            NodeProps {
+                                text: Some("live".to_string()),
+                                ..NodeProps::default()
+                            },
+                            vec![],
+                        ),
+                        node(
+                            "queued",
+                            WidgetKind::Badge,
+                            NodeProps {
+                                text: Some("queued".to_string()),
+                                ..NodeProps::default()
+                            },
+                            vec![],
+                        ),
+                        node(
+                            "review",
+                            WidgetKind::Tag,
+                            NodeProps {
+                                text: Some("review".to_string()),
+                                ..NodeProps::default()
+                            },
+                            vec![],
+                        ),
+                    ],
+                ),
+                node("input", WidgetKind::TextInput, NodeProps::default(), vec![]),
+                node(
+                    "dropdown",
+                    WidgetKind::Dropdown,
+                    NodeProps::default(),
+                    vec![],
+                ),
+                node("slider", WidgetKind::Slider, NodeProps::default(), vec![]),
+                node(
+                    "number",
+                    WidgetKind::NumberInput,
+                    NodeProps::default(),
+                    vec![],
+                ),
+                node("button-a", WidgetKind::Button, NodeProps::default(), vec![]),
+                node("button-b", WidgetKind::Button, NodeProps::default(), vec![]),
+                node("button-c", WidgetKind::Button, NodeProps::default(), vec![]),
+            ],
+        );
+        panel.style.layout.padding = Some(14.0);
+        panel.style.layout.gap = Some(10.0);
+        let page = node(
+            "controls",
+            WidgetKind::Page,
+            NodeProps {
+                route_value: Some("controls".to_string()),
+                ..NodeProps::default()
+            },
+            vec![node(
+                "row",
+                WidgetKind::HLayout,
+                NodeProps::default(),
+                vec![panel],
+            )],
+        );
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "pages",
+                WidgetKind::Pages,
+                NodeProps {
+                    route_value: Some("controls".to_string()),
+                    ..NodeProps::default()
+                },
+                vec![page],
+            )],
+        );
+        let theme = Theme::dark();
+        let unscrolled = compute_layout(&root, 480.0, 180.0, 1.0, &theme, None);
+        let mut state = WidgetState::default();
+        state.container_scroll_y.insert("form".to_string(), 12.0);
+        let scrolled = compute_layout(&root, 480.0, 180.0, 1.0, &theme, Some(&state));
+
+        let applied_scroll = scrolled.scroll_y.get("form").copied().unwrap_or(0.0);
+        assert!(applied_scroll > 0.0);
+        let tags_before = unscrolled.rects.get("tags").unwrap();
+        let tags_after = scrolled.rects.get("tags").unwrap();
+        assert_eq!(tags_after.y, tags_before.y - applied_scroll);
+
+        let form = unscrolled.rects.get("form").unwrap();
+        let title_bottom = form.y
+            + panel_title_top_padding_lp(
+                root.children[0].children[0].children[0]
+                    .children
+                    .first()
+                    .unwrap(),
+                &theme,
+            )
+            + panel_title_line_height_lp(
+                root.children[0].children[0].children[0]
+                    .children
+                    .first()
+                    .unwrap(),
+                &theme,
+            )
+            + panel_title_gap_lp(
+                root.children[0].children[0].children[0]
+                    .children
+                    .first()
+                    .unwrap(),
+                &theme,
+            );
+        assert!(
+            tags_before.y >= title_bottom,
+            "tag row should start below fixed title: tags={tags_before:?} title_bottom={title_bottom}"
         );
     }
 

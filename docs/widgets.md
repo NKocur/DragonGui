@@ -37,7 +37,7 @@ Common live methods:
 | `Window(title, width=1024, height=768)` | Root container and native window metadata. Must be created outside any active layout context. |
 | `HLayout` | Horizontal flex container. Useful for rows, split panes, and button groups. |
 | `VLayout` | Vertical flex container. Useful for forms, panels, and stacked sections. |
-| `Panel(title=None, width=None)` | Titled or untitled container with optional preferred width. Supports `Panel::accent`. |
+| `Panel(title=None, width=None)` | Titled or untitled container with optional preferred width. Vertically scrolls overflowing child content with the mouse wheel. Supports `Panel::accent`. |
 | `Collapsible(title, expanded=True, on_change=None, disabled=False)` | Header/body container for optional sections. Header toggles expanded state; children lay out only when expanded. Supports `set_expanded()`, `expand()`, `collapse()`, `toggle()`, and `Collapsible::header`, `indicator`, `body`. |
 | `Sidebar(title=None, width=220)` | Fixed-width navigation/rail container. |
 | `StatusBar(height=28)` | Bottom/status container with fixed height. |
@@ -103,7 +103,7 @@ Helper builders:
 | Widget | Features |
 | --- | --- |
 | `Slider(value=0, min=0, max=1, step=0.01, on_change=None, disabled=False)` | Numeric slider. Clamps initial and live values to `[min, max]`; `step` must be greater than zero. Supports `Slider::track`, `fill`, and `thumb`. |
-| `NumberInput(value=0, min=None, max=None, step=1, on_change=None, disabled=False)` | Numeric text field with steppers. Values must be finite; `step` must be finite and greater than zero. Supports `NumberInput::field`, `stepper`, `stepper-up`, `stepper-down`, `stepper-divider`, `divider`, and `caret`. |
+| `NumberInput(value=0, min=None, max=None, step=1, on_change=None, disabled=False)` | Numeric text field with left decrement and right increment steppers. Values must be finite; `step` must be finite and greater than zero. Supports `NumberInput::field`, `stepper`, `stepper-up`, `stepper-down`, `stepper-divider`, `divider`, and `caret`. |
 | `ProgressBar(value=0, min=0, max=1, label=None, show_value=False, disabled=False)` | Read-only progress display. `set_value(value)` updates progress and, when `show_value=True`, updates the generated percentage label. Supports `ProgressBar::track`, `fill`, and `label`. |
 | `ColorPicker(value=(255, 100, 0), alpha=True, on_change=None, title="Color", width=320)` | Composite panel made from a swatch, sliders, and labels. Accepts RGB/RGBA values as 0-255 integers or normalized 0.0-1.0 floats. `set_value(value, notify=False)` updates the displayed color; pass `notify=True` to invoke `on_change`. User interaction always invokes `on_change`. |
 
