@@ -190,7 +190,7 @@ def release_buffer() -> None:
 
 
 def choose_csv() -> None:
-    dg.FileDialog.open_file(
+    dg.open_file_dialog(
         title="Open CSV",
         filters=[("CSV files", ["csv"])],
         on_select=lambda path: set_status(f"Selected: {path}" if path else "Open CSV cancelled"),
@@ -214,6 +214,19 @@ def apply_demo_color(color: tuple[int, ...]) -> None:
         }
     )
     set_status(f"ColorPicker: {selected}")
+
+
+def show_demo_toast() -> None:
+    dg.toast(
+        "Runtime toast from all_features_demo",
+        level="success",
+        duration=2400,
+        opacity=0.94,
+        radius=12,
+        padding=14,
+        position="bottom-right",
+    )
+    set_status("Toast queued")
 
 
 def print_snapshot() -> None:
@@ -308,6 +321,9 @@ with dg.HLayout(style={"gap": 0}):
     with dg.Sidebar(width=230, style={"padding": 14, "gap": 10, "background": "surface"}):
         dg.Label("DragonGUI", style={"font_size": 20, "font_weight": "bold", "color": "accent"})
         dg.Label("All features", style={"color": "muted_text"})
+        with dg.HLayout(style={"gap": 6, "height": 24}):
+            dg.Badge("V2", level="success")
+            dg.Tag("native", level="info")
         dg.Separator()
         dg.NavItem("Overview", page="overview")
         dg.NavItem("Controls", page="controls")
@@ -363,6 +379,10 @@ with dg.HLayout(style={"gap": 0}):
         with dg.Page("controls", title="Controls"):
             with dg.HLayout(style={"gap": 16, "padding": 14}):
                 with dg.Panel("Form controls", width=330, style={"padding": 14, "gap": 10}):
+                    with dg.HLayout(style={"gap": 8, "height": 28}):
+                        dg.Badge("live", level="success")
+                        dg.Badge("queued", level="warning")
+                        dg.Tag("review", level="neutral")
                     dg.TextInput(
                         "editable text",
                         placeholder="Type here",
@@ -408,8 +428,20 @@ with dg.HLayout(style={"gap": 0}):
                     )
                     dg.Checkbox("Enable analysis", checked=True, on_change=lambda v: set_status(f"Analysis: {v}"))
                     dg.Button("Regular Button", on_click=lambda: set_status("Button clicked"))
+                    dg.Button("Show Toast", badge="new", on_click=show_demo_toast)
                     dg.Button("Disabled Button", disabled=True)
                     dg.TextInput("disabled input", disabled=True)
+                    with dg.Collapsible(
+                        "Advanced notes",
+                        expanded=False,
+                        on_change=lambda expanded: set_status(f"Advanced notes: {expanded}"),
+                    ):
+                        dg.TextArea(
+                            "Line one\nLine two\nLine three\nLine four\nLine five",
+                            rows=3,
+                            wrap=True,
+                            on_change=lambda v: set_status(f"Notes length: {len(v)}"),
+                        )
                 with dg.Panel("Tabs", style={"padding": 14, "gap": 10}):
                     with dg.Tabs(value="one", on_change=lambda v: set_status(f"Tab: {v}")):
                         with dg.Tab("One", value="one"):
@@ -417,7 +449,10 @@ with dg.HLayout(style={"gap": 0}):
                             dg.Separator()
                             dg.Label("Separator above, spacer below.")
                             dg.Spacer(height=10)
-                            dg.Button("Tab Button", on_click=lambda: set_status("Tab button clicked"))
+                            tab_button = dg.Button("Tab Button", on_click=lambda: set_status("Tab button clicked"))
+                            with dg.Tooltip(target=tab_button):
+                                dg.Label("Rich tooltip")
+                                dg.ProgressBar(0.66, show_value=True)
                         with dg.Tab("Two", value="two"):
                             dg.Label("Tab content two")
                             dg.Checkbox("A checkbox in a tab", checked=False)

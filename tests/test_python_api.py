@@ -1000,7 +1000,18 @@ def test_app_debug_snapshot_requires_running_app() -> None:
 def test_app_toast_enqueues_native_commands() -> None:
     class Sender:
         def __init__(self) -> None:
-            self.shown: list[tuple[str, str, str, int | None]] = []
+            self.shown: list[
+                tuple[
+                    str,
+                    str,
+                    str,
+                    int | None,
+                    float | None,
+                    float | None,
+                    float | None,
+                    str | None,
+                ]
+            ] = []
             self.dismissed: list[str] = []
 
         def enqueue_show_toast(
@@ -1009,8 +1020,14 @@ def test_app_toast_enqueues_native_commands() -> None:
             message: str,
             level: str,
             duration_ms: int | None = None,
+            opacity: float | None = None,
+            radius: float | None = None,
+            padding: float | None = None,
+            position: str | None = None,
         ) -> None:
-            self.shown.append((toast_id, message, level, duration_ms))
+            self.shown.append(
+                (toast_id, message, level, duration_ms, opacity, radius, padding, position)
+            )
 
         def enqueue_dismiss_toast(self, toast_id: str) -> None:
             self.dismissed.append(toast_id)
@@ -1024,8 +1041,16 @@ def test_app_toast_enqueues_native_commands() -> None:
     app = dg.App()
     app._handle = handle
 
-    toast = app.toast("Export complete", level="success", duration=2500)
-    toast.update("Saved", level="info", duration=None)
+    toast = app.toast(
+        "Export complete",
+        level="success",
+        duration=2500,
+        opacity=0.85,
+        radius=10,
+        padding=16,
+        position="bottom-left",
+    )
+    toast.update("Saved", level="info", duration=None, position="top_left")
     toast.dismiss()
     _set_active_app_handle(handle)
     try:
@@ -1035,9 +1060,9 @@ def test_app_toast_enqueues_native_commands() -> None:
 
     assert isinstance(toast, dg.ToastHandle)
     assert sender.shown == [
-        ("toast-1", "Export complete", "success", 2500),
-        ("toast-1", "Saved", "info", None),
-        ("toast-2", "Queued from callback", "warning", 500),
+        ("toast-1", "Export complete", "success", 2500, 0.85, 10.0, 16.0, "bottom-left"),
+        ("toast-1", "Saved", "info", None, None, None, None, "top-left"),
+        ("toast-2", "Queued from callback", "warning", 500, None, None, None, None),
     ]
     assert sender.dismissed == ["toast-1"]
 
@@ -1053,6 +1078,14 @@ def test_app_toast_validation_and_running_requirement() -> None:
         handle.toast("Saved", duration=0)
     with pytest.raises(ValueError, match="message"):
         handle.toast("")
+    with pytest.raises(ValueError, match="opacity"):
+        handle.toast("Saved", opacity=1.5)
+    with pytest.raises(ValueError, match="radius"):
+        handle.toast("Saved", radius=-1)
+    with pytest.raises(ValueError, match="padding"):
+        handle.toast("Saved", padding=-1)
+    with pytest.raises(ValueError, match="position"):
+        handle.toast("Saved", position="center")
 
 
 def test_app_handle_generic_buffer_resources_queue_and_release() -> None:
@@ -1203,23 +1236,46 @@ def test_live_widget_setters_enqueue_native_props() -> None:
     handle._bind_native_sender(sender)
 
     button = dg.Button("Filters", id="button", badge=1, parent=None)
+    badge = dg.Badge("Ready", id="badge", parent=None)
     text = dg.TextInput("old", id="text", parent=None)
     text_area = dg.TextArea("old\nvalue", id="notes", parent=None)
     slider = dg.Slider(0.0, min=0, max=1, id="slider", parent=None)
     dropdown = dg.Dropdown(["x", "y"], id="dropdown", parent=None)
     checkbox = dg.Checkbox("Enabled", id="checkbox", parent=None)
     collapsible = dg.Collapsible("Advanced", id="advanced", expanded=False, parent=None)
+    tabs = dg.Tabs(value="one", id="tabs", parent=None)
+    dg.Tab("One", value="one", parent=tabs)
+    dg.Tab("Two", value="two", parent=tabs)
+    pages = dg.Pages(value="one", id="pages", parent=None)
+    dg.Page("one", parent=pages)
+    dg.Page("two", parent=pages)
     scatter = dg.Scatter3D(DemoFrame(), x="x", y="y", z="z", id="scatter", parent=None)
-    for widget in (button, text, text_area, slider, dropdown, checkbox, collapsible, scatter):
+    for widget in (
+        button,
+        badge,
+        text,
+        text_area,
+        slider,
+        dropdown,
+        checkbox,
+        collapsible,
+        tabs,
+        pages,
+        scatter,
+    ):
         widget._bind_live(handle.widget_handle(widget.id))
 
     button.set_badge(None)
+    badge.set_value("Busy")
+    badge.set_level("warning")
     text.set_value("new")
     text_area.set_value("new\nvalue")
     slider.set_value(2.0)
     dropdown.set_value("y")
     checkbox.set_checked(True)
     collapsible.set_expanded(True)
+    tabs.set_value("two")
+    pages.set_value("two")
     monkey_payload = bytes(range(12))
     original_pack = widgets_module._pack_xyz_bytes
     widgets_module._pack_xyz_bytes = lambda frame, x, y, z: monkey_payload
@@ -1229,20 +1285,28 @@ def test_live_widget_setters_enqueue_native_props() -> None:
         widgets_module._pack_xyz_bytes = original_pack
 
     assert button.badge is None
+    assert badge.text == "Busy"
+    assert badge.level == "warning"
     assert text.value == "new"
     assert text_area.value == "new\nvalue"
     assert slider.value == 1.0
     assert dropdown.value == "y"
     assert checkbox.checked is True
     assert collapsible.expanded is True
+    assert tabs.value == "two"
+    assert pages.value == "two"
     assert sender.props == [
         ("button", "badge", None),
+        ("badge", "text", "Busy"),
+        ("badge", "level", "warning"),
         ("text", "value", "new"),
         ("notes", "value", "new\nvalue"),
         ("slider", "value", 1.0),
         ("dropdown", "value", "y"),
         ("checkbox", "checked", True),
         ("advanced", "expanded", True),
+        ("tabs", "value", "two"),
+        ("pages", "value", "two"),
     ]
     assert len(sender.scatter_payloads) == 1
     widget_id, payload, pack_ms, enqueue_epoch_ms, colormap = sender.scatter_payloads[0]
@@ -1516,6 +1580,8 @@ def test_m5_theme_and_mutable_control_props_serialize() -> None:
     text_area = dg.TextArea("line 1\nline 2", placeholder="Notes", rows=5, wrap=False, parent=win)
     dropdown = dg.Dropdown(["x", "y"], value="y", disabled=True, parent=win)
     slider = dg.Slider(0.5, min=0, max=1, step=0.25, parent=win)
+    badge = dg.Badge("live", level="success", parent=win)
+    tag = dg.Tag("queued", level="warning", parent=win)
 
     document = app.document(win)
 
@@ -1526,6 +1592,10 @@ def test_m5_theme_and_mutable_control_props_serialize() -> None:
     assert text.to_dict()["props"]["placeholder"] == "Name"
     assert dropdown.to_dict()["props"]["disabled"] is True
     assert slider.to_dict()["props"]["step"] == 0.25
+    assert badge.to_dict()["type"] == "badge"
+    assert badge.to_dict()["props"] == {"text": "live", "level": "success"}
+    assert tag.to_dict()["type"] == "tag"
+    assert tag.to_dict()["props"] == {"text": "queued", "level": "warning"}
     assert text_area.to_dict()["type"] == "text_area"
     assert text_area.to_dict()["props"]["value"] == "line 1\nline 2"
     assert text_area.to_dict()["props"]["placeholder"] == "Notes"
@@ -1537,6 +1607,8 @@ def test_m5_theme_and_mutable_control_props_serialize() -> None:
         dg.TextArea(rows=0, parent=None)
     with pytest.raises(TypeError, match="badge"):
         dg.Button("Bad", badge=True, parent=None)
+    with pytest.raises(ValueError, match="unknown badge level"):
+        dg.Badge("Bad", level="urgent", parent=None)
 
 
 def test_change_callback_wrappers_update_python_handles() -> None:
@@ -1786,6 +1858,31 @@ def test_navigation_widgets_serialize_and_register_callbacks() -> None:
     change_cbs[tabs["id"]]("scatter")
 
     assert calls == [("page", "table"), ("tab", "scatter")]
+
+
+def test_navigation_set_value_updates_route_and_optional_callback() -> None:
+    calls: list[tuple[str, str]] = []
+    pages = dg.Pages(value="one", on_change=lambda value: calls.append(("page", value)), parent=None)
+    dg.Page("one", parent=pages)
+    dg.Page("two", parent=pages)
+    tabs = dg.Tabs(value="one", on_change=lambda value: calls.append(("tab", value)), parent=None)
+    dg.Tab("One", value="one", parent=tabs)
+    dg.Tab("Two", value="two", parent=tabs)
+
+    pages.set_value("two")
+    tabs.set_value("two", notify=True)
+
+    assert pages.value == "two"
+    assert tabs.value == "two"
+    assert calls == [("tab", "two")]
+
+    pages.set_value("one", notify=True)
+    assert calls == [("tab", "two"), ("page", "one")]
+
+    with pytest.raises(ValueError, match="Pages value"):
+        pages.set_value("missing")
+    with pytest.raises(ValueError, match="Tabs value"):
+        tabs.set_value("missing")
 
 
 def test_menu_widgets_serialize_and_register_callbacks() -> None:

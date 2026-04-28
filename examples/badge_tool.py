@@ -25,6 +25,17 @@ app.stylesheet(
         background: danger;
         color: text;
     }
+
+    Badge,
+    Tag {
+        font-size: 12px;
+        padding: 8px;
+    }
+
+    Tag {
+        background: surface;
+        border: 1px solid border;
+    }
     """
 )
 
@@ -75,6 +86,10 @@ with dg.HLayout(style={"padding": 18, "gap": 16}):
                 jobs_tab = tab
                 with dg.Panel("Jobs", style={"padding": 14, "gap": 10}):
                     dg.Label("Badges reserve space at the right edge of the control.")
+                    with dg.HLayout(style={"gap": 8, "height": 28}):
+                        dg.Badge("live", level="success")
+                        dg.Badge("queued", level="warning")
+                        dg.Tag("owner: data", level="neutral")
                     status = dg.Label("Badges ready")
                     dg.ProgressBar(0.72, show_value=True)
             with dg.Tab("Logs", value="logs", badge=99):

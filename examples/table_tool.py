@@ -30,6 +30,7 @@ with dg.VLayout():
         )
 
     dg.Label("Metadata-backed virtualized table")
+    dg.Label("Click a cell, then use Arrow keys, PageUp/PageDown, Home/End, or Enter.")
     dg.DataFrameTable(frame, page_size=80, on_select=show_selection)
 
 try:

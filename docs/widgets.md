@@ -62,7 +62,7 @@ with dg.HLayout():
 | `ContextMenu(target=None, width=220)` | Popup menu attached to a widget id or widget instance. Contains `MenuItem` children. |
 | `Tooltip(target, width=280, height=None)` | Rich hover tooltip attached to a widget id or widget instance. Contains arbitrary children and does not take focus. |
 | `Modal(title="", open=False, width=420, height=220)` | Floating modal container. Prefer `show()` and `close()`; `set_open(value)` is kept as a compatibility alias. |
-| `toast(message, level="info", duration=3000, app=None)` / `App.toast(...)` | Non-blocking native notification overlay. Levels are `info`, `success`, `warning`, and `error`; pass `duration=None` for a persistent toast. Returns `ToastHandle` with `update(...)` and `dismiss()`. |
+| `toast(message, level="info", duration=3000, opacity=None, radius=None, padding=None, position=None, app=None)` / `App.toast(...)` | Non-blocking native notification overlay. Levels are `info`, `success`, `warning`, and `error`; pass `duration=None` for a persistent toast. `position` accepts `top-right`, `top-left`, `bottom-right`, or `bottom-left`. Returns `ToastHandle` with `update(...)` and `dismiss()`. |
 
 Helper builders:
 
@@ -79,9 +79,9 @@ Helper builders:
 
 | Widget | Features |
 | --- | --- |
-| `Tabs(value=None, on_change=None, disabled=False)` | Container for `Tab` children. If `value` is omitted, the first tab becomes active. Emits `change` when `on_change` is supplied and not disabled. Supports `Tabs::header`. |
+| `Tabs(value=None, on_change=None, disabled=False)` | Container for `Tab` children. If `value` is omitted, the first tab becomes active. `set_value(value, notify=False)` switches tabs programmatically; pass `notify=True` to invoke `on_change`. Emits `change` for native interaction when `on_change` is supplied and not disabled. Supports `Tabs::header`. |
 | `Tab(label, value=None, badge=None, disabled=False)` | Tab page container. `value` defaults to a route-safe version of `label`. Must be created directly inside `Tabs`. Optional badge supports `set_badge(value)`. Supports `Tab::tab`, `accent`, and `badge`. |
-| `Pages(value=None, on_change=None)` | Container for route-based `Page` children. If `value` is omitted, the first page becomes active. Native page-route changes emit `change` when `on_change` is supplied; programmatic construction does not call it. |
+| `Pages(value=None, on_change=None)` | Container for route-based `Page` children. If `value` is omitted, the first page becomes active. `set_value(value, notify=False)` switches pages programmatically; pass `notify=True` to invoke `on_change`. Native page-route changes emit `change` when `on_change` is supplied; programmatic construction does not call it. |
 | `Page(value, title=None)` | Page container. Must be created directly inside `Pages`. |
 | `NavItem(label, page, badge=None, disabled=False)` | Navigation row targeting a `Page` route. Optional badge supports `set_badge(value)`. Supports `NavItem::item`, `accent`, and `badge`. |
 
@@ -90,9 +90,11 @@ Helper builders:
 | Widget | Features |
 | --- | --- |
 | `Label(text)` | Static text. `set_value(value)` updates text. |
+| `Badge(text, level="info")` | Compact status/count pill. `level` may be `neutral`, `info`, `success`, `warning`, `danger`, or `error`. Supports `set_value(value)` and `set_level(level)`. |
+| `Tag(text, level="neutral")` | Compact bordered status label with the same API as `Badge`. |
 | `Button(text, on_click=None, badge=None, disabled=False)` | Clickable button. Emits `click` when `on_click` is supplied and not disabled. `click()` invokes the Python callback directly. Optional badge supports `set_badge(value)`. |
 | `TextInput(value="", placeholder="", on_change=None, disabled=False)` | Editable text field. `set_value(value)` updates text. |
-| `TextArea(value="", placeholder="", rows=4, wrap=True, on_change=None, disabled=False)` | Editable multiline text field. Newlines are preserved; `rows` controls preferred height; `wrap` controls long-line wrapping. `set_value(value)` updates text. |
+| `TextArea(value="", placeholder="", rows=4, wrap=True, on_change=None, disabled=False)` | Editable multiline text field. Newlines are preserved; `rows` controls preferred height; overflow scrolls inside the field; `wrap` controls long-line wrapping. `set_value(value)` updates text. |
 | `Checkbox(label, checked=False, on_change=None, disabled=False)` | Boolean control. `set_checked(checked)` updates state. Supports `Checkbox::row`, `box`, `indicator`, and `label`. |
 | `Dropdown(items, value=None, on_change=None, disabled=False)` | Select control. `items` must be non-empty; `value` must be in `items` when supplied. `set_value(value)` updates selection. Supports field, chevron, menu, and item parts. |
 
@@ -111,7 +113,7 @@ Helper builders:
 | --- | --- |
 | `Image(path, fit="contain", width=None, height=None)` | Image widget. `fit` may be `contain`, `cover`, or `stretch`; width/height must be positive when supplied. Supports `set_path()`, `reload()`, and `set_fit()`. |
 | `Scatter3D(frame, x, y, z, colormap="viridis", on_pick=None)` | GPU 3D scatter plot. Uses frame metadata and packed float32 xyz data when NumPy/addressable columns are available. Emits `ScatterPick` callbacks for point clicks. Supports `set_points()` and `set_colormap()` for live updates. |
-| `DataFrameTable(frame, page_size=100, sample_rows=DEFAULT_TABLE_SAMPLE_ROWS, on_select=None)` | Virtualized table for dataframe-like objects. Extracts metadata, cell samples, and optional column buffers. Emits selection callbacks with `TableSelection`. Supports `set_frame()`. Supports `DataFrameTable::header`, `row`, `row-selected`, and `grid-line`. |
+| `DataFrameTable(frame, page_size=100, sample_rows=DEFAULT_TABLE_SAMPLE_ROWS, on_select=None)` | Virtualized table for dataframe-like objects. Extracts metadata, cell samples, and optional column buffers. Emits selection callbacks with `TableSelection` from mouse or keyboard selection. Supports `set_frame()`. Supports `DataFrameTable::header`, `row`, `row-selected`, and `grid-line`. |
 
 Supported `Scatter3D` colormaps:
 
@@ -130,6 +132,10 @@ def selected(selection: dg.TableSelection) -> None:
 For convenience, callbacks that declare three positional parameters receive
 `row_index`, `column`, and `value`. Four-argument callbacks receive
 `row_index`, `column_index`, `column`, and `value`.
+
+When focused, table keyboard navigation uses Arrow keys for cell movement,
+PageUp/PageDown for visible-page movement, Home/End for row edges, and
+Enter/Space to re-emit the current selection.
 
 `Scatter3D.on_pick` receives a `ScatterPick` object by default:
 
@@ -161,6 +167,10 @@ These widgets expose named renderer parts for CSS selectors and inline
 | `NavItem` | `item`, `accent`, `badge` |
 | `DataFrameTable` | `header`, `row`, `row-selected`, `grid-line` |
 
+Runtime `Toast` overlays and simple string `tooltip="..."` overlays do not have
+parts, but they can be styled with `Toast`, `Toast.error`, `Tooltip`, and
+`Tooltip.static` type/class selectors.
+
 Part names in inline styles accept dashed or snake-case spellings:
 
 ```python
@@ -185,8 +195,8 @@ and debug snapshot path.
 | --- | --- | --- |
 | `Button` | `on_click()` | `click()` invokes the Python callback directly. |
 | `MenuItem` | `on_click()` | Activated by native menu interaction. |
-| `Tabs` | `on_change(value: str)` | Native tab selection updates the route value. |
-| `Pages` | `on_change(value: str)` | Fires when native interaction changes the active page route. |
+| `Tabs` | `on_change(value: str)` | Native tab selection updates the route value. `set_value(value, notify=False)` is silent unless `notify=True`. |
+| `Pages` | `on_change(value: str)` | Fires when native interaction changes the active page route. `set_value(value, notify=False)` is silent unless `notify=True`. |
 | `TextInput` | `on_change(value: str)` | `set_value(value)` updates the live native value. |
 | `TextArea` | `on_change(value: str)` | `set_value(value)` updates the live native value. |
 | `Slider` | `on_change(value: float)` | `set_value(value)` clamps and updates the native value. |
@@ -195,9 +205,10 @@ and debug snapshot path.
 | `Checkbox` | `on_change(value: bool)` | `set_checked(value)` updates checked state. |
 | `Collapsible` | `on_change(value: bool)` | `set_expanded(value)`, `expand()`, `collapse()`, `toggle()`. |
 | `Button`, `Tab`, `NavItem` badges | None | `set_badge(value)` updates or hides the live badge. |
+| `Badge`, `Tag` | None | `set_value(value)` updates text; `set_level(level)` updates semantic color. |
 | `ColorPicker` | `on_change(value: tuple[int, ...])` | `set_value(value, notify=False)` updates silently by default; `notify=True` invokes the callback. |
 | `Scatter3D` | `on_pick(point: ScatterPick)` or compatible index/x/y/z callback | `set_points(...)`, `set_colormap(...)`. |
 | `DataFrameTable` | `on_select(selection: TableSelection)` or compatible row/column/value callback | `set_frame(...)`. |
 | `Image` | None | `set_path(...)`, `reload()`, `set_fit(...)`. |
 | `Modal` | None | `show()`, `close()`; `set_open(...)` is a compatibility alias. |
-| `toast` / `App.toast` | None | `ToastHandle.update(...)`, `ToastHandle.dismiss()`. |
+| `toast` / `App.toast` | None | `ToastHandle.update(...)`, `ToastHandle.dismiss()`. Toast updates can also set `opacity`, `radius`, `padding`, and `position`. |

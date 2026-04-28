@@ -134,12 +134,21 @@ pub fn placeholder_cell(table: &TableState, row: usize, col: usize) -> String {
     }
 }
 
+pub fn source_row(table: &TableState, display_row: usize) -> usize {
+    table
+        .row_order
+        .as_ref()
+        .and_then(|rows| rows.get(display_row).copied())
+        .unwrap_or(display_row)
+}
+
 pub fn cell_text(
     table: &TableState,
     resources: &ResourceRegistry,
     row: usize,
     col: usize,
 ) -> String {
+    let row = source_row(table, row);
     resources
         .table_cell_text(table.resource_id.as_deref(), row, col)
         .unwrap_or_else(|| placeholder_cell(table, row, col))
@@ -187,5 +196,26 @@ mod tests {
         assert_eq!(column_bounds(&rect, metrics, 0), Some((74.0, 194.0)));
         assert_eq!(column_bounds(&rect, metrics, 1), Some((194.0, 260.0)));
         assert_eq!(column_bounds(&rect, metrics, 2), None);
+    }
+
+    #[test]
+    fn cell_text_uses_sorted_source_row_mapping() {
+        let table = TableState {
+            columns: vec!["a".to_string()],
+            dtypes: vec!["f32".to_string()],
+            rows: 3,
+            resource_id: None,
+            page_size: 10,
+            scroll_row: 0,
+            scroll_col: 0,
+            selected: None,
+            sort: Some((0, SortDirection::Asc)),
+            row_order: Some(vec![2, 0, 1]),
+        };
+        let resources = ResourceRegistry::default();
+
+        assert_eq!(source_row(&table, 0), 2);
+        assert_eq!(source_row(&table, 3), 3);
+        assert_eq!(cell_text(&table, &resources, 0, 0), "f32 #2");
     }
 }

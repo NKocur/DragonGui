@@ -1,10 +1,14 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 
+use glyphon::cosmic_text::{FeatureTag, FontFeatures};
 use glyphon::{
-    Attrs, Buffer, Cache, Color, Family, FontSystem, Metrics, Resolution, Shaping, SwashCache,
-    TextArea, TextAtlas, TextBounds, TextRenderer, Viewport, Weight, Wrap,
+    Attrs, Buffer, Cache, Color, Family, FontSystem, Metrics, Resolution, Shaping,
+    Style as GlyphStyle, SwashCache, TextArea, TextAtlas, TextBounds, TextRenderer, Viewport,
+    Weight, Wrap,
 };
 
+use crate::css_style::{computed_style_for_virtual_element, StylesheetStore};
 use crate::document::{WidgetKind, WidgetNode};
 use crate::events::WidgetState;
 use crate::layout::{LayoutResult, Rect};
@@ -15,14 +19,17 @@ use crate::overlays::{
 use crate::resources::ResourceRegistry;
 use crate::style::{
     badge_font_size_lp, badge_height_for_style, badge_width_for_text, base_part_style,
-    checked_part_style_for_state, collapsible_header_height_for_style,
-    number_stepper_width_for_style, state_part_style_for_state, FontFamily, TextAlign, VisualStyle,
-    BADGE_GAP_LP, BORDER_WIDTH_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP,
+    checked_part_style_for_state, collapsed_part_style_for_state,
+    collapsible_header_height_for_style, expanded_part_style_for_state,
+    number_stepper_width_for_style, open_part_style_for_state, selected_part_style_for_state,
+    state_part_style_for_state, uniform_layout_padding, FontFamily, FontStyle, FontVariantNumeric,
+    LineHeight, NodeStyle, TextAlign, TextOverflow, TextSpacing, TextStyle, TextTransform,
+    VisualStyle, BADGE_GAP_LP, BORDER_WIDTH_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP,
     DROPDOWN_CHEVRON_WIDTH_LP, PANEL_ACCENT_WIDTH_LP, TAB_GAP_LP,
 };
 use crate::table;
 use crate::theme::Theme;
-use crate::toast::{toast_colors, toast_rect, ToastOverlay};
+use crate::toast::{toast_colors, toast_padding, toast_rect, toast_stack_index, ToastOverlay};
 
 // ---------------------------------------------------------------------------
 // Layout constants (logical pixels × scale_factor = physical pixels)
@@ -37,6 +44,9 @@ struct TextKey {
     text: String,
     font_family: String,
     font_weight: u16,
+    font_style: FontStyle,
+    tabular_nums: bool,
+    letter_spacing_milli: i32,
     font_size_milli: i32,
     line_height_milli: i32,
     width_milli: i32,
@@ -53,6 +63,58 @@ struct TextEntry {
 }
 
 type TextBufferCache = HashMap<TextKey, Vec<Buffer>>;
+
+#[derive(Clone, Copy, Debug, Default)]
+struct TextRenderOptions {
+    font_style: Option<FontStyle>,
+    font_variant_numeric: Option<FontVariantNumeric>,
+    letter_spacing: Option<TextSpacing>,
+    text_transform: Option<TextTransform>,
+    text_overflow: Option<TextOverflow>,
+}
+
+fn text_options_from_style(style: &TextStyle) -> TextRenderOptions {
+    TextRenderOptions {
+        font_style: style.font_style,
+        font_variant_numeric: style.font_variant_numeric,
+        letter_spacing: style.letter_spacing,
+        text_transform: style.text_transform,
+        text_overflow: style.text_overflow,
+    }
+}
+
+fn text_options_from_styles(
+    primary: Option<&TextStyle>,
+    fallback: &TextStyle,
+) -> TextRenderOptions {
+    let primary = primary.unwrap_or(fallback);
+    TextRenderOptions {
+        font_style: primary.font_style.or(fallback.font_style),
+        font_variant_numeric: primary
+            .font_variant_numeric
+            .or(fallback.font_variant_numeric),
+        letter_spacing: primary.letter_spacing.or(fallback.letter_spacing),
+        text_transform: primary.text_transform.or(fallback.text_transform),
+        text_overflow: primary.text_overflow.or(fallback.text_overflow),
+    }
+}
+
+fn text_options_for_parts(node: &WidgetNode, parts: &[&str]) -> TextRenderOptions {
+    let mut options = text_options_from_style(&node.style.text);
+    for part in parts {
+        if let Some(style) = base_part_style(&node.style, part) {
+            options.font_style = style.text.font_style.or(options.font_style);
+            options.font_variant_numeric = style
+                .text
+                .font_variant_numeric
+                .or(options.font_variant_numeric);
+            options.letter_spacing = style.text.letter_spacing.or(options.letter_spacing);
+            options.text_transform = style.text.text_transform.or(options.text_transform);
+            options.text_overflow = style.text.text_overflow.or(options.text_overflow);
+        }
+    }
+    options
+}
 
 // ---------------------------------------------------------------------------
 // TextRendererDg
@@ -118,6 +180,7 @@ impl TextRendererDg {
         state: &WidgetState,
         resources: &ResourceRegistry,
         toasts: &[ToastOverlay],
+        stylesheets: &StylesheetStore,
         window_w: f32,
         window_h: f32,
     ) -> HashMap<String, [f32; 2]> {
@@ -197,6 +260,7 @@ impl TextRendererDg {
             theme,
             &mut self.font_system,
             sf,
+            stylesheets,
             &mut cache,
             &mut caret_positions,
             &mut entries,
@@ -223,6 +287,7 @@ impl TextRendererDg {
             sf,
             window_w,
             window_h,
+            stylesheets,
             &mut cache,
             &mut caret_positions,
             &mut entries,
@@ -324,7 +389,8 @@ fn collect_text(
         .and_then(|text| text.font_size)
         .map(|font_size| font_size.max(8.0) * sf)
         .unwrap_or_else(|| text_font_size(node, theme, sf));
-    let line_height = text_line_height(font_size, theme, sf);
+    let line_height =
+        text_line_height_from_styles(primary_part_text, &node.style.text, font_size, theme, sf);
     let font_family = primary_part_text
         .and_then(|text| text.font_family.as_ref())
         .or(node.style.text.font_family.as_ref());
@@ -336,11 +402,14 @@ fn collect_text(
         .and_then(|text| text.text_align)
         .or(node.style.text.text_align)
         .unwrap_or(TextAlign::Left);
+    let text_options = text_options_from_styles(primary_part_text, &node.style.text);
     let is_text_widget = matches!(
         node.kind,
         WidgetKind::Panel
             | WidgetKind::Modal
             | WidgetKind::Sidebar
+            | WidgetKind::Badge
+            | WidgetKind::Tag
             | WidgetKind::Label
             | WidgetKind::Button
             | WidgetKind::Checkbox
@@ -452,6 +521,10 @@ fn collect_text(
                             r.y + r.h,
                         )
                     }
+                    WidgetKind::Badge | WidgetKind::Tag => {
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        (r.x + pad, top, r.x + pad, r.y, r.x + r.w - pad, r.y + r.h)
+                    }
                     WidgetKind::NumberInput => {
                         let step_w = number_stepper_width_for_style(&node.style, r.w, sf);
                         let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
@@ -465,10 +538,12 @@ fn collect_text(
                         )
                     }
                     WidgetKind::TextArea => {
+                        let visible_h = (r.h - pad * 2.0).max(1.0);
+                        let scroll_y = state.text_area_scroll_y(&node.id, visible_h, line_height);
                         let top = r.y + pad;
                         (
                             r.x + pad,
-                            top,
+                            top - scroll_y,
                             r.x + pad,
                             r.y + pad,
                             r.x + r.w - pad,
@@ -568,11 +643,15 @@ fn collect_text(
                         &["item"],
                         text_color(node, state, theme, placeholder),
                     )
+                } else if matches!(node.kind, WidgetKind::Badge | WidgetKind::Tag) && !placeholder {
+                    standalone_badge_text_color(node, state, theme)
                 } else {
                     text_color(node, state, theme, placeholder)
                 };
-                let align = if node.kind == WidgetKind::ProgressBar
-                    && node.style.text.text_align.is_none()
+                let align = if matches!(
+                    node.kind,
+                    WidgetKind::ProgressBar | WidgetKind::Badge | WidgetKind::Tag
+                ) && node.style.text.text_align.is_none()
                 {
                     TextAlign::Center
                 } else {
@@ -603,6 +682,17 @@ fn collect_text(
                             bottom: (clip_rect.y + clip_rect.h) as i32,
                         };
                         if node.kind == WidgetKind::TextArea {
+                            let scroll_y = layout
+                                .rects
+                                .get(&node.id)
+                                .map(|r| {
+                                    state.text_area_scroll_y(
+                                        &node.id,
+                                        (r.h - pad * 2.0).max(1.0),
+                                        line_height,
+                                    )
+                                })
+                                .unwrap_or(0.0);
                             push_text_entry_impl(
                                 font_system,
                                 out,
@@ -617,9 +707,11 @@ fn collect_text(
                                 color,
                                 align,
                                 node.props.wrap.unwrap_or(true),
+                                scroll_y,
                                 cache,
                                 if placeholder { None } else { caret },
                                 caret_positions,
+                                text_options,
                             );
                         } else {
                             push_text_entry(
@@ -638,6 +730,7 @@ fn collect_text(
                                 cache,
                                 if placeholder { None } else { caret },
                                 caret_positions,
+                                text_options,
                             );
                         }
                     }
@@ -718,6 +811,7 @@ fn collect_text(
                         cache,
                         None,
                         caret_positions,
+                        text_options,
                     );
                     push_text_entry(
                         font_system,
@@ -740,6 +834,7 @@ fn collect_text(
                         cache,
                         None,
                         caret_positions,
+                        text_options,
                     );
                 }
             }
@@ -800,6 +895,7 @@ fn collect_text(
                         cache,
                         None,
                         caret_positions,
+                        text_options,
                     );
                 }
             }
@@ -862,6 +958,7 @@ fn collect_text(
                         cache,
                         None,
                         caret_positions,
+                        text_options,
                     );
                 }
             }
@@ -925,11 +1022,37 @@ fn is_obscured_by_overlay(
         || tooltip_overlay.is_some_and(|overlay| rects_intersect(*r, overlay))
 }
 
+fn text_bounds_obscured_by_overlay(
+    node: &WidgetNode,
+    bounds: TextBounds,
+    open_dropdown: Option<&str>,
+    dropdown_overlay: Option<Rect>,
+    menu_overlays: [Option<Rect>; 2],
+    tooltip_overlay: Option<Rect>,
+) -> bool {
+    let rect = Rect {
+        x: bounds.left as f32,
+        y: bounds.top as f32,
+        w: (bounds.right - bounds.left).max(0) as f32,
+        h: (bounds.bottom - bounds.top).max(0) as f32,
+    };
+    rect.w <= 0.0
+        || rect.h <= 0.0
+        || is_obscured_by_overlay(
+            node,
+            &rect,
+            open_dropdown,
+            dropdown_overlay,
+            menu_overlays,
+            tooltip_overlay,
+        )
+}
+
 fn rects_intersect(a: Rect, b: Rect) -> bool {
     a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y
 }
 
-fn text_font_size(node: &WidgetNode, theme: &Theme, sf: f32) -> f32 {
+pub(crate) fn text_font_size(node: &WidgetNode, theme: &Theme, sf: f32) -> f32 {
     node.style
         .text
         .font_size
@@ -946,8 +1069,47 @@ fn text_scale(font_size: f32, theme: &Theme) -> f32 {
     }
 }
 
-fn text_line_height(font_size: f32, theme: &Theme, sf: f32) -> f32 {
+pub(crate) fn text_line_height(font_size: f32, theme: &Theme, sf: f32) -> f32 {
     (font_size + 5.0 * sf).max((theme.font_size + 3.0) * sf)
+}
+
+fn text_line_height_for_style(style: &TextStyle, font_size: f32, theme: &Theme, sf: f32) -> f32 {
+    match style.line_height {
+        Some(LineHeight::Multiplier(value)) => (font_size * value.max(0.1)).max(1.0),
+        Some(LineHeight::LogicalPx(value)) => (value.max(1.0) * sf).max(1.0),
+        None => text_line_height(font_size, theme, sf),
+    }
+}
+
+fn text_line_height_from_styles(
+    primary: Option<&TextStyle>,
+    fallback: &TextStyle,
+    font_size: f32,
+    theme: &Theme,
+    sf: f32,
+) -> f32 {
+    if let Some(style) = primary.filter(|style| style.line_height.is_some()) {
+        text_line_height_for_style(style, font_size, theme, sf)
+    } else {
+        text_line_height_for_style(fallback, font_size, theme, sf)
+    }
+}
+
+fn text_line_height_for_parts(
+    node: &WidgetNode,
+    parts: &[&str],
+    font_size: f32,
+    theme: &Theme,
+    sf: f32,
+) -> f32 {
+    for part in parts {
+        if let Some(style) = base_part_style(&node.style, part) {
+            if style.text.line_height.is_some() {
+                return text_line_height_for_style(&style.text, font_size, theme, sf);
+            }
+        }
+    }
+    text_line_height_for_style(&node.style.text, font_size, theme, sf)
 }
 
 fn dropdown_chevron_width(node: &WidgetNode, font_size: f32, theme: &Theme, sf: f32) -> f32 {
@@ -962,7 +1124,10 @@ fn dropdown_chevron_width(node: &WidgetNode, font_size: f32, theme: &Theme, sf: 
 
 fn text_color(node: &WidgetNode, state: &WidgetState, theme: &Theme, placeholder: bool) -> Color {
     let state_visual = state_visual_for(node, state);
-    let base = if let Some(color) = state_visual.and_then(|visual| visual.foreground.as_ref()) {
+    let base = if let Some(color) = state_visual
+        .as_ref()
+        .and_then(|visual| visual.foreground.as_ref())
+    {
         color.resolve(theme)
     } else if state.is_disabled(&node.id) || placeholder {
         theme.muted_text
@@ -980,6 +1145,7 @@ fn text_color(node: &WidgetNode, state: &WidgetState, theme: &Theme, placeholder
         theme.text
     };
     let opacity = state_visual
+        .as_ref()
         .and_then(|visual| visual.opacity)
         .or(node.style.visual.opacity)
         .unwrap_or(1.0)
@@ -987,20 +1153,117 @@ fn text_color(node: &WidgetNode, state: &WidgetState, theme: &Theme, placeholder
     glyph_color([base[0], base[1], base[2], base[3] * opacity])
 }
 
-fn state_visual_for<'a>(node: &'a WidgetNode, state: &WidgetState) -> Option<&'a VisualStyle> {
-    if state.is_disabled(&node.id) {
-        Some(&node.style.disabled)
-    } else if state.pressed.as_deref() == Some(node.id.as_str()) {
-        Some(&node.style.active)
-    } else if state.hovered.as_deref() == Some(node.id.as_str()) {
-        Some(&node.style.hover)
-    } else if state.focused.as_deref() == Some(node.id.as_str()) {
-        Some(&node.style.focus)
-    } else if state.checked.get(&node.id).copied().unwrap_or(false) {
-        Some(&node.style.checked)
-    } else {
-        None
+fn overlay_opacity(style: &NodeStyle, base_opacity: f32) -> f32 {
+    (base_opacity * style.visual.opacity.unwrap_or(1.0)).clamp(0.0, 1.0)
+}
+
+fn overlay_text_color(style: &NodeStyle, theme: &Theme, fallback: [f32; 4], opacity: f32) -> Color {
+    let mut color = style
+        .text
+        .color
+        .as_ref()
+        .or(style.visual.foreground.as_ref())
+        .map(|color| color.resolve(theme))
+        .unwrap_or(fallback);
+    color[3] *= opacity.clamp(0.0, 1.0);
+    glyph_color(color)
+}
+
+fn standalone_badge_level_color(node: &WidgetNode, theme: &Theme) -> [f32; 4] {
+    match node.props.level.as_deref().unwrap_or("info") {
+        "success" => theme.success,
+        "warning" => theme.warning,
+        "danger" | "error" => theme.danger,
+        "neutral" => theme.muted_text,
+        _ => theme.accent,
     }
+}
+
+fn mix_color(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
+    let t = t.clamp(0.0, 1.0);
+    [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+        a[3] + (b[3] - a[3]) * t,
+    ]
+}
+
+fn standalone_badge_fill(node: &WidgetNode, theme: &Theme) -> [f32; 4] {
+    let semantic = standalone_badge_level_color(node, theme);
+    if node.kind == WidgetKind::Tag {
+        mix_color(theme.surface_alt, semantic, 0.22)
+    } else {
+        semantic
+    }
+}
+
+fn standalone_badge_text_color(node: &WidgetNode, state: &WidgetState, theme: &Theme) -> Color {
+    if state.is_disabled(&node.id) {
+        return glyph_color(theme.disabled);
+    }
+    if let Some(color) = node
+        .style
+        .text
+        .color
+        .as_ref()
+        .or(node.style.visual.foreground.as_ref())
+    {
+        return glyph_color(color.resolve(theme));
+    }
+    let fill = node
+        .style
+        .visual
+        .background
+        .as_ref()
+        .map(|color| color.resolve(theme))
+        .unwrap_or_else(|| standalone_badge_fill(node, theme));
+    contrast_glyph_color(fill)
+}
+
+fn state_visual_for(node: &WidgetNode, state: &WidgetState) -> Option<VisualStyle> {
+    let mut visual = VisualStyle::default();
+    let mut changed = false;
+    if state.checked.get(&node.id).copied().unwrap_or(false) {
+        visual = visual.merged(&node.style.checked);
+        changed = true;
+    }
+    if node_is_open(node, state) {
+        visual = visual.merged(&node.style.open);
+        changed = true;
+    }
+    if state.is_expanded_widget(&node.id) {
+        visual = visual.merged(&node.style.expanded);
+        changed = true;
+    }
+    if state.is_collapsed_widget(&node.id) {
+        visual = visual.merged(&node.style.collapsed);
+        changed = true;
+    }
+    if state.is_selected_widget(&node.id) {
+        visual = visual.merged(&node.style.selected);
+        changed = true;
+    }
+    if state.pressed.as_deref() == Some(node.id.as_str()) {
+        visual = visual.merged(&node.style.active);
+        changed = true;
+    } else if state.hovered.as_deref() == Some(node.id.as_str()) {
+        visual = visual.merged(&node.style.hover);
+        changed = true;
+    } else if state.focused.as_deref() == Some(node.id.as_str()) {
+        visual = visual.merged(&node.style.focus);
+        changed = true;
+    }
+    if state.is_disabled(&node.id) {
+        visual = visual.merged(&node.style.disabled);
+        changed = true;
+    }
+    changed.then_some(visual)
+}
+
+fn node_is_open(node: &WidgetNode, state: &WidgetState) -> bool {
+    state.is_open_widget(&node.id)
+        || (node.kind == WidgetKind::Modal && node.props.open == Some(true))
 }
 
 fn part_style_text_color(style: &crate::style::PartStyle, theme: &Theme) -> Option<Color> {
@@ -1037,6 +1300,34 @@ fn part_text_color(
     }
     for part in parts {
         if let Some(color) = checked_part_style_for_state(&node.style, &node.id, state, *part)
+            .and_then(|style| part_style_text_color(style, theme))
+        {
+            return color;
+        }
+    }
+    for part in parts {
+        if let Some(color) = open_part_style_for_state(&node.style, &node.id, state, *part)
+            .and_then(|style| part_style_text_color(style, theme))
+        {
+            return color;
+        }
+    }
+    for part in parts {
+        if let Some(color) = expanded_part_style_for_state(&node.style, &node.id, state, *part)
+            .and_then(|style| part_style_text_color(style, theme))
+        {
+            return color;
+        }
+    }
+    for part in parts {
+        if let Some(color) = collapsed_part_style_for_state(&node.style, &node.id, state, *part)
+            .and_then(|style| part_style_text_color(style, theme))
+        {
+            return color;
+        }
+    }
+    for part in parts {
+        if let Some(color) = selected_part_style_for_state(&node.style, &node.id, state, *part)
             .and_then(|style| part_style_text_color(style, theme))
         {
             return color;
@@ -1148,7 +1439,9 @@ fn emit_badge_text(
     }
 
     let badge_font_size = badge_font_size_lp(&node.style, theme) * sf;
-    let badge_line_height = text_line_height(badge_font_size, theme, sf);
+    let badge_parts = &["badge"];
+    let badge_line_height =
+        text_line_height_for_parts(node, badge_parts, badge_font_size, theme, sf);
     let visual = crate::style::part_visual_for_state(&node.style, &node.id, state, "badge");
     let bg = visual
         .background
@@ -1163,10 +1456,10 @@ fn emit_badge_text(
         badge,
         badge_font_size,
         badge_line_height,
-        part_font_family(node, &["badge"], node.style.text.font_family.as_ref()),
+        part_font_family(node, badge_parts, node.style.text.font_family.as_ref()),
         part_font_weight(
             node,
-            &["badge"],
+            badge_parts,
             node.style.text.font_weight.unwrap_or(Weight::BOLD.0),
         ),
         rect.x,
@@ -1182,6 +1475,7 @@ fn emit_badge_text(
         cache,
         None,
         caret_positions,
+        text_options_for_parts(node, badge_parts),
     );
 }
 
@@ -1264,9 +1558,10 @@ fn collect_dropdown_overlay_text(
             state.dropdown_items.get(&node.id),
         ) {
             let font_size = text_font_size(node, theme, sf);
-            let line_height = text_line_height(font_size, theme, sf);
+            let line_height = text_line_height_for_style(&node.style.text, font_size, theme, sf);
             let font_family = node.style.text.font_family.as_ref();
             let font_weight = node.style.text.font_weight.unwrap_or(Weight::NORMAL.0);
+            let text_options = text_options_from_style(&node.style.text);
             let scale = text_scale(font_size, theme);
             let row_h = theme.control_height() * scale;
             let selected = state.dropdown_index.get(&node.id).copied().unwrap_or(0);
@@ -1310,6 +1605,7 @@ fn collect_dropdown_overlay_text(
                     cache,
                     None,
                     caret_positions,
+                    text_options,
                 );
             }
         }
@@ -1399,9 +1695,10 @@ fn collect_single_menu_overlay_text(
         return;
     };
     let font_size = text_font_size(node, theme, sf);
-    let line_height = text_line_height(font_size, theme, sf);
+    let line_height = text_line_height_for_style(&node.style.text, font_size, theme, sf);
     let font_family = node.style.text.font_family.as_ref();
     let font_weight = node.style.text.font_weight.unwrap_or(Weight::NORMAL.0);
+    let text_options = text_options_from_style(&node.style.text);
     let row_h = theme.control_height() * sf;
     for (idx, item) in items.iter().enumerate() {
         let y = rect.y + idx as f32 * row_h;
@@ -1432,6 +1729,7 @@ fn collect_single_menu_overlay_text(
             cache,
             None,
             caret_positions,
+            text_options,
         );
     }
 }
@@ -1443,6 +1741,7 @@ fn collect_tooltip_text(
     theme: &Theme,
     font_system: &mut FontSystem,
     sf: f32,
+    stylesheets: &StylesheetStore,
     cache: &mut TextBufferCache,
     caret_positions: &mut HashMap<String, [f32; 2]>,
     out: &mut Vec<TextEntry>,
@@ -1456,18 +1755,31 @@ fn collect_tooltip_text(
     let Some(text) = node.props.tooltip.as_deref() else {
         return;
     };
-    let pad = theme.spacing * sf * 1.25;
-    let font_size = (theme.font_size * sf).max(8.0 * sf);
-    let line_height = text_line_height(font_size, theme, sf);
+    let style = computed_style_for_virtual_element(
+        WidgetKind::Tooltip,
+        "__dg_static_tooltip",
+        &["static"],
+        stylesheets,
+    );
+    let pad = uniform_layout_padding(&style.layout)
+        .map(|padding| padding.max(0.0) * sf)
+        .unwrap_or(theme.spacing * sf * 1.25);
+    let font_size = style
+        .text
+        .font_size
+        .map(|font_size| font_size.max(1.0) * sf)
+        .unwrap_or_else(|| (theme.font_size * sf).max(8.0 * sf));
+    let line_height = text_line_height_for_style(&style.text, font_size, theme, sf);
     let top = rect.y + pad;
+    let opacity = overlay_opacity(&style, 1.0);
     push_wrapped_text_entry(
         font_system,
         out,
         text,
         font_size,
         line_height,
-        None,
-        Weight::NORMAL.0,
+        style.text.font_family.as_ref(),
+        style.text.font_weight.unwrap_or(Weight::NORMAL.0),
         rect.x + pad,
         top,
         TextBounds {
@@ -1476,10 +1788,11 @@ fn collect_tooltip_text(
             right: (rect.x + rect.w - pad) as i32,
             bottom: (rect.y + rect.h) as i32,
         },
-        glyph_color(theme.text),
-        TextAlign::Left,
+        overlay_text_color(&style, theme, theme.text, opacity),
+        style.text.text_align.unwrap_or(TextAlign::Left),
         cache,
         caret_positions,
+        text_options_from_style(&style.text),
     );
 }
 
@@ -1529,27 +1842,53 @@ fn collect_toast_text(
     sf: f32,
     window_w: f32,
     window_h: f32,
+    stylesheets: &StylesheetStore,
     cache: &mut TextBufferCache,
     caret_positions: &mut HashMap<String, [f32; 2]>,
     out: &mut Vec<TextEntry>,
 ) {
-    let pad = theme.spacing * sf * 1.5;
-    let font_size = (theme.font_size * sf).max(8.0 * sf);
-    let line_height = text_line_height(font_size, theme, sf);
-    for (idx, toast) in toasts.iter().enumerate() {
-        let rect = toast_rect(idx, &toast.message, window_w, window_h, sf);
+    let mut stack_counts = [0usize; 4];
+    for toast in toasts {
+        let classes = [toast.level.as_str()];
+        let style = computed_style_for_virtual_element(
+            WidgetKind::Toast,
+            toast.id.as_str(),
+            &classes,
+            stylesheets,
+        );
+        let font_size = style
+            .text
+            .font_size
+            .map(|font_size| font_size.max(1.0) * sf)
+            .unwrap_or_else(|| (theme.font_size * sf).max(8.0 * sf));
+        let line_height = text_line_height_for_style(&style.text, font_size, theme, sf);
+        let idx = toast_stack_index(toast.position, &mut stack_counts);
+        let padding = toast
+            .padding
+            .or_else(|| uniform_layout_padding(&style.layout));
+        let rect = toast_rect(
+            idx,
+            &toast.message,
+            window_w,
+            window_h,
+            sf,
+            toast.position,
+            padding,
+        );
+        let pad = toast_padding(padding, sf);
         if rect.w <= pad * 2.0 || rect.h <= pad * 2.0 {
             continue;
         }
-        let colors = toast_colors(toast.level, theme);
+        let colors = toast_colors(toast.level, theme, 1.0);
+        let opacity = overlay_opacity(&style, toast.opacity);
         push_wrapped_text_entry(
             font_system,
             out,
             &toast.message,
             font_size,
             line_height,
-            None,
-            Weight::MEDIUM.0,
+            style.text.font_family.as_ref(),
+            style.text.font_weight.unwrap_or(Weight::MEDIUM.0),
             rect.x + pad,
             rect.y + ((rect.h - line_height) * 0.5).max(pad * 0.5),
             TextBounds {
@@ -1558,10 +1897,11 @@ fn collect_toast_text(
                 right: (rect.x + rect.w - pad) as i32,
                 bottom: (rect.y + rect.h) as i32,
             },
-            glyph_color(colors.text),
-            TextAlign::Left,
+            overlay_text_color(&style, theme, colors.text, opacity),
+            style.text.text_align.unwrap_or(TextAlign::Left),
             cache,
             caret_positions,
+            text_options_from_style(&style.text),
         );
     }
 }
@@ -1586,17 +1926,7 @@ fn collect_table_text(
     if node.kind == WidgetKind::DataFrameTable {
         if let (Some(r), Some(table_state)) = (layout.visible_rect(&node.id), state.table(&node.id))
         {
-            if r.w > 0.0
-                && r.h > 0.0
-                && !is_obscured_by_overlay(
-                    node,
-                    &r,
-                    open_dropdown,
-                    dropdown_overlay,
-                    menu_overlays,
-                    tooltip_overlay,
-                )
-            {
+            if r.w > 0.0 && r.h > 0.0 {
                 let font_size = text_font_size(node, theme, sf);
                 let font_family = node.style.text.font_family.as_ref();
                 let font_weight = node.style.text.font_weight.unwrap_or(Weight::NORMAL.0);
@@ -1609,9 +1939,11 @@ fn collect_table_text(
                 let table_radii = table_text_radii(node, theme, sf);
                 let header_parts = &["header"];
                 let header_font_size = part_font_size(node, header_parts, font_size, sf);
-                let header_line_height = text_line_height(header_font_size, theme, sf);
+                let header_line_height =
+                    text_line_height_for_parts(node, header_parts, header_font_size, theme, sf);
                 let header_font_family = part_font_family(node, header_parts, font_family);
                 let header_font_weight = part_font_weight(node, header_parts, font_weight);
+                let header_text_options = text_options_for_parts(node, header_parts);
                 let header_color =
                     part_text_color(node, state, theme, header_parts, table_text_color);
                 let header_muted = part_text_color(node, state, theme, header_parts, muted);
@@ -1626,24 +1958,36 @@ fn collect_table_text(
                     pad,
                     table_radii,
                 );
+                let index_header_bounds =
+                    clamp_text_bounds_bottom(index_header_bounds, header_bottom);
 
-                push_text_entry(
-                    font_system,
-                    out,
-                    "#",
-                    header_font_size,
-                    header_line_height,
-                    header_font_family,
-                    header_font_weight,
-                    index_header_bounds.left as f32,
-                    r.y + ((metrics.header_h - header_line_height) * 0.5).max(0.0),
-                    clamp_text_bounds_bottom(index_header_bounds, header_bottom),
-                    header_muted,
-                    TextAlign::Left,
-                    cache,
-                    None,
-                    caret_positions,
-                );
+                if !text_bounds_obscured_by_overlay(
+                    node,
+                    index_header_bounds,
+                    open_dropdown,
+                    dropdown_overlay,
+                    menu_overlays,
+                    tooltip_overlay,
+                ) {
+                    push_text_entry(
+                        font_system,
+                        out,
+                        "#",
+                        header_font_size,
+                        header_line_height,
+                        header_font_family,
+                        header_font_weight,
+                        index_header_bounds.left as f32,
+                        r.y + ((metrics.header_h - header_line_height) * 0.5).max(0.0),
+                        index_header_bounds,
+                        header_muted,
+                        TextAlign::Left,
+                        cache,
+                        None,
+                        caret_positions,
+                        header_text_options,
+                    );
+                }
 
                 for col_offset in 0..visible.col_count {
                     let col = visible.first_col + col_offset;
@@ -1673,23 +2017,34 @@ fn collect_table_text(
                         pad,
                         table_radii,
                     );
-                    push_text_entry(
-                        font_system,
-                        out,
-                        label.as_ref(),
-                        header_font_size,
-                        header_line_height,
-                        header_font_family,
-                        header_font_weight,
-                        bounds.left as f32,
-                        r.y + ((metrics.header_h - header_line_height) * 0.5).max(0.0),
-                        clamp_text_bounds_bottom(bounds, header_bottom),
-                        header_color,
-                        TextAlign::Left,
-                        cache,
-                        None,
-                        caret_positions,
-                    );
+                    let bounds = clamp_text_bounds_bottom(bounds, header_bottom);
+                    if !text_bounds_obscured_by_overlay(
+                        node,
+                        bounds,
+                        open_dropdown,
+                        dropdown_overlay,
+                        menu_overlays,
+                        tooltip_overlay,
+                    ) {
+                        push_text_entry(
+                            font_system,
+                            out,
+                            label.as_ref(),
+                            header_font_size,
+                            header_line_height,
+                            header_font_family,
+                            header_font_weight,
+                            bounds.left as f32,
+                            r.y + ((metrics.header_h - header_line_height) * 0.5).max(0.0),
+                            bounds,
+                            header_color,
+                            TextAlign::Left,
+                            cache,
+                            None,
+                            caret_positions,
+                            header_text_options,
+                        );
+                    }
                 }
 
                 for row_offset in 0..visible.row_count {
@@ -1698,19 +2053,6 @@ fn collect_table_text(
                     else {
                         continue;
                     };
-                    if dropdown_overlay.is_some_and(|overlay| {
-                        rects_intersect(
-                            Rect {
-                                x: r.x,
-                                y: row_y,
-                                w: r.w,
-                                h: row_bottom - row_y,
-                            },
-                            overlay,
-                        )
-                    }) {
-                        continue;
-                    }
 
                     let selected = table_state
                         .selected
@@ -1721,9 +2063,11 @@ fn collect_table_text(
                         &["row"]
                     };
                     let row_font_size = part_font_size(node, row_parts, font_size, sf);
-                    let row_line_height = text_line_height(row_font_size, theme, sf);
+                    let row_line_height =
+                        text_line_height_for_parts(node, row_parts, row_font_size, theme, sf);
                     let row_font_family = part_font_family(node, row_parts, font_family);
                     let row_font_weight = part_font_weight(node, row_parts, font_weight);
+                    let row_text_options = text_options_for_parts(node, row_parts);
                     let row_text_color =
                         part_text_color(node, state, theme, row_parts, table_text_color);
                     let row_muted = part_text_color(node, state, theme, row_parts, muted);
@@ -1739,23 +2083,33 @@ fn collect_table_text(
                         table_radii,
                     );
 
-                    push_text_entry(
-                        font_system,
-                        out,
-                        &row.to_string(),
-                        row_font_size,
-                        row_line_height,
-                        row_font_family,
-                        row_font_weight,
-                        row_index_bounds.left as f32,
-                        row_y + ((metrics.row_h - row_line_height) * 0.5).max(0.0),
+                    if !text_bounds_obscured_by_overlay(
+                        node,
                         row_index_bounds,
-                        row_muted,
-                        TextAlign::Left,
-                        cache,
-                        None,
-                        caret_positions,
-                    );
+                        open_dropdown,
+                        dropdown_overlay,
+                        menu_overlays,
+                        tooltip_overlay,
+                    ) {
+                        push_text_entry(
+                            font_system,
+                            out,
+                            &table::source_row(table_state, row).to_string(),
+                            row_font_size,
+                            row_line_height,
+                            row_font_family,
+                            row_font_weight,
+                            row_index_bounds.left as f32,
+                            row_y + ((metrics.row_h - row_line_height) * 0.5).max(0.0),
+                            row_index_bounds,
+                            row_muted,
+                            TextAlign::Left,
+                            cache,
+                            None,
+                            caret_positions,
+                            row_text_options,
+                        );
+                    }
 
                     for col_offset in 0..visible.col_count {
                         let col = visible.first_col + col_offset;
@@ -1776,23 +2130,33 @@ fn collect_table_text(
                             pad,
                             table_radii,
                         );
-                        push_text_entry(
-                            font_system,
-                            out,
-                            &value,
-                            row_font_size,
-                            row_line_height,
-                            row_font_family,
-                            row_font_weight,
-                            bounds.left as f32,
-                            row_y + ((metrics.row_h - row_line_height) * 0.5).max(0.0),
+                        if !text_bounds_obscured_by_overlay(
+                            node,
                             bounds,
-                            row_text_color,
-                            TextAlign::Left,
-                            cache,
-                            None,
-                            caret_positions,
-                        );
+                            open_dropdown,
+                            dropdown_overlay,
+                            menu_overlays,
+                            tooltip_overlay,
+                        ) {
+                            push_text_entry(
+                                font_system,
+                                out,
+                                &value,
+                                row_font_size,
+                                row_line_height,
+                                row_font_family,
+                                row_font_weight,
+                                bounds.left as f32,
+                                row_y + ((metrics.row_h - row_line_height) * 0.5).max(0.0),
+                                bounds,
+                                row_text_color,
+                                TextAlign::Left,
+                                cache,
+                                None,
+                                caret_positions,
+                                row_text_options,
+                            );
+                        }
                     }
                 }
             }
@@ -1924,6 +2288,7 @@ fn push_text_entry(
     cache: &mut TextBufferCache,
     caret: Option<(&str, usize)>,
     caret_positions: &mut HashMap<String, [f32; 2]>,
+    options: TextRenderOptions,
 ) {
     push_text_entry_impl(
         font_system,
@@ -1939,9 +2304,11 @@ fn push_text_entry(
         color,
         align,
         false,
+        0.0,
         cache,
         caret,
         caret_positions,
+        options,
     );
 }
 
@@ -1961,6 +2328,7 @@ fn push_wrapped_text_entry(
     align: TextAlign,
     cache: &mut TextBufferCache,
     caret_positions: &mut HashMap<String, [f32; 2]>,
+    options: TextRenderOptions,
 ) {
     push_text_entry_impl(
         font_system,
@@ -1976,9 +2344,11 @@ fn push_wrapped_text_entry(
         color,
         align,
         true,
+        0.0,
         cache,
         None,
         caret_positions,
+        options,
     );
 }
 
@@ -1997,9 +2367,11 @@ fn push_text_entry_impl(
     color: Color,
     align: TextAlign,
     wrap: bool,
+    caret_scroll_y: f32,
     cache: &mut TextBufferCache,
     caret: Option<(&str, usize)>,
     caret_positions: &mut HashMap<String, [f32; 2]>,
+    options: TextRenderOptions,
 ) {
     if clip.right <= clip.left
         || clip.bottom <= clip.top
@@ -2010,10 +2382,29 @@ fn push_text_entry_impl(
     }
 
     let avail_w = (clip.right as f32 - left).max(1.0);
+    let display_text = prepare_display_text(
+        font_system,
+        text,
+        font_size,
+        line_height,
+        font_family,
+        font_weight,
+        avail_w,
+        wrap,
+        caret.is_some(),
+        options,
+    );
+    let text = display_text.as_ref();
+    let font_style = options.font_style.unwrap_or(FontStyle::Normal);
+    let tabular_nums = options.font_variant_numeric == Some(FontVariantNumeric::TabularNums);
+    let letter_spacing = resolved_letter_spacing_em(options.letter_spacing, font_size);
     let key = TextKey {
         text: text.to_string(),
         font_family: font_family_key(font_family),
         font_weight,
+        font_style,
+        tabular_nums,
+        letter_spacing_milli: (letter_spacing.unwrap_or(0.0) * 1000.0).round() as i32,
         font_size_milli: (font_size * 1000.0).round() as i32,
         line_height_milli: (line_height * 1000.0).round() as i32,
         width_milli: (avail_w * 1000.0).round() as i32,
@@ -2026,20 +2417,15 @@ fn push_text_entry_impl(
             let mut buf = Buffer::new(font_system, Metrics::new(font_size, line_height));
             buf.set_size(font_system, Some(avail_w), None);
             buf.set_wrap(font_system, if wrap { Wrap::Word } else { Wrap::None });
-            buf.set_text(
-                font_system,
-                text,
-                &Attrs::new()
-                    .family(to_glyphon_family(font_family))
-                    .weight(Weight(font_weight)),
-                Shaping::Advanced,
-                None,
-            );
+            let attrs = text_attrs(font_family, font_weight, options, font_size);
+            buf.set_text(font_system, text, &attrs, Shaping::Advanced, None);
             buf.shape_until_scroll(font_system, false);
             buf
         });
     if let Some((id, cursor)) = caret {
-        caret_positions.insert(id.to_string(), caret_xy_for_buffer(&buf, text, cursor));
+        let mut xy = caret_xy_for_buffer(&buf, text, cursor);
+        xy[1] -= caret_scroll_y;
+        caret_positions.insert(id.to_string(), xy);
     }
     let aligned_left = match align {
         TextAlign::Left => left,
@@ -2063,6 +2449,178 @@ fn push_text_entry_impl(
         clip,
         color,
     });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_display_text<'a>(
+    font_system: &mut FontSystem,
+    text: &'a str,
+    font_size: f32,
+    line_height: f32,
+    font_family: Option<&FontFamily>,
+    font_weight: u16,
+    avail_w: f32,
+    wrap: bool,
+    has_caret: bool,
+    options: TextRenderOptions,
+) -> Cow<'a, str> {
+    let transformed = if has_caret {
+        Cow::Borrowed(text)
+    } else {
+        transform_text(text, options.text_transform)
+    };
+    if wrap || has_caret || options.text_overflow != Some(TextOverflow::Ellipsis) {
+        return transformed;
+    }
+    if text_width_for_measurement(
+        font_system,
+        transformed.as_ref(),
+        font_size,
+        line_height,
+        font_family,
+        font_weight,
+        options,
+    ) <= avail_w
+    {
+        return transformed;
+    }
+    Cow::Owned(ellipsize_text(
+        font_system,
+        transformed.as_ref(),
+        font_size,
+        line_height,
+        font_family,
+        font_weight,
+        options,
+        avail_w,
+    ))
+}
+
+fn transform_text(text: &str, transform: Option<TextTransform>) -> Cow<'_, str> {
+    match transform.unwrap_or(TextTransform::None) {
+        TextTransform::None => Cow::Borrowed(text),
+        TextTransform::Uppercase => Cow::Owned(text.to_uppercase()),
+        TextTransform::Lowercase => Cow::Owned(text.to_lowercase()),
+        TextTransform::Capitalize => Cow::Owned(capitalize_text(text)),
+    }
+}
+
+fn capitalize_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut word_start = true;
+    for ch in text.chars() {
+        if ch.is_whitespace() {
+            word_start = true;
+            out.push(ch);
+        } else if word_start {
+            out.extend(ch.to_uppercase());
+            word_start = false;
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ellipsize_text(
+    font_system: &mut FontSystem,
+    text: &str,
+    font_size: f32,
+    line_height: f32,
+    font_family: Option<&FontFamily>,
+    font_weight: u16,
+    options: TextRenderOptions,
+    avail_w: f32,
+) -> String {
+    const ELLIPSIS: &str = "...";
+    if text_width_for_measurement(
+        font_system,
+        ELLIPSIS,
+        font_size,
+        line_height,
+        font_family,
+        font_weight,
+        options,
+    ) > avail_w
+    {
+        return String::new();
+    }
+
+    let chars: Vec<char> = text.chars().collect();
+    let mut low = 0usize;
+    let mut high = chars.len();
+    while low < high {
+        let mid = (low + high).div_ceil(2);
+        let candidate: String = chars[..mid].iter().collect::<String>() + ELLIPSIS;
+        if text_width_for_measurement(
+            font_system,
+            &candidate,
+            font_size,
+            line_height,
+            font_family,
+            font_weight,
+            options,
+        ) <= avail_w
+        {
+            low = mid;
+        } else {
+            high = mid - 1;
+        }
+    }
+    chars[..low].iter().collect::<String>() + ELLIPSIS
+}
+
+#[allow(clippy::too_many_arguments)]
+fn text_width_for_measurement(
+    font_system: &mut FontSystem,
+    text: &str,
+    font_size: f32,
+    line_height: f32,
+    font_family: Option<&FontFamily>,
+    font_weight: u16,
+    options: TextRenderOptions,
+) -> f32 {
+    let mut buf = Buffer::new(font_system, Metrics::new(font_size, line_height));
+    buf.set_size(font_system, Some(1_000_000.0), None);
+    buf.set_wrap(font_system, Wrap::None);
+    let attrs = text_attrs(font_family, font_weight, options, font_size);
+    buf.set_text(font_system, text, &attrs, Shaping::Advanced, None);
+    buf.shape_until_scroll(font_system, false);
+    text_width_for_buffer(&buf)
+}
+
+fn text_attrs(
+    font_family: Option<&FontFamily>,
+    font_weight: u16,
+    options: TextRenderOptions,
+    font_size: f32,
+) -> Attrs<'_> {
+    let glyph_style = match options.font_style.unwrap_or(FontStyle::Normal) {
+        FontStyle::Normal => GlyphStyle::Normal,
+        FontStyle::Italic => GlyphStyle::Italic,
+    };
+    let mut attrs = Attrs::new()
+        .family(to_glyphon_family(font_family))
+        .weight(Weight(font_weight))
+        .style(glyph_style);
+    if let Some(spacing) = resolved_letter_spacing_em(options.letter_spacing, font_size) {
+        attrs = attrs.letter_spacing(spacing);
+    }
+    if options.font_variant_numeric == Some(FontVariantNumeric::TabularNums) {
+        let mut features = FontFeatures::new();
+        features.enable(FeatureTag::new(b"tnum"));
+        attrs = attrs.font_features(features);
+    }
+    attrs
+}
+
+fn resolved_letter_spacing_em(spacing: Option<TextSpacing>, font_size: f32) -> Option<f32> {
+    match spacing {
+        Some(TextSpacing::LogicalPx(px)) if font_size > 0.0 => Some(px / font_size),
+        Some(TextSpacing::Em(em)) => Some(em),
+        _ => None,
+    }
 }
 
 fn font_family_key(family: Option<&FontFamily>) -> String {
@@ -2181,6 +2739,8 @@ fn glyph_color(color: [f32; 4]) -> Color {
 mod tests {
     use super::*;
     use crate::document::NodeProps;
+    use crate::events::TableState;
+    use crate::resources::ResourceRegistry;
 
     fn node(id: &str, kind: WidgetKind) -> WidgetNode {
         WidgetNode {
@@ -2289,5 +2849,89 @@ mod tests {
         );
 
         assert_eq!(color, Color::rgba(63, 127, 191, 255));
+    }
+
+    #[test]
+    fn table_tooltip_obscures_only_intersecting_text_bounds() {
+        let table = node("table", WidgetKind::DataFrameTable);
+        let theme = Theme::dark();
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "table".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 420.0,
+                h: 160.0,
+            },
+        );
+
+        let mut state = WidgetState::default();
+        state.tables.insert(
+            "table".to_string(),
+            TableState {
+                columns: vec!["a".to_string(), "b".to_string()],
+                dtypes: vec!["f32".to_string(), "f32".to_string()],
+                rows: 3,
+                resource_id: None,
+                page_size: 10,
+                scroll_row: 0,
+                scroll_col: 0,
+                selected: None,
+                sort: None,
+                row_order: None,
+            },
+        );
+
+        let mut font_system = FontSystem::new();
+        let resources = ResourceRegistry::default();
+        let mut cache = TextBufferCache::default();
+        let mut caret_positions = HashMap::new();
+        let mut unobscured = Vec::new();
+        collect_table_text(
+            &table,
+            &layout,
+            &state,
+            &resources,
+            &theme,
+            None,
+            None,
+            [None, None],
+            None,
+            &mut font_system,
+            1.0,
+            6.0,
+            &mut cache,
+            &mut caret_positions,
+            &mut unobscured,
+        );
+
+        let metrics = table::metrics_for_node(&table, &theme, 1.0);
+        let mut partially_obscured = Vec::new();
+        collect_table_text(
+            &table,
+            &layout,
+            &state,
+            &resources,
+            &theme,
+            None,
+            None,
+            [None, None],
+            Some(Rect {
+                x: 0.0,
+                y: metrics.header_h,
+                w: metrics.index_w * 0.5,
+                h: metrics.row_h,
+            }),
+            &mut font_system,
+            1.0,
+            6.0,
+            &mut cache,
+            &mut caret_positions,
+            &mut partially_obscured,
+        );
+
+        assert!(unobscured.len() > partially_obscured.len());
+        assert!(!partially_obscured.is_empty());
     }
 }

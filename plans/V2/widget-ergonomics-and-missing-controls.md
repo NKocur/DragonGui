@@ -19,6 +19,7 @@ Already available:
   `confirm(...)` helpers.
 - Native file dialogs through `dg.FileDialog.open_file(...)`,
   `open_files(...)`, `save_file(...)`, and `pick_folder(...)`.
+- Runtime toast notifications through `dg.toast(...)` and `App.toast(...)`.
 - Single-line text editing through `TextInput`.
 - Navigation through `Pages`, `Page`, `Tabs`, `Tab`, `NavItem`.
 - Data widgets through `DataFrameTable` and `Scatter3D`.
@@ -28,7 +29,6 @@ Missing or weak:
 
 - No top-level `dg.open_file_dialog(...)` / `dg.save_file_dialog(...)`
   convenience API.
-- No native non-blocking toast/notification surface.
 - No collapsible/accordion container for dense sidebars.
 - No multiline text editor.
 - No badge/count bubble support on common navigation/action widgets.
@@ -66,6 +66,12 @@ Only add CSS parts when a widget has stable internal renderer pieces worth
 styling separately.
 
 ## Phase 1: File Dialog Convenience API
+
+Status: implemented with top-level `dg.open_file_dialog(...)`,
+`dg.open_files_dialog(...)`, `dg.save_file_dialog(...)`, and
+`dg.pick_folder_dialog(...)` helpers. They delegate to `FileDialog`, preserve
+synchronous return values, support callback dispatch, are exported from
+`dragongui`, and are covered by Python API tests and docs.
 
 ### Goal
 
@@ -118,9 +124,9 @@ dg.open_file_dialog(
 
 Status: implemented in the first slice with `dg.toast(...)`, `App.toast(...)`,
 `ToastHandle.update(...)`, `ToastHandle.dismiss()`, native command dispatch,
-top-right native rendering, timeout expiry, debug snapshot state, tests, and
-`examples/toast_tool.py`. Full CSS selector styling for native toasts remains a
-future enhancement.
+corner-positioned native rendering, per-toast opacity/radius/padding, timeout
+expiry, debug snapshot state, tests, and `examples/toast_tool.py`. Full CSS
+selector styling for native toasts remains a future enhancement.
 
 ### Goal
 
@@ -136,14 +142,14 @@ Provide non-blocking ephemeral feedback for common operations:
 ```python
 dg.toast("Export complete")
 dg.toast("Error saving file", level="error", duration=5000)
-app.toast("Saved report.csv", level="success")
+app.toast("Saved report.csv", level="success", position="bottom-right", opacity=0.92)
 ```
 
 Optional handle form:
 
 ```python
 toast = app.toast("Uploading...", level="info", duration=None)
-toast.update("Upload complete", level="success", duration=2000)
+toast.update("Upload complete", level="success", duration=2000, radius=12)
 toast.dismiss()
 ```
 
@@ -161,7 +167,7 @@ toast.dismiss()
 - Prefer an app-level command queue API, because toasts are transient runtime
   overlays rather than document-tree widgets.
 - Native runtime stores a small toast list with ids, message, level, created
-  time, duration, and dismiss state.
+  time, duration, dismiss state, opacity, radius, padding, and corner position.
 - Primitive/text renderers draw toasts above normal content in a corner stack.
 - Start with simple text-only toasts.
 - Add `Toast::close`/dismiss hit target later if needed; first slice may be
@@ -193,6 +199,9 @@ on full CSS integration.
 
 - Toasts can be triggered while the app is running.
 - Multiple toasts stack without overlapping.
+- Toasts can stack in any corner.
+- Per-toast opacity, radius, and padding can be controlled through the runtime
+  API and are visible in the debug snapshot.
 - Duration auto-dismiss works.
 - `duration=None` creates a persistent toast until dismissed.
 - Smoke demo shows success/warning/error toasts.
@@ -265,8 +274,9 @@ dg.Collapsible(
 Status: implemented in the first slice with `dg.TextArea(...)`, native
 `WidgetKind::TextArea`, shared text state/callbacks, newline insertion, row-based
 preferred height, optional wrapping, clipping, docs, tests, and a smoke example.
-Internal scrolling and richer selection behavior remain out of scope for this
-slice.
+Internal scrolling, wheel scrolling, ArrowUp/ArrowDown cursor movement, and
+caret visibility are implemented in the second slice. Richer selection behavior
+remains out of scope for this slice.
 
 ### Goal
 
@@ -302,8 +312,10 @@ Options:
   styling in the first slice.
 - Reuse text input state where possible, but support newline insertion,
   multi-line caret metrics, vertical scrolling, and text clipping.
-- If internal scrolling is too much for the first slice, support fixed visible
-  rows and clipped content, then add scroll in the next pass.
+- Maintain a native vertical scroll offset for overflowing TextArea content.
+- Mouse wheel over a TextArea scrolls its content instead of the surrounding
+  scene.
+- Keyboard editing keeps the caret visible as the user types or navigates.
 
 ### Acceptance
 
@@ -312,14 +324,17 @@ Options:
 - `rows` affects intrinsic/preferred height.
 - Placeholder appears only when empty.
 - Text does not draw outside the widget bounds.
+- Overflowing text can be scrolled inside the widget.
+- ArrowUp/ArrowDown moves the caret between text lines.
 - `on_change` emits the full multiline value.
 
 ## Phase 5: Badge / Tag Support
 
-Status: implemented in the first slice with inline `badge` support on
-`Button`, `Tab`, and `NavItem`, live `set_badge(value)`, native badge pill/text
-rendering, CSS `badge` parts, docs, tests, and a smoke example. Standalone
-`Badge` / `Tag` widgets remain optional follow-up work.
+Status: implemented. Inline `badge` support exists on `Button`, `Tab`, and
+`NavItem` with live `set_badge(value)`, native badge pill/text rendering, CSS
+`badge` parts, docs, tests, and a smoke example. Standalone `Badge` and `Tag`
+leaf widgets are also implemented with semantic `level` styling and live
+`set_value(...)` / `set_level(...)`.
 
 ### Goal
 
@@ -350,7 +365,10 @@ Add badge support to:
 - `NavItem`
 - `Tab`
 
-Optional standalone `Badge` can follow if inline badges prove useful.
+Standalone status widgets:
+
+- `Badge`
+- `Tag`
 
 ### Implementation Notes
 
@@ -359,6 +377,9 @@ Optional standalone `Badge` can follow if inline badges prove useful.
 - Runtime text layer measures and draws badge text.
 - Primitive layer draws badge pill background.
 - Live `set_badge(value)` updates the badge.
+- Standalone `Badge`/`Tag` values accept `str | int`.
+- Standalone levels: `neutral`, `info`, `success`, `warning`, `danger`,
+  `error`.
 - CSS parts:
 
 | Widget | Part |
@@ -373,15 +394,18 @@ Optional standalone `Badge` can follow if inline badges prove useful.
 - `set_badge(None)` hides the badge.
 - Badges fit single/two/three digit counts.
 - CSS can style badge background/text.
+- Standalone `Badge` and `Tag` serialize as leaf widgets and update live.
 - Existing Button/NavItem/Tab behavior remains unchanged when no badge is set.
 
 ## Phase 6: API Contract Cleanup
 
 Status: implemented. Modal docs now prefer `show()` / `close()` while retaining
 `set_open(...)` as a compatibility alias, `ColorPicker.set_value(...)` supports
-`notify=False` by default and `notify=True` for callback emission, and
-`Pages.on_change` docs/tests state that callbacks fire for native route changes
-rather than construction-time state.
+`notify=False` by default and `notify=True` for callback emission,
+`Tabs.set_value(...)` and `Pages.set_value(...)` support live programmatic route
+switching with optional callback notification, and `Pages.on_change` docs/tests
+state that callbacks fire for native route changes rather than construction-time
+state.
 
 ### Modal Open/Close
 
@@ -437,8 +461,8 @@ Plan:
 - State clearly: `Pages.on_change` fires when native interaction changes the
   active page route.
 - Programmatic construction with `value=...` does not call `on_change`.
-- Future `Pages.set_value(...)` should optionally support `notify=False`,
-  matching ColorPicker style.
+- `Tabs.set_value(...)` and `Pages.set_value(...)` support `notify=False` by
+  default, matching ColorPicker style.
 
 Acceptance:
 
@@ -484,6 +508,8 @@ popup surface. Defer until toast/collapsible/text area are done.
 Status: implemented in the first Phase 8 slice with
 `DataFrameTable(on_select=...)`, `TableSelection`, native click emission,
 selected-cell debug snapshot details, docs, and the table demo update.
+Keyboard navigation was added in the second Phase 8 slice with Arrow keys,
+PageUp/PageDown, Home/End, and Enter/Space emitting the same selection payload.
 
 Proposed API:
 
@@ -508,8 +534,9 @@ TableSelection(
 Acceptance:
 
 - Clicked row/cell selection emits a callback.
+- Keyboard row/cell navigation emits the same callback payload.
 - Selection is represented in debug snapshot.
-- Keyboard/table navigation can be added later.
+- Keyboard navigation keeps the selected cell visible.
 
 ### Scatter3D Point Picking
 
@@ -562,7 +589,7 @@ Add examples as features land:
 
 - `examples/toast_tool.py`
 - `examples/collapsible_tool.py`
-- `examples/text_area_tool.py`
+- `examples/textarea_tool.py`
 
 ## Testing Strategy
 

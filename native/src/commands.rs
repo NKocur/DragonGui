@@ -109,6 +109,10 @@ pub enum Command {
         message: String,
         level: String,
         duration_ms: Option<u64>,
+        opacity: Option<f32>,
+        radius: Option<f32>,
+        padding: Option<f32>,
+        position: Option<String>,
     },
     DismissToast {
         id: String,
@@ -569,13 +573,17 @@ impl NativeCommandSender {
         self.enqueue(Command::ClearStylesheets { origin })
     }
 
-    #[pyo3(signature = (id, message, level, duration_ms=None))]
+    #[pyo3(signature = (id, message, level, duration_ms=None, opacity=None, radius=None, padding=None, position=None))]
     fn enqueue_show_toast(
         &self,
         id: String,
         message: String,
         level: String,
         duration_ms: Option<u64>,
+        opacity: Option<f32>,
+        radius: Option<f32>,
+        padding: Option<f32>,
+        position: Option<String>,
     ) -> PyResult<()> {
         if id.trim().is_empty() {
             return Err(PyValueError::new_err("toast id cannot be empty"));
@@ -588,11 +596,53 @@ impl NativeCommandSender {
                 "unknown toast level: {level}"
             )));
         }
+        if let Some(opacity) = opacity {
+            if !opacity.is_finite() || !(0.0..=1.0).contains(&opacity) {
+                return Err(PyValueError::new_err(
+                    "toast opacity must be between 0.0 and 1.0",
+                ));
+            }
+        }
+        if let Some(radius) = radius {
+            if !radius.is_finite() || radius < 0.0 {
+                return Err(PyValueError::new_err(
+                    "toast radius must be a non-negative number",
+                ));
+            }
+        }
+        if let Some(padding) = padding {
+            if !padding.is_finite() || padding < 0.0 {
+                return Err(PyValueError::new_err(
+                    "toast padding must be a non-negative number",
+                ));
+            }
+        }
+        if let Some(position) = position.as_deref() {
+            if !matches!(
+                position,
+                "top-right"
+                    | "top_left"
+                    | "top-left"
+                    | "top_right"
+                    | "bottom-right"
+                    | "bottom_right"
+                    | "bottom-left"
+                    | "bottom_left"
+            ) {
+                return Err(PyValueError::new_err(format!(
+                    "unknown toast position: {position}"
+                )));
+            }
+        }
         self.enqueue(Command::ShowToast {
             id,
             message,
             level,
             duration_ms,
+            opacity,
+            radius,
+            padding,
+            position,
         })
     }
 

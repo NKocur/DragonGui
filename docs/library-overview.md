@@ -127,7 +127,7 @@ updates instead of rebuilding the whole app.
 | --- | --- |
 | `Window` | Top-level native application window. Holds the root widget tree. |
 | `FileDialog` | Native open/save/folder picker helpers with synchronous or callback-based use. Top-level helpers are also exported as `open_file_dialog`, `open_files_dialog`, `save_file_dialog`, and `pick_folder_dialog`. |
-| `toast` / `App.toast` | Live app helper for non-blocking native notification overlays. Returns a `ToastHandle` for update or dismiss. |
+| `toast` / `App.toast` | Live app helper for non-blocking native notification overlays. Supports per-toast level, duration, opacity, corner position, radius, and padding, and can be styled with `Toast` CSS selectors. Returns a `ToastHandle` for update or dismiss. |
 
 ### Layout And Structure
 
@@ -149,9 +149,9 @@ updates instead of rebuilding the whole app.
 
 | Widget | Purpose |
 | --- | --- |
-| `Tabs` | Tab strip container. |
+| `Tabs` | Tab strip container with live `set_value(...)` route switching. |
 | `Tab` | Individual tab item with optional badge text/count. |
-| `Pages` | Page container paired with navigation state. |
+| `Pages` | Page container paired with navigation state and live `set_value(...)` route switching. |
 | `Page` | Individual page inside `Pages`. |
 | `NavItem` | Sidebar/page navigation item with optional badge text/count. |
 | `Menu` | Top-level menu inside a `MenuBar`. |
@@ -163,9 +163,11 @@ updates instead of rebuilding the whole app.
 | Widget | Purpose |
 | --- | --- |
 | `Label` | Text display. |
+| `Badge` | Compact status/count pill with semantic levels. |
+| `Tag` | Compact bordered status label with semantic levels. |
 | `Button` | Clickable command control with `on_click` and optional badge text/count. |
 | `TextInput` | Editable single-line text input with `on_change`. |
-| `TextArea` | Editable multiline text input with rows, wrapping, and `on_change`. |
+| `TextArea` | Editable multiline text input with rows, wrapping, internal scrolling, and `on_change`. |
 | `NumberInput` | Editable numeric input with min/max/step and `on_change`. |
 | `Slider` | Numeric drag control with range and `on_change`. |
 | `ProgressBar` | Non-interactive progress indicator with live `set_value`. |
@@ -187,6 +189,7 @@ Current interaction support includes:
 
 - Button click callbacks.
 - Inline badges on buttons, tabs, and navigation items.
+- Standalone `Badge` and `Tag` status widgets.
 - Checkbox toggling.
 - Dropdown open/select behavior.
 - Number input typing, steppers, clamping, and callbacks.
@@ -201,10 +204,10 @@ Current interaction support includes:
 - Menu bar popups, menu item callbacks, and target-based context menus.
 - File open/save/folder dialogs through top-level helpers or `FileDialog`.
 - PNG/JPEG image display with fit modes and styled placeholders.
-- Text input and multiline text area editing, caret positioning, and keyboard input.
-- Tab focus navigation.
+- Text input and multiline text area editing, internal TextArea scrolling, caret positioning, and keyboard input.
+- Tab focus navigation and programmatic tab route switching.
 - Enter/Space activation for keyboard-focused controls.
-- Sidebar/page navigation.
+- Sidebar/page navigation and programmatic page route switching.
 - Table scrolling and cell/header selection.
 - Scatter orbit, pan, and zoom.
 
@@ -508,7 +511,7 @@ objects, extract bounded table samples, and pack NumPy-accessible columns.
 ## DataFrameTable
 
 `DataFrameTable` displays tabular data in the native renderer and can emit
-selection callbacks when a user clicks a cell.
+selection callbacks when a user clicks or keyboard-selects a cell.
 
 Current capabilities:
 
@@ -518,6 +521,8 @@ Current capabilities:
 - Supports selected cell/header state.
 - Emits `on_select` with `TableSelection(row_index, column_index, column, value)`.
 - Supports scrolling by row and column.
+- Supports keyboard cell navigation with Arrow keys, PageUp/PageDown,
+  Home/End, and Enter/Space.
 - Renders headers, grid/row backgrounds, visible cells, and selected regions.
 
 The table is designed around visible rows/columns rather than drawing every row

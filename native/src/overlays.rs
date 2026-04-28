@@ -327,6 +327,7 @@ fn tooltip_obstacle_weight(kind: &WidgetKind) -> Option<f32> {
         | WidgetKind::Separator
         | WidgetKind::ContextMenu
         | WidgetKind::MenuItem
+        | WidgetKind::Toast
         | WidgetKind::Unknown => None,
         WidgetKind::Panel
         | WidgetKind::Sidebar

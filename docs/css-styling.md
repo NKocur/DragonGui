@@ -106,6 +106,7 @@ Type selectors use DragonGUI widget names:
 - `MenuItem`
 - `ContextMenu`
 - `Tooltip`
+- `Toast`
 - `Sidebar`
 - `StatusBar`
 - `Tabs`
@@ -114,6 +115,8 @@ Type selectors use DragonGUI widget names:
 - `Page`
 - `NavItem`
 - `Label`
+- `Badge`
+- `Tag`
 - `Button`
 - `TextInput`
 - `TextArea`
@@ -131,6 +134,12 @@ Type selectors use DragonGUI widget names:
 `ColorPicker` is a Python composite widget built from `Panel`, `Label`,
 `Slider`, and `Button`; style it through those underlying widget types, classes,
 or inline styles.
+
+`Toast` and simple string `Tooltip` overlays are not normal layout widgets, but
+they do participate in type/class CSS matching. Toast levels are exposed as
+classes, so `Toast.error` and `Toast.success` can style runtime notifications.
+Simple `tooltip="..."` overlays match `Tooltip` and `Tooltip.static`; rich
+`dg.Tooltip(...)` widgets also match `Tooltip` through the normal widget tree.
 
 ## Layout Properties
 
@@ -276,6 +285,22 @@ rounded popup bounds.
 General `overflow: hidden`, scroll containers, and rounded `Scatter3D` clipping
 are not part of the current CSS slice. Scatter uses a rectangular 3D viewport
 and needs a dedicated stencil/mask implementation for rounded clipping.
+
+Runtime `Toast` overlays and simple string `Tooltip` overlays have no CSS parts.
+Style their surface and text through the type selector instead:
+
+```css
+Toast.error {
+    background: danger;
+    border-color: danger;
+    color: white;
+}
+
+Tooltip.static {
+    background: surface_alt;
+    border-radius: 8px;
+}
+```
 
 A small subset of layout properties is accepted where the renderer already has
 matching geometry:

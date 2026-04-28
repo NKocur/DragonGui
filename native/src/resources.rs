@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::str;
 
@@ -5,6 +6,7 @@ use serde_json::{json, Map, Value};
 
 use crate::commands::TableColumnPacket;
 use crate::document::{NodeProps, WidgetKind, WidgetNode};
+use crate::events::SortDirection;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TableColumnData {
@@ -87,6 +89,47 @@ impl TableColumnData {
             }
         }
     }
+
+    fn compare_rows(&self, left: usize, right: usize) -> Ordering {
+        match self {
+            Self::F32(bytes) => compare_float_values(
+                read_array::<4>(bytes, left)
+                    .map(f32::from_le_bytes)
+                    .map(f64::from),
+                read_array::<4>(bytes, right)
+                    .map(f32::from_le_bytes)
+                    .map(f64::from),
+            ),
+            Self::F64(bytes) => compare_float_values(
+                read_array::<8>(bytes, left).map(f64::from_le_bytes),
+                read_array::<8>(bytes, right).map(f64::from_le_bytes),
+            ),
+            Self::I32(bytes) => compare_option_values(
+                read_array::<4>(bytes, left).map(i32::from_le_bytes),
+                read_array::<4>(bytes, right).map(i32::from_le_bytes),
+            ),
+            Self::I64(bytes) => compare_option_values(
+                read_array::<8>(bytes, left).map(i64::from_le_bytes),
+                read_array::<8>(bytes, right).map(i64::from_le_bytes),
+            ),
+            Self::U32(bytes) => compare_option_values(
+                read_array::<4>(bytes, left).map(u32::from_le_bytes),
+                read_array::<4>(bytes, right).map(u32::from_le_bytes),
+            ),
+            Self::U64(bytes) => compare_option_values(
+                read_array::<8>(bytes, left).map(u64::from_le_bytes),
+                read_array::<8>(bytes, right).map(u64::from_le_bytes),
+            ),
+            Self::Bool(bytes) => {
+                compare_option_values(bytes.get(left).copied(), bytes.get(right).copied())
+            }
+            Self::Utf8 { offsets, data } => {
+                let left = utf8_value(offsets, data, left);
+                let right = utf8_value(offsets, data, right);
+                compare_option_by(left, right, |left, right| left.cmp(right))
+            }
+        }
+    }
 }
 
 fn decode_utf8_packet(bytes: Vec<u8>) -> Option<TableColumnData> {
@@ -128,6 +171,40 @@ fn format_float(value: f64) -> String {
             .trim_end_matches('.')
             .to_string()
     }
+}
+
+fn utf8_value<'a>(offsets: &[usize], data: &'a [u8], row: usize) -> Option<&'a str> {
+    let start = *offsets.get(row)?;
+    let end = *offsets.get(row + 1)?;
+    str::from_utf8(data.get(start..end)?).ok()
+}
+
+fn compare_option_values<T: Ord>(left: Option<T>, right: Option<T>) -> Ordering {
+    compare_option_by(left, right, Ord::cmp)
+}
+
+fn compare_option_by<T>(
+    left: Option<T>,
+    right: Option<T>,
+    compare: impl FnOnce(&T, &T) -> Ordering,
+) -> Ordering {
+    match (left, right) {
+        (Some(left), Some(right)) => compare(&left, &right),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => Ordering::Equal,
+    }
+}
+
+fn compare_float_values(left: Option<f64>, right: Option<f64>) -> Ordering {
+    compare_option_by(left, right, |left, right| {
+        match (left.is_nan(), right.is_nan()) {
+            (true, true) => Ordering::Equal,
+            (true, false) => Ordering::Greater,
+            (false, true) => Ordering::Less,
+            (false, false) => left.partial_cmp(right).unwrap_or(Ordering::Equal),
+        }
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -196,6 +273,31 @@ impl TableResource {
             .iter()
             .find(|buffer| &buffer.name == column_name)
             .and_then(|buffer| buffer.data.value_text(row))
+    }
+
+    pub fn sorted_rows(&self, col: usize, direction: SortDirection) -> Option<Vec<usize>> {
+        if col >= self.columns.len() {
+            return None;
+        }
+        let column_name = self.columns.get(col)?;
+        let column_buffer = self
+            .column_buffers
+            .iter()
+            .find(|buffer| &buffer.name == column_name);
+        let mut rows: Vec<usize> = (0..self.rows).collect();
+        rows.sort_by(|left, right| {
+            let ordering = if let Some(buffer) = column_buffer {
+                buffer.data.compare_rows(*left, *right)
+            } else {
+                compare_option_values(self.cell_text(*left, col), self.cell_text(*right, col))
+            };
+            match direction {
+                SortDirection::Asc => ordering,
+                SortDirection::Desc => ordering.reverse(),
+            }
+            .then_with(|| left.cmp(right))
+        });
+        Some(rows)
     }
 
     fn snapshot(&self) -> Value {
@@ -277,6 +379,19 @@ impl ResourceRegistry {
     ) -> Option<String> {
         let resource_id = resource_id?;
         self.table(resource_id)?.cell_text(row, col)
+    }
+
+    pub fn sorted_table_rows(
+        &self,
+        resource_id: Option<&str>,
+        col: usize,
+        rows: usize,
+        direction: SortDirection,
+    ) -> Option<Vec<usize>> {
+        let resource_id = resource_id?;
+        let mut row_order = self.table(resource_id)?.sorted_rows(col, direction)?;
+        row_order.truncate(rows);
+        (row_order.len() == rows).then_some(row_order)
     }
 
     pub fn update_table_columns(
@@ -516,6 +631,65 @@ mod tests {
         assert_eq!(
             registry.table_cell_text(Some("table-resource"), 2, 2),
             Some("gamma".to_string())
+        );
+    }
+
+    #[test]
+    fn registry_sorts_buffer_backed_rows_by_typed_values() {
+        let root = crate::document::parse_widget_node(&json!({
+            "id": "root",
+            "type": "window",
+            "props": {},
+            "children": [{
+                "id": "table",
+                "type": "dataframe_table",
+                "props": {
+                    "resource_id": "table-resource",
+                    "frame": {
+                        "columns": ["x", "label"],
+                        "dtypes": ["float32", "str"],
+                        "rows": 3
+                    },
+                    "sample_rows": 0,
+                    "cells": []
+                }
+            }]
+        }))
+        .unwrap();
+        let props = &root.children[0].props;
+        let mut registry = ResourceRegistry::default();
+        registry.sync_from_tree(&root);
+        registry.update_table_columns(
+            "table-resource",
+            props,
+            vec![
+                TableColumnPacket {
+                    name: "x".to_string(),
+                    dtype: "f32".to_string(),
+                    bytes: [10.0_f32, 2.0, 30.0]
+                        .into_iter()
+                        .flat_map(f32::to_le_bytes)
+                        .collect(),
+                },
+                TableColumnPacket {
+                    name: "label".to_string(),
+                    dtype: "utf8".to_string(),
+                    bytes: utf8_packet(["beta", "alpha", "gamma"]),
+                },
+            ],
+        );
+
+        assert_eq!(
+            registry.sorted_table_rows(Some("table-resource"), 0, 3, SortDirection::Asc),
+            Some(vec![1, 0, 2])
+        );
+        assert_eq!(
+            registry.sorted_table_rows(Some("table-resource"), 0, 3, SortDirection::Desc),
+            Some(vec![2, 0, 1])
+        );
+        assert_eq!(
+            registry.sorted_table_rows(Some("table-resource"), 1, 3, SortDirection::Asc),
+            Some(vec![1, 0, 2])
         );
     }
 

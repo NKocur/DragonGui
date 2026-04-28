@@ -36,13 +36,14 @@ use crate::resources::ResourceRegistry;
 use crate::scatter::{self, PointInstance, ScatterWidget};
 use crate::style::{
     collapsible_header_height_for_style, number_stepper_width, number_stepper_width_for_style,
-    ColorRef, DisplayStyle, FlexDirectionStyle, FontFamily, LayoutStyle, NodeStyle,
-    PartLayoutStyle, PartStyle, TextAlign, TextStyle, VisualStyle, WidgetStyle,
+    BackgroundPaint, BoxShadow, ColorRef, DisplayStyle, FlexDirectionStyle, FontFamily, FontStyle,
+    FontVariantNumeric, LayoutStyle, LineHeight, NodeStyle, PartLayoutStyle, PartStyle, TextAlign,
+    TextOverflow, TextSpacing, TextStyle, TextTransform, VisualStyle, WidgetStyle,
 };
 use crate::table::{self, TableHit};
 use crate::text::TextRendererDg;
 use crate::theme::Theme;
-use crate::toast::{ToastLevel, ToastOverlay};
+use crate::toast::{ToastLevel, ToastOverlay, ToastPosition};
 
 // ---------------------------------------------------------------------------
 // AppSpec — bundles everything parsed from the Python document
@@ -325,6 +326,8 @@ fn widget_kind_name(kind: &WidgetKind) -> &'static str {
         WidgetKind::Panel => "panel",
         WidgetKind::Collapsible => "collapsible",
         WidgetKind::Modal => "modal",
+        WidgetKind::Badge => "badge",
+        WidgetKind::Tag => "tag",
         WidgetKind::Button => "button",
         WidgetKind::Checkbox => "checkbox",
         WidgetKind::Dropdown => "dropdown",
@@ -342,6 +345,7 @@ fn widget_kind_name(kind: &WidgetKind) -> &'static str {
         WidgetKind::MenuItem => "menu_item",
         WidgetKind::ContextMenu => "context_menu",
         WidgetKind::Tooltip => "tooltip",
+        WidgetKind::Toast => "toast",
         WidgetKind::Tabs => "tabs",
         WidgetKind::Tab => "tab",
         WidgetKind::Pages => "pages",
@@ -400,6 +404,50 @@ fn text_align_name(align: TextAlign) -> &'static str {
     }
 }
 
+fn text_transform_name(value: TextTransform) -> &'static str {
+    match value {
+        TextTransform::None => "none",
+        TextTransform::Uppercase => "uppercase",
+        TextTransform::Lowercase => "lowercase",
+        TextTransform::Capitalize => "capitalize",
+    }
+}
+
+fn font_style_name(value: FontStyle) -> &'static str {
+    match value {
+        FontStyle::Normal => "normal",
+        FontStyle::Italic => "italic",
+    }
+}
+
+fn font_variant_numeric_name(value: FontVariantNumeric) -> &'static str {
+    match value {
+        FontVariantNumeric::Normal => "normal",
+        FontVariantNumeric::TabularNums => "tabular_nums",
+    }
+}
+
+fn text_overflow_name(value: TextOverflow) -> &'static str {
+    match value {
+        TextOverflow::Clip => "clip",
+        TextOverflow::Ellipsis => "ellipsis",
+    }
+}
+
+fn text_spacing_json(value: TextSpacing) -> Value {
+    match value {
+        TextSpacing::LogicalPx(value) => json!({ "px": value }),
+        TextSpacing::Em(value) => json!({ "em": value }),
+    }
+}
+
+fn line_height_json(value: LineHeight) -> Value {
+    match value {
+        LineHeight::Multiplier(value) => json!({ "multiplier": value }),
+        LineHeight::LogicalPx(value) => json!({ "px": value }),
+    }
+}
+
 fn font_family_json(font_family: &FontFamily) -> Value {
     match font_family {
         FontFamily::Serif => json!("serif"),
@@ -455,6 +503,11 @@ fn layout_style_snapshot(style: &LayoutStyle) -> Value {
 fn visual_style_snapshot(style: &VisualStyle) -> Value {
     let mut map = Map::new();
     insert_color_ref(&mut map, "background", &style.background);
+    if let Some(paint) = &style.background_paint {
+        if let Some(value) = background_paint_json(paint) {
+            map.insert("background_paint".to_string(), value);
+        }
+    }
     insert_color_ref(&mut map, "foreground", &style.foreground);
     insert_color_ref(&mut map, "border_color", &style.border_color);
     insert_number(&mut map, "border_width", style.border_width);
@@ -483,7 +536,49 @@ fn visual_style_snapshot(style: &VisualStyle) -> Value {
     insert_color_ref(&mut map, "track_color", &style.track_color);
     insert_color_ref(&mut map, "thumb_color", &style.thumb_color);
     insert_number(&mut map, "opacity", style.opacity);
+    if let Some(shadows) = &style.box_shadows {
+        map.insert(
+            "box_shadow".to_string(),
+            Value::Array(shadows.iter().map(box_shadow_json).collect()),
+        );
+    }
     Value::Object(map)
+}
+
+fn background_paint_json(paint: &BackgroundPaint) -> Option<Value> {
+    match paint {
+        BackgroundPaint::Color(_) => None,
+        BackgroundPaint::LinearGradient(gradient) => Some(json!({
+            "type": "linear_gradient",
+            "angle_deg": gradient.angle_deg,
+            "stops": gradient.stops.iter().map(|stop| {
+                json!({
+                    "color": color_ref_json(&stop.color),
+                    "position": stop.position,
+                })
+            }).collect::<Vec<_>>(),
+        })),
+        BackgroundPaint::RadialGradient(gradient) => Some(json!({
+            "type": "radial_gradient",
+            "stops": gradient.stops.iter().map(|stop| {
+                json!({
+                    "color": color_ref_json(&stop.color),
+                    "position": stop.position,
+                })
+            }).collect::<Vec<_>>(),
+        })),
+    }
+}
+
+fn box_shadow_json(shadow: &BoxShadow) -> Value {
+    json!({
+        "offset_x": shadow.offset_x,
+        "offset_y": shadow.offset_y,
+        "blur": shadow.blur,
+        "spread": shadow.spread,
+        "color": color_ref_json(&shadow.color),
+        "inset": shadow.inset,
+    })
 }
 
 fn text_style_snapshot(style: &TextStyle) -> Value {
@@ -498,6 +593,33 @@ fn text_style_snapshot(style: &TextStyle) -> Value {
     insert_color_ref(&mut map, "color", &style.color);
     if let Some(value) = style.text_align {
         map.insert("text_align".to_string(), json!(text_align_name(value)));
+    }
+    if let Some(value) = style.text_transform {
+        map.insert(
+            "text_transform".to_string(),
+            json!(text_transform_name(value)),
+        );
+    }
+    if let Some(value) = style.letter_spacing {
+        map.insert("letter_spacing".to_string(), text_spacing_json(value));
+    }
+    if let Some(value) = style.line_height {
+        map.insert("line_height".to_string(), line_height_json(value));
+    }
+    if let Some(value) = style.font_style {
+        map.insert("font_style".to_string(), json!(font_style_name(value)));
+    }
+    if let Some(value) = style.font_variant_numeric {
+        map.insert(
+            "font_variant_numeric".to_string(),
+            json!(font_variant_numeric_name(value)),
+        );
+    }
+    if let Some(value) = style.text_overflow {
+        map.insert(
+            "text_overflow".to_string(),
+            json!(text_overflow_name(value)),
+        );
     }
     Value::Object(map)
 }
@@ -547,6 +669,10 @@ fn compact_part_styles_snapshot(
     names.extend(style.parts.focus.keys().cloned());
     names.extend(style.parts.disabled.keys().cloned());
     names.extend(style.parts.checked.keys().cloned());
+    names.extend(style.parts.open.keys().cloned());
+    names.extend(style.parts.expanded.keys().cloned());
+    names.extend(style.parts.collapsed.keys().cloned());
+    names.extend(style.parts.selected.keys().cloned());
     if let Some(matched_part_rules) = matched_part_rules {
         names.extend(matched_part_rules.keys().cloned());
     }
@@ -569,6 +695,10 @@ fn compact_part_styles_snapshot(
         insert_part_state_snapshot(&mut part, "focus", style.parts.focus.get(&name));
         insert_part_state_snapshot(&mut part, "disabled", style.parts.disabled.get(&name));
         insert_part_state_snapshot(&mut part, "checked", style.parts.checked.get(&name));
+        insert_part_state_snapshot(&mut part, "open", style.parts.open.get(&name));
+        insert_part_state_snapshot(&mut part, "expanded", style.parts.expanded.get(&name));
+        insert_part_state_snapshot(&mut part, "collapsed", style.parts.collapsed.get(&name));
+        insert_part_state_snapshot(&mut part, "selected", style.parts.selected.get(&name));
         if !part.is_empty() {
             out.insert(name, Value::Object(part));
         }
@@ -605,6 +735,19 @@ fn node_style_snapshot(
         visual_style_snapshot(&style.disabled),
     );
     map.insert("checked".to_string(), visual_style_snapshot(&style.checked));
+    map.insert("open".to_string(), visual_style_snapshot(&style.open));
+    map.insert(
+        "expanded".to_string(),
+        visual_style_snapshot(&style.expanded),
+    );
+    map.insert(
+        "collapsed".to_string(),
+        visual_style_snapshot(&style.collapsed),
+    );
+    map.insert(
+        "selected".to_string(),
+        visual_style_snapshot(&style.selected),
+    );
     Value::Object(map)
 }
 
@@ -645,6 +788,7 @@ fn props_snapshot(node: &WidgetNode) -> Value {
     json!({
         "text": props.text.as_deref(),
         "badge": props.badge.as_deref(),
+        "level": props.level.as_deref(),
         "fixed_width": props.fixed_width,
         "fixed_height": props.fixed_height,
         "disabled": props.disabled,
@@ -742,6 +886,7 @@ fn widget_state_snapshot(state: Option<&WidgetState>) -> Value {
         "float_range": &state.float_range,
         "text_val": &state.text_val,
         "text_cursor": &state.text_cursor,
+        "text_scroll_y": &state.text_scroll_y,
         "dropdown_index": &state.dropdown_index,
         "dropdown_items_count": state.dropdown_items.iter().map(|(id, items)| (id.clone(), json!(items.len()))).collect::<Map<_, _>>(),
         "disabled": state.disabled.iter().cloned().collect::<Vec<_>>(),
@@ -796,6 +941,8 @@ fn set_widget_text_prop(node: &mut WidgetNode, id: &str, prop: &str, value: Stri
     match (target.kind.clone(), prop) {
         (
             WidgetKind::Label
+            | WidgetKind::Badge
+            | WidgetKind::Tag
             | WidgetKind::Button
             | WidgetKind::Checkbox
             | WidgetKind::NumberInput
@@ -827,6 +974,17 @@ fn set_widget_text_prop(node: &mut WidgetNode, id: &str, prop: &str, value: Stri
     }
 }
 
+fn set_widget_level_prop(node: &mut WidgetNode, id: &str, level: String) -> bool {
+    let Some(target) = find_widget_mut(node, id) else {
+        return false;
+    };
+    if !matches!(target.kind, WidgetKind::Badge | WidgetKind::Tag) {
+        return false;
+    }
+    target.props.level = Some(level);
+    true
+}
+
 fn set_widget_open_prop(node: &mut WidgetNode, id: &str, open: bool) -> bool {
     let Some(target) = find_widget_mut(node, id) else {
         return false;
@@ -846,6 +1004,17 @@ fn set_widget_expanded_prop(node: &mut WidgetNode, id: &str, expanded: bool) -> 
         return false;
     }
     target.props.expanded = Some(expanded);
+    true
+}
+
+fn set_widget_route_value_prop(node: &mut WidgetNode, id: &str, value: String) -> bool {
+    let Some(target) = find_widget_mut(node, id) else {
+        return false;
+    };
+    if !matches!(target.kind, WidgetKind::Tabs | WidgetKind::Pages) {
+        return false;
+    }
+    target.props.route_value = Some(value);
     true
 }
 
@@ -951,12 +1120,44 @@ fn is_layout_style_key(key: &str) -> bool {
 fn is_text_style_key(key: &str) -> bool {
     matches!(
         key,
-        "foreground" | "color" | "font_size" | "font_family" | "font_weight" | "text_align"
+        "foreground"
+            | "color"
+            | "font_size"
+            | "font-size"
+            | "font_family"
+            | "font-family"
+            | "font_weight"
+            | "font-weight"
+            | "text_align"
+            | "text-align"
+            | "text_transform"
+            | "text-transform"
+            | "letter_spacing"
+            | "letter-spacing"
+            | "line_height"
+            | "line-height"
+            | "font_style"
+            | "font-style"
+            | "font_variant_numeric"
+            | "font-variant-numeric"
+            | "text_overflow"
+            | "text-overflow"
     )
 }
 
 fn pseudo_style_value_changes_text(key: &str, value: &Value) -> bool {
-    if !matches!(key, "hover" | "active" | "focus" | "disabled" | "checked") {
+    if !matches!(
+        key,
+        "hover"
+            | "active"
+            | "focus"
+            | "disabled"
+            | "checked"
+            | "open"
+            | "expanded"
+            | "collapsed"
+            | "selected"
+    ) {
         return false;
     }
     let Some(map) = value.as_object() else {
@@ -1457,6 +1658,10 @@ struct RuntimeToast {
     level: ToastLevel,
     duration: Option<Duration>,
     created: Instant,
+    opacity: f32,
+    radius: Option<f32>,
+    padding: Option<f32>,
+    position: ToastPosition,
 }
 
 impl RuntimeToast {
@@ -1474,6 +1679,10 @@ impl RuntimeToast {
             id: self.id.clone(),
             message: self.message.clone(),
             level: self.level,
+            opacity: self.opacity,
+            radius: self.radius,
+            padding: self.padding,
+            position: self.position,
         }
     }
 }
@@ -1655,6 +1864,7 @@ impl WgpuState {
             config,
             theme,
             scale_factor,
+            stylesheets,
             ..
         } = self;
 
@@ -1703,6 +1913,7 @@ impl WgpuState {
                     state,
                     resources,
                     toast_overlays,
+                    stylesheets,
                     config.width as f32,
                     config.height as f32,
                 )
@@ -1723,6 +1934,7 @@ impl WgpuState {
                 state,
                 caret_positions,
                 toast_overlays,
+                stylesheets,
                 config.width as f32,
                 config.height as f32,
             );
@@ -1743,6 +1955,7 @@ impl WgpuState {
             scale_factor,
             caret_positions,
             toast_overlays,
+            stylesheets,
             config,
             ..
         } = self;
@@ -1763,6 +1976,7 @@ impl WgpuState {
                 state,
                 caret_positions,
                 toast_overlays,
+                stylesheets,
                 config.width as f32,
                 config.height as f32,
             );
@@ -1780,6 +1994,7 @@ impl WgpuState {
             caret_positions,
             resources,
             toast_overlays,
+            stylesheets,
             config,
             ..
         } = self;
@@ -1798,6 +2013,7 @@ impl WgpuState {
                 state,
                 resources,
                 toast_overlays,
+                stylesheets,
                 config.width as f32,
                 config.height as f32,
             );
@@ -1984,6 +2200,8 @@ impl WgpuState {
             if matches!(
                 kind,
                 WidgetKind::Label
+                    | WidgetKind::Badge
+                    | WidgetKind::Tag
                     | WidgetKind::Button
                     | WidgetKind::Panel
                     | WidgetKind::Sidebar
@@ -2004,6 +2222,21 @@ impl WgpuState {
                     }
                 }
             }
+        }
+        if matches!(kind, WidgetKind::Badge | WidgetKind::Tag) && prop == "level" {
+            let CommandValue::Text(level) = value else {
+                eprintln!(
+                    "DragonGUI: ignoring unsupported live SetProp for widget {id:?} ({kind:?}).{prop}"
+                );
+                return None;
+            };
+            if let Some(tree) = self.widget_tree.as_mut() {
+                if set_widget_level_prop(tree, id, level) {
+                    self.reapply_stylesheets();
+                    return Some(Dirty::Full);
+                }
+            }
+            return None;
         }
         if kind == WidgetKind::Modal && prop == "open" {
             let CommandValue::Bool(open) = value else {
@@ -2077,6 +2310,29 @@ impl WgpuState {
             return None;
         }
         let state = self.widget_state.as_mut()?;
+        if matches!(kind, WidgetKind::Tabs | WidgetKind::Pages) && prop == "value" {
+            let CommandValue::Text(value) = value else {
+                eprintln!(
+                    "DragonGUI: ignoring unsupported live SetProp for widget {id:?} ({kind:?}).{prop}"
+                );
+                return None;
+            };
+            let changed = match kind {
+                WidgetKind::Tabs => state.set_active_tab_value(id, &value).is_some(),
+                WidgetKind::Pages => state.set_active_page_value(id, &value).is_some(),
+                _ => false,
+            };
+            if !changed {
+                eprintln!(
+                    "DragonGUI: ignoring live SetProp for widget {id:?} ({kind:?}).{prop}: unknown or disabled route {value:?}"
+                );
+                return None;
+            }
+            if let Some(tree) = self.widget_tree.as_mut() {
+                set_widget_route_value_prop(tree, id, value);
+            }
+            return Some(Dirty::Layout);
+        }
         match (kind, prop, value) {
             (WidgetKind::Checkbox, "checked", CommandValue::Bool(v)) => {
                 state.set_checked(id, v)?;
@@ -2289,6 +2545,24 @@ impl WgpuState {
         true
     }
 
+    fn refresh_table_sort(&mut self, id: &str) {
+        let Some((resource_id, sort, rows)) = self
+            .widget_state
+            .as_ref()
+            .and_then(|state| state.table(id))
+            .map(|table| (table.resource_id.clone(), table.sort, table.rows))
+        else {
+            return;
+        };
+        let row_order = sort.and_then(|(col, direction)| {
+            self.resources
+                .sorted_table_rows(resource_id.as_deref(), col, rows, direction)
+        });
+        if let Some(state) = &mut self.widget_state {
+            state.set_table_row_order(id, row_order);
+        }
+    }
+
     fn apply_release_resource(&mut self, id: &str) -> bool {
         self.resources.release(id)
     }
@@ -2384,13 +2658,27 @@ impl WgpuState {
         message: String,
         level: ToastLevel,
         duration_ms: Option<u64>,
+        opacity: Option<f32>,
+        radius: Option<f32>,
+        padding: Option<f32>,
+        position: Option<ToastPosition>,
     ) {
+        let existing_style = self.toasts.iter().find(|existing| existing.id == id);
         let toast = RuntimeToast {
             id,
             message,
             level,
             duration: duration_ms.map(Duration::from_millis),
             created: Instant::now(),
+            opacity: opacity
+                .or_else(|| existing_style.map(|toast| toast.opacity))
+                .unwrap_or(1.0)
+                .clamp(0.0, 1.0),
+            radius: radius.or_else(|| existing_style.and_then(|toast| toast.radius)),
+            padding: padding.or_else(|| existing_style.and_then(|toast| toast.padding)),
+            position: position
+                .or_else(|| existing_style.map(|toast| toast.position))
+                .unwrap_or_default(),
         };
         if let Some(existing) = self
             .toasts
@@ -2447,6 +2735,10 @@ impl WgpuState {
                     "level": toast.level.as_str(),
                     "duration_ms": toast.duration.map(|duration| duration.as_millis() as u64),
                     "age_ms": now.saturating_duration_since(toast.created).as_millis() as u64,
+                    "opacity": toast.opacity,
+                    "radius": toast.radius,
+                    "padding": toast.padding,
+                    "position": toast.position.as_str(),
                 })
             }).collect::<Vec<_>>(),
         })
@@ -2658,6 +2950,50 @@ impl WgpuState {
             .and_then(|(id, kind)| (kind == WidgetKind::DataFrameTable).then_some(id))
     }
 
+    fn text_area_at(&self, pos: [f32; 2]) -> Option<String> {
+        self.hit_test_ui(pos)
+            .and_then(|(id, kind)| (kind == WidgetKind::TextArea).then_some(id))
+    }
+
+    fn text_area_scroll_geometry(&self, id: &str) -> Option<(f32, f32)> {
+        let tree = self.widget_tree.as_ref()?;
+        let layout = self.current_layout.as_ref()?;
+        let node = crate::overlays::find_node(tree, id)?;
+        let rect = layout
+            .visible_rect(id)
+            .or_else(|| layout.rects.get(id).copied())?;
+        let pad = self.theme.spacing * self.scale_factor;
+        let visible_h = (rect.h - pad * 2.0).max(1.0);
+        let font_size = crate::text::text_font_size(node, &self.theme, self.scale_factor);
+        let line_h = crate::text::text_line_height(font_size, &self.theme, self.scale_factor);
+        Some((visible_h, line_h))
+    }
+
+    fn scroll_text_area(&mut self, id: &str, wheel_y: f32) -> bool {
+        let Some((visible_h, line_h)) = self.text_area_scroll_geometry(id) else {
+            return false;
+        };
+        let changed = self
+            .widget_state
+            .as_mut()
+            .map(|state| state.scroll_text_area(id, -wheel_y * line_h * 3.0, visible_h, line_h))
+            .unwrap_or(false);
+        if changed {
+            self.rebuild_visuals();
+        }
+        changed
+    }
+
+    fn ensure_text_area_cursor_visible(&mut self, id: &str) -> bool {
+        let Some((visible_h, line_h)) = self.text_area_scroll_geometry(id) else {
+            return false;
+        };
+        self.widget_state
+            .as_mut()
+            .map(|state| state.ensure_text_area_cursor_visible(id, visible_h, line_h))
+            .unwrap_or(false)
+    }
+
     fn table_hit(&self, pos: [f32; 2]) -> Option<(String, TableHit)> {
         let (id, kind) = self.hit_test_ui(pos)?;
         if kind != WidgetKind::DataFrameTable {
@@ -2679,10 +3015,11 @@ impl WgpuState {
     fn table_selection_payload(&self, id: &str, row: usize, col: usize) -> Option<String> {
         let table_state = self.widget_state.as_ref()?.table(id)?;
         let column = table_state.columns.get(col)?.clone();
+        let source_row = table::source_row(table_state, row);
         let value = table::cell_text(table_state, &self.resources, row, col);
         Some(
             json!({
-                "row_index": row,
+                "row_index": source_row,
                 "column_index": col,
                 "column": column,
                 "value": value,
@@ -2707,8 +3044,14 @@ impl WgpuState {
     }
 
     fn focus_widget(&mut self, id: Option<String>) {
+        let focused = id.clone();
         if let Some(ws) = &mut self.widget_state {
             ws.focus_widget(id);
+        }
+        if let Some(id) = focused.as_deref() {
+            if self.widget_kind(id) == Some(WidgetKind::TextArea) {
+                self.ensure_text_area_cursor_visible(id);
+            }
         }
         self.rebuild_visuals();
     }
@@ -3546,12 +3889,17 @@ impl DragonApp {
                 message,
                 level,
                 duration_ms,
+                opacity,
+                radius,
+                padding,
+                position,
             } => {
                 let detail = Some(format!(
-                    "level={level}, duration_ms={}",
+                    "level={level}, duration_ms={}, position={}",
                     duration_ms
                         .map(|duration| duration.to_string())
-                        .unwrap_or_else(|| "persistent".to_string())
+                        .unwrap_or_else(|| "persistent".to_string()),
+                    position.as_deref().unwrap_or("default")
                 ));
                 let (outcome, redraw) = {
                     let Some(gpu) = &mut self.gpu else {
@@ -3566,7 +3914,32 @@ impl DragonApp {
                     };
                     match ToastLevel::from_str(&level) {
                         Some(level) => {
-                            gpu.show_toast(id.clone(), message, level, duration_ms);
+                            let position = match position.as_deref() {
+                                Some(value) => match ToastPosition::from_str(value) {
+                                    Some(position) => Some(position),
+                                    None => {
+                                        return self.record_runtime_command(
+                                            "ShowToast",
+                                            Some(id),
+                                            detail,
+                                            None,
+                                            &format!("unknown_position: {value}"),
+                                            false,
+                                        )
+                                    }
+                                },
+                                None => None,
+                            };
+                            gpu.show_toast(
+                                id.clone(),
+                                message,
+                                level,
+                                duration_ms,
+                                opacity,
+                                radius,
+                                padding,
+                                position,
+                            );
                             gpu.rebuild_visuals();
                             ("applied".to_string(), true)
                         }
@@ -3863,12 +4236,83 @@ impl DragonApp {
         self.request_redraw();
     }
 
+    fn emit_current_table_selection(&mut self, id: &str) -> bool {
+        let payload = self.gpu.as_ref().and_then(|gpu| {
+            gpu.widget_state
+                .as_ref()
+                .and_then(|ws| ws.current_table_selection(id))
+                .and_then(|(row, col)| gpu.table_selection_payload(id, row, col))
+        });
+        if let Some(payload) = payload {
+            self.emit_change(id, ChangeValue::Text(payload));
+            true
+        } else {
+            false
+        }
+    }
+
+    fn move_table_selection(
+        &mut self,
+        id: &str,
+        row_delta: isize,
+        col_delta: isize,
+        visible_rows: usize,
+        visible_cols: usize,
+    ) {
+        let mut changed = false;
+        if let Some(gpu) = &mut self.gpu {
+            changed = gpu
+                .widget_state
+                .as_mut()
+                .map(|ws| {
+                    ws.move_table_selection(
+                        id,
+                        row_delta,
+                        col_delta,
+                        visible_rows.max(1),
+                        visible_cols.max(1),
+                    )
+                })
+                .unwrap_or(false);
+            if changed {
+                gpu.rebuild_visuals();
+            }
+        }
+        if changed {
+            self.emit_current_table_selection(id);
+            self.request_redraw();
+        }
+    }
+
+    fn move_table_selection_to_col_edge(&mut self, id: &str, end: bool) {
+        let mut changed = false;
+        if let Some(gpu) = &mut self.gpu {
+            changed = gpu
+                .widget_state
+                .as_mut()
+                .map(|ws| ws.move_table_selection_to_col_edge(id, end))
+                .unwrap_or(false);
+            if changed {
+                gpu.rebuild_visuals();
+            }
+        }
+        if changed {
+            self.emit_current_table_selection(id);
+            self.request_redraw();
+        }
+    }
+
     fn toggle_table_sort(&mut self, id: &str, col: usize) {
         if let Some(gpu) = &mut self.gpu {
-            if let Some(ws) = &mut gpu.widget_state {
-                ws.toggle_table_sort(id, col);
+            let changed = gpu
+                .widget_state
+                .as_mut()
+                .map(|ws| ws.toggle_table_sort(id, col))
+                .unwrap_or(false);
+            if changed {
+                gpu.refresh_table_sort(id);
+                gpu.rebuild_visuals();
             }
-            gpu.rebuild_visuals();
         }
         self.request_redraw();
     }
@@ -4119,35 +4563,87 @@ impl DragonApp {
                     _ => {}
                 },
                 WidgetKind::DataFrameTable => {
-                    let movement = match &event.logical_key {
-                        Key::Named(NamedKey::ArrowUp) => Some((-1, 0)),
-                        Key::Named(NamedKey::ArrowDown) => Some((1, 0)),
-                        Key::Named(NamedKey::ArrowLeft) => Some((0, -1)),
-                        Key::Named(NamedKey::ArrowRight) => Some((0, 1)),
-                        Key::Named(NamedKey::PageUp) => Some((-10, 0)),
-                        Key::Named(NamedKey::PageDown) => Some((10, 0)),
-                        _ => None,
-                    };
-                    if let Some((row_delta, col_delta)) = movement {
-                        let visible_counts = self
-                            .gpu
-                            .as_ref()
-                            .and_then(|g| g.table_visible_counts(&id))
-                            .unwrap_or((1, 1));
-                        if let Some(gpu) = &mut self.gpu {
-                            if let Some(ws) = &mut gpu.widget_state {
-                                ws.move_table_selection(
-                                    &id,
-                                    row_delta,
-                                    col_delta,
-                                    visible_counts.0,
-                                    visible_counts.1,
-                                );
-                            }
-                            gpu.rebuild_visuals();
+                    let visible_counts = self
+                        .gpu
+                        .as_ref()
+                        .and_then(|g| g.table_visible_counts(&id))
+                        .unwrap_or((1, 1));
+                    match &event.logical_key {
+                        Key::Named(NamedKey::ArrowUp) => {
+                            self.move_table_selection(
+                                &id,
+                                -1,
+                                0,
+                                visible_counts.0,
+                                visible_counts.1,
+                            );
+                            return;
                         }
-                        self.request_redraw();
-                        return;
+                        Key::Named(NamedKey::ArrowDown) => {
+                            self.move_table_selection(
+                                &id,
+                                1,
+                                0,
+                                visible_counts.0,
+                                visible_counts.1,
+                            );
+                            return;
+                        }
+                        Key::Named(NamedKey::ArrowLeft) => {
+                            self.move_table_selection(
+                                &id,
+                                0,
+                                -1,
+                                visible_counts.0,
+                                visible_counts.1,
+                            );
+                            return;
+                        }
+                        Key::Named(NamedKey::ArrowRight) => {
+                            self.move_table_selection(
+                                &id,
+                                0,
+                                1,
+                                visible_counts.0,
+                                visible_counts.1,
+                            );
+                            return;
+                        }
+                        Key::Named(NamedKey::PageUp) => {
+                            self.move_table_selection(
+                                &id,
+                                -(visible_counts.0.max(1) as isize),
+                                0,
+                                visible_counts.0,
+                                visible_counts.1,
+                            );
+                            return;
+                        }
+                        Key::Named(NamedKey::PageDown) => {
+                            self.move_table_selection(
+                                &id,
+                                visible_counts.0.max(1) as isize,
+                                0,
+                                visible_counts.0,
+                                visible_counts.1,
+                            );
+                            return;
+                        }
+                        Key::Named(NamedKey::Home) => {
+                            self.move_table_selection_to_col_edge(&id, false);
+                            return;
+                        }
+                        Key::Named(NamedKey::End) => {
+                            self.move_table_selection_to_col_edge(&id, true);
+                            return;
+                        }
+                        Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Space) => {
+                            if self.emit_current_table_selection(&id) {
+                                self.request_redraw();
+                            }
+                            return;
+                        }
+                        _ => {}
                     }
                 }
                 _ => {}
@@ -4359,6 +4855,20 @@ impl DragonApp {
                     }
                 }
             }
+            Key::Named(NamedKey::ArrowUp) if multiline => {
+                if let Some(gpu) = &mut self.gpu {
+                    if let Some(ws) = &mut gpu.widget_state {
+                        ws.move_text_cursor_vertical(id, -1);
+                    }
+                }
+            }
+            Key::Named(NamedKey::ArrowDown) if multiline => {
+                if let Some(gpu) = &mut self.gpu {
+                    if let Some(ws) = &mut gpu.widget_state {
+                        ws.move_text_cursor_vertical(id, 1);
+                    }
+                }
+            }
             Key::Named(NamedKey::Home) => {
                 if let Some(gpu) = &mut self.gpu {
                     if let Some(ws) = &mut gpu.widget_state {
@@ -4416,6 +4926,9 @@ impl DragonApp {
         }
         if handled {
             if let Some(gpu) = &mut self.gpu {
+                if multiline {
+                    gpu.ensure_text_area_cursor_visible(id);
+                }
                 gpu.rebuild_visuals();
             }
             self.request_redraw();
@@ -4863,6 +5376,16 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                     MouseScrollDelta::PixelDelta(pos) => (pos.x as f32 * 0.01, pos.y as f32 * 0.01),
                 };
                 if let Some(pos) = self.last_mouse_pos {
+                    if let Some(id) = self.gpu.as_ref().and_then(|gpu| gpu.text_area_at(pos)) {
+                        if self
+                            .gpu
+                            .as_mut()
+                            .is_some_and(|gpu| gpu.scroll_text_area(&id, scroll_y))
+                        {
+                            self.request_redraw();
+                        }
+                        return;
+                    }
                     if let Some(id) = self.gpu.as_ref().and_then(|gpu| gpu.table_at(pos)) {
                         let row_delta = (-(scroll_y * 3.0)).round() as isize;
                         let col_delta = if scroll_x.abs() >= 0.5 {
@@ -4928,6 +5451,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                     self.emit_change(&id, ChangeValue::Text(value));
                                 }
                                 if let Some(gpu) = &mut self.gpu {
+                                    gpu.ensure_text_area_cursor_visible(&id);
                                     gpu.rebuild_visuals();
                                 }
                                 self.request_redraw();

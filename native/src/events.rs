@@ -42,6 +42,7 @@ pub struct TableState {
     pub scroll_col: usize,
     pub selected: Option<(usize, usize)>,
     pub sort: Option<(usize, SortDirection)>,
+    pub row_order: Option<Vec<usize>>,
 }
 
 impl TableState {
@@ -62,6 +63,7 @@ impl TableState {
             scroll_col: 0,
             selected: None,
             sort: None,
+            row_order: None,
         }
     }
 }
@@ -97,6 +99,8 @@ pub struct WidgetState {
     pub text_placeholder: HashMap<String, String>,
     /// TextInput cursor byte offset keyed by widget id.
     pub text_cursor: HashMap<String, usize>,
+    /// TextArea vertical scroll offset in physical pixels keyed by widget id.
+    pub text_scroll_y: HashMap<String, f32>,
     /// NumberInput widgets whose edited text cannot currently be parsed.
     pub invalid_numbers: HashSet<String>,
     /// Dropdown items keyed by widget id.
@@ -255,6 +259,20 @@ impl WidgetState {
         self.expanded.get(id).copied().unwrap_or(true)
     }
 
+    pub fn is_expanded_widget(&self, id: &str) -> bool {
+        self.expanded.get(id).copied() == Some(true)
+    }
+
+    pub fn is_collapsed_widget(&self, id: &str) -> bool {
+        self.expanded.get(id).copied() == Some(false)
+    }
+
+    pub fn is_open_widget(&self, id: &str) -> bool {
+        self.open_dropdown.as_deref() == Some(id)
+            || self.open_menu.as_deref() == Some(id)
+            || self.open_context_menu.as_deref() == Some(id)
+    }
+
     pub fn set_expanded(&mut self, id: &str, expanded: bool) -> Option<bool> {
         if !self.expanded.contains_key(id) {
             return None;
@@ -344,6 +362,7 @@ impl WidgetState {
         }
         self.text_cursor.insert(id.to_string(), value.len());
         self.text_val.insert(id.to_string(), value.clone());
+        self.text_scroll_y.insert(id.to_string(), 0.0);
         self.close_popups();
         Some(value)
     }
@@ -425,6 +444,25 @@ impl WidgetState {
         }
     }
 
+    pub fn move_text_cursor_vertical(&mut self, id: &str, direction: i32) {
+        if direction == 0 {
+            return;
+        }
+        let Some(value) = self.text_val.get(id) else {
+            return;
+        };
+        let current = self.text_cursor.get(id).copied().unwrap_or(value.len());
+        let current = clamp_boundary(value, current);
+        let (line, column) = line_column_for_cursor(value, current);
+        let target_line = if direction < 0 {
+            line.saturating_sub(1)
+        } else {
+            (line + 1).min(line_count(value).saturating_sub(1))
+        };
+        let target = cursor_for_line_column(value, target_line, column);
+        self.text_cursor.insert(id.to_string(), target);
+    }
+
     pub fn move_text_cursor_home_end(&mut self, id: &str, end: bool) {
         if let Some(value) = self.text_val.get(id) {
             self.text_cursor
@@ -442,6 +480,75 @@ impl WidgetState {
         }
         let cursor_chars = value[..clamp_boundary(value, cursor)].chars().count() as f32;
         (cursor_chars / value.chars().count() as f32).clamp(0.0, 1.0)
+    }
+
+    pub fn text_area_scroll_y(&self, id: &str, visible_h: f32, line_h: f32) -> f32 {
+        let Some(value) = self.text_val.get(id) else {
+            return 0.0;
+        };
+        let max_scroll = text_area_max_scroll(value, visible_h, line_h);
+        self.text_scroll_y
+            .get(id)
+            .copied()
+            .unwrap_or(0.0)
+            .clamp(0.0, max_scroll)
+    }
+
+    pub fn scroll_text_area(
+        &mut self,
+        id: &str,
+        delta_y: f32,
+        visible_h: f32,
+        line_h: f32,
+    ) -> bool {
+        let Some(value) = self.text_val.get(id) else {
+            return false;
+        };
+        let max_scroll = text_area_max_scroll(value, visible_h, line_h);
+        let current = self.text_scroll_y.get(id).copied().unwrap_or(0.0);
+        let next = (current + delta_y).clamp(0.0, max_scroll);
+        if (next - current).abs() <= f32::EPSILON {
+            self.text_scroll_y.insert(id.to_string(), next);
+            return false;
+        }
+        self.text_scroll_y.insert(id.to_string(), next);
+        true
+    }
+
+    pub fn ensure_text_area_cursor_visible(
+        &mut self,
+        id: &str,
+        visible_h: f32,
+        line_h: f32,
+    ) -> bool {
+        let Some(value) = self.text_val.get(id) else {
+            return false;
+        };
+        if visible_h <= 0.0 || line_h <= 0.0 {
+            self.text_scroll_y.insert(id.to_string(), 0.0);
+            return false;
+        }
+        let cursor = self.text_cursor.get(id).copied().unwrap_or(value.len());
+        let cursor = clamp_boundary(value, cursor);
+        let (line, _) = line_column_for_cursor(value, cursor);
+        let max_scroll = text_area_max_scroll(value, visible_h, line_h);
+        let current = self
+            .text_scroll_y
+            .get(id)
+            .copied()
+            .unwrap_or(0.0)
+            .clamp(0.0, max_scroll);
+        let caret_top = line as f32 * line_h;
+        let caret_bottom = caret_top + line_h;
+        let mut next = current;
+        if caret_top < next {
+            next = caret_top;
+        } else if caret_bottom > next + visible_h {
+            next = caret_bottom - visible_h;
+        }
+        next = next.clamp(0.0, max_scroll);
+        self.text_scroll_y.insert(id.to_string(), next);
+        (next - current).abs() > f32::EPSILON
     }
 
     pub fn set_dropdown_open(&mut self, id: Option<String>) {
@@ -557,6 +664,28 @@ impl WidgetState {
             .is_some_and(|active| active == target)
     }
 
+    pub fn is_active_page_child(&self, id: &str) -> bool {
+        let Some(parent) = self.page_parent.get(id) else {
+            return false;
+        };
+        let Some(value) = self.page_values.get(id) else {
+            return false;
+        };
+        self.active_pages
+            .get(parent)
+            .is_some_and(|active| active == value)
+    }
+
+    pub fn is_selected_widget(&self, id: &str) -> bool {
+        self.is_active_tab(id)
+            || self.is_active_nav_item(id)
+            || self.is_active_page_child(id)
+            || self
+                .tables
+                .get(id)
+                .is_some_and(|table| table.selected.is_some())
+    }
+
     pub fn activate_tab(&mut self, tab_id: &str) -> Option<(String, String)> {
         if self.is_disabled(tab_id) {
             return None;
@@ -568,6 +697,20 @@ impl WidgetState {
         Some((parent, value))
     }
 
+    pub fn set_active_tab_value(&mut self, tabs_id: &str, value: &str) -> Option<()> {
+        let valid =
+            self.tabs.get(tabs_id)?.iter().any(|item| {
+                item.value == value && !item.disabled && !self.disabled.contains(&item.id)
+            });
+        if !valid {
+            return None;
+        }
+        self.active_tabs
+            .insert(tabs_id.to_string(), value.to_string());
+        self.close_popups();
+        Some(())
+    }
+
     pub fn activate_nav_item(&mut self, nav_id: &str) -> Option<(String, String)> {
         if self.is_disabled(nav_id) {
             return None;
@@ -577,6 +720,20 @@ impl WidgetState {
         self.active_pages.insert(pages_id.clone(), value.clone());
         self.close_popups();
         Some((pages_id, value))
+    }
+
+    pub fn set_active_page_value(&mut self, pages_id: &str, value: &str) -> Option<()> {
+        let valid =
+            self.pages.get(pages_id)?.iter().any(|item| {
+                item.value == value && !item.disabled && !self.disabled.contains(&item.id)
+            });
+        if !valid {
+            return None;
+        }
+        self.active_pages
+            .insert(pages_id.to_string(), value.to_string());
+        self.close_popups();
+        Some(())
     }
 
     pub fn move_tab(&mut self, tab_id: &str, direction: i32) -> Option<(String, String, String)> {
@@ -701,6 +858,16 @@ impl WidgetState {
             Some((current_col, direction)) if current_col == col => (col, direction.toggle()),
             _ => (col, SortDirection::Asc),
         });
+        table.scroll_row = 0;
+        table.selected = None;
+        true
+    }
+
+    pub fn set_table_row_order(&mut self, id: &str, row_order: Option<Vec<usize>>) -> bool {
+        let Some(table) = self.tables.get_mut(id) else {
+            return false;
+        };
+        table.row_order = row_order.filter(|rows| rows.len() == table.rows);
         true
     }
 
@@ -734,10 +901,45 @@ impl WidgetState {
         );
         old != (table.selected, table.scroll_row, table.scroll_col)
     }
+
+    pub fn move_table_selection_to_col_edge(&mut self, id: &str, end: bool) -> bool {
+        let Some(table) = self.tables.get_mut(id) else {
+            return false;
+        };
+        if table.rows == 0 || table.columns.is_empty() {
+            return false;
+        }
+        let (row, _) = table
+            .selected
+            .unwrap_or((table.scroll_row, table.scroll_col));
+        let col = if end {
+            table.columns.len().saturating_sub(1)
+        } else {
+            0
+        };
+        let old = (table.selected, table.scroll_col);
+        table.selected = Some((row.min(table.rows.saturating_sub(1)), col));
+        table.scroll_col = keep_visible(table.scroll_col, col, 1, table.columns.len());
+        old != (table.selected, table.scroll_col)
+    }
+
+    pub fn current_table_selection(&self, id: &str) -> Option<(usize, usize)> {
+        let table = self.tables.get(id)?;
+        if table.rows == 0 || table.columns.is_empty() {
+            return None;
+        }
+        let (row, col) = table
+            .selected
+            .unwrap_or((table.scroll_row, table.scroll_col));
+        Some((
+            row.min(table.rows.saturating_sub(1)),
+            col.min(table.columns.len().saturating_sub(1)),
+        ))
+    }
 }
 
 fn collect_state(node: &WidgetNode, s: &mut WidgetState, parent: Option<&WidgetNode>) {
-    if node.kind == WidgetKind::Tooltip {
+    if matches!(node.kind, WidgetKind::Tooltip | WidgetKind::Toast) {
         return;
     }
     match node.kind {
@@ -787,6 +989,9 @@ fn collect_state(node: &WidgetNode, s: &mut WidgetState, parent: Option<&WidgetN
             let value = node.props.text.clone().unwrap_or_default();
             s.text_cursor.insert(node.id.clone(), value.len());
             s.text_val.insert(node.id.clone(), value);
+            if node.kind == WidgetKind::TextArea {
+                s.text_scroll_y.insert(node.id.clone(), 0.0);
+            }
             if let Some(placeholder) = &node.props.placeholder {
                 s.text_placeholder
                     .insert(node.id.clone(), placeholder.to_string());
@@ -1113,6 +1318,51 @@ fn keep_visible(scroll: usize, selected: usize, visible_count: usize, total: usi
     }
 }
 
+fn line_count(text: &str) -> usize {
+    text.chars().filter(|ch| *ch == '\n').count() + 1
+}
+
+fn text_area_max_scroll(text: &str, visible_h: f32, line_h: f32) -> f32 {
+    let content_h = line_count(text) as f32 * line_h.max(1.0);
+    (content_h - visible_h.max(1.0)).max(0.0)
+}
+
+fn line_column_for_cursor(text: &str, cursor: usize) -> (usize, usize) {
+    let cursor = clamp_boundary(text, cursor);
+    let mut line = 0;
+    let mut col = 0;
+    for (idx, ch) in text.char_indices() {
+        if idx >= cursor {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            col = 0;
+        } else {
+            col += 1;
+        }
+    }
+    (line, col)
+}
+
+fn cursor_for_line_column(text: &str, target_line: usize, target_col: usize) -> usize {
+    let mut line = 0;
+    let mut col = 0;
+    for (idx, ch) in text.char_indices() {
+        if line == target_line {
+            if ch == '\n' || col >= target_col {
+                return idx;
+            }
+            col += 1;
+            continue;
+        }
+        if ch == '\n' {
+            line += 1;
+        }
+    }
+    text.len()
+}
+
 fn format_number(value: f32) -> String {
     if value.fract().abs() < f32::EPSILON && value.abs() < 1.0e7 {
         format!("{value:.0}")
@@ -1266,5 +1516,180 @@ mod tests {
         let hit = hit_test_hover(&root, &layout, [30.0, 30.0]);
 
         assert_eq!(hit, Some(("progress".to_string(), WidgetKind::ProgressBar)));
+    }
+
+    #[test]
+    fn text_area_cursor_visibility_updates_scroll_offset() {
+        let mut state = WidgetState::default();
+        state
+            .text_val
+            .insert("notes".to_string(), "one\ntwo\nthree\nfour".to_string());
+        state
+            .text_cursor
+            .insert("notes".to_string(), "one\ntwo\nthree\nfour".len());
+        state.text_scroll_y.insert("notes".to_string(), 0.0);
+
+        assert!(state.ensure_text_area_cursor_visible("notes", 20.0, 10.0));
+        assert_eq!(state.text_area_scroll_y("notes", 20.0, 10.0), 20.0);
+    }
+
+    #[test]
+    fn text_area_scroll_clamps_to_content_height() {
+        let mut state = WidgetState::default();
+        state
+            .text_val
+            .insert("notes".to_string(), "one\ntwo\nthree".to_string());
+
+        assert!(state.scroll_text_area("notes", 999.0, 20.0, 10.0));
+        assert_eq!(state.text_area_scroll_y("notes", 20.0, 10.0), 10.0);
+        assert!(state.scroll_text_area("notes", -999.0, 20.0, 10.0));
+        assert_eq!(state.text_area_scroll_y("notes", 20.0, 10.0), 0.0);
+    }
+
+    #[test]
+    fn text_area_vertical_cursor_movement_preserves_column() {
+        let mut state = WidgetState::default();
+        let text = "alpha\nbeta\ngamma";
+        state.text_val.insert("notes".to_string(), text.to_string());
+        state
+            .text_cursor
+            .insert("notes".to_string(), "alpha\nbe".len());
+
+        state.move_text_cursor_vertical("notes", 1);
+
+        let cursor = state.text_cursor["notes"];
+        assert_eq!(line_column_for_cursor(text, cursor), (2, 2));
+    }
+
+    #[test]
+    fn table_selection_navigation_keeps_cell_visible() {
+        let mut state = WidgetState::default();
+        state.tables.insert(
+            "table".to_string(),
+            TableState {
+                columns: vec!["a".to_string(), "b".to_string(), "c".to_string()],
+                dtypes: vec![],
+                rows: 20,
+                resource_id: None,
+                page_size: 10,
+                scroll_row: 0,
+                scroll_col: 0,
+                selected: Some((0, 0)),
+                sort: None,
+                row_order: None,
+            },
+        );
+
+        assert!(state.move_table_selection("table", 6, 2, 4, 2));
+        let table = state.table("table").unwrap();
+        assert_eq!(table.selected, Some((6, 2)));
+        assert_eq!(table.scroll_row, 3);
+        assert_eq!(table.scroll_col, 1);
+    }
+
+    #[test]
+    fn table_selection_edge_moves_within_current_row() {
+        let mut state = WidgetState::default();
+        state.tables.insert(
+            "table".to_string(),
+            TableState {
+                columns: vec!["a".to_string(), "b".to_string(), "c".to_string()],
+                dtypes: vec![],
+                rows: 5,
+                resource_id: None,
+                page_size: 10,
+                scroll_row: 0,
+                scroll_col: 0,
+                selected: Some((2, 1)),
+                sort: None,
+                row_order: None,
+            },
+        );
+
+        assert!(state.move_table_selection_to_col_edge("table", true));
+        assert_eq!(state.current_table_selection("table"), Some((2, 2)));
+        assert!(state.move_table_selection_to_col_edge("table", false));
+        assert_eq!(state.current_table_selection("table"), Some((2, 0)));
+    }
+
+    #[test]
+    fn table_sort_resets_view_selection_and_stores_row_order() {
+        let mut state = WidgetState::default();
+        state.tables.insert(
+            "table".to_string(),
+            TableState {
+                columns: vec!["a".to_string(), "b".to_string()],
+                dtypes: vec![],
+                rows: 3,
+                resource_id: None,
+                page_size: 10,
+                scroll_row: 2,
+                scroll_col: 0,
+                selected: Some((2, 1)),
+                sort: None,
+                row_order: None,
+            },
+        );
+
+        assert!(state.toggle_table_sort("table", 0));
+        let table = state.table("table").unwrap();
+        assert_eq!(table.sort, Some((0, SortDirection::Asc)));
+        assert_eq!(table.scroll_row, 0);
+        assert_eq!(table.selected, None);
+
+        assert!(state.set_table_row_order("table", Some(vec![1, 0, 2])));
+        assert_eq!(
+            state.table("table").unwrap().row_order.as_deref(),
+            Some([1, 0, 2].as_slice())
+        );
+
+        assert!(state.toggle_table_sort("table", 0));
+        assert_eq!(
+            state.table("table").unwrap().sort,
+            Some((0, SortDirection::Desc))
+        );
+    }
+
+    #[test]
+    fn programmatic_navigation_value_updates_active_routes() {
+        let mut state = WidgetState::default();
+        state.tabs.insert(
+            "tabs".to_string(),
+            vec![
+                NavigationItem {
+                    id: "tab-a".to_string(),
+                    value: "a".to_string(),
+                    disabled: false,
+                },
+                NavigationItem {
+                    id: "tab-b".to_string(),
+                    value: "b".to_string(),
+                    disabled: false,
+                },
+            ],
+        );
+        state.pages.insert(
+            "pages".to_string(),
+            vec![
+                NavigationItem {
+                    id: "page-a".to_string(),
+                    value: "a".to_string(),
+                    disabled: false,
+                },
+                NavigationItem {
+                    id: "page-b".to_string(),
+                    value: "b".to_string(),
+                    disabled: false,
+                },
+            ],
+        );
+
+        assert_eq!(state.set_active_tab_value("tabs", "b"), Some(()));
+        assert_eq!(state.set_active_page_value("pages", "b"), Some(()));
+        assert_eq!(state.active_tab("tabs"), Some("b"));
+        assert_eq!(state.active_page("pages"), Some("b"));
+
+        assert_eq!(state.set_active_tab_value("tabs", "missing"), None);
+        assert_eq!(state.active_tab("tabs"), Some("b"));
     }
 }

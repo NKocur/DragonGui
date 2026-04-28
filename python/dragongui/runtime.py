@@ -12,6 +12,7 @@ from typing import Any
 
 _MAX_PYTHON_TASKS_PER_DRAIN = 100
 _TOAST_LEVELS = {"info", "success", "warning", "error"}
+_TOAST_POSITIONS = {"top-right", "top-left", "bottom-right", "bottom-left"}
 _active_app_handle: AppHandle | None = None
 _active_app_lock = RLock()
 
@@ -29,9 +30,22 @@ class ToastHandle:
         *,
         level: str = "info",
         duration: int | float | None = 3000,
+        opacity: int | float | None = None,
+        radius: int | float | None = None,
+        padding: int | float | None = None,
+        position: str | None = None,
     ) -> None:
-        """Replace this toast's message, level, and duration."""
-        self._app.enqueue_show_toast(self.id, message, level=level, duration=duration)
+        """Replace this toast's message, level, duration, and optional styling."""
+        self._app.enqueue_show_toast(
+            self.id,
+            message,
+            level=level,
+            duration=duration,
+            opacity=opacity,
+            radius=radius,
+            padding=padding,
+            position=position,
+        )
 
     def dismiss(self) -> None:
         """Dismiss this toast if it is still visible."""
@@ -248,13 +262,26 @@ class AppHandle:
         *,
         level: str = "info",
         duration: int | float | None = 3000,
+        opacity: int | float | None = None,
+        radius: int | float | None = None,
+        padding: int | float | None = None,
+        position: str | None = None,
     ) -> ToastHandle:
         with self._lock:
             if self._closed:
                 raise RuntimeError("DragonGUI app handle is closed")
             self._toast_seq += 1
             toast_id = f"toast-{self._toast_seq}"
-        self.enqueue_show_toast(toast_id, message, level=level, duration=duration)
+        self.enqueue_show_toast(
+            toast_id,
+            message,
+            level=level,
+            duration=duration,
+            opacity=opacity,
+            radius=radius,
+            padding=padding,
+            position=position,
+        )
         return ToastHandle(self, toast_id)
 
     def enqueue_show_toast(
@@ -264,6 +291,10 @@ class AppHandle:
         *,
         level: str = "info",
         duration: int | float | None = 3000,
+        opacity: int | float | None = None,
+        radius: int | float | None = None,
+        padding: int | float | None = None,
+        position: str | None = None,
     ) -> None:
         self._send_or_queue_native(
             "enqueue_show_toast",
@@ -271,6 +302,10 @@ class AppHandle:
             _toast_message(message),
             _toast_level(level),
             _toast_duration_ms(duration),
+            _toast_opacity(opacity),
+            _toast_non_negative("radius", radius),
+            _toast_non_negative("padding", padding),
+            _toast_position(position),
         )
 
     def enqueue_dismiss_toast(self, toast_id: str) -> None:
@@ -498,6 +533,40 @@ def _toast_duration_ms(value: object) -> int | None:
     if not math.isfinite(duration) or duration <= 0:
         raise ValueError("toast duration must be greater than zero milliseconds")
     return int(round(duration))
+
+
+def _toast_opacity(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError("toast opacity must be a number between 0.0 and 1.0")
+    opacity = float(value)
+    if not math.isfinite(opacity) or opacity < 0.0 or opacity > 1.0:
+        raise ValueError("toast opacity must be between 0.0 and 1.0")
+    return opacity
+
+
+def _toast_non_negative(name: str, value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"toast {name} must be a non-negative number")
+    number = float(value)
+    if not math.isfinite(number) or number < 0.0:
+        raise ValueError(f"toast {name} must be a non-negative number")
+    return number
+
+
+def _toast_position(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError("toast position must be a string")
+    position = value.strip().lower().replace("_", "-")
+    if position not in _TOAST_POSITIONS:
+        allowed = ", ".join(sorted(_TOAST_POSITIONS))
+        raise ValueError(f"toast position must be one of: {allowed}")
+    return position
 
 
 def _resource_id(value: object) -> str:

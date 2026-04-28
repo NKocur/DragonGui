@@ -23,7 +23,17 @@ def on_notes_change(value: str) -> None:
 
 def load_sample() -> None:
     if editor is not None:
-        editor.set_value("select *\nfrom orders\nwhere total > 100\norder by created_at desc")
+        editor.set_value(
+            "select *\n"
+            "from orders\n"
+            "where total > 100\n"
+            "and status in ('ready', 'queued')\n"
+            "order by created_at desc\n"
+            "limit 250;\n"
+            "\n"
+            "-- Scroll with the mouse wheel.\n"
+            "-- Arrow up/down keeps the caret visible."
+        )
 
 
 with dg.HLayout(style={"padding": 18, "gap": 16}):
@@ -41,7 +51,7 @@ with dg.HLayout(style={"padding": 18, "gap": 16}):
 
     with dg.Panel("Details", style={"padding": 14, "gap": 10}):
         dg.Label("TextArea preserves newlines and reports the full value.")
-        dg.Label("Rows set the preferred height; text is clipped to the field.")
+        dg.Label("Rows set the preferred height; overflow scrolls inside the field.")
         status = dg.Label("31 chars, 1 lines")
         dg.Separator()
         dg.TextArea(

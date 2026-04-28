@@ -174,6 +174,8 @@ pub enum WidgetKind {
     Panel,
     Collapsible,
     Modal,
+    Badge,
+    Tag,
     Button,
     Checkbox,
     Dropdown,
@@ -191,6 +193,7 @@ pub enum WidgetKind {
     MenuItem,
     ContextMenu,
     Tooltip,
+    Toast,
     Tabs,
     Tab,
     Pages,
@@ -212,6 +215,8 @@ impl WidgetKind {
             "panel" => WidgetKind::Panel,
             "collapsible" => WidgetKind::Collapsible,
             "modal" => WidgetKind::Modal,
+            "badge" => WidgetKind::Badge,
+            "tag" => WidgetKind::Tag,
             "button" => WidgetKind::Button,
             "checkbox" => WidgetKind::Checkbox,
             "dropdown" => WidgetKind::Dropdown,
@@ -229,6 +234,7 @@ impl WidgetKind {
             "menu_item" => WidgetKind::MenuItem,
             "context_menu" => WidgetKind::ContextMenu,
             "tooltip" => WidgetKind::Tooltip,
+            "toast" => WidgetKind::Toast,
             "tabs" => WidgetKind::Tabs,
             "tab" => WidgetKind::Tab,
             "pages" => WidgetKind::Pages,
@@ -266,6 +272,8 @@ pub struct NodeProps {
     pub text: Option<String>,
     /// Optional inline badge text for selected controls.
     pub badge: Option<String>,
+    /// Semantic level for standalone Badge/Tag widgets.
+    pub level: Option<String>,
     /// Placeholder text for TextInput.
     pub placeholder: Option<String>,
     /// Preferred visible row count for TextArea.
@@ -404,6 +412,11 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         .and_then(|v| v.as_str())
         .filter(|v| !v.is_empty())
         .map(|v| v.to_string());
+    let level = props
+        .get("level")
+        .and_then(|v| v.as_str())
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_ascii_lowercase());
     let placeholder = props
         .get("placeholder")
         .and_then(|v| v.as_str())
@@ -531,6 +544,7 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         step,
         text,
         badge,
+        level,
         placeholder,
         rows,
         wrap,

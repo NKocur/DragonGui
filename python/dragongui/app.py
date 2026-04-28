@@ -112,11 +112,23 @@ class App:
         *,
         level: str = "info",
         duration: int | float | None = 3000,
+        opacity: int | float | None = None,
+        radius: int | float | None = None,
+        padding: int | float | None = None,
+        position: str | None = None,
     ) -> ToastHandle:
         """Show a non-blocking native toast while the app is live."""
         if self._handle is None:
             raise RuntimeError("DragonGUI app is not running")
-        return self._handle.toast(message, level=level, duration=duration)
+        return self._handle.toast(
+            message,
+            level=level,
+            duration=duration,
+            opacity=opacity,
+            radius=radius,
+            padding=padding,
+            position=position,
+        )
 
     def debug_snapshot(self, timeout_ms: int = 1000) -> dict[str, Any]:
         """Return a JSON-safe snapshot of the live native runtime."""

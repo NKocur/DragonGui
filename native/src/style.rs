@@ -98,6 +98,16 @@ pub(crate) fn collapsible_header_height_for_style(
     (height_lp.max(1.0) * sf).max(1.0)
 }
 
+pub(crate) fn uniform_layout_padding(style: &LayoutStyle) -> Option<f32> {
+    style.padding.or_else(|| {
+        let top = style.padding_top?;
+        let right = style.padding_right?;
+        let bottom = style.padding_bottom?;
+        let left = style.padding_left?;
+        (top == right && right == bottom && bottom == left).then_some(top)
+    })
+}
+
 use serde_json::Value;
 
 use crate::events::WidgetState;
@@ -115,6 +125,10 @@ pub struct NodeStyle {
     pub focus: VisualStyle,
     pub disabled: VisualStyle,
     pub checked: VisualStyle,
+    pub open: VisualStyle,
+    pub expanded: VisualStyle,
+    pub collapsed: VisualStyle,
+    pub selected: VisualStyle,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -156,6 +170,7 @@ pub enum FlexDirectionStyle {
 #[derive(Debug, Clone, Default)]
 pub struct VisualStyle {
     pub background: Option<ColorRef>,
+    pub background_paint: Option<BackgroundPaint>,
     pub foreground: Option<ColorRef>,
     pub border_color: Option<ColorRef>,
     pub border_width: Option<f32>,
@@ -165,6 +180,31 @@ pub struct VisualStyle {
     pub track_color: Option<ColorRef>,
     pub thumb_color: Option<ColorRef>,
     pub opacity: Option<f32>,
+    pub box_shadows: Option<Vec<BoxShadow>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum BackgroundPaint {
+    Color(ColorRef),
+    LinearGradient(LinearGradient),
+    RadialGradient(RadialGradient),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LinearGradient {
+    pub angle_deg: f32,
+    pub stops: Vec<GradientStop>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RadialGradient {
+    pub stops: Vec<GradientStop>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct GradientStop {
+    pub color: ColorRef,
+    pub position: Option<f32>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -175,11 +215,59 @@ pub struct CornerRadii {
     pub bottom_left: Option<f32>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct BoxShadow {
+    pub offset_x: f32,
+    pub offset_y: f32,
+    pub blur: f32,
+    pub spread: f32,
+    pub color: ColorRef,
+    pub inset: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TextAlign {
     Left,
     Center,
     Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TextTransform {
+    None,
+    Uppercase,
+    Lowercase,
+    Capitalize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FontStyle {
+    Normal,
+    Italic,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FontVariantNumeric {
+    Normal,
+    TabularNums,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TextSpacing {
+    LogicalPx(f32),
+    Em(f32),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LineHeight {
+    Multiplier(f32),
+    LogicalPx(f32),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TextOverflow {
+    Clip,
+    Ellipsis,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -189,6 +277,12 @@ pub struct TextStyle {
     pub font_weight: Option<u16>,
     pub color: Option<ColorRef>,
     pub text_align: Option<TextAlign>,
+    pub text_transform: Option<TextTransform>,
+    pub letter_spacing: Option<TextSpacing>,
+    pub line_height: Option<LineHeight>,
+    pub font_style: Option<FontStyle>,
+    pub font_variant_numeric: Option<FontVariantNumeric>,
+    pub text_overflow: Option<TextOverflow>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -220,6 +314,10 @@ pub struct NodePartStyles {
     pub focus: BTreeMap<String, PartStyle>,
     pub disabled: BTreeMap<String, PartStyle>,
     pub checked: BTreeMap<String, PartStyle>,
+    pub open: BTreeMap<String, PartStyle>,
+    pub expanded: BTreeMap<String, PartStyle>,
+    pub collapsed: BTreeMap<String, PartStyle>,
+    pub selected: BTreeMap<String, PartStyle>,
 }
 
 pub(crate) fn base_part_style<'a>(style: &'a NodeStyle, part: &str) -> Option<&'a PartStyle> {
@@ -234,6 +332,58 @@ pub(crate) fn checked_part_style_for_state<'a>(
 ) -> Option<&'a PartStyle> {
     if state.checked.get(widget_id).copied().unwrap_or(false) {
         style.parts.checked.get(part)
+    } else {
+        None
+    }
+}
+
+pub(crate) fn open_part_style_for_state<'a>(
+    style: &'a NodeStyle,
+    widget_id: &str,
+    state: &WidgetState,
+    part: &str,
+) -> Option<&'a PartStyle> {
+    if state.is_open_widget(widget_id) {
+        style.parts.open.get(part)
+    } else {
+        None
+    }
+}
+
+pub(crate) fn expanded_part_style_for_state<'a>(
+    style: &'a NodeStyle,
+    widget_id: &str,
+    state: &WidgetState,
+    part: &str,
+) -> Option<&'a PartStyle> {
+    if state.is_expanded_widget(widget_id) {
+        style.parts.expanded.get(part)
+    } else {
+        None
+    }
+}
+
+pub(crate) fn collapsed_part_style_for_state<'a>(
+    style: &'a NodeStyle,
+    widget_id: &str,
+    state: &WidgetState,
+    part: &str,
+) -> Option<&'a PartStyle> {
+    if state.is_collapsed_widget(widget_id) {
+        style.parts.collapsed.get(part)
+    } else {
+        None
+    }
+}
+
+pub(crate) fn selected_part_style_for_state<'a>(
+    style: &'a NodeStyle,
+    widget_id: &str,
+    state: &WidgetState,
+    part: &str,
+) -> Option<&'a PartStyle> {
+    if state.is_selected_widget(widget_id) {
+        style.parts.selected.get(part)
     } else {
         None
     }
@@ -266,6 +416,10 @@ pub(crate) fn part_style_active_for_state(
 ) -> bool {
     base_part_style(style, part).is_some()
         || checked_part_style_for_state(style, widget_id, state, part).is_some()
+        || open_part_style_for_state(style, widget_id, state, part).is_some()
+        || expanded_part_style_for_state(style, widget_id, state, part).is_some()
+        || collapsed_part_style_for_state(style, widget_id, state, part).is_some()
+        || selected_part_style_for_state(style, widget_id, state, part).is_some()
         || state_part_style_for_state(style, widget_id, state, part).is_some()
 }
 
@@ -280,6 +434,18 @@ pub(crate) fn part_visual_for_state(
         .unwrap_or_default();
     if let Some(checked) = checked_part_style_for_state(style, widget_id, state, part) {
         visual = visual.merged(&checked.visual);
+    }
+    if let Some(open) = open_part_style_for_state(style, widget_id, state, part) {
+        visual = visual.merged(&open.visual);
+    }
+    if let Some(expanded) = expanded_part_style_for_state(style, widget_id, state, part) {
+        visual = visual.merged(&expanded.visual);
+    }
+    if let Some(collapsed) = collapsed_part_style_for_state(style, widget_id, state, part) {
+        visual = visual.merged(&collapsed.visual);
+    }
+    if let Some(selected) = selected_part_style_for_state(style, widget_id, state, part) {
+        visual = visual.merged(&selected.visual);
     }
     if let Some(pseudo) = state_part_style_for_state(style, widget_id, state, part) {
         visual = visual.merged(&pseudo.visual);
@@ -332,6 +498,10 @@ impl NodeStyle {
         style.focus = nested_visual(map.get("focus"));
         style.disabled = nested_visual(map.get("disabled"));
         style.checked = nested_visual(map.get("checked"));
+        style.open = nested_visual(map.get("open"));
+        style.expanded = nested_visual(map.get("expanded"));
+        style.collapsed = nested_visual(map.get("collapsed"));
+        style.selected = nested_visual(map.get("selected"));
         style
     }
 }
@@ -340,6 +510,10 @@ impl VisualStyle {
     pub fn merged(&self, other: &VisualStyle) -> VisualStyle {
         VisualStyle {
             background: other.background.clone().or_else(|| self.background.clone()),
+            background_paint: other
+                .background_paint
+                .clone()
+                .or_else(|| self.background_paint.clone()),
             foreground: other.foreground.clone().or_else(|| self.foreground.clone()),
             border_color: other
                 .border_color
@@ -358,6 +532,10 @@ impl VisualStyle {
                 .clone()
                 .or_else(|| self.thumb_color.clone()),
             opacity: other.opacity.or(self.opacity),
+            box_shadows: other
+                .box_shadows
+                .clone()
+                .or_else(|| self.box_shadows.clone()),
         }
     }
 }
@@ -429,6 +607,7 @@ fn parse_layout(map: &serde_json::Map<String, Value>, out: &mut LayoutStyle) {
 
 fn parse_visual(map: &serde_json::Map<String, Value>, out: &mut VisualStyle) {
     out.background = color_ref(map.get("background"));
+    out.background_paint = out.background.clone().map(BackgroundPaint::Color);
     out.foreground = color_ref(map.get("foreground")).or_else(|| color_ref(map.get("color")));
     out.border_color = color_ref(map.get("border_color"));
     out.border_width = number(map.get("border_width"));
@@ -445,6 +624,7 @@ fn parse_visual(map: &serde_json::Map<String, Value>, out: &mut VisualStyle) {
     out.track_color = color_ref(map.get("track_color"));
     out.thumb_color = color_ref(map.get("thumb_color"));
     out.opacity = number(map.get("opacity")).map(|v| v.clamp(0.0, 1.0));
+    out.box_shadows = value_for_keys(map, "box_shadow", "box-shadow").and_then(parse_box_shadows);
 }
 
 fn parse_text(map: &serde_json::Map<String, Value>, out: &mut TextStyle) {
@@ -459,6 +639,16 @@ fn parse_text(map: &serde_json::Map<String, Value>, out: &mut TextStyle) {
         .get("text_align")
         .and_then(Value::as_str)
         .and_then(parse_text_align);
+    out.text_transform =
+        text_value(map, "text_transform", "text-transform").and_then(parse_text_transform);
+    out.letter_spacing =
+        value_for_keys(map, "letter_spacing", "letter-spacing").and_then(parse_text_spacing);
+    out.line_height = value_for_keys(map, "line_height", "line-height").and_then(parse_line_height);
+    out.font_style = text_value(map, "font_style", "font-style").and_then(parse_font_style);
+    out.font_variant_numeric = text_value(map, "font_variant_numeric", "font-variant-numeric")
+        .and_then(parse_font_variant_numeric);
+    out.text_overflow =
+        text_value(map, "text_overflow", "text-overflow").and_then(parse_text_overflow);
 }
 
 fn parse_widget(map: &serde_json::Map<String, Value>, out: &mut WidgetStyle) {
@@ -488,6 +678,10 @@ fn parse_parts(value: Option<&Value>, out: &mut NodePartStyles) {
         parse_part_pseudo(map.get("focus"), &mut out.focus, &name);
         parse_part_pseudo(map.get("disabled"), &mut out.disabled, &name);
         parse_part_pseudo(map.get("checked"), &mut out.checked, &name);
+        parse_part_pseudo(map.get("open"), &mut out.open, &name);
+        parse_part_pseudo(map.get("expanded"), &mut out.expanded, &name);
+        parse_part_pseudo(map.get("collapsed"), &mut out.collapsed, &name);
+        parse_part_pseudo(map.get("selected"), &mut out.selected, &name);
     }
 }
 
@@ -536,6 +730,7 @@ fn part_style_is_empty(style: &PartStyle) -> bool {
 
 fn visual_style_is_empty(style: &VisualStyle) -> bool {
     style.background.is_none()
+        && style.background_paint.is_none()
         && style.foreground.is_none()
         && style.border_color.is_none()
         && style.border_width.is_none()
@@ -545,6 +740,7 @@ fn visual_style_is_empty(style: &VisualStyle) -> bool {
         && style.track_color.is_none()
         && style.thumb_color.is_none()
         && style.opacity.is_none()
+        && style.box_shadows.is_none()
 }
 
 fn text_style_is_empty(style: &TextStyle) -> bool {
@@ -553,6 +749,12 @@ fn text_style_is_empty(style: &TextStyle) -> bool {
         && style.font_weight.is_none()
         && style.color.is_none()
         && style.text_align.is_none()
+        && style.text_transform.is_none()
+        && style.letter_spacing.is_none()
+        && style.line_height.is_none()
+        && style.font_style.is_none()
+        && style.font_variant_numeric.is_none()
+        && style.text_overflow.is_none()
 }
 
 fn nested_visual(value: Option<&Value>) -> VisualStyle {
@@ -571,6 +773,114 @@ fn parse_text_align(value: &str) -> Option<TextAlign> {
         "right" | "end" => Some(TextAlign::Right),
         _ => None,
     }
+}
+
+fn parse_text_transform(value: &str) -> Option<TextTransform> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "none" => Some(TextTransform::None),
+        "uppercase" => Some(TextTransform::Uppercase),
+        "lowercase" => Some(TextTransform::Lowercase),
+        "capitalize" => Some(TextTransform::Capitalize),
+        _ => None,
+    }
+}
+
+fn parse_font_style(value: &str) -> Option<FontStyle> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "normal" => Some(FontStyle::Normal),
+        "italic" => Some(FontStyle::Italic),
+        _ => None,
+    }
+}
+
+fn parse_font_variant_numeric(value: &str) -> Option<FontVariantNumeric> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "normal" => Some(FontVariantNumeric::Normal),
+        "tabular-nums" | "tabular_nums" => Some(FontVariantNumeric::TabularNums),
+        _ => None,
+    }
+}
+
+fn parse_text_overflow(value: &str) -> Option<TextOverflow> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "clip" => Some(TextOverflow::Clip),
+        "ellipsis" => Some(TextOverflow::Ellipsis),
+        _ => None,
+    }
+}
+
+fn parse_text_spacing(value: &Value) -> Option<TextSpacing> {
+    if let Some(n) = value.as_f64() {
+        return Some(TextSpacing::LogicalPx(n as f32));
+    }
+    let text = value.as_str()?.trim().to_ascii_lowercase();
+    if text == "normal" {
+        return Some(TextSpacing::LogicalPx(0.0));
+    }
+    if let Some(px) = text.strip_suffix("px") {
+        return px.trim().parse::<f32>().ok().map(TextSpacing::LogicalPx);
+    }
+    if let Some(em) = text.strip_suffix("em") {
+        return em.trim().parse::<f32>().ok().map(TextSpacing::Em);
+    }
+    text.parse::<f32>().ok().map(TextSpacing::LogicalPx)
+}
+
+fn parse_line_height(value: &Value) -> Option<LineHeight> {
+    if let Some(n) = value.as_f64() {
+        return Some(LineHeight::Multiplier(n as f32));
+    }
+    let text = value.as_str()?.trim().to_ascii_lowercase();
+    if let Some(px) = text.strip_suffix("px") {
+        return px.trim().parse::<f32>().ok().map(LineHeight::LogicalPx);
+    }
+    text.parse::<f32>().ok().map(LineHeight::Multiplier)
+}
+
+fn parse_box_shadows(value: &Value) -> Option<Vec<BoxShadow>> {
+    match value {
+        Value::String(value) if value.trim().eq_ignore_ascii_case("none") => Some(Vec::new()),
+        Value::Object(map) => parse_box_shadow_object(map).map(|shadow| vec![shadow]),
+        Value::Array(items) => {
+            let mut shadows = Vec::with_capacity(items.len());
+            for item in items {
+                let Value::Object(map) = item else {
+                    return None;
+                };
+                shadows.push(parse_box_shadow_object(map)?);
+            }
+            Some(shadows)
+        }
+        _ => None,
+    }
+}
+
+fn parse_box_shadow_object(map: &serde_json::Map<String, Value>) -> Option<BoxShadow> {
+    let color = color_ref(map.get("color")).unwrap_or(ColorRef::Rgba([0.0, 0.0, 0.0, 0.35]));
+    Some(BoxShadow {
+        offset_x: number(value_for_keys(map, "offset_x", "offset-x")).unwrap_or(0.0),
+        offset_y: number(value_for_keys(map, "offset_y", "offset-y")).unwrap_or(0.0),
+        blur: number(map.get("blur")).unwrap_or(0.0).max(0.0),
+        spread: number(map.get("spread")).unwrap_or(0.0),
+        color,
+        inset: map.get("inset").and_then(Value::as_bool).unwrap_or(false),
+    })
+}
+
+fn value_for_keys<'a>(
+    map: &'a serde_json::Map<String, Value>,
+    snake: &str,
+    dashed: &str,
+) -> Option<&'a Value> {
+    map.get(snake).or_else(|| map.get(dashed))
+}
+
+fn text_value<'a>(
+    map: &'a serde_json::Map<String, Value>,
+    snake: &str,
+    dashed: &str,
+) -> Option<&'a str> {
+    value_for_keys(map, snake, dashed).and_then(Value::as_str)
 }
 
 fn parse_display(value: &str) -> Option<DisplayStyle> {

@@ -58,9 +58,12 @@ win = dg.Window("DragonGUI Multipage Demo", width=1280, height=820)
 with dg.HLayout():
     with dg.Sidebar(width=220):
         dg.Label("Workspace")
+        with dg.HLayout(style={"gap": 6, "height": 24}):
+            dg.Badge("live", level="success")
+            dg.Tag("v2", level="info")
         dg.Separator()
-        dg.NavItem("Explore", page="explore")
-        dg.NavItem("Data", page="data")
+        dg.NavItem("Explore", page="explore", badge="3")
+        dg.NavItem("Data", page="data", badge=12)
         dg.NavItem("Settings", page="settings")
         dg.Spacer()
         dg.Separator()
@@ -69,7 +72,7 @@ with dg.HLayout():
     with dg.Pages(value="explore", on_change=lambda value: log("page", value)):
         with dg.Page("explore", title="Explore"):
             with dg.Tabs(value="scatter", on_change=lambda value: log("tab", value)):
-                with dg.Tab("Scatter", value="scatter"):
+                with dg.Tab("Scatter", value="scatter", badge="gpu"):
                     dg.Scatter3D(
                         df,
                         x="x",
@@ -91,6 +94,7 @@ with dg.HLayout():
                     dg.Separator()
                     dg.TextInput("editable value", placeholder="type here")
                     dg.Checkbox("Enable GPU points", checked=True)
+                    dg.Button("Show Toast", on_click=lambda: dg.toast("Multipage toast", level="success"))
                     dg.Spacer(height=8)
                     dg.Slider(0.35, min=0, max=1, step=0.05)
 
@@ -111,6 +115,8 @@ with dg.HLayout():
             dg.Dropdown(("Viridis", "Magma", "Plasma", "Cividis"), value="Viridis")
             dg.Checkbox("Show diagnostics", checked=False)
             dg.TextInput("", placeholder="Project note")
+            with dg.Collapsible("Advanced note", expanded=False):
+                dg.TextArea("Multiline\nruntime\nsettings", rows=3)
 
 with dg.StatusBar():
     dg.Label("Ready")

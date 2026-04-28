@@ -138,6 +138,7 @@ fn build_node(
             | WidgetKind::Menu
             | WidgetKind::ContextMenu
             | WidgetKind::Tooltip
+            | WidgetKind::Toast
     ) || (node.kind == WidgetKind::Modal && !layout_modal_children)
         || (node.kind == WidgetKind::Collapsible && !collapsible_expanded(node, state))
     {
@@ -363,7 +364,7 @@ fn style_for(
             ..Default::default()
         },
 
-        WidgetKind::Tooltip => Style {
+        WidgetKind::Tooltip | WidgetKind::Toast => Style {
             flex_grow: 0.0,
             flex_shrink: 0.0,
             size: Size {
@@ -407,6 +408,15 @@ fn style_for(
             size: Size {
                 width: Dimension::Auto,
                 height: Dimension::Length(ctrl_h),
+            },
+            flex_shrink: 0.0,
+            ..Default::default()
+        },
+
+        WidgetKind::Badge | WidgetKind::Tag => Style {
+            size: Size {
+                width: Dimension::Auto,
+                height: Dimension::Length((node_font_size_lp(node, theme) + 8.0).max(20.0) * sf),
             },
             flex_shrink: 0.0,
             ..Default::default()
@@ -545,7 +555,7 @@ fn style_for(
         },
     };
     apply_intrinsic_leaf_width(&mut style, node, parent_kind, sf, theme);
-    if node.kind != WidgetKind::Tooltip {
+    if !matches!(node.kind, WidgetKind::Tooltip | WidgetKind::Toast) {
         apply_node_style(&mut style, node, sf);
     }
     if (node.kind != WidgetKind::Modal || layout_modal_children)
@@ -626,6 +636,9 @@ fn intrinsic_leaf_width(node: &WidgetNode, theme: &Theme) -> Option<f32> {
     let badge_w = badge_extra_width(node, theme);
     match node.kind {
         WidgetKind::Button => Some((text_w.unwrap_or(0.0) + pad + badge_w).clamp(72.0, 280.0)),
+        WidgetKind::Badge | WidgetKind::Tag => {
+            Some((text_w.unwrap_or(0.0) + theme.spacing * 1.5).clamp(24.0, 220.0))
+        }
         WidgetKind::Menu => {
             Some((text_w.unwrap_or(0.0) + pad + MENU_LABEL_WIDTH_SAFETY_LP).clamp(44.0, 180.0))
         }
@@ -1372,6 +1385,51 @@ mod tests {
         assert_eq!(content.h, 600.0);
         assert_eq!(tip.w, 0.0);
         assert_eq!(tip.h, 0.0);
+    }
+
+    #[test]
+    fn standalone_badge_and_tag_keep_intrinsic_pill_size() {
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "row",
+                WidgetKind::HLayout,
+                NodeProps::default(),
+                vec![
+                    node(
+                        "badge",
+                        WidgetKind::Badge,
+                        NodeProps {
+                            text: Some("live".to_string()),
+                            level: Some("success".to_string()),
+                            ..NodeProps::default()
+                        },
+                        vec![],
+                    ),
+                    node(
+                        "tag",
+                        WidgetKind::Tag,
+                        NodeProps {
+                            text: Some("owner:data".to_string()),
+                            level: Some("neutral".to_string()),
+                            ..NodeProps::default()
+                        },
+                        vec![],
+                    ),
+                ],
+            )],
+        );
+
+        let layout = compute_layout(&root, 320.0, 90.0, 1.0, &Theme::dark(), None);
+        let badge = layout.rects.get("badge").unwrap();
+        let tag = layout.rects.get("tag").unwrap();
+
+        assert!(badge.w >= 24.0);
+        assert_eq!(badge.h, 22.0);
+        assert!(tag.w > badge.w);
+        assert_eq!(tag.h, 22.0);
     }
 
     #[test]

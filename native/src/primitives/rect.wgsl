@@ -1,9 +1,10 @@
-// Instanced solid-colour rectangle renderer with optional rounded corners.
+// Instanced rectangle renderer with solid or simple gradient paint and optional
+// rounded corners.
 //
-// Each instance specifies a pixel-space rect (x, y, w, h), an RGBA colour,
-// and four corner radii in pixels. The vertex shader expands the instance into
-// a two-triangle quad; the fragment shader discards pixels outside the rounded
-// corner arc using a signed-distance field.
+// Each instance specifies a pixel-space rect (x, y, w, h), primary/secondary
+// RGBA colours, paint metadata, and four corner radii in pixels. The vertex
+// shader expands the instance into a two-triangle quad; the fragment shader
+// clips pixels outside the rounded corner arc using a signed-distance field.
 
 struct Uniforms {
     screen_size: vec2<f32>,
@@ -18,6 +19,9 @@ struct RectInstance {
     @location(1) color: vec4<f32>,  // rgba linear
     @location(2) radii: vec4<f32>,  // TL, TR, BR, BL corner radii (pixels)
     @location(3) clip_bounds: vec4<f32>, // local left, top, right, bottom clip
+    @location(4) params: vec4<f32>, // x softness, y shape inset, z shadow mode
+    @location(5) color2: vec4<f32>, // secondary rgba for gradient paints
+    @location(6) paint: vec4<f32>, // x paint kind, y/z linear gradient direction
 }
 
 struct VertOut {
@@ -30,6 +34,9 @@ struct VertOut {
     @location(2) @interpolate(flat) half_size: vec2<f32>,
     @location(3) @interpolate(flat) radii: vec4<f32>,
     @location(4) @interpolate(flat) clip_bounds: vec4<f32>,
+    @location(5) @interpolate(flat) params: vec4<f32>,
+    @location(6) @interpolate(flat) color2: vec4<f32>,
+    @location(7) @interpolate(flat) paint: vec4<f32>,
 }
 
 // Two-triangle unit quad (CCW).
@@ -63,6 +70,9 @@ fn vs_main(
     out.half_size = inst.rect.zw * 0.5;
     out.radii = inst.radii;
     out.clip_bounds = inst.clip_bounds;
+    out.params = inst.params;
+    out.color2 = inst.color2;
+    out.paint = inst.paint;
     return out;
 }
 
@@ -103,10 +113,35 @@ fn fs_main(in: VertOut) -> @location(0) vec4<f32> {
     ) {
         discard;
     }
+    let shape_inset = max(in.params.y, 0.0);
+    let shape_half_size = max(in.half_size - vec2<f32>(shape_inset, shape_inset), vec2<f32>(0.5, 0.5));
     let p = in.local_px - in.half_size; // centered coords
-    let sdf = rounded_rect_sdf(p, in.half_size, in.radii);
+    let sdf = rounded_rect_sdf(p, shape_half_size, in.radii);
     // Anti-aliased edge: smoothly fade over 1 pixel.
-    let a = clamp(1.0 - sdf, 0.0, 1.0) * in.color.a;
+    var color = in.color;
+    if (in.paint.x > 0.5 && in.paint.x < 1.5 && in.params.z < 0.5) {
+        let size = max(in.half_size * 2.0, vec2<f32>(1.0, 1.0));
+        let uv = in.local_px / size;
+        let dir = normalize(in.paint.yz);
+        let t = clamp(dot(uv - vec2<f32>(0.5, 0.5), dir) + 0.5, 0.0, 1.0);
+        color = mix(in.color, in.color2, t);
+    } else if (in.paint.x > 1.5 && in.paint.x < 2.5 && in.params.z < 0.5) {
+        let size = max(in.half_size * 2.0, vec2<f32>(1.0, 1.0));
+        let centered = (in.local_px / size) - vec2<f32>(0.5, 0.5);
+        let aspect = vec2<f32>(
+            size.x / max(size.x, size.y),
+            size.y / max(size.x, size.y),
+        );
+        let t = clamp(length(centered / max(aspect, vec2<f32>(0.001, 0.001))) * 2.0, 0.0, 1.0);
+        color = mix(in.color, in.color2, t);
+    }
+    var a: f32;
+    if (in.params.z > 0.5) {
+        let softness = max(in.params.x, 1.0);
+        a = (1.0 - smoothstep(0.0, softness, sdf)) * color.a;
+    } else {
+        a = clamp(1.0 - sdf, 0.0, 1.0) * color.a;
+    }
     if a < 0.001 { discard; }
-    return vec4<f32>(in.color.rgb, a);
+    return vec4<f32>(color.rgb, a);
 }

@@ -42,6 +42,12 @@ Dropdown {
     color: text;
 }
 
+Badge,
+Tag {
+    border-radius: 999px;
+    color: text;
+}
+
 Button:hover,
 Dropdown:hover {
     background: accent_mix_20;

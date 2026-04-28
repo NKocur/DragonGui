@@ -2,6 +2,7 @@ use std::{borrow::Cow, collections::HashMap};
 
 use bytemuck::{Pod, Zeroable};
 
+use crate::css_style::{computed_style_for_virtual_element, StylesheetStore};
 use crate::document::{WidgetKind, WidgetNode};
 use crate::events::{NavigationItem, WidgetState};
 use crate::layout::{LayoutResult, Rect};
@@ -12,14 +13,14 @@ use crate::style::{
     number_stepper_width_for_style,
     part_style_active_for_state as style_part_style_active_for_state,
     part_visual_for_state as style_part_visual_for_state, tabs_header_height_for_style,
-    VisualStyle, BORDER_WIDTH_LP, CARET_WIDTH_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP,
-    FOCUS_RING_LP, PANEL_ACCENT_WIDTH_LP, SLIDER_THUMB_WIDTH_LP, SLIDER_TRACK_HEIGHT_LP,
-    SLIDER_TRACK_MARGIN_LP, TAB_ACTIVE_BAR_LP, TAB_GAP_LP, TAB_INACTIVE_BOTTOM_INSET_LP,
-    TAB_TOP_INSET_LP,
+    uniform_layout_padding, BackgroundPaint, NodeStyle, VisualStyle, BORDER_WIDTH_LP,
+    CARET_WIDTH_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP, FOCUS_RING_LP, PANEL_ACCENT_WIDTH_LP,
+    SLIDER_THUMB_WIDTH_LP, SLIDER_TRACK_HEIGHT_LP, SLIDER_TRACK_MARGIN_LP, TAB_ACTIVE_BAR_LP,
+    TAB_GAP_LP, TAB_INACTIVE_BOTTOM_INSET_LP, TAB_TOP_INSET_LP,
 };
 use crate::table;
 use crate::theme::Theme;
-use crate::toast::{toast_colors, toast_rect, ToastOverlay};
+use crate::toast::{toast_colors, toast_rect, toast_stack_index, ToastOverlay};
 
 // ---------------------------------------------------------------------------
 // Per-instance GPU data
@@ -37,9 +38,15 @@ pub struct RectInstance {
     pub radii: [f32; 4],
     /// Local clip bounds: left, top, right, bottom in rect-local pixels.
     pub clip: [f32; 4],
+    /// x: edge softness, y: shape inset, z: shadow mode flag, w: reserved.
+    pub params: [f32; 4],
+    /// Secondary RGBA colour for gradient paints.
+    pub color2: [f32; 4],
+    /// x: paint kind, y/z: linear-gradient direction, w: reserved.
+    pub paint: [f32; 4],
 }
 
-static RECT_ATTRS: [wgpu::VertexAttribute; 4] = [
+static RECT_ATTRS: [wgpu::VertexAttribute; 7] = [
     wgpu::VertexAttribute {
         format: wgpu::VertexFormat::Float32x4,
         offset: 0,
@@ -59,6 +66,21 @@ static RECT_ATTRS: [wgpu::VertexAttribute; 4] = [
         format: wgpu::VertexFormat::Float32x4,
         offset: 48,
         shader_location: 3,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 64,
+        shader_location: 4,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 80,
+        shader_location: 5,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 96,
+        shader_location: 6,
     },
 ];
 
@@ -221,6 +243,7 @@ impl PrimitivesRenderer {
         state: &WidgetState,
         caret_positions: &HashMap<String, [f32; 2]>,
         toasts: &[ToastOverlay],
+        stylesheets: &StylesheetStore,
         window_w: f32,
         window_h: f32,
     ) {
@@ -257,12 +280,14 @@ impl PrimitivesRenderer {
             scale_factor,
             state,
             caret_positions,
+            stylesheets,
             &mut self.instances,
         );
         emit_toast_overlays(
             toasts,
             theme,
             scale_factor,
+            stylesheets,
             window_w,
             window_h,
             &mut self.instances,
@@ -331,6 +356,58 @@ fn inst_radii_clipped(
         color,
         radii,
         clip,
+        params: [1.0, 0.0, 0.0, 0.0],
+        color2: color,
+        paint: [0.0, 0.0, 0.0, 0.0],
+    }
+}
+
+fn inst_shadow(rect: [f32; 4], color: [f32; 4], radii: [f32; 4], blur: f32) -> RectInstance {
+    RectInstance {
+        rect,
+        color,
+        radii,
+        clip: [-1.0, -1.0, rect[2] + 1.0, rect[3] + 1.0],
+        params: [blur.max(1.0), blur.max(0.0), 1.0, 0.0],
+        color2: color,
+        paint: [0.0, 0.0, 0.0, 0.0],
+    }
+}
+
+fn inst_linear_gradient(
+    rect: [f32; 4],
+    start: [f32; 4],
+    end: [f32; 4],
+    radii: [f32; 4],
+    angle_deg: f32,
+) -> RectInstance {
+    let angle = angle_deg.to_radians();
+    let dir = [angle.sin(), -angle.cos()];
+    RectInstance {
+        rect,
+        color: start,
+        radii,
+        clip: [-1.0, -1.0, rect[2] + 1.0, rect[3] + 1.0],
+        params: [1.0, 0.0, 0.0, 0.0],
+        color2: end,
+        paint: [1.0, dir[0], dir[1], 0.0],
+    }
+}
+
+fn inst_radial_gradient(
+    rect: [f32; 4],
+    center: [f32; 4],
+    edge: [f32; 4],
+    radii: [f32; 4],
+) -> RectInstance {
+    RectInstance {
+        rect,
+        color: center,
+        radii,
+        clip: [-1.0, -1.0, rect[2] + 1.0, rect[3] + 1.0],
+        params: [1.0, 0.0, 0.0, 0.0],
+        color2: edge,
+        paint: [2.0, 0.0, 0.0, 0.0],
     }
 }
 
@@ -382,19 +459,61 @@ fn darken(color: [f32; 4], t: f32) -> [f32; 4] {
 
 fn visual_for<'a>(node: &'a WidgetNode, state: &WidgetState) -> Cow<'a, VisualStyle> {
     let base = &node.style.visual;
-    if state.is_disabled(&node.id) {
-        Cow::Owned(base.merged(&node.style.disabled))
-    } else if state.pressed.as_deref() == Some(node.id.as_str()) {
-        Cow::Owned(base.merged(&node.style.active))
+    let mut visual = base.clone();
+    let mut changed = false;
+    merge_semantic_visual_states(&mut visual, node, state, &mut changed);
+    if state.pressed.as_deref() == Some(node.id.as_str()) {
+        visual = visual.merged(&node.style.active);
+        changed = true;
     } else if state.hovered.as_deref() == Some(node.id.as_str()) {
-        Cow::Owned(base.merged(&node.style.hover))
+        visual = visual.merged(&node.style.hover);
+        changed = true;
     } else if state.focused.as_deref() == Some(node.id.as_str()) {
-        Cow::Owned(base.merged(&node.style.focus))
-    } else if state.checked.get(&node.id).copied().unwrap_or(false) {
-        Cow::Owned(base.merged(&node.style.checked))
+        visual = visual.merged(&node.style.focus);
+        changed = true;
+    }
+    if state.is_disabled(&node.id) {
+        visual = visual.merged(&node.style.disabled);
+        changed = true;
+    }
+    if changed {
+        Cow::Owned(visual)
     } else {
         Cow::Borrowed(base)
     }
+}
+
+fn merge_semantic_visual_states(
+    visual: &mut VisualStyle,
+    node: &WidgetNode,
+    state: &WidgetState,
+    changed: &mut bool,
+) {
+    if state.checked.get(&node.id).copied().unwrap_or(false) {
+        *visual = visual.merged(&node.style.checked);
+        *changed = true;
+    }
+    if node_is_open(node, state) {
+        *visual = visual.merged(&node.style.open);
+        *changed = true;
+    }
+    if state.is_expanded_widget(&node.id) {
+        *visual = visual.merged(&node.style.expanded);
+        *changed = true;
+    }
+    if state.is_collapsed_widget(&node.id) {
+        *visual = visual.merged(&node.style.collapsed);
+        *changed = true;
+    }
+    if state.is_selected_widget(&node.id) {
+        *visual = visual.merged(&node.style.selected);
+        *changed = true;
+    }
+}
+
+fn node_is_open(node: &WidgetNode, state: &WidgetState) -> bool {
+    state.is_open_widget(&node.id)
+        || (node.kind == WidgetKind::Modal && node.props.open == Some(true))
 }
 
 fn part_visual_for(node: &WidgetNode, state: &WidgetState, part: &str) -> VisualStyle {
@@ -413,11 +532,93 @@ fn resolve_color(color: &Option<crate::style::ColorRef>, theme: &Theme) -> Optio
     color.as_ref().map(|c| c.resolve(theme))
 }
 
+#[derive(Debug, Clone)]
+enum FillPaint {
+    Solid([f32; 4]),
+    LinearGradient {
+        start: [f32; 4],
+        end: [f32; 4],
+        angle_deg: f32,
+    },
+    RadialGradient {
+        center: [f32; 4],
+        edge: [f32; 4],
+    },
+}
+
 fn apply_opacity(mut color: [f32; 4], opacity: Option<f32>) -> [f32; 4] {
     if let Some(opacity) = opacity {
         color[3] *= opacity.clamp(0.0, 1.0);
     }
     color
+}
+
+fn resolve_overlay_opacity(style: &NodeStyle, base_opacity: f32) -> f32 {
+    (base_opacity * style.visual.opacity.unwrap_or(1.0)).clamp(0.0, 1.0)
+}
+
+fn overlay_color(
+    color: &Option<crate::style::ColorRef>,
+    theme: &Theme,
+    fallback: [f32; 4],
+    opacity: f32,
+) -> [f32; 4] {
+    let mut color = resolve_color(color, theme).unwrap_or(fallback);
+    color[3] *= opacity.clamp(0.0, 1.0);
+    color
+}
+
+fn resolve_background_paint(visual: &VisualStyle, theme: &Theme, fallback: [f32; 4]) -> FillPaint {
+    match &visual.background_paint {
+        Some(BackgroundPaint::Color(color)) => {
+            FillPaint::Solid(apply_opacity(color.resolve(theme), visual.opacity))
+        }
+        Some(BackgroundPaint::LinearGradient(gradient)) if gradient.stops.len() >= 2 => {
+            let first = gradient.stops.first().expect("checked length");
+            let last = gradient.stops.last().expect("checked length");
+            FillPaint::LinearGradient {
+                start: apply_opacity(first.color.resolve(theme), visual.opacity),
+                end: apply_opacity(last.color.resolve(theme), visual.opacity),
+                angle_deg: gradient.angle_deg,
+            }
+        }
+        Some(BackgroundPaint::RadialGradient(gradient)) if gradient.stops.len() >= 2 => {
+            let first = gradient.stops.first().expect("checked length");
+            let last = gradient.stops.last().expect("checked length");
+            FillPaint::RadialGradient {
+                center: apply_opacity(first.color.resolve(theme), visual.opacity),
+                edge: apply_opacity(last.color.resolve(theme), visual.opacity),
+            }
+        }
+        _ => FillPaint::Solid(
+            resolve_color(&visual.background, theme)
+                .map(|color| apply_opacity(color, visual.opacity))
+                .unwrap_or(fallback),
+        ),
+    }
+}
+
+fn emit_paint_rect_radii(
+    out: &mut Vec<RectInstance>,
+    rect: [f32; 4],
+    paint: FillPaint,
+    radii: [f32; 4],
+) {
+    match paint {
+        FillPaint::Solid(color) => out.push(inst_radii(rect, color, radii)),
+        FillPaint::LinearGradient {
+            start,
+            end,
+            angle_deg,
+        } => out.push(inst_linear_gradient(rect, start, end, radii, angle_deg)),
+        FillPaint::RadialGradient { center, edge } => {
+            out.push(inst_radial_gradient(rect, center, edge, radii))
+        }
+    }
+}
+
+fn overlay_radius(style: &NodeStyle, fallback_lp: f32, sf: f32) -> f32 {
+    style.visual.border_radius.unwrap_or(fallback_lp).max(0.0) * sf
 }
 
 fn visual_radii(visual: &VisualStyle, fallback_radius_lp: f32, sf: f32) -> [f32; 4] {
@@ -527,6 +728,86 @@ fn emit_bordered_rect_radii(
     ));
 }
 
+fn emit_bordered_paint_rect_radii(
+    out: &mut Vec<RectInstance>,
+    rect: [f32; 4],
+    border: [f32; 4],
+    fill: FillPaint,
+    radii: [f32; 4],
+    border_w: f32,
+) {
+    out.push(inst_radii(rect, border, radii));
+    emit_paint_rect_radii(
+        out,
+        inset_rect(rect, border_w),
+        fill,
+        inset_radii(radii, border_w),
+    );
+}
+
+fn emit_box_shadows(
+    out: &mut Vec<RectInstance>,
+    rect: [f32; 4],
+    radii: [f32; 4],
+    visual: &VisualStyle,
+    theme: &Theme,
+    sf: f32,
+) {
+    let Some(shadows) = &visual.box_shadows else {
+        return;
+    };
+    for shadow in shadows {
+        if shadow.inset {
+            continue;
+        }
+        let blur = (shadow.blur.max(0.0) * sf).max(0.0);
+        let spread = shadow.spread * sf;
+        if blur <= 0.0 && spread.abs() <= f32::EPSILON {
+            continue;
+        }
+        let shape_w = rect[2] + spread * 2.0;
+        let shape_h = rect[3] + spread * 2.0;
+        if shape_w <= 0.0 || shape_h <= 0.0 {
+            continue;
+        }
+        let mut color = shadow.color.resolve(theme);
+        color = apply_opacity(color, visual.opacity);
+        if color[3] <= 0.001 {
+            continue;
+        }
+        let offset_x = shadow.offset_x * sf;
+        let offset_y = shadow.offset_y * sf;
+        let shape_rect = [
+            rect[0] + offset_x - spread,
+            rect[1] + offset_y - spread,
+            shape_w,
+            shape_h,
+        ];
+        let cover_rect = [
+            shape_rect[0] - blur,
+            shape_rect[1] - blur,
+            shape_rect[2] + blur * 2.0,
+            shape_rect[3] + blur * 2.0,
+        ];
+        if cover_rect[2] <= 0.0 || cover_rect[3] <= 0.0 {
+            continue;
+        }
+        out.push(inst_shadow(
+            cover_rect,
+            color,
+            outset_radii(radii, spread),
+            blur,
+        ));
+    }
+}
+
+fn widget_supports_box_shadow(kind: WidgetKind) -> bool {
+    !matches!(
+        kind,
+        WidgetKind::Window | WidgetKind::Modal | WidgetKind::Tooltip | WidgetKind::Spacer
+    )
+}
+
 fn emit_focus_ring_radii(
     node: &WidgetNode,
     theme: &Theme,
@@ -579,12 +860,15 @@ fn emit_rects(
             resolve_color(&visual.border_color, theme).map(|c| apply_opacity(c, visual.opacity));
         let styled_accent =
             resolve_color(&visual.accent, theme).map(|c| apply_opacity(c, visual.opacity));
+        if widget_supports_box_shadow(node.kind) {
+            emit_box_shadows(out, [x, y, w, h], radii, &visual, theme, sf);
+        }
         match node.kind {
             WidgetKind::Panel => {
                 let panel_radius_lp = visual.border_radius.unwrap_or(theme.radius * 0.5).max(0.0);
                 let panel_radii = visual_radii(&visual, panel_radius_lp, sf);
-                let panel_fill = styled_bg.unwrap_or(theme.surface);
-                emit_bordered_rect_radii(
+                let panel_fill = resolve_background_paint(&visual, theme, theme.surface);
+                emit_bordered_paint_rect_radii(
                     out,
                     [x, y, w, h],
                     styled_border.unwrap_or(theme.border),
@@ -628,9 +912,13 @@ fn emit_rects(
                 let header_visual = part_visual_for(node, state, "header");
                 let body_visual = part_visual_for(node, state, "body");
                 let header_h = collapsible_header_height_for_style(&node.style, theme, sf).min(h);
-                let fill = styled_bg.unwrap_or(theme.surface);
+                let fill = if visual.background_paint.is_some() {
+                    resolve_background_paint(&visual, theme, theme.surface)
+                } else {
+                    FillPaint::Solid(styled_bg.unwrap_or(theme.surface))
+                };
                 emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], radii, out);
-                emit_bordered_rect_radii(
+                emit_bordered_paint_rect_radii(
                     out,
                     [x, y, w, h],
                     styled_border.unwrap_or_else(|| control_border(node, theme, state)),
@@ -736,17 +1024,22 @@ fn emit_rects(
                     [0.0, 0.0, 0.0, 0.52],
                     0.0,
                 ));
-                let shadow = 6.0 * sf;
-                out.push(inst_radii(
-                    [x + shadow, y + shadow, w, h],
-                    [0.0, 0.0, 0.0, 0.35],
-                    radii,
-                ));
-                emit_bordered_rect_radii(
+                if visual.box_shadows.is_some() {
+                    emit_box_shadows(out, [x, y, w, h], radii, &visual, theme, sf);
+                } else {
+                    let shadow = 6.0 * sf;
+                    out.push(inst_radii(
+                        [x + shadow, y + shadow, w, h],
+                        [0.0, 0.0, 0.0, 0.35],
+                        radii,
+                    ));
+                }
+                let fill = resolve_background_paint(&visual, theme, theme.surface);
+                emit_bordered_paint_rect_radii(
                     out,
                     [x, y, w, h],
                     styled_border.unwrap_or(theme.border),
-                    styled_bg.unwrap_or(theme.surface),
+                    fill,
                     radii,
                     border_w,
                 );
@@ -764,11 +1057,12 @@ fn emit_rects(
             }
 
             WidgetKind::Sidebar => {
-                out.push(inst_radii(
+                emit_paint_rect_radii(
+                    out,
                     [x, y, w, h],
-                    styled_bg.unwrap_or(theme.surface),
+                    resolve_background_paint(&visual, theme, theme.surface),
                     radii,
-                ));
+                );
                 out.push(inst(
                     [x + w - border_w, y, border_w, h],
                     styled_border.unwrap_or(theme.border),
@@ -777,11 +1071,12 @@ fn emit_rects(
             }
 
             WidgetKind::StatusBar => {
-                out.push(inst_radii(
+                emit_paint_rect_radii(
+                    out,
                     [x, y, w, h],
-                    styled_bg.unwrap_or(theme.surface),
+                    resolve_background_paint(&visual, theme, theme.surface),
                     radii,
-                ));
+                );
                 out.push(inst(
                     [x, y, w, border_w],
                     styled_border.unwrap_or(theme.border),
@@ -790,11 +1085,12 @@ fn emit_rects(
             }
 
             WidgetKind::MenuBar => {
-                out.push(inst_radii(
+                emit_paint_rect_radii(
+                    out,
                     [x, y, w, h],
-                    styled_bg.unwrap_or(theme.surface),
+                    resolve_background_paint(&visual, theme, theme.surface),
                     radii,
-                ));
+                );
                 out.push(inst(
                     [x, y + h - border_w, w, border_w],
                     styled_border.unwrap_or(theme.border),
@@ -818,16 +1114,18 @@ fn emit_rects(
                     .map(|width| (width.max(0.0) * sf).max(0.0))
                     .unwrap_or(border_w);
                 let header_radii = visual_radii_with_fallback(&header_visual, [0.0; 4], sf);
-                out.push(inst_radii(
-                    [x, y, w, header_h],
-                    apply_opacity(
-                        resolve_color(&header_visual.background, theme)
-                            .or(styled_bg)
-                            .unwrap_or(theme.surface),
-                        header_visual.opacity,
-                    ),
-                    header_radii,
-                ));
+                let header_fallback = apply_opacity(
+                    resolve_color(&header_visual.background, theme)
+                        .or(styled_bg)
+                        .unwrap_or(theme.surface),
+                    header_visual.opacity,
+                );
+                let header_fill = if header_visual.background_paint.is_some() {
+                    resolve_background_paint(&header_visual, theme, header_fallback)
+                } else {
+                    FillPaint::Solid(header_fallback)
+                };
+                emit_paint_rect_radii(out, [x, y, w, header_h], header_fill, header_radii);
                 if header_border_w > 0.0 {
                     out.push(inst(
                         [
@@ -848,11 +1146,10 @@ fn emit_rects(
                 emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], radii, out);
                 let menu_open = node.kind == WidgetKind::Menu
                     && state.open_menu.as_deref() == Some(node.id.as_str());
-                emit_bordered_rect_radii(
-                    out,
-                    [x, y, w, h],
-                    styled_border.unwrap_or_else(|| control_border(node, theme, state)),
-                    styled_bg.unwrap_or_else(|| {
+                let fill = if visual.background_paint.is_some() {
+                    resolve_background_paint(&visual, theme, control_fill(node, theme, state))
+                } else {
+                    FillPaint::Solid(styled_bg.unwrap_or_else(|| {
                         if menu_open {
                             mix(
                                 theme.surface_alt,
@@ -862,7 +1159,13 @@ fn emit_rects(
                         } else {
                             control_fill(node, theme, state)
                         }
-                    }),
+                    }))
+                };
+                emit_bordered_paint_rect_radii(
+                    out,
+                    [x, y, w, h],
+                    styled_border.unwrap_or_else(|| control_border(node, theme, state)),
+                    fill,
                     radii,
                     border_w,
                 );
@@ -872,6 +1175,39 @@ fn emit_rects(
                     {
                         emit_badge_pill(node, theme, sf, state, rect, out);
                     }
+                }
+            }
+
+            WidgetKind::Badge | WidgetKind::Tag => {
+                let fill_solid = styled_bg.unwrap_or_else(|| standalone_badge_fill(node, theme));
+                let fill = if visual.background_paint.is_some() {
+                    resolve_background_paint(&visual, theme, fill_solid)
+                } else {
+                    FillPaint::Solid(fill_solid)
+                };
+                let border_color = styled_border.unwrap_or_else(|| {
+                    if node.kind == WidgetKind::Tag {
+                        standalone_badge_level_color(node, theme)
+                    } else {
+                        fill_solid
+                    }
+                });
+                let badge_border_w = if node.kind == WidgetKind::Tag {
+                    border_w
+                } else {
+                    visual.border_width.unwrap_or(0.0).max(0.0) * sf
+                };
+                if badge_border_w > 0.0 {
+                    emit_bordered_paint_rect_radii(
+                        out,
+                        [x, y, w, h],
+                        border_color,
+                        fill,
+                        radii,
+                        badge_border_w,
+                    );
+                } else {
+                    emit_paint_rect_radii(out, [x, y, w, h], fill, radii);
                 }
             }
 
@@ -1061,7 +1397,7 @@ fn emit_rects(
 
             WidgetKind::TextInput | WidgetKind::TextArea => {
                 emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], radii, out);
-                let fill = if state.is_disabled(&node.id) {
+                let fill_solid = if state.is_disabled(&node.id) {
                     styled_bg.unwrap_or_else(|| mix(theme.surface_alt, theme.disabled, 0.24))
                 } else if state.hovered.as_deref() == Some(node.id.as_str())
                     || state.focused.as_deref() == Some(node.id.as_str())
@@ -1070,7 +1406,12 @@ fn emit_rects(
                 } else {
                     styled_bg.unwrap_or_else(|| mix(theme.surface, theme.surface_alt, 0.55))
                 };
-                emit_bordered_rect_radii(
+                let fill = if visual.background_paint.is_some() {
+                    resolve_background_paint(&visual, theme, fill_solid)
+                } else {
+                    FillPaint::Solid(fill_solid)
+                };
+                emit_bordered_paint_rect_radii(
                     out,
                     [x, y, w, h],
                     styled_border.unwrap_or_else(|| control_border(node, theme, state)),
@@ -1088,15 +1429,24 @@ fn emit_rects(
                     let caret_font_size = node.style.text.font_size.unwrap_or(theme.font_size) * sf;
                     let caret_h = (caret_font_size + 5.0 * sf).min((h - border_w * 2.0).max(1.0));
                     let caret_y = if node.kind == WidgetKind::TextArea {
-                        (y + pad + caret_xy[1]).min(y + h - border_w - caret_h)
+                        y + pad + caret_xy[1]
                     } else {
                         y + (h - caret_h) * 0.5
                     };
-                    out.push(inst(
-                        [caret_xy[0], caret_y, CARET_WIDTH_LP * sf, caret_h],
-                        theme.focus,
-                        0.0,
-                    ));
+                    let visible_caret = node.kind != WidgetKind::TextArea
+                        || (caret_y < y + h - border_w && caret_y + caret_h > y + border_w);
+                    if visible_caret {
+                        let caret_y = if node.kind == WidgetKind::TextArea {
+                            caret_y.clamp(y + border_w, y + h - border_w - caret_h)
+                        } else {
+                            caret_y
+                        };
+                        out.push(inst(
+                            [caret_xy[0], caret_y, CARET_WIDTH_LP * sf, caret_h],
+                            theme.focus,
+                            0.0,
+                        ));
+                    }
                 }
             }
 
@@ -1104,7 +1454,7 @@ fn emit_rects(
                 emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], radii, out);
                 let invalid = state.number_is_invalid(&node.id);
                 let field_visual = part_visual_for(node, state, "field");
-                let fill = if state.is_disabled(&node.id) {
+                let fill_solid = if state.is_disabled(&node.id) {
                     styled_bg.unwrap_or_else(|| mix(theme.surface_alt, theme.disabled, 0.24))
                 } else if state.hovered.as_deref() == Some(node.id.as_str())
                     || state.focused.as_deref() == Some(node.id.as_str())
@@ -1113,7 +1463,12 @@ fn emit_rects(
                 } else {
                     styled_bg.unwrap_or_else(|| mix(theme.surface, theme.surface_alt, 0.55))
                 };
-                emit_bordered_rect_radii(
+                let fill = if visual.background_paint.is_some() {
+                    resolve_background_paint(&visual, theme, fill_solid)
+                } else {
+                    FillPaint::Solid(fill_solid)
+                };
+                emit_bordered_paint_rect_radii(
                     out,
                     [x, y, w, h],
                     if invalid {
@@ -1140,7 +1495,7 @@ fn emit_rects(
                 let field_has_border = field_border_w > 0.0 || field_visual.border_color.is_some();
                 let field_fill = resolve_color(&field_visual.background, theme)
                     .map(|color| apply_opacity(color, field_visual.opacity))
-                    .or_else(|| field_has_border.then_some(fill));
+                    .or_else(|| field_has_border.then_some(fill_solid));
                 if let Some(field_fill) = field_fill {
                     let field_radii = visual_radii_with_fallback(
                         &field_visual,
@@ -1486,11 +1841,11 @@ fn emit_rects(
             }
 
             WidgetKind::Image => {
-                emit_bordered_rect_radii(
+                emit_bordered_paint_rect_radii(
                     out,
                     [x, y, w, h],
                     styled_border.unwrap_or(theme.border),
-                    styled_bg.unwrap_or(theme.surface_alt),
+                    resolve_background_paint(&visual, theme, theme.surface_alt),
                     radii,
                     border_w,
                 );
@@ -1810,12 +2165,32 @@ fn emit_rects(
             | WidgetKind::ContextMenu
             | WidgetKind::MenuItem
             | WidgetKind::Tooltip
+            | WidgetKind::Toast
             | WidgetKind::Unknown => {}
         }
     }
 
     for child in &node.children {
         emit_rects(child, layout, theme, sf, state, caret_positions, out);
+    }
+}
+
+fn standalone_badge_level_color(node: &WidgetNode, theme: &Theme) -> [f32; 4] {
+    match node.props.level.as_deref().unwrap_or("info") {
+        "success" => theme.success,
+        "warning" => theme.warning,
+        "danger" | "error" => theme.danger,
+        "neutral" => theme.muted_text,
+        _ => theme.accent,
+    }
+}
+
+fn standalone_badge_fill(node: &WidgetNode, theme: &Theme) -> [f32; 4] {
+    let semantic = standalone_badge_level_color(node, theme);
+    if node.kind == WidgetKind::Tag {
+        mix(theme.surface_alt, semantic, 0.22)
+    } else {
+        semantic
     }
 }
 
@@ -1828,7 +2203,7 @@ fn caret_xy_for_node(
 ) -> [f32; 2] {
     let fallback = [text_width * state.caret_t(id), 0.0];
     let xy = caret_positions.get(id).copied().unwrap_or(fallback);
-    [left + xy[0].clamp(0.0, text_width), xy[1].max(0.0)]
+    [left + xy[0].clamp(0.0, text_width), xy[1]]
 }
 
 fn badge_rect(
@@ -2011,17 +2386,21 @@ fn emit_dropdown_overlays(
             let menu_radii = visual_radii(&menu_visual, menu_radius_lp, sf);
             let border_w = menu_visual.border_width.unwrap_or(BORDER_WIDTH_LP).max(0.0) * sf;
             let menu_rect = [r.x, r.y + r.h, r.w, menu_h];
-            let shadow_offset = 3.0 * sf;
-            out.push(inst_radii(
-                [
-                    menu_rect[0] + shadow_offset,
-                    menu_rect[1] + shadow_offset,
-                    menu_rect[2],
-                    menu_rect[3],
-                ],
-                [0.0, 0.0, 0.0, 0.30],
-                menu_radii,
-            ));
+            if menu_visual.box_shadows.is_some() {
+                emit_box_shadows(out, menu_rect, menu_radii, &menu_visual, theme, sf);
+            } else {
+                let shadow_offset = 3.0 * sf;
+                out.push(inst_radii(
+                    [
+                        menu_rect[0] + shadow_offset,
+                        menu_rect[1] + shadow_offset,
+                        menu_rect[2],
+                        menu_rect[3],
+                    ],
+                    [0.0, 0.0, 0.0, 0.30],
+                    menu_radii,
+                ));
+            }
             emit_bordered_rect_radii(
                 out,
                 menu_rect,
@@ -2092,6 +2471,7 @@ fn emit_tooltip_overlay(
     sf: f32,
     state: &WidgetState,
     caret_positions: &HashMap<String, [f32; 2]>,
+    stylesheets: &StylesheetStore,
     out: &mut Vec<RectInstance>,
 ) {
     if let Some((node, rect)) = rich_tooltip_target(tree, layout, state) {
@@ -2104,7 +2484,13 @@ fn emit_tooltip_overlay(
     let Some((_node, rect)) = tooltip_target(tree, layout, theme, state, sf) else {
         return;
     };
-    emit_tooltip_surface(_node, rect, theme, sf, state, out);
+    let style = computed_style_for_virtual_element(
+        WidgetKind::Tooltip,
+        "__dg_static_tooltip",
+        &["static"],
+        stylesheets,
+    );
+    emit_static_tooltip_surface(rect, theme, sf, &style, out);
 }
 
 fn emit_tooltip_surface(
@@ -2119,12 +2505,23 @@ fn emit_tooltip_surface(
     let visual = visual_for(node, state);
     let radius_lp = visual.border_radius.unwrap_or(theme.radius).max(0.0);
     let radius = radius_lp * sf;
-    let shadow = 4.0 * sf;
-    out.push(inst(
-        [rect.x + shadow, rect.y + shadow, rect.w, rect.h],
-        [0.0, 0.0, 0.0, 0.36],
-        radius,
-    ));
+    if visual.box_shadows.is_some() {
+        emit_box_shadows(
+            out,
+            [rect.x, rect.y, rect.w, rect.h],
+            [radius; 4],
+            &visual,
+            theme,
+            sf,
+        );
+    } else {
+        let shadow = 4.0 * sf;
+        out.push(inst(
+            [rect.x + shadow, rect.y + shadow, rect.w, rect.h],
+            [0.0, 0.0, 0.0, 0.36],
+            radius,
+        ));
+    }
     emit_bordered_rect(
         out,
         [rect.x, rect.y, rect.w, rect.h],
@@ -2142,35 +2539,132 @@ fn emit_tooltip_surface(
     );
 }
 
+fn emit_static_tooltip_surface(
+    rect: Rect,
+    theme: &Theme,
+    sf: f32,
+    style: &NodeStyle,
+    out: &mut Vec<RectInstance>,
+) {
+    let border_w = BORDER_WIDTH_LP * sf;
+    let opacity = resolve_overlay_opacity(style, 1.0);
+    let radius = overlay_radius(style, theme.radius, sf);
+    if style.visual.box_shadows.is_some() {
+        let mut shadow_visual = style.visual.clone();
+        shadow_visual.opacity = Some(opacity);
+        emit_box_shadows(
+            out,
+            [rect.x, rect.y, rect.w, rect.h],
+            [radius; 4],
+            &shadow_visual,
+            theme,
+            sf,
+        );
+    } else {
+        let shadow = 4.0 * sf;
+        out.push(inst(
+            [rect.x + shadow, rect.y + shadow, rect.w, rect.h],
+            [0.0, 0.0, 0.0, 0.36 * opacity],
+            radius,
+        ));
+    }
+    emit_bordered_rect(
+        out,
+        [rect.x, rect.y, rect.w, rect.h],
+        overlay_color(
+            &style.visual.border_color,
+            theme,
+            mix(theme.border, theme.accent, 0.18),
+            opacity,
+        ),
+        overlay_color(
+            &style.visual.background,
+            theme,
+            with_alpha(theme.surface_alt, 1.0),
+            opacity,
+        ),
+        radius,
+        style
+            .visual
+            .border_width
+            .map(|width| width.max(0.0) * sf)
+            .unwrap_or(border_w),
+    );
+}
+
 fn emit_toast_overlays(
     toasts: &[ToastOverlay],
     theme: &Theme,
     sf: f32,
+    stylesheets: &StylesheetStore,
     window_w: f32,
     window_h: f32,
     out: &mut Vec<RectInstance>,
 ) {
     let border_w = BORDER_WIDTH_LP * sf;
-    let radius = (theme.radius * sf).max(0.0);
-    let shadow = 4.0 * sf;
-    for (idx, toast) in toasts.iter().enumerate() {
-        let rect = toast_rect(idx, &toast.message, window_w, window_h, sf);
+    let mut stack_counts = [0usize; 4];
+    for toast in toasts {
+        let classes = [toast.level.as_str()];
+        let style = computed_style_for_virtual_element(
+            WidgetKind::Toast,
+            toast.id.as_str(),
+            &classes,
+            stylesheets,
+        );
+        let idx = toast_stack_index(toast.position, &mut stack_counts);
+        let padding = toast
+            .padding
+            .or_else(|| uniform_layout_padding(&style.layout));
+        let rect = toast_rect(
+            idx,
+            &toast.message,
+            window_w,
+            window_h,
+            sf,
+            toast.position,
+            padding,
+        );
         if rect.w <= 0.0 || rect.h <= 0.0 {
             continue;
         }
-        let colors = toast_colors(toast.level, theme);
-        out.push(inst(
-            [rect.x + shadow, rect.y + shadow, rect.w, rect.h],
-            [0.0, 0.0, 0.0, 0.36],
-            radius,
-        ));
+        let radius = toast
+            .radius
+            .map(|radius| radius.max(0.0) * sf)
+            .unwrap_or_else(|| overlay_radius(&style, theme.radius, sf));
+        let colors = toast_colors(toast.level, theme, 1.0);
+        let opacity = resolve_overlay_opacity(&style, toast.opacity);
+        let fill = overlay_color(&style.visual.background, theme, colors.fill, opacity);
+        let border = overlay_color(&style.visual.border_color, theme, colors.border, opacity);
+        if style.visual.box_shadows.is_some() {
+            let mut shadow_visual = style.visual.clone();
+            shadow_visual.opacity = Some(opacity);
+            emit_box_shadows(
+                out,
+                [rect.x, rect.y, rect.w, rect.h],
+                [radius; 4],
+                &shadow_visual,
+                theme,
+                sf,
+            );
+        } else {
+            let shadow = 4.0 * sf;
+            out.push(inst(
+                [rect.x + shadow, rect.y + shadow, rect.w, rect.h],
+                [0.0, 0.0, 0.0, 0.36 * opacity],
+                radius,
+            ));
+        }
         emit_bordered_rect(
             out,
             [rect.x, rect.y, rect.w, rect.h],
-            colors.border,
-            colors.fill,
+            border,
+            fill,
             radius,
-            border_w,
+            style
+                .visual
+                .border_width
+                .map(|width| width.max(0.0) * sf)
+                .unwrap_or(border_w),
         );
     }
 }
@@ -2179,7 +2673,10 @@ fn emit_toast_overlays(
 mod tests {
     use super::*;
     use crate::document::NodeProps;
-    use crate::style::{ColorRef, PartLayoutStyle, PartStyle};
+    use crate::style::{
+        BackgroundPaint, BoxShadow, ColorRef, GradientStop, LinearGradient, PartLayoutStyle,
+        PartStyle, RadialGradient,
+    };
 
     fn node(id: &str, kind: WidgetKind) -> WidgetNode {
         WidgetNode {
@@ -2202,6 +2699,172 @@ mod tests {
     fn has_rect(out: &[RectInstance], color: [f32; 4], rect: [f32; 4]) -> bool {
         out.iter()
             .any(|inst| inst.color == color && inst.rect == rect)
+    }
+
+    #[test]
+    fn styled_box_shadow_emits_soft_shadow_instance_before_surface() {
+        let mut button = node("run", WidgetKind::Button);
+        button.style.visual.box_shadows = Some(vec![BoxShadow {
+            offset_x: 2.0,
+            offset_y: 4.0,
+            blur: 6.0,
+            spread: 1.0,
+            color: ColorRef::Rgba([0.0, 0.0, 0.0, 0.25]),
+            inset: false,
+        }]);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "run".to_string(),
+            Rect {
+                x: 10.0,
+                y: 10.0,
+                w: 100.0,
+                h: 30.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &button,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let shadow = out.first().expect("shadow instance");
+        assert_eq!(shadow.rect, [5.0, 7.0, 114.0, 44.0]);
+        assert_eq!(shadow.color, [0.0, 0.0, 0.0, 0.25]);
+        assert_eq!(shadow.params, [6.0, 6.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn linear_gradient_background_emits_gradient_rect_instance() {
+        let mut panel = node("panel", WidgetKind::Panel);
+        panel.style.visual.background_paint =
+            Some(BackgroundPaint::LinearGradient(LinearGradient {
+                angle_deg: 180.0,
+                stops: vec![
+                    GradientStop {
+                        color: ColorRef::Rgba([1.0, 0.0, 0.0, 1.0]),
+                        position: None,
+                    },
+                    GradientStop {
+                        color: ColorRef::Rgba([0.0, 0.0, 1.0, 1.0]),
+                        position: None,
+                    },
+                ],
+            }));
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 50.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &panel,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let fill = out
+            .iter()
+            .find(|inst| inst.paint[0] == 1.0)
+            .expect("gradient fill instance");
+        assert_eq!(fill.color, [1.0, 0.0, 0.0, 1.0]);
+        assert_eq!(fill.color2, [0.0, 0.0, 1.0, 1.0]);
+        assert_eq!(fill.paint[0], 1.0);
+        assert!((fill.paint[2] - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn radial_gradient_background_emits_gradient_rect_instance() {
+        let mut panel = node("panel", WidgetKind::Panel);
+        panel.style.visual.background_paint =
+            Some(BackgroundPaint::RadialGradient(RadialGradient {
+                stops: vec![
+                    GradientStop {
+                        color: ColorRef::Rgba([1.0, 1.0, 1.0, 1.0]),
+                        position: None,
+                    },
+                    GradientStop {
+                        color: ColorRef::Rgba([0.0, 0.0, 0.0, 0.0]),
+                        position: None,
+                    },
+                ],
+            }));
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 50.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &panel,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let fill = out
+            .iter()
+            .find(|inst| inst.paint[0] == 2.0)
+            .expect("radial gradient fill instance");
+        assert_eq!(fill.color, [1.0, 1.0, 1.0, 1.0]);
+        assert_eq!(fill.color2, [0.0, 0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn semantic_pseudo_visuals_resolve_from_widget_state() {
+        let mut dropdown = node("mode", WidgetKind::Dropdown);
+        dropdown.style.open.border_color = Some(rgba(0.2, 0.4, 0.6));
+        let mut state = WidgetState {
+            open_dropdown: Some("mode".to_string()),
+            ..Default::default()
+        };
+
+        let visual = visual_for(&dropdown, &state);
+        assert_eq!(visual.border_color, Some(rgba(0.2, 0.4, 0.6)));
+
+        let mut tab = node("tab-a", WidgetKind::Tab);
+        tab.style.selected.background = Some(rgba(0.3, 0.5, 0.7));
+        state.open_dropdown = None;
+        state
+            .tab_parent
+            .insert("tab-a".to_string(), "tabs".to_string());
+        state
+            .tab_values
+            .insert("tab-a".to_string(), "a".to_string());
+        state
+            .active_tabs
+            .insert("tabs".to_string(), "a".to_string());
+
+        let visual = visual_for(&tab, &state);
+        assert_eq!(visual.background, Some(rgba(0.3, 0.5, 0.7)));
     }
 
     #[test]
@@ -2307,6 +2970,123 @@ mod tests {
             &out,
             [0.90, 0.10, 0.20, 1.0],
             [20.0, 10.0, 4.0, 20.0]
+        ));
+    }
+
+    #[test]
+    fn static_tooltip_surface_uses_tooltip_theme_not_target_widget_style() {
+        let mut root = node("root", WidgetKind::Window);
+        let mut button = node("upload", WidgetKind::Button);
+        button.props.text = Some("Upload Buffer".to_string());
+        button.props.tooltip = Some("Create a named native buffer resource.".to_string());
+        button.style.visual.background = Some(rgba(1.0, 1.0, 1.0));
+        button.style.visual.border_color = Some(rgba(1.0, 1.0, 1.0));
+        root.children = vec![button];
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "root".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 500.0,
+                h: 300.0,
+            },
+        );
+        layout.rects.insert(
+            "upload".to_string(),
+            Rect {
+                x: 12.0,
+                y: 20.0,
+                w: 130.0,
+                h: 36.0,
+            },
+        );
+        let mut theme = Theme::dark();
+        theme.surface_alt[3] = 0.24;
+        theme.border[3] = 0.36;
+        theme.accent[3] = 0.48;
+        let mut state = WidgetState::default();
+        state.hovered = Some("upload".to_string());
+        let mut out = Vec::new();
+
+        emit_tooltip_overlay(
+            &root,
+            &layout,
+            &theme,
+            1.0,
+            &state,
+            &HashMap::new(),
+            &StylesheetStore::default(),
+            &mut out,
+        );
+
+        assert!(out
+            .iter()
+            .any(|inst| inst.color == with_alpha(theme.surface_alt, 1.0)));
+        assert!(!out.iter().any(|inst| inst.color == [1.0, 1.0, 1.0, 1.0]));
+        assert!(!out.iter().any(|inst| inst.color == theme.surface_alt));
+    }
+
+    #[test]
+    fn standalone_badge_and_tag_emit_semantic_pills() {
+        let mut root = node("row", WidgetKind::HLayout);
+        let mut badge = node("badge", WidgetKind::Badge);
+        badge.props.text = Some("live".to_string());
+        badge.props.level = Some("success".to_string());
+        let mut tag = node("tag", WidgetKind::Tag);
+        tag.props.text = Some("queued".to_string());
+        tag.props.level = Some("warning".to_string());
+        root.children = vec![badge, tag];
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "row".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 140.0,
+                h: 60.0,
+            },
+        );
+        layout.rects.insert(
+            "badge".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 48.0,
+                h: 22.0,
+            },
+        );
+        layout.rects.insert(
+            "tag".to_string(),
+            Rect {
+                x: 56.0,
+                y: 0.0,
+                w: 72.0,
+                h: 22.0,
+            },
+        );
+        let theme = Theme::dark();
+        let state = WidgetState::default();
+        let mut out = Vec::new();
+
+        emit_rects(
+            &root,
+            &layout,
+            &theme,
+            1.0,
+            &state,
+            &HashMap::new(),
+            &mut out,
+        );
+
+        assert!(has_rect(&out, theme.success, [0.0, 0.0, 48.0, 22.0]));
+        assert!(has_rect(&out, theme.warning, [56.0, 0.0, 72.0, 22.0]));
+        assert!(has_rect(
+            &out,
+            mix(theme.surface_alt, theme.warning, 0.22),
+            [57.0, 1.0, 70.0, 20.0]
         ));
     }
 }

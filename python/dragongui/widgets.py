@@ -128,6 +128,8 @@ _SUPPORTED_PARTS_BY_KIND: dict[str, set[str]] = {
     "dataframe_table": {"header", "row", "row-selected", "grid-line"},
 }
 
+_BADGE_LEVELS = {"neutral", "info", "success", "warning", "danger", "error"}
+
 
 def _normalize_part_name(name: object) -> str:
     if not isinstance(name, str):
@@ -241,6 +243,16 @@ def _badge_value(value: BadgeValue) -> str | None:
     if isinstance(value, str):
         return value
     raise TypeError("badge must be a str, int, or None")
+
+
+def _badge_level(value: str) -> str:
+    if not isinstance(value, str):
+        raise TypeError("badge level must be a string")
+    level = value.strip().lower()
+    if level not in _BADGE_LEVELS:
+        allowed = ", ".join(sorted(_BADGE_LEVELS))
+        raise ValueError(f"unknown badge level {value!r}; expected one of: {allowed}")
+    return level
 
 
 class _BuildContext:
@@ -761,6 +773,19 @@ class Tabs(Container):
             "events": ["change"] if self.on_change and not self.disabled else [],
         }
 
+    def set_value(self, value: str, *, notify: bool = False) -> None:
+        selected = str(value)
+        if not selected:
+            raise ValueError("Tabs value cannot be empty")
+        values = {child.value for child in self.children if isinstance(child, Tab)}
+        if values and selected not in values:
+            raise ValueError("Tabs value must match one of its Tab children")
+        self.value = selected
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("value", self.value)
+        if notify and self.on_change is not None:
+            self.on_change(self.value)
+
 
 class Tab(Container):
     kind = "tab"
@@ -837,6 +862,19 @@ class Pages(Container):
             "value": self.value,
             "events": ["change"] if self.on_change else [],
         }
+
+    def set_value(self, value: str, *, notify: bool = False) -> None:
+        selected = str(value)
+        if not selected:
+            raise ValueError("Pages value cannot be empty")
+        values = {child.value for child in self.children if isinstance(child, Page)}
+        if values and selected not in values:
+            raise ValueError("Pages value must match one of its Page children")
+        self.value = selected
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("value", self.value)
+        if notify and self.on_change is not None:
+            self.on_change(self.value)
 
 
 class Page(Container):
@@ -1080,6 +1118,72 @@ class Label(Widget):
         self.text = str(value)
         if (handle := self._live()) is not None:
             handle.enqueue_set_prop("text", self.text)
+
+
+class Badge(Widget):
+    kind = "badge"
+
+    def __init__(
+        self,
+        text: BadgeValue,
+        *,
+        level: str = "info",
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        value = _badge_value(text)
+        if value is None:
+            raise ValueError("Badge text cannot be None")
+        self.text = value
+        self.level = _badge_level(level)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def props(self) -> dict[str, Any]:
+        return {"text": self.text, "level": self.level}
+
+    def set_value(self, value: BadgeValue) -> None:
+        text = _badge_value(value)
+        if text is None:
+            raise ValueError("Badge text cannot be None")
+        self.text = text
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("text", self.text)
+
+    def set_level(self, level: str) -> None:
+        self.level = _badge_level(level)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("level", self.level)
+
+
+class Tag(Badge):
+    kind = "tag"
+
+    def __init__(
+        self,
+        text: BadgeValue,
+        *,
+        level: str = "neutral",
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        super().__init__(
+            text,
+            level=level,
+            id=id,
+            key=key,
+            class_=class_,
+            style=style,
+            tooltip=tooltip,
+            parent=parent,
+        )
 
 
 class Button(Widget):

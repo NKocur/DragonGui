@@ -15,6 +15,7 @@ from .runtime import ToastHandle
 from .theme import Theme
 from .vdom import Patch, ResourceRef, VNode
 from .widgets import (
+    Badge,
     Button,
     Checkbox,
     Collapsible,
@@ -45,6 +46,7 @@ from .widgets import (
     Tab,
     Tabs,
     TableSelection,
+    Tag,
     TextArea,
     TextInput,
     Tooltip,
@@ -66,6 +68,7 @@ __all__ = [
     "Theme",
     "ToastHandle",
     "VNode",
+    "Badge",
     "Button",
     "Checkbox",
     "Collapsible",
@@ -96,6 +99,7 @@ __all__ = [
     "Tab",
     "Tabs",
     "TableSelection",
+    "Tag",
     "TextArea",
     "TextInput",
     "Tooltip",
