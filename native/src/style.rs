@@ -100,13 +100,11 @@ pub(crate) fn collapsible_header_height_for_style(
 }
 
 pub(crate) fn uniform_layout_padding(style: &LayoutStyle) -> Option<f32> {
-    style.padding.or_else(|| {
-        let top = style.padding_top?;
-        let right = style.padding_right?;
-        let bottom = style.padding_bottom?;
-        let left = style.padding_left?;
-        (top == right && right == bottom && bottom == left).then_some(top)
-    })
+    let top = style.padding_top.or(style.padding)?;
+    let right = style.padding_right.or(style.padding)?;
+    let bottom = style.padding_bottom.or(style.padding)?;
+    let left = style.padding_left.or(style.padding)?;
+    (top == right && right == bottom && bottom == left).then_some(top)
 }
 
 use serde_json::Value;
@@ -158,13 +156,93 @@ pub enum TransitionProperty {
     Transform,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TransitionTimingFunction {
     Linear,
     Ease,
     EaseIn,
     EaseOut,
     EaseInOut,
+    CubicBezier { x1: f32, y1: f32, x2: f32, y2: f32 },
+}
+
+impl TransitionTimingFunction {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().replace('_', "-").as_str() {
+            "linear" => Some(Self::Linear),
+            "ease" => Some(Self::Ease),
+            "ease-in" => Some(Self::EaseIn),
+            "ease-out" => Some(Self::EaseOut),
+            "ease-in-out" => Some(Self::EaseInOut),
+            _ => Self::parse_cubic_bezier(value),
+        }
+    }
+
+    pub fn css_text(self) -> String {
+        match self {
+            Self::Linear => "linear".to_string(),
+            Self::Ease => "ease".to_string(),
+            Self::EaseIn => "ease-in".to_string(),
+            Self::EaseOut => "ease-out".to_string(),
+            Self::EaseInOut => "ease-in-out".to_string(),
+            Self::CubicBezier { x1, y1, x2, y2 } => format!(
+                "cubic-bezier({}, {}, {}, {})",
+                format_css_float(x1),
+                format_css_float(y1),
+                format_css_float(x2),
+                format_css_float(y2)
+            ),
+        }
+    }
+
+    fn parse_cubic_bezier(value: &str) -> Option<Self> {
+        let value = value.trim();
+        let (name, args) = value.split_once('(')?;
+        if !name.trim().eq_ignore_ascii_case("cubic-bezier") {
+            return None;
+        }
+        let args = args.trim().strip_suffix(')')?;
+        let mut values = [0.0; 4];
+        let mut count = 0usize;
+        for part in args.split(',') {
+            if count == values.len() {
+                return None;
+            }
+            let value = part.trim().parse::<f32>().ok()?;
+            if !value.is_finite() {
+                return None;
+            }
+            values[count] = value;
+            count += 1;
+        }
+        if count != values.len()
+            || !(0.0..=1.0).contains(&values[0])
+            || !(0.0..=1.0).contains(&values[2])
+        {
+            return None;
+        }
+        Some(Self::CubicBezier {
+            x1: values[0],
+            y1: values[1],
+            x2: values[2],
+            y2: values[3],
+        })
+    }
+}
+
+fn format_css_float(value: f32) -> String {
+    let mut text = format!("{value:.3}");
+    while text.contains('.') && text.ends_with('0') {
+        text.pop();
+    }
+    if text.ends_with('.') {
+        text.pop();
+    }
+    if text == "-0" {
+        "0".to_string()
+    } else {
+        text
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -188,10 +266,19 @@ pub struct LayoutStyle {
     pub padding_right: Option<f32>,
     pub padding_top: Option<f32>,
     pub padding_bottom: Option<f32>,
+    pub padding_value: Option<LayoutLength>,
+    pub padding_left_value: Option<LayoutLength>,
+    pub padding_right_value: Option<LayoutLength>,
+    pub padding_top_value: Option<LayoutLength>,
+    pub padding_bottom_value: Option<LayoutLength>,
     pub margin: Option<f32>,
+    pub margin_value: Option<LayoutLength>,
     pub gap: Option<f32>,
     pub row_gap: Option<f32>,
     pub column_gap: Option<f32>,
+    pub gap_value: Option<LayoutLength>,
+    pub row_gap_value: Option<LayoutLength>,
+    pub column_gap_value: Option<LayoutLength>,
     pub overflow: Option<OverflowStyle>,
     pub overflow_x: Option<OverflowStyle>,
     pub overflow_y: Option<OverflowStyle>,
@@ -252,14 +339,51 @@ pub enum PositionStyle {
     Static,
     Relative,
     Absolute,
+    Fixed,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum GridTrackSize {
     LogicalPx(f32),
     Percent(f32),
     Fraction(f32),
     Auto,
+    FitContent(GridTrackFitContentSize),
+    MinMax {
+        min: GridTrackMinSize,
+        max: GridTrackMaxSize,
+    },
+    Repeat {
+        kind: GridTrackRepeatKind,
+        tracks: Vec<GridTrackSize>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GridTrackRepeatKind {
+    AutoFit,
+    AutoFill,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum GridTrackMinSize {
+    LogicalPx(f32),
+    Percent(f32),
+    Auto,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum GridTrackMaxSize {
+    LogicalPx(f32),
+    Percent(f32),
+    Fraction(f32),
+    Auto,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum GridTrackFitContentSize {
+    LogicalPx(f32),
+    Percent(f32),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -753,10 +877,19 @@ fn parse_layout(map: &serde_json::Map<String, Value>, out: &mut LayoutStyle) {
     out.padding_right = number(map.get("padding_right"));
     out.padding_top = number(map.get("padding_top"));
     out.padding_bottom = number(map.get("padding_bottom"));
+    out.padding_value = out.padding.map(LayoutLength::LogicalPx);
+    out.padding_left_value = out.padding_left.map(LayoutLength::LogicalPx);
+    out.padding_right_value = out.padding_right.map(LayoutLength::LogicalPx);
+    out.padding_top_value = out.padding_top.map(LayoutLength::LogicalPx);
+    out.padding_bottom_value = out.padding_bottom.map(LayoutLength::LogicalPx);
     out.margin = number(map.get("margin"));
+    out.margin_value = out.margin.map(LayoutLength::LogicalPx);
     out.gap = number(map.get("gap"));
     out.row_gap = number(map.get("row_gap")).or_else(|| number(map.get("row-gap")));
     out.column_gap = number(map.get("column_gap")).or_else(|| number(map.get("column-gap")));
+    out.gap_value = out.gap.map(LayoutLength::LogicalPx);
+    out.row_gap_value = out.row_gap.map(LayoutLength::LogicalPx);
+    out.column_gap_value = out.column_gap.map(LayoutLength::LogicalPx);
     out.overflow = text_value(map, "overflow", "overflow").and_then(parse_overflow);
     out.overflow_x = text_value(map, "overflow_x", "overflow-x").and_then(parse_overflow);
     out.overflow_y = text_value(map, "overflow_y", "overflow-y").and_then(parse_overflow);
@@ -1129,14 +1262,7 @@ fn parse_transition_property(value: &str) -> Option<TransitionProperty> {
 }
 
 fn parse_transition_timing_function(value: &str) -> Option<TransitionTimingFunction> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "linear" => Some(TransitionTimingFunction::Linear),
-        "ease" => Some(TransitionTimingFunction::Ease),
-        "ease-in" | "ease_in" => Some(TransitionTimingFunction::EaseIn),
-        "ease-out" | "ease_out" => Some(TransitionTimingFunction::EaseOut),
-        "ease-in-out" | "ease_in_out" => Some(TransitionTimingFunction::EaseInOut),
-        _ => None,
-    }
+    TransitionTimingFunction::parse(value)
 }
 
 fn parse_transform_style(value: &Value) -> Option<TransformStyle> {
@@ -1328,6 +1454,7 @@ fn parse_position(value: &str) -> Option<PositionStyle> {
         "static" => Some(PositionStyle::Static),
         "relative" => Some(PositionStyle::Relative),
         "absolute" => Some(PositionStyle::Absolute),
+        "fixed" => Some(PositionStyle::Fixed),
         _ => None,
     }
 }
@@ -1529,6 +1656,23 @@ mod tests {
         assert_eq!(transform.scale_x, 1.02);
         assert_eq!(transform.scale_y, 1.02);
         assert_eq!(transform.rotate_deg, 1.0);
+    }
+
+    #[test]
+    fn parses_inline_cubic_bezier_transition_timing_function() {
+        let style = NodeStyle::from_json(Some(&json!({
+            "transition_timing_function": "cubic-bezier(0.16, 1, 0.3, 1)"
+        })));
+
+        assert_eq!(
+            style.transition.timing_function,
+            Some(TransitionTimingFunction::CubicBezier {
+                x1: 0.16,
+                y1: 1.0,
+                x2: 0.3,
+                y2: 1.0
+            })
+        );
     }
 
     #[test]

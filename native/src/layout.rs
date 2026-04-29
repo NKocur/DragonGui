@@ -7,9 +7,9 @@ use crate::document::{WidgetKind, WidgetNode};
 use crate::events::WidgetState;
 use crate::style::{
     badge_width_for_text, collapsible_header_height_for_style, tabs_header_height_for_style,
-    DisplayStyle, FlexDirectionStyle, GridLineStyle, GridPlacementStyle, GridTrackSize,
-    LayoutLength, LineHeight, OverflowStyle, PositionStyle, BADGE_GAP_LP, CHECKBOX_BOX_LP,
-    CHECKBOX_LEFT_PAD_LP,
+    DisplayStyle, FlexDirectionStyle, GridLineStyle, GridPlacementStyle, GridTrackFitContentSize,
+    GridTrackMaxSize, GridTrackMinSize, GridTrackRepeatKind, GridTrackSize, LayoutLength,
+    LineHeight, OverflowStyle, PositionStyle, BADGE_GAP_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP,
 };
 use crate::theme::Theme;
 
@@ -51,7 +51,9 @@ impl Rect {
 pub struct LayoutResult {
     pub rects: HashMap<String, Rect>,
     pub clips: HashMap<String, Rect>,
+    pub scroll_x: HashMap<String, f32>,
     pub scroll_y: HashMap<String, f32>,
+    pub scroll_max_x: HashMap<String, f32>,
     pub scroll_max_y: HashMap<String, f32>,
     pub scale_factor: f32,
 }
@@ -117,6 +119,7 @@ pub fn compute_layout(
     apply_modal_layout(root, &mut result, scale_factor, theme);
     apply_tooltip_layout(root, &mut result, scale_factor, theme, state);
     apply_scroll_offsets(root, &mut result, state);
+    apply_fixed_positions(root, &mut result, scale_factor);
     compute_clips(root, &mut result, scale_factor, theme);
     result
 }
@@ -612,7 +615,7 @@ fn reserve_panel_title_space(style: &mut Style, node: &WidgetNode, sf: f32, them
     };
 }
 
-fn panel_title_line_height_lp(node: &WidgetNode, theme: &Theme) -> f32 {
+pub(crate) fn panel_title_line_height_lp(node: &WidgetNode, theme: &Theme) -> f32 {
     let font_size = node_font_size_lp(node, theme);
     match node.style.text.line_height {
         Some(LineHeight::Multiplier(value)) => (font_size * value.max(0.1)).max(1.0),
@@ -621,7 +624,7 @@ fn panel_title_line_height_lp(node: &WidgetNode, theme: &Theme) -> f32 {
     }
 }
 
-fn panel_title_gap_lp(node: &WidgetNode, theme: &Theme) -> f32 {
+pub(crate) fn panel_title_gap_lp(node: &WidgetNode, theme: &Theme) -> f32 {
     node.style
         .layout
         .gap
@@ -629,7 +632,7 @@ fn panel_title_gap_lp(node: &WidgetNode, theme: &Theme) -> f32 {
         .max(0.0)
 }
 
-fn panel_title_top_padding_lp(node: &WidgetNode, theme: &Theme) -> f32 {
+pub(crate) fn panel_title_top_padding_lp(node: &WidgetNode, theme: &Theme) -> f32 {
     let default = theme.spacing + 2.0;
     let layout = &node.style.layout;
     layout
@@ -852,28 +855,50 @@ fn apply_node_style(
     if let Some(shrink) = layout.flex_shrink {
         style.flex_shrink = shrink.max(0.0);
     }
-    if let Some(gap) = layout.gap {
-        style.gap = taffy::geometry::Size {
-            width: LengthPercentage::Length(gap * sf),
-            height: LengthPercentage::Length(gap * sf),
-        };
+    if let Some(gap) = layout_length_percentage(
+        layout.gap_value,
+        layout.gap,
+        sf,
+        parent_size.map(|size| size.0),
+    ) {
+        style.gap.width = gap;
     }
-    if let Some(column_gap) = layout.column_gap {
-        style.gap.width = LengthPercentage::Length(column_gap * sf);
+    if let Some(gap) = layout_length_percentage(
+        layout.gap_value,
+        layout.gap,
+        sf,
+        parent_size.map(|size| size.1),
+    ) {
+        style.gap.height = gap;
     }
-    if let Some(row_gap) = layout.row_gap {
-        style.gap.height = LengthPercentage::Length(row_gap * sf);
+    if let Some(column_gap) = layout_length_percentage(
+        layout.column_gap_value,
+        layout.column_gap,
+        sf,
+        parent_size.map(|size| size.0),
+    ) {
+        style.gap.width = column_gap;
+    }
+    if let Some(row_gap) = layout_length_percentage(
+        layout.row_gap_value,
+        layout.row_gap,
+        sf,
+        parent_size.map(|size| size.1),
+    ) {
+        style.gap.height = row_gap;
     }
     if let Some(tracks) = &layout.grid_template_columns {
         style.grid_template_columns = tracks
             .iter()
-            .map(|track| grid_track_size(*track, sf))
+            .cloned()
+            .map(|track| grid_track_size(track, sf))
             .collect();
     }
     if let Some(tracks) = &layout.grid_template_rows {
         style.grid_template_rows = tracks
             .iter()
-            .map(|track| grid_track_size(*track, sf))
+            .cloned()
+            .map(|track| grid_track_size(track, sf))
             .collect();
     }
     if let Some(placement) = layout.grid_column {
@@ -882,7 +907,10 @@ fn apply_node_style(
     if let Some(placement) = layout.grid_row {
         style.grid_row = grid_placement(placement);
     }
-    if layout.position == Some(PositionStyle::Absolute) {
+    if matches!(
+        layout.position,
+        Some(PositionStyle::Absolute | PositionStyle::Fixed)
+    ) {
         style.position = taffy::style::Position::Absolute;
         if let Some(left) = layout.left {
             style.inset.left = LengthPercentageAuto::Length(left * sf);
@@ -905,51 +933,85 @@ fn apply_node_style(
             y: taffy_overflow(overflow_y.unwrap_or(OverflowStyle::Hidden)),
         };
     }
-    if let Some(margin) = layout.margin {
+    if layout.margin.is_some() || layout.margin_value.is_some() {
+        let current = style.margin;
+        let parent_width = parent_size.map(|size| size.0);
         style.margin = taffy::geometry::Rect {
-            left: LengthPercentageAuto::Length(margin * sf),
-            right: LengthPercentageAuto::Length(margin * sf),
-            top: LengthPercentageAuto::Length(margin * sf),
-            bottom: LengthPercentageAuto::Length(margin * sf),
+            left: layout_length_percentage_auto(
+                layout.margin_value,
+                layout.margin,
+                sf,
+                parent_width,
+            )
+            .unwrap_or(current.left),
+            right: layout_length_percentage_auto(
+                layout.margin_value,
+                layout.margin,
+                sf,
+                parent_width,
+            )
+            .unwrap_or(current.right),
+            top: layout_length_percentage_auto(
+                layout.margin_value,
+                layout.margin,
+                sf,
+                parent_width,
+            )
+            .unwrap_or(current.top),
+            bottom: layout_length_percentage_auto(
+                layout.margin_value,
+                layout.margin,
+                sf,
+                parent_width,
+            )
+            .unwrap_or(current.bottom),
         };
     }
-    let pad_all = layout.padding.map(|v| v * sf);
-    if pad_all.is_some()
+    let pad_all_value = layout
+        .padding_value
+        .or_else(|| layout.padding.map(LayoutLength::LogicalPx));
+    if pad_all_value.is_some()
+        || layout.padding.is_some()
         || layout.padding_left.is_some()
         || layout.padding_right.is_some()
         || layout.padding_top.is_some()
         || layout.padding_bottom.is_some()
+        || layout.padding_left_value.is_some()
+        || layout.padding_right_value.is_some()
+        || layout.padding_top_value.is_some()
+        || layout.padding_bottom_value.is_some()
     {
         let current = style.padding;
+        let parent_width = parent_size.map(|size| size.0);
         style.padding = taffy::geometry::Rect {
-            left: LengthPercentage::Length(
-                layout
-                    .padding_left
-                    .map(|v| v * sf)
-                    .or(pad_all)
-                    .unwrap_or_else(|| lp_value(current.left)),
-            ),
-            right: LengthPercentage::Length(
-                layout
-                    .padding_right
-                    .map(|v| v * sf)
-                    .or(pad_all)
-                    .unwrap_or_else(|| lp_value(current.right)),
-            ),
-            top: LengthPercentage::Length(
-                layout
-                    .padding_top
-                    .map(|v| v * sf)
-                    .or(pad_all)
-                    .unwrap_or_else(|| lp_value(current.top)),
-            ),
-            bottom: LengthPercentage::Length(
-                layout
-                    .padding_bottom
-                    .map(|v| v * sf)
-                    .or(pad_all)
-                    .unwrap_or_else(|| lp_value(current.bottom)),
-            ),
+            left: layout_length_percentage(
+                layout.padding_left_value.or(pad_all_value),
+                layout.padding_left.or(layout.padding),
+                sf,
+                parent_width,
+            )
+            .unwrap_or(current.left),
+            right: layout_length_percentage(
+                layout.padding_right_value.or(pad_all_value),
+                layout.padding_right.or(layout.padding),
+                sf,
+                parent_width,
+            )
+            .unwrap_or(current.right),
+            top: layout_length_percentage(
+                layout.padding_top_value.or(pad_all_value),
+                layout.padding_top.or(layout.padding),
+                sf,
+                parent_width,
+            )
+            .unwrap_or(current.top),
+            bottom: layout_length_percentage(
+                layout.padding_bottom_value.or(pad_all_value),
+                layout.padding_bottom.or(layout.padding),
+                sf,
+                parent_width,
+            )
+            .unwrap_or(current.bottom),
         };
     }
 }
@@ -963,27 +1025,95 @@ fn taffy_overflow(value: OverflowStyle) -> Overflow {
 }
 
 fn grid_track_size(value: GridTrackSize, sf: f32) -> TrackSizingFunction {
-    match value {
-        GridTrackSize::LogicalPx(value) => track_size_fixed(LengthPercentage::Length(value * sf)),
-        GridTrackSize::Percent(value) => track_size_fixed(LengthPercentage::Percent(value / 100.0)),
-        GridTrackSize::Fraction(value) => {
-            TrackSizingFunction::Single(NonRepeatedTrackSizingFunction {
-                min: MinTrackSizingFunction::Auto,
-                max: MaxTrackSizingFunction::Fraction(value),
-            })
+    if let GridTrackSize::Repeat { kind, tracks } = value {
+        let mut repeated: Vec<_> = tracks
+            .into_iter()
+            .filter_map(|track| grid_non_repeated_track_size(track, sf))
+            .collect();
+        if repeated.is_empty() {
+            repeated.push(NonRepeatedTrackSizingFunction::AUTO);
         }
-        GridTrackSize::Auto => TrackSizingFunction::Single(NonRepeatedTrackSizingFunction {
+        return TrackSizingFunction::Repeat(grid_track_repeat_kind(kind), repeated);
+    }
+    TrackSizingFunction::Single(
+        grid_non_repeated_track_size(value, sf).unwrap_or(NonRepeatedTrackSizingFunction::AUTO),
+    )
+}
+
+fn grid_non_repeated_track_size(
+    value: GridTrackSize,
+    sf: f32,
+) -> Option<NonRepeatedTrackSizingFunction> {
+    match value {
+        GridTrackSize::LogicalPx(value) => Some(non_repeated_track_size_fixed(
+            LengthPercentage::Length(value * sf),
+        )),
+        GridTrackSize::Percent(value) => Some(non_repeated_track_size_fixed(
+            LengthPercentage::Percent(value / 100.0),
+        )),
+        GridTrackSize::Fraction(value) => Some(NonRepeatedTrackSizingFunction {
+            min: MinTrackSizingFunction::Auto,
+            max: MaxTrackSizingFunction::Fraction(value),
+        }),
+        GridTrackSize::Auto => Some(NonRepeatedTrackSizingFunction {
             min: MinTrackSizingFunction::Auto,
             max: MaxTrackSizingFunction::Auto,
         }),
+        GridTrackSize::FitContent(value) => Some(NonRepeatedTrackSizingFunction::fit_content(
+            grid_track_fit_content_size(value, sf),
+        )),
+        GridTrackSize::MinMax { min, max } => Some(NonRepeatedTrackSizingFunction {
+            min: grid_track_min_size(min, sf),
+            max: grid_track_max_size(max, sf),
+        }),
+        GridTrackSize::Repeat { .. } => None,
     }
 }
 
-fn track_size_fixed(value: LengthPercentage) -> TrackSizingFunction {
-    TrackSizingFunction::Single(NonRepeatedTrackSizingFunction {
+fn grid_track_repeat_kind(value: GridTrackRepeatKind) -> GridTrackRepetition {
+    match value {
+        GridTrackRepeatKind::AutoFit => GridTrackRepetition::AutoFit,
+        GridTrackRepeatKind::AutoFill => GridTrackRepetition::AutoFill,
+    }
+}
+
+fn non_repeated_track_size_fixed(value: LengthPercentage) -> NonRepeatedTrackSizingFunction {
+    NonRepeatedTrackSizingFunction {
         min: MinTrackSizingFunction::Fixed(value),
         max: MaxTrackSizingFunction::Fixed(value),
-    })
+    }
+}
+
+fn grid_track_fit_content_size(value: GridTrackFitContentSize, sf: f32) -> LengthPercentage {
+    match value {
+        GridTrackFitContentSize::LogicalPx(value) => LengthPercentage::Length(value * sf),
+        GridTrackFitContentSize::Percent(value) => LengthPercentage::Percent(value / 100.0),
+    }
+}
+
+fn grid_track_min_size(value: GridTrackMinSize, sf: f32) -> MinTrackSizingFunction {
+    match value {
+        GridTrackMinSize::LogicalPx(value) => {
+            MinTrackSizingFunction::Fixed(LengthPercentage::Length(value * sf))
+        }
+        GridTrackMinSize::Percent(value) => {
+            MinTrackSizingFunction::Fixed(LengthPercentage::Percent(value / 100.0))
+        }
+        GridTrackMinSize::Auto => MinTrackSizingFunction::Auto,
+    }
+}
+
+fn grid_track_max_size(value: GridTrackMaxSize, sf: f32) -> MaxTrackSizingFunction {
+    match value {
+        GridTrackMaxSize::LogicalPx(value) => {
+            MaxTrackSizingFunction::Fixed(LengthPercentage::Length(value * sf))
+        }
+        GridTrackMaxSize::Percent(value) => {
+            MaxTrackSizingFunction::Fixed(LengthPercentage::Percent(value / 100.0))
+        }
+        GridTrackMaxSize::Fraction(value) => MaxTrackSizingFunction::Fraction(value),
+        GridTrackMaxSize::Auto => MaxTrackSizingFunction::Auto,
+    }
 }
 
 fn grid_placement(value: GridPlacementStyle) -> taffy::geometry::Line<GridPlacement> {
@@ -1046,6 +1176,43 @@ fn layout_dimension(
     }
 }
 
+fn layout_length_percentage(
+    value: Option<LayoutLength>,
+    legacy_px: Option<f32>,
+    sf: f32,
+    parent_axis_size: Option<f32>,
+) -> Option<LengthPercentage> {
+    match value {
+        Some(LayoutLength::LogicalPx(value)) => Some(LengthPercentage::Length(value * sf)),
+        Some(LayoutLength::Percent(value)) => Some(LengthPercentage::Percent(value / 100.0)),
+        Some(LayoutLength::Calc(value)) if value.percent == 0.0 => {
+            Some(LengthPercentage::Length(value.px * sf))
+        }
+        Some(LayoutLength::Calc(value)) if value.px == 0.0 => {
+            Some(LengthPercentage::Percent(value.percent / 100.0))
+        }
+        Some(LayoutLength::Calc(value)) => parent_axis_size.map(|parent| {
+            LengthPercentage::Length(parent * (value.percent / 100.0) + value.px * sf)
+        }),
+        Some(LayoutLength::Auto) => None,
+        None => legacy_px.map(|value| LengthPercentage::Length(value * sf)),
+    }
+}
+
+fn layout_length_percentage_auto(
+    value: Option<LayoutLength>,
+    legacy_px: Option<f32>,
+    sf: f32,
+    parent_axis_size: Option<f32>,
+) -> Option<LengthPercentageAuto> {
+    match value {
+        Some(LayoutLength::Auto) => Some(LengthPercentageAuto::Auto),
+        Some(other) => layout_length_percentage(Some(other), legacy_px, sf, parent_axis_size)
+            .map(LengthPercentageAuto::from),
+        None => legacy_px.map(|value| LengthPercentageAuto::Length(value * sf)),
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SeparatorOrientation {
     Horizontal,
@@ -1104,18 +1271,24 @@ fn compute_clips(root: &WidgetNode, result: &mut LayoutResult, sf: f32, theme: &
     let Some(root_rect) = result.rects.get(&root.id).copied() else {
         return;
     };
-    compute_node_clips(root, result, root_rect, sf, theme);
+    compute_node_clips(root, result, root_rect, root_rect, sf, theme);
 }
 
 fn compute_node_clips(
     node: &WidgetNode,
     result: &mut LayoutResult,
     parent_clip: Rect,
+    root_clip: Rect,
     sf: f32,
     theme: &Theme,
 ) {
     let Some(rect) = result.rects.get(&node.id).copied() else {
         return;
+    };
+    let parent_clip = if is_fixed_positioned_node(node) {
+        root_clip
+    } else {
+        parent_clip
     };
     let clip = rect.intersect(parent_clip).unwrap_or(Rect {
         x: rect.x,
@@ -1127,7 +1300,7 @@ fn compute_node_clips(
     let child_clip = scroll_container_child_clip(node, result, clip, sf, theme)
         .unwrap_or_else(|| child_clip_for_overflow(node, parent_clip, clip));
     for child in &node.children {
-        compute_node_clips(child, result, child_clip, sf, theme);
+        compute_node_clips(child, result, child_clip, root_clip, sf, theme);
     }
 }
 
@@ -1136,6 +1309,17 @@ pub(crate) fn is_scroll_container_kind(kind: &WidgetKind) -> bool {
 }
 
 pub(crate) fn is_scroll_container_node(node: &WidgetNode) -> bool {
+    scroll_container_scrolls_x(node) || scroll_container_scrolls_y(node)
+}
+
+fn scroll_container_scrolls_x(node: &WidgetNode) -> bool {
+    matches!(
+        node_overflow_x(node),
+        Some(OverflowStyle::Scroll | OverflowStyle::Auto)
+    )
+}
+
+fn scroll_container_scrolls_y(node: &WidgetNode) -> bool {
     match node_overflow_y(node) {
         Some(OverflowStyle::Scroll | OverflowStyle::Auto) => true,
         Some(OverflowStyle::Visible | OverflowStyle::Hidden) => false,
@@ -1143,8 +1327,8 @@ pub(crate) fn is_scroll_container_node(node: &WidgetNode) -> bool {
     }
 }
 
-pub(crate) fn scroll_container_max_y(node: &WidgetNode, result: &LayoutResult) -> f32 {
-    if !is_scroll_container_node(node) {
+pub(crate) fn scroll_container_max_x(node: &WidgetNode, result: &LayoutResult) -> f32 {
+    if !scroll_container_scrolls_x(node) {
         return 0.0;
     }
     let Some(rect) = result.rects.get(&node.id).copied() else {
@@ -1153,7 +1337,20 @@ pub(crate) fn scroll_container_max_y(node: &WidgetNode, result: &LayoutResult) -
     let Some(content) = scroll_content_bounds(node, result) else {
         return 0.0;
     };
-    (content.1 - (rect.y + rect.h)).max(0.0)
+    (content.right - (rect.x + rect.w)).max(0.0)
+}
+
+pub(crate) fn scroll_container_max_y(node: &WidgetNode, result: &LayoutResult) -> f32 {
+    if !scroll_container_scrolls_y(node) {
+        return 0.0;
+    }
+    let Some(rect) = result.rects.get(&node.id).copied() else {
+        return 0.0;
+    };
+    let Some(content) = scroll_content_bounds(node, result) else {
+        return 0.0;
+    };
+    (content.bottom - (rect.y + rect.h)).max(0.0)
 }
 
 fn scroll_container_child_clip(
@@ -1207,11 +1404,22 @@ fn node_overflow_y(node: &WidgetNode) -> Option<OverflowStyle> {
     node.style.layout.overflow_y.or(node.style.layout.overflow)
 }
 
-fn scroll_content_bounds(node: &WidgetNode, result: &LayoutResult) -> Option<(f32, f32)> {
+#[derive(Debug, Clone, Copy)]
+struct ScrollContentBounds {
+    right: f32,
+    bottom: f32,
+}
+
+fn scroll_content_bounds(node: &WidgetNode, result: &LayoutResult) -> Option<ScrollContentBounds> {
+    let mut right = f32::NEG_INFINITY;
     let mut top = f32::INFINITY;
     let mut bottom = f32::NEG_INFINITY;
     for child in &node.children {
+        if is_fixed_positioned_node(child) {
+            continue;
+        }
         if let Some(rect) = result.rects.get(&child.id) {
+            right = right.max(rect.x + rect.w);
             top = top.min(rect.y);
             bottom = bottom.max(rect.y + rect.h);
         }
@@ -1222,11 +1430,21 @@ fn scroll_content_bounds(node: &WidgetNode, result: &LayoutResult) -> Option<(f3
         } else {
             1.0
         };
+        right += scroll_container_right_padding_lp(node) * scale_factor;
         bottom += scroll_container_bottom_padding_lp(node) * scale_factor;
-        Some((top, bottom))
+        Some(ScrollContentBounds { right, bottom })
     } else {
         None
     }
+}
+
+fn scroll_container_right_padding_lp(node: &WidgetNode) -> f32 {
+    node.style
+        .layout
+        .padding_right
+        .or(node.style.layout.padding)
+        .unwrap_or(10.0)
+        .max(0.0)
 }
 
 fn scroll_container_bottom_padding_lp(node: &WidgetNode) -> f32 {
@@ -1247,13 +1465,20 @@ fn apply_scroll_offsets(root: &WidgetNode, result: &mut LayoutResult, state: Opt
 
 fn apply_node_scroll_offsets(node: &WidgetNode, result: &mut LayoutResult, state: &WidgetState) {
     if is_scroll_container_node(node) {
-        let max_scroll = scroll_container_max_y(node, result);
-        let scroll_y = state.container_scroll_y(&node.id, max_scroll);
-        result.scroll_max_y.insert(node.id.clone(), max_scroll);
+        let max_scroll_x = scroll_container_max_x(node, result);
+        let max_scroll_y = scroll_container_max_y(node, result);
+        let scroll_x = state.container_scroll_x(&node.id, max_scroll_x);
+        let scroll_y = state.container_scroll_y(&node.id, max_scroll_y);
+        result.scroll_max_x.insert(node.id.clone(), max_scroll_x);
+        result.scroll_max_y.insert(node.id.clone(), max_scroll_y);
+        result.scroll_x.insert(node.id.clone(), scroll_x);
         result.scroll_y.insert(node.id.clone(), scroll_y);
-        if scroll_y > 0.0 {
+        if scroll_x > 0.0 || scroll_y > 0.0 {
             for child in &node.children {
-                translate_subtree(child, result, 0.0, -scroll_y);
+                if is_fixed_positioned_node(child) {
+                    continue;
+                }
+                translate_subtree(child, result, -scroll_x, -scroll_y);
             }
         }
     }
@@ -1274,16 +1499,73 @@ fn translate_subtree(node: &WidgetNode, result: &mut LayoutResult, dx: f32, dy: 
 
 fn undo_scroll_offsets(node: &WidgetNode, result: &mut LayoutResult) {
     if is_scroll_container_node(node) {
+        let scroll_x = result.scroll_x.get(&node.id).copied().unwrap_or(0.0);
         let scroll_y = result.scroll_y.get(&node.id).copied().unwrap_or(0.0);
-        if scroll_y > 0.0 {
+        if scroll_x > 0.0 || scroll_y > 0.0 {
             for child in &node.children {
-                translate_subtree(child, result, 0.0, scroll_y);
+                if is_fixed_positioned_node(child) {
+                    continue;
+                }
+                translate_subtree(child, result, scroll_x, scroll_y);
             }
         }
     }
     for child in &node.children {
         undo_scroll_offsets(child, result);
     }
+}
+
+fn apply_fixed_positions(root: &WidgetNode, result: &mut LayoutResult, sf: f32) {
+    let Some(root_rect) = result.rects.get(&root.id).copied() else {
+        return;
+    };
+    apply_fixed_positions_for_node(root, result, root_rect, sf);
+}
+
+fn apply_fixed_positions_for_node(
+    node: &WidgetNode,
+    result: &mut LayoutResult,
+    root_rect: Rect,
+    sf: f32,
+) {
+    if is_fixed_positioned_node(node) {
+        rebase_fixed_node(node, result, root_rect, sf);
+    }
+    for child in &node.children {
+        apply_fixed_positions_for_node(child, result, root_rect, sf);
+    }
+}
+
+fn rebase_fixed_node(node: &WidgetNode, result: &mut LayoutResult, root_rect: Rect, sf: f32) {
+    let Some(old_rect) = result.rects.get(&node.id).copied() else {
+        return;
+    };
+    let layout = &node.style.layout;
+    let x = match (layout.left, layout.right) {
+        (Some(left), _) => root_rect.x + left * sf,
+        (None, Some(right)) => root_rect.x + root_rect.w - right * sf - old_rect.w,
+        (None, None) => old_rect.x,
+    };
+    let y = match (layout.top, layout.bottom) {
+        (Some(top), _) => root_rect.y + top * sf,
+        (None, Some(bottom)) => root_rect.y + root_rect.h - bottom * sf - old_rect.h,
+        (None, None) => old_rect.y,
+    };
+    if let Some(rect) = result.rects.get_mut(&node.id) {
+        rect.x = x;
+        rect.y = y;
+    }
+    let dx = x - old_rect.x;
+    let dy = y - old_rect.y;
+    if dx != 0.0 || dy != 0.0 {
+        for child in &node.children {
+            translate_subtree(child, result, dx, dy);
+        }
+    }
+}
+
+fn is_fixed_positioned_node(node: &WidgetNode) -> bool {
+    node.style.layout.position == Some(PositionStyle::Fixed)
 }
 
 fn apply_navigation_layout(
@@ -2528,6 +2810,56 @@ mod tests {
     }
 
     #[test]
+    fn fixed_position_child_uses_viewport_insets_and_escapes_parent_clip() {
+        let flow = node("flow", WidgetKind::Label, NodeProps::default(), vec![]);
+        let mut dock = node("dock", WidgetKind::Panel, NodeProps::default(), vec![]);
+        dock.style.layout.position = Some(PositionStyle::Fixed);
+        dock.style.layout.right = Some(24.0);
+        dock.style.layout.bottom = Some(16.0);
+        dock.style.layout.width = Some(120.0);
+        dock.style.layout.height = Some(32.0);
+
+        let mut panel = node(
+            "panel",
+            WidgetKind::Panel,
+            NodeProps::default(),
+            vec![flow, dock],
+        );
+        panel.style.layout.width = Some(240.0);
+        panel.style.layout.height = Some(120.0);
+        panel.style.layout.flex_grow = Some(0.0);
+        panel.style.layout.flex_shrink = Some(0.0);
+        panel.style.layout.overflow = Some(OverflowStyle::Hidden);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![panel],
+        );
+
+        let layout = compute_layout(&root, 800.0, 600.0, 1.0, &Theme::dark(), None);
+        let panel = layout.rects.get("panel").unwrap();
+        let flow = layout.rects.get("flow").unwrap();
+        let dock = layout.rects.get("dock").unwrap();
+        let dock_clip = layout.clips.get("dock").unwrap();
+
+        assert_eq!(panel.w, 240.0);
+        assert_eq!(panel.h, 120.0);
+        assert_eq!(dock.w, 120.0);
+        assert_eq!(dock.h, 32.0);
+        assert_eq!(dock.x, 800.0 - 24.0 - dock.w);
+        assert_eq!(dock.y, 600.0 - 16.0 - dock.h);
+        assert!(
+            flow.y < panel.y + panel.h,
+            "fixed child should not affect normal flow: flow={flow:?} dock={dock:?}"
+        );
+        assert_eq!(dock_clip.x, dock.x);
+        assert_eq!(dock_clip.y, dock.y);
+        assert_eq!(dock_clip.w, dock.w);
+        assert_eq!(dock_clip.h, dock.h);
+    }
+
+    #[test]
     fn percent_style_width_uses_parent_space() {
         let mut left = node("left", WidgetKind::Panel, NodeProps::default(), vec![]);
         left.style.layout.width_value = Some(LayoutLength::Percent(50.0));
@@ -2612,6 +2944,72 @@ mod tests {
     }
 
     #[test]
+    fn percent_and_calc_spacing_values_lower_to_taffy() {
+        let mut first = node("first", WidgetKind::Panel, NodeProps::default(), vec![]);
+        first.style.layout.width_value = Some(LayoutLength::LogicalPx(50.0));
+        first.style.layout.flex_grow = Some(0.0);
+        first.style.layout.flex_shrink = Some(0.0);
+        let mut second = node("second", WidgetKind::Panel, NodeProps::default(), vec![]);
+        second.style.layout.width_value = Some(LayoutLength::LogicalPx(50.0));
+        second.style.layout.flex_grow = Some(0.0);
+        second.style.layout.flex_shrink = Some(0.0);
+        let mut row = node(
+            "row",
+            WidgetKind::HLayout,
+            NodeProps::default(),
+            vec![first, second],
+        );
+        row.style.layout.padding_left_value = Some(LayoutLength::Percent(10.0));
+        row.style.layout.padding_right_value = Some(LayoutLength::Calc(crate::style::CalcLength {
+            percent: 5.0,
+            px: 10.0,
+        }));
+        row.style.layout.gap_value = Some(LayoutLength::Calc(crate::style::CalcLength {
+            percent: 5.0,
+            px: 10.0,
+        }));
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![row],
+        );
+
+        let layout = compute_layout(&root, 400.0, 160.0, 1.0, &Theme::dark(), None);
+        let first = layout.rects.get("first").unwrap();
+        let second = layout.rects.get("second").unwrap();
+
+        assert_eq!(first.x, 40.0);
+        assert_eq!(second.x, 120.0);
+    }
+
+    #[test]
+    fn uniform_auto_margin_lowers_to_taffy() {
+        let mut centered = node("centered", WidgetKind::Panel, NodeProps::default(), vec![]);
+        centered.style.layout.width_value = Some(LayoutLength::LogicalPx(120.0));
+        centered.style.layout.height_value = Some(LayoutLength::LogicalPx(40.0));
+        centered.style.layout.margin_value = Some(LayoutLength::Auto);
+        centered.style.layout.flex_grow = Some(0.0);
+        centered.style.layout.flex_shrink = Some(0.0);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "row",
+                WidgetKind::HLayout,
+                NodeProps::default(),
+                vec![centered],
+            )],
+        );
+
+        let layout = compute_layout(&root, 400.0, 160.0, 1.0, &Theme::dark(), None);
+        let centered = layout.rects.get("centered").unwrap();
+
+        assert_eq!(centered.x, 140.0);
+    }
+
+    #[test]
     fn grid_layout_places_children_on_template_tracks() {
         let mut grid = node("grid", WidgetKind::Panel, NodeProps::default(), vec![]);
         grid.style.layout.display = Some(DisplayStyle::Grid);
@@ -2664,6 +3062,68 @@ mod tests {
         assert_eq!(main.x, 180.0);
         assert_eq!(main.w, 420.0);
         assert_eq!(main.h, 80.0);
+    }
+
+    #[test]
+    fn grid_minmax_tracks_lower_to_taffy() {
+        let track = grid_track_size(
+            GridTrackSize::MinMax {
+                min: GridTrackMinSize::LogicalPx(120.0),
+                max: GridTrackMaxSize::Fraction(1.0),
+            },
+            2.0,
+        );
+
+        let TrackSizingFunction::Single(track) = track else {
+            panic!("minmax should lower to a single non-repeated track");
+        };
+        assert_eq!(
+            track.min,
+            MinTrackSizingFunction::Fixed(LengthPercentage::Length(240.0))
+        );
+        assert_eq!(track.max, MaxTrackSizingFunction::Fraction(1.0));
+    }
+
+    #[test]
+    fn grid_fit_content_tracks_lower_to_taffy() {
+        let track = grid_track_size(
+            GridTrackSize::FitContent(GridTrackFitContentSize::Percent(40.0)),
+            2.0,
+        );
+
+        let TrackSizingFunction::Single(track) = track else {
+            panic!("fit-content should lower to a single non-repeated track");
+        };
+        assert_eq!(track.min, MinTrackSizingFunction::Auto);
+        assert_eq!(
+            track.max,
+            MaxTrackSizingFunction::FitContent(LengthPercentage::Percent(0.4))
+        );
+    }
+
+    #[test]
+    fn grid_auto_repeat_tracks_lower_to_taffy() {
+        let track = grid_track_size(
+            GridTrackSize::Repeat {
+                kind: GridTrackRepeatKind::AutoFit,
+                tracks: vec![GridTrackSize::MinMax {
+                    min: GridTrackMinSize::LogicalPx(120.0),
+                    max: GridTrackMaxSize::Fraction(1.0),
+                }],
+            },
+            2.0,
+        );
+
+        let TrackSizingFunction::Repeat(kind, tracks) = track else {
+            panic!("auto-repeat should lower to a repeated track");
+        };
+        assert_eq!(kind, GridTrackRepetition::AutoFit);
+        assert_eq!(tracks.len(), 1);
+        assert_eq!(
+            tracks[0].min,
+            MinTrackSizingFunction::Fixed(LengthPercentage::Length(240.0))
+        );
+        assert_eq!(tracks[0].max, MaxTrackSizingFunction::Fraction(1.0));
     }
 
     #[test]
@@ -2756,6 +3216,87 @@ mod tests {
         assert!(scroll_container_max_y(root.children.first().unwrap(), &unscrolled) > 0.0);
         assert_eq!(scrolled.scroll_y.get("panel").copied(), Some(36.0));
         assert_eq!(scrolled.scroll_max_y.get("panel").copied(), Some(36.0));
+    }
+
+    #[test]
+    fn horizontal_scroll_offset_moves_children_and_preserves_clip() {
+        let mut scroller = node(
+            "scroller",
+            WidgetKind::HLayout,
+            NodeProps::default(),
+            vec![
+                node(
+                    "first",
+                    WidgetKind::Button,
+                    NodeProps {
+                        fixed_width: Some(100.0),
+                        ..NodeProps::default()
+                    },
+                    vec![],
+                ),
+                node(
+                    "second",
+                    WidgetKind::Button,
+                    NodeProps {
+                        fixed_width: Some(100.0),
+                        ..NodeProps::default()
+                    },
+                    vec![],
+                ),
+                node(
+                    "third",
+                    WidgetKind::Button,
+                    NodeProps {
+                        fixed_width: Some(100.0),
+                        ..NodeProps::default()
+                    },
+                    vec![],
+                ),
+            ],
+        );
+        scroller.style.layout.width = Some(140.0);
+        scroller.style.layout.height = Some(40.0);
+        scroller.style.layout.padding = Some(0.0);
+        scroller.style.layout.gap = Some(0.0);
+        scroller.style.layout.flex_grow = Some(0.0);
+        scroller.style.layout.flex_shrink = Some(0.0);
+        scroller.style.layout.overflow_x = Some(OverflowStyle::Auto);
+        scroller.style.layout.overflow_y = Some(OverflowStyle::Hidden);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![scroller],
+        );
+        let unscrolled = compute_layout(&root, 240.0, 80.0, 1.0, &Theme::dark(), None);
+        let mut state = WidgetState::default();
+        state
+            .container_scroll_x
+            .insert("scroller".to_string(), 50.0);
+
+        let scrolled = compute_layout(&root, 240.0, 80.0, 1.0, &Theme::dark(), Some(&state));
+
+        let first_before = unscrolled.rects.get("first").unwrap();
+        let first_after = scrolled.rects.get("first").unwrap();
+        let scroller_rect = scrolled.rects.get("scroller").unwrap();
+        let first_clip = scrolled.clips.get("first").unwrap();
+        let applied_scroll = scrolled.scroll_x.get("scroller").copied().unwrap_or(0.0);
+
+        assert!(scroll_container_max_x(root.children.first().unwrap(), &unscrolled) > 0.0);
+        assert_eq!(applied_scroll, 50.0);
+        assert_eq!(first_after.x, first_before.x - applied_scroll);
+        if first_clip.w > 0.0 {
+            assert!(first_clip.x >= scroller_rect.x);
+            assert!(first_clip.x + first_clip.w <= scroller_rect.x + scroller_rect.w);
+        }
+        assert!(
+            scrolled
+                .scroll_max_x
+                .get("scroller")
+                .copied()
+                .unwrap_or(0.0)
+                > 0.0
+        );
     }
 
     #[test]

@@ -103,6 +103,8 @@ pub struct WidgetState {
     pub text_scroll_y: HashMap<String, f32>,
     /// Scrollable container vertical offset in physical pixels keyed by widget id.
     pub container_scroll_y: HashMap<String, f32>,
+    /// Scrollable container horizontal offset in physical pixels keyed by widget id.
+    pub container_scroll_x: HashMap<String, f32>,
     /// NumberInput widgets whose edited text cannot currently be parsed.
     pub invalid_numbers: HashSet<String>,
     /// Dropdown items keyed by widget id.
@@ -125,6 +127,8 @@ pub struct WidgetState {
     pub open_t: HashMap<String, f32>,
     /// Selected animation progress keyed by widget id, where 0.0 is unselected and 1.0 is selected.
     pub selected_t: HashMap<String, f32>,
+    /// Expansion animation progress keyed by widget id, where 0.0 is collapsed and 1.0 is expanded.
+    pub expanded_t: HashMap<String, f32>,
     /// Widget that received a pointer-down (not yet released).
     pub pressed: Option<String>,
     /// Dropdown whose menu is currently open.
@@ -531,22 +535,34 @@ impl WidgetState {
             .clamp(0.0, max_scroll.max(0.0))
     }
 
-    pub fn scroll_container(&mut self, id: &str, delta_y: f32, max_scroll: f32) -> bool {
-        let max_scroll = max_scroll.max(0.0);
-        let current = self
-            .container_scroll_y
+    pub fn container_scroll_x(&self, id: &str, max_scroll: f32) -> f32 {
+        self.container_scroll_x
             .get(id)
             .copied()
             .unwrap_or(0.0)
-            .clamp(0.0, max_scroll);
-        let next = (current + delta_y).clamp(0.0, max_scroll);
-        if (next - current).abs() <= f32::EPSILON {
-            self.container_scroll_y.insert(id.to_string(), next);
-            return false;
+            .clamp(0.0, max_scroll.max(0.0))
+    }
+
+    pub fn scroll_container(
+        &mut self,
+        id: &str,
+        delta_x: f32,
+        delta_y: f32,
+        max_scroll_x: f32,
+        max_scroll_y: f32,
+    ) -> bool {
+        let next_x = scroll_axis_next(&self.container_scroll_x, id, delta_x, max_scroll_x);
+        let next_y = scroll_axis_next(&self.container_scroll_y, id, delta_y, max_scroll_y);
+        let current_x = self.container_scroll_x(id, max_scroll_x);
+        let current_y = self.container_scroll_y(id, max_scroll_y);
+        let changed =
+            (next_x - current_x).abs() > f32::EPSILON || (next_y - current_y).abs() > f32::EPSILON;
+        self.container_scroll_x.insert(id.to_string(), next_x);
+        self.container_scroll_y.insert(id.to_string(), next_y);
+        if changed {
+            self.close_popups();
         }
-        self.container_scroll_y.insert(id.to_string(), next);
-        self.close_popups();
-        true
+        changed
     }
 
     pub fn ensure_text_area_cursor_visible(
@@ -1361,6 +1377,16 @@ fn text_area_max_scroll(text: &str, visible_h: f32, line_h: f32) -> f32 {
     (content_h - visible_h.max(1.0)).max(0.0)
 }
 
+fn scroll_axis_next(scrolls: &HashMap<String, f32>, id: &str, delta: f32, max_scroll: f32) -> f32 {
+    let max_scroll = max_scroll.max(0.0);
+    let current = scrolls
+        .get(id)
+        .copied()
+        .unwrap_or(0.0)
+        .clamp(0.0, max_scroll);
+    (current + delta).clamp(0.0, max_scroll)
+}
+
 fn line_column_for_cursor(text: &str, cursor: usize) -> (usize, usize) {
     let cursor = clamp_boundary(text, cursor);
     let mut line = 0;
@@ -1627,6 +1653,19 @@ mod tests {
         assert_eq!(state.text_area_scroll_y("notes", 20.0, 10.0), 10.0);
         assert!(state.scroll_text_area("notes", -999.0, 20.0, 10.0));
         assert_eq!(state.text_area_scroll_y("notes", 20.0, 10.0), 0.0);
+    }
+
+    #[test]
+    fn container_scroll_clamps_both_axes() {
+        let mut state = WidgetState::default();
+
+        assert!(state.scroll_container("panel", 25.0, 40.0, 20.0, 30.0));
+        assert_eq!(state.container_scroll_x("panel", 20.0), 20.0);
+        assert_eq!(state.container_scroll_y("panel", 30.0), 30.0);
+
+        assert!(state.scroll_container("panel", -999.0, -999.0, 20.0, 30.0));
+        assert_eq!(state.container_scroll_x("panel", 20.0), 0.0);
+        assert_eq!(state.container_scroll_y("panel", 30.0), 0.0);
     }
 
     #[test]

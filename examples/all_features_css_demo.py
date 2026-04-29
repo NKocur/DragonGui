@@ -143,6 +143,22 @@ Panel.color-picker {
     border-color: #2c8c99;
 }
 
+Panel.horizontal-strip {
+    width: 250px;
+    height: 92px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 12px;
+    gap: 0;
+}
+
+HLayout.strip-row {
+    width: 392px;
+    height: 34px;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
 Label {
     color: #28313d;
 }
@@ -176,6 +192,11 @@ NumberInput {
 
 Button {
     font-weight: 700;
+}
+
+Button.strip-item {
+    width: 120px;
+    flex-shrink: 0;
 }
 
 Button:hover,
@@ -275,6 +296,22 @@ Panel.color-picker {
     border-color: #39ff88;
 }
 
+Panel.horizontal-strip {
+    width: 250px;
+    height: 92px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 12px;
+    gap: 0;
+}
+
+HLayout.strip-row {
+    width: 392px;
+    height: 34px;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
 Label {
     color: #d7fbff;
 }
@@ -308,6 +345,11 @@ NumberInput {
 
 Button {
     font-weight: 700;
+}
+
+Button.strip-item {
+    width: 120px;
+    flex-shrink: 0;
 }
 
 Button:hover,
@@ -774,6 +816,12 @@ with dg.HLayout(style={"gap": 0}):
                 with dg.Panel("CSS theme controls", width=330, class_="token-panel", style={"padding": 14, "gap": 10}):
                     dg.Button("Paper Lab CSS", on_click=lambda: apply_css_theme("paper"))
                     dg.Button("Neon Console CSS", on_click=lambda: apply_css_theme("neon"))
+                    dg.Separator()
+                    with dg.Panel("Horizontal overflow", class_="horizontal-strip"):
+                        with dg.HLayout(class_="strip-row"):
+                            dg.Button("First", class_="strip-item")
+                            dg.Button("Second", class_="strip-item")
+                            dg.Button("Third", class_="strip-item")
                     dg.Separator()
                     dg.Button("Danger token", style={"background": "danger", "border_color": "danger"})
                     dg.Button("Warning token", style={"background": "warning", "border_color": "warning"})

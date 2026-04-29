@@ -58,23 +58,27 @@ Styles can be loaded before `app.run(...)` or while the app is live.
 
 | Selector | Example | Notes |
 | --- | --- | --- |
+| Universal | `*`, `Panel > *` | Matches any DragonGUI widget in the current selector position. |
 | Type | `Button` | Uses DragonGUI widget type names. |
 | Class | `.primary` | Matches `class_="primary"` or whitespace-split class strings. |
 | Type + class | `Button.primary.danger` | Multiple class selectors are supported. |
 | ID | `#run-button` | Matches explicit widget `id`. |
 | Key attribute | `[key="primary-action"]` | Matches explicit widget `key`. |
+| Attribute | `[disabled]`, `[level="info"]`, `[text="run" i]` | Matches stable widget metadata and parsed scalar props. |
 | Descendant | `Panel Button` | Matches any ancestor relationship. |
 | Direct child | `Panel.controls > Button` | Checks immediate parent. |
 | Child chain | `Window > Panel > HLayout > Button` | Multi-level direct-child chains are supported. |
 | Pseudo-state | `Button:hover` | Supported pseudo-states are listed below. |
-| Structural child | `Button:first-child` | Matches by sibling position. |
+| Structural child | `Button:first-child`, `Button:nth-child(3n+1)`, `*:nth-child(2 of Button.primary)` | Matches by sibling position, optionally filtered by a compound selector list. |
 | Selector function | `Button:not(.ghost)` | `:not(...)`, `:is(...)`, and `:where(...)` support compound selector lists. |
 | Widget part | `NumberInput::stepper` | Part hooks style renderer-owned sub-elements. |
 
-Unsupported selector forms warn and are ignored: attribute selectors other than
-`[key="..."]`, universal selectors, browser pseudo-elements, and dynamic
-pseudo-states inside selector functions such as `:is(:hover, .primary)`.
-`:nth-child(...)` supports integer indexes plus `odd` and `even`.
+Unsupported selector forms warn and are ignored: browser pseudo-elements and
+ancestor pseudo-states inside selector functions such as
+`Panel:is(:hover) Button`.
+`:nth-child(...)` supports integer indexes, `odd`, `even`, `an+b` formulas
+such as `3n+1` and `-n+3`, and `of <selector-list>` filters for compound
+selector lists.
 
 ### Supported Pseudo-States
 
@@ -131,7 +135,7 @@ Visual properties:
 - `border-top-right-radius`
 - `border-bottom-right-radius`
 - `border-bottom-left-radius`
-- `border: <width> solid <color>`
+- `border: none`, `border: 0`, or `border: <width> solid <color>`
 - `box-shadow`
 - `opacity`
 - `accent`
@@ -175,7 +179,7 @@ Supported color values:
 - `transparent`, common named colors, `rgb(...)`, `rgba(...)`, `hsl(...)`,
   and `hsla(...)`.
 - Global `:root` variables through `var(--name)` and
-  `var(--name, fallback)`.
+  `var(--name, fallback)`, including inside larger parseable property values.
 
 Supported background paint values:
 
@@ -199,7 +203,11 @@ simple `repeat(n, ...)`.
 
 First-slice overflow is available through CSS with `overflow`, `overflow-x`,
 and `overflow-y`. `visible` lets children escape container clipping, `hidden`
-clips children, and `auto`/`scroll` opt containers into vertical scrolling.
+clips children, and `auto`/`scroll` opt containers into scroll state.
+Horizontal scroll uses horizontal wheel input or shift-wheel; scrollable panels
+draw vertical and horizontal overlay scrollbars for overflowing axes. Panel
+scrollbar thumbs can be dragged, and clicking a track moves the thumb toward
+that position.
 
 ### Inline Part Styles
 
@@ -447,15 +455,30 @@ Options:
 | `title` | Optional panel title. |
 | `width` | Preferred panel width. |
 
-Overflowing panel children scroll vertically with the mouse wheel. The panel
-frame and title stay in place while child widgets are clipped to the panel.
+Overflowing panel children scroll vertically with the mouse wheel and
+horizontally with horizontal wheel input or shift-wheel. The panel frame, title,
+and inset overlay scrollbar stay in place while child widgets are clipped to
+the panel. Scrollbars stay inside rounded panel corners, remain centered on the
+panel surface, and avoid the bottom-right corner when both axes overflow. The
+thumb can be dragged, clicking the track updates the scroll offset, and
+PageUp/PageDown/Home/End scroll the nearest scrollable ancestor when keyboard
+focus is inside the panel. Shift uses the horizontal axis when horizontal
+overflow exists.
+`Panel::scrollbar-track` styles the track and uses `width` plus uniform
+`padding` for thickness and axis inset; `Panel::scrollbar-thumb` styles the
+thumb.
 
 CSS:
 
 - Type selector: `Panel`.
-- Parts: `accent`.
+- Parts: `accent`, `scrollbar-track`, `scrollbar-thumb`.
 - `Panel::accent` styles the left-side accent fill. `width` controls accent
   thickness and the fill is clipped to the panel shape.
+- `Panel::scrollbar-track` styles the built-in scroll track. `width` controls
+  thickness and uniform `padding` controls the top/bottom inset for vertical
+  scrollbars and the left/right inset for horizontal scrollbars.
+- `Panel::scrollbar-thumb` styles the built-in scroll thumb. `width`,
+  `background`, `border`, `border-radius`, and `opacity` are supported.
 
 ### `Collapsible`
 
@@ -1415,7 +1438,7 @@ Notable non-selectors:
 
 | Widget | Parts |
 | --- | --- |
-| `Panel` | `accent` |
+| `Panel` | `accent`, `scrollbar-track`, `scrollbar-thumb` |
 | `Collapsible` | `header`, `indicator`, `body` |
 | `Button` | `badge` |
 | `NumberInput` | `field`, `stepper`, `stepper-up`, `stepper-down`, `stepper-divider`, `divider`, `caret` |

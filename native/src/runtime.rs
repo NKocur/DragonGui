@@ -19,8 +19,8 @@ use crate::commands::{
     Command, CommandBridge, CommandValue, Dirty, RuntimeEvent, ScatterTelemetry, TableColumnPacket,
 };
 use crate::css_style::{
-    apply_stylesheets_to_tree, matched_part_rule_labels_for_tree, matched_rule_labels_for_tree,
-    StylesheetOrigin, StylesheetStore,
+    apply_stylesheets_to_tree_for_media, matched_part_rule_labels_for_tree_with_media,
+    matched_rule_labels_for_tree_with_media, DgMediaEnvironment, StylesheetOrigin, StylesheetStore,
 };
 use crate::document::{self, NodeProps, ScatterSpec, WidgetKind, WidgetNode};
 use crate::error::DragonError;
@@ -29,9 +29,13 @@ use crate::events::{
     WidgetState,
 };
 use crate::image_widget::ImageRenderer;
-use crate::layout::{compute_layout, is_scroll_container_node, scroll_container_max_y};
+use crate::layout::{
+    compute_layout, is_scroll_container_node, scroll_container_max_x, scroll_container_max_y, Rect,
+};
 use crate::overlays::menu_popup_width;
-use crate::primitives::PrimitivesRenderer;
+use crate::primitives::{
+    panel_scrollbar_geometry, PanelScrollbarAxis, PanelScrollbarAxisGeometry, PrimitivesRenderer,
+};
 use crate::resources::ResourceRegistry;
 use crate::scatter::{self, PointInstance, ScatterWidget};
 use crate::style::{
@@ -235,6 +239,15 @@ fn find_widget<'a>(node: &'a WidgetNode, id: &str) -> Option<&'a WidgetNode> {
     None
 }
 
+fn active_modal_ref(node: &WidgetNode) -> Option<&WidgetNode> {
+    for child in node.children.iter().rev() {
+        if let Some(modal) = active_modal_ref(child) {
+            return Some(modal);
+        }
+    }
+    (node.kind == WidgetKind::Modal && node.props.open.unwrap_or(false)).then_some(node)
+}
+
 fn scroll_container_at_pos(
     node: &WidgetNode,
     layout: &crate::layout::LayoutResult,
@@ -257,12 +270,130 @@ fn scroll_container_at_pos(
     {
         return None;
     }
-    let max_scroll = layout
+    let max_scroll_x = layout
+        .scroll_max_x
+        .get(&node.id)
+        .copied()
+        .unwrap_or_else(|| scroll_container_max_x(node, layout));
+    let max_scroll_y = layout
         .scroll_max_y
         .get(&node.id)
         .copied()
         .unwrap_or_else(|| scroll_container_max_y(node, layout));
-    (max_scroll > 0.0).then(|| node.id.clone())
+    (max_scroll_x > 0.0 || max_scroll_y > 0.0).then(|| node.id.clone())
+}
+
+#[derive(Clone, Debug)]
+struct ScrollContainerKeyboardTarget {
+    id: String,
+    rect: Rect,
+    current_x: f32,
+    current_y: f32,
+    max_x: f32,
+    max_y: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ScrollKeyboardCommand {
+    PageBackward,
+    PageForward,
+    Start,
+    End,
+}
+
+fn scroll_container_keyboard_target_by_id(
+    node: &WidgetNode,
+    layout: &crate::layout::LayoutResult,
+    state: &WidgetState,
+) -> Option<ScrollContainerKeyboardTarget> {
+    if !is_scroll_container_node(node) || state.is_disabled(&node.id) {
+        return None;
+    }
+    let max_x = layout
+        .scroll_max_x
+        .get(&node.id)
+        .copied()
+        .unwrap_or_else(|| scroll_container_max_x(node, layout));
+    let max_y = layout
+        .scroll_max_y
+        .get(&node.id)
+        .copied()
+        .unwrap_or_else(|| scroll_container_max_y(node, layout));
+    if max_x <= 0.0 && max_y <= 0.0 {
+        return None;
+    }
+    let rect = layout.visible_rect(&node.id)?;
+    Some(ScrollContainerKeyboardTarget {
+        id: node.id.clone(),
+        rect,
+        current_x: state.container_scroll_x(&node.id, max_x),
+        current_y: state.container_scroll_y(&node.id, max_y),
+        max_x,
+        max_y,
+    })
+}
+
+fn focused_scroll_container_keyboard_target(
+    node: &WidgetNode,
+    layout: &crate::layout::LayoutResult,
+    state: &WidgetState,
+    focused_id: &str,
+    ancestor: Option<ScrollContainerKeyboardTarget>,
+) -> Option<ScrollContainerKeyboardTarget> {
+    let ancestor = scroll_container_keyboard_target_by_id(node, layout, state).or(ancestor);
+    if node.id == focused_id {
+        return ancestor;
+    }
+    for child in &node.children {
+        if let Some(target) = focused_scroll_container_keyboard_target(
+            child,
+            layout,
+            state,
+            focused_id,
+            ancestor.clone(),
+        ) {
+            return Some(target);
+        }
+    }
+    None
+}
+
+fn scroll_keyboard_command(key: &Key) -> Option<ScrollKeyboardCommand> {
+    match key {
+        Key::Named(NamedKey::PageUp) => Some(ScrollKeyboardCommand::PageBackward),
+        Key::Named(NamedKey::PageDown) => Some(ScrollKeyboardCommand::PageForward),
+        Key::Named(NamedKey::Home) => Some(ScrollKeyboardCommand::Start),
+        Key::Named(NamedKey::End) => Some(ScrollKeyboardCommand::End),
+        _ => None,
+    }
+}
+
+fn scroll_keyboard_destination(
+    target: &ScrollContainerKeyboardTarget,
+    command: ScrollKeyboardCommand,
+    shift: bool,
+) -> Option<(PanelScrollbarAxis, f32)> {
+    let axis = if shift && target.max_x > 0.0 {
+        PanelScrollbarAxis::Horizontal
+    } else if target.max_y > 0.0 {
+        PanelScrollbarAxis::Vertical
+    } else if target.max_x > 0.0 {
+        PanelScrollbarAxis::Horizontal
+    } else {
+        return None;
+    };
+    let (current, max_scroll, page) = match axis {
+        PanelScrollbarAxis::Horizontal => (target.current_x, target.max_x, target.rect.w),
+        PanelScrollbarAxis::Vertical => (target.current_y, target.max_y, target.rect.h),
+    };
+    let page = (page * 0.85).max(1.0);
+    let next = match command {
+        ScrollKeyboardCommand::PageBackward => current - page,
+        ScrollKeyboardCommand::PageForward => current + page,
+        ScrollKeyboardCommand::Start => 0.0,
+        ScrollKeyboardCommand::End => max_scroll,
+    };
+    Some((axis, next.clamp(0.0, max_scroll)))
 }
 
 fn find_widget_mut<'a>(node: &'a mut WidgetNode, id: &str) -> Option<&'a mut WidgetNode> {
@@ -443,6 +574,7 @@ fn position_style_name(value: PositionStyle) -> &'static str {
         PositionStyle::Static => "static",
         PositionStyle::Relative => "relative",
         PositionStyle::Absolute => "absolute",
+        PositionStyle::Fixed => "fixed",
     }
 }
 
@@ -541,12 +673,57 @@ fn insert_layout_length(
     }
 }
 
-fn grid_track_json(value: GridTrackSize) -> Value {
+fn grid_track_json(value: &GridTrackSize) -> Value {
     match value {
-        GridTrackSize::LogicalPx(value) => json!(value),
-        GridTrackSize::Percent(value) => json!({ "percent": value }),
-        GridTrackSize::Fraction(value) => json!({ "fr": value }),
+        GridTrackSize::LogicalPx(value) => json!(*value),
+        GridTrackSize::Percent(value) => json!({ "percent": *value }),
+        GridTrackSize::Fraction(value) => json!({ "fr": *value }),
         GridTrackSize::Auto => json!("auto"),
+        GridTrackSize::FitContent(value) => {
+            json!({ "fit_content": grid_track_fit_content_json(*value) })
+        }
+        GridTrackSize::MinMax { min, max } => {
+            json!({ "minmax": { "min": grid_track_min_json(*min), "max": grid_track_max_json(*max) } })
+        }
+        GridTrackSize::Repeat { kind, tracks } => {
+            json!({
+                "repeat": {
+                    "kind": grid_track_repeat_kind_json(*kind),
+                    "tracks": tracks.iter().map(grid_track_json).collect::<Vec<_>>(),
+                }
+            })
+        }
+    }
+}
+
+fn grid_track_repeat_kind_json(value: crate::style::GridTrackRepeatKind) -> &'static str {
+    match value {
+        crate::style::GridTrackRepeatKind::AutoFit => "auto-fit",
+        crate::style::GridTrackRepeatKind::AutoFill => "auto-fill",
+    }
+}
+
+fn grid_track_fit_content_json(value: crate::style::GridTrackFitContentSize) -> Value {
+    match value {
+        crate::style::GridTrackFitContentSize::LogicalPx(value) => json!(value),
+        crate::style::GridTrackFitContentSize::Percent(value) => json!({ "percent": value }),
+    }
+}
+
+fn grid_track_min_json(value: crate::style::GridTrackMinSize) -> Value {
+    match value {
+        crate::style::GridTrackMinSize::LogicalPx(value) => json!(value),
+        crate::style::GridTrackMinSize::Percent(value) => json!({ "percent": value }),
+        crate::style::GridTrackMinSize::Auto => json!("auto"),
+    }
+}
+
+fn grid_track_max_json(value: crate::style::GridTrackMaxSize) -> Value {
+    match value {
+        crate::style::GridTrackMaxSize::LogicalPx(value) => json!(value),
+        crate::style::GridTrackMaxSize::Percent(value) => json!({ "percent": value }),
+        crate::style::GridTrackMaxSize::Fraction(value) => json!({ "fr": value }),
+        crate::style::GridTrackMaxSize::Auto => json!("auto"),
     }
 }
 
@@ -608,15 +785,40 @@ fn layout_style_snapshot(style: &LayoutStyle) -> Value {
         style.max_height_value,
         style.max_height,
     );
-    insert_number(&mut map, "padding", style.padding);
-    insert_number(&mut map, "padding_left", style.padding_left);
-    insert_number(&mut map, "padding_right", style.padding_right);
-    insert_number(&mut map, "padding_top", style.padding_top);
-    insert_number(&mut map, "padding_bottom", style.padding_bottom);
-    insert_number(&mut map, "margin", style.margin);
-    insert_number(&mut map, "gap", style.gap);
-    insert_number(&mut map, "row_gap", style.row_gap);
-    insert_number(&mut map, "column_gap", style.column_gap);
+    insert_layout_length(&mut map, "padding", style.padding_value, style.padding);
+    insert_layout_length(
+        &mut map,
+        "padding_left",
+        style.padding_left_value,
+        style.padding_left,
+    );
+    insert_layout_length(
+        &mut map,
+        "padding_right",
+        style.padding_right_value,
+        style.padding_right,
+    );
+    insert_layout_length(
+        &mut map,
+        "padding_top",
+        style.padding_top_value,
+        style.padding_top,
+    );
+    insert_layout_length(
+        &mut map,
+        "padding_bottom",
+        style.padding_bottom_value,
+        style.padding_bottom,
+    );
+    insert_layout_length(&mut map, "margin", style.margin_value, style.margin);
+    insert_layout_length(&mut map, "gap", style.gap_value, style.gap);
+    insert_layout_length(&mut map, "row_gap", style.row_gap_value, style.row_gap);
+    insert_layout_length(
+        &mut map,
+        "column_gap",
+        style.column_gap_value,
+        style.column_gap,
+    );
     if let Some(value) = style.overflow {
         map.insert("overflow".to_string(), json!(overflow_style_name(value)));
     }
@@ -641,13 +843,13 @@ fn layout_style_snapshot(style: &LayoutStyle) -> Value {
     if let Some(value) = &style.grid_template_columns {
         map.insert(
             "grid_template_columns".to_string(),
-            Value::Array(value.iter().copied().map(grid_track_json).collect()),
+            Value::Array(value.iter().map(grid_track_json).collect()),
         );
     }
     if let Some(value) = &style.grid_template_rows {
         map.insert(
             "grid_template_rows".to_string(),
-            Value::Array(value.iter().copied().map(grid_track_json).collect()),
+            Value::Array(value.iter().map(grid_track_json).collect()),
         );
     }
     if let Some(value) = style.grid_column {
@@ -809,14 +1011,8 @@ fn transition_property_name(property: crate::style::TransitionProperty) -> &'sta
     }
 }
 
-fn transition_timing_name(timing: TransitionTimingFunction) -> &'static str {
-    match timing {
-        TransitionTimingFunction::Linear => "linear",
-        TransitionTimingFunction::Ease => "ease",
-        TransitionTimingFunction::EaseIn => "ease-in",
-        TransitionTimingFunction::EaseOut => "ease-out",
-        TransitionTimingFunction::EaseInOut => "ease-in-out",
-    }
+fn transition_timing_name(timing: TransitionTimingFunction) -> String {
+    timing.css_text()
 }
 
 fn text_style_snapshot(style: &TextStyle) -> Value {
@@ -994,12 +1190,16 @@ fn node_style_snapshot(
     Value::Object(map)
 }
 
-fn computed_styles_snapshot(root: Option<&WidgetNode>, store: &StylesheetStore) -> Value {
+fn computed_styles_snapshot(
+    root: Option<&WidgetNode>,
+    store: &StylesheetStore,
+    media: Option<DgMediaEnvironment>,
+) -> Value {
     let Some(root) = root else {
         return json!({});
     };
-    let matched_rules = matched_rule_labels_for_tree(root, store);
-    let matched_part_rules = matched_part_rule_labels_for_tree(root, store);
+    let matched_rules = matched_rule_labels_for_tree_with_media(root, store, media);
+    let matched_part_rules = matched_part_rule_labels_for_tree_with_media(root, store, media);
     let mut out = Map::new();
     collect_computed_styles_snapshot(root, &matched_rules, &matched_part_rules, &mut out);
     Value::Object(out)
@@ -1130,6 +1330,7 @@ fn widget_state_snapshot(state: Option<&WidgetState>) -> Value {
         "text_val": &state.text_val,
         "text_cursor": &state.text_cursor,
         "text_scroll_y": &state.text_scroll_y,
+        "container_scroll_x": &state.container_scroll_x,
         "container_scroll_y": &state.container_scroll_y,
         "dropdown_index": &state.dropdown_index,
         "dropdown_items_count": state.dropdown_items.iter().map(|(id, items)| (id.clone(), json!(items.len()))).collect::<Map<_, _>>(),
@@ -1140,6 +1341,7 @@ fn widget_state_snapshot(state: Option<&WidgetState>) -> Value {
         "hover_t": &state.hover_t,
         "open_t": &state.open_t,
         "selected_t": &state.selected_t,
+        "expanded_t": &state.expanded_t,
         "pressed": state.pressed.as_deref(),
         "open_dropdown": state.open_dropdown.as_deref(),
         "dropdown_hover": state.dropdown_hover.as_ref().map(|(id, idx)| json!({"id": id, "index": idx})),
@@ -1416,6 +1618,7 @@ fn pseudo_style_value_changes_text(key: &str, value: &Value) -> bool {
 #[cfg(test)]
 mod style_patch_tests {
     use super::*;
+    use crate::css_style::apply_stylesheets_to_tree;
     use serde_json::json;
 
     #[test]
@@ -1536,7 +1739,7 @@ mod style_patch_tests {
         .unwrap();
         let store = StylesheetStore::default();
 
-        let snapshot = computed_styles_snapshot(Some(&tree), &store);
+        let snapshot = computed_styles_snapshot(Some(&tree), &store, None);
         let button_style = &snapshot["run"]["style"];
 
         assert!(button_style["layout"].is_object());
@@ -1564,13 +1767,36 @@ mod style_patch_tests {
             .unwrap();
         apply_stylesheets_to_tree(&mut tree, &mut store);
 
-        let snapshot = computed_styles_snapshot(Some(&tree), &store);
+        let snapshot = computed_styles_snapshot(Some(&tree), &store, None);
         let transition = &snapshot["run"]["style"]["transition"];
 
         assert_eq!(transition["property"], json!(["background"]));
         assert_eq!(transition["duration_ms"], json!(180));
         assert_eq!(transition["delay_ms"], json!(25));
         assert_eq!(transition["timing_function"], json!("ease-out"));
+    }
+
+    #[test]
+    fn cubic_bezier_transition_easing_solves_curve() {
+        let linear = TransitionTimingFunction::CubicBezier {
+            x1: 0.0,
+            y1: 0.0,
+            x2: 1.0,
+            y2: 1.0,
+        };
+        let fast_out = TransitionTimingFunction::CubicBezier {
+            x1: 0.16,
+            y1: 1.0,
+            x2: 0.3,
+            y2: 1.0,
+        };
+
+        assert!((ease_transition(0.5, linear) - 0.5).abs() < 0.001);
+        assert!(ease_transition(0.5, fast_out) > 0.85);
+        assert_eq!(
+            transition_timing_name(fast_out),
+            "cubic-bezier(0.16, 1, 0.3, 1)"
+        );
     }
 
     #[test]
@@ -1608,30 +1834,134 @@ mod style_patch_tests {
                 timing: TransitionTimingFunction::EaseOut,
             },
         )]);
+        let mut expanded_transitions = HashMap::from([(
+            "advanced".to_string(),
+            HoverTransition {
+                start: Instant::now(),
+                duration: Duration::from_millis(120),
+                delay: Duration::ZERO,
+                from: 1.0,
+                to: 0.0,
+                timing: TransitionTimingFunction::EaseOut,
+            },
+        )]);
         let mut state = WidgetState::default();
         state.hover_t.insert("run".to_string(), 0.5);
         state.open_t.insert("mode".to_string(), 0.5);
         state.selected_t.insert("tab-a".to_string(), 0.5);
+        state.expanded_t.insert("advanced".to_string(), 0.5);
         let mut state = Some(state);
 
         assert!(clear_style_transition_state(
             &mut transitions,
             &mut open_transitions,
             &mut selected_transitions,
+            &mut expanded_transitions,
             &mut state
         ));
         assert!(transitions.is_empty());
         assert!(open_transitions.is_empty());
         assert!(selected_transitions.is_empty());
+        assert!(expanded_transitions.is_empty());
         assert!(state.as_ref().unwrap().hover_t.is_empty());
         assert!(state.as_ref().unwrap().open_t.is_empty());
         assert!(state.as_ref().unwrap().selected_t.is_empty());
+        assert!(state.as_ref().unwrap().expanded_t.is_empty());
         assert!(!clear_style_transition_state(
             &mut transitions,
             &mut open_transitions,
             &mut selected_transitions,
+            &mut expanded_transitions,
             &mut state
         ));
+    }
+
+    #[test]
+    fn scrollbar_drag_maps_pointer_to_scroll_range() {
+        let hit = PanelScrollbarHit {
+            widget_id: "panel".to_string(),
+            axis: PanelScrollbarAxis::Vertical,
+            geometry: PanelScrollbarAxisGeometry {
+                track: crate::layout::Rect {
+                    x: 90.0,
+                    y: 10.0,
+                    w: 4.0,
+                    h: 100.0,
+                },
+                thumb: crate::layout::Rect {
+                    x: 90.0,
+                    y: 10.0,
+                    w: 4.0,
+                    h: 25.0,
+                },
+                max_scroll: 300.0,
+            },
+            on_thumb: true,
+        };
+        let drag = ScrollbarDrag::new(hit, [92.0, 20.0]);
+
+        assert_eq!(drag.compute_scroll([92.0, 20.0]), 0.0);
+        assert_eq!(drag.compute_scroll([92.0, 95.0]), 300.0);
+    }
+
+    #[test]
+    fn scroll_keyboard_destination_pages_and_jumps_axes() {
+        let target = ScrollContainerKeyboardTarget {
+            id: "panel".to_string(),
+            rect: Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 200.0,
+                h: 100.0,
+            },
+            current_x: 30.0,
+            current_y: 20.0,
+            max_x: 400.0,
+            max_y: 300.0,
+        };
+
+        assert_eq!(
+            scroll_keyboard_destination(&target, ScrollKeyboardCommand::PageForward, false),
+            Some((PanelScrollbarAxis::Vertical, 105.0))
+        );
+        assert_eq!(
+            scroll_keyboard_destination(&target, ScrollKeyboardCommand::PageBackward, false),
+            Some((PanelScrollbarAxis::Vertical, 0.0))
+        );
+        assert_eq!(
+            scroll_keyboard_destination(&target, ScrollKeyboardCommand::End, false),
+            Some((PanelScrollbarAxis::Vertical, 300.0))
+        );
+        assert_eq!(
+            scroll_keyboard_destination(&target, ScrollKeyboardCommand::PageForward, true),
+            Some((PanelScrollbarAxis::Horizontal, 200.0))
+        );
+    }
+
+    #[test]
+    fn scroll_keyboard_destination_falls_back_to_horizontal_when_needed() {
+        let target = ScrollContainerKeyboardTarget {
+            id: "strip".to_string(),
+            rect: Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 120.0,
+                h: 80.0,
+            },
+            current_x: 10.0,
+            current_y: 0.0,
+            max_x: 250.0,
+            max_y: 0.0,
+        };
+
+        assert_eq!(
+            scroll_keyboard_destination(&target, ScrollKeyboardCommand::PageForward, false),
+            Some((PanelScrollbarAxis::Horizontal, 112.0))
+        );
+        assert_eq!(
+            scroll_keyboard_destination(&target, ScrollKeyboardCommand::End, false),
+            Some((PanelScrollbarAxis::Horizontal, 250.0))
+        );
     }
 
     #[test]
@@ -1658,7 +1988,7 @@ mod style_patch_tests {
             .unwrap();
         apply_stylesheets_to_tree(&mut tree, &mut store);
 
-        let snapshot = computed_styles_snapshot(Some(&tree), &store);
+        let snapshot = computed_styles_snapshot(Some(&tree), &store, None);
         let parts = &snapshot["amount"]["style"]["parts"];
 
         assert_eq!(
@@ -2001,6 +2331,8 @@ struct WgpuState {
     open_state_snapshot: HashSet<String>,
     selected_transitions: HashMap<String, HoverTransition>,
     selected_state_snapshot: HashSet<String>,
+    expanded_transitions: HashMap<String, HoverTransition>,
+    expanded_state_snapshot: HashSet<String>,
     scatter_metrics: ScatterMetrics,
 }
 
@@ -2095,26 +2427,90 @@ fn ease_transition(t: f32, timing: TransitionTimingFunction) -> f32 {
                 1.0 - (-2.0 * t + 2.0).powi(2) * 0.5
             }
         }
+        TransitionTimingFunction::CubicBezier { x1, y1, x2, y2 } => {
+            cubic_bezier_transition(t, x1, y1, x2, y2)
+        }
     }
+}
+
+fn cubic_bezier_transition(t: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
+    if t <= 0.0 {
+        return 0.0;
+    }
+    if t >= 1.0 {
+        return 1.0;
+    }
+
+    let mut parameter = t;
+    for _ in 0..8 {
+        let x = cubic_bezier_axis(parameter, x1, x2) - t;
+        if x.abs() < 0.000_01 {
+            return cubic_bezier_axis(parameter, y1, y2).clamp(0.0, 1.0);
+        }
+        let derivative = cubic_bezier_axis_derivative(parameter, x1, x2);
+        if derivative.abs() < 0.000_001 {
+            break;
+        }
+        let next = parameter - x / derivative;
+        if !(0.0..=1.0).contains(&next) {
+            break;
+        }
+        parameter = next;
+    }
+
+    let mut lower = 0.0;
+    let mut upper = 1.0;
+    parameter = t;
+    for _ in 0..16 {
+        let x = cubic_bezier_axis(parameter, x1, x2);
+        if (x - t).abs() < 0.000_01 {
+            break;
+        }
+        if x < t {
+            lower = parameter;
+        } else {
+            upper = parameter;
+        }
+        parameter = (lower + upper) * 0.5;
+    }
+    cubic_bezier_axis(parameter, y1, y2).clamp(0.0, 1.0)
+}
+
+fn cubic_bezier_axis(t: f32, p1: f32, p2: f32) -> f32 {
+    let c = 3.0 * p1;
+    let b = 3.0 * (p2 - p1) - c;
+    let a = 1.0 - c - b;
+    ((a * t + b) * t + c) * t
+}
+
+fn cubic_bezier_axis_derivative(t: f32, p1: f32, p2: f32) -> f32 {
+    let c = 3.0 * p1;
+    let b = 3.0 * (p2 - p1) - c;
+    let a = 1.0 - c - b;
+    (3.0 * a * t + 2.0 * b) * t + c
 }
 
 fn clear_style_transition_state(
     hover_transitions: &mut HashMap<String, HoverTransition>,
     open_transitions: &mut HashMap<String, HoverTransition>,
     selected_transitions: &mut HashMap<String, HoverTransition>,
+    expanded_transitions: &mut HashMap<String, HoverTransition>,
     widget_state: &mut Option<WidgetState>,
 ) -> bool {
     let had_transitions = !hover_transitions.is_empty()
         || !open_transitions.is_empty()
-        || !selected_transitions.is_empty();
+        || !selected_transitions.is_empty()
+        || !expanded_transitions.is_empty();
     hover_transitions.clear();
     open_transitions.clear();
     selected_transitions.clear();
+    expanded_transitions.clear();
     let had_progress = widget_state.as_mut().is_some_and(|state| {
         let had_hover = !std::mem::take(&mut state.hover_t).is_empty();
         let had_open = !std::mem::take(&mut state.open_t).is_empty();
         let had_selected = !std::mem::take(&mut state.selected_t).is_empty();
-        had_hover || had_open || had_selected
+        let had_expanded = !std::mem::take(&mut state.expanded_t).is_empty();
+        had_hover || had_open || had_selected || had_expanded
     });
     had_transitions || had_progress
 }
@@ -2144,6 +2540,19 @@ fn collect_selected_widget_ids(
     }
     for child in &node.children {
         collect_selected_widget_ids(child, state, out);
+    }
+}
+
+fn collect_expanded_widget_ids(
+    node: &WidgetNode,
+    state: Option<&WidgetState>,
+    out: &mut HashSet<String>,
+) {
+    if state.is_some_and(|state| state.is_expanded_widget(&node.id)) {
+        out.insert(node.id.clone());
+    }
+    for child in &node.children {
+        collect_expanded_widget_ids(child, state, out);
     }
 }
 
@@ -2265,6 +2674,10 @@ impl WgpuState {
         if let Some(tree) = &spec.widget_tree {
             collect_selected_widget_ids(tree, widget_state.as_ref(), &mut selected_state_snapshot);
         }
+        let mut expanded_state_snapshot = HashSet::new();
+        if let Some(tree) = &spec.widget_tree {
+            collect_expanded_widget_ids(tree, widget_state.as_ref(), &mut expanded_state_snapshot);
+        }
         let mut widget_kinds = HashMap::new();
         if let Some(tree) = &spec.widget_tree {
             collect_widget_kinds(tree, &mut widget_kinds);
@@ -2305,6 +2718,8 @@ impl WgpuState {
             open_state_snapshot,
             selected_transitions: HashMap::new(),
             selected_state_snapshot,
+            expanded_transitions: HashMap::new(),
+            expanded_state_snapshot,
             scatter_metrics: ScatterMetrics::default(),
         };
 
@@ -2313,10 +2728,27 @@ impl WgpuState {
         Ok((state, upload_ms))
     }
 
+    fn media_environment(&self) -> DgMediaEnvironment {
+        DgMediaEnvironment::from_physical_size(
+            self.config.width as f32,
+            self.config.height as f32,
+            self.scale_factor,
+        )
+    }
+
+    fn reapply_stylesheets_for_current_viewport(&mut self) {
+        let media = self.media_environment();
+        if let Some(tree) = &mut self.widget_tree {
+            apply_stylesheets_to_tree_for_media(tree, &mut self.stylesheets, media);
+        }
+    }
+
     /// Recompute layout and push scatter viewport + primitives + text to GPU.
     fn apply_layout(&mut self) {
+        self.reapply_stylesheets_for_current_viewport();
         self.sync_open_transitions();
         self.sync_selected_transitions();
+        self.sync_expanded_transitions();
         // Destructure to get separate borrows of each field.
         let WgpuState {
             widget_tree,
@@ -2496,6 +2928,7 @@ impl WgpuState {
     fn rebuild_visuals(&mut self) {
         self.sync_open_transitions();
         self.sync_selected_transitions();
+        self.sync_expanded_transitions();
         self.rebuild_text();
         self.rebuild_primitives();
     }
@@ -2544,6 +2977,30 @@ impl WgpuState {
         }
         for id in current.difference(&old) {
             changed |= self.start_selected_transition(id, 1.0);
+        }
+        changed
+    }
+
+    fn current_expanded_widget_ids(&self) -> HashSet<String> {
+        let mut expanded = HashSet::new();
+        if let Some(tree) = self.widget_tree.as_ref() {
+            collect_expanded_widget_ids(tree, self.widget_state.as_ref(), &mut expanded);
+        }
+        expanded
+    }
+
+    fn sync_expanded_transitions(&mut self) -> bool {
+        let current = self.current_expanded_widget_ids();
+        if current == self.expanded_state_snapshot {
+            return false;
+        }
+        let old = std::mem::replace(&mut self.expanded_state_snapshot, current.clone());
+        let mut changed = false;
+        for id in old.difference(&current) {
+            changed |= self.start_expanded_transition(id, 0.0);
+        }
+        for id in current.difference(&old) {
+            changed |= self.start_expanded_transition(id, 1.0);
         }
         changed
     }
@@ -2670,6 +3127,36 @@ impl WgpuState {
         true
     }
 
+    fn start_expanded_transition(&mut self, id: &str, to: f32) -> bool {
+        let Some((duration, delay, timing)) = self.expanded_transition_config(id) else {
+            self.expanded_transitions.remove(id);
+            if let Some(state) = &mut self.widget_state {
+                state.expanded_t.remove(id);
+            }
+            return false;
+        };
+        let from = self
+            .widget_state
+            .as_ref()
+            .and_then(|state| state.expanded_t.get(id).copied())
+            .unwrap_or(if to >= 0.5 { 0.0 } else { 1.0 });
+        if let Some(state) = &mut self.widget_state {
+            state.expanded_t.insert(id.to_string(), from);
+        }
+        self.expanded_transitions.insert(
+            id.to_string(),
+            HoverTransition {
+                start: Instant::now(),
+                duration,
+                delay,
+                from,
+                to,
+                timing,
+            },
+        );
+        true
+    }
+
     fn hover_transition_config(
         &self,
         id: &str,
@@ -2689,6 +3176,15 @@ impl WgpuState {
     }
 
     fn selected_transition_config(
+        &self,
+        id: &str,
+    ) -> Option<(Duration, Duration, TransitionTimingFunction)> {
+        let tree = self.widget_tree.as_ref()?;
+        let node = find_widget(tree, id)?;
+        transition_config(&node.style.transition)
+    }
+
+    fn expanded_transition_config(
         &self,
         id: &str,
     ) -> Option<(Duration, Duration, TransitionTimingFunction)> {
@@ -2826,11 +3322,55 @@ impl WgpuState {
         changed
     }
 
+    fn tick_expanded_transitions(&mut self) -> bool {
+        if self.expanded_transitions.is_empty() {
+            return false;
+        }
+        let now = Instant::now();
+        let ids: Vec<String> = self.expanded_transitions.keys().cloned().collect();
+        let mut finished = Vec::new();
+        let mut changed = false;
+        for id in ids {
+            let Some(transition) = self.expanded_transitions.get(&id) else {
+                continue;
+            };
+            let elapsed = now.saturating_duration_since(transition.start);
+            let raw_t = if elapsed < transition.delay {
+                0.0
+            } else {
+                let active = elapsed - transition.delay;
+                (active.as_secs_f32() / transition.duration.as_secs_f32()).clamp(0.0, 1.0)
+            };
+            let eased = ease_transition(raw_t, transition.timing);
+            let value = transition.from + (transition.to - transition.from) * eased;
+            if let Some(state) = &mut self.widget_state {
+                state.expanded_t.insert(id.clone(), value.clamp(0.0, 1.0));
+            }
+            changed = true;
+            if raw_t >= 1.0 {
+                finished.push(id);
+            }
+        }
+        for id in finished {
+            let Some(transition) = self.expanded_transitions.remove(&id) else {
+                continue;
+            };
+            if let Some(state) = &mut self.widget_state {
+                state.expanded_t.remove(&id);
+                if transition.to > 0.0 {
+                    state.expanded_t.insert(id, 1.0);
+                }
+            }
+        }
+        changed
+    }
+
     fn cancel_hover_transitions(&mut self) -> bool {
         clear_style_transition_state(
             &mut self.hover_transitions,
             &mut self.open_transitions,
             &mut self.selected_transitions,
+            &mut self.expanded_transitions,
             &mut self.widget_state,
         )
     }
@@ -2839,6 +3379,7 @@ impl WgpuState {
         !self.hover_transitions.is_empty()
             || !self.open_transitions.is_empty()
             || !self.selected_transitions.is_empty()
+            || !self.expanded_transitions.is_empty()
     }
 
     fn resize(&mut self, width: u32, height: u32) {
@@ -3449,9 +3990,7 @@ impl WgpuState {
 
     fn reapply_stylesheets(&mut self) {
         self.cancel_hover_transitions();
-        if let Some(tree) = &mut self.widget_tree {
-            apply_stylesheets_to_tree(tree, &mut self.stylesheets);
-        }
+        self.reapply_stylesheets_for_current_viewport();
     }
 
     fn set_stylesheet(&mut self, origin: StylesheetOrigin, css: &str) -> Result<(), String> {
@@ -3576,7 +4115,11 @@ impl WgpuState {
                 "warning_count": self.stylesheets.warnings().len(),
                 "last_error": self.stylesheets.last_error.as_deref(),
             },
-            "computed_styles": computed_styles_snapshot(self.widget_tree.as_ref(), &self.stylesheets),
+            "computed_styles": computed_styles_snapshot(
+                self.widget_tree.as_ref(),
+                &self.stylesheets,
+                Some(self.media_environment()),
+            ),
             "tree": self.widget_tree.as_ref().map(node_snapshot),
             "layout": layout_snapshot(self.current_layout.as_ref()),
             "state": widget_state_snapshot(self.widget_state.as_ref()),
@@ -3779,6 +4322,79 @@ impl WgpuState {
         scroll_container_at_pos(tree, layout, state, pos)
     }
 
+    fn keyboard_scroll_container_target(
+        &self,
+        fallback_pos: Option<[f32; 2]>,
+    ) -> Option<ScrollContainerKeyboardTarget> {
+        let tree = self.widget_tree.as_ref()?;
+        let layout = self.current_layout.as_ref()?;
+        let state = self.widget_state.as_ref()?;
+        if let Some(target) = state.focused.as_deref().and_then(|focused| {
+            focused_scroll_container_keyboard_target(tree, layout, state, focused, None)
+        }) {
+            return Some(target);
+        }
+        let id = fallback_pos.and_then(|pos| scroll_container_at_pos(tree, layout, state, pos))?;
+        let node = find_widget(tree, &id)?;
+        scroll_container_keyboard_target_by_id(node, layout, state)
+    }
+
+    fn panel_scrollbar_at(&self, pos: [f32; 2]) -> Option<PanelScrollbarHit> {
+        let tree = self.widget_tree.as_ref()?;
+        let layout = self.current_layout.as_ref()?;
+        let state = self.widget_state.as_ref()?;
+        let root = active_modal_ref(tree).unwrap_or(tree);
+        let slop = (5.0 * self.scale_factor).max(4.0);
+        self.panel_scrollbar_at_node(root, layout, state, pos, slop)
+    }
+
+    fn panel_scrollbar_at_node(
+        &self,
+        node: &WidgetNode,
+        layout: &crate::layout::LayoutResult,
+        state: &WidgetState,
+        pos: [f32; 2],
+        slop: f32,
+    ) -> Option<PanelScrollbarHit> {
+        if node.kind == WidgetKind::Panel && !state.is_disabled(&node.id) {
+            if let Some(rect) = layout.visible_rect(&node.id) {
+                if let Some(geometry) = panel_scrollbar_geometry(
+                    node,
+                    layout,
+                    state,
+                    &self.theme,
+                    self.scale_factor,
+                    rect,
+                ) {
+                    if let Some(hit) = panel_scrollbar_axis_hit(
+                        &node.id,
+                        PanelScrollbarAxis::Horizontal,
+                        geometry.horizontal,
+                        pos,
+                        slop,
+                    ) {
+                        return Some(hit);
+                    }
+                    if let Some(hit) = panel_scrollbar_axis_hit(
+                        &node.id,
+                        PanelScrollbarAxis::Vertical,
+                        geometry.vertical,
+                        pos,
+                        slop,
+                    ) {
+                        return Some(hit);
+                    }
+                }
+            }
+        }
+        for child in node.children.iter().rev() {
+            if let Some(hit) = self.panel_scrollbar_at_node(child, layout, state, pos, slop) {
+                return Some(hit);
+            }
+        }
+        None
+    }
+
     fn text_area_scroll_geometry(&self, id: &str) -> Option<(f32, f32)> {
         let tree = self.widget_tree.as_ref()?;
         let layout = self.current_layout.as_ref()?;
@@ -3808,7 +4424,7 @@ impl WgpuState {
         changed
     }
 
-    fn scroll_container(&mut self, id: &str, wheel_y: f32) -> bool {
+    fn scroll_container(&mut self, id: &str, wheel_x: f32, wheel_y: f32) -> bool {
         let Some(tree) = self.widget_tree.as_ref() else {
             return false;
         };
@@ -3818,20 +4434,68 @@ impl WgpuState {
         let Some(node) = find_widget(tree, id) else {
             return false;
         };
-        let max_scroll = layout
+        let max_scroll_x = layout
+            .scroll_max_x
+            .get(id)
+            .copied()
+            .unwrap_or_else(|| scroll_container_max_x(node, layout));
+        let max_scroll_y = layout
             .scroll_max_y
             .get(id)
             .copied()
             .unwrap_or_else(|| scroll_container_max_y(node, layout));
-        if max_scroll <= 0.0 {
+        if max_scroll_x <= 0.0 && max_scroll_y <= 0.0 {
             return false;
         }
-        let delta_y = -wheel_y * self.theme.control_height() * self.scale_factor * 0.75;
+        let line = self.theme.control_height() * self.scale_factor * 0.75;
+        let delta_x = -wheel_x * line;
+        let delta_y = -wheel_y * line;
         let changed = self
             .widget_state
             .as_mut()
-            .map(|state| state.scroll_container(id, delta_y, max_scroll))
+            .map(|state| state.scroll_container(id, delta_x, delta_y, max_scroll_x, max_scroll_y))
             .unwrap_or(false);
+        if changed {
+            self.apply_layout();
+        }
+        changed
+    }
+
+    fn scroll_container_to_axis(
+        &mut self,
+        id: &str,
+        axis: PanelScrollbarAxis,
+        scroll: f32,
+    ) -> bool {
+        let Some(tree) = self.widget_tree.as_ref() else {
+            return false;
+        };
+        let Some(layout) = self.current_layout.as_ref() else {
+            return false;
+        };
+        let Some(node) = find_widget(tree, id) else {
+            return false;
+        };
+        let max_scroll_x = layout
+            .scroll_max_x
+            .get(id)
+            .copied()
+            .unwrap_or_else(|| scroll_container_max_x(node, layout));
+        let max_scroll_y = layout
+            .scroll_max_y
+            .get(id)
+            .copied()
+            .unwrap_or_else(|| scroll_container_max_y(node, layout));
+        let Some(state) = self.widget_state.as_mut() else {
+            return false;
+        };
+        let current_x = state.container_scroll_x(id, max_scroll_x);
+        let current_y = state.container_scroll_y(id, max_scroll_y);
+        let (delta_x, delta_y) = match axis {
+            PanelScrollbarAxis::Horizontal => (scroll - current_x, 0.0),
+            PanelScrollbarAxis::Vertical => (0.0, scroll - current_y),
+        };
+        let changed = state.scroll_container(id, delta_x, delta_y, max_scroll_x, max_scroll_y);
         if changed {
             self.apply_layout();
         }
@@ -4039,6 +4703,43 @@ fn rect_contains_pos(r: &crate::layout::Rect, pos: [f32; 2]) -> bool {
     pos[0] >= r.x && pos[0] < r.x + r.w && pos[1] >= r.y && pos[1] < r.y + r.h
 }
 
+fn scrollbar_rect_contains(
+    axis: PanelScrollbarAxis,
+    r: &crate::layout::Rect,
+    pos: [f32; 2],
+    slop: f32,
+) -> bool {
+    match axis {
+        PanelScrollbarAxis::Horizontal => {
+            pos[0] >= r.x && pos[0] < r.x + r.w && pos[1] >= r.y - slop && pos[1] < r.y + r.h + slop
+        }
+        PanelScrollbarAxis::Vertical => {
+            pos[0] >= r.x - slop && pos[0] < r.x + r.w + slop && pos[1] >= r.y && pos[1] < r.y + r.h
+        }
+    }
+}
+
+fn panel_scrollbar_axis_hit(
+    widget_id: &str,
+    axis: PanelScrollbarAxis,
+    geometry: Option<PanelScrollbarAxisGeometry>,
+    pos: [f32; 2],
+    slop: f32,
+) -> Option<PanelScrollbarHit> {
+    let geometry = geometry?;
+    let on_thumb = scrollbar_rect_contains(axis, &geometry.thumb, pos, slop);
+    if on_thumb || scrollbar_rect_contains(axis, &geometry.track, pos, slop) {
+        Some(PanelScrollbarHit {
+            widget_id: widget_id.to_string(),
+            axis,
+            geometry,
+            on_thumb,
+        })
+    } else {
+        None
+    }
+}
+
 // ---------------------------------------------------------------------------
 // winit ApplicationHandler
 // ---------------------------------------------------------------------------
@@ -4051,6 +4752,77 @@ struct SliderChangeDispatch {
     widget_id: String,
     value: f32,
     at: Instant,
+}
+
+#[derive(Debug, Clone)]
+struct PanelScrollbarHit {
+    widget_id: String,
+    axis: PanelScrollbarAxis,
+    geometry: PanelScrollbarAxisGeometry,
+    on_thumb: bool,
+}
+
+#[derive(Debug, Clone)]
+struct ScrollbarDrag {
+    widget_id: String,
+    axis: PanelScrollbarAxis,
+    track_start: f32,
+    track_len: f32,
+    thumb_len: f32,
+    grab_offset: f32,
+    max_scroll: f32,
+}
+
+impl ScrollbarDrag {
+    fn new(hit: PanelScrollbarHit, pos: [f32; 2]) -> Self {
+        let axis_pos = scrollbar_axis_pos(hit.axis, pos);
+        let thumb_start = scrollbar_axis_start(hit.axis, hit.geometry.thumb);
+        let grab_offset = if hit.on_thumb {
+            (axis_pos - thumb_start).clamp(0.0, scrollbar_axis_len(hit.axis, hit.geometry.thumb))
+        } else {
+            scrollbar_axis_len(hit.axis, hit.geometry.thumb) * 0.5
+        };
+        Self {
+            widget_id: hit.widget_id,
+            axis: hit.axis,
+            track_start: scrollbar_axis_start(hit.axis, hit.geometry.track),
+            track_len: scrollbar_axis_len(hit.axis, hit.geometry.track),
+            thumb_len: scrollbar_axis_len(hit.axis, hit.geometry.thumb),
+            grab_offset,
+            max_scroll: hit.geometry.max_scroll,
+        }
+    }
+
+    fn compute_scroll(&self, pos: [f32; 2]) -> f32 {
+        let travel = (self.track_len - self.thumb_len).max(0.0);
+        if travel <= f32::EPSILON {
+            return 0.0;
+        }
+        let thumb_start = scrollbar_axis_pos(self.axis, pos) - self.grab_offset;
+        let t = ((thumb_start - self.track_start) / travel).clamp(0.0, 1.0);
+        t * self.max_scroll.max(0.0)
+    }
+}
+
+fn scrollbar_axis_pos(axis: PanelScrollbarAxis, pos: [f32; 2]) -> f32 {
+    match axis {
+        PanelScrollbarAxis::Horizontal => pos[0],
+        PanelScrollbarAxis::Vertical => pos[1],
+    }
+}
+
+fn scrollbar_axis_start(axis: PanelScrollbarAxis, rect: crate::layout::Rect) -> f32 {
+    match axis {
+        PanelScrollbarAxis::Horizontal => rect.x,
+        PanelScrollbarAxis::Vertical => rect.y,
+    }
+}
+
+fn scrollbar_axis_len(axis: PanelScrollbarAxis, rect: crate::layout::Rect) -> f32 {
+    match axis {
+        PanelScrollbarAxis::Horizontal => rect.w,
+        PanelScrollbarAxis::Vertical => rect.h,
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -4110,6 +4882,8 @@ struct DragonApp {
     change_cbs: HashMap<String, Box<dyn Fn(ChangeValue) + Send>>,
     /// Active slider drag session (pointer-down on a Slider widget).
     slider_drag: Option<SliderDrag>,
+    /// Active panel scrollbar drag session.
+    scrollbar_drag: Option<ScrollbarDrag>,
     scatter_press_pos: Option<[f32; 2]>,
     /// Last slider value sent to Python during drag throttling.
     last_slider_emit: Option<SliderChangeDispatch>,
@@ -4144,6 +4918,7 @@ impl DragonApp {
             click_cbs: HashMap::new(),
             change_cbs: HashMap::new(),
             slider_drag: None,
+            scrollbar_drag: None,
             scatter_press_pos: None,
             last_slider_emit: None,
             pending_slider_emit: None,
@@ -4255,6 +5030,13 @@ impl DragonApp {
                 "pan_active": self.pan_active,
                 "pressed_id": self.pressed_id.as_deref(),
                 "last_mouse_pos": self.last_mouse_pos,
+                "scrollbar_drag": self.scrollbar_drag.as_ref().map(|drag| json!({
+                    "id": drag.widget_id,
+                    "axis": match drag.axis {
+                        PanelScrollbarAxis::Horizontal => "horizontal",
+                        PanelScrollbarAxis::Vertical => "vertical",
+                    },
+                })),
                 "pending_slider_emit": self.pending_slider_emit.as_ref().map(|(id, value)| json!({
                     "id": id,
                     "value": value,
@@ -4965,6 +5747,25 @@ impl DragonApp {
         }
     }
 
+    fn begin_scrollbar_drag(&mut self, hit: PanelScrollbarHit, pos: [f32; 2]) {
+        self.scrollbar_drag = Some(ScrollbarDrag::new(hit, pos));
+        self.update_scrollbar_drag(pos);
+    }
+
+    fn update_scrollbar_drag(&mut self, pos: [f32; 2]) {
+        let Some(drag) = self.scrollbar_drag.as_ref().cloned() else {
+            return;
+        };
+        let scroll = drag.compute_scroll(pos);
+        let changed = self
+            .gpu
+            .as_mut()
+            .is_some_and(|gpu| gpu.scroll_container_to_axis(&drag.widget_id, drag.axis, scroll));
+        if changed {
+            self.request_redraw();
+        }
+    }
+
     fn activate_widget(&mut self, id: &str, kind: WidgetKind) {
         let needs_text_rebuild = matches!(kind, WidgetKind::Dropdown | WidgetKind::Menu);
         let mut needs_layout_rebuild = false;
@@ -5203,6 +6004,35 @@ impl DragonApp {
             }
         }
         self.request_redraw();
+    }
+
+    fn handle_scroll_container_key(&mut self, event: &winit::event::KeyEvent) -> bool {
+        if self.modifiers.control_key() || self.modifiers.alt_key() || self.modifiers.super_key() {
+            return false;
+        }
+        let Some(command) = scroll_keyboard_command(&event.logical_key) else {
+            return false;
+        };
+        let Some(target) = self
+            .gpu
+            .as_ref()
+            .and_then(|gpu| gpu.keyboard_scroll_container_target(self.last_mouse_pos))
+        else {
+            return false;
+        };
+        let Some((axis, scroll)) =
+            scroll_keyboard_destination(&target, command, self.modifiers.shift_key())
+        else {
+            return false;
+        };
+        let changed = self
+            .gpu
+            .as_mut()
+            .is_some_and(|gpu| gpu.scroll_container_to_axis(&target.id, axis, scroll));
+        if changed {
+            self.request_redraw();
+        }
+        true
     }
 
     fn handle_keyboard_input(&mut self, event: winit::event::KeyEvent) {
@@ -5502,6 +6332,10 @@ impl DragonApp {
                 }
                 _ => {}
             }
+        }
+
+        if self.handle_scroll_container_key(&event) {
+            return;
         }
 
         let reset = matches!(
@@ -5874,6 +6708,10 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                 gpu.rebuild_visuals();
                 request_redraw = true;
             }
+            if gpu.tick_expanded_transitions() {
+                gpu.rebuild_visuals();
+                request_redraw = true;
+            }
             next_deadline = gpu.next_toast_deadline();
             if gpu.has_style_transitions() {
                 let transition_deadline = Instant::now() + Duration::from_millis(16);
@@ -5932,12 +6770,17 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                             let was_orbiting = self.orbit_active;
                             let scatter_press = self.scatter_press_pos.take();
                             self.orbit_active = false;
+                            let released_scrollbar = self.scrollbar_drag.take().is_some();
                             let released_slider =
                                 self.slider_drag.as_ref().map(|drag| drag.widget_id.clone());
                             if let Some(id) = released_slider {
                                 self.flush_slider_change(&id);
                             }
                             self.slider_drag = None;
+                            if released_scrollbar {
+                                self.request_redraw();
+                                return;
+                            }
 
                             if was_orbiting {
                                 let pos = self.last_mouse_pos.unwrap_or([0.0, 0.0]);
@@ -6046,6 +6889,19 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                             {
                                 self.set_focus(Some(id.clone()));
                                 self.select_dropdown_option(&id, idx);
+                                return;
+                            }
+
+                            if let Some(hit) = (!modal_active)
+                                .then(|| self.gpu.as_ref().and_then(|g| g.panel_scrollbar_at(pos)))
+                                .flatten()
+                            {
+                                self.set_focus(None);
+                                if let Some(gpu) = &mut self.gpu {
+                                    gpu.close_popups();
+                                }
+                                self.begin_scrollbar_drag(hit, pos);
+                                self.request_redraw();
                                 return;
                             }
 
@@ -6171,8 +7027,10 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
             WindowEvent::CursorMoved { position, .. } => {
                 let new_pos = [position.x as f32, position.y as f32];
 
-                // Slider drag takes priority.
-                if self.slider_drag.is_some() {
+                // Drag interactions take priority.
+                if self.scrollbar_drag.is_some() {
+                    self.update_scrollbar_drag(new_pos);
+                } else if self.slider_drag.is_some() {
                     self.update_slider_drag(new_pos[0], false);
                 } else if let Some(old) = self.last_mouse_pos {
                     let delta = glam::Vec2::new(new_pos[0] - old[0], new_pos[1] - old[1]);
@@ -6192,7 +7050,11 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                 }
 
                 // Update hover state when no button is held.
-                if self.slider_drag.is_none() && !self.orbit_active && !self.pan_active {
+                if self.scrollbar_drag.is_none()
+                    && self.slider_drag.is_none()
+                    && !self.orbit_active
+                    && !self.pan_active
+                {
                     let new_dropdown_hover = self
                         .gpu
                         .as_ref()
@@ -6270,11 +7132,22 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                         .as_ref()
                         .and_then(|gpu| gpu.scroll_container_at(pos))
                     {
-                        if self
-                            .gpu
-                            .as_mut()
-                            .is_some_and(|gpu| gpu.scroll_container(&id, scroll_y))
-                        {
+                        let container_scroll_x = if scroll_x.abs() >= 0.5 {
+                            scroll_x
+                        } else if self.modifiers.shift_key() {
+                            scroll_y
+                        } else {
+                            0.0
+                        };
+                        let container_scroll_y =
+                            if self.modifiers.shift_key() && scroll_x.abs() < 0.5 {
+                                0.0
+                            } else {
+                                scroll_y
+                            };
+                        if self.gpu.as_mut().is_some_and(|gpu| {
+                            gpu.scroll_container(&id, container_scroll_x, container_scroll_y)
+                        }) {
                             self.request_redraw();
                         }
                         return;

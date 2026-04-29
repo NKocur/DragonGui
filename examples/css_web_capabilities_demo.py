@@ -13,12 +13,14 @@ app = dg.App(theme=dg.Theme.dark(accent="#5aa9ff", radius=8))
 app.stylesheet(
     """
     :root {
-        --card-shadow: 0 18px 44px rgba(0, 0, 0, 0.34);
-        --soft-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+        --card-shadow: 0 2px 10px rgba(0, 0, 0, 0.18), 0 18px 44px rgba(0, 0, 0, 0.34);
+        --soft-shadow: 0 1px 5px rgba(0, 0, 0, 0.16), 0 8px 24px rgba(0, 0, 0, 0.22);
         --hero-bg:
             radial-gradient(circle at 18% 20%, rgba(116, 221, 176, 0.24) 0%, rgba(116, 221, 176, 0.07) 40%, transparent 70%),
             radial-gradient(circle at 82% 28%, rgba(90, 169, 255, 0.22) 0%, rgba(90, 169, 255, 0.06) 36%, transparent 68%),
             linear-gradient(135deg, rgba(78, 129, 196, 0.38) 0%, rgba(44, 58, 91, 0.28) 52%, rgba(17, 24, 38, 0.96) 100%);
+        --panel-border: rgba(255, 255, 255, 0.10);
+        --button-shadow-color: rgba(0, 0, 0, 0.20);
         --inputs-offset: 560px;
         --inputs-min: 220px;
     }
@@ -33,11 +35,24 @@ app.stylesheet(
 
     Panel {
         background: rgba(18, 25, 39, 0.92);
-        border: 1px solid rgba(255, 255, 255, 0.10);
+        border: 1px solid var(--panel-border);
         border-radius: 18px;
         box-shadow: var(--card-shadow);
         padding: 18px;
         gap: 12px;
+    }
+
+    Panel::scrollbar-track {
+        width: 5px;
+        padding: 14px;
+        background: rgba(255, 255, 255, 0.10);
+        border-radius: 999px;
+    }
+
+    Panel::scrollbar-thumb {
+        width: 5px;
+        background: rgba(90, 169, 255, 0.66);
+        border-radius: 999px;
     }
 
     Panel.compact {
@@ -56,20 +71,41 @@ app.stylesheet(
 
     Panel.grid-demo {
         display: grid;
-        grid-template-columns: 150px 1fr 1fr;
-        grid-template-rows: 58px 76px;
-        column-gap: 10px;
-        row-gap: 10px;
+        grid-template-columns: fit-content(190px) repeat(auto-fill, minmax(150px, 1fr));
+        grid-template-rows: fit-content(58px) 76px;
+        column-gap: calc(1% + 6px);
+        row-gap: calc(1% + 6px);
         overflow: visible;
-        padding: 10px;
+        padding: calc(1% + 8px);
     }
 
     Panel.grid-tile {
         background: rgba(255, 255, 255, 0.07);
         border-color: rgba(255, 255, 255, 0.12);
         border-radius: 10px;
-        box-shadow: none;
-        padding: 10px;
+        box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.12),
+            inset 0 -16px 28px rgba(0, 0, 0, 0.14);
+        padding: calc(1% + 6px);
+    }
+
+    Panel.grid-demo > * {
+        opacity: 0.96;
+    }
+
+    Panel.grid-demo > *:nth-child(3n + 1) {
+        border-color: rgba(255, 211, 106, 0.36);
+    }
+
+    Panel.grid-demo > *:nth-child(2 of Panel.grid-demo > Panel.grid-tile) {
+        background: rgba(90, 169, 255, 0.12);
+        border-color: rgba(90, 169, 255, 0.36);
+    }
+
+    @supports (display: grid) and (selector(Panel.grid-demo > Panel.grid-tile)) {
+        Panel.grid-demo {
+            border-color: rgba(116, 221, 176, 0.30);
+        }
     }
 
     Panel.grid-sidebar {
@@ -97,6 +133,27 @@ app.stylesheet(
     Panel.grid-right {
         grid-column: 3;
         grid-row: 2;
+    }
+
+    Panel.horizontal-strip {
+        width: 280px;
+        height: 96px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        padding: 12px;
+        gap: 0;
+    }
+
+    HLayout.strip-row {
+        width: 420px;
+        height: 36px;
+        gap: 8px;
+        flex-shrink: 0;
+    }
+
+    Button.strip-item {
+        width: 128px;
+        flex-shrink: 0;
     }
 
     Panel.hero {
@@ -158,15 +215,15 @@ app.stylesheet(
         border-radius: 12px;
         color: white;
         font-weight: 700;
-        box-shadow: 0 7px 16px rgba(0, 0, 0, 0.20);
+        box-shadow: 0 7px 16px var(--button-shadow-color);
     }
 
     Button.motion {
         background: rgba(90, 169, 255, 0.16);
         border-color: rgba(90, 169, 255, 0.38);
-        transition-property: background, border-color, transform;
+        transition-property: background, border-color, translate, scale;
         transition-duration: 220ms;
-        transition-timing-function: ease-out;
+        transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
     }
 
     Button:is(:hover, :focus) {
@@ -177,11 +234,13 @@ app.stylesheet(
     Button.motion:hover {
         background: rgba(90, 169, 255, 0.42);
         border-color: rgba(90, 169, 255, 0.72);
-        transform: translateY(-2px) scale(1.02);
+        translate: 0 -2px;
+        scale: 1.02;
     }
 
     Button.ghost {
         background: transparent;
+        border: none;
         box-shadow: none;
         color: rgba(230, 238, 255, 0.80);
     }
@@ -195,7 +254,7 @@ app.stylesheet(
         border: 1px solid rgba(255, 255, 255, 0.14);
         border-radius: 12px;
         color: white;
-        transition-property: background, border-color, transform;
+        transition-property: background, border-color, translate;
         transition-duration: 180ms;
         transition-timing-function: ease-out;
     }
@@ -203,16 +262,20 @@ app.stylesheet(
     Dropdown:open {
         background: rgba(90, 169, 255, 0.24);
         border-color: rgba(90, 169, 255, 0.72);
-        transform: translateY(-1px);
+        translate: 0 -1px;
     }
 
     Collapsible {
         background: rgba(255, 255, 255, 0.05);
         border: 1px solid rgba(255, 255, 255, 0.10);
         border-radius: 12px;
+        transition-property: background, border-color;
+        transition-duration: 180ms;
+        transition-timing-function: ease-out;
     }
 
     Collapsible:collapsed {
+        background: rgba(90, 169, 255, 0.10);
         border-color: rgba(90, 169, 255, 0.38);
     }
 
@@ -246,6 +309,14 @@ app.stylesheet(
         color: white;
     }
 
+    Badge[level] {
+        border-width: 1px;
+    }
+
+    Badge[text="FIXED" i] {
+        border-color: rgba(116, 221, 176, 0.70);
+    }
+
     Badge.offset-demo {
         position: relative;
         top: 0;
@@ -276,10 +347,57 @@ app.stylesheet(
         color: white;
     }
 
+    Badge.fixed-demo {
+        position: fixed;
+        right: 18px;
+        bottom: 18px;
+        z-index: 8;
+        background: rgba(90, 169, 255, 0.28);
+        border-color: rgba(90, 169, 255, 0.62);
+        color: white;
+        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+    }
+
     ProgressBar {
         background: rgba(255, 255, 255, 0.08);
         accent: #5aa9ff;
         border-radius: 999px;
+    }
+
+    @media (max-width: 760px) {
+        Window {
+            padding: 12px;
+            gap: 10px;
+        }
+
+        Panel {
+            padding: 12px;
+        }
+
+        Panel.inputs {
+            width: auto;
+            min-width: 220px;
+        }
+
+        Label.headline {
+            font-size: 20px;
+        }
+    }
+
+    @media (min-width: 1100px) {
+        Label.headline {
+            font-size: 28px;
+        }
+
+        Panel.grid-demo {
+            grid-template-columns: fit-content(220px) repeat(auto-fill, minmax(180px, 1fr));
+        }
+    }
+
+    @media (orientation: landscape) {
+        Panel.horizontal-strip {
+            width: 320px;
+        }
     }
     """
 )
@@ -298,12 +416,17 @@ with dg.VLayout(style={"gap": 14}):
             )
             dg.Label(
                 "State selectors, selector chains, key selectors, structural child "
-                "selectors, and dynamic :is() / :where() / :not().",
+                "selectors with filtered :nth-child(), attribute presence/string/case selectors, "
+                "and dynamic :is() / :where() / :not().",
                 class_="caption callout",
             )
             dg.Label(
-                "Hover/open/selected transitions, paint-only transforms, percent "
-                "and var() calc sizing, CSS Grid, overflow, relative offsets, and absolute pins.",
+                "Hover/open/selected transitions with custom easing, paint-only transforms, percent "
+                "and var() calc sizing/spacing, CSS Grid, overflow, relative offsets, absolute pins, and fixed badges.",
+                class_="caption callout",
+            )
+            dg.Label(
+                "Resize the window to exercise width, height, and orientation @media rules.",
                 class_="caption callout",
             )
         with dg.HLayout(style={"gap": 10, "height": 38}):
@@ -339,6 +462,11 @@ with dg.VLayout(style={"gap": 14}):
                     dg.Label("Inactive tab keeps the base styling.", class_="caption")
             with dg.Collapsible("State selector details", expanded=False):
                 dg.Label("Expanded headers use Collapsible:expanded::header.", class_="caption")
+            with dg.Panel("Horizontal overflow", class_="horizontal-strip"):
+                with dg.HLayout(class_="strip-row"):
+                    dg.Button("Forecast", class_="strip-item")
+                    dg.Button("Pipeline", class_="strip-item")
+                    dg.Button("Capacity", class_="strip-item")
             with dg.Panel("Grid slice", class_="grid-demo"):
                 with dg.Panel(class_="grid-tile grid-sidebar"):
                     dg.Label("Sidebar", class_="kicker")
@@ -353,6 +481,8 @@ with dg.VLayout(style={"gap": 14}):
                     with dg.HLayout(style={"gap": 0, "height": 22}):
                         dg.Badge("base", level="info", class_="stack-demo")
                         dg.Badge("offset", level="success", class_="offset-demo")
+
+    dg.Badge("fixed", level="info", class_="fixed-demo")
 
 
 print(app.run(win))

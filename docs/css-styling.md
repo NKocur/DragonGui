@@ -37,6 +37,59 @@ For a running app, `app.stylesheet(...)`, `app.load_stylesheet(...)`, and
 `app.clear_stylesheets()` enqueue native stylesheet commands. The UI is
 restyled without rebuilding the Python document.
 
+## Media Queries
+
+DragonGUI supports a first slice of `@media` for responsive app layouts. Width,
+height, and orientation are evaluated from the logical viewport and stylesheets
+are reapplied on window resize.
+
+```css
+@media (max-width: 760px) {
+    Window {
+        padding: 12px;
+    }
+
+    Panel.sidebar {
+        display: none;
+    }
+}
+
+@media (min-height: 600px) and (max-height: 900px) {
+    Label.metric {
+        font-size: 18px;
+    }
+}
+
+@media (orientation: landscape) {
+    Panel.toolbar {
+        width: 320px;
+    }
+}
+```
+
+Supported media features are `width`, `height`, and `orientation`;
+comma-separated query lists, `and`, `or`, `not`, and range syntax are accepted
+when the resulting conditions only use those features. Container queries,
+`@font-face`, and `@keyframes` are still unsupported.
+
+DragonGUI also supports a first slice of static `@supports` feature queries.
+Declaration queries use the DragonGUI property parser, selector queries use the
+DragonGUI selector subset, and false queries skip their nested rules.
+
+```css
+@supports (display: grid) and (selector(Panel > Button.primary)) {
+    Panel.dashboard {
+        display: grid;
+    }
+}
+
+@supports not (backdrop-filter: blur(8px)) {
+    Panel.floating {
+        background: rgba(18, 25, 39, 0.94);
+    }
+}
+```
+
 ## Cascade Order
 
 DragonGUI resolves styles in this order, lowest to highest precedence:
@@ -60,16 +113,25 @@ apps and lets local widget overrides win over global stylesheet rules.
 Supported selectors:
 
 ```css
+* { ... }                       /* universal */
 Button { ... }                  /* type */
 .primary { ... }                /* class */
 Button.primary { ... }          /* type + class */
 #run-button { ... }             /* explicit widget id */
 [key="primary-action"] { ... }  /* explicit widget key */
+[disabled] { ... }              /* boolean/state metadata presence */
+[level="info"] { ... }          /* exact widget metadata/prop */
+[class~="pill"] { ... }         /* whitespace-separated metadata word */
+[text^="Run"] { ... }           /* string prefix metadata/prop */
+[text="run" i] { ... }          /* ASCII case-insensitive metadata match */
 Panel Button { ... }            /* descendant */
 Panel.controls > Button { ... } /* direct child */
+Panel > * { ... }               /* universal child target */
 Panel > HLayout > Button { ... }/* child chain */
 Button:hover { ... }            /* pseudo-state */
 Button:not(.ghost) { ... }      /* selector function */
+Panel > *:nth-child(3n+1) { ... } /* structural formula */
+Panel > *:nth-child(2 of Panel > Button.primary) { ... } /* filtered structural formula */
 ```
 
 Supported pseudo-states:
@@ -79,6 +141,10 @@ Supported pseudo-states:
 - `:focus`
 - `:disabled`
 - `:checked`
+- `:open`
+- `:expanded`
+- `:collapsed`
+- `:selected`
 
 `class_` supports normal CSS whitespace splitting:
 
@@ -88,10 +154,16 @@ dg.Button("Run", class_="primary danger")
 
 Then either `.primary`, `.danger`, or `Button.primary.danger` can match.
 
+Attribute selectors can target stable widget metadata and parsed scalar props,
+including `key`, `id`, `type`, `class`, `text`, `level`, `value`, `page`,
+`disabled`, `checked`, `expanded`, and `open`. Supported operators are
+presence, exact (`=`), word (`~=`), prefix (`^=`), suffix (`$=`), substring
+(`*=`), and dash-match (`|=`). Value selectors support ASCII case flags:
+`i` for case-insensitive matching and `s` for case-sensitive matching.
+Boolean attributes are present only when true.
+
 Unsupported selector forms produce warnings and are ignored. Examples:
 
-- Attribute selectors other than `[key="main"]`.
-- Universal selectors such as `*`.
 - Ancestor pseudo-states inside selector functions, such as `Panel:is(:hover) Button`.
 - Browser pseudo-elements such as `::before` and `::after`.
 
@@ -162,15 +234,15 @@ Supported layout properties:
 | `min-height` | logical pixels, percent, `auto` |
 | `max-width` | logical pixels, percent, `auto` |
 | `max-height` | logical pixels, percent, `auto` |
-| `padding` | one to four logical-pixel values |
-| `padding-left` | logical pixels only |
-| `padding-right` | logical pixels only |
-| `padding-top` | logical pixels only |
-| `padding-bottom` | logical pixels only |
-| `margin` | uniform margin only |
-| `gap` | logical pixels only |
-| `row-gap` | logical pixels only |
-| `column-gap` | logical pixels only |
+| `padding` | one to four logical-pixel, percent, or compatible `calc()` values |
+| `padding-left` | logical pixels, percent, compatible `calc()` |
+| `padding-right` | logical pixels, percent, compatible `calc()` |
+| `padding-top` | logical pixels, percent, compatible `calc()` |
+| `padding-bottom` | logical pixels, percent, compatible `calc()` |
+| `margin` | uniform logical pixels, percent, `auto`, or compatible `calc()` |
+| `gap` | logical pixels, percent, compatible `calc()` |
+| `row-gap` | logical pixels, percent, compatible `calc()` |
+| `column-gap` | logical pixels, percent, compatible `calc()` |
 | `grid-template-columns` | first-slice grid track list |
 | `grid-template-rows` | first-slice grid track list |
 | `grid-column` | line or span placement |
@@ -178,21 +250,39 @@ Supported layout properties:
 | `overflow` | `visible`, `hidden`, `scroll`, `auto` |
 | `overflow-x` | `visible`, `hidden`, `scroll`, `auto` |
 | `overflow-y` | `visible`, `hidden`, `scroll`, `auto` |
+| `position` | `static`, `relative`, `absolute`, `fixed` |
+| `top`, `right`, `bottom`, `left` | logical pixels |
+| `z-index` | integer sibling stacking hint |
 
-Percent lengths, `auto`, and first-slice `calc()` are supported for the sizing
-properties above. `calc()` currently supports addition, subtraction, and simple
-scalar multiply/divide for pixel and percent terms, such as
-`calc(220px + 40px)`, `calc(20% + 30%)`, or `calc(100% - 240px)`. Mixed
-percent/pixel expressions resolve when the parent axis has a definite size.
-Other layout lengths such as padding, margin, and gap still require logical
-pixels.
+Percent lengths and first-slice `calc()` are supported for sizing, padding,
+uniform margin, and gap properties above. `auto` is supported for sizing and
+uniform margin; padding and gap reject `auto`. `calc()` currently supports
+addition, subtraction, and simple scalar multiply/divide for pixel and percent
+terms, such as `calc(220px + 40px)`, `calc(20% + 30%)`, or
+`calc(100% - 240px)`. Mixed percent/pixel expressions resolve when the parent
+axis has a definite size.
 
 First-slice CSS Grid supports `display: grid`, track lists using px, percent,
-`fr`, `auto`, and simple `repeat(n, ...)`, plus `grid-column` and `grid-row`
+`fr`, `auto`, `minmax()`, `fit-content()`, `repeat(n, ...)`, and
+`repeat(auto-fit/auto-fill, ...)`, plus `grid-column` and `grid-row`
 placements such as `1`, `2 / 4`, and `1 / span 2`.
 
 First-slice overflow supports explicit clipping with `hidden`, child escape
-with `visible`, and vertical scroll opt-in with `auto` or `scroll`.
+with `visible`, and scroll opt-in with `auto` or `scroll`. `overflow-x`
+containers can scroll horizontally with horizontal wheel input or shift-wheel;
+`overflow-y` containers use the vertical wheel path. Scrollable panels draw
+inset vertical and horizontal overlay scrollbars that stay inside rounded panel
+corners and leave the corner clear when both axes overflow.
+Users can drag the thumb, click the track, or use PageUp/PageDown/Home/End when
+keyboard focus is inside a scroll container. Shift changes those keys to the
+horizontal axis when horizontal overflow exists. `Panel::scrollbar-track`
+styles the track and supports `width` plus uniform `padding` for the axis
+inset; `Panel::scrollbar-thumb` styles the thumb.
+
+First-slice positioning supports paint-only `relative` offsets,
+layout-backed `absolute` children inside their parent, and viewport-backed
+`fixed` widgets. Fixed widgets are removed from normal flow and clip against the
+window rather than the parent container.
 
 ## Visual Properties
 
@@ -210,11 +300,16 @@ Supported visual properties:
 | `border-top-right-radius` | logical pixels |
 | `border-bottom-right-radius` | logical pixels |
 | `border-bottom-left-radius` | logical pixels |
-| `border` | `<width> solid <color>` only |
+| `border` | `none`, `0`, or `<width> solid <color>` |
+| `box-shadow` | comma-separated outset or `inset` soft shadow layers |
 | `opacity` | `0.0` to `1.0` |
 | `accent` | widget accent color |
 | `track-color` | slider/progress track color |
 | `thumb-color` | slider thumb color |
+| `transform` | paint-only `translate(...)`, `scale(...)`, `rotate(...)` shorthand |
+| `translate` | paint-only one or two logical-pixel offsets |
+| `scale` | paint-only one or two numeric scale factors |
+| `rotate` | paint-only angle |
 
 Supported color forms:
 
@@ -307,9 +402,10 @@ rounded panels. `Image` textures are clipped to the image widget's rounded
 content box inside the border. Dropdown and menu item fills are clipped to their
 rounded popup bounds.
 
-General `overflow: hidden`, scroll containers, and rounded `Scatter3D` clipping
-are not part of the current CSS slice. Scatter uses a rectangular 3D viewport
-and needs a dedicated stencil/mask implementation for rounded clipping.
+Rounded `Scatter3D` clipping is not part of the current CSS slice. Scatter uses
+a rectangular 3D viewport and needs a dedicated stencil/mask implementation for
+rounded clipping. Overflow support is first-slice: horizontal scrolling works,
+but visible scrollbars are currently limited to `Panel` scroll containers.
 
 Runtime `Toast` overlays and simple string `Tooltip` overlays have no CSS parts.
 Style their surface and text through the type selector instead:
@@ -393,11 +489,14 @@ Global custom properties can be defined in `:root`:
 Panel {
     border-radius: var(--panel-radius);
     border-color: var(--brand);
+    box-shadow: 0 8px 24px var(--brand);
 }
 ```
 
 V2 supports global `:root` variables only. Scoped custom properties are not
-implemented.
+implemented. `var()` may be used as a whole property value or inside larger
+parseable values such as borders, shadows, gradients, and transition
+shorthands.
 
 ## Debugging
 

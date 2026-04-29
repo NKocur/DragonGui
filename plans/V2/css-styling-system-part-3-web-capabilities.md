@@ -35,7 +35,8 @@ The most important visible gaps today are:
 - Flat surfaces with no elevation.
 - Only first-slice gradients; intermediate stop interpolation, first-slice
   repeating gradients, and comma-separated background layers have landed.
-- No transition easing.
+- Transition easing now includes standard keywords and custom cubic-bezier
+  curves; broader animation support is still pending.
 - Limited typography controls.
 - Limited color syntax.
 - Limited responsive layout primitives.
@@ -43,7 +44,9 @@ The most important visible gaps today are:
   `:open`, `:expanded`, `:collapsed`, `:selected`, descendant selectors,
   multi-level child chains, `[key="..."]`, and simple structural child
   selectors. Selector functions have landed for compound selector arguments,
-  including target pseudo-state arguments.
+  including target pseudo-state arguments. Universal selectors and attribute
+  selectors for widget metadata/scalar props have also landed, including
+  presence, string operators, and case flags.
 
 The first implementation slices should prioritize features that visibly improve
 existing demos with low architectural risk.
@@ -325,7 +328,8 @@ Parsing rules:
 
 ### Scope
 
-Support `var(--name, fallback)` when the whole property value is a `var()`.
+Support `var(--name, fallback)` when the whole property value is a `var()`,
+and support embedded `var()` inside larger parseable property values.
 
 Current system already supports `var(--name)` from `:root`. This slice makes
 variables less fragile.
@@ -338,12 +342,12 @@ Supported:
 Button {
     background: var(--button-bg, accent);
     border-radius: var(--button-radius, 6px);
+    border: 1px solid var(--button-border, rgba(255, 255, 255, 0.2));
 }
 ```
 
 Still unsupported:
 
-- `var()` embedded inside larger expressions.
 - Nested fallback expressions beyond one level unless trivial to support.
 - Scoped variables.
 - Cross-stylesheet variable sharing guarantees.
@@ -358,6 +362,8 @@ Still unsupported:
 ### Acceptance Criteria
 
 - Missing variable with fallback uses fallback.
+- Embedded `var()` works inside borders, shadows, gradients, and transition
+  shorthands.
 - Missing variable without fallback warns and drops declaration.
 - Existing `var(--name)` behavior remains unchanged.
 
@@ -377,7 +383,7 @@ Panel.card {
 
 Supported:
 
-- Single non-inset shadow.
+- One or more comma-separated outset or `inset` shadows.
 - Offset X/Y.
 - Blur radius.
 - Optional spread radius.
@@ -385,8 +391,6 @@ Supported:
 
 Deferred:
 
-- Multiple comma-separated shadows.
-- `inset`.
 - Shadow clipping against scroll containers.
 - Shadow on arbitrary non-rect primitives.
 
@@ -569,16 +573,28 @@ Improve selector expressiveness:
 - Descendant selectors: `Panel Button`.
 - Multi-level child selectors: `Panel > HLayout > Button`.
 - Attribute selector for key: `[key="main"]`.
+- Attribute selectors for widget metadata and scalar props, such as
+  `[disabled]`, `[level="info"]`, `[class~="pill"]`, and `[text^="Run"]`.
 - `:not(...)`.
 - `:is(...)`.
 - `:where(...)`.
-- Structural child selectors: `:first-child`, `:last-child`, simple
-  `:nth-child(n)`.
+- Universal selectors: `*`, `Panel > *`.
+- Structural child selectors: `:first-child`, `:last-child`, and
+  `:nth-child(...)` with integer, odd/even, `an+b` formulas, and
+  `of <selector-list>` filters for compound selector lists and supported
+  selector chains.
 
 Status note: descendant selectors, multi-level child chains, `[key="..."]`,
-`:first-child`, `:last-child`, simple `:nth-child(...)`, and selector
-functions with compound selector arguments have landed. Target pseudo-state
-arguments inside selector functions have also landed.
+`:first-child`, `:last-child`, `:nth-child(...)` integer/odd/even/an+b
+formulas, filtered `:nth-child(... of <selector-list>)` for compound selector
+lists and supported selector chains, and selector functions with compound
+selector arguments have landed.
+Target pseudo-state
+arguments inside selector functions have also landed. Universal selectors have
+landed for whole compounds such as `*`, `*.class`, `*:hover`, and chain targets
+such as `Panel > *`. Attribute selectors have landed for stable widget
+metadata and parsed scalar props, including presence, string operators, and
+case flags.
 
 ### Implementation Notes
 
@@ -592,6 +608,7 @@ Needed model changes:
 - Add sibling index and sibling count to `StyleElement` or a companion
   `StyleContext`.
 - Add key to style matching context for `[key="..."]`.
+- Add a bounded attribute surface from widget metadata and parsed scalar props.
 - For `:where()`, selector specificity is zero.
 - For `:is()` and `:not()`, specificity follows CSS-compatible simplified
   behavior. Exact browser parity is not required, but it must be documented.
@@ -599,14 +616,18 @@ Needed model changes:
 ### Deferred
 
 - `:has(...)`.
-- Arbitrary attribute selectors beyond `key`.
-- Complex `nth-child` formulas beyond basic `odd`, `even`, and integer forms.
+- Stateful, structural, and widget-part target selectors inside
+  `:nth-child(... of <selector>)` filters.
 
 ### Acceptance Criteria
 
 - `Panel Button` works.
 - `Panel > HLayout > Button` works.
 - `[key="primary-action"]` works.
+- `[level="info"]`, `[disabled]`, and `[text^="Run"]` work.
+- `Panel > *` works.
+- `Panel > *:nth-child(2 of Button.primary)` works.
+- `Panel > *:nth-child(2 of Panel > Button.primary)` works.
 - `Button:not(:disabled)` works.
 - `:is(Button, Label).callout` works.
 - `:where(.quiet)` works with zero specificity.
@@ -699,8 +720,11 @@ Initial timing functions:
 - `ease-in`
 - `ease-out`
 - `ease-in-out`
+- `cubic-bezier(x1, y1, x2, y2)`
 
-Custom cubic-bezier can be deferred.
+Status note: custom cubic-bezier timing has landed for transition longhands and
+the one-item transition shorthand. The x control points are validated to the CSS
+`0..1` range.
 
 ### Acceptance Criteria
 
@@ -761,8 +785,11 @@ Enable percent/auto/calc first on:
 - `min-height`
 - `max-width`
 - `max-height`
-- `padding` only if Taffy behavior is verified.
-- `margin` only if uniform and Taffy behavior is verified.
+- `padding` with logical pixels, percent, and compatible `calc()`.
+- uniform `margin` with logical pixels, percent, `auto`, and compatible
+  `calc()`.
+- `gap`, `row-gap`, and `column-gap` with logical pixels, percent, and
+  compatible `calc()`.
 
 Keep visual lengths like `border-radius` as logical px only for now.
 
@@ -805,7 +832,8 @@ Panel.sidebar {
 Status: In progress. First Taffy-backed grid slice landed for `display: grid`,
 `grid-template-columns`, `grid-template-rows`, `grid-column`, `grid-row`,
 `column-gap`, and `row-gap`. Track parsing currently supports px, percent,
-`fr`, `auto`, and small-count `repeat(n, ...)`.
+`fr`, `auto`, `minmax()`, `fit-content()`, small-count `repeat(n, ...)`, and
+`repeat(auto-fit/auto-fill, ...)`.
 
 ### Scope
 
@@ -826,8 +854,7 @@ Defer:
 - Named grid areas.
 - Subgrid.
 - Auto-placement edge cases.
-- Complex repeat syntax beyond a small safe subset.
-- `minmax()`, `fit-content()`, `auto-fit`, and `auto-fill`.
+- Complex or nested repeat syntax beyond the safe subset.
 
 ### Implementation Notes
 
@@ -839,7 +866,7 @@ needed grid APIs. If not, this slice becomes a dependency upgrade task first.
 ```css
 Panel.dashboard {
     display: grid;
-    grid-template-columns: 240px 1fr 1fr;
+    grid-template-columns: minmax(240px, 1fr) 1fr 1fr;
     grid-template-rows: auto 1fr;
     gap: 12px;
 }
@@ -861,8 +888,17 @@ Panel.sidebar {
 
 Status: In progress. First public overflow slice landed for `overflow`,
 `overflow-x`, and `overflow-y`. `visible` lets children escape normal container
-clipping, `hidden` clips, and `auto` / `scroll` opt containers into the
-existing vertical scroll path.
+clipping, `hidden` clips, and `auto` / `scroll` opt containers into scroll
+state. Vertical scrolling uses the normal wheel path; horizontal scrolling uses
+horizontal wheel input or shift-wheel. Scrollable panels now render inset
+vertical and horizontal overlay scrollbars that stay inside rounded panel
+surfaces, remain centered on the panel surface, and leave the bottom-right
+corner clear when both axes overflow. Panel scrollbar thumbs can be dragged,
+and clicking the track updates the scroll offset. `Panel::scrollbar-track` and
+`Panel::scrollbar-thumb` styling parts have landed for track/thumb width, track
+axis inset, background, border, radius, and opacity. PageUp/PageDown/Home/End
+keyboard scrolling has landed for the nearest scrollable ancestor of the
+focused widget, with Shift using the horizontal axis when available.
 
 ### Scope
 
@@ -887,10 +923,10 @@ This is not only a layout property. It requires:
 
 First slice limitations:
 
-- No horizontal scroll offset yet.
-- No CSS scrollbar styling.
-- Overlay clipping remains renderer-managed and top-layer content is not
-  clipped by normal containers.
+- Visible scrollbar indicators and scrollbar styling are currently limited to
+  Panel track/thumb CSS parts.
+- Overlay clipping remains renderer-managed and top-layer content is not clipped
+  by normal containers.
 
 ### Overlay Pass Policy
 
@@ -972,8 +1008,10 @@ Status: In progress. First `position: relative` slice landed for paint-only
 logical-pixel offsets through `top`, `right`, `bottom`, and `left`. First
 `z-index` slice landed as local sibling ordering for normal widget surfaces and
 text. First `position: absolute` slice landed for explicit/intrinsic-size
-children placed by layout insets inside a parent layout context. `relative`
-layout and hit testing still use the unoffset widget rectangle.
+children placed by layout insets inside a parent layout context. First
+`position: fixed` slice landed for explicit/intrinsic-size widgets pinned to
+the logical viewport. `relative` layout and hit testing still use the unoffset
+widget rectangle; full browser stacking contexts remain pending.
 
 ### Scope
 
@@ -1002,6 +1040,7 @@ This is a major layout model extension. It can conflict with:
 3. Add `position: absolute` within positioned parent. Implemented as a first
    slice for explicit/intrinsic-size children.
 4. Add `position: fixed` only after root/window coordinate behavior is stable.
+   First viewport-inset slice implemented.
 
 ### Acceptance Criteria
 
@@ -1106,11 +1145,19 @@ It should not have:
 
 ## CSS3-17: Responsive At-Rules And Fonts
 
+Status: First `@media` implementation slice landed. Stylesheets now lower
+viewport width/height/orientation media rules into rule metadata, cascade
+matching filters them against the current logical window size, and the runtime
+reapplies CSS on layout/resize. First static `@supports` implementation slice
+landed for DragonGUI declaration and selector feature queries. Container
+queries, `@font-face`, and other media features remain pending.
+
 ### Scope
 
 Later-stage browser-like features:
 
 - `@media`.
+- `@supports`.
 - Container queries.
 - `@font-face`.
 
@@ -1128,8 +1175,34 @@ Initial useful subset:
 
 Needs:
 
-- Runtime viewport width/height in style context.
-- Reapply styles on window resize when media query match changes.
+- Runtime viewport width/height in style context. Implemented for logical
+  window size.
+- Reapply styles on window resize when media query match changes. Implemented.
+- Remaining: media features beyond `width`/`height`/`orientation`,
+  container queries, and media-scoped custom property cascade semantics.
+
+### `@supports`
+
+Initial useful subset:
+
+```css
+@supports (display: grid) and (selector(Panel > Button.primary)) {
+    Panel.dashboard {
+        display: grid;
+    }
+}
+```
+
+Needs:
+
+- Declaration feature queries that reuse DragonGUI property lowering.
+  Implemented.
+- Selector feature queries that reuse DragonGUI selector subset parsing.
+  Implemented.
+- `not`, `and`, and `or` conditions. Implemented.
+- Nesting with supported `@media` rules. Implemented.
+- Remaining: browser capability parity and feature functions beyond
+  `selector(...)`.
 
 ### Container Queries
 
@@ -1158,7 +1231,8 @@ Needs:
 ### Milestone A: Fast Typographic And Color Wins
 
 Status: In progress. First implementation slice landed for typography
-style-model/rendering, web color syntax, and variable fallbacks.
+style-model/rendering, web color syntax, variable fallbacks, and embedded
+`var()` substitution inside larger parseable values.
 
 Implement:
 
@@ -1172,7 +1246,8 @@ Implement:
 - named colors
 - `rgb()` / `rgba()`
 - `hsl()` / `hsla()`
-- `var(--name, fallback)`
+- `var(--name, fallback)`, including embedded `var()` inside larger parseable
+  property values.
 
 Why first:
 
@@ -1183,7 +1258,7 @@ Why first:
 
 ### Milestone B: Elevation And Rich Paint
 
-Status: In progress. `box-shadow` first slice landed for single non-inset
+Status: In progress. `box-shadow` landed for comma-separated outset and inset
 shadows on rect-backed surfaces. First `linear-gradient()` and
 `radial-gradient()` slices landed for rect-backed backgrounds. Gradient
 rendering now interpolates up to four stop colors, sampling longer gradients
@@ -1209,9 +1284,14 @@ Why second:
 Status: In progress. Public state selectors landed for `:open`, `:expanded`,
 `:collapsed`, and `:selected` with whole-widget and part styling. Selector
 chains also landed for descendants, deeper direct-child chains, `[key="..."]`,
-`:first-child`, `:last-child`, and simple `:nth-child(...)`. Selector
-functions have landed for compound selector arguments, including target
-pseudo-state arguments.
+`:first-child`, `:last-child`, `:nth-child(...)` integer/odd/even/an+b
+formulas, and filtered `:nth-child(... of <selector-list>)` for compound
+selector lists and supported selector chains. Selector functions have landed
+for compound selector arguments, including target pseudo-state arguments.
+Universal selectors have landed for
+`*`, `*.class`, `*:hover`, and chain targets such as `Panel > *`. Attribute
+selectors have landed for widget metadata and parsed scalar props, including
+presence, string operators, and case flags.
 
 Implement:
 
@@ -1222,10 +1302,17 @@ Implement:
 - Descendant selectors. Implemented.
 - Multi-level child chains. Implemented.
 - `[key="..."]`. Implemented.
+- Attribute selectors. Implemented for widget metadata and parsed scalar props,
+  including presence, exact, word, prefix, suffix, substring, dash-match, and
+  explicit ASCII case-sensitivity flags.
 - Structural child selectors. Implemented for `:first-child`, `:last-child`,
-  integer `:nth-child(n)`, `:nth-child(odd)`, and `:nth-child(even)`.
+  integer `:nth-child(n)`, `:nth-child(odd)`, `:nth-child(even)`, and `an+b`
+  formulas such as `3n+1` and `-n+3`. Filtered
+  `:nth-child(... of <selector-list>)` is implemented for compound selector
+  lists and supported descendant or child selector chains.
 - Selector functions such as `:not()`, `:is()`, and `:where()`. Implemented
   for compound selector arguments, including target pseudo-state arguments.
+- Universal selectors. Implemented for whole compounds and selector chains.
 
 Why third:
 
@@ -1238,23 +1325,27 @@ Status: In progress. First CSS transition slice landed for parser/style-model
 support, debug snapshots, whole-widget hover paint transitions, and
 whole-widget `:open` / `:selected` paint transitions for tracked widgets. First
 paint-only transform slice also landed for `translate`, `scale`, and `rotate`
-on rect-backed widget surfaces. Runtime support currently interpolates solid
-color, numeric visual fields, and transform fields. Stylesheet changes, inline
-style patches, full layout rebuilds, and widget replacement paths now cancel
-active style transition progress. `transition-property` is honored for hover,
-`:open`, and `:selected` transitions, with unlisted visual fields snapping to
-the current state. Layout, text scale/rotate, child subtree transforms, image
-texture transforms, and expanded/collapsed state-change transitions remain
-pending.
+on rect-backed widget surfaces, with CSS transform longhands now lowering into
+the same transform model. Runtime support currently interpolates solid color,
+numeric visual fields, and transform fields. Stylesheet changes, inline style
+patches, full layout rebuilds, and widget replacement paths now cancel active
+style transition progress. `transition-property` is honored for hover, `:open`,
+`:selected`, and expanded/collapsed whole-widget transitions, with unlisted
+visual fields snapping to the current state. Timing functions include the
+standard easing keywords and custom `cubic-bezier(...)` curves. Layout, text
+scale/rotate, child subtree transforms, image texture transforms, and layout
+animation for expanding/collapsing content remain pending.
 
 Implement:
 
 - Paint-only CSS transitions. First whole-widget hover, `:open`, and
-  `:selected` slices implemented.
+  `:selected` slices implemented. Expanded/collapsed whole-widget paint
+  transitions also implemented.
 - Timing functions. Implemented for `linear`, `ease`, `ease-in`, `ease-out`,
-  and `ease-in-out`.
+  `ease-in-out`, and `cubic-bezier(...)`.
 - Paint-only transforms. First rect-surface slice implemented for
-  `translate`, `scale`, and `rotate`; text follows translate only.
+  `transform` plus `translate`, `scale`, and `rotate` longhands; text follows
+  translate only.
 
 Why fourth:
 
@@ -1268,9 +1359,11 @@ Status: In progress. First percent/auto sizing slice landed for `width`,
 `height`, `min-width`, `min-height`, `max-width`, and `max-height`, carrying
 typed layout values through CSS lowering into Taffy. First `calc()` sizing slice
 landed for pixel, percent, and mixed pixel/percent sizing expressions when the
-parent axis is definite. `var()` terms inside `calc()` are supported for
-lengths and scalar multipliers/divisors. Mixed-unit calc in fully auto-sized
-parent axes and percent/auto support for margin/padding remain pending.
+parent axis is definite. The follow-up typed spacing slice landed for padding,
+uniform margin, `gap`, `row-gap`, and `column-gap`; uniform margin also
+supports `auto`. `var()` terms inside `calc()` are supported for lengths and
+scalar multipliers/divisors. Mixed-unit calc in fully auto-sized parent axes
+remains pending.
 
 Implement:
 
@@ -1278,7 +1371,12 @@ Implement:
 - `auto` sizing. First sizing-property slice implemented.
 - `calc()`. First sizing slice implemented, including mixed pixel/percent
   expressions when the parent axis is definite.
-- CSS Grid. First Taffy-backed track and placement slice implemented.
+- Typed spacing. First padding, uniform margin, and gap slice implemented.
+- CSS Grid. First Taffy-backed track and placement slice implemented. `minmax()`
+  track parsing/lowering implemented for px/percent/auto minimums and
+  px/percent/fr/auto maximums. `fit-content()` track parsing/lowering
+  implemented for px and percent arguments. Auto-repeat parsing/lowering
+  implemented for `repeat(auto-fit, ...)` and `repeat(auto-fill, ...)`.
 
 Why fifth:
 
@@ -1290,8 +1388,11 @@ Why fifth:
 Implement:
 
 - General `overflow`. First visible/hidden/auto/scroll slice implemented.
-- Scroll state. Existing vertical scroll state now works for opted-in
-  containers.
+- Scroll state. Vertical and horizontal scroll offsets now work for opted-in
+  containers; `Panel` scroll containers now render vertical and horizontal
+  overlay indicators with mouse click/drag operation. PageUp/PageDown/Home/End
+  keyboard scrolling now targets the focused scroll context, with mouse-position
+  fallback.
 - Clip stack. First explicit visible/hidden child clip behavior implemented.
 
 Why separate:
@@ -1303,12 +1404,15 @@ Why separate:
 Evaluate and implement selectively:
 
 - Positioning and z-index. First paint-only relative positioning, local sibling
-  `z-index`, and layout-backed `position: absolute` slices implemented;
-  `fixed` positioning and full stacking contexts remain pending.
+  `z-index`, layout-backed `position: absolute`, and viewport-backed
+  `position: fixed` slices implemented; full stacking contexts remain pending.
 - `@keyframes`.
 - Backdrop filter.
 - Generated content.
-- `@media`.
+- `@media`. First viewport `width`/`height`/`orientation` slice implemented;
+  broader media features remain pending.
+- `@supports`. First static declaration and selector feature-query slice
+  implemented.
 - `@font-face`.
 
 These should not block the earlier visible wins.

@@ -7,17 +7,22 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use lightningcss::media_query::{
+    MediaCondition as LightningMediaCondition, MediaFeatureComparison, MediaFeatureId,
+    MediaFeatureName, MediaFeatureValue, MediaList, MediaQuery, MediaType, Operator, QueryFeature,
+};
 use lightningcss::properties::Property;
-use lightningcss::rules::CssRule;
+use lightningcss::rules::{supports::SupportsCondition, CssRule, CssRuleList};
 use lightningcss::stylesheet::{ParserOptions, PrinterOptions, StyleSheet};
 use lightningcss::traits::ToCss;
 
 use crate::document::{WidgetKind, WidgetNode};
 use crate::style::{
     BackgroundPaint, BoxShadow, CalcLength, ColorRef, DisplayStyle, FlexDirectionStyle, FontFamily,
-    FontStyle, FontVariantNumeric, GradientStop, GridLineStyle, GridPlacementStyle, GridTrackSize,
-    LayoutLength, LayoutStyle, LineHeight, LinearGradient, NodePartStyles, NodeStyle,
-    OverflowStyle, PartLayoutStyle, PartStyle, PositionStyle, RadialGradient, TextAlign,
+    FontStyle, FontVariantNumeric, GradientStop, GridLineStyle, GridPlacementStyle,
+    GridTrackFitContentSize, GridTrackMaxSize, GridTrackMinSize, GridTrackRepeatKind,
+    GridTrackSize, LayoutLength, LayoutStyle, LineHeight, LinearGradient, NodePartStyles,
+    NodeStyle, OverflowStyle, PartLayoutStyle, PartStyle, PositionStyle, RadialGradient, TextAlign,
     TextOverflow, TextSpacing, TextStyle, TextTransform, TransformStyle, TransitionProperty,
     TransitionStyle, TransitionTimingFunction, VisualStyle,
 };
@@ -81,6 +86,192 @@ pub struct CascadeKey {
     pub source_order: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DgMediaEnvironment {
+    pub width: f32,
+    pub height: f32,
+}
+
+impl DgMediaEnvironment {
+    pub fn new(width: f32, height: f32) -> Self {
+        Self {
+            width: width.max(0.0),
+            height: height.max(0.0),
+        }
+    }
+
+    pub fn from_physical_size(width: f32, height: f32, scale_factor: f32) -> Self {
+        let scale_factor = scale_factor.max(0.001);
+        Self::new(width / scale_factor, height / scale_factor)
+    }
+
+    fn orientation(self) -> DgMediaOrientation {
+        if self.width > self.height {
+            DgMediaOrientation::Landscape
+        } else {
+            DgMediaOrientation::Portrait
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DgMediaCondition {
+    expression: DgMediaExpression,
+}
+
+impl DgMediaCondition {
+    fn new(expression: DgMediaExpression) -> Self {
+        Self {
+            expression: expression.simplified(),
+        }
+    }
+
+    fn always() -> Self {
+        Self::new(DgMediaExpression::Always)
+    }
+
+    fn and(self, other: Self) -> Self {
+        Self::new(DgMediaExpression::And(vec![
+            self.expression,
+            other.expression,
+        ]))
+    }
+
+    pub fn matches(&self, environment: Option<DgMediaEnvironment>) -> bool {
+        self.expression.matches(environment)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum DgMediaExpression {
+    Always,
+    Never,
+    Constraint(DgMediaConstraint),
+    Orientation(DgMediaOrientation),
+    And(Vec<DgMediaExpression>),
+    Or(Vec<DgMediaExpression>),
+    Not(Box<DgMediaExpression>),
+}
+
+impl DgMediaExpression {
+    fn and(expressions: Vec<DgMediaExpression>) -> Self {
+        Self::And(expressions).simplified()
+    }
+
+    fn or(expressions: Vec<DgMediaExpression>) -> Self {
+        Self::Or(expressions).simplified()
+    }
+
+    fn simplified(self) -> Self {
+        match self {
+            DgMediaExpression::And(expressions) => {
+                let mut out = Vec::new();
+                for expression in expressions {
+                    match expression.simplified() {
+                        DgMediaExpression::Always => {}
+                        DgMediaExpression::Never => return DgMediaExpression::Never,
+                        DgMediaExpression::And(nested) => out.extend(nested),
+                        expression => out.push(expression),
+                    }
+                }
+                match out.len() {
+                    0 => DgMediaExpression::Always,
+                    1 => out.remove(0),
+                    _ => DgMediaExpression::And(out),
+                }
+            }
+            DgMediaExpression::Or(expressions) => {
+                let mut out = Vec::new();
+                for expression in expressions {
+                    match expression.simplified() {
+                        DgMediaExpression::Never => {}
+                        DgMediaExpression::Always => return DgMediaExpression::Always,
+                        DgMediaExpression::Or(nested) => out.extend(nested),
+                        expression => out.push(expression),
+                    }
+                }
+                match out.len() {
+                    0 => DgMediaExpression::Never,
+                    1 => out.remove(0),
+                    _ => DgMediaExpression::Or(out),
+                }
+            }
+            DgMediaExpression::Not(expression) => match expression.simplified() {
+                DgMediaExpression::Always => DgMediaExpression::Never,
+                DgMediaExpression::Never => DgMediaExpression::Always,
+                DgMediaExpression::Not(nested) => *nested,
+                expression => DgMediaExpression::Not(Box::new(expression)),
+            },
+            expression => expression,
+        }
+    }
+
+    fn matches(&self, environment: Option<DgMediaEnvironment>) -> bool {
+        match self {
+            DgMediaExpression::Always => true,
+            DgMediaExpression::Never => false,
+            DgMediaExpression::Constraint(constraint) => constraint.matches(environment),
+            DgMediaExpression::Orientation(expected) => {
+                environment.is_some_and(|environment| environment.orientation() == *expected)
+            }
+            DgMediaExpression::And(expressions) => expressions
+                .iter()
+                .all(|expression| expression.matches(environment)),
+            DgMediaExpression::Or(expressions) => expressions
+                .iter()
+                .any(|expression| expression.matches(environment)),
+            DgMediaExpression::Not(expression) => !expression.matches(environment),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct DgMediaConstraint {
+    feature: DgMediaFeature,
+    comparison: DgMediaComparison,
+    value: f32,
+}
+
+impl DgMediaConstraint {
+    fn matches(self, environment: Option<DgMediaEnvironment>) -> bool {
+        let Some(environment) = environment else {
+            return false;
+        };
+        let actual = match self.feature {
+            DgMediaFeature::Width => environment.width,
+            DgMediaFeature::Height => environment.height,
+        };
+        match self.comparison {
+            DgMediaComparison::Equal => (actual - self.value).abs() <= f32::EPSILON,
+            DgMediaComparison::GreaterThan => actual > self.value,
+            DgMediaComparison::GreaterThanEqual => actual >= self.value,
+            DgMediaComparison::LessThan => actual < self.value,
+            DgMediaComparison::LessThanEqual => actual <= self.value,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DgMediaFeature {
+    Width,
+    Height,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DgMediaOrientation {
+    Portrait,
+    Landscape,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DgMediaComparison {
+    Equal,
+    GreaterThan,
+    GreaterThanEqual,
+    LessThan,
+    LessThanEqual,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct DgStyleRule {
     pub selector: DgSelector,
@@ -88,6 +279,7 @@ pub struct DgStyleRule {
     pub specificity: Specificity,
     pub origin: StylesheetOrigin,
     pub source_order: u32,
+    pub media: Option<DgMediaCondition>,
 }
 
 impl DgStyleRule {
@@ -97,6 +289,16 @@ impl DgStyleRule {
         origin: StylesheetOrigin,
         source_order: u32,
     ) -> Self {
+        Self::with_media(selector, declarations, origin, source_order, None)
+    }
+
+    pub fn with_media(
+        selector: DgSelector,
+        declarations: Vec<DgStyleDeclaration>,
+        origin: StylesheetOrigin,
+        source_order: u32,
+        media: Option<DgMediaCondition>,
+    ) -> Self {
         let specificity = selector.specificity();
         Self {
             selector,
@@ -104,6 +306,7 @@ impl DgStyleRule {
             specificity,
             origin,
             source_order,
+            media,
         }
     }
 
@@ -206,6 +409,9 @@ pub enum DgVisualDeclaration {
     BackgroundNoise(DgCssNumber),
     BoxShadow(Vec<DgBoxShadow>),
     Transform(TransformStyle),
+    Translate(f32, f32),
+    Scale(f32, f32),
+    Rotate(f32),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -259,12 +465,48 @@ pub enum DgCssLength {
     Auto,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum DgGridTrackSize {
     LogicalPx(f32),
     Percent(f32),
     Fraction(f32),
     Auto,
+    FitContent(DgGridTrackFitContentSize),
+    MinMax {
+        min: DgGridTrackMinSize,
+        max: DgGridTrackMaxSize,
+    },
+    Repeat {
+        kind: DgGridTrackRepeatKind,
+        tracks: Vec<DgGridTrackSize>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DgGridTrackRepeatKind {
+    AutoFit,
+    AutoFill,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DgGridTrackMinSize {
+    LogicalPx(f32),
+    Percent(f32),
+    Auto,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DgGridTrackMaxSize {
+    LogicalPx(f32),
+    Percent(f32),
+    Fraction(f32),
+    Auto,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum DgGridTrackFitContentSize {
+    LogicalPx(f32),
+    Percent(f32),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -350,6 +592,7 @@ pub struct DgBoxShadow {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DgBorderStyle {
+    None,
     Solid,
 }
 
@@ -428,6 +671,15 @@ impl DgSelector {
             DgSelector::Compound(selector) => selector.contains_state_pseudo(),
             DgSelector::Child { child, .. } => child.contains_state_pseudo(),
             DgSelector::Chain(chain) => chain.target.contains_state_pseudo(),
+        }
+    }
+
+    fn target_contains_structural_pseudo(&self) -> bool {
+        match self {
+            DgSelector::Root => false,
+            DgSelector::Compound(selector) => selector.contains_structural_pseudo(),
+            DgSelector::Child { child, .. } => child.contains_structural_pseudo(),
+            DgSelector::Chain(chain) => chain.target.contains_structural_pseudo(),
         }
     }
 
@@ -511,11 +763,166 @@ pub struct DgCompoundSelector {
     pub type_selector: Option<WidgetKind>,
     pub id: Option<String>,
     pub key: Option<String>,
+    pub attributes: Vec<DgAttributeSelector>,
     pub classes: Vec<String>,
     pub pseudo: Vec<DgPseudoClass>,
     pub structural: Vec<DgStructuralPseudo>,
     pub functions: Vec<DgSelectorFunction>,
     pub part: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DgAttributeSelector {
+    pub name: String,
+    pub operator: DgAttributeOperator,
+    pub value: Option<String>,
+    pub case_sensitivity: DgAttributeCaseSensitivity,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DgAttributeOperator {
+    Exists,
+    Equals,
+    Includes,
+    Prefix,
+    Suffix,
+    Substring,
+    DashMatch,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DgAttributeCaseSensitivity {
+    Default,
+    CaseSensitive,
+    CaseInsensitive,
+}
+
+impl DgAttributeSelector {
+    fn new(name: impl Into<String>, operator: DgAttributeOperator, value: Option<String>) -> Self {
+        Self::new_with_case(name, operator, value, DgAttributeCaseSensitivity::Default)
+    }
+
+    fn new_with_case(
+        name: impl Into<String>,
+        operator: DgAttributeOperator,
+        value: Option<String>,
+        case_sensitivity: DgAttributeCaseSensitivity,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            operator,
+            value,
+            case_sensitivity,
+        }
+    }
+
+    fn matches(&self, attributes: &[StyleAttribute]) -> bool {
+        let actual = attribute_value(attributes, &self.name);
+        match self.operator {
+            DgAttributeOperator::Exists => actual.is_some(),
+            DgAttributeOperator::Equals => self
+                .value
+                .as_deref()
+                .is_some_and(|expected| actual.is_some_and(|actual| self.eq(actual, expected))),
+            DgAttributeOperator::Includes => self.value.as_deref().is_some_and(|expected| {
+                actual.is_some_and(|actual| {
+                    actual
+                        .split_whitespace()
+                        .any(|part| self.eq(part, expected))
+                })
+            }),
+            DgAttributeOperator::Prefix => self.value.as_deref().is_some_and(|expected| {
+                actual.is_some_and(|actual| self.starts_with(actual, expected))
+            }),
+            DgAttributeOperator::Suffix => self.value.as_deref().is_some_and(|expected| {
+                actual.is_some_and(|actual| self.ends_with(actual, expected))
+            }),
+            DgAttributeOperator::Substring => self.value.as_deref().is_some_and(|expected| {
+                actual.is_some_and(|actual| self.contains(actual, expected))
+            }),
+            DgAttributeOperator::DashMatch => self.value.as_deref().is_some_and(|expected| {
+                actual.is_some_and(|actual| {
+                    self.eq(actual, expected)
+                        || self.starts_with(actual, expected)
+                            && actual
+                                .get(expected.len()..)
+                                .is_some_and(|suffix| suffix.starts_with('-'))
+                })
+            }),
+        }
+    }
+
+    fn eq(&self, actual: &str, expected: &str) -> bool {
+        match self.case_sensitivity {
+            DgAttributeCaseSensitivity::CaseInsensitive => actual.eq_ignore_ascii_case(expected),
+            DgAttributeCaseSensitivity::Default | DgAttributeCaseSensitivity::CaseSensitive => {
+                actual == expected
+            }
+        }
+    }
+
+    fn starts_with(&self, actual: &str, expected: &str) -> bool {
+        match self.case_sensitivity {
+            DgAttributeCaseSensitivity::CaseInsensitive => actual
+                .get(..expected.len())
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(expected)),
+            DgAttributeCaseSensitivity::Default | DgAttributeCaseSensitivity::CaseSensitive => {
+                actual.starts_with(expected)
+            }
+        }
+    }
+
+    fn ends_with(&self, actual: &str, expected: &str) -> bool {
+        match self.case_sensitivity {
+            DgAttributeCaseSensitivity::CaseInsensitive => actual
+                .len()
+                .checked_sub(expected.len())
+                .and_then(|start| actual.get(start..))
+                .is_some_and(|suffix| suffix.eq_ignore_ascii_case(expected)),
+            DgAttributeCaseSensitivity::Default | DgAttributeCaseSensitivity::CaseSensitive => {
+                actual.ends_with(expected)
+            }
+        }
+    }
+
+    fn contains(&self, actual: &str, expected: &str) -> bool {
+        match self.case_sensitivity {
+            DgAttributeCaseSensitivity::CaseInsensitive => actual
+                .to_ascii_lowercase()
+                .contains(&expected.to_ascii_lowercase()),
+            DgAttributeCaseSensitivity::Default | DgAttributeCaseSensitivity::CaseSensitive => {
+                actual.contains(expected)
+            }
+        }
+    }
+
+    fn label(&self) -> String {
+        let mut label = String::new();
+        label.push('[');
+        label.push_str(&self.name);
+        if let Some(value) = &self.value {
+            label.push_str(match self.operator {
+                DgAttributeOperator::Exists => "",
+                DgAttributeOperator::Equals => "=\"",
+                DgAttributeOperator::Includes => "~=\"",
+                DgAttributeOperator::Prefix => "^=\"",
+                DgAttributeOperator::Suffix => "$=\"",
+                DgAttributeOperator::Substring => "*=\"",
+                DgAttributeOperator::DashMatch => "|=\"",
+            });
+            if self.operator != DgAttributeOperator::Exists {
+                label.push_str(value);
+                label.push('"');
+                match self.case_sensitivity {
+                    DgAttributeCaseSensitivity::Default => {}
+                    DgAttributeCaseSensitivity::CaseSensitive => label.push_str(" s"),
+                    DgAttributeCaseSensitivity::CaseInsensitive => label.push_str(" i"),
+                }
+            }
+        }
+        label.push(']');
+        label
+    }
 }
 
 impl DgCompoundSelector {
@@ -535,6 +942,42 @@ impl DgCompoundSelector {
 
     pub fn with_key(mut self, key: impl Into<String>) -> Self {
         self.key = Some(key.into());
+        self
+    }
+
+    pub fn with_attribute(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.attributes.push(DgAttributeSelector::new(
+            name,
+            DgAttributeOperator::Equals,
+            Some(value.into()),
+        ));
+        self
+    }
+
+    pub fn with_attribute_operator(
+        mut self,
+        name: impl Into<String>,
+        operator: DgAttributeOperator,
+        value: Option<String>,
+    ) -> Self {
+        self.attributes
+            .push(DgAttributeSelector::new(name, operator, value));
+        self
+    }
+
+    pub fn with_attribute_case(
+        mut self,
+        name: impl Into<String>,
+        operator: DgAttributeOperator,
+        value: Option<String>,
+        case_sensitivity: DgAttributeCaseSensitivity,
+    ) -> Self {
+        self.attributes.push(DgAttributeSelector::new_with_case(
+            name,
+            operator,
+            value,
+            case_sensitivity,
+        ));
         self
     }
 
@@ -564,6 +1007,12 @@ impl DgCompoundSelector {
     }
 
     pub fn specificity(&self) -> Specificity {
+        let structural_specificity = self
+            .structural
+            .iter()
+            .fold(Specificity::ZERO, |specificity, structural| {
+                specificity.add(structural.specificity_extra())
+            });
         let function_specificity = self
             .functions
             .iter()
@@ -575,19 +1024,26 @@ impl DgCompoundSelector {
             classes: (self.classes.len()
                 + self.pseudo.len()
                 + self.structural.len()
-                + usize::from(self.key.is_some()))
+                + usize::from(self.key.is_some())
+                + self.attributes.len())
             .min(u16::MAX as usize) as u16,
             types: u16::from(self.type_selector.is_some()),
         }
+        .add(structural_specificity)
         .add(function_specificity)
     }
 
     fn matches_element(&self, element: &StyleElement<'_>) -> bool {
-        self.matches_identity(element.id, element.key, element.classes, element.kind)
-            && self
-                .pseudo
-                .iter()
-                .all(|pseudo| element.pseudo.contains(pseudo))
+        self.matches_identity(
+            element.id,
+            element.key,
+            element.attributes,
+            element.classes,
+            element.kind,
+        ) && self
+            .pseudo
+            .iter()
+            .all(|pseudo| element.pseudo.contains(pseudo))
             && self
                 .structural
                 .iter()
@@ -601,7 +1057,13 @@ impl DgCompoundSelector {
     fn matches_ancestor(&self, ancestor: &StyleAncestor<'_>) -> bool {
         self.pseudo.is_empty()
             && self.structural.is_empty()
-            && self.matches_identity(ancestor.id, ancestor.key, ancestor.classes, ancestor.kind)
+            && self.matches_identity(
+                ancestor.id,
+                ancestor.key,
+                ancestor.attributes,
+                ancestor.classes,
+                ancestor.kind,
+            )
             && self
                 .functions
                 .iter()
@@ -612,6 +1074,7 @@ impl DgCompoundSelector {
         &self,
         id: &str,
         key: Option<&str>,
+        attributes: &[StyleAttribute],
         classes: &[&str],
         kind: WidgetKind,
     ) -> bool {
@@ -628,6 +1091,13 @@ impl DgCompoundSelector {
         {
             return false;
         }
+        if !self
+            .attributes
+            .iter()
+            .all(|expected| expected.matches(attributes))
+        {
+            return false;
+        }
         self.classes
             .iter()
             .all(|expected| classes.iter().any(|class| class == expected))
@@ -639,6 +1109,14 @@ impl DgCompoundSelector {
                 .functions
                 .iter()
                 .any(DgSelectorFunction::contains_state_pseudo)
+    }
+
+    fn contains_structural_pseudo(&self) -> bool {
+        !self.structural.is_empty()
+            || self
+                .functions
+                .iter()
+                .any(DgSelectorFunction::contains_structural_pseudo)
     }
 
     fn label(&self) -> String {
@@ -654,6 +1132,9 @@ impl DgCompoundSelector {
             label.push_str("[key=\"");
             label.push_str(key);
             label.push_str("\"]");
+        }
+        for attribute in &self.attributes {
+            label.push_str(&attribute.label());
         }
         for class in &self.classes {
             label.push('.');
@@ -734,6 +1215,12 @@ impl DgSelectorFunction {
             .any(DgCompoundSelector::contains_state_pseudo)
     }
 
+    fn contains_structural_pseudo(&self) -> bool {
+        self.selectors
+            .iter()
+            .any(DgCompoundSelector::contains_structural_pseudo)
+    }
+
     fn label(&self) -> String {
         let name = match self.kind {
             DgSelectorFunctionKind::Not => "not",
@@ -786,22 +1273,37 @@ impl DgPseudoClass {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DgStructuralPseudo {
     FirstChild,
     LastChild,
     NthChild(DgNthChild),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DgNthChild {
     Odd,
     Even,
     Exact(usize),
+    Formula {
+        step: i64,
+        offset: i64,
+    },
+    Of {
+        pattern: Box<DgNthChild>,
+        selectors: Vec<DgSelector>,
+    },
 }
 
 impl DgStructuralPseudo {
-    fn matches_element(self, element: &StyleElement<'_>) -> bool {
+    fn specificity_extra(&self) -> Specificity {
+        match self {
+            DgStructuralPseudo::NthChild(child) => child.specificity_extra(),
+            _ => Specificity::ZERO,
+        }
+    }
+
+    fn matches_element(&self, element: &StyleElement<'_>) -> bool {
         let (Some(index), Some(count)) = (element.sibling_index, element.sibling_count) else {
             return false;
         };
@@ -812,43 +1314,198 @@ impl DgStructuralPseudo {
         match self {
             DgStructuralPseudo::FirstChild => index == 0,
             DgStructuralPseudo::LastChild => one_based == count,
-            DgStructuralPseudo::NthChild(DgNthChild::Odd) => one_based % 2 == 1,
-            DgStructuralPseudo::NthChild(DgNthChild::Even) => one_based % 2 == 0,
-            DgStructuralPseudo::NthChild(DgNthChild::Exact(expected)) => expected == one_based,
+            DgStructuralPseudo::NthChild(child) => child.matches_element(element, one_based),
         }
     }
 
-    fn label(self) -> String {
+    fn label(&self) -> String {
         match self {
             DgStructuralPseudo::FirstChild => "first-child".to_string(),
             DgStructuralPseudo::LastChild => "last-child".to_string(),
-            DgStructuralPseudo::NthChild(DgNthChild::Odd) => "nth-child(odd)".to_string(),
-            DgStructuralPseudo::NthChild(DgNthChild::Even) => "nth-child(even)".to_string(),
-            DgStructuralPseudo::NthChild(DgNthChild::Exact(index)) => {
-                format!("nth-child({index})")
+            DgStructuralPseudo::NthChild(child) => format!("nth-child({})", child.label()),
+        }
+    }
+}
+
+impl DgNthChild {
+    fn specificity_extra(&self) -> Specificity {
+        match self {
+            DgNthChild::Of { selectors, .. } => selectors
+                .iter()
+                .map(DgSelector::specificity)
+                .max()
+                .unwrap_or(Specificity::ZERO),
+            _ => Specificity::ZERO,
+        }
+    }
+
+    fn matches_element(&self, element: &StyleElement<'_>, one_based: usize) -> bool {
+        match self {
+            DgNthChild::Odd => one_based % 2 == 1,
+            DgNthChild::Even => one_based % 2 == 0,
+            DgNthChild::Exact(expected) => *expected == one_based,
+            DgNthChild::Formula { step, offset } => {
+                nth_child_formula_matches(one_based as i64, *step, *offset)
+            }
+            DgNthChild::Of { pattern, selectors } => {
+                nth_child_of_matches(pattern, selectors, element)
             }
         }
     }
+
+    fn label(&self) -> String {
+        match self {
+            DgNthChild::Odd => "odd".to_string(),
+            DgNthChild::Even => "even".to_string(),
+            DgNthChild::Exact(index) => index.to_string(),
+            DgNthChild::Formula { step, offset } => nth_child_formula_label(*step, *offset),
+            DgNthChild::Of { pattern, selectors } => {
+                let selectors = selectors
+                    .iter()
+                    .map(DgSelector::label)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{} of {selectors}", pattern.label())
+            }
+        }
+    }
+}
+
+fn nth_child_of_matches(
+    pattern: &DgNthChild,
+    selectors: &[DgSelector],
+    element: &StyleElement<'_>,
+) -> bool {
+    let (Some(siblings), Some(index)) = (element.siblings, element.sibling_index) else {
+        return false;
+    };
+    if index >= siblings.len() {
+        return false;
+    }
+
+    let mut filtered_index = 0usize;
+    let mut current_matches = false;
+    for (sibling_index, sibling) in siblings.iter().enumerate() {
+        if sibling_matches_nth_child_filter(
+            sibling,
+            sibling_index,
+            siblings.len(),
+            element,
+            selectors,
+        ) {
+            filtered_index += 1;
+            if sibling_index == index {
+                current_matches = true;
+                break;
+            }
+        }
+    }
+
+    current_matches && pattern.matches_element(element, filtered_index)
+}
+
+fn sibling_matches_nth_child_filter(
+    sibling: &StyleSibling,
+    sibling_index: usize,
+    sibling_count: usize,
+    base: &StyleElement<'_>,
+    selectors: &[DgSelector],
+) -> bool {
+    let classes: Vec<&str> = sibling.classes.iter().map(String::as_str).collect();
+    let sibling_element = StyleElement {
+        id: sibling.id.as_str(),
+        key: sibling.key.as_deref(),
+        attributes: &sibling.attributes,
+        classes: &classes,
+        kind: sibling.kind,
+        ancestors: base.ancestors,
+        pseudo: &[],
+        sibling_index: Some(sibling_index),
+        sibling_count: Some(sibling_count),
+        siblings: base.siblings,
+    };
+    selectors
+        .iter()
+        .any(|selector| selector.matches(&sibling_element))
+}
+
+fn nth_child_formula_matches(index: i64, step: i64, offset: i64) -> bool {
+    if index < 1 {
+        return false;
+    }
+    if step == 0 {
+        return index == offset;
+    }
+    if step > 0 {
+        index >= offset && (index - offset) % step == 0
+    } else {
+        let span = step.checked_abs().unwrap_or(i64::MAX);
+        index <= offset && (offset - index) % span == 0
+    }
+}
+
+fn nth_child_formula_label(step: i64, offset: i64) -> String {
+    if step == 0 {
+        return offset.to_string();
+    }
+
+    let mut label = match step {
+        1 => "n".to_string(),
+        -1 => "-n".to_string(),
+        _ => format!("{step}n"),
+    };
+    if offset > 0 {
+        label.push('+');
+        label.push_str(&offset.to_string());
+    } else if offset < 0 {
+        label.push_str(&offset.to_string());
+    }
+    label
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct StyleElement<'a> {
     pub id: &'a str,
     pub key: Option<&'a str>,
+    pub attributes: &'a [StyleAttribute],
     pub classes: &'a [&'a str],
     pub kind: WidgetKind,
     pub ancestors: &'a [StyleAncestor<'a>],
     pub pseudo: &'a [DgPseudoClass],
     pub sibling_index: Option<usize>,
     pub sibling_count: Option<usize>,
+    pub siblings: Option<&'a [StyleSibling]>,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct StyleAncestor<'a> {
     pub id: &'a str,
     pub key: Option<&'a str>,
+    pub attributes: &'a [StyleAttribute],
     pub classes: &'a [&'a str],
     pub kind: WidgetKind,
+}
+
+#[derive(Debug, Clone)]
+pub struct StyleSibling {
+    pub id: String,
+    pub key: Option<String>,
+    pub attributes: Vec<StyleAttribute>,
+    pub classes: Vec<String>,
+    pub kind: WidgetKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct StyleAttribute {
+    pub name: String,
+    pub value: String,
+}
+
+fn attribute_value<'a>(attributes: &'a [StyleAttribute], name: &str) -> Option<&'a str> {
+    attributes
+        .iter()
+        .find(|attribute| attribute.name == name)
+        .map(|attribute| attribute.value.as_str())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -917,6 +1574,9 @@ pub enum DgVisualPropertyName {
     ThumbColor,
     BackgroundNoise,
     Transform,
+    Translate,
+    Scale,
+    Rotate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -976,7 +1636,7 @@ impl DgStylePropertyName {
     /// border-width, border-radius, border-top-left-radius,
     /// border-top-right-radius, border-bottom-right-radius,
     /// border-bottom-left-radius, border, box-shadow, opacity, accent, track-color,
-    /// thumb-color.
+    /// thumb-color, transform, translate, scale, rotate.
     ///
     /// Text: color, font-size, font-family, font-weight, text-align,
     /// text-transform, letter-spacing, line-height, font-style,
@@ -1045,6 +1705,9 @@ impl DgStylePropertyName {
             "thumb-color" => Ok(Self::Visual(DgVisualPropertyName::ThumbColor)),
             "background-noise" => Ok(Self::Visual(DgVisualPropertyName::BackgroundNoise)),
             "transform" => Ok(Self::Visual(DgVisualPropertyName::Transform)),
+            "translate" => Ok(Self::Visual(DgVisualPropertyName::Translate)),
+            "scale" => Ok(Self::Visual(DgVisualPropertyName::Scale)),
+            "rotate" => Ok(Self::Visual(DgVisualPropertyName::Rotate)),
             "color" => Ok(Self::Text(DgTextPropertyName::Color)),
             "font-size" => Ok(Self::Text(DgTextPropertyName::FontSize)),
             "font-family" => Ok(Self::Text(DgTextPropertyName::FontFamily)),
@@ -1186,6 +1849,7 @@ struct AncestorSnapshot {
     id: String,
     key: Option<String>,
     classes: Vec<String>,
+    attributes: Vec<StyleAttribute>,
     kind: WidgetKind,
 }
 
@@ -1198,8 +1862,113 @@ impl AncestorSnapshot {
                 .into_iter()
                 .map(str::to_string)
                 .collect(),
+            attributes: node_style_attributes(node),
             kind: node.kind,
         }
+    }
+}
+
+impl StyleSibling {
+    fn from_node(node: &WidgetNode) -> Self {
+        Self {
+            id: node.id.clone(),
+            key: node.key.clone(),
+            classes: node_css_classes(node)
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+            attributes: node_style_attributes(node),
+            kind: node.kind,
+        }
+    }
+}
+
+fn node_style_attributes(node: &WidgetNode) -> Vec<StyleAttribute> {
+    let mut attributes = Vec::new();
+    push_attr(&mut attributes, "id", &node.id);
+    if let Some(kind) = css_type_name(node.kind) {
+        push_attr(&mut attributes, "type", kind);
+    }
+    if let Some(key) = node.key.as_deref().filter(|value| !value.is_empty()) {
+        push_attr(&mut attributes, "key", key);
+    }
+    if let Some(class_name) = node.class_name.as_deref().filter(|value| !value.is_empty()) {
+        push_attr(&mut attributes, "class", class_name);
+    }
+
+    let props = &node.props;
+    push_attr_opt(&mut attributes, "text", props.text.as_deref());
+    push_attr_opt(&mut attributes, "badge", props.badge.as_deref());
+    push_attr_opt(&mut attributes, "level", props.level.as_deref());
+    push_attr_opt(&mut attributes, "placeholder", props.placeholder.as_deref());
+    if let Some(value) = props.route_value.as_deref() {
+        push_attr(&mut attributes, "value", value);
+    } else {
+        push_attr_number_opt(&mut attributes, "value", props.value);
+    }
+    push_attr_opt(&mut attributes, "page", props.page.as_deref());
+    push_attr_opt(&mut attributes, "orientation", props.orientation.as_deref());
+    push_attr_opt(&mut attributes, "target", props.target.as_deref());
+    push_attr_opt(&mut attributes, "tooltip", props.tooltip.as_deref());
+    push_attr_opt(&mut attributes, "path", props.image_path.as_deref());
+    push_attr_opt(&mut attributes, "fit", props.image_fit.as_deref());
+    push_attr_number_opt(&mut attributes, "width", props.fixed_width);
+    push_attr_number_opt(&mut attributes, "height", props.fixed_height);
+    push_attr_number_opt(&mut attributes, "min", props.min);
+    push_attr_number_opt(&mut attributes, "max", props.max);
+    push_attr_number_opt(&mut attributes, "step", props.step);
+    push_attr_bool_if_true(&mut attributes, "disabled", props.disabled);
+    push_attr_bool_opt(&mut attributes, "checked", props.checked);
+    push_attr_bool_opt(&mut attributes, "expanded", props.expanded);
+    push_attr_bool_opt(&mut attributes, "open", props.open);
+    push_attr_bool_opt(&mut attributes, "wrap", props.wrap);
+    if let Some(rows) = props.rows {
+        push_attr(&mut attributes, "rows", &rows.to_string());
+    }
+    if let Some(page_size) = props.page_size {
+        push_attr(&mut attributes, "page-size", &page_size.to_string());
+    }
+    if let Some(table_rows) = props.table_rows {
+        push_attr(&mut attributes, "table-rows", &table_rows.to_string());
+    }
+    if !props.items.is_empty() {
+        push_attr(
+            &mut attributes,
+            "items-count",
+            &props.items.len().to_string(),
+        );
+    }
+    attributes
+}
+
+fn push_attr(attributes: &mut Vec<StyleAttribute>, name: &str, value: &str) {
+    attributes.push(StyleAttribute {
+        name: name.to_string(),
+        value: value.to_string(),
+    });
+}
+
+fn push_attr_opt(attributes: &mut Vec<StyleAttribute>, name: &str, value: Option<&str>) {
+    if let Some(value) = value.filter(|value| !value.is_empty()) {
+        push_attr(attributes, name, value);
+    }
+}
+
+fn push_attr_number_opt(attributes: &mut Vec<StyleAttribute>, name: &str, value: Option<f32>) {
+    if let Some(value) = value {
+        push_attr(attributes, name, &value.to_string());
+    }
+}
+
+fn push_attr_bool_if_true(attributes: &mut Vec<StyleAttribute>, name: &str, value: bool) {
+    if value {
+        push_attr(attributes, name, "true");
+    }
+}
+
+fn push_attr_bool_opt(attributes: &mut Vec<StyleAttribute>, name: &str, value: Option<bool>) {
+    if value == Some(true) {
+        push_attr(attributes, name, "true");
     }
 }
 
@@ -1253,6 +2022,22 @@ fn selector_match_slots(
 }
 
 pub fn apply_stylesheets_to_tree(root: &mut WidgetNode, store: &mut StylesheetStore) {
+    apply_stylesheets_to_tree_with_media(root, store, None);
+}
+
+pub fn apply_stylesheets_to_tree_for_media(
+    root: &mut WidgetNode,
+    store: &mut StylesheetStore,
+    media: DgMediaEnvironment,
+) {
+    apply_stylesheets_to_tree_with_media(root, store, Some(media));
+}
+
+fn apply_stylesheets_to_tree_with_media(
+    root: &mut WidgetNode,
+    store: &mut StylesheetStore,
+    media: Option<DgMediaEnvironment>,
+) {
     let mut ancestors = Vec::new();
     let mut validation_warnings = Vec::new();
     let mut seen_validation_warnings = BTreeSet::new();
@@ -1267,6 +2052,8 @@ pub fn apply_stylesheets_to_tree(root: &mut WidgetNode, store: &mut StylesheetSt
             &mut seen_validation_warnings,
             None,
             None,
+            None,
+            media,
         );
     }
     store.validation_warnings = validation_warnings;
@@ -1276,10 +2063,27 @@ pub fn matched_rule_labels_for_tree(
     root: &WidgetNode,
     store: &StylesheetStore,
 ) -> BTreeMap<String, Vec<String>> {
+    matched_rule_labels_for_tree_with_media(root, store, None)
+}
+
+pub fn matched_rule_labels_for_tree_with_media(
+    root: &WidgetNode,
+    store: &StylesheetStore,
+    media: Option<DgMediaEnvironment>,
+) -> BTreeMap<String, Vec<String>> {
     let rules = store.all_rules();
     let mut ancestors = Vec::new();
     let mut out = BTreeMap::new();
-    collect_matched_rule_labels(root, &rules, &mut ancestors, &mut out, None, None);
+    collect_matched_rule_labels(
+        root,
+        &rules,
+        &mut ancestors,
+        &mut out,
+        None,
+        None,
+        None,
+        media,
+    );
     out
 }
 
@@ -1287,10 +2091,27 @@ pub fn matched_part_rule_labels_for_tree(
     root: &WidgetNode,
     store: &StylesheetStore,
 ) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
+    matched_part_rule_labels_for_tree_with_media(root, store, None)
+}
+
+pub fn matched_part_rule_labels_for_tree_with_media(
+    root: &WidgetNode,
+    store: &StylesheetStore,
+    media: Option<DgMediaEnvironment>,
+) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
     let rules = store.all_rules();
     let mut ancestors = Vec::new();
     let mut out = BTreeMap::new();
-    collect_matched_part_rule_labels(root, &rules, &mut ancestors, &mut out, None, None);
+    collect_matched_part_rule_labels(
+        root,
+        &rules,
+        &mut ancestors,
+        &mut out,
+        None,
+        None,
+        None,
+        media,
+    );
     out
 }
 
@@ -1300,19 +2121,34 @@ pub fn computed_style_for_virtual_element(
     classes: &[&str],
     store: &StylesheetStore,
 ) -> NodeStyle {
+    computed_style_for_virtual_element_with_media(kind, id, classes, store, None)
+}
+
+pub fn computed_style_for_virtual_element_with_media(
+    kind: WidgetKind,
+    id: &str,
+    classes: &[&str],
+    store: &StylesheetStore,
+    media: Option<DgMediaEnvironment>,
+) -> NodeStyle {
     let rules = store.all_rules();
     let element = StyleElement {
         id,
         key: None,
+        attributes: &[],
         classes,
         kind,
         ancestors: &[],
         pseudo: &[],
         sibling_index: None,
         sibling_count: None,
+        siblings: None,
     };
     let mut matched = Vec::new();
     for rule in rules.iter() {
+        if !rule_matches_media(rule, media) {
+            continue;
+        }
         let slots = selector_match_slots(&rule.selector, &element);
         if !slots.is_empty() && rule.selector.target_part().is_none() {
             for slot in slots {
@@ -1334,6 +2170,13 @@ pub fn computed_style_for_virtual_element(
     computed
 }
 
+fn rule_matches_media(rule: &DgStyleRule, media: Option<DgMediaEnvironment>) -> bool {
+    rule.media
+        .as_ref()
+        .map(|condition| condition.matches(media))
+        .unwrap_or(true)
+}
+
 fn collect_matched_part_rule_labels(
     node: &WidgetNode,
     rules: &StylesheetRuleRefs<'_>,
@@ -1341,14 +2184,25 @@ fn collect_matched_part_rule_labels(
     out: &mut BTreeMap<String, BTreeMap<String, Vec<String>>>,
     sibling_index: Option<usize>,
     sibling_count: Option<usize>,
+    siblings: Option<&[StyleSibling]>,
+    media: Option<DgMediaEnvironment>,
 ) {
-    let labels =
-        matched_part_rule_labels_for_node(node, rules, ancestors, sibling_index, sibling_count);
+    let labels = matched_part_rule_labels_for_node(
+        node,
+        rules,
+        ancestors,
+        sibling_index,
+        sibling_count,
+        siblings,
+        media,
+    );
     if !labels.is_empty() {
         out.insert(node.id.clone(), labels);
     }
     ancestors.push(AncestorSnapshot::from_node(node));
     let child_count = node.children.len();
+    let child_siblings: Vec<StyleSibling> =
+        node.children.iter().map(StyleSibling::from_node).collect();
     for (index, child) in node.children.iter().enumerate() {
         collect_matched_part_rule_labels(
             child,
@@ -1357,6 +2211,8 @@ fn collect_matched_part_rule_labels(
             out,
             Some(index),
             Some(child_count),
+            Some(&child_siblings),
+            media,
         );
     }
     ancestors.pop();
@@ -1368,6 +2224,8 @@ fn matched_part_rule_labels_for_node(
     ancestors: &[AncestorSnapshot],
     sibling_index: Option<usize>,
     sibling_count: Option<usize>,
+    siblings: Option<&[StyleSibling]>,
+    media: Option<DgMediaEnvironment>,
 ) -> BTreeMap<String, Vec<String>> {
     let classes = node_css_classes(node);
     let ancestor_classes: Vec<Vec<&str>> = ancestors
@@ -1381,23 +2239,28 @@ fn matched_part_rule_labels_for_node(
         .map(|(ancestor, classes)| StyleAncestor {
             id: ancestor.id.as_str(),
             key: ancestor.key.as_deref(),
+            attributes: &ancestor.attributes,
             classes,
             kind: ancestor.kind,
         })
         .collect();
+    let attributes = node_style_attributes(node);
     let element = StyleElement {
         id: node.id.as_str(),
         key: node.key.as_deref(),
+        attributes: &attributes,
         classes: &classes,
         kind: node.kind,
         ancestors: &style_ancestors,
         pseudo: &[],
         sibling_index,
         sibling_count,
+        siblings,
     };
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for rule in rules
         .iter()
+        .filter(|rule| rule_matches_media(rule, media))
         .filter(|rule| !selector_match_slots(&rule.selector, &element).is_empty())
     {
         let Some(part) = rule.selector.target_part() else {
@@ -1422,15 +2285,36 @@ fn collect_matched_rule_labels(
     out: &mut BTreeMap<String, Vec<String>>,
     sibling_index: Option<usize>,
     sibling_count: Option<usize>,
+    siblings: Option<&[StyleSibling]>,
+    media: Option<DgMediaEnvironment>,
 ) {
-    let labels = matched_rule_labels_for_node(node, rules, ancestors, sibling_index, sibling_count);
+    let labels = matched_rule_labels_for_node(
+        node,
+        rules,
+        ancestors,
+        sibling_index,
+        sibling_count,
+        siblings,
+        media,
+    );
     if !labels.is_empty() {
         out.insert(node.id.clone(), labels);
     }
     ancestors.push(AncestorSnapshot::from_node(node));
     let child_count = node.children.len();
+    let child_siblings: Vec<StyleSibling> =
+        node.children.iter().map(StyleSibling::from_node).collect();
     for (index, child) in node.children.iter().enumerate() {
-        collect_matched_rule_labels(child, rules, ancestors, out, Some(index), Some(child_count));
+        collect_matched_rule_labels(
+            child,
+            rules,
+            ancestors,
+            out,
+            Some(index),
+            Some(child_count),
+            Some(&child_siblings),
+            media,
+        );
     }
     ancestors.pop();
 }
@@ -1441,6 +2325,8 @@ fn matched_rule_labels_for_node(
     ancestors: &[AncestorSnapshot],
     sibling_index: Option<usize>,
     sibling_count: Option<usize>,
+    siblings: Option<&[StyleSibling]>,
+    media: Option<DgMediaEnvironment>,
 ) -> Vec<String> {
     let classes = node_css_classes(node);
     let ancestor_classes: Vec<Vec<&str>> = ancestors
@@ -1454,22 +2340,27 @@ fn matched_rule_labels_for_node(
         .map(|(ancestor, classes)| StyleAncestor {
             id: ancestor.id.as_str(),
             key: ancestor.key.as_deref(),
+            attributes: &ancestor.attributes,
             classes,
             kind: ancestor.kind,
         })
         .collect();
+    let attributes = node_style_attributes(node);
     let element = StyleElement {
         id: node.id.as_str(),
         key: node.key.as_deref(),
+        attributes: &attributes,
         classes: &classes,
         kind: node.kind,
         ancestors: &style_ancestors,
         pseudo: &[],
         sibling_index,
         sibling_count,
+        siblings,
     };
     rules
         .iter()
+        .filter(|rule| rule_matches_media(rule, media))
         .filter(|rule| !selector_match_slots(&rule.selector, &element).is_empty())
         .map(|rule| format!("{}: {}", rule.origin.label(), rule.selector.label()))
         .collect()
@@ -1484,6 +2375,8 @@ fn apply_stylesheets_to_node(
     seen_validation_warnings: &mut BTreeSet<String>,
     sibling_index: Option<usize>,
     sibling_count: Option<usize>,
+    siblings: Option<&[StyleSibling]>,
+    media: Option<DgMediaEnvironment>,
 ) {
     let classes = node_css_classes(node);
     let ancestor_classes: Vec<Vec<&str>> = ancestors
@@ -1497,25 +2390,32 @@ fn apply_stylesheets_to_node(
         .map(|(ancestor, classes)| StyleAncestor {
             id: ancestor.id.as_str(),
             key: ancestor.key.as_deref(),
+            attributes: &ancestor.attributes,
             classes,
             kind: ancestor.kind,
         })
         .collect();
+    let attributes = node_style_attributes(node);
     let element = StyleElement {
         id: node.id.as_str(),
         key: node.key.as_deref(),
+        attributes: &attributes,
         classes: &classes,
         kind: node.kind,
         ancestors: &style_ancestors,
         pseudo: &[],
         sibling_index,
         sibling_count,
+        siblings,
     };
     // Pseudo-state selectors are matched against base and single-state contexts
     // here. Their declarations are precomputed into hover/active/focus/disabled
     // style slots, and live widget state decides which slot is active.
     let mut matched = Vec::new();
     for rule in rules.iter() {
+        if !rule_matches_media(rule, media) {
+            continue;
+        }
         let slots = selector_match_slots(&rule.selector, &element);
         if !slots.is_empty() {
             if let Some(part) = rule.selector.target_part() {
@@ -1580,6 +2480,8 @@ fn apply_stylesheets_to_node(
     ancestors.push(AncestorSnapshot::from_node(node));
     let child_text = node.style.text.clone();
     let child_count = node.children.len();
+    let child_siblings: Vec<StyleSibling> =
+        node.children.iter().map(StyleSibling::from_node).collect();
     for (index, child) in node.children.iter_mut().enumerate() {
         apply_stylesheets_to_node(
             child,
@@ -1590,6 +2492,8 @@ fn apply_stylesheets_to_node(
             seen_validation_warnings,
             Some(index),
             Some(child_count),
+            Some(&child_siblings),
+            media,
         );
     }
     ancestors.pop();
@@ -1710,7 +2614,7 @@ fn record_unsupported_inline_part_warning(
 
 fn widget_kind_supports_part(kind: WidgetKind, part: &str) -> bool {
     match kind {
-        WidgetKind::Panel => matches!(part, "accent"),
+        WidgetKind::Panel => matches!(part, "accent" | "scrollbar-track" | "scrollbar-thumb"),
         WidgetKind::Collapsible => matches!(part, "header" | "indicator" | "body"),
         WidgetKind::Button => matches!(part, "badge"),
         WidgetKind::NumberInput => matches!(
@@ -1778,10 +2682,19 @@ fn merge_layout_style(base: &mut LayoutStyle, overlay: &LayoutStyle) {
     base.padding_right = overlay.padding_right.or(base.padding_right);
     base.padding_top = overlay.padding_top.or(base.padding_top);
     base.padding_bottom = overlay.padding_bottom.or(base.padding_bottom);
+    base.padding_value = overlay.padding_value.or(base.padding_value);
+    base.padding_left_value = overlay.padding_left_value.or(base.padding_left_value);
+    base.padding_right_value = overlay.padding_right_value.or(base.padding_right_value);
+    base.padding_top_value = overlay.padding_top_value.or(base.padding_top_value);
+    base.padding_bottom_value = overlay.padding_bottom_value.or(base.padding_bottom_value);
     base.margin = overlay.margin.or(base.margin);
+    base.margin_value = overlay.margin_value.or(base.margin_value);
     base.gap = overlay.gap.or(base.gap);
     base.row_gap = overlay.row_gap.or(base.row_gap);
     base.column_gap = overlay.column_gap.or(base.column_gap);
+    base.gap_value = overlay.gap_value.or(base.gap_value);
+    base.row_gap_value = overlay.row_gap_value.or(base.row_gap_value);
+    base.column_gap_value = overlay.column_gap_value.or(base.column_gap_value);
     base.overflow = overlay.overflow.or(base.overflow);
     base.overflow_x = overlay.overflow_x.or(base.overflow_x);
     base.overflow_y = overlay.overflow_y.or(base.overflow_y);
@@ -2045,20 +2958,54 @@ fn apply_layout_declaration(style: &mut LayoutStyle, declaration: &DgLayoutDecla
             style.padding_right = length_px(&edges.right);
             style.padding_bottom = length_px(&edges.bottom);
             style.padding_left = length_px(&edges.left);
+            style.padding_top_value = layout_length(&edges.top);
+            style.padding_right_value = layout_length(&edges.right);
+            style.padding_bottom_value = layout_length(&edges.bottom);
+            style.padding_left_value = layout_length(&edges.left);
+            if edges.top == edges.right && edges.right == edges.bottom && edges.bottom == edges.left
+            {
+                style.padding = length_px(&edges.top);
+                style.padding_value = layout_length(&edges.top);
+            } else {
+                style.padding = None;
+                style.padding_value = None;
+            }
         }
-        DgLayoutDeclaration::PaddingLeft(value) => style.padding_left = length_px(value),
-        DgLayoutDeclaration::PaddingRight(value) => style.padding_right = length_px(value),
-        DgLayoutDeclaration::PaddingTop(value) => style.padding_top = length_px(value),
-        DgLayoutDeclaration::PaddingBottom(value) => style.padding_bottom = length_px(value),
+        DgLayoutDeclaration::PaddingLeft(value) => {
+            style.padding_left = length_px(value);
+            style.padding_left_value = layout_length(value);
+        }
+        DgLayoutDeclaration::PaddingRight(value) => {
+            style.padding_right = length_px(value);
+            style.padding_right_value = layout_length(value);
+        }
+        DgLayoutDeclaration::PaddingTop(value) => {
+            style.padding_top = length_px(value);
+            style.padding_top_value = layout_length(value);
+        }
+        DgLayoutDeclaration::PaddingBottom(value) => {
+            style.padding_bottom = length_px(value);
+            style.padding_bottom_value = layout_length(value);
+        }
         DgLayoutDeclaration::Margin(edges) => {
             if edges.top == edges.right && edges.right == edges.bottom && edges.bottom == edges.left
             {
                 style.margin = length_px(&edges.top);
+                style.margin_value = layout_length(&edges.top);
             }
         }
-        DgLayoutDeclaration::Gap(value) => style.gap = length_px(value),
-        DgLayoutDeclaration::RowGap(value) => style.row_gap = length_px(value),
-        DgLayoutDeclaration::ColumnGap(value) => style.column_gap = length_px(value),
+        DgLayoutDeclaration::Gap(value) => {
+            style.gap = length_px(value);
+            style.gap_value = layout_length(value);
+        }
+        DgLayoutDeclaration::RowGap(value) => {
+            style.row_gap = length_px(value);
+            style.row_gap_value = layout_length(value);
+        }
+        DgLayoutDeclaration::ColumnGap(value) => {
+            style.column_gap = length_px(value);
+            style.column_gap_value = layout_length(value);
+        }
         DgLayoutDeclaration::GridTemplateColumns(value) => {
             style.grid_template_columns = Some(value.iter().map(grid_track_from_css).collect())
         }
@@ -2089,6 +3036,48 @@ fn grid_track_from_css(value: &DgGridTrackSize) -> GridTrackSize {
         DgGridTrackSize::Percent(value) => GridTrackSize::Percent(*value),
         DgGridTrackSize::Fraction(value) => GridTrackSize::Fraction(*value),
         DgGridTrackSize::Auto => GridTrackSize::Auto,
+        DgGridTrackSize::FitContent(value) => {
+            GridTrackSize::FitContent(grid_track_fit_content_from_css(*value))
+        }
+        DgGridTrackSize::MinMax { min, max } => GridTrackSize::MinMax {
+            min: grid_track_min_from_css(*min),
+            max: grid_track_max_from_css(*max),
+        },
+        DgGridTrackSize::Repeat { kind, tracks } => GridTrackSize::Repeat {
+            kind: grid_track_repeat_kind_from_css(*kind),
+            tracks: tracks.iter().map(grid_track_from_css).collect(),
+        },
+    }
+}
+
+fn grid_track_repeat_kind_from_css(value: DgGridTrackRepeatKind) -> GridTrackRepeatKind {
+    match value {
+        DgGridTrackRepeatKind::AutoFit => GridTrackRepeatKind::AutoFit,
+        DgGridTrackRepeatKind::AutoFill => GridTrackRepeatKind::AutoFill,
+    }
+}
+
+fn grid_track_min_from_css(value: DgGridTrackMinSize) -> GridTrackMinSize {
+    match value {
+        DgGridTrackMinSize::LogicalPx(value) => GridTrackMinSize::LogicalPx(value),
+        DgGridTrackMinSize::Percent(value) => GridTrackMinSize::Percent(value),
+        DgGridTrackMinSize::Auto => GridTrackMinSize::Auto,
+    }
+}
+
+fn grid_track_max_from_css(value: DgGridTrackMaxSize) -> GridTrackMaxSize {
+    match value {
+        DgGridTrackMaxSize::LogicalPx(value) => GridTrackMaxSize::LogicalPx(value),
+        DgGridTrackMaxSize::Percent(value) => GridTrackMaxSize::Percent(value),
+        DgGridTrackMaxSize::Fraction(value) => GridTrackMaxSize::Fraction(value),
+        DgGridTrackMaxSize::Auto => GridTrackMaxSize::Auto,
+    }
+}
+
+fn grid_track_fit_content_from_css(value: DgGridTrackFitContentSize) -> GridTrackFitContentSize {
+    match value {
+        DgGridTrackFitContentSize::LogicalPx(value) => GridTrackFitContentSize::LogicalPx(value),
+        DgGridTrackFitContentSize::Percent(value) => GridTrackFitContentSize::Percent(value),
     }
 }
 
@@ -2138,10 +3127,16 @@ fn apply_visual_declaration(style: &mut VisualStyle, declaration: &DgVisualDecla
         DgVisualDeclaration::BorderBottomLeftRadius(value) => {
             style.corner_radii.bottom_left = length_px(value)
         }
-        DgVisualDeclaration::Border(border) => {
-            style.border_width = length_px(&border.width);
-            style.border_color = Some(color_ref_from_css(&border.color));
-        }
+        DgVisualDeclaration::Border(border) => match border.style {
+            DgBorderStyle::None => {
+                style.border_width = Some(0.0);
+                style.border_color = Some(ColorRef::Rgba([0.0, 0.0, 0.0, 0.0]));
+            }
+            DgBorderStyle::Solid => {
+                style.border_width = length_px(&border.width);
+                style.border_color = Some(color_ref_from_css(&border.color));
+            }
+        },
         DgVisualDeclaration::Opacity(value) => style.opacity = Some(value.0.clamp(0.0, 1.0)),
         DgVisualDeclaration::Accent(value) => style.accent = Some(color_ref_from_css(value)),
         DgVisualDeclaration::TrackColor(value) => {
@@ -2157,6 +3152,20 @@ fn apply_visual_declaration(style: &mut VisualStyle, declaration: &DgVisualDecla
             style.box_shadows = Some(value.iter().filter_map(box_shadow_from_css).collect());
         }
         DgVisualDeclaration::Transform(value) => style.transform = Some(*value),
+        DgVisualDeclaration::Translate(x, y) => {
+            let transform = style.transform.get_or_insert_with(TransformStyle::default);
+            transform.translate_x = *x;
+            transform.translate_y = *y;
+        }
+        DgVisualDeclaration::Scale(x, y) => {
+            let transform = style.transform.get_or_insert_with(TransformStyle::default);
+            transform.scale_x = *x;
+            transform.scale_y = *y;
+        }
+        DgVisualDeclaration::Rotate(value) => {
+            let transform = style.transform.get_or_insert_with(TransformStyle::default);
+            transform.rotate_deg = *value;
+        }
     }
 }
 
@@ -2230,6 +3239,17 @@ fn display_from_keyword(value: &DgCssKeyword) -> Option<DisplayStyle> {
     }
 }
 
+fn parse_display_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<DgCssKeyword, DgStyleWarning> {
+    let keyword = DgCssKeyword(resolve_keyword(value, variables));
+    display_from_keyword(&keyword)
+        .map(|_| keyword)
+        .ok_or_else(|| parse_warning(name, value, "display value"))
+}
+
 fn overflow_from_keyword(value: &DgCssKeyword) -> Option<OverflowStyle> {
     match value.0.trim().to_ascii_lowercase().as_str() {
         "visible" => Some(OverflowStyle::Visible),
@@ -2256,6 +3276,7 @@ fn position_from_keyword(value: &DgCssKeyword) -> Option<PositionStyle> {
         "static" => Some(PositionStyle::Static),
         "relative" => Some(PositionStyle::Relative),
         "absolute" => Some(PositionStyle::Absolute),
+        "fixed" => Some(PositionStyle::Fixed),
         _ => None,
     }
 }
@@ -2281,6 +3302,17 @@ fn flex_direction_from_keyword(value: &DgCssKeyword) -> Option<FlexDirectionStyl
     }
 }
 
+fn parse_flex_direction_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<DgCssKeyword, DgStyleWarning> {
+    let keyword = DgCssKeyword(resolve_keyword(value, variables));
+    flex_direction_from_keyword(&keyword)
+        .map(|_| keyword)
+        .ok_or_else(|| parse_warning(name, value, "flex direction value"))
+}
+
 fn text_align_from_keyword(value: &DgCssKeyword) -> Option<TextAlign> {
     match value.0.trim().to_ascii_lowercase().as_str() {
         "left" | "start" => Some(TextAlign::Left),
@@ -2288,6 +3320,17 @@ fn text_align_from_keyword(value: &DgCssKeyword) -> Option<TextAlign> {
         "right" | "end" => Some(TextAlign::Right),
         _ => None,
     }
+}
+
+fn parse_text_align_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<DgCssKeyword, DgStyleWarning> {
+    let keyword = DgCssKeyword(resolve_keyword(value, variables));
+    text_align_from_keyword(&keyword)
+        .map(|_| keyword)
+        .ok_or_else(|| parse_warning(name, value, "text align value"))
 }
 
 fn text_transform_from_keyword(value: &str) -> Option<TextTransform> {
@@ -2580,50 +3623,344 @@ pub fn parse_stylesheet(
 
     let mut rules = Vec::new();
     let mut source_order = 0;
-    for rule in sheet.rules.0.iter() {
-        let CssRule::Style(style_rule) = rule else {
-            continue;
-        };
-        let selectors = selector_strings(&style_rule.selectors)?;
-        let declaration_specs = lower_declarations(
-            &style_rule.declarations,
-            &variables,
-            &mut warnings,
-            selectors.first().map(String::as_str),
-        )?;
-        if declaration_specs.is_empty() {
-            continue;
-        }
-        for selector_text in selectors {
-            if selector_text == ":root" {
-                continue;
-            }
-            let Some(selector) = parse_selector(&selector_text, &mut warnings) else {
-                continue;
-            };
-            let declarations = declaration_specs
-                .iter()
-                .cloned()
-                .map(|(property, important)| DgStyleDeclaration {
-                    property,
-                    important,
-                })
-                .collect();
-            rules.push(DgStyleRule::new(
-                selector,
-                declarations,
-                origin,
-                source_order,
-            ));
-            source_order += 1;
-        }
-    }
+    collect_style_rules(
+        &sheet.rules,
+        origin,
+        &variables,
+        &mut warnings,
+        &mut rules,
+        &mut source_order,
+        None,
+    )?;
 
     Ok(ParsedStylesheet {
         rules,
         variables,
         warnings,
     })
+}
+
+fn collect_style_rules<R>(
+    rules_list: &CssRuleList<'_, R>,
+    origin: StylesheetOrigin,
+    variables: &BTreeMap<String, DgCssValue>,
+    warnings: &mut Vec<DgStyleWarning>,
+    rules: &mut Vec<DgStyleRule>,
+    source_order: &mut u32,
+    media: Option<DgMediaCondition>,
+) -> Result<(), DgCssParseError> {
+    for rule in rules_list.0.iter() {
+        match rule {
+            CssRule::Style(style_rule) => {
+                let selectors = selector_strings(&style_rule.selectors)?;
+                let declaration_specs = lower_declarations(
+                    &style_rule.declarations,
+                    variables,
+                    warnings,
+                    selectors.first().map(String::as_str),
+                )?;
+                if declaration_specs.is_empty() {
+                    continue;
+                }
+                for selector_text in selectors {
+                    if selector_text == ":root" {
+                        continue;
+                    }
+                    let Some(selector) = parse_selector(&selector_text, warnings) else {
+                        continue;
+                    };
+                    let declarations = declaration_specs
+                        .iter()
+                        .cloned()
+                        .map(|(property, important)| DgStyleDeclaration {
+                            property,
+                            important,
+                        })
+                        .collect();
+                    rules.push(DgStyleRule::with_media(
+                        selector,
+                        declarations,
+                        origin,
+                        *source_order,
+                        media.clone(),
+                    ));
+                    *source_order += 1;
+                }
+            }
+            CssRule::Media(media_rule) => {
+                let nested_media = match media_condition_from_list(&media_rule.query) {
+                    Ok(condition) => media
+                        .clone()
+                        .map(|parent| parent.and(condition.clone()))
+                        .unwrap_or(condition),
+                    Err(message) => {
+                        warnings.push(DgStyleWarning {
+                            property: "@media".to_string(),
+                            message,
+                        });
+                        continue;
+                    }
+                };
+                collect_style_rules(
+                    &media_rule.rules,
+                    origin,
+                    variables,
+                    warnings,
+                    rules,
+                    source_order,
+                    Some(nested_media),
+                )?;
+            }
+            CssRule::Supports(supports_rule) => {
+                if supports_condition_matches(&supports_rule.condition, variables) {
+                    collect_style_rules(
+                        &supports_rule.rules,
+                        origin,
+                        variables,
+                        warnings,
+                        rules,
+                        source_order,
+                        media.clone(),
+                    )?;
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn supports_condition_matches(
+    condition: &SupportsCondition<'_>,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> bool {
+    match condition {
+        SupportsCondition::Not(condition) => !supports_condition_matches(condition, variables),
+        SupportsCondition::And(conditions) => conditions
+            .iter()
+            .all(|condition| supports_condition_matches(condition, variables)),
+        SupportsCondition::Or(conditions) => conditions
+            .iter()
+            .any(|condition| supports_condition_matches(condition, variables)),
+        SupportsCondition::Declaration { property_id, value } => {
+            supports_declaration_matches(property_id.name(), value.as_ref(), variables)
+        }
+        SupportsCondition::Selector(selector) => supports_selector_matches(selector.as_ref()),
+        SupportsCondition::Unknown(_) => false,
+    }
+}
+
+fn supports_declaration_matches(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> bool {
+    lower_declaration(name, value, variables).is_ok_and(|property| property.is_some())
+}
+
+fn supports_selector_matches(selector: &str) -> bool {
+    let mut warnings = Vec::new();
+    parse_selector(selector, &mut warnings).is_some()
+}
+
+fn media_condition_from_list(media_list: &MediaList<'_>) -> Result<DgMediaCondition, String> {
+    if media_list.media_queries.is_empty() {
+        return Ok(DgMediaCondition::always());
+    }
+    let expressions = media_list
+        .media_queries
+        .iter()
+        .map(media_query_expression)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(DgMediaCondition::new(DgMediaExpression::or(expressions)))
+}
+
+fn media_query_expression(query: &MediaQuery<'_>) -> Result<DgMediaExpression, String> {
+    let media_type = match &query.media_type {
+        MediaType::All | MediaType::Screen => DgMediaExpression::Always,
+        MediaType::Print => DgMediaExpression::Never,
+        MediaType::Custom(media_type) => {
+            return Err(format!(
+                "unsupported @media type {media_type:?}; only screen/all width, height, and orientation queries are supported"
+            ));
+        }
+    };
+    let condition = query
+        .condition
+        .as_ref()
+        .map(media_condition_expression)
+        .transpose()?
+        .unwrap_or(DgMediaExpression::Always);
+    let expression = DgMediaExpression::and(vec![media_type, condition]);
+    Ok(match query.qualifier {
+        Some(lightningcss::media_query::Qualifier::Not) => {
+            DgMediaExpression::Not(Box::new(expression))
+        }
+        Some(lightningcss::media_query::Qualifier::Only) | None => expression,
+    })
+}
+
+fn media_condition_expression(
+    condition: &LightningMediaCondition<'_>,
+) -> Result<DgMediaExpression, String> {
+    match condition {
+        LightningMediaCondition::Feature(feature) => media_feature_expression(feature),
+        LightningMediaCondition::Not(condition) => Ok(DgMediaExpression::Not(Box::new(
+            media_condition_expression(condition)?,
+        ))),
+        LightningMediaCondition::Operation {
+            conditions,
+            operator,
+        } => {
+            let expressions = conditions
+                .iter()
+                .map(media_condition_expression)
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(match operator {
+                Operator::And => DgMediaExpression::and(expressions),
+                Operator::Or => DgMediaExpression::or(expressions),
+            })
+        }
+        LightningMediaCondition::Unknown(_) => Err(
+            "unsupported @media condition; only width, height, and orientation queries are supported"
+                .to_string(),
+        ),
+    }
+}
+
+fn media_feature_expression(
+    feature: &lightningcss::media_query::MediaFeature<'_>,
+) -> Result<DgMediaExpression, String> {
+    match feature {
+        QueryFeature::Plain { name, value } => media_plain_feature_expression(name, value),
+        QueryFeature::Range {
+            name,
+            operator,
+            value,
+        } => media_constraint_expression(name, media_comparison(*operator), value),
+        QueryFeature::Interval {
+            name,
+            start,
+            start_operator,
+            end,
+            end_operator,
+        } => Ok(DgMediaExpression::and(vec![
+            media_constraint_expression(
+                name,
+                media_comparison_for_interval_start(*start_operator),
+                start,
+            )?,
+            media_constraint_expression(name, media_comparison(*end_operator), end)?,
+        ])),
+        QueryFeature::Boolean { name } => Err(format!(
+            "unsupported @media feature {feature}; only width, height, and orientation queries are supported",
+            feature = media_feature_name_label(name)
+        )),
+    }
+}
+
+fn media_plain_feature_expression(
+    name: &MediaFeatureName<'_, MediaFeatureId>,
+    value: &MediaFeatureValue<'_>,
+) -> Result<DgMediaExpression, String> {
+    if matches!(
+        name,
+        MediaFeatureName::Standard(MediaFeatureId::Orientation)
+    ) {
+        return media_orientation_expression(name, value);
+    }
+    media_constraint_expression(name, DgMediaComparison::Equal, value)
+}
+
+fn media_orientation_expression(
+    name: &MediaFeatureName<'_, MediaFeatureId>,
+    value: &MediaFeatureValue<'_>,
+) -> Result<DgMediaExpression, String> {
+    let MediaFeatureValue::Ident(ident) = value else {
+        return Err(format!(
+            "unsupported @media value for {feature}; only portrait and landscape are supported",
+            feature = media_feature_name_label(name)
+        ));
+    };
+    let orientation = match ident.as_ref() {
+        value if value.eq_ignore_ascii_case("portrait") => DgMediaOrientation::Portrait,
+        value if value.eq_ignore_ascii_case("landscape") => DgMediaOrientation::Landscape,
+        _ => {
+            return Err(format!(
+                "unsupported @media value for {feature}; only portrait and landscape are supported",
+                feature = media_feature_name_label(name)
+            ));
+        }
+    };
+    Ok(DgMediaExpression::Orientation(orientation))
+}
+
+fn media_constraint_expression(
+    name: &MediaFeatureName<'_, MediaFeatureId>,
+    comparison: DgMediaComparison,
+    value: &MediaFeatureValue<'_>,
+) -> Result<DgMediaExpression, String> {
+    let feature = media_feature_name(name).ok_or_else(|| {
+        format!(
+            "unsupported @media feature {feature}; only width, height, and orientation queries are supported",
+            feature = media_feature_name_label(name)
+        )
+    })?;
+    let value = media_feature_length_px(value).ok_or_else(|| {
+        format!(
+            "unsupported @media value for {feature}; only absolute length values are supported",
+            feature = media_feature_name_label(name)
+        )
+    })?;
+    Ok(DgMediaExpression::Constraint(DgMediaConstraint {
+        feature,
+        comparison,
+        value,
+    }))
+}
+
+fn media_feature_name(name: &MediaFeatureName<'_, MediaFeatureId>) -> Option<DgMediaFeature> {
+    match name {
+        MediaFeatureName::Standard(MediaFeatureId::Width) => Some(DgMediaFeature::Width),
+        MediaFeatureName::Standard(MediaFeatureId::Height) => Some(DgMediaFeature::Height),
+        _ => None,
+    }
+}
+
+fn media_feature_name_label(name: &MediaFeatureName<'_, MediaFeatureId>) -> String {
+    match name {
+        MediaFeatureName::Standard(MediaFeatureId::Width) => "width".to_string(),
+        MediaFeatureName::Standard(MediaFeatureId::Height) => "height".to_string(),
+        MediaFeatureName::Standard(MediaFeatureId::Orientation) => "orientation".to_string(),
+        other => format!("{other:?}"),
+    }
+}
+
+fn media_feature_length_px(value: &MediaFeatureValue<'_>) -> Option<f32> {
+    match value {
+        MediaFeatureValue::Length(length) => length.to_px(),
+        _ => None,
+    }
+}
+
+fn media_comparison(comparison: MediaFeatureComparison) -> DgMediaComparison {
+    match comparison {
+        MediaFeatureComparison::Equal => DgMediaComparison::Equal,
+        MediaFeatureComparison::GreaterThan => DgMediaComparison::GreaterThan,
+        MediaFeatureComparison::GreaterThanEqual => DgMediaComparison::GreaterThanEqual,
+        MediaFeatureComparison::LessThan => DgMediaComparison::LessThan,
+        MediaFeatureComparison::LessThanEqual => DgMediaComparison::LessThanEqual,
+    }
+}
+
+fn media_comparison_for_interval_start(comparison: MediaFeatureComparison) -> DgMediaComparison {
+    match comparison {
+        MediaFeatureComparison::Equal => DgMediaComparison::Equal,
+        MediaFeatureComparison::GreaterThan => DgMediaComparison::LessThan,
+        MediaFeatureComparison::GreaterThanEqual => DgMediaComparison::LessThanEqual,
+        MediaFeatureComparison::LessThan => DgMediaComparison::GreaterThan,
+        MediaFeatureComparison::LessThanEqual => DgMediaComparison::GreaterThanEqual,
+    }
 }
 
 fn collect_root_variables(
@@ -2720,7 +4057,8 @@ fn lower_declaration(
         DgStylePropertyName::BorderShorthand => {
             let border = parse_border(value, variables).ok_or_else(|| DgStyleWarning {
                 property: name.to_string(),
-                message: "only `border: <width> solid <color>` is supported".to_string(),
+                message: "only `border: none` or `border: <width> solid <color>` is supported"
+                    .to_string(),
             })?;
             Ok(Some(DgStyleProperty::Visual(DgVisualDeclaration::Border(
                 border,
@@ -2744,10 +4082,10 @@ fn lower_layout(
 ) -> Result<Option<DgStyleProperty>, DgStyleWarning> {
     let declaration = match property {
         DgLayoutPropertyName::Display => {
-            DgLayoutDeclaration::Display(DgCssKeyword(resolve_keyword(value, variables)))
+            DgLayoutDeclaration::Display(parse_display_value(name, value, variables)?)
         }
         DgLayoutPropertyName::FlexDirection => {
-            DgLayoutDeclaration::FlexDirection(DgCssKeyword(resolve_keyword(value, variables)))
+            DgLayoutDeclaration::FlexDirection(parse_flex_direction_value(name, value, variables)?)
         }
         DgLayoutPropertyName::Flex => {
             DgLayoutDeclaration::Flex(parse_number_value(name, value, variables)?)
@@ -2777,22 +4115,22 @@ fn lower_layout(
             DgLayoutDeclaration::MaxHeight(parse_layout_length_value(name, value, variables)?)
         }
         DgLayoutPropertyName::Padding => {
-            DgLayoutDeclaration::Padding(parse_px_box_edges(name, value, variables)?)
+            DgLayoutDeclaration::Padding(parse_spacing_box_edges(name, value, variables)?)
         }
         DgLayoutPropertyName::PaddingLeft => {
-            DgLayoutDeclaration::PaddingLeft(parse_px_length_value(name, value, variables)?)
+            DgLayoutDeclaration::PaddingLeft(parse_spacing_length_value(name, value, variables)?)
         }
         DgLayoutPropertyName::PaddingRight => {
-            DgLayoutDeclaration::PaddingRight(parse_px_length_value(name, value, variables)?)
+            DgLayoutDeclaration::PaddingRight(parse_spacing_length_value(name, value, variables)?)
         }
         DgLayoutPropertyName::PaddingTop => {
-            DgLayoutDeclaration::PaddingTop(parse_px_length_value(name, value, variables)?)
+            DgLayoutDeclaration::PaddingTop(parse_spacing_length_value(name, value, variables)?)
         }
         DgLayoutPropertyName::PaddingBottom => {
-            DgLayoutDeclaration::PaddingBottom(parse_px_length_value(name, value, variables)?)
+            DgLayoutDeclaration::PaddingBottom(parse_spacing_length_value(name, value, variables)?)
         }
         DgLayoutPropertyName::Margin => {
-            let edges = parse_px_box_edges(name, value, variables)?;
+            let edges = parse_layout_box_edges(name, value, variables)?;
             if edges.top != edges.right || edges.right != edges.bottom || edges.bottom != edges.left
             {
                 return Err(DgStyleWarning {
@@ -2804,13 +4142,13 @@ fn lower_layout(
             DgLayoutDeclaration::Margin(edges)
         }
         DgLayoutPropertyName::Gap => {
-            DgLayoutDeclaration::Gap(parse_px_length_value(name, value, variables)?)
+            DgLayoutDeclaration::Gap(parse_spacing_length_value(name, value, variables)?)
         }
         DgLayoutPropertyName::RowGap => {
-            DgLayoutDeclaration::RowGap(parse_px_length_value(name, value, variables)?)
+            DgLayoutDeclaration::RowGap(parse_spacing_length_value(name, value, variables)?)
         }
         DgLayoutPropertyName::ColumnGap => {
-            DgLayoutDeclaration::ColumnGap(parse_px_length_value(name, value, variables)?)
+            DgLayoutDeclaration::ColumnGap(parse_spacing_length_value(name, value, variables)?)
         }
         DgLayoutPropertyName::GridTemplateColumns => DgLayoutDeclaration::GridTemplateColumns(
             parse_grid_template_value(name, value, variables)?,
@@ -2915,6 +4253,17 @@ fn lower_visual(
         DgVisualPropertyName::Transform => {
             DgVisualDeclaration::Transform(parse_transform_value(name, value, variables)?)
         }
+        DgVisualPropertyName::Translate => {
+            let (x, y) = parse_translate_value(name, value, variables)?;
+            DgVisualDeclaration::Translate(x, y)
+        }
+        DgVisualPropertyName::Scale => {
+            let (x, y) = parse_scale_value(name, value, variables)?;
+            DgVisualDeclaration::Scale(x, y)
+        }
+        DgVisualPropertyName::Rotate => {
+            DgVisualDeclaration::Rotate(parse_rotate_value(name, value, variables)?)
+        }
     };
     Ok(Some(DgStyleProperty::Visual(declaration)))
 }
@@ -2939,7 +4288,7 @@ fn lower_text(
             DgTextDeclaration::Color(parse_color_value(name, value, variables)?)
         }
         DgTextPropertyName::TextAlign => {
-            DgTextDeclaration::TextAlign(DgCssKeyword(resolve_keyword(value, variables)))
+            DgTextDeclaration::TextAlign(parse_text_align_value(name, value, variables)?)
         }
         DgTextPropertyName::TextTransform => {
             let keyword = resolve_keyword(value, variables);
@@ -3044,12 +4393,14 @@ fn parse_transition_shorthand(
 
     let mut style = TransitionStyle::default();
     let mut saw_duration = false;
-    for token in first.split_whitespace() {
-        if let Some(timing) = transition_timing_from_keyword(token) {
+    let tokens = split_css_whitespace_tokens(&first)
+        .ok_or_else(|| parse_warning(name, value.as_str(), "transition shorthand"))?;
+    for token in tokens {
+        if let Some(timing) = transition_timing_from_keyword(&token) {
             style.timing_function = Some(timing);
             continue;
         }
-        if let Some(time) = parse_time_ms(token) {
+        if let Some(time) = parse_time_ms(&token) {
             if !saw_duration {
                 style.duration_ms = Some(time);
                 saw_duration = true;
@@ -3058,7 +4409,7 @@ fn parse_transition_shorthand(
             }
             continue;
         }
-        if let Some(property) = transition_property_from_keyword(token) {
+        if let Some(property) = transition_property_from_keyword(&token) {
             style.properties.get_or_insert_with(Vec::new).push(property);
             continue;
         }
@@ -3088,7 +4439,9 @@ fn parse_transition_property_list(
                 "transition property list",
             ));
         };
-        properties.push(property);
+        if !properties.contains(&property) {
+            properties.push(property);
+        }
     }
     if properties.is_empty() {
         Err(parse_warning(
@@ -3131,14 +4484,7 @@ fn parse_time_ms(value: &str) -> Option<u64> {
 }
 
 fn transition_timing_from_keyword(value: &str) -> Option<TransitionTimingFunction> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "linear" => Some(TransitionTimingFunction::Linear),
-        "ease" => Some(TransitionTimingFunction::Ease),
-        "ease-in" => Some(TransitionTimingFunction::EaseIn),
-        "ease-out" => Some(TransitionTimingFunction::EaseOut),
-        "ease-in-out" => Some(TransitionTimingFunction::EaseInOut),
-        _ => None,
-    }
+    TransitionTimingFunction::parse(value)
 }
 
 fn transition_property_from_keyword(value: &str) -> Option<TransitionProperty> {
@@ -3155,7 +4501,7 @@ fn transition_property_from_keyword(value: &str) -> Option<TransitionProperty> {
         "track-color" => Some(TransitionProperty::TrackColor),
         "thumb-color" => Some(TransitionProperty::ThumbColor),
         "box-shadow" => Some(TransitionProperty::BoxShadow),
-        "transform" => Some(TransitionProperty::Transform),
+        "transform" | "translate" | "scale" | "rotate" => Some(TransitionProperty::Transform),
         _ => None,
     }
 }
@@ -3172,6 +4518,62 @@ fn parse_transform_value(
     let transform = parse_transform_functions(&value)
         .ok_or_else(|| parse_warning(name, value.as_str(), "transform"))?;
     Ok(transform)
+}
+
+fn parse_translate_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<(f32, f32), DgStyleWarning> {
+    let value = resolve_keyword(value, variables);
+    if value.trim().eq_ignore_ascii_case("none") {
+        return Ok((0.0, 0.0));
+    }
+    let args = split_transform_args(&value);
+    if args.is_empty() || args.len() > 2 {
+        return Err(parse_warning(name, value.as_str(), "translate"));
+    }
+    let x = parse_transform_length(args[0])
+        .ok_or_else(|| parse_warning(name, value.as_str(), "translate"))?;
+    let y = args
+        .get(1)
+        .and_then(|arg| parse_transform_length(arg))
+        .unwrap_or(0.0);
+    Ok((x, y))
+}
+
+fn parse_scale_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<(f32, f32), DgStyleWarning> {
+    let value = resolve_keyword(value, variables);
+    if value.trim().eq_ignore_ascii_case("none") {
+        return Ok((1.0, 1.0));
+    }
+    let args = split_transform_args(&value);
+    if args.is_empty() || args.len() > 2 {
+        return Err(parse_warning(name, value.as_str(), "scale"));
+    }
+    let x = parse_transform_number(args[0])
+        .ok_or_else(|| parse_warning(name, value.as_str(), "scale"))?;
+    let y = args
+        .get(1)
+        .and_then(|arg| parse_transform_number(arg))
+        .unwrap_or(x);
+    Ok((x, y))
+}
+
+fn parse_rotate_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<f32, DgStyleWarning> {
+    let value = resolve_keyword(value, variables);
+    if value.trim().eq_ignore_ascii_case("none") {
+        return Ok(0.0);
+    }
+    parse_transform_angle(&value).ok_or_else(|| parse_warning(name, value.as_str(), "rotate"))
 }
 
 fn parse_transform_functions(value: &str) -> Option<TransformStyle> {
@@ -3451,6 +4853,16 @@ fn parse_compound_selector(selector: &str) -> Option<DgCompoundSelector> {
     let mut compound = DgCompoundSelector::new();
     compound.part = part.map(str::to_string);
     let mut rest = selector;
+    if let Some(tail) = rest.strip_prefix('*') {
+        if tail
+            .chars()
+            .next()
+            .is_some_and(|ch| !matches!(ch, '.' | '#' | ':' | '['))
+        {
+            return None;
+        }
+        rest = tail;
+    }
 
     if let Some(type_len) = rest
         .find(['.', '#', ':', '['])
@@ -3601,27 +5013,111 @@ fn pseudo_selector_len(rest: &str) -> Option<usize> {
 }
 
 fn parse_attribute_selector(value: &str, compound: &mut DgCompoundSelector) -> Option<()> {
-    let (name, raw_value) = value.split_once('=')?;
-    if name.trim() != "key" {
+    let value = value.trim();
+    if value.is_empty() {
         return None;
     }
-    let key = raw_value.trim();
-    if key.is_empty() {
+
+    let (name, operator, raw_value) = parse_attribute_operator(value)?;
+    let name = name.trim().to_ascii_lowercase();
+    if !is_attribute_name(&name) {
         return None;
     }
-    let key = key
-        .strip_prefix('"')
-        .and_then(|value| value.strip_suffix('"'))
-        .or_else(|| {
-            key.strip_prefix('\'')
-                .and_then(|value| value.strip_suffix('\''))
-        })
-        .unwrap_or(key);
-    if key.is_empty() {
-        return None;
+
+    let (parsed_value, case_sensitivity) = if operator == DgAttributeOperator::Exists {
+        if raw_value.is_some() {
+            return None;
+        }
+        (None, DgAttributeCaseSensitivity::Default)
+    } else {
+        let (value, case_sensitivity) = parse_attribute_value(raw_value?)?;
+        (Some(value), case_sensitivity)
+    };
+
+    if name == "key"
+        && operator == DgAttributeOperator::Equals
+        && case_sensitivity == DgAttributeCaseSensitivity::Default
+    {
+        compound.key = parsed_value;
+    } else {
+        compound.attributes.push(DgAttributeSelector::new_with_case(
+            name,
+            operator,
+            parsed_value,
+            case_sensitivity,
+        ));
     }
-    compound.key = Some(key.to_string());
     Some(())
+}
+
+fn parse_attribute_value(value: &str) -> Option<(String, DgAttributeCaseSensitivity)> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    if value.starts_with('"') || value.starts_with('\'') {
+        let quote = value.chars().next()?;
+        let close = value[quote.len_utf8()..].find(quote)? + quote.len_utf8();
+        let parsed = &value[quote.len_utf8()..close];
+        if parsed.is_empty() {
+            return None;
+        }
+        let case_sensitivity = parse_attribute_case_flag(&value[close + quote.len_utf8()..])?;
+        return Some((parsed.to_string(), case_sensitivity));
+    }
+    if value.chars().any(|ch| ch == '"' || ch == '\'') {
+        return None;
+    }
+    let mut parts = value.split_ascii_whitespace();
+    let parsed = parts.next()?;
+    if parsed.is_empty() {
+        return None;
+    }
+    let case_sensitivity = match (parts.next(), parts.next()) {
+        (None, None) => DgAttributeCaseSensitivity::Default,
+        (Some(flag), None) => parse_attribute_case_flag(flag)?,
+        _ => return None,
+    };
+    Some((parsed.to_string(), case_sensitivity))
+}
+
+fn parse_attribute_case_flag(value: &str) -> Option<DgAttributeCaseSensitivity> {
+    match value.trim() {
+        "" => Some(DgAttributeCaseSensitivity::Default),
+        "i" | "I" => Some(DgAttributeCaseSensitivity::CaseInsensitive),
+        "s" | "S" => Some(DgAttributeCaseSensitivity::CaseSensitive),
+        _ => None,
+    }
+}
+
+fn parse_attribute_operator(value: &str) -> Option<(&str, DgAttributeOperator, Option<&str>)> {
+    const OPERATORS: [(&str, DgAttributeOperator); 6] = [
+        ("~=", DgAttributeOperator::Includes),
+        ("^=", DgAttributeOperator::Prefix),
+        ("$=", DgAttributeOperator::Suffix),
+        ("*=", DgAttributeOperator::Substring),
+        ("|=", DgAttributeOperator::DashMatch),
+        ("=", DgAttributeOperator::Equals),
+    ];
+
+    if let Some((idx, token, operator)) = OPERATORS
+        .iter()
+        .filter_map(|(token, operator)| value.find(token).map(|idx| (idx, *token, *operator)))
+        .min_by_key(|(idx, _, _)| *idx)
+    {
+        let name = &value[..idx];
+        let raw_value = &value[idx + token.len()..];
+        return Some((name, operator, Some(raw_value)));
+    }
+
+    Some((value, DgAttributeOperator::Exists, None))
+}
+
+fn is_attribute_name(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
 }
 
 fn is_part_name(value: &str) -> bool {
@@ -3691,19 +5187,133 @@ fn parse_structural_pseudo(value: &str) -> Option<DgStructuralPseudo> {
                 .strip_prefix("nth-child(")
                 .and_then(|value| value.strip_suffix(')'))?
                 .trim();
-            match inner {
-                "odd" => Some(DgStructuralPseudo::NthChild(DgNthChild::Odd)),
-                "even" => Some(DgStructuralPseudo::NthChild(DgNthChild::Even)),
-                "2n" | "2n+0" => Some(DgStructuralPseudo::NthChild(DgNthChild::Even)),
-                "2n+1" => Some(DgStructuralPseudo::NthChild(DgNthChild::Odd)),
-                _ => inner
-                    .parse::<usize>()
-                    .ok()
-                    .filter(|index| *index > 0)
-                    .map(|index| DgStructuralPseudo::NthChild(DgNthChild::Exact(index))),
-            }
+            parse_nth_child(inner).map(DgStructuralPseudo::NthChild)
         }
     }
+}
+
+fn parse_nth_child(value: &str) -> Option<DgNthChild> {
+    let (pattern, filter) = split_nth_child_pattern_and_filter(value)?;
+    let pattern = parse_nth_child_pattern(pattern)?;
+    let Some(filter) = filter else {
+        return Some(pattern);
+    };
+
+    let selectors = split_selector_list(filter)
+        .into_iter()
+        .map(|selector| {
+            let mut warnings = Vec::new();
+            let selector = parse_selector(&selector, &mut warnings)?;
+            nth_child_filter_selector_is_supported(&selector).then_some(selector)
+        })
+        .collect::<Option<Vec<_>>>()?;
+    (!selectors.is_empty()).then_some(DgNthChild::Of {
+        pattern: Box::new(pattern),
+        selectors,
+    })
+}
+
+fn parse_nth_child_pattern(value: &str) -> Option<DgNthChild> {
+    let compact = value
+        .chars()
+        .filter(|ch| !ch.is_ascii_whitespace())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    match compact.as_str() {
+        "odd" => return Some(DgNthChild::Odd),
+        "even" | "2n" | "2n+0" => return Some(DgNthChild::Even),
+        "2n+1" => return Some(DgNthChild::Odd),
+        _ => {}
+    }
+
+    let Some(n_idx) = compact.find('n') else {
+        let offset = compact.parse::<i64>().ok()?;
+        return Some(if offset > 0 {
+            DgNthChild::Exact(usize::try_from(offset).ok()?)
+        } else {
+            DgNthChild::Formula { step: 0, offset }
+        });
+    };
+    if compact[n_idx + 1..].contains('n') {
+        return None;
+    }
+
+    let step = match &compact[..n_idx] {
+        "" | "+" => 1,
+        "-" => -1,
+        value => value.parse::<i64>().ok()?,
+    };
+    let offset = match &compact[n_idx + 1..] {
+        "" => 0,
+        value if value.starts_with('+') || value.starts_with('-') => value.parse::<i64>().ok()?,
+        _ => return None,
+    };
+    Some(DgNthChild::Formula { step, offset })
+}
+
+fn split_nth_child_pattern_and_filter(value: &str) -> Option<(&str, Option<&str>)> {
+    let mut bracket_depth = 0usize;
+    let mut paren_depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut chars = value.char_indices().peekable();
+
+    while let Some((idx, ch)) = chars.next() {
+        if let Some(quote_ch) = quote {
+            if ch == quote_ch {
+                quote = None;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            '[' => bracket_depth += 1,
+            ']' => bracket_depth = bracket_depth.checked_sub(1)?,
+            '(' => paren_depth += 1,
+            ')' => paren_depth = paren_depth.checked_sub(1)?,
+            _ if ch.is_ascii_whitespace() && bracket_depth == 0 && paren_depth == 0 => {
+                while chars
+                    .peek()
+                    .is_some_and(|(_, next)| next.is_ascii_whitespace())
+                {
+                    chars.next();
+                }
+                let Some((token_idx, _)) = chars.peek().copied() else {
+                    break;
+                };
+                let rest = &value[token_idx..];
+                if rest.len() < 2 || !rest[..2].eq_ignore_ascii_case("of") {
+                    continue;
+                }
+                let after_of = &rest[2..];
+                if !after_of
+                    .chars()
+                    .next()
+                    .is_some_and(|ch| ch.is_ascii_whitespace())
+                {
+                    continue;
+                }
+                let pattern = value[..idx].trim();
+                let filter = after_of.trim();
+                return (!pattern.is_empty() && !filter.is_empty())
+                    .then_some((pattern, Some(filter)));
+            }
+            _ => {}
+        }
+    }
+
+    if quote.is_some() || bracket_depth != 0 || paren_depth != 0 {
+        return None;
+    }
+    let pattern = value.trim();
+    (!pattern.is_empty()).then_some((pattern, None))
+}
+
+fn nth_child_filter_selector_is_supported(selector: &DgSelector) -> bool {
+    !matches!(selector, DgSelector::Root)
+        && selector.target_part().is_none()
+        && !selector.target_contains_state_pseudo()
+        && !selector.target_contains_structural_pseudo()
 }
 
 fn split_selector_list(selector: &str) -> Vec<String> {
@@ -3761,6 +5371,64 @@ fn split_selector_list(selector: &str) -> Vec<String> {
     parts
 }
 
+fn split_css_whitespace_tokens(value: &str) -> Option<Vec<String>> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut bracket_depth = 0usize;
+    let mut paren_depth = 0usize;
+    let mut quote: Option<char> = None;
+
+    for ch in value.chars() {
+        if let Some(quote_ch) = quote {
+            current.push(ch);
+            if ch == quote_ch {
+                quote = None;
+            }
+            continue;
+        }
+
+        match ch {
+            '"' | '\'' => {
+                quote = Some(ch);
+                current.push(ch);
+            }
+            '[' => {
+                bracket_depth += 1;
+                current.push(ch);
+            }
+            ']' => {
+                bracket_depth = bracket_depth.checked_sub(1)?;
+                current.push(ch);
+            }
+            '(' => {
+                paren_depth += 1;
+                current.push(ch);
+            }
+            ')' => {
+                paren_depth = paren_depth.checked_sub(1)?;
+                current.push(ch);
+            }
+            _ if ch.is_ascii_whitespace() && bracket_depth == 0 && paren_depth == 0 => {
+                let token = current.trim();
+                if !token.is_empty() {
+                    tokens.push(token.to_string());
+                }
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    if quote.is_some() || bracket_depth != 0 || paren_depth != 0 {
+        return None;
+    }
+    let token = current.trim();
+    if !token.is_empty() {
+        tokens.push(token.to_string());
+    }
+    Some(tokens)
+}
+
 fn split_declaration(declaration: &str) -> Option<(&str, &str)> {
     let declaration = declaration.trim().trim_end_matches(';').trim();
     let (name, value) = declaration.split_once(':')?;
@@ -3772,6 +5440,9 @@ fn parse_css_value(value: &str, variables: &BTreeMap<String, DgCssValue>) -> Opt
     if let Some(resolved) = resolve_variable(value, variables) {
         return Some(resolved);
     }
+    let resolved =
+        resolve_vars_in_value(value, variables).unwrap_or_else(|| value.trim().to_string());
+    let value = resolved.as_str();
     if let Ok(number) = value.trim().parse::<f32>() {
         return Some(DgCssValue::Number(DgCssNumber(number)));
     }
@@ -3823,7 +5494,180 @@ fn resolve_keyword(value: &str, variables: &BTreeMap<String, DgCssValue>) -> Str
         Some(DgCssValue::Keyword(keyword)) => keyword.0,
         Some(DgCssValue::String(value)) => value,
         Some(DgCssValue::Color(DgCssColor::Token(token))) => token,
-        _ => value.trim().to_string(),
+        Some(value) => css_value_text(&value),
+        None => resolve_vars_in_value(value, variables).unwrap_or_else(|| value.trim().to_string()),
+    }
+}
+
+fn resolve_vars_in_value(value: &str, variables: &BTreeMap<String, DgCssValue>) -> Option<String> {
+    resolve_vars_in_value_inner(value, variables, 0)
+}
+
+fn resolve_vars_in_value_inner(
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+    depth: usize,
+) -> Option<String> {
+    const MAX_VAR_DEPTH: usize = 16;
+    if depth > MAX_VAR_DEPTH {
+        return None;
+    }
+
+    let value = value.trim();
+    let mut output = String::new();
+    let mut index = 0usize;
+    let mut changed = false;
+    while index < value.len() {
+        let Some(var_start) = find_next_var_function(value, index) else {
+            output.push_str(&value[index..]);
+            break;
+        };
+        output.push_str(&value[index..var_start]);
+        let (inner, end) = var_function_inner(value, var_start)?;
+        let (name, fallback) = split_var_name_and_fallback(inner);
+        let replacement = if let Some(value) = variables.get(name.trim()) {
+            let text = css_value_text(value);
+            resolve_vars_in_value_inner(&text, variables, depth + 1)?
+        } else {
+            let fallback = fallback?;
+            resolve_vars_in_value_inner(fallback, variables, depth + 1)?
+        };
+        output.push_str(&replacement);
+        index = end;
+        changed = true;
+    }
+
+    Some(if changed { output } else { value.to_string() })
+}
+
+fn find_next_var_function(value: &str, start: usize) -> Option<usize> {
+    let mut quote: Option<char> = None;
+    let mut index = start;
+    while index < value.len() {
+        let ch = value[index..].chars().next()?;
+        if let Some(quote_ch) = quote {
+            if ch == quote_ch {
+                quote = None;
+            }
+            index += ch.len_utf8();
+            continue;
+        }
+        match ch {
+            '"' | '\'' => {
+                quote = Some(ch);
+                index += ch.len_utf8();
+            }
+            _ if value[index..]
+                .get(..4)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("var(")) =>
+            {
+                return Some(index);
+            }
+            _ => index += ch.len_utf8(),
+        }
+    }
+    None
+}
+
+fn var_function_inner(value: &str, start: usize) -> Option<(&str, usize)> {
+    let open = start + 3;
+    if value.as_bytes().get(open).copied()? != b'(' {
+        return None;
+    }
+    let inner_start = open + 1;
+    let mut depth = 1usize;
+    let mut quote: Option<char> = None;
+    let mut index = inner_start;
+    while index < value.len() {
+        let ch = value[index..].chars().next()?;
+        if let Some(quote_ch) = quote {
+            if ch == quote_ch {
+                quote = None;
+            }
+            index += ch.len_utf8();
+            continue;
+        }
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            '(' => depth += 1,
+            ')' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some((&value[inner_start..index], index + ch.len_utf8()));
+                }
+            }
+            _ => {}
+        }
+        index += ch.len_utf8();
+    }
+    None
+}
+
+fn css_value_text(value: &DgCssValue) -> String {
+    match value {
+        DgCssValue::Number(number) => format_css_number(number.0),
+        DgCssValue::Length(length) => css_length_text(length),
+        DgCssValue::Color(color) => css_color_text(color),
+        DgCssValue::Keyword(keyword) => keyword.0.clone(),
+        DgCssValue::String(value) => value.clone(),
+    }
+}
+
+fn css_length_text(value: &DgCssLength) -> String {
+    match value {
+        DgCssLength::LogicalPx(value) => format!("{}px", format_css_number(*value)),
+        DgCssLength::Em(value) => format!("{}em", format_css_number(*value)),
+        DgCssLength::Percent(value) => format!("{}%", format_css_number(*value)),
+        DgCssLength::Calc(value) => {
+            let px = value.px;
+            let percent = value.percent;
+            if px == 0.0 {
+                format!("calc({}%)", format_css_number(percent))
+            } else if percent == 0.0 {
+                format!("calc({}px)", format_css_number(px))
+            } else if px < 0.0 {
+                format!(
+                    "calc({}% - {}px)",
+                    format_css_number(percent),
+                    format_css_number(px.abs())
+                )
+            } else {
+                format!(
+                    "calc({}% + {}px)",
+                    format_css_number(percent),
+                    format_css_number(px)
+                )
+            }
+        }
+        DgCssLength::Auto => "auto".to_string(),
+    }
+}
+
+fn css_color_text(value: &DgCssColor) -> String {
+    match value {
+        DgCssColor::Token(token) => token.clone(),
+        DgCssColor::Rgba(color) => format!(
+            "rgba({}, {}, {}, {})",
+            format_css_number((color[0].clamp(0.0, 1.0) * 255.0).round()),
+            format_css_number((color[1].clamp(0.0, 1.0) * 255.0).round()),
+            format_css_number((color[2].clamp(0.0, 1.0) * 255.0).round()),
+            format_css_number(color[3].clamp(0.0, 1.0))
+        ),
+    }
+}
+
+fn format_css_number(value: f32) -> String {
+    let mut text = format!("{value:.3}");
+    while text.contains('.') && text.ends_with('0') {
+        text.pop();
+    }
+    if text.ends_with('.') {
+        text.pop();
+    }
+    if text == "-0" {
+        "0".to_string()
+    } else {
+        text
     }
 }
 
@@ -3944,7 +5788,7 @@ fn parse_grid_template_value(
     }
     let mut tracks = Vec::new();
     for token in split_value_tokens(&value) {
-        if let Some(repeated) = parse_grid_repeat(token) {
+        if let Some(repeated) = parse_grid_repeat(name, token) {
             tracks.extend(repeated?);
         } else {
             tracks.push(parse_grid_track_size(name, token)?);
@@ -3956,7 +5800,10 @@ fn parse_grid_template_value(
     Ok(tracks)
 }
 
-fn parse_grid_repeat(token: &str) -> Option<Result<Vec<DgGridTrackSize>, DgStyleWarning>> {
+fn parse_grid_repeat(
+    name: &str,
+    token: &str,
+) -> Option<Result<Vec<DgGridTrackSize>, DgStyleWarning>> {
     let token = token.trim();
     if !token
         .get(..7)
@@ -3968,27 +5815,64 @@ fn parse_grid_repeat(token: &str) -> Option<Result<Vec<DgGridTrackSize>, DgStyle
     let inner = &token[7..token.len() - 1];
     let parts = split_top_level_commas(inner);
     if parts.len() != 2 {
-        return Some(Err(parse_warning("repeat", token, "repeat(count, tracks)")));
+        return Some(Err(parse_warning(name, token, "repeat(count, tracks)")));
     }
-    let count = match parts[0].trim().parse::<usize>() {
-        Ok(count) if count > 0 && count <= 32 => count,
-        _ => return Some(Err(parse_warning("repeat", token, "positive repeat count"))),
-    };
-    let parsed: Result<Vec<_>, _> = split_value_tokens(parts[1])
-        .iter()
-        .map(|track| parse_grid_track_size("repeat", track))
-        .collect();
-    Some(parsed.map(|tracks| {
-        let mut repeated = Vec::with_capacity(tracks.len() * count);
-        for _ in 0..count {
-            repeated.extend(tracks.iter().copied());
+    let repeat_kind = parts[0].trim();
+    let track_tokens = split_value_tokens(parts[1]);
+    if track_tokens.is_empty() {
+        return Some(Err(parse_warning(name, token, "repeat track list")));
+    }
+    let mut parsed = Vec::with_capacity(track_tokens.len());
+    for track in track_tokens {
+        if parse_grid_repeat(name, track).is_some() {
+            return Some(Err(parse_warning(
+                name,
+                token,
+                "non-nested repeat track list",
+            )));
         }
-        repeated
-    }))
+        match parse_grid_track_size(name, track) {
+            Ok(track) => parsed.push(track),
+            Err(warning) => return Some(Err(warning)),
+        }
+    }
+    match repeat_kind.parse::<usize>() {
+        Ok(count) if count > 0 && count <= 32 => Some(Ok({
+            let mut repeated = Vec::with_capacity(parsed.len() * count);
+            for _ in 0..count {
+                repeated.extend(parsed.iter().cloned());
+            }
+            repeated
+        })),
+        Ok(_) => Some(Err(parse_warning(name, token, "positive repeat count"))),
+        Err(_) => {
+            let kind = match repeat_kind.to_ascii_lowercase().as_str() {
+                "auto-fit" => DgGridTrackRepeatKind::AutoFit,
+                "auto-fill" => DgGridTrackRepeatKind::AutoFill,
+                _ => {
+                    return Some(Err(parse_warning(
+                        name,
+                        token,
+                        "repeat count or auto-repeat",
+                    )))
+                }
+            };
+            Some(Ok(vec![DgGridTrackSize::Repeat {
+                kind,
+                tracks: parsed,
+            }]))
+        }
+    }
 }
 
 fn parse_grid_track_size(name: &str, value: &str) -> Result<DgGridTrackSize, DgStyleWarning> {
     let value = value.trim();
+    if let Some(minmax) = parse_grid_minmax(name, value) {
+        return minmax;
+    }
+    if let Some(fit_content) = parse_grid_fit_content(name, value) {
+        return fit_content;
+    }
     if value.eq_ignore_ascii_case("auto") {
         return Ok(DgGridTrackSize::Auto);
     }
@@ -4014,6 +5898,121 @@ fn parse_grid_track_size(name: &str, value: &str) -> Result<DgGridTrackSize, DgS
             name,
             value,
             "px, percent, fr, auto grid track",
+        )),
+    }
+}
+
+fn parse_grid_fit_content(
+    name: &str,
+    value: &str,
+) -> Option<Result<DgGridTrackSize, DgStyleWarning>> {
+    let value = value.trim();
+    if !value
+        .get(..12)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("fit-content("))
+        || !value.ends_with(')')
+    {
+        return None;
+    }
+    let inner = value[12..value.len() - 1].trim();
+    Some(parse_grid_fit_content_size(name, inner).map(DgGridTrackSize::FitContent))
+}
+
+fn parse_grid_fit_content_size(
+    name: &str,
+    value: &str,
+) -> Result<DgGridTrackFitContentSize, DgStyleWarning> {
+    match parse_length(value) {
+        Some(DgCssLength::LogicalPx(value)) => Ok(DgGridTrackFitContentSize::LogicalPx(value)),
+        Some(DgCssLength::Percent(value)) => Ok(DgGridTrackFitContentSize::Percent(value)),
+        Some(DgCssLength::Calc(calc)) if calc.percent == 0.0 => {
+            Ok(DgGridTrackFitContentSize::LogicalPx(calc.px))
+        }
+        Some(DgCssLength::Calc(calc)) if calc.px == 0.0 => {
+            Ok(DgGridTrackFitContentSize::Percent(calc.percent))
+        }
+        _ => Err(parse_warning(
+            name,
+            value,
+            "px or percent fit-content track",
+        )),
+    }
+}
+
+fn parse_grid_minmax(name: &str, value: &str) -> Option<Result<DgGridTrackSize, DgStyleWarning>> {
+    let value = value.trim();
+    if !value
+        .get(..7)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("minmax("))
+        || !value.ends_with(')')
+    {
+        return None;
+    }
+    let inner = &value[7..value.len() - 1];
+    let parts = split_top_level_commas(inner);
+    if parts.len() != 2 {
+        return Some(Err(parse_warning(name, value, "minmax(min, max)")));
+    }
+    let min = match parse_grid_track_min_size(name, parts[0].trim()) {
+        Ok(value) => value,
+        Err(warning) => return Some(Err(warning)),
+    };
+    let max = match parse_grid_track_max_size(name, parts[1].trim()) {
+        Ok(value) => value,
+        Err(warning) => return Some(Err(warning)),
+    };
+    Some(Ok(DgGridTrackSize::MinMax { min, max }))
+}
+
+fn parse_grid_track_min_size(
+    name: &str,
+    value: &str,
+) -> Result<DgGridTrackMinSize, DgStyleWarning> {
+    if value.eq_ignore_ascii_case("auto") {
+        return Ok(DgGridTrackMinSize::Auto);
+    }
+    match parse_length(value) {
+        Some(DgCssLength::LogicalPx(value)) => Ok(DgGridTrackMinSize::LogicalPx(value)),
+        Some(DgCssLength::Percent(value)) => Ok(DgGridTrackMinSize::Percent(value)),
+        Some(DgCssLength::Calc(calc)) if calc.percent == 0.0 => {
+            Ok(DgGridTrackMinSize::LogicalPx(calc.px))
+        }
+        Some(DgCssLength::Calc(calc)) if calc.px == 0.0 => {
+            Ok(DgGridTrackMinSize::Percent(calc.percent))
+        }
+        _ => Err(parse_warning(name, value, "px, percent, or auto min track")),
+    }
+}
+
+fn parse_grid_track_max_size(
+    name: &str,
+    value: &str,
+) -> Result<DgGridTrackMaxSize, DgStyleWarning> {
+    if value.eq_ignore_ascii_case("auto") {
+        return Ok(DgGridTrackMaxSize::Auto);
+    }
+    if let Some(fr) = value.strip_suffix("fr") {
+        return fr
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .map(DgGridTrackMaxSize::Fraction)
+            .ok_or_else(|| parse_warning(name, value, "positive fr max track"));
+    }
+    match parse_length(value) {
+        Some(DgCssLength::LogicalPx(value)) => Ok(DgGridTrackMaxSize::LogicalPx(value)),
+        Some(DgCssLength::Percent(value)) => Ok(DgGridTrackMaxSize::Percent(value)),
+        Some(DgCssLength::Calc(calc)) if calc.percent == 0.0 => {
+            Ok(DgGridTrackMaxSize::LogicalPx(calc.px))
+        }
+        Some(DgCssLength::Calc(calc)) if calc.px == 0.0 => {
+            Ok(DgGridTrackMaxSize::Percent(calc.percent))
+        }
+        _ => Err(parse_warning(
+            name,
+            value,
+            "px, percent, fr, or auto max track",
         )),
     }
 }
@@ -4076,6 +6075,22 @@ fn parse_layout_length_value(
                 "`em` lengths are only supported for text spacing in DragonGUI CSS: {value:?}"
             ),
         }),
+    }
+}
+
+fn parse_spacing_length_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<DgCssLength, DgStyleWarning> {
+    let length = parse_layout_length_value(name, value, variables)?;
+    match length {
+        DgCssLength::LogicalPx(_) | DgCssLength::Percent(_) | DgCssLength::Calc(_) => Ok(length),
+        DgCssLength::Auto => Err(DgStyleWarning {
+            property: name.to_string(),
+            message: format!("`auto` lengths are not supported for {name:?} in DragonGUI CSS V1"),
+        }),
+        DgCssLength::Em(_) => unreachable!("parse_layout_length_value rejects em lengths"),
     }
 }
 
@@ -4145,18 +6160,67 @@ fn parse_box_edges(
     })
 }
 
-fn parse_px_box_edges(
+fn parse_layout_box_edges(
     name: &str,
     value: &str,
     variables: &BTreeMap<String, DgCssValue>,
 ) -> Result<DgBoxEdges<DgCssLength>, DgStyleWarning> {
     let edges = parse_box_edges(name, value, variables)?;
     Ok(DgBoxEdges {
-        top: require_logical_px(name, value, edges.top)?,
-        right: require_logical_px(name, value, edges.right)?,
-        bottom: require_logical_px(name, value, edges.bottom)?,
-        left: require_logical_px(name, value, edges.left)?,
+        top: parse_layout_box_edge(name, value, edges.top)?,
+        right: parse_layout_box_edge(name, value, edges.right)?,
+        bottom: parse_layout_box_edge(name, value, edges.bottom)?,
+        left: parse_layout_box_edge(name, value, edges.left)?,
     })
+}
+
+fn parse_layout_box_edge(
+    name: &str,
+    source: &str,
+    length: DgCssLength,
+) -> Result<DgCssLength, DgStyleWarning> {
+    match length {
+        DgCssLength::LogicalPx(_)
+        | DgCssLength::Percent(_)
+        | DgCssLength::Calc(_)
+        | DgCssLength::Auto => Ok(length),
+        DgCssLength::Em(_) => Err(DgStyleWarning {
+            property: name.to_string(),
+            message: format!(
+                "`em` lengths are only supported for text spacing in DragonGUI CSS: {source:?}"
+            ),
+        }),
+    }
+}
+
+fn parse_spacing_box_edges(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<DgBoxEdges<DgCssLength>, DgStyleWarning> {
+    let edges = parse_layout_box_edges(name, value, variables)?;
+    Ok(DgBoxEdges {
+        top: reject_auto_spacing(name, value, edges.top)?,
+        right: reject_auto_spacing(name, value, edges.right)?,
+        bottom: reject_auto_spacing(name, value, edges.bottom)?,
+        left: reject_auto_spacing(name, value, edges.left)?,
+    })
+}
+
+fn reject_auto_spacing(
+    name: &str,
+    source: &str,
+    length: DgCssLength,
+) -> Result<DgCssLength, DgStyleWarning> {
+    match length {
+        DgCssLength::Auto => Err(DgStyleWarning {
+            property: name.to_string(),
+            message: format!(
+                "`auto` lengths are not supported for {name:?} in DragonGUI CSS V1: {source:?}"
+            ),
+        }),
+        _ => Ok(length),
+    }
 }
 
 fn parse_color_value(
@@ -4846,15 +6910,69 @@ fn parse_simple_length(value: &str) -> Option<DgCssLength> {
 }
 
 fn parse_border(value: &str, variables: &BTreeMap<String, DgCssValue>) -> Option<DgBorder> {
-    let parts = split_value_tokens(value);
-    if parts.len() != 3 || !parts[1].eq_ignore_ascii_case("solid") {
+    let value = resolve_keyword(value, variables);
+    let parts = split_value_tokens(&value);
+    if parts.is_empty() {
         return None;
     }
-    Some(DgBorder {
-        width: parse_px_length_value("border", parts[0], variables).ok()?,
-        style: DgBorderStyle::Solid,
-        color: parse_color_value("border", parts[2], variables).ok()?,
-    })
+
+    let mut width = None;
+    let mut style = None;
+    let mut color = None;
+    for part in parts {
+        if part.eq_ignore_ascii_case("none") {
+            style = Some(DgBorderStyle::None);
+            continue;
+        }
+        if part.eq_ignore_ascii_case("solid") {
+            style = Some(DgBorderStyle::Solid);
+            continue;
+        }
+        if width.is_none() {
+            if let Ok(parsed) = parse_px_length_value("border", part, variables) {
+                width = Some(parsed);
+                continue;
+            }
+        }
+        if color.is_none() {
+            if let Ok(parsed) = parse_color_value("border", part, variables) {
+                color = Some(parsed);
+                continue;
+            }
+        }
+        return None;
+    }
+
+    match style {
+        Some(DgBorderStyle::Solid) => Some(DgBorder {
+            width: width?,
+            style: DgBorderStyle::Solid,
+            color: color?,
+        }),
+        Some(DgBorderStyle::None) => Some(DgBorder {
+            width: width.unwrap_or(DgCssLength::LogicalPx(0.0)),
+            style: DgBorderStyle::None,
+            color: color.unwrap_or(DgCssColor::Rgba([0.0, 0.0, 0.0, 0.0])),
+        }),
+        None if width.as_ref().is_some_and(css_length_is_zero) => Some(DgBorder {
+            width: width.unwrap_or(DgCssLength::LogicalPx(0.0)),
+            style: DgBorderStyle::None,
+            color: color.unwrap_or(DgCssColor::Rgba([0.0, 0.0, 0.0, 0.0])),
+        }),
+        None => None,
+    }
+}
+
+fn css_length_is_zero(value: &DgCssLength) -> bool {
+    match value {
+        DgCssLength::LogicalPx(value) | DgCssLength::Em(value) | DgCssLength::Percent(value) => {
+            value.abs() <= f32::EPSILON
+        }
+        DgCssLength::Calc(value) => {
+            value.px.abs() <= f32::EPSILON && value.percent.abs() <= f32::EPSILON
+        }
+        DgCssLength::Auto => false,
+    }
 }
 
 fn parse_box_shadow_value(
@@ -4867,14 +6985,13 @@ fn parse_box_shadow_value(
         return Ok(Vec::new());
     }
     let shadows = split_top_level_commas(&value);
-    if shadows.len() != 1 {
-        return Err(DgStyleWarning {
-            property: name.to_string(),
-            message: "only a single non-inset box-shadow is supported in DragonGUI CSS V1"
-                .to_string(),
-        });
+    if shadows.is_empty() {
+        return Err(parse_warning(name, &value, "box-shadow"));
     }
-    parse_single_box_shadow(name, shadows[0], variables).map(|shadow| vec![shadow])
+    shadows
+        .iter()
+        .map(|shadow| parse_single_box_shadow(name, shadow, variables))
+        .collect()
 }
 
 fn parse_single_box_shadow(
@@ -4898,17 +7015,11 @@ fn parse_single_box_shadow(
         }
         lengths.push(parse_px_length_value(name, token, variables)?);
     }
-    if inset {
-        return Err(DgStyleWarning {
-            property: name.to_string(),
-            message: "inset box-shadow is not supported in DragonGUI CSS V1".to_string(),
-        });
-    }
     if lengths.len() < 2 || lengths.len() > 4 {
         return Err(parse_warning(
             name,
             value,
-            "box-shadow: <offset-x> <offset-y> <blur?> <spread?> <color>",
+            "box-shadow: inset? <offset-x> <offset-y> <blur?> <spread?> <color>",
         ));
     }
     let Some(color) = color else {
@@ -4926,7 +7037,7 @@ fn parse_single_box_shadow(
             .cloned()
             .unwrap_or(DgCssLength::LogicalPx(0.0)),
         color,
-        inset: false,
+        inset,
     })
 }
 
@@ -5064,6 +7175,18 @@ mod tests {
             (
                 "transform",
                 DgStylePropertyName::Visual(DgVisualPropertyName::Transform),
+            ),
+            (
+                "translate",
+                DgStylePropertyName::Visual(DgVisualPropertyName::Translate),
+            ),
+            (
+                "scale",
+                DgStylePropertyName::Visual(DgVisualPropertyName::Scale),
+            ),
+            (
+                "rotate",
+                DgStylePropertyName::Visual(DgVisualPropertyName::Rotate),
             ),
             ("border", DgStylePropertyName::BorderShorthand),
             (
@@ -5256,12 +7379,14 @@ mod tests {
         let element = StyleElement {
             id: "run",
             key: Some("primary-action"),
+            attributes: &[],
             classes: &classes,
             kind: WidgetKind::Button,
             ancestors: &[],
             pseudo: &pseudos,
             sibling_index: Some(0),
             sibling_count: Some(2),
+            siblings: None,
         };
         let selector = DgSelector::Compound(
             DgCompoundSelector::new()
@@ -5278,24 +7403,155 @@ mod tests {
     }
 
     #[test]
+    fn selector_matching_supports_exact_attribute_selectors() {
+        let attributes = [
+            StyleAttribute {
+                name: "level".to_string(),
+                value: "info".to_string(),
+            },
+            StyleAttribute {
+                name: "disabled".to_string(),
+                value: "true".to_string(),
+            },
+        ];
+        let element = StyleElement {
+            id: "status",
+            key: None,
+            attributes: &attributes,
+            classes: &[],
+            kind: WidgetKind::Badge,
+            ancestors: &[],
+            pseudo: &[],
+            sibling_index: None,
+            sibling_count: None,
+            siblings: None,
+        };
+        let selector = DgSelector::Compound(
+            DgCompoundSelector::new()
+                .with_type(WidgetKind::Badge)
+                .with_attribute("level", "info")
+                .with_attribute("disabled", "true"),
+        );
+        let wrong_level =
+            DgSelector::Compound(DgCompoundSelector::new().with_attribute("level", "warning"));
+
+        assert!(selector.matches(&element));
+        assert!(!wrong_level.matches(&element));
+        assert_eq!(selector.specificity(), Specificity::new(0, 2, 1));
+    }
+
+    #[test]
+    fn selector_matching_supports_attribute_presence_and_string_operators() {
+        let attributes = [
+            StyleAttribute {
+                name: "class".to_string(),
+                value: "callout pill".to_string(),
+            },
+            StyleAttribute {
+                name: "text".to_string(),
+                value: "Run report".to_string(),
+            },
+            StyleAttribute {
+                name: "path".to_string(),
+                value: "icons/run.png".to_string(),
+            },
+            StyleAttribute {
+                name: "level".to_string(),
+                value: "info-primary".to_string(),
+            },
+            StyleAttribute {
+                name: "disabled".to_string(),
+                value: "true".to_string(),
+            },
+        ];
+        let element = StyleElement {
+            id: "run",
+            key: None,
+            attributes: &attributes,
+            classes: &[],
+            kind: WidgetKind::Button,
+            ancestors: &[],
+            pseudo: &[],
+            sibling_index: None,
+            sibling_count: None,
+            siblings: None,
+        };
+        let selector = DgSelector::Compound(
+            DgCompoundSelector::new()
+                .with_type(WidgetKind::Button)
+                .with_attribute_operator("disabled", DgAttributeOperator::Exists, None)
+                .with_attribute_operator(
+                    "class",
+                    DgAttributeOperator::Includes,
+                    Some("pill".to_string()),
+                )
+                .with_attribute_operator(
+                    "text",
+                    DgAttributeOperator::Prefix,
+                    Some("Run".to_string()),
+                )
+                .with_attribute_operator(
+                    "path",
+                    DgAttributeOperator::Suffix,
+                    Some(".png".to_string()),
+                )
+                .with_attribute_operator(
+                    "text",
+                    DgAttributeOperator::Substring,
+                    Some("report".to_string()),
+                )
+                .with_attribute_operator(
+                    "level",
+                    DgAttributeOperator::DashMatch,
+                    Some("info".to_string()),
+                )
+                .with_attribute_case(
+                    "text",
+                    DgAttributeOperator::Prefix,
+                    Some("run".to_string()),
+                    DgAttributeCaseSensitivity::CaseInsensitive,
+                ),
+        );
+        let missing_presence =
+            DgSelector::Compound(DgCompoundSelector::new().with_attribute_operator(
+                "open",
+                DgAttributeOperator::Exists,
+                None,
+            ));
+        let wrong_word = DgSelector::Compound(DgCompoundSelector::new().with_attribute_operator(
+            "class",
+            DgAttributeOperator::Includes,
+            Some("pi".to_string()),
+        ));
+
+        assert!(selector.matches(&element));
+        assert!(!missing_presence.matches(&element));
+        assert!(!wrong_word.matches(&element));
+        assert_eq!(selector.specificity(), Specificity::new(0, 7, 1));
+    }
+
+    #[test]
     fn selector_matching_supports_direct_child_ancestors() {
         let classes = ["primary"];
         let parent_classes = ["controls"];
         let ancestors = [StyleAncestor {
             id: "controls-panel",
             key: None,
+            attributes: &[],
             classes: &parent_classes,
             kind: WidgetKind::Panel,
         }];
         let element = StyleElement {
             id: "run",
             key: None,
+            attributes: &[],
             classes: &classes,
             kind: WidgetKind::Button,
             ancestors: &ancestors,
             pseudo: &[],
             sibling_index: Some(0),
             sibling_count: Some(1),
+            siblings: None,
         };
         let selector = DgSelector::Child {
             parent: Box::new(DgSelector::Compound(
@@ -5326,18 +7582,21 @@ mod tests {
             StyleAncestor {
                 id: "toolbar",
                 key: Some("main-toolbar"),
+                attributes: &[],
                 classes: &h_layout_classes,
                 kind: WidgetKind::HLayout,
             },
             StyleAncestor {
                 id: "controls-panel",
                 key: None,
+                attributes: &[],
                 classes: &panel_classes,
                 kind: WidgetKind::Panel,
             },
             StyleAncestor {
                 id: "root",
                 key: None,
+                attributes: &[],
                 classes: &window_classes,
                 kind: WidgetKind::Window,
             },
@@ -5345,12 +7604,14 @@ mod tests {
         let element = StyleElement {
             id: "run",
             key: Some("primary-action"),
+            attributes: &[],
             classes: &button_classes,
             kind: WidgetKind::Button,
             ancestors: &ancestors,
             pseudo: &[],
             sibling_index: Some(1),
             sibling_count: Some(3),
+            siblings: None,
         };
         let descendant = DgSelector::Chain(DgSelectorChain {
             ancestors: vec![(
@@ -5401,12 +7662,14 @@ mod tests {
         let element = StyleElement {
             id: "second",
             key: None,
+            attributes: &[],
             classes: &classes,
             kind: WidgetKind::Button,
             ancestors: &[],
             pseudo: &[],
             sibling_index: Some(1),
             sibling_count: Some(3),
+            siblings: None,
         };
         let second_child = DgSelector::Compound(
             DgCompoundSelector::new()
@@ -5428,11 +7691,38 @@ mod tests {
                 .with_type(WidgetKind::Button)
                 .with_structural(DgStructuralPseudo::LastChild),
         );
+        let every_third_offset = DgSelector::Compound(
+            DgCompoundSelector::new()
+                .with_type(WidgetKind::Button)
+                .with_structural(DgStructuralPseudo::NthChild(DgNthChild::Formula {
+                    step: 3,
+                    offset: -1,
+                })),
+        );
+        let first_three = DgSelector::Compound(
+            DgCompoundSelector::new()
+                .with_type(WidgetKind::Button)
+                .with_structural(DgStructuralPseudo::NthChild(DgNthChild::Formula {
+                    step: -1,
+                    offset: 3,
+                })),
+        );
+        let after_third = DgSelector::Compound(
+            DgCompoundSelector::new()
+                .with_type(WidgetKind::Button)
+                .with_structural(DgStructuralPseudo::NthChild(DgNthChild::Formula {
+                    step: 1,
+                    offset: 4,
+                })),
+        );
 
         assert!(second_child.matches(&element));
         assert!(even_child.matches(&element));
         assert!(!first_child.matches(&element));
         assert!(!last_child.matches(&element));
+        assert!(every_third_offset.matches(&element));
+        assert!(first_three.matches(&element));
+        assert!(!after_third.matches(&element));
     }
 
     #[test]
@@ -5441,12 +7731,14 @@ mod tests {
         let element = StyleElement {
             id: "run",
             key: None,
+            attributes: &[],
             classes: &classes,
             kind: WidgetKind::Button,
             ancestors: &[],
             pseudo: &[],
             sibling_index: Some(1),
             sibling_count: Some(3),
+            siblings: None,
         };
         let not_ghost = DgSelector::Compound(
             DgCompoundSelector::new()
@@ -5484,12 +7776,14 @@ mod tests {
         let base = StyleElement {
             id: "run",
             key: None,
+            attributes: &[],
             classes: &classes,
             kind: WidgetKind::Button,
             ancestors: &[],
             pseudo: &[],
             sibling_index: None,
             sibling_count: None,
+            siblings: None,
         };
         let hover_pseudos = [DgPseudoClass::Hover];
         let hover = StyleElement {
@@ -5527,6 +7821,46 @@ mod tests {
             selector_match_slots(&is_hover_or_focus, &base),
             vec![Some(DgPseudoClass::Hover), Some(DgPseudoClass::Focus)]
         );
+    }
+
+    #[test]
+    fn universal_selectors_parse_and_match() {
+        let mut warnings = Vec::new();
+        let universal = parse_selector("*", &mut warnings).expect("universal selector");
+        let universal_quiet =
+            parse_selector("*.quiet", &mut warnings).expect("universal class selector");
+        let chain =
+            parse_selector("Panel > *:nth-child(2)", &mut warnings).expect("universal child");
+
+        let classes = ["quiet"];
+        let ancestors = [StyleAncestor {
+            id: "panel",
+            key: None,
+            attributes: &[],
+            classes: &[],
+            kind: WidgetKind::Panel,
+        }];
+        let element = StyleElement {
+            id: "note",
+            key: None,
+            attributes: &[],
+            classes: &classes,
+            kind: WidgetKind::Label,
+            ancestors: &ancestors,
+            pseudo: &[],
+            sibling_index: Some(1),
+            sibling_count: Some(3),
+            siblings: None,
+        };
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(universal.matches(&element));
+        assert_eq!(universal.specificity(), Specificity::ZERO);
+        assert_eq!(universal.label(), "*");
+        assert!(universal_quiet.matches(&element));
+        assert_eq!(universal_quiet.specificity(), Specificity::new(0, 1, 0));
+        assert!(chain.matches(&element));
+        assert_eq!(chain.specificity(), Specificity::new(0, 1, 1));
     }
 
     #[test]
@@ -5656,6 +7990,112 @@ mod tests {
     }
 
     #[test]
+    fn parses_an_plus_b_nth_child_selectors() {
+        let parsed = parse_stylesheet(
+            r#"
+            Panel > Button:nth-child(3n + 1) { border-width: 2px; }
+            Panel > Label:nth-child(-n + 3) { color: accent; }
+            Panel > *:nth-child(n + 2) { opacity: 0.8; }
+            Panel > *:nth-child(2 of Button.primary, Badge[level="info"]) { border-color: accent; }
+            Panel > Button:nth-child(2 of Window > Panel > Button.metric) { opacity: 0.4; }
+            "#,
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        assert_eq!(parsed.rules.len(), 5);
+        assert_eq!(
+            parsed.rules[0].selector.label(),
+            "Panel > Button:nth-child(3n+1)"
+        );
+        assert_eq!(
+            parsed.rules[1].selector.label(),
+            "Panel > Label:nth-child(-n+3)"
+        );
+        assert_eq!(parsed.rules[2].selector.label(), "Panel > :nth-child(n+2)");
+        assert_eq!(
+            parsed.rules[2].selector.specificity(),
+            Specificity::new(0, 1, 1)
+        );
+        assert_eq!(
+            parsed.rules[3].selector.label(),
+            "Panel > :nth-child(2 of Button.primary, Badge[level=\"info\"])"
+        );
+        assert_eq!(
+            parsed.rules[3].selector.specificity(),
+            Specificity::new(0, 2, 2)
+        );
+        assert_eq!(
+            parsed.rules[4].selector.label(),
+            "Panel > Button:nth-child(2 of Window > Panel > Button.metric)"
+        );
+        assert_eq!(
+            parsed.rules[4].selector.specificity(),
+            Specificity::new(0, 2, 5)
+        );
+    }
+
+    #[test]
+    fn parses_exact_attribute_selectors() {
+        let parsed = parse_stylesheet(
+            r#"
+            Badge[level="info"] { border-width: 2px; }
+            Dropdown[value="Finance"] { border-color: accent; }
+            Button[disabled="true"] { opacity: 0.5; }
+            Button[disabled] { opacity: 0.6; }
+            Badge[class~="pill"] { border-radius: 8px; }
+            Label[text^="Run"] { color: accent; }
+            Image[path$=".png"] { opacity: 0.9; }
+            Panel[text*="Status"] { border-color: accent; }
+            Badge[level|="info"] { border-width: 1px; }
+            Label[text="run" i] { color: white; }
+            Button[text=RUN s] { opacity: 0.7; }
+            "#,
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        assert_eq!(parsed.rules.len(), 11);
+        assert_eq!(parsed.rules[0].selector.label(), "Badge[level=\"info\"]");
+        assert_eq!(
+            parsed.rules[0].selector.specificity(),
+            Specificity::new(0, 1, 1)
+        );
+        assert_eq!(
+            parsed.rules[1].selector.label(),
+            "Dropdown[value=\"Finance\"]"
+        );
+        assert_eq!(
+            parsed.rules[2].selector.label(),
+            "Button[disabled=\"true\"]"
+        );
+        assert_eq!(parsed.rules[3].selector.label(), "Button[disabled]");
+        assert_eq!(parsed.rules[4].selector.label(), "Badge[class~=\"pill\"]");
+        assert_eq!(parsed.rules[5].selector.label(), "Label[text^=\"Run\"]");
+        assert_eq!(parsed.rules[6].selector.label(), "Image[path$=\".png\"]");
+        assert_eq!(parsed.rules[7].selector.label(), "Panel[text*=\"Status\"]");
+        assert_eq!(parsed.rules[8].selector.label(), "Badge[level|=\"info\"]");
+        assert_eq!(parsed.rules[9].selector.label(), "Label[text=\"run\" i]");
+        assert_eq!(parsed.rules[10].selector.label(), "Button[text=\"RUN\" s]");
+    }
+
+    #[test]
+    fn invalid_attribute_selector_flags_are_parse_errors() {
+        let err = parse_stylesheet(
+            r#"
+            Label[text="run" q] { color: white; }
+            Label[text=run q] { color: white; }
+            "#,
+            StylesheetOrigin::User,
+        )
+        .unwrap_err();
+
+        assert!(err.message.contains("failed to parse DragonGUI stylesheet"));
+    }
+
+    #[test]
     fn parses_per_corner_radius_declarations() {
         let parsed = parse_stylesheet(
             "NumberInput { border-radius: 8px; border-top-right-radius: 12px; border-bottom-right-radius: 4px; }",
@@ -5690,9 +8130,10 @@ mod tests {
                 "id": "panel",
                 "type": "panel",
                 "children": [
-                    {"id": "first", "type": "button", "props": {"text": "One"}},
-                    {"id": "second", "type": "button", "props": {"text": "Two"}},
-                    {"id": "caption", "type": "label", "props": {"text": "End"}}
+                    {"id": "first", "type": "button", "class": "metric", "props": {"text": "One"}},
+                    {"id": "caption", "type": "label", "class": "metric", "props": {"text": "Middle"}},
+                    {"id": "second", "type": "button", "class": "metric", "props": {"text": "Two"}},
+                    {"id": "third", "type": "button", "props": {"text": "Three"}}
                 ]
             }]
         }))
@@ -5704,7 +8145,13 @@ mod tests {
                 r#"
                 Panel > Button:first-child { background: accent; }
                 Panel > Button:nth-child(2) { border-width: 3px; }
+                Panel > *:nth-child(-n + 2) { color: white; }
+                Panel > *:nth-child(3n) { opacity: 0.6; }
                 Panel > Button:last-child { background: danger; }
+                Panel > *:nth-child(2 of Button) { border-color: accent; }
+                Panel > Button:nth-child(3 of .metric) { background: success; }
+                Panel > *:nth-child(odd of .metric) { border-radius: 10px; }
+                Panel > Button:nth-child(2 of Window > Panel > Button.metric) { opacity: 0.4; }
                 "#,
             )
             .unwrap();
@@ -5712,15 +8159,36 @@ mod tests {
         apply_stylesheets_to_tree(&mut tree, &mut store);
         let panel = &tree.children[0];
         let first = &panel.children[0];
-        let second = &panel.children[1];
+        let caption = &panel.children[1];
+        let second = &panel.children[2];
+        let third = &panel.children[3];
 
         assert_eq!(
             first.style.visual.background,
             Some(ColorRef::Token("accent".to_string()))
         );
-        assert_eq!(second.style.visual.border_width, Some(3.0));
-        assert_ne!(
+        assert_eq!(
+            first.style.text.color,
+            Some(ColorRef::Rgba([1.0, 1.0, 1.0, 1.0]))
+        );
+        assert_eq!(first.style.visual.border_radius, Some(10.0));
+        assert_ne!(caption.style.visual.border_radius, Some(10.0));
+        assert_eq!(second.style.visual.opacity, Some(0.4));
+        assert_eq!(second.style.visual.border_radius, Some(10.0));
+        assert_eq!(
+            second.style.visual.border_color,
+            Some(ColorRef::Token("accent".to_string()))
+        );
+        assert_eq!(
             second.style.visual.background,
+            Some(ColorRef::Token("success".to_string()))
+        );
+        assert_ne!(
+            third.style.visual.border_color,
+            Some(ColorRef::Token("accent".to_string()))
+        );
+        assert_eq!(
+            third.style.visual.background,
             Some(ColorRef::Token("danger".to_string()))
         );
     }
@@ -5749,6 +8217,7 @@ mod tests {
                 Button:not(.ghost) { background: accent; }
                 :is(Button, Label).callout { color: white; }
                 :where(.quiet) { border-radius: 9px; }
+                Panel > *:nth-child(3) { opacity: 0.7; }
                 Button:is(:hover, :focus) { border-color: accent; }
                 Button:not(:disabled) { border-width: 2px; }
                 "#,
@@ -5778,6 +8247,7 @@ mod tests {
             Some(ColorRef::Rgba([1.0, 1.0, 1.0, 1.0]))
         );
         assert_eq!(note.style.visual.border_radius, Some(9.0));
+        assert_eq!(note.style.visual.opacity, Some(0.7));
         assert_eq!(
             run.style.hover.border_color,
             Some(ColorRef::Token("accent".to_string()))
@@ -5788,6 +8258,54 @@ mod tests {
         );
         assert_eq!(run.style.visual.border_width, Some(2.0));
         assert_ne!(run.style.disabled.border_width, Some(2.0));
+    }
+
+    #[test]
+    fn stylesheet_cascade_applies_exact_attribute_selectors() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [
+                {"id": "status", "type": "badge", "class": "callout pill", "props": {"text": "Ready", "level": "info-primary"}},
+                {"id": "team", "type": "dropdown", "props": {"items": ["Operations", "Finance"], "value": "Finance"}},
+                {"id": "run", "type": "button", "props": {"text": "Run", "disabled": true}}
+            ]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Badge[level] { border-width: 3px; }
+                Badge[level|="info"] { border-radius: 8px; }
+                Badge[class~="pill"] { opacity: 0.8; }
+                Badge[text*="AD" i] { color: white; }
+                Dropdown[value$="ance"] { border-color: accent; }
+                Button[disabled] { opacity: 0.5; }
+                Button[text^="Run"] { background: accent; }
+                "#,
+            )
+            .unwrap();
+
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+
+        assert_eq!(tree.children[0].style.visual.border_width, Some(3.0));
+        assert_eq!(tree.children[0].style.visual.border_radius, Some(8.0));
+        assert_eq!(tree.children[0].style.visual.opacity, Some(0.8));
+        assert_eq!(
+            tree.children[0].style.text.color,
+            Some(ColorRef::Rgba([1.0, 1.0, 1.0, 1.0]))
+        );
+        assert_eq!(
+            tree.children[1].style.visual.border_color,
+            Some(ColorRef::Token("accent".to_string()))
+        );
+        assert_eq!(tree.children[2].style.visual.opacity, Some(0.5));
+        assert_eq!(
+            tree.children[2].style.visual.background,
+            Some(ColorRef::Token("accent".to_string()))
+        );
     }
 
     #[test]
@@ -6075,6 +8593,44 @@ mod tests {
     }
 
     #[test]
+    fn border_shorthand_accepts_none_reset() {
+        let parsed = parse_stylesheet("Button { border: none; }", StylesheetOrigin::User).unwrap();
+        let declaration = parsed.rules[0]
+            .declarations
+            .iter()
+            .find_map(|declaration| match &declaration.property {
+                DgStyleProperty::Visual(DgVisualDeclaration::Border(border)) => Some(border),
+                _ => None,
+            })
+            .expect("border shorthand should lower");
+
+        assert_eq!(declaration.style, DgBorderStyle::None);
+        assert_eq!(declaration.width, DgCssLength::LogicalPx(0.0));
+
+        let mut style = NodeStyle::default();
+        apply_property_to_style(&mut style, &parsed.rules[0].declarations[0].property);
+        assert_eq!(style.visual.border_width, Some(0.0));
+        assert_eq!(
+            style.visual.border_color,
+            Some(ColorRef::Rgba([0.0, 0.0, 0.0, 0.0]))
+        );
+    }
+
+    #[test]
+    fn border_shorthand_zero_resets_border() {
+        let parsed = parse_stylesheet("Button { border: 0; }", StylesheetOrigin::User).unwrap();
+
+        let mut style = NodeStyle::default();
+        apply_property_to_style(&mut style, &parsed.rules[0].declarations[0].property);
+
+        assert_eq!(style.visual.border_width, Some(0.0));
+        assert_eq!(
+            style.visual.border_color,
+            Some(ColorRef::Rgba([0.0, 0.0, 0.0, 0.0]))
+        );
+    }
+
+    #[test]
     fn unsupported_properties_are_reported_as_warnings() {
         let parsed = parse_stylesheet(
             "Button { filter: blur(2px); border-radius: 4px; }",
@@ -6284,6 +8840,81 @@ mod tests {
     }
 
     #[test]
+    fn layout_spacing_percent_calc_and_auto_lengths_parse() {
+        let parsed = parse_stylesheet(
+            "Panel { padding: 4% calc(10px + 2%); margin: auto; gap: calc(2% + 8px); row-gap: 4%; column-gap: calc(16px + 2%); }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                &declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::Padding(edges))
+                    if edges.top == DgCssLength::Percent(4.0)
+                        && edges.right == DgCssLength::Calc(CalcLength { percent: 2.0, px: 10.0 })
+                        && edges.bottom == DgCssLength::Percent(4.0)
+                        && edges.left == DgCssLength::Calc(CalcLength { percent: 2.0, px: 10.0 })
+            )
+        }));
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                &declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::Margin(edges))
+                    if edges.top == DgCssLength::Auto
+                        && edges.right == DgCssLength::Auto
+                        && edges.bottom == DgCssLength::Auto
+                        && edges.left == DgCssLength::Auto
+            )
+        }));
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::Gap(DgCssLength::Calc(CalcLength {
+                    percent: 2.0,
+                    px: 8.0
+                })))
+            )
+        }));
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::RowGap(DgCssLength::Percent(4.0)))
+            )
+        }));
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::ColumnGap(DgCssLength::Calc(
+                    CalcLength {
+                        percent: 2.0,
+                        px: 16.0
+                    }
+                )))
+            )
+        }));
+    }
+
+    #[test]
+    fn padding_and_gap_auto_lengths_warn() {
+        let parsed = parse_stylesheet(
+            "Panel { padding: auto; gap: auto; }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed
+            .warnings
+            .iter()
+            .any(|warning| warning.property == "padding" && warning.message.contains("auto")));
+        assert!(parsed
+            .warnings
+            .iter()
+            .any(|warning| warning.property == "gap" && warning.message.contains("auto")));
+    }
+
+    #[test]
     fn grid_layout_properties_parse() {
         let parsed = parse_stylesheet(
             "Panel.dashboard { display: grid; grid-template-columns: 180px 1fr 2fr; grid-template-rows: auto 48px; column-gap: 10px; row-gap: 12px; } Panel.sidebar { grid-column: 1; grid-row: 1 / span 2; }",
@@ -6345,6 +8976,155 @@ mod tests {
     }
 
     #[test]
+    fn grid_auto_repeat_tracks_parse() {
+        let parsed = parse_stylesheet(
+            "Panel { display: grid; grid-template-columns: fit-content(180px) repeat(auto-fit, minmax(120px, 1fr)); grid-template-rows: repeat(auto-fill, 40px); }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                &declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::GridTemplateColumns(tracks))
+                    if tracks == &vec![
+                        DgGridTrackSize::FitContent(DgGridTrackFitContentSize::LogicalPx(180.0)),
+                        DgGridTrackSize::Repeat {
+                            kind: DgGridTrackRepeatKind::AutoFit,
+                            tracks: vec![DgGridTrackSize::MinMax {
+                                min: DgGridTrackMinSize::LogicalPx(120.0),
+                                max: DgGridTrackMaxSize::Fraction(1.0),
+                            }],
+                        },
+                    ]
+            )
+        }));
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                &declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::GridTemplateRows(tracks))
+                    if tracks == &vec![DgGridTrackSize::Repeat {
+                        kind: DgGridTrackRepeatKind::AutoFill,
+                        tracks: vec![DgGridTrackSize::LogicalPx(40.0)],
+                    }]
+            )
+        }));
+    }
+
+    #[test]
+    fn grid_repeat_rejects_nested_repeat() {
+        let parsed = parse_stylesheet(
+            "Panel { display: grid; grid-template-columns: repeat(auto-fit, repeat(2, 120px)); }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed
+            .warnings
+            .iter()
+            .any(|warning| warning.property == "grid-template-columns"
+                && warning.message.contains("non-nested")));
+    }
+
+    #[test]
+    fn grid_minmax_tracks_parse() {
+        let parsed = parse_stylesheet(
+            "Panel { display: grid; grid-template-columns: minmax(160px, 1fr) minmax(25%, auto); grid-template-rows: minmax(calc(40px + 20px), 120px); }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                &declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::GridTemplateColumns(tracks))
+                    if tracks == &vec![
+                        DgGridTrackSize::MinMax {
+                            min: DgGridTrackMinSize::LogicalPx(160.0),
+                            max: DgGridTrackMaxSize::Fraction(1.0),
+                        },
+                        DgGridTrackSize::MinMax {
+                            min: DgGridTrackMinSize::Percent(25.0),
+                            max: DgGridTrackMaxSize::Auto,
+                        },
+                    ]
+            )
+        }));
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                &declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::GridTemplateRows(tracks))
+                    if tracks == &vec![DgGridTrackSize::MinMax {
+                        min: DgGridTrackMinSize::LogicalPx(60.0),
+                        max: DgGridTrackMaxSize::LogicalPx(120.0),
+                    }]
+            )
+        }));
+    }
+
+    #[test]
+    fn grid_minmax_rejects_flexible_min_track() {
+        let parsed = parse_stylesheet(
+            "Panel { display: grid; grid-template-columns: minmax(1fr, 2fr); }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed
+            .warnings
+            .iter()
+            .any(|warning| warning.property == "grid-template-columns"
+                && warning.message.contains("min track")));
+    }
+
+    #[test]
+    fn grid_fit_content_tracks_parse() {
+        let parsed = parse_stylesheet(
+            "Panel { display: grid; grid-template-columns: fit-content(220px) fit-content(40%); grid-template-rows: fit-content(calc(20px + 30px)); }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                &declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::GridTemplateColumns(tracks))
+                    if tracks == &vec![
+                        DgGridTrackSize::FitContent(DgGridTrackFitContentSize::LogicalPx(220.0)),
+                        DgGridTrackSize::FitContent(DgGridTrackFitContentSize::Percent(40.0)),
+                    ]
+            )
+        }));
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                &declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::GridTemplateRows(tracks))
+                    if tracks == &vec![DgGridTrackSize::FitContent(
+                        DgGridTrackFitContentSize::LogicalPx(50.0)
+                    )]
+            )
+        }));
+    }
+
+    #[test]
+    fn grid_fit_content_rejects_fr_track() {
+        let parsed = parse_stylesheet(
+            "Panel { display: grid; grid-template-columns: fit-content(1fr); }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed
+            .warnings
+            .iter()
+            .any(|warning| warning.property == "grid-template-columns"
+                && warning.message.contains("fit-content")));
+    }
+
+    #[test]
     fn overflow_properties_parse_and_validate() {
         let parsed = parse_stylesheet(
             "Panel { overflow: auto; overflow-x: visible; overflow-y: hidden; } Panel.bad { overflow: banana; }",
@@ -6387,7 +9167,8 @@ mod tests {
             "type": "window",
             "children": [
                 {"id": "badge", "type": "badge", "class": "float", "props": {"text": "Offset"}},
-                {"id": "pin", "type": "badge", "class": "pin", "props": {"text": "Pinned"}}
+                {"id": "pin", "type": "badge", "class": "pin", "props": {"text": "Pinned"}},
+                {"id": "dock", "type": "badge", "class": "dock", "props": {"text": "Docked"}}
             ]
         }))
         .unwrap();
@@ -6395,7 +9176,7 @@ mod tests {
         store
             .set_stylesheet(
                 StylesheetOrigin::User,
-            "Badge.float { position: relative; top: -6px; left: 8px; z-index: 3; } Badge.pin { position: absolute; top: 8px; right: 10px; } Badge.bad { position: fixed; }",
+            "Badge.float { position: relative; top: -6px; left: 8px; z-index: 3; } Badge.pin { position: absolute; top: 8px; right: 10px; } Badge.dock { position: fixed; bottom: 12px; left: 16px; } Badge.bad { position: sticky; }",
             )
             .unwrap();
 
@@ -6409,6 +9190,10 @@ mod tests {
         assert_eq!(pin.style.layout.position, Some(PositionStyle::Absolute));
         assert_eq!(pin.style.layout.top, Some(8.0));
         assert_eq!(pin.style.layout.right, Some(10.0));
+        let dock = &tree.children[2];
+        assert_eq!(dock.style.layout.position, Some(PositionStyle::Fixed));
+        assert_eq!(dock.style.layout.bottom, Some(12.0));
+        assert_eq!(dock.style.layout.left, Some(16.0));
         assert!(store
             .warnings()
             .iter()
@@ -6573,6 +9358,68 @@ mod tests {
             DgStyleProperty::Visual(DgVisualDeclaration::BoxShadow(shadows))
                 if shadows.is_empty()
         ));
+    }
+
+    #[test]
+    fn box_shadow_parses_multiple_non_inset_layers() {
+        let parsed = parse_stylesheet(
+            "Panel.card { box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18), 0 16px 40px 4px rgba(0, 0, 0, 0.24); }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        let shadows = parsed.rules[0]
+            .declarations
+            .iter()
+            .find_map(|declaration| match &declaration.property {
+                DgStyleProperty::Visual(DgVisualDeclaration::BoxShadow(shadows)) => Some(shadows),
+                _ => None,
+            })
+            .expect("box-shadow declaration");
+        assert_eq!(shadows.len(), 2);
+        assert_eq!(shadows[0].offset_y, DgCssLength::LogicalPx(2.0));
+        assert_eq!(shadows[0].blur, DgCssLength::LogicalPx(8.0));
+        assert_eq!(shadows[1].offset_y, DgCssLength::LogicalPx(16.0));
+        assert_eq!(shadows[1].blur, DgCssLength::LogicalPx(40.0));
+        assert_eq!(shadows[1].spread, DgCssLength::LogicalPx(4.0));
+
+        let mut style = NodeStyle::default();
+        apply_property_to_style(&mut style, &parsed.rules[0].declarations[0].property);
+        let shadows = style.visual.box_shadows.as_ref().expect("computed shadows");
+        assert_eq!(shadows.len(), 2);
+        assert_eq!(shadows[0].offset_y, 2.0);
+        assert_eq!(shadows[1].offset_y, 16.0);
+    }
+
+    #[test]
+    fn box_shadow_parses_inset_layers() {
+        let parsed = parse_stylesheet(
+            "Panel.card { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), inset 0 -14px 30px rgba(0, 0, 0, 0.24); }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        let shadows = parsed.rules[0]
+            .declarations
+            .iter()
+            .find_map(|declaration| match &declaration.property {
+                DgStyleProperty::Visual(DgVisualDeclaration::BoxShadow(shadows)) => Some(shadows),
+                _ => None,
+            })
+            .expect("box-shadow declaration");
+        assert_eq!(shadows.len(), 2);
+        assert!(shadows[0].inset);
+        assert_eq!(shadows[0].offset_y, DgCssLength::LogicalPx(1.0));
+        assert_eq!(shadows[0].blur, DgCssLength::LogicalPx(0.0));
+        assert!(shadows[1].inset);
+        assert_eq!(shadows[1].offset_y, DgCssLength::LogicalPx(-14.0));
+        assert_eq!(shadows[1].blur, DgCssLength::LogicalPx(30.0));
+
+        let mut style = NodeStyle::default();
+        apply_property_to_style(&mut style, &parsed.rules[0].declarations[0].property);
+        let shadows = style.visual.box_shadows.as_ref().expect("computed shadows");
+        assert_eq!(shadows.len(), 2);
+        assert!(shadows.iter().all(|shadow| shadow.inset));
     }
 
     #[test]
@@ -6811,6 +9658,72 @@ mod tests {
     }
 
     #[test]
+    fn transition_timing_parses_cubic_bezier() {
+        let parsed = parse_stylesheet(
+            "Button { transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1); }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+        let mut style = NodeStyle::default();
+        apply_property_to_style(&mut style, &parsed.rules[0].declarations[0].property);
+
+        assert_eq!(
+            style.transition.timing_function,
+            Some(TransitionTimingFunction::CubicBezier {
+                x1: 0.16,
+                y1: 1.0,
+                x2: 0.3,
+                y2: 1.0
+            })
+        );
+    }
+
+    #[test]
+    fn transition_shorthand_keeps_cubic_bezier_function_token() {
+        let parsed = parse_stylesheet(
+            "Button { transition: background 220ms cubic-bezier(0.16, 1, 0.3, 1) 40ms; }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+        let mut style = NodeStyle::default();
+        apply_property_to_style(&mut style, &parsed.rules[0].declarations[0].property);
+
+        assert_eq!(
+            style.transition.properties,
+            Some(vec![TransitionProperty::Background])
+        );
+        assert_eq!(style.transition.duration_ms, Some(220));
+        assert_eq!(style.transition.delay_ms, Some(40));
+        assert_eq!(
+            style.transition.timing_function,
+            Some(TransitionTimingFunction::CubicBezier {
+                x1: 0.16,
+                y1: 1.0,
+                x2: 0.3,
+                y2: 1.0
+            })
+        );
+    }
+
+    #[test]
+    fn transition_timing_rejects_invalid_cubic_bezier_x_control_points() {
+        let parsed = parse_stylesheet(
+            "Button { transition-timing-function: cubic-bezier(1.2, 0, 0.3, 1); }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed
+            .rules
+            .first()
+            .is_none_or(|rule| rule.declarations.is_empty()));
+        assert!(parsed
+            .warnings
+            .iter()
+            .any(|warning| warning.property == "transition-timing-function"));
+    }
+
+    #[test]
     fn transition_property_rejects_unknown_names() {
         let parsed = parse_stylesheet(
             "Button { transition-property: background, grid-template-columns; }",
@@ -6846,6 +9759,30 @@ mod tests {
     }
 
     #[test]
+    fn transform_longhands_merge_into_visual_transform() {
+        let parsed = parse_stylesheet(
+            "Button:hover { transform: translateX(2px); translate: 6px -3px; scale: 1.04 0.98; rotate: 0.25turn; transition-property: translate, rotate; }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+        let mut style = NodeStyle::default();
+        for declaration in &parsed.rules[0].declarations {
+            apply_property_to_style(&mut style, &declaration.property);
+        }
+
+        let transform = style.visual.transform.expect("merged transform");
+        assert_eq!(transform.translate_x, 6.0);
+        assert_eq!(transform.translate_y, -3.0);
+        assert_eq!(transform.scale_x, 1.04);
+        assert_eq!(transform.scale_y, 0.98);
+        assert_eq!(transform.rotate_deg, 90.0);
+        assert_eq!(
+            style.transition.properties,
+            Some(vec![TransitionProperty::Transform])
+        );
+    }
+
+    #[test]
     fn variable_fallbacks_parse_when_variable_is_missing() {
         let parsed = parse_stylesheet(
             r#"
@@ -6876,6 +9813,66 @@ mod tests {
                 )))
             )
         }));
+    }
+
+    #[test]
+    fn variables_resolve_inside_larger_property_values() {
+        let parsed = parse_stylesheet(
+            r#"
+            :root {
+                --line-color: rgba(255, 255, 255, 0.25);
+                --shadow-color: rgba(0, 0, 0, 0.35);
+                --brand-stop: #5aa9ff;
+                --border-width: 2px;
+                --fast: 160ms;
+            }
+
+            Button {
+                border: var(--border-width) solid var(--line-color);
+                box-shadow: 0 2px 8px var(--shadow-color);
+                background: linear-gradient(180deg, var(--brand-stop), var(--missing-stop, transparent));
+                transition: background var(--fast) ease-out;
+            }
+            "#,
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+
+        let mut style = NodeStyle::default();
+        for declaration in &parsed.rules[0].declarations {
+            apply_property_to_style(&mut style, &declaration.property);
+        }
+
+        assert_eq!(style.visual.border_width, Some(2.0));
+        assert!(matches!(
+            style.visual.border_color,
+            Some(ColorRef::Rgba([r, g, b, a]))
+                if (r - 1.0).abs() < 0.001
+                    && (g - 1.0).abs() < 0.001
+                    && (b - 1.0).abs() < 0.001
+                    && (a - 0.25).abs() < 0.003
+        ));
+        let shadows = style.visual.box_shadows.as_ref().expect("box shadow");
+        assert_eq!(shadows.len(), 1);
+        assert!(matches!(
+            shadows[0].color,
+            ColorRef::Rgba([r, g, b, a])
+                if r.abs() < 0.001
+                    && g.abs() < 0.001
+                    && b.abs() < 0.001
+                    && (a - 0.35).abs() < 0.003
+        ));
+        assert!(matches!(
+            style.visual.background_paint,
+            Some(BackgroundPaint::LinearGradient(_))
+        ));
+        assert_eq!(style.transition.duration_ms, Some(160));
+        assert_eq!(
+            style.transition.properties,
+            Some(vec![TransitionProperty::Background])
+        );
     }
 
     #[test]
@@ -6957,6 +9954,280 @@ mod tests {
             store.variables().get("--radius"),
             Some(&DgCssValue::Length(DgCssLength::LogicalPx(2.0)))
         );
+    }
+
+    #[test]
+    fn media_rules_apply_against_logical_viewport_size() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "run",
+                "type": "button",
+                "props": {"text": "Run"}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Button { width: 180px; background: neutral; }
+                @media (max-width: 500px) {
+                    Button { width: 120px; background: danger; }
+                }
+                @media (min-width: 900px) {
+                    Button { width: 240px; background: success; }
+                }
+                "#,
+            )
+            .unwrap();
+
+        assert_eq!(store.rules(StylesheetOrigin::User).len(), 3);
+        assert!(store.rules(StylesheetOrigin::User)[1].media.is_some());
+
+        apply_stylesheets_to_tree_for_media(
+            &mut tree,
+            &mut store,
+            DgMediaEnvironment::new(420.0, 700.0),
+        );
+        let button = &tree.children[0];
+        assert_eq!(button.style.layout.width, Some(120.0));
+        assert_eq!(
+            button.style.visual.background,
+            Some(ColorRef::Token("danger".to_string()))
+        );
+
+        apply_stylesheets_to_tree_for_media(
+            &mut tree,
+            &mut store,
+            DgMediaEnvironment::new(700.0, 700.0),
+        );
+        let button = &tree.children[0];
+        assert_eq!(button.style.layout.width, Some(180.0));
+        assert_eq!(
+            button.style.visual.background,
+            Some(ColorRef::Token("neutral".to_string()))
+        );
+
+        apply_stylesheets_to_tree_for_media(
+            &mut tree,
+            &mut store,
+            DgMediaEnvironment::new(960.0, 700.0),
+        );
+        let button = &tree.children[0];
+        assert_eq!(button.style.layout.width, Some(240.0));
+        assert_eq!(
+            button.style.visual.background,
+            Some(ColorRef::Token("success".to_string()))
+        );
+    }
+
+    #[test]
+    fn media_rules_support_height_ranges_and_or_lists() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "status",
+                "type": "label",
+                "props": {"text": "Status"}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Label { font-size: 12px; }
+                @media (height >= 600px) and (height <= 900px), (max-width: 420px) {
+                    Label { font-size: 18px; }
+                }
+                "#,
+            )
+            .unwrap();
+
+        apply_stylesheets_to_tree_for_media(
+            &mut tree,
+            &mut store,
+            DgMediaEnvironment::new(800.0, 700.0),
+        );
+        assert_eq!(tree.children[0].style.text.font_size, Some(18.0));
+
+        apply_stylesheets_to_tree_for_media(
+            &mut tree,
+            &mut store,
+            DgMediaEnvironment::new(400.0, 300.0),
+        );
+        assert_eq!(tree.children[0].style.text.font_size, Some(18.0));
+
+        apply_stylesheets_to_tree_for_media(
+            &mut tree,
+            &mut store,
+            DgMediaEnvironment::new(800.0, 300.0),
+        );
+        assert_eq!(tree.children[0].style.text.font_size, Some(12.0));
+    }
+
+    #[test]
+    fn media_rules_support_viewport_orientation() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "status",
+                "type": "label",
+                "props": {"text": "Status"}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Label { font-size: 12px; color: white; }
+                @media (orientation: landscape) {
+                    Label { font-size: 18px; }
+                }
+                @media screen and (orientation: portrait) {
+                    Label { color: accent; }
+                }
+                @media (orientation: square) {
+                    Label { border-width: 4px; }
+                }
+                "#,
+            )
+            .unwrap();
+
+        assert!(store
+            .warnings()
+            .iter()
+            .any(|warning| warning.property == "@media"
+                && warning.message.contains("portrait and landscape")));
+
+        apply_stylesheets_to_tree_for_media(
+            &mut tree,
+            &mut store,
+            DgMediaEnvironment::new(900.0, 600.0),
+        );
+        assert_eq!(tree.children[0].style.text.font_size, Some(18.0));
+        assert_eq!(
+            tree.children[0].style.text.color,
+            Some(ColorRef::Rgba([1.0, 1.0, 1.0, 1.0]))
+        );
+        assert_ne!(tree.children[0].style.visual.border_width, Some(4.0));
+
+        apply_stylesheets_to_tree_for_media(
+            &mut tree,
+            &mut store,
+            DgMediaEnvironment::new(600.0, 900.0),
+        );
+        assert_eq!(tree.children[0].style.text.font_size, Some(12.0));
+        assert_eq!(
+            tree.children[0].style.text.color,
+            Some(ColorRef::Token("accent".to_string()))
+        );
+        assert_ne!(tree.children[0].style.visual.border_width, Some(4.0));
+
+        apply_stylesheets_to_tree_for_media(
+            &mut tree,
+            &mut store,
+            DgMediaEnvironment::new(700.0, 700.0),
+        );
+        assert_eq!(
+            tree.children[0].style.text.color,
+            Some(ColorRef::Token("accent".to_string()))
+        );
+    }
+
+    #[test]
+    fn supports_rules_gate_declaration_and_selector_queries() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "run",
+                "type": "button",
+                "class": "primary",
+                "props": {"text": "Run"}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Button { background: neutral; border-radius: 4px; }
+                @supports (display: grid) and (selector(Button.primary)) {
+                    Button.primary { background: success; }
+                }
+                @supports not (backdrop-filter: blur(8px)) {
+                    Button.primary { border-radius: 12px; }
+                }
+                @supports (display: inline-grid) or (selector(Widget.unknown)) {
+                    Button.primary { border-width: 7px; }
+                }
+                "#,
+            )
+            .unwrap();
+
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+        let button = &tree.children[0];
+        assert_eq!(
+            button.style.visual.background,
+            Some(ColorRef::Token("success".to_string()))
+        );
+        assert_eq!(button.style.visual.border_radius, Some(12.0));
+        assert_ne!(button.style.visual.border_width, Some(7.0));
+    }
+
+    #[test]
+    fn supports_rules_compose_with_media_rules() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "run",
+                "type": "button",
+                "props": {"text": "Run"}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Button { width: 160px; }
+                @media (min-width: 900px) {
+                    @supports (width: calc(100% - 40px)) {
+                        Button { width: 240px; }
+                    }
+                    @supports (display: inline-grid) {
+                        Button { width: 80px; }
+                    }
+                }
+                "#,
+            )
+            .unwrap();
+
+        apply_stylesheets_to_tree_for_media(
+            &mut tree,
+            &mut store,
+            DgMediaEnvironment::new(700.0, 700.0),
+        );
+        assert_eq!(tree.children[0].style.layout.width, Some(160.0));
+
+        apply_stylesheets_to_tree_for_media(
+            &mut tree,
+            &mut store,
+            DgMediaEnvironment::new(960.0, 700.0),
+        );
+        assert_eq!(tree.children[0].style.layout.width, Some(240.0));
     }
 
     #[test]
@@ -7551,6 +10822,59 @@ mod tests {
             Some(ColorRef::Token("border".to_string()))
         );
         assert_eq!(accent.visual.border_radius, Some(2.0));
+        assert!(store.warnings().is_empty());
+    }
+
+    #[test]
+    fn stylesheet_cascade_applies_panel_scrollbar_part_styles() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "panel",
+                "type": "panel"
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Panel::scrollbar-track {
+                    width: 6px;
+                    padding: 14px;
+                    background: rgba(255, 255, 255, 0.12);
+                    border-radius: 999px;
+                }
+
+                Panel::scrollbar-thumb {
+                    width: 8px;
+                    background: accent;
+                    border-radius: 999px;
+                }
+                "#,
+            )
+            .unwrap();
+
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+        let panel = &tree.children[0];
+        let track = panel.style.parts.parts.get("scrollbar-track").unwrap();
+        let thumb = panel.style.parts.parts.get("scrollbar-thumb").unwrap();
+
+        assert_eq!(track.layout.width, Some(6.0));
+        assert_eq!(track.layout.padding, Some(14.0));
+        assert_eq!(track.visual.border_radius, Some(999.0));
+        assert!(matches!(
+            track.visual.background,
+            Some(ColorRef::Rgba([_, _, _, alpha])) if (alpha - 0.12).abs() < 0.003
+        ));
+        assert_eq!(thumb.layout.width, Some(8.0));
+        assert_eq!(
+            thumb.visual.background,
+            Some(ColorRef::Token("accent".to_string()))
+        );
+        assert_eq!(thumb.visual.border_radius, Some(999.0));
         assert!(store.warnings().is_empty());
     }
 

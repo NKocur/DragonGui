@@ -8,7 +8,9 @@ use glyphon::{
     Weight, Wrap,
 };
 
-use crate::css_style::{computed_style_for_virtual_element, StylesheetStore};
+use crate::css_style::{
+    computed_style_for_virtual_element_with_media, DgMediaEnvironment, StylesheetStore,
+};
 use crate::document::{WidgetKind, WidgetNode};
 use crate::events::WidgetState;
 use crate::layout::{LayoutResult, Rect};
@@ -189,6 +191,7 @@ impl TextRendererDg {
         let dropdown_overlay = dropdown_overlay_rect(layout, state, theme, sf);
         let menu_overlays = active_menu_overlay_rects(tree, layout, state, theme, sf);
         let tooltip_overlay = active_tooltip_overlay_rect(tree, layout, theme, state, sf);
+        let media = DgMediaEnvironment::from_physical_size(window_w, window_h, sf);
 
         let mut entries = std::mem::take(&mut self.entries);
         let mut caret_positions = HashMap::new();
@@ -261,6 +264,7 @@ impl TextRendererDg {
             &mut self.font_system,
             sf,
             stylesheets,
+            media,
             &mut cache,
             &mut caret_positions,
             &mut entries,
@@ -288,6 +292,7 @@ impl TextRendererDg {
             window_w,
             window_h,
             stylesheets,
+            media,
             &mut cache,
             &mut caret_positions,
             &mut entries,
@@ -1585,6 +1590,7 @@ fn collect_tooltip_text(
     font_system: &mut FontSystem,
     sf: f32,
     stylesheets: &StylesheetStore,
+    media: DgMediaEnvironment,
     cache: &mut TextBufferCache,
     caret_positions: &mut HashMap<String, [f32; 2]>,
     out: &mut Vec<TextEntry>,
@@ -1598,11 +1604,12 @@ fn collect_tooltip_text(
     let Some(text) = node.props.tooltip.as_deref() else {
         return;
     };
-    let style = computed_style_for_virtual_element(
+    let style = computed_style_for_virtual_element_with_media(
         WidgetKind::Tooltip,
         "__dg_static_tooltip",
         &["static"],
         stylesheets,
+        Some(media),
     );
     let pad = uniform_layout_padding(&style.layout)
         .map(|padding| padding.max(0.0) * sf)
@@ -1686,6 +1693,7 @@ fn collect_toast_text(
     window_w: f32,
     window_h: f32,
     stylesheets: &StylesheetStore,
+    media: DgMediaEnvironment,
     cache: &mut TextBufferCache,
     caret_positions: &mut HashMap<String, [f32; 2]>,
     out: &mut Vec<TextEntry>,
@@ -1693,11 +1701,12 @@ fn collect_toast_text(
     let mut stack_counts = [0usize; 4];
     for toast in toasts {
         let classes = [toast.level.as_str()];
-        let style = computed_style_for_virtual_element(
+        let style = computed_style_for_virtual_element_with_media(
             WidgetKind::Toast,
             toast.id.as_str(),
             &classes,
             stylesheets,
+            Some(media),
         );
         let font_size = style
             .text

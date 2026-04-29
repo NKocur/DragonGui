@@ -19,7 +19,7 @@ struct RectInstance {
     @location(1) color: vec4<f32>,  // rgba linear
     @location(2) radii: vec4<f32>,  // TL, TR, BR, BL corner radii (pixels)
     @location(3) clip_bounds: vec4<f32>, // local left, top, right, bottom clip
-    @location(4) params: vec4<f32>, // x softness, y shape inset, z shadow mode, w shape kind
+    @location(4) params: vec4<f32>, // x softness, y shape inset, z shadow mode (1 outset, 2 inset), w shape kind
     @location(5) color2: vec4<f32>, // secondary rgba for gradient paints
     @location(6) paint: vec4<f32>, // x paint kind, y/z linear gradient direction, w stop count or shape option
     @location(7) transform: vec4<f32>, // x/y translation pixels, z/w scale
@@ -267,7 +267,15 @@ fn fs_main(in: VertOut) -> @location(0) vec4<f32> {
         );
     }
     var a: f32;
-    if (in.params.z > 0.5) {
+    if (in.params.z > 1.5 && in.params.z < 2.5) {
+        let softness = max(in.params.x, 1.0);
+        let spread = in.paint.w;
+        let inner_half_size = max(shape_half_size - vec2<f32>(spread, spread), vec2<f32>(0.5, 0.5));
+        let inner_radii = max(in.radii - vec4<f32>(spread, spread, spread, spread), vec4<f32>(0.0, 0.0, 0.0, 0.0));
+        let inner_sdf = rounded_rect_sdf(p - in.paint.yz, inner_half_size, inner_radii);
+        let shape_mask = clamp(1.0 - sdf, 0.0, 1.0);
+        a = smoothstep(-softness, 0.0, inner_sdf) * shape_mask * color.a;
+    } else if (in.params.z > 0.5) {
         let softness = max(in.params.x, 1.0);
         a = (1.0 - smoothstep(0.0, softness, sdf)) * color.a;
     } else {

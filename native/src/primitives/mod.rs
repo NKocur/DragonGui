@@ -2,10 +2,15 @@ use std::{borrow::Cow, collections::HashMap};
 
 use bytemuck::{Pod, Zeroable};
 
-use crate::css_style::{computed_style_for_virtual_element, StylesheetStore};
+use crate::css_style::{
+    computed_style_for_virtual_element_with_media, DgMediaEnvironment, StylesheetStore,
+};
 use crate::document::{WidgetKind, WidgetNode};
 use crate::events::{NavigationItem, SortDirection, WidgetState};
-use crate::layout::{scroll_container_max_y, LayoutResult, Rect};
+use crate::layout::{
+    panel_title_gap_lp, panel_title_line_height_lp, panel_title_top_padding_lp,
+    scroll_container_max_x, scroll_container_max_y, LayoutResult, Rect,
+};
 use crate::overlays::{menu_popup_rect, rich_tooltip_target, tooltip_target};
 use crate::style::{
     badge_height_for_style, badge_width_for_text, base_part_style, checked_part_style_for_state,
@@ -42,7 +47,7 @@ pub struct RectInstance {
     pub radii: [f32; 4],
     /// Local clip bounds: left, top, right, bottom in rect-local pixels.
     pub clip: [f32; 4],
-    /// x: edge softness, y: shape inset, z: shadow mode flag, w: shape kind.
+    /// x: edge softness, y: shape inset, z: shadow mode (1 outset, 2 inset), w: shape kind.
     pub params: [f32; 4],
     /// Secondary RGBA colour for gradient paints.
     pub color2: [f32; 4],
@@ -286,6 +291,7 @@ impl PrimitivesRenderer {
         window_w: f32,
         window_h: f32,
     ) {
+        let media = DgMediaEnvironment::from_physical_size(window_w, window_h, scale_factor);
         self.instances.clear();
         emit_rects(
             tree,
@@ -320,6 +326,7 @@ impl PrimitivesRenderer {
             state,
             caret_positions,
             stylesheets,
+            media,
             &mut self.instances,
         );
         emit_toast_overlays(
@@ -327,6 +334,7 @@ impl PrimitivesRenderer {
             theme,
             scale_factor,
             stylesheets,
+            media,
             window_w,
             window_h,
             &mut self.instances,
@@ -448,6 +456,30 @@ fn inst_shadow(rect: [f32; 4], color: [f32; 4], radii: [f32; 4], blur: f32) -> R
         params: [blur.max(1.0), blur.max(0.0), 1.0, 0.0],
         color2: color,
         paint: [0.0, 0.0, 0.0, 0.0],
+        transform: [0.0, 0.0, 1.0, 1.0],
+        transform2: [0.0, 0.0, 0.0, 0.0],
+        color3: color,
+        color4: color,
+        gradient_stops: [0.0, 1.0, 1.0, 1.0],
+    }
+}
+
+fn inst_inset_shadow(
+    rect: [f32; 4],
+    color: [f32; 4],
+    radii: [f32; 4],
+    blur: f32,
+    offset: [f32; 2],
+    spread: f32,
+) -> RectInstance {
+    RectInstance {
+        rect,
+        color,
+        radii,
+        clip: [-1.0, -1.0, rect[2] + 1.0, rect[3] + 1.0],
+        params: [blur.max(1.0), 0.0, 2.0, 0.0],
+        color2: color,
+        paint: [0.0, offset[0], offset[1], spread],
         transform: [0.0, 0.0, 1.0, 1.0],
         transform2: [0.0, 0.0, 0.0, 0.0],
         color3: color,
@@ -637,7 +669,29 @@ fn visual_for<'a>(
         visual = visual.merged(&node.style.open);
         changed = true;
     }
-    merge_expansion_visual_states(&mut visual, node, state, &mut changed);
+    if let Some(t) = state.expanded_t.get(&node.id).copied() {
+        let base_state = visual.clone();
+        let expanded = visual.merged(&node.style.expanded);
+        let collapsed = visual.merged(&node.style.collapsed);
+        let current_state = if state.is_expanded_widget(&node.id) {
+            &expanded
+        } else if state.is_collapsed_widget(&node.id) {
+            &collapsed
+        } else {
+            &base_state
+        };
+        visual = interpolate_visual_style(
+            &collapsed,
+            &expanded,
+            current_state,
+            t,
+            theme,
+            node.style.transition.properties.as_deref(),
+        );
+        changed = true;
+    } else {
+        merge_expansion_visual_states(&mut visual, node, state, &mut changed);
+    }
     if let Some(t) = state.selected_t.get(&node.id).copied() {
         let base_state = visual.clone();
         let selected = visual.merged(&node.style.selected);
@@ -1191,6 +1245,171 @@ fn emit_collapsible_indicator(
     emit_triangle_chevron(out, rect, color, expanded, sf, clip);
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PanelScrollbarAxis {
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PanelScrollbarAxisGeometry {
+    pub track: Rect,
+    pub thumb: Rect,
+    pub max_scroll: f32,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct PanelScrollbarGeometry {
+    pub horizontal: Option<PanelScrollbarAxisGeometry>,
+    pub vertical: Option<PanelScrollbarAxisGeometry>,
+}
+
+pub(crate) fn panel_scrollbar_geometry(
+    node: &WidgetNode,
+    layout: &LayoutResult,
+    state: &WidgetState,
+    theme: &Theme,
+    sf: f32,
+    rect: Rect,
+) -> Option<PanelScrollbarGeometry> {
+    let max_scroll_x = layout
+        .scroll_max_x
+        .get(&node.id)
+        .copied()
+        .unwrap_or_else(|| scroll_container_max_x(node, layout));
+    let max_scroll_y = layout
+        .scroll_max_y
+        .get(&node.id)
+        .copied()
+        .unwrap_or_else(|| scroll_container_max_y(node, layout));
+    let has_horizontal = max_scroll_x > 0.0;
+    let has_vertical = max_scroll_y > 0.0;
+    if !has_horizontal && !has_vertical {
+        return None;
+    }
+    if rect.w <= 0.0 || rect.h <= 0.0 {
+        return None;
+    }
+
+    let scroll_x = layout
+        .scroll_x
+        .get(&node.id)
+        .copied()
+        .unwrap_or_else(|| state.container_scroll_x(&node.id, max_scroll_x));
+    let scroll_y = layout
+        .scroll_y
+        .get(&node.id)
+        .copied()
+        .unwrap_or_else(|| state.container_scroll_y(&node.id, max_scroll_y));
+    let visual = visual_for(node, state, theme);
+    let border_w = visual.border_width.unwrap_or(BORDER_WIDTH_LP).max(0.0) * sf;
+    let panel_radius_lp = visual.border_radius.unwrap_or(theme.radius * 0.5).max(0.0);
+    let panel_radii = visual_radii(&visual, panel_radius_lp, sf);
+    let title_inset = panel_scrollbar_title_inset(node, theme, sf).min(rect.h.max(0.0));
+    let viewport_h = (rect.h - title_inset).max(1.0);
+    let viewport_w = rect.w.max(1.0);
+    let track_thickness = scrollbar_part_width_px(node, "scrollbar-track", 4.0, sf).max(2.0);
+    let thumb_thickness = scrollbar_part_width_px(
+        node,
+        "scrollbar-thumb",
+        track_thickness / sf.max(0.0001),
+        sf,
+    )
+    .max(2.0);
+    let gutter_thickness = track_thickness.max(thumb_thickness);
+    let gap = (4.0 * sf).max(2.0);
+    let part_padding = base_part_style(&node.style, "scrollbar-track")
+        .and_then(|part| part.layout.padding)
+        .map(|padding| (padding.max(0.0) * sf).max(border_w));
+
+    let mut geometry = PanelScrollbarGeometry::default();
+    if has_vertical {
+        let content_h = viewport_h + max_scroll_y;
+        let right_radius = panel_radii[1].max(panel_radii[2]);
+        let default_vertical_pad = (border_w + gap * 1.5).max(right_radius * 0.6);
+        let vertical_pad = part_padding.unwrap_or(default_vertical_pad);
+        let right_pad = (border_w + gap).max(right_radius * 0.45);
+        let horizontal_reserve = if has_horizontal {
+            gutter_thickness + gap
+        } else {
+            0.0
+        };
+        let gutter_x = rect.x + rect.w - right_pad - gutter_thickness;
+        let track_x = gutter_x + (gutter_thickness - track_thickness) * 0.5;
+        let track_y = rect.y + vertical_pad;
+        let track_bottom = rect.y + rect.h - vertical_pad - horizontal_reserve;
+        let track_h = (track_bottom - track_y).max(1.0);
+        if gutter_x >= rect.x && track_h > 1.0 {
+            let thumb_h = (track_h * (viewport_h / content_h).clamp(0.0, 1.0))
+                .max(18.0 * sf)
+                .min(track_h);
+            let travel = (track_h - thumb_h).max(0.0);
+            let thumb_y = track_y + travel * (scroll_y / max_scroll_y).clamp(0.0, 1.0);
+            geometry.vertical = Some(PanelScrollbarAxisGeometry {
+                track: Rect {
+                    x: track_x,
+                    y: track_y,
+                    w: track_thickness,
+                    h: track_h,
+                },
+                thumb: Rect {
+                    x: gutter_x + (gutter_thickness - thumb_thickness) * 0.5,
+                    y: thumb_y,
+                    w: thumb_thickness,
+                    h: thumb_h,
+                },
+                max_scroll: max_scroll_y,
+            });
+        }
+    }
+
+    if has_horizontal {
+        let content_w = viewport_w + max_scroll_x;
+        let bottom_radius = panel_radii[2].max(panel_radii[3]);
+        let default_horizontal_pad = (border_w + gap * 1.5).max(bottom_radius * 0.6);
+        let horizontal_pad = part_padding.unwrap_or(default_horizontal_pad);
+        let bottom_pad = (border_w + gap).max(bottom_radius * 0.45);
+        let vertical_reserve = if has_vertical {
+            gutter_thickness + gap
+        } else {
+            0.0
+        };
+        let gutter_y = rect.y + rect.h - bottom_pad - gutter_thickness;
+        let track_x = rect.x + horizontal_pad;
+        let track_right = rect.x + rect.w - horizontal_pad - vertical_reserve;
+        let track_y = gutter_y + (gutter_thickness - track_thickness) * 0.5;
+        let track_w = (track_right - track_x).max(1.0);
+        if gutter_y >= rect.y && track_w > 1.0 {
+            let thumb_w = (track_w * (viewport_w / content_w).clamp(0.0, 1.0))
+                .max(18.0 * sf)
+                .min(track_w);
+            let travel = (track_w - thumb_w).max(0.0);
+            let thumb_x = track_x + travel * (scroll_x / max_scroll_x).clamp(0.0, 1.0);
+            geometry.horizontal = Some(PanelScrollbarAxisGeometry {
+                track: Rect {
+                    x: track_x,
+                    y: track_y,
+                    w: track_w,
+                    h: track_thickness,
+                },
+                thumb: Rect {
+                    x: thumb_x,
+                    y: gutter_y + (gutter_thickness - thumb_thickness) * 0.5,
+                    w: thumb_w,
+                    h: thumb_thickness,
+                },
+                max_scroll: max_scroll_x,
+            });
+        }
+    }
+
+    if geometry.horizontal.is_some() || geometry.vertical.is_some() {
+        Some(geometry)
+    } else {
+        None
+    }
+}
+
 fn emit_panel_scrollbar(
     node: &WidgetNode,
     layout: &LayoutResult,
@@ -1200,38 +1419,123 @@ fn emit_panel_scrollbar(
     rect: [f32; 4],
     out: &mut Vec<RectInstance>,
 ) {
-    let max_scroll = layout
-        .scroll_max_y
-        .get(&node.id)
-        .copied()
-        .unwrap_or_else(|| scroll_container_max_y(node, layout));
-    if max_scroll <= 0.0 {
-        return;
-    }
     let [x, y, w, h] = rect;
-    if w <= 0.0 || h <= 0.0 {
+    let Some(geometry) =
+        panel_scrollbar_geometry(node, layout, state, theme, sf, Rect { x, y, w, h })
+    else {
         return;
+    };
+    let track_visual = part_visual_for(node, state, "scrollbar-track");
+    let thumb_visual = part_visual_for(node, state, "scrollbar-thumb");
+    let track_fallback = with_alpha(mix(theme.surface, theme.muted_text, 0.25), 0.22);
+    let thumb_fallback = with_alpha(mix(theme.surface_alt, theme.muted_text, 0.45), 0.58);
+
+    if let Some(vertical) = geometry.vertical {
+        emit_scrollbar_part_rect(
+            out,
+            rect_array(vertical.track),
+            &track_visual,
+            theme,
+            track_fallback,
+            [vertical.track.w * 0.5; 4],
+            sf,
+        );
+        emit_scrollbar_part_rect(
+            out,
+            rect_array(vertical.thumb),
+            &thumb_visual,
+            theme,
+            thumb_fallback,
+            [vertical.thumb.w * 0.5; 4],
+            sf,
+        );
     }
-    let scroll_y = layout
-        .scroll_y
-        .get(&node.id)
-        .copied()
-        .unwrap_or_else(|| state.container_scroll_y(&node.id, max_scroll));
-    let content_h = h + max_scroll;
-    let track_w = (4.0 * sf).max(2.0);
-    let margin = (3.0 * sf).max(2.0);
-    let track_h = (h - margin * 2.0).max(1.0);
-    let thumb_h = (track_h * (h / content_h).clamp(0.0, 1.0))
-        .max(18.0 * sf)
-        .min(track_h);
-    let travel = (track_h - thumb_h).max(0.0);
-    let thumb_y = y + margin + travel * (scroll_y / max_scroll).clamp(0.0, 1.0);
-    let thumb = [x + w - margin - track_w, thumb_y, track_w, thumb_h];
-    out.push(inst_radii(
-        thumb,
-        with_alpha(mix(theme.surface_alt, theme.muted_text, 0.45), 0.58),
-        [track_w * 0.5; 4],
-    ));
+
+    if let Some(horizontal) = geometry.horizontal {
+        emit_scrollbar_part_rect(
+            out,
+            rect_array(horizontal.track),
+            &track_visual,
+            theme,
+            track_fallback,
+            [horizontal.track.h * 0.5; 4],
+            sf,
+        );
+        emit_scrollbar_part_rect(
+            out,
+            rect_array(horizontal.thumb),
+            &thumb_visual,
+            theme,
+            thumb_fallback,
+            [horizontal.thumb.h * 0.5; 4],
+            sf,
+        );
+    }
+}
+
+fn rect_array(rect: Rect) -> [f32; 4] {
+    [rect.x, rect.y, rect.w, rect.h]
+}
+
+fn panel_scrollbar_title_inset(node: &WidgetNode, theme: &Theme, sf: f32) -> f32 {
+    if !node
+        .props
+        .text
+        .as_deref()
+        .is_some_and(|text| !text.is_empty())
+    {
+        return 0.0;
+    }
+    (panel_title_top_padding_lp(node, theme)
+        + panel_title_line_height_lp(node, theme)
+        + panel_title_gap_lp(node, theme))
+        * sf
+}
+
+fn scrollbar_part_width_px(node: &WidgetNode, part: &str, fallback_lp: f32, sf: f32) -> f32 {
+    base_part_style(&node.style, part)
+        .and_then(|part| part.layout.width)
+        .unwrap_or(fallback_lp)
+        .max(1.0)
+        * sf
+}
+
+fn emit_scrollbar_part_rect(
+    out: &mut Vec<RectInstance>,
+    rect: [f32; 4],
+    visual: &VisualStyle,
+    theme: &Theme,
+    fallback_color: Color,
+    fallback_radii: [f32; 4],
+    sf: f32,
+) {
+    let radii = visual_radii_with_fallback(visual, fallback_radii, sf);
+    let paint = resolve_part_background_paint(visual, theme, fallback_color);
+    let border_w = visual
+        .border_width
+        .map(|width| width.max(0.0) * sf)
+        .unwrap_or(0.0)
+        .min(rect[2].min(rect[3]) * 0.5);
+    if border_w > 0.0 {
+        let border = resolve_color(&visual.border_color, theme)
+            .map(|color| apply_opacity(color, visual.opacity))
+            .unwrap_or_else(|| apply_opacity(theme.border, visual.opacity));
+        emit_bordered_paint_rect_radii(out, rect, border, paint, radii, border_w);
+    } else {
+        emit_paint_rect_radii(out, rect, paint, radii);
+    }
+}
+
+fn resolve_part_background_paint(
+    visual: &VisualStyle,
+    theme: &Theme,
+    fallback: Color,
+) -> FillPaint {
+    if visual.background_paint.is_some() || visual.background.is_some() {
+        resolve_background_paint(visual, theme, fallback)
+    } else {
+        FillPaint::Solid(apply_opacity(fallback, visual.opacity))
+    }
 }
 
 fn resolve_overlay_opacity(style: &NodeStyle, base_opacity: f32) -> f32 {
@@ -1631,6 +1935,38 @@ fn emit_box_shadows(
             color,
             outset_radii(radii, spread),
             blur,
+        ));
+    }
+}
+
+fn emit_inset_box_shadows(
+    out: &mut Vec<RectInstance>,
+    rect: [f32; 4],
+    radii: [f32; 4],
+    visual: &VisualStyle,
+    theme: &Theme,
+    sf: f32,
+) {
+    let Some(shadows) = &visual.box_shadows else {
+        return;
+    };
+    for shadow in shadows {
+        if !shadow.inset {
+            continue;
+        }
+        let blur = (shadow.blur.max(0.0) * sf).max(1.0);
+        let mut color = shadow.color.resolve(theme);
+        color = apply_opacity(color, visual.opacity);
+        if color[3] <= 0.001 {
+            continue;
+        }
+        out.push(inst_inset_shadow(
+            rect,
+            color,
+            radii,
+            blur,
+            [shadow.offset_x * sf, shadow.offset_y * sf],
+            shadow.spread * sf,
         ));
     }
 }
@@ -3136,6 +3472,9 @@ fn emit_rects(
             | WidgetKind::Toast
             | WidgetKind::Unknown => {}
         }
+        if widget_supports_box_shadow(node.kind) || node.kind == WidgetKind::Modal {
+            emit_inset_box_shadows(out, [x, y, w, h], radii, &visual, theme, sf);
+        }
         apply_transform_to_instances(
             &mut out[own_primitive_start..],
             paint_transform_for_node(node, visual.transform),
@@ -3454,6 +3793,7 @@ fn emit_tooltip_overlay(
     state: &WidgetState,
     caret_positions: &HashMap<String, [f32; 2]>,
     stylesheets: &StylesheetStore,
+    media: DgMediaEnvironment,
     out: &mut Vec<RectInstance>,
 ) {
     if let Some((node, rect)) = rich_tooltip_target(tree, layout, state) {
@@ -3466,11 +3806,12 @@ fn emit_tooltip_overlay(
     let Some((_node, rect)) = tooltip_target(tree, layout, theme, state, sf) else {
         return;
     };
-    let style = computed_style_for_virtual_element(
+    let style = computed_style_for_virtual_element_with_media(
         WidgetKind::Tooltip,
         "__dg_static_tooltip",
         &["static"],
         stylesheets,
+        Some(media),
     );
     emit_static_tooltip_surface(rect, theme, sf, &style, out);
 }
@@ -3579,6 +3920,7 @@ fn emit_toast_overlays(
     theme: &Theme,
     sf: f32,
     stylesheets: &StylesheetStore,
+    media: DgMediaEnvironment,
     window_w: f32,
     window_h: f32,
     out: &mut Vec<RectInstance>,
@@ -3587,11 +3929,12 @@ fn emit_toast_overlays(
     let mut stack_counts = [0usize; 4];
     for toast in toasts {
         let classes = [toast.level.as_str()];
-        let style = computed_style_for_virtual_element(
+        let style = computed_style_for_virtual_element_with_media(
             WidgetKind::Toast,
             toast.id.as_str(),
             &classes,
             stylesheets,
+            Some(media),
         );
         let idx = toast_stack_index(toast.position, &mut stack_counts);
         let padding = toast
@@ -3721,6 +4064,107 @@ mod tests {
         assert_eq!(shadow.rect, [5.0, 7.0, 114.0, 44.0]);
         assert_eq!(shadow.color, [0.0, 0.0, 0.0, 0.25]);
         assert_eq!(shadow.params, [6.0, 6.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn multiple_box_shadows_emit_multiple_shadow_instances() {
+        let mut button = node("run", WidgetKind::Button);
+        button.style.visual.box_shadows = Some(vec![
+            BoxShadow {
+                offset_x: 0.0,
+                offset_y: 2.0,
+                blur: 4.0,
+                spread: 0.0,
+                color: ColorRef::Rgba([0.0, 0.0, 0.0, 0.18]),
+                inset: false,
+            },
+            BoxShadow {
+                offset_x: 0.0,
+                offset_y: 10.0,
+                blur: 12.0,
+                spread: 2.0,
+                color: ColorRef::Rgba([0.0, 0.0, 0.0, 0.24]),
+                inset: false,
+            },
+        ]);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "run".to_string(),
+            Rect {
+                x: 10.0,
+                y: 10.0,
+                w: 100.0,
+                h: 30.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &button,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let shadows: Vec<_> = out.iter().filter(|inst| inst.params[2] == 1.0).collect();
+        assert_eq!(shadows.len(), 2);
+        assert_eq!(shadows[0].rect, [6.0, 8.0, 108.0, 38.0]);
+        assert_eq!(shadows[0].color, [0.0, 0.0, 0.0, 0.18]);
+        assert_eq!(shadows[1].rect, [-4.0, 6.0, 128.0, 58.0]);
+        assert_eq!(shadows[1].color, [0.0, 0.0, 0.0, 0.24]);
+    }
+
+    #[test]
+    fn inset_box_shadow_emits_inner_shadow_instance_after_surface() {
+        let mut button = node("run", WidgetKind::Button);
+        button.style.visual.box_shadows = Some(vec![BoxShadow {
+            offset_x: 0.0,
+            offset_y: 2.0,
+            blur: 8.0,
+            spread: 1.0,
+            color: ColorRef::Rgba([1.0, 1.0, 1.0, 0.20]),
+            inset: true,
+        }]);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "run".to_string(),
+            Rect {
+                x: 10.0,
+                y: 10.0,
+                w: 100.0,
+                h: 30.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &button,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let inset_index = out
+            .iter()
+            .position(|inst| inst.params[2] == 2.0)
+            .expect("inset shadow instance");
+        assert!(
+            inset_index > 1,
+            "inset shadow should render after the button surface"
+        );
+        let shadow = &out[inset_index];
+        assert_eq!(shadow.rect, [10.0, 10.0, 100.0, 30.0]);
+        assert_eq!(shadow.color, [1.0, 1.0, 1.0, 0.20]);
+        assert_eq!(shadow.params, [8.0, 0.0, 2.0, 0.0]);
+        assert_eq!(shadow.paint, [0.0, 0.0, 2.0, 1.0]);
     }
 
     #[test]
@@ -4003,6 +4447,262 @@ mod tests {
     }
 
     #[test]
+    fn panel_scrollbar_stays_inside_rounded_panel_surface() {
+        let mut panel = node("panel", WidgetKind::Panel);
+        panel.props.text = Some("Controls".to_string());
+        panel.style.visual.border_radius = Some(20.0);
+        panel.style.visual.border_width = Some(1.0);
+        panel.style.layout.padding = Some(18.0);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 120.0,
+            },
+        );
+        layout.scroll_max_y.insert("panel".to_string(), 120.0);
+        layout.scroll_y.insert("panel".to_string(), 0.0);
+        let state = WidgetState::default();
+        let theme = Theme::dark();
+        let mut out = Vec::new();
+
+        emit_rects(
+            &panel,
+            &layout,
+            &theme,
+            1.0,
+            &state,
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let scrollbar: Vec<_> = out
+            .iter()
+            .filter(|inst| (inst.rect[2] - 4.0).abs() < 0.01)
+            .collect();
+        assert_eq!(scrollbar.len(), 2, "track and thumb should be emitted");
+        let track = scrollbar[0];
+        let thumb = scrollbar[1];
+        assert!(
+            track.rect[0] + track.rect[2] <= 92.0,
+            "scrollbar should be inset from the rounded right edge: {:?}",
+            track.rect
+        );
+        let top_gap = track.rect[1];
+        let bottom_gap = 120.0 - (track.rect[1] + track.rect[3]);
+        assert!(
+            top_gap >= 11.0,
+            "scrollbar track should leave enough vertical breathing room: {:?}",
+            track.rect
+        );
+        assert!(
+            (top_gap - bottom_gap).abs() < 0.01,
+            "scrollbar track should be vertically centered on the panel surface: top_gap={top_gap} bottom_gap={bottom_gap}"
+        );
+        assert!(thumb.rect[1] >= track.rect[1]);
+        assert!(thumb.rect[1] + thumb.rect[3] <= track.rect[1] + track.rect[3]);
+    }
+
+    #[test]
+    fn panel_horizontal_scrollbar_stays_inside_rounded_panel_surface() {
+        let mut panel = node("panel", WidgetKind::Panel);
+        panel.style.visual.border_radius = Some(20.0);
+        panel.style.visual.border_width = Some(1.0);
+        panel.style.layout.padding = Some(18.0);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 140.0,
+                h: 80.0,
+            },
+        );
+        layout.scroll_max_x.insert("panel".to_string(), 180.0);
+        layout.scroll_x.insert("panel".to_string(), 45.0);
+        let state = WidgetState::default();
+        let theme = Theme::dark();
+        let mut out = Vec::new();
+
+        emit_rects(
+            &panel,
+            &layout,
+            &theme,
+            1.0,
+            &state,
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let scrollbar: Vec<_> = out
+            .iter()
+            .filter(|inst| (inst.rect[3] - 4.0).abs() < 0.01 && inst.rect[2] > 20.0)
+            .collect();
+        assert_eq!(
+            scrollbar.len(),
+            2,
+            "track and horizontal thumb should be emitted"
+        );
+        let track = scrollbar[0];
+        let thumb = scrollbar[1];
+        assert!(
+            track.rect[1] + track.rect[3] <= 71.0,
+            "horizontal scrollbar should be inset from the rounded bottom edge: {:?}",
+            track.rect
+        );
+        let left_gap = track.rect[0];
+        let right_gap = 140.0 - (track.rect[0] + track.rect[2]);
+        assert!(
+            left_gap >= 11.0,
+            "horizontal scrollbar track should leave enough side breathing room: {:?}",
+            track.rect
+        );
+        assert!(
+            (left_gap - right_gap).abs() < 0.01,
+            "horizontal scrollbar track should be centered on the panel surface: left_gap={left_gap} right_gap={right_gap}"
+        );
+        assert!(thumb.rect[0] >= track.rect[0]);
+        assert!(thumb.rect[0] + thumb.rect[2] <= track.rect[0] + track.rect[2]);
+    }
+
+    #[test]
+    fn panel_scrollbars_avoid_bottom_right_corner_overlap() {
+        let mut panel = node("panel", WidgetKind::Panel);
+        panel.style.visual.border_radius = Some(20.0);
+        panel.style.visual.border_width = Some(1.0);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 140.0,
+                h: 100.0,
+            },
+        );
+        layout.scroll_max_x.insert("panel".to_string(), 120.0);
+        layout.scroll_x.insert("panel".to_string(), 0.0);
+        layout.scroll_max_y.insert("panel".to_string(), 120.0);
+        layout.scroll_y.insert("panel".to_string(), 0.0);
+        let mut out = Vec::new();
+
+        emit_rects(
+            &panel,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let vertical: Vec<_> = out
+            .iter()
+            .filter(|inst| (inst.rect[2] - 4.0).abs() < 0.01 && inst.rect[3] > 20.0)
+            .collect();
+        let horizontal: Vec<_> = out
+            .iter()
+            .filter(|inst| (inst.rect[3] - 4.0).abs() < 0.01 && inst.rect[2] > 20.0)
+            .collect();
+        assert_eq!(
+            vertical.len(),
+            2,
+            "vertical track and thumb should be emitted"
+        );
+        assert_eq!(
+            horizontal.len(),
+            2,
+            "horizontal track and thumb should be emitted"
+        );
+        let vertical_track = vertical[0];
+        let horizontal_track = horizontal[0];
+        assert!(vertical_track.rect[1] + vertical_track.rect[3] < horizontal_track.rect[1]);
+        assert!(horizontal_track.rect[0] + horizontal_track.rect[2] < vertical_track.rect[0]);
+    }
+
+    #[test]
+    fn panel_scrollbar_uses_scrollbar_part_styles() {
+        let mut panel = node("panel", WidgetKind::Panel);
+        panel.style.visual.border_radius = Some(20.0);
+        panel.style.parts.parts.insert(
+            "scrollbar-track".to_string(),
+            PartStyle {
+                layout: PartLayoutStyle {
+                    width: Some(6.0),
+                    padding: Some(14.0),
+                    ..Default::default()
+                },
+                visual: VisualStyle {
+                    background: Some(ColorRef::Rgba([0.10, 0.20, 0.30, 0.40])),
+                    border_radius: Some(99.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        panel.style.parts.parts.insert(
+            "scrollbar-thumb".to_string(),
+            PartStyle {
+                layout: PartLayoutStyle {
+                    width: Some(8.0),
+                    ..Default::default()
+                },
+                visual: VisualStyle {
+                    background: Some(ColorRef::Rgba([0.50, 0.60, 0.70, 0.80])),
+                    border_radius: Some(99.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 120.0,
+            },
+        );
+        layout.scroll_max_y.insert("panel".to_string(), 120.0);
+        layout.scroll_y.insert("panel".to_string(), 0.0);
+        let mut out = Vec::new();
+
+        emit_rects(
+            &panel,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let track = out
+            .iter()
+            .find(|inst| inst.color == [0.10, 0.20, 0.30, 0.40])
+            .expect("styled scrollbar track");
+        let thumb = out
+            .iter()
+            .find(|inst| inst.color == [0.50, 0.60, 0.70, 0.80])
+            .expect("styled scrollbar thumb");
+
+        assert_eq!(track.rect, [84.0, 14.0, 6.0, 92.0]);
+        assert_eq!(thumb.rect, [83.0, 14.0, 8.0, 46.0]);
+        assert_eq!(track.radii, [99.0; 4]);
+        assert_eq!(thumb.radii, [99.0; 4]);
+    }
+
+    #[test]
     fn radial_gradient_background_emits_gradient_rect_instance() {
         let mut panel = node("panel", WidgetKind::Panel);
         panel.style.visual.background_paint =
@@ -4187,6 +4887,29 @@ mod tests {
             Some(ColorRef::Rgba([0.3, 0.1, 0.0, 1.0]))
         );
         assert_eq!(visual.border_width, Some(2.0));
+    }
+
+    #[test]
+    fn expanded_transition_progress_interpolates_visual_fields() {
+        let mut collapsible = node("advanced", WidgetKind::Collapsible);
+        collapsible.style.visual.background = Some(ColorRef::Rgba([0.0, 0.0, 0.0, 1.0]));
+        collapsible.style.visual.border_width = Some(1.0);
+        collapsible.style.expanded.background = Some(ColorRef::Rgba([0.0, 0.5, 1.0, 1.0]));
+        collapsible.style.expanded.border_width = Some(3.0);
+        collapsible.style.collapsed.background = Some(ColorRef::Rgba([0.2, 0.0, 0.0, 1.0]));
+        collapsible.style.collapsed.border_width = Some(5.0);
+        let mut state = WidgetState::default();
+        state.expanded.insert("advanced".to_string(), true);
+        state.expanded_t.insert("advanced".to_string(), 0.5);
+
+        let theme = Theme::dark();
+        let visual = visual_for(&collapsible, &state, &theme);
+
+        assert_eq!(
+            visual.background,
+            Some(ColorRef::Rgba([0.1, 0.25, 0.5, 1.0]))
+        );
+        assert_eq!(visual.border_width, Some(4.0));
     }
 
     #[test]
@@ -4991,6 +5714,7 @@ mod tests {
             &state,
             &HashMap::new(),
             &StylesheetStore::default(),
+            DgMediaEnvironment::new(500.0, 300.0),
             &mut out,
         );
 
