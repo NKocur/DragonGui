@@ -832,8 +832,8 @@ Panel.sidebar {
 Status: In progress. First Taffy-backed grid slice landed for `display: grid`,
 `grid-template-columns`, `grid-template-rows`, `grid-column`, `grid-row`,
 `column-gap`, and `row-gap`. Track parsing currently supports px, percent,
-`fr`, `auto`, `minmax()`, `fit-content()`, small-count `repeat(n, ...)`, and
-`repeat(auto-fit/auto-fill, ...)`.
+`fr`, `auto`, `minmax()`, `fit-content()`, small-count and nested finite
+`repeat(n, ...)`, and `repeat(auto-fit/auto-fill, ...)`.
 
 ### Scope
 
@@ -844,6 +844,8 @@ Initial properties:
 - `display: grid`
 - `grid-template-columns`
 - `grid-template-rows`
+- `grid-template-areas`
+- `grid-area`
 - `grid-column`
 - `grid-row`
 - `column-gap`
@@ -851,10 +853,10 @@ Initial properties:
 
 Defer:
 
-- Named grid areas.
 - Subgrid.
-- Auto-placement edge cases.
-- Complex or nested repeat syntax beyond the safe subset.
+- Dense auto-placement and other auto-placement edge cases.
+- Nested auto-repeat syntax beyond the safe subset. Non-nested
+  `repeat(auto-fit, ...)` and `repeat(auto-fill, ...)` are implemented.
 
 ### Implementation Notes
 
@@ -1052,6 +1054,17 @@ This is a major layout model extension. It can conflict with:
 
 ## CSS3-14: Keyframes And Continuous Animation
 
+Status: In progress. First visual keyframes slice landed for `@keyframes`
+parsing/lowering, animation longhands, a global runtime animation clock, redraw
+requests while animations are active, and visual interpolation/reuse of the
+transition paint interpolation model. The first slice supports one animation
+per widget and visual declarations only. The `animation` shorthand is now
+implemented for the supported longhand fields, including first-slice
+`animation-play-state: running | paused`. Multiple animations, layout/text
+animation, composition, timelines, and OS reduced-motion preference integration
+remain pending. CSS `prefers-reduced-motion` media matching has landed and
+defaults to `no-preference` until DragonGUI receives an OS preference hook.
+
 ### Scope
 
 Add:
@@ -1064,6 +1077,8 @@ Add:
 - `animation-iteration-count`
 - `animation-direction`
 - `animation-fill-mode`
+- `animation-play-state`. First slice supports `running` and `paused`.
+- `animation` shorthand. Implemented for one animation using supported fields.
 
 Initial animatable properties should match transition support.
 
@@ -1073,7 +1088,8 @@ Initial animatable properties should match transition support.
 - Per-widget active animation state.
 - Redraw requests while animations are active.
 - Pause/cleanup when widget leaves tree.
-- Respect reduced-motion setting if DragonGUI adds one.
+- Respect OS reduced-motion setting if DragonGUI adds one. First CSS media
+  query gate implemented with a default `no-preference` environment.
 
 ### Acceptance Criteria
 
@@ -1082,6 +1098,12 @@ Initial animatable properties should match transition support.
 - Infinite animations do not leak state.
 
 ## CSS3-15: Backdrop Filter
+
+Status: In progress. First CSS/style-model slice landed for
+`backdrop-filter: blur(px)` with debug/computed-style visibility and a
+rounded frosted-surface renderer treatment for `Panel`, `Modal`, `Tooltip`,
+and `Toast`. This is not the full sampled framebuffer blur yet; true backdrop
+sampling still needs an offscreen scene texture and blur pass.
 
 ### Scope
 
@@ -1112,6 +1134,13 @@ Only for:
 
 ## CSS3-16: Generated Content
 
+Status: In progress. First generated-content slice landed by reusing the
+renderer part selector path for `::before` and `::after`, adding
+`content: "..."` and `content: attr(name)` to part styles, and rendering
+generated prefix/suffix text as non-interactive overlay text. Generated content
+still does not participate in layout and does not support counters or
+independent generated boxes.
+
 ### Scope
 
 Add limited generated content:
@@ -1119,6 +1148,8 @@ Add limited generated content:
 - `::before`
 - `::after`
 - `content: "..."`
+- `content: attr(...)`. Implemented for widget metadata and serialized scalar
+  props.
 
 ### Design Constraint
 
@@ -1139,18 +1170,47 @@ It should not have:
 
 ### Deferred
 
-- `content: attr(...)`.
 - Counter functions.
 - Generated content with independent layout.
 
 ## CSS3-17: Responsive At-Rules And Fonts
 
 Status: First `@media` implementation slice landed. Stylesheets now lower
-viewport width/height/orientation media rules into rule metadata, cascade
-matching filters them against the current logical window size, and the runtime
-reapplies CSS on layout/resize. First static `@supports` implementation slice
-landed for DragonGUI declaration and selector feature queries. Container
-queries, `@font-face`, and other media features remain pending.
+viewport width/height/aspect-ratio/resolution/color-gamut/orientation,
+pointer/hover/update/scripting/forced-colors capability, and
+`prefers-contrast` / `inverted-colors` / `dynamic-range` /
+`video-dynamic-range` / `prefers-color-scheme` / `prefers-reduced-motion`
+media rules into rule metadata, cascade matching
+filters them against the current logical window size, platform window theme
+when available, active theme fallback color scheme, assumed desktop
+input/display capabilities, and scale factor, and the runtime reapplies CSS on
+layout/resize/theme-change events. First static `@supports`
+implementation slice landed for DragonGUI declaration and selector feature
+queries. Container queries and other media features remain pending. First
+`@font-face` slice landed for local `.ttf`, `.otf`, and `.ttc` files referenced
+through `url(...)`.
+
+Code-backed remaining work:
+
+- Container queries.
+- Media features beyond the currently supported viewport, resolution,
+  orientation, color-gamut, pointer/hover/update/scripting/forced-colors,
+  contrast, inverted-colors, dynamic-range, video-dynamic-range, color-scheme,
+  and reduced-motion subset.
+- Platform detection for display gamut, pointer/hover capability, forced-colors
+  mode, contrast preference, inverted-colors mode, dynamic-range capability,
+  and OS reduced-motion preference. The runtime currently assumes `srgb`, fine pointer, hover
+  support, `update: fast`, `scripting: none`, `forced-colors: none`,
+  `prefers-contrast: no-preference`, `inverted-colors: none`, and
+  `prefers-reduced-motion: no-preference`; both dynamic-range features
+  currently default to `standard`. Color scheme now uses winit's
+  platform window theme when available and falls back to active DragonGUI theme
+  luminance when unavailable.
+- Full inherited custom property cascade semantics. Top-level `:root`
+  variables and first-slice parse-time `:root` variables inside matching
+  `@media` / static true `@supports` blocks are implemented.
+- Remote font URLs, `data:` font URLs, WOFF/WOFF2 loading, and packaged font
+  asset resolution.
 
 ### Scope
 
@@ -1178,8 +1238,18 @@ Needs:
 - Runtime viewport width/height in style context. Implemented for logical
   window size.
 - Reapply styles on window resize when media query match changes. Implemented.
-- Remaining: media features beyond `width`/`height`/`orientation`,
-  container queries, and media-scoped custom property cascade semantics.
+- Remaining: media features beyond
+  `width`/`height`/`aspect-ratio`/`resolution`/`color-gamut`/`orientation`/
+  `pointer`/`any-pointer`/`hover`/`any-hover`/`update`/`scripting`/
+  `forced-colors`/`prefers-contrast`/`inverted-colors`/`dynamic-range`/
+  `video-dynamic-range`/`prefers-color-scheme`/`prefers-reduced-motion`,
+  container queries, OS reduced-motion preference
+  integration, platform forced-colors/contrast/inverted-colors/dynamic-range
+  detection, platform input/display capability detection, and full inherited
+  media-scoped custom property cascade
+  semantics. First-slice parse-time `:root` variables inside matching `@media`
+  and static true `@supports` blocks are implemented for declarations inside
+  the same block.
 
 ### `@supports`
 
@@ -1211,20 +1281,41 @@ without creating feedback loops.
 
 ### `@font-face`
 
-Planning decision required before implementation:
+First useful subset:
+
+```css
+@font-face {
+    font-family: "Report UI";
+    src: url("C:/Windows/Fonts/segoeui.ttf") format("truetype");
+}
+```
+
+Implemented:
+
+- Parse `@font-face` `font-family` and local `url(...)` `src` descriptors into
+  DragonGUI stylesheet IR.
+- Merge font-face records across framework/theme/user stylesheet origins.
+- Load supported local font files into glyphon's font database at text rebuild.
+- Map the declared CSS family to the loaded font's exposed family name when
+  available.
+- Report one-time renderer diagnostics for missing, unsupported, or unusable
+  font sources through the debug snapshot.
+- Demo coverage in `examples/css_web_capabilities_demo.py`.
+
+Remaining planning decisions:
 
 - Decide whether DragonGUI ships bundled fonts, only supports user-provided
-  font files, or supports both.
+  font files, or supports both. Current implementation only supports
+  user-provided local font files.
 - Estimate wheel/sdist size impact before adding bundled assets.
 - Define how font files are referenced from CSS in packaged applications.
 - Update maturin/pyproject packaging rules before the renderer work starts.
 
-Needs:
+Remaining:
 
-- Font asset loading.
+- Remote URLs and `data:` URLs.
+- WOFF/WOFF2 loading.
 - Packaging story for wheels/sdists.
-- Integration with glyphon/font system.
-- Error handling when font files are missing.
 
 ## Implementation Milestones
 
@@ -1334,7 +1425,9 @@ style transition progress. `transition-property` is honored for hover, `:open`,
 visual fields snapping to the current state. Timing functions include the
 standard easing keywords and custom `cubic-bezier(...)` curves. Layout, text
 scale/rotate, child subtree transforms, image texture transforms, and layout
-animation for expanding/collapsing content remain pending.
+animation for expanding/collapsing content remain pending. First visual
+`@keyframes` animation support has also landed on top of this interpolation
+model, with one shorthand/animation per widget and visual declarations only.
 
 Implement:
 
@@ -1346,6 +1439,9 @@ Implement:
 - Paint-only transforms. First rect-surface slice implemented for
   `transform` plus `translate`, `scale`, and `rotate` longhands; text follows
   translate only.
+- Continuous animation. First visual `@keyframes` and animation longhand slice
+  implemented. `animation` shorthand implemented for one supported animation.
+  `animation-play-state` implemented for `running` and `paused`.
 
 Why fourth:
 
@@ -1363,7 +1459,9 @@ parent axis is definite. The follow-up typed spacing slice landed for padding,
 uniform margin, `gap`, `row-gap`, and `column-gap`; uniform margin also
 supports `auto`. `var()` terms inside `calc()` are supported for lengths and
 scalar multipliers/divisors. Mixed-unit calc in fully auto-sized parent axes
-remains pending.
+remains pending. The CSS Grid slice now includes named
+`grid-template-areas` and child `grid-area` placement for rectangular named
+regions, plus nested finite `repeat(n, ...)` track lists.
 
 Implement:
 
@@ -1372,11 +1470,14 @@ Implement:
 - `calc()`. First sizing slice implemented, including mixed pixel/percent
   expressions when the parent axis is definite.
 - Typed spacing. First padding, uniform margin, and gap slice implemented.
-- CSS Grid. First Taffy-backed track and placement slice implemented. `minmax()`
+- CSS Grid. First Taffy-backed track and placement slice implemented. Named
+  `grid-template-areas` and `grid-area` placement implemented for rectangular
+  regions. `minmax()`
   track parsing/lowering implemented for px/percent/auto minimums and
   px/percent/fr/auto maximums. `fit-content()` track parsing/lowering
   implemented for px and percent arguments. Auto-repeat parsing/lowering
   implemented for `repeat(auto-fit, ...)` and `repeat(auto-fill, ...)`.
+  Nested finite repeat track lists are flattened before layout.
 
 Why fifth:
 
@@ -1406,14 +1507,22 @@ Evaluate and implement selectively:
 - Positioning and z-index. First paint-only relative positioning, local sibling
   `z-index`, layout-backed `position: absolute`, and viewport-backed
   `position: fixed` slices implemented; full stacking contexts remain pending.
-- `@keyframes`.
-- Backdrop filter.
-- Generated content.
-- `@media`. First viewport `width`/`height`/`orientation` slice implemented;
-  broader media features remain pending.
+- `@keyframes`. First visual animation slice and one-animation shorthand
+  implemented; broader animation compatibility remains pending.
+- Backdrop filter. First `blur(px)` frosted-surface treatment implemented;
+  true sampled framebuffer blur remains pending.
+- Generated content. First text-only `::before` / `::after` and `attr(...)`
+  slice implemented; layout-aware generated boxes remain pending.
+- `@media`. First viewport
+  `width`/`height`/`aspect-ratio`/`resolution`/`color-gamut`/`orientation`/
+  `pointer`/`any-pointer`/`hover`/`any-hover`/`update`/`scripting`/
+  `forced-colors`/`prefers-contrast`/`inverted-colors`/`dynamic-range`/
+  `video-dynamic-range`/`prefers-color-scheme`/`prefers-reduced-motion` slice
+  implemented; broader media features remain pending.
 - `@supports`. First static declaration and selector feature-query slice
   implemented.
-- `@font-face`.
+- `@font-face`. First local font-file loading slice implemented; remote fonts,
+  WOFF/WOFF2, and packaged asset resolution remain pending.
 
 These should not block the earlier visible wins.
 

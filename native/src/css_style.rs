@@ -11,20 +11,26 @@ use lightningcss::media_query::{
     MediaCondition as LightningMediaCondition, MediaFeatureComparison, MediaFeatureId,
     MediaFeatureName, MediaFeatureValue, MediaList, MediaQuery, MediaType, Operator, QueryFeature,
 };
+use lightningcss::properties::font::FontFamily as CssFontFamily;
 use lightningcss::properties::Property;
+use lightningcss::rules::font_face::{FontFaceProperty, FontFaceRule, Source as FontFaceSource};
+use lightningcss::rules::keyframes::{KeyframeSelector, KeyframesName, KeyframesRule};
 use lightningcss::rules::{supports::SupportsCondition, CssRule, CssRuleList};
 use lightningcss::stylesheet::{ParserOptions, PrinterOptions, StyleSheet};
 use lightningcss::traits::ToCss;
+use lightningcss::values::resolution::Resolution as CssResolution;
 
 use crate::document::{WidgetKind, WidgetNode};
 use crate::style::{
-    BackgroundPaint, BoxShadow, CalcLength, ColorRef, DisplayStyle, FlexDirectionStyle, FontFamily,
-    FontStyle, FontVariantNumeric, GradientStop, GridLineStyle, GridPlacementStyle,
-    GridTrackFitContentSize, GridTrackMaxSize, GridTrackMinSize, GridTrackRepeatKind,
-    GridTrackSize, LayoutLength, LayoutStyle, LineHeight, LinearGradient, NodePartStyles,
-    NodeStyle, OverflowStyle, PartLayoutStyle, PartStyle, PositionStyle, RadialGradient, TextAlign,
-    TextOverflow, TextSpacing, TextStyle, TextTransform, TransformStyle, TransitionProperty,
-    TransitionStyle, TransitionTimingFunction, VisualStyle,
+    visual_style_is_empty, AnimationDirection, AnimationFillMode, AnimationIterationCount,
+    AnimationPlayState, AnimationStyle, BackdropFilterStyle, BackgroundPaint, BoxShadow,
+    CalcLength, ColorRef, DisplayStyle, FlexDirectionStyle, FontFamily, FontStyle,
+    FontVariantNumeric, GeneratedContent, GradientStop, GridLineStyle, GridPlacementStyle,
+    GridTemplateArea, GridTemplateAreas, GridTrackFitContentSize, GridTrackMaxSize,
+    GridTrackMinSize, GridTrackRepeatKind, GridTrackSize, LayoutLength, LayoutStyle, LineHeight,
+    LinearGradient, NodePartStyles, NodeStyle, OverflowStyle, PartLayoutStyle, PartStyle,
+    PositionStyle, RadialGradient, TextAlign, TextOverflow, TextSpacing, TextStyle, TextTransform,
+    TransformStyle, TransitionProperty, TransitionStyle, TransitionTimingFunction, VisualStyle,
 };
 use crate::theme::{parse_hex_color, Color, Theme};
 
@@ -90,19 +96,88 @@ pub struct CascadeKey {
 pub struct DgMediaEnvironment {
     pub width: f32,
     pub height: f32,
+    pub resolution_dppx: f32,
+    pub color_gamut: DgMediaColorGamut,
+    pub pointer: DgMediaPointer,
+    pub any_pointer: DgMediaPointer,
+    pub hover: DgMediaHover,
+    pub any_hover: DgMediaHover,
+    pub prefers_reduced_motion: bool,
+    pub prefers_color_scheme: DgMediaColorScheme,
+    pub update: DgMediaUpdate,
+    pub scripting: DgMediaScripting,
+    pub forced_colors: DgMediaForcedColors,
+    pub prefers_contrast: DgMediaContrast,
+    pub inverted_colors: DgMediaInvertedColors,
+    pub dynamic_range: DgMediaDynamicRange,
+    pub video_dynamic_range: DgMediaDynamicRange,
 }
 
 impl DgMediaEnvironment {
     pub fn new(width: f32, height: f32) -> Self {
+        Self::with_resolution(width, height, 1.0)
+    }
+
+    pub fn with_resolution(width: f32, height: f32, resolution_dppx: f32) -> Self {
+        Self::with_preferences(width, height, resolution_dppx, false)
+    }
+
+    pub fn with_preferences(
+        width: f32,
+        height: f32,
+        resolution_dppx: f32,
+        prefers_reduced_motion: bool,
+    ) -> Self {
+        Self::with_color_scheme(
+            width,
+            height,
+            resolution_dppx,
+            DgMediaColorGamut::Srgb,
+            DgMediaPointer::Fine,
+            DgMediaPointer::Fine,
+            DgMediaHover::Hover,
+            DgMediaHover::Hover,
+            prefers_reduced_motion,
+            DgMediaColorScheme::Dark,
+        )
+    }
+
+    pub fn with_color_scheme(
+        width: f32,
+        height: f32,
+        resolution_dppx: f32,
+        color_gamut: DgMediaColorGamut,
+        pointer: DgMediaPointer,
+        any_pointer: DgMediaPointer,
+        hover: DgMediaHover,
+        any_hover: DgMediaHover,
+        prefers_reduced_motion: bool,
+        prefers_color_scheme: DgMediaColorScheme,
+    ) -> Self {
         Self {
             width: width.max(0.0),
             height: height.max(0.0),
+            resolution_dppx: resolution_dppx.max(0.001),
+            color_gamut,
+            pointer,
+            any_pointer,
+            hover,
+            any_hover,
+            prefers_reduced_motion,
+            prefers_color_scheme,
+            update: DgMediaUpdate::Fast,
+            scripting: DgMediaScripting::None,
+            forced_colors: DgMediaForcedColors::None,
+            prefers_contrast: DgMediaContrast::NoPreference,
+            inverted_colors: DgMediaInvertedColors::None,
+            dynamic_range: DgMediaDynamicRange::Standard,
+            video_dynamic_range: DgMediaDynamicRange::Standard,
         }
     }
 
     pub fn from_physical_size(width: f32, height: f32, scale_factor: f32) -> Self {
         let scale_factor = scale_factor.max(0.001);
-        Self::new(width / scale_factor, height / scale_factor)
+        Self::with_resolution(width / scale_factor, height / scale_factor, scale_factor)
     }
 
     fn orientation(self) -> DgMediaOrientation {
@@ -110,6 +185,14 @@ impl DgMediaEnvironment {
             DgMediaOrientation::Landscape
         } else {
             DgMediaOrientation::Portrait
+        }
+    }
+
+    fn aspect_ratio(self) -> f32 {
+        if self.height <= f32::EPSILON {
+            0.0
+        } else {
+            self.width / self.height
         }
     }
 }
@@ -148,6 +231,20 @@ enum DgMediaExpression {
     Never,
     Constraint(DgMediaConstraint),
     Orientation(DgMediaOrientation),
+    ColorGamut(DgMediaColorGamut),
+    Pointer(DgMediaPointer),
+    AnyPointer(DgMediaPointer),
+    Hover(DgMediaHover),
+    AnyHover(DgMediaHover),
+    PrefersReducedMotion(bool),
+    PrefersColorScheme(DgMediaColorScheme),
+    Update(DgMediaUpdate),
+    Scripting(DgMediaScripting),
+    ForcedColors(DgMediaForcedColors),
+    PrefersContrast(DgMediaContrast),
+    InvertedColors(DgMediaInvertedColors),
+    DynamicRange(DgMediaDynamicRange),
+    VideoDynamicRange(DgMediaDynamicRange),
     And(Vec<DgMediaExpression>),
     Or(Vec<DgMediaExpression>),
     Not(Box<DgMediaExpression>),
@@ -214,6 +311,46 @@ impl DgMediaExpression {
             DgMediaExpression::Orientation(expected) => {
                 environment.is_some_and(|environment| environment.orientation() == *expected)
             }
+            DgMediaExpression::ColorGamut(expected) => {
+                environment.is_some_and(|environment| environment.color_gamut.supports(*expected))
+            }
+            DgMediaExpression::Pointer(expected) => {
+                environment.is_some_and(|environment| environment.pointer == *expected)
+            }
+            DgMediaExpression::AnyPointer(expected) => {
+                environment.is_some_and(|environment| environment.any_pointer == *expected)
+            }
+            DgMediaExpression::Hover(expected) => {
+                environment.is_some_and(|environment| environment.hover == *expected)
+            }
+            DgMediaExpression::AnyHover(expected) => {
+                environment.is_some_and(|environment| environment.any_hover == *expected)
+            }
+            DgMediaExpression::PrefersReducedMotion(expected) => environment
+                .is_some_and(|environment| environment.prefers_reduced_motion == *expected),
+            DgMediaExpression::PrefersColorScheme(expected) => {
+                environment.is_some_and(|environment| environment.prefers_color_scheme == *expected)
+            }
+            DgMediaExpression::Update(expected) => {
+                environment.is_some_and(|environment| environment.update == *expected)
+            }
+            DgMediaExpression::Scripting(expected) => {
+                environment.is_some_and(|environment| environment.scripting == *expected)
+            }
+            DgMediaExpression::ForcedColors(expected) => {
+                environment.is_some_and(|environment| environment.forced_colors == *expected)
+            }
+            DgMediaExpression::PrefersContrast(expected) => {
+                environment.is_some_and(|environment| environment.prefers_contrast == *expected)
+            }
+            DgMediaExpression::InvertedColors(expected) => {
+                environment.is_some_and(|environment| environment.inverted_colors == *expected)
+            }
+            DgMediaExpression::DynamicRange(expected) => {
+                environment.is_some_and(|environment| environment.dynamic_range.supports(*expected))
+            }
+            DgMediaExpression::VideoDynamicRange(expected) => environment
+                .is_some_and(|environment| environment.video_dynamic_range.supports(*expected)),
             DgMediaExpression::And(expressions) => expressions
                 .iter()
                 .all(|expression| expression.matches(environment)),
@@ -240,6 +377,8 @@ impl DgMediaConstraint {
         let actual = match self.feature {
             DgMediaFeature::Width => environment.width,
             DgMediaFeature::Height => environment.height,
+            DgMediaFeature::AspectRatio => environment.aspect_ratio(),
+            DgMediaFeature::Resolution => environment.resolution_dppx,
         };
         match self.comparison {
             DgMediaComparison::Equal => (actual - self.value).abs() <= f32::EPSILON,
@@ -255,12 +394,92 @@ impl DgMediaConstraint {
 enum DgMediaFeature {
     Width,
     Height,
+    AspectRatio,
+    Resolution,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DgMediaOrientation {
     Portrait,
     Landscape,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DgMediaColorGamut {
+    Srgb,
+    P3,
+    Rec2020,
+}
+
+impl DgMediaColorGamut {
+    fn supports(self, expected: Self) -> bool {
+        self >= expected
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DgMediaPointer {
+    None,
+    Coarse,
+    Fine,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DgMediaHover {
+    None,
+    Hover,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DgMediaColorScheme {
+    Light,
+    Dark,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DgMediaUpdate {
+    None,
+    Slow,
+    Fast,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DgMediaScripting {
+    None,
+    InitialOnly,
+    Enabled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DgMediaForcedColors {
+    None,
+    Active,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DgMediaContrast {
+    NoPreference,
+    More,
+    Less,
+    Custom,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DgMediaInvertedColors {
+    None,
+    Inverted,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DgMediaDynamicRange {
+    Standard,
+    High,
+}
+
+impl DgMediaDynamicRange {
+    fn supports(self, expected: Self) -> bool {
+        self >= expected
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -349,6 +568,8 @@ pub enum DgStyleProperty {
     Text(DgTextDeclaration),
     Widget(DgWidgetDeclaration),
     Transition(DgTransitionDeclaration),
+    Animation(DgAnimationDeclaration),
+    Generated(DgGeneratedDeclaration),
     CustomProperty { name: String, value: DgCssValue },
 }
 
@@ -376,6 +597,8 @@ pub enum DgLayoutDeclaration {
     ColumnGap(DgCssLength),
     GridTemplateColumns(Vec<DgGridTrackSize>),
     GridTemplateRows(Vec<DgGridTrackSize>),
+    GridTemplateAreas(DgGridTemplateAreas),
+    GridArea(String),
     GridColumn(DgGridPlacement),
     GridRow(DgGridPlacement),
     Overflow(DgCssKeyword),
@@ -393,6 +616,7 @@ pub enum DgLayoutDeclaration {
 pub enum DgVisualDeclaration {
     Background(DgCssColor),
     BackgroundPaint(DgBackgroundPaint),
+    BackdropFilter(Option<BackdropFilterStyle>),
     Foreground(DgCssColor),
     BorderColor(DgCssColor),
     BorderWidth(DgCssLength),
@@ -442,6 +666,24 @@ pub enum DgTransitionDeclaration {
     Delay(u64),
     TimingFunction(TransitionTimingFunction),
     Shorthand(TransitionStyle),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DgAnimationDeclaration {
+    Shorthand(AnimationStyle),
+    Name(Option<String>),
+    Duration(u64),
+    Delay(u64),
+    TimingFunction(TransitionTimingFunction),
+    IterationCount(AnimationIterationCount),
+    Direction(AnimationDirection),
+    FillMode(AnimationFillMode),
+    PlayState(AnimationPlayState),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DgGeneratedDeclaration {
+    Content(Option<GeneratedContent>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -520,6 +762,22 @@ pub enum DgGridLine {
 pub struct DgGridPlacement {
     pub start: DgGridLine,
     pub end: DgGridLine,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DgGridTemplateAreas {
+    pub columns: u16,
+    pub rows: u16,
+    pub areas: Vec<DgGridTemplateArea>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DgGridTemplateArea {
+    pub name: String,
+    pub row_start: u16,
+    pub row_end: u16,
+    pub column_start: u16,
+    pub column_end: u16,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1515,6 +1773,8 @@ pub enum DgStylePropertyName {
     Text(DgTextPropertyName),
     Widget(DgWidgetPropertyName),
     Transition(DgTransitionPropertyName),
+    Animation(DgAnimationPropertyName),
+    Generated(DgGeneratedPropertyName),
     BorderShorthand,
     CustomProperty(String),
 }
@@ -1543,6 +1803,8 @@ pub enum DgLayoutPropertyName {
     ColumnGap,
     GridTemplateColumns,
     GridTemplateRows,
+    GridTemplateAreas,
+    GridArea,
     GridColumn,
     GridRow,
     Overflow,
@@ -1559,6 +1821,7 @@ pub enum DgLayoutPropertyName {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DgVisualPropertyName {
     Background,
+    BackdropFilter,
     Foreground,
     BorderColor,
     BorderWidth,
@@ -1609,6 +1872,24 @@ pub enum DgTransitionPropertyName {
     Delay,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DgAnimationPropertyName {
+    Animation,
+    Name,
+    Duration,
+    TimingFunction,
+    Delay,
+    IterationCount,
+    Direction,
+    FillMode,
+    PlayState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DgGeneratedPropertyName {
+    Content,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DgStyleWarning {
     pub property: String,
@@ -1630,7 +1911,9 @@ impl DgStylePropertyName {
     /// Layout: display, flex-direction, flex, flex-grow, flex-shrink, width,
     /// height, min-width, min-height, max-width, max-height, padding,
     /// padding-left, padding-right, padding-top, padding-bottom, margin, gap,
-    /// overflow, position, top, right, bottom, left.
+    /// grid-template-columns, grid-template-rows, grid-template-areas,
+    /// grid-area, grid-column, grid-row, overflow, position, top, right,
+    /// bottom, left.
     ///
     /// Visual: background, background-color, foreground, border-color,
     /// border-width, border-radius, border-top-left-radius,
@@ -1671,6 +1954,8 @@ impl DgStylePropertyName {
             "column-gap" => Ok(Self::Layout(DgLayoutPropertyName::ColumnGap)),
             "grid-template-columns" => Ok(Self::Layout(DgLayoutPropertyName::GridTemplateColumns)),
             "grid-template-rows" => Ok(Self::Layout(DgLayoutPropertyName::GridTemplateRows)),
+            "grid-template-areas" => Ok(Self::Layout(DgLayoutPropertyName::GridTemplateAreas)),
+            "grid-area" => Ok(Self::Layout(DgLayoutPropertyName::GridArea)),
             "grid-column" => Ok(Self::Layout(DgLayoutPropertyName::GridColumn)),
             "grid-row" => Ok(Self::Layout(DgLayoutPropertyName::GridRow)),
             "overflow" => Ok(Self::Layout(DgLayoutPropertyName::Overflow)),
@@ -1683,6 +1968,7 @@ impl DgStylePropertyName {
             "left" => Ok(Self::Layout(DgLayoutPropertyName::Left)),
             "z-index" => Ok(Self::Layout(DgLayoutPropertyName::ZIndex)),
             "background" | "background-color" => Ok(Self::Visual(DgVisualPropertyName::Background)),
+            "backdrop-filter" => Ok(Self::Visual(DgVisualPropertyName::BackdropFilter)),
             "foreground" => Ok(Self::Visual(DgVisualPropertyName::Foreground)),
             "border-color" => Ok(Self::Visual(DgVisualPropertyName::BorderColor)),
             "border-width" => Ok(Self::Visual(DgVisualPropertyName::BorderWidth)),
@@ -1726,6 +2012,20 @@ impl DgStylePropertyName {
                 Ok(Self::Transition(DgTransitionPropertyName::TimingFunction))
             }
             "transition-delay" => Ok(Self::Transition(DgTransitionPropertyName::Delay)),
+            "animation" => Ok(Self::Animation(DgAnimationPropertyName::Animation)),
+            "animation-name" => Ok(Self::Animation(DgAnimationPropertyName::Name)),
+            "animation-duration" => Ok(Self::Animation(DgAnimationPropertyName::Duration)),
+            "animation-timing-function" => {
+                Ok(Self::Animation(DgAnimationPropertyName::TimingFunction))
+            }
+            "animation-delay" => Ok(Self::Animation(DgAnimationPropertyName::Delay)),
+            "animation-iteration-count" => {
+                Ok(Self::Animation(DgAnimationPropertyName::IterationCount))
+            }
+            "animation-direction" => Ok(Self::Animation(DgAnimationPropertyName::Direction)),
+            "animation-fill-mode" => Ok(Self::Animation(DgAnimationPropertyName::FillMode)),
+            "animation-play-state" => Ok(Self::Animation(DgAnimationPropertyName::PlayState)),
+            "content" => Ok(Self::Generated(DgGeneratedPropertyName::Content)),
             "table-row-height" => Ok(Self::Widget(DgWidgetPropertyName::TableRowHeight)),
             "table-header-height" => Ok(Self::Widget(DgWidgetPropertyName::TableHeaderHeight)),
             _ => Err(DgStyleWarning::unsupported_property(name)),
@@ -2613,6 +2913,12 @@ fn record_unsupported_inline_part_warning(
 }
 
 fn widget_kind_supports_part(kind: WidgetKind, part: &str) -> bool {
+    if matches!(part, "before" | "after") {
+        return !matches!(
+            kind,
+            WidgetKind::Window | WidgetKind::Spacer | WidgetKind::Unknown
+        );
+    }
     match kind {
         WidgetKind::Panel => matches!(part, "accent" | "scrollbar-track" | "scrollbar-thumb"),
         WidgetKind::Collapsible => matches!(part, "header" | "indicator" | "body"),
@@ -2714,6 +3020,11 @@ fn merge_layout_style(base: &mut LayoutStyle, overlay: &LayoutStyle) {
         .grid_template_rows
         .clone()
         .or_else(|| base.grid_template_rows.clone());
+    base.grid_template_areas = overlay
+        .grid_template_areas
+        .clone()
+        .or_else(|| base.grid_template_areas.clone());
+    base.grid_area = overlay.grid_area.clone().or_else(|| base.grid_area.clone());
     base.grid_column = overlay.grid_column.or(base.grid_column);
     base.grid_row = overlay.grid_row.or(base.grid_row);
 }
@@ -2784,6 +3095,7 @@ fn merge_part_style(base: &mut PartStyle, overlay: &PartStyle) {
     merge_part_layout_style(&mut base.layout, &overlay.layout);
     merge_visual_style(&mut base.visual, &overlay.visual);
     merge_text_style(&mut base.text, &overlay.text);
+    base.content = overlay.content.clone().or_else(|| base.content.clone());
 }
 
 fn merge_part_layout_style(base: &mut PartLayoutStyle, overlay: &PartLayoutStyle) {
@@ -2827,6 +3139,10 @@ fn apply_property_to_style(style: &mut NodeStyle, property: &DgStyleProperty) {
         DgStyleProperty::Transition(declaration) => {
             apply_transition_declaration(&mut style.transition, declaration)
         }
+        DgStyleProperty::Animation(declaration) => {
+            apply_animation_declaration(&mut style.animation, declaration)
+        }
+        DgStyleProperty::Generated(_) => {}
         DgStyleProperty::CustomProperty { .. } => {}
     }
 }
@@ -2856,6 +3172,8 @@ fn apply_property_to_pseudo_style(
         | DgStyleProperty::Text(_)
         | DgStyleProperty::Widget(_)
         | DgStyleProperty::Transition(_)
+        | DgStyleProperty::Animation(_)
+        | DgStyleProperty::Generated(_)
         | DgStyleProperty::CustomProperty { .. } => {}
     }
 }
@@ -2898,9 +3216,13 @@ fn apply_property_to_part(style: &mut PartStyle, property: &DgStyleProperty, sta
             apply_visual_declaration(&mut style.visual, declaration)
         }
         DgStyleProperty::Text(declaration) => apply_text_declaration(&mut style.text, declaration),
+        DgStyleProperty::Generated(DgGeneratedDeclaration::Content(value)) => {
+            style.content = value.clone()
+        }
         DgStyleProperty::Layout(_)
         | DgStyleProperty::Widget(_)
         | DgStyleProperty::Transition(_)
+        | DgStyleProperty::Animation(_)
         | DgStyleProperty::CustomProperty { .. } => {}
     }
 }
@@ -3012,6 +3334,10 @@ fn apply_layout_declaration(style: &mut LayoutStyle, declaration: &DgLayoutDecla
         DgLayoutDeclaration::GridTemplateRows(value) => {
             style.grid_template_rows = Some(value.iter().map(grid_track_from_css).collect())
         }
+        DgLayoutDeclaration::GridTemplateAreas(value) => {
+            style.grid_template_areas = Some(grid_template_areas_from_css(value))
+        }
+        DgLayoutDeclaration::GridArea(value) => style.grid_area = Some(value.clone()),
         DgLayoutDeclaration::GridColumn(value) => {
             style.grid_column = Some(grid_placement_from_css(value))
         }
@@ -3081,6 +3407,24 @@ fn grid_track_fit_content_from_css(value: DgGridTrackFitContentSize) -> GridTrac
     }
 }
 
+fn grid_template_areas_from_css(value: &DgGridTemplateAreas) -> GridTemplateAreas {
+    GridTemplateAreas {
+        columns: value.columns,
+        rows: value.rows,
+        areas: value
+            .areas
+            .iter()
+            .map(|area| GridTemplateArea {
+                name: area.name.clone(),
+                row_start: area.row_start,
+                row_end: area.row_end,
+                column_start: area.column_start,
+                column_end: area.column_end,
+            })
+            .collect(),
+    }
+}
+
 fn grid_placement_from_css(value: &DgGridPlacement) -> GridPlacementStyle {
     GridPlacementStyle {
         start: grid_line_from_css(value.start),
@@ -3107,6 +3451,7 @@ fn apply_visual_declaration(style: &mut VisualStyle, declaration: &DgVisualDecla
             style.background = None;
             style.background_paint = Some(background_paint_from_css(value));
         }
+        DgVisualDeclaration::BackdropFilter(value) => style.backdrop_filter = *value,
         DgVisualDeclaration::Foreground(value) => {
             style.foreground = Some(color_ref_from_css(value))
         }
@@ -3480,7 +3825,33 @@ fn layout_length(value: &DgCssLength) -> Option<LayoutLength> {
 pub struct ParsedStylesheet {
     pub rules: Vec<DgStyleRule>,
     pub variables: BTreeMap<String, DgCssValue>,
+    pub keyframes: BTreeMap<String, DgKeyframes>,
+    pub font_faces: Vec<DgFontFace>,
     pub warnings: Vec<DgStyleWarning>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DgFontFace {
+    pub family: String,
+    pub sources: Vec<DgFontFaceSource>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DgFontFaceSource {
+    pub url: String,
+    pub format: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DgKeyframes {
+    pub name: String,
+    pub frames: Vec<DgKeyframe>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DgKeyframe {
+    pub offset: f32,
+    pub visual: VisualStyle,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -3577,6 +3948,22 @@ impl StylesheetStore {
         variables
     }
 
+    pub fn keyframes(&self) -> BTreeMap<String, DgKeyframes> {
+        let mut keyframes = BTreeMap::new();
+        keyframes.extend(self.framework.keyframes.clone());
+        keyframes.extend(self.theme.keyframes.clone());
+        keyframes.extend(self.user.keyframes.clone());
+        keyframes
+    }
+
+    pub fn font_faces(&self) -> Vec<DgFontFace> {
+        let mut font_faces = Vec::new();
+        font_faces.extend(self.framework.font_faces.clone());
+        font_faces.extend(self.theme.font_faces.clone());
+        font_faces.extend(self.user.font_faces.clone());
+        font_faces
+    }
+
     pub fn warnings(&self) -> Vec<&DgStyleWarning> {
         self.framework
             .warnings
@@ -3622,6 +4009,8 @@ pub fn parse_stylesheet(
     collect_root_variables(&sheet, &mut variables, &mut warnings)?;
 
     let mut rules = Vec::new();
+    let mut keyframes = BTreeMap::new();
+    let mut font_faces = Vec::new();
     let mut source_order = 0;
     collect_style_rules(
         &sheet.rules,
@@ -3629,6 +4018,8 @@ pub fn parse_stylesheet(
         &variables,
         &mut warnings,
         &mut rules,
+        &mut keyframes,
+        &mut font_faces,
         &mut source_order,
         None,
     )?;
@@ -3636,6 +4027,8 @@ pub fn parse_stylesheet(
     Ok(ParsedStylesheet {
         rules,
         variables,
+        keyframes,
+        font_faces,
         warnings,
     })
 }
@@ -3646,6 +4039,8 @@ fn collect_style_rules<R>(
     variables: &BTreeMap<String, DgCssValue>,
     warnings: &mut Vec<DgStyleWarning>,
     rules: &mut Vec<DgStyleRule>,
+    keyframes: &mut BTreeMap<String, DgKeyframes>,
+    font_faces: &mut Vec<DgFontFace>,
     source_order: &mut u32,
     media: Option<DgMediaCondition>,
 ) -> Result<(), DgCssParseError> {
@@ -3701,33 +4096,183 @@ fn collect_style_rules<R>(
                         continue;
                     }
                 };
+                let mut scoped_variables = variables.clone();
+                collect_immediate_root_variables(
+                    &media_rule.rules,
+                    &mut scoped_variables,
+                    warnings,
+                )?;
                 collect_style_rules(
                     &media_rule.rules,
                     origin,
-                    variables,
+                    &scoped_variables,
                     warnings,
                     rules,
+                    keyframes,
+                    font_faces,
                     source_order,
                     Some(nested_media),
                 )?;
             }
             CssRule::Supports(supports_rule) => {
                 if supports_condition_matches(&supports_rule.condition, variables) {
+                    let mut scoped_variables = variables.clone();
+                    collect_immediate_root_variables(
+                        &supports_rule.rules,
+                        &mut scoped_variables,
+                        warnings,
+                    )?;
                     collect_style_rules(
                         &supports_rule.rules,
                         origin,
-                        variables,
+                        &scoped_variables,
                         warnings,
                         rules,
+                        keyframes,
+                        font_faces,
                         source_order,
                         media.clone(),
                     )?;
+                }
+            }
+            CssRule::Keyframes(rule) => {
+                if let Some(parsed) = lower_keyframes_rule(rule, variables, warnings)? {
+                    keyframes.insert(parsed.name.clone(), parsed);
+                }
+            }
+            CssRule::FontFace(rule) => {
+                if let Some(font_face) = lower_font_face_rule(rule, warnings)? {
+                    font_faces.push(font_face);
                 }
             }
             _ => {}
         }
     }
     Ok(())
+}
+
+fn lower_font_face_rule(
+    rule: &FontFaceRule<'_>,
+    warnings: &mut Vec<DgStyleWarning>,
+) -> Result<Option<DgFontFace>, DgCssParseError> {
+    let mut family = None;
+    let mut sources = Vec::new();
+    for property in &rule.properties {
+        match property {
+            FontFaceProperty::FontFamily(value) => {
+                family = Some(font_face_family_to_string(value)?);
+            }
+            FontFaceProperty::Source(values) => {
+                for source in values {
+                    if let FontFaceSource::Url(url_source) = source {
+                        let format = url_source
+                            .format
+                            .as_ref()
+                            .map(|format| {
+                                format
+                                    .to_css_string(PrinterOptions::default())
+                                    .map(|value| unquote(&value))
+                            })
+                            .transpose()
+                            .map_err(|error| {
+                                DgCssParseError::new(format!(
+                                    "failed to serialize @font-face format: {error}"
+                                ))
+                            })?;
+                        sources.push(DgFontFaceSource {
+                            url: url_source.url.url.as_ref().to_string(),
+                            format,
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let Some(family) = family.filter(|value| !value.trim().is_empty()) else {
+        warnings.push(DgStyleWarning {
+            property: "@font-face".to_string(),
+            message: "@font-face rule is missing a supported font-family descriptor".to_string(),
+        });
+        return Ok(None);
+    };
+    if sources.is_empty() {
+        warnings.push(DgStyleWarning {
+            property: format!("@font-face {family}"),
+            message: "@font-face rule is missing a supported url(...) src descriptor".to_string(),
+        });
+        return Ok(None);
+    }
+    Ok(Some(DgFontFace { family, sources }))
+}
+
+fn font_face_family_to_string(value: &CssFontFamily<'_>) -> Result<String, DgCssParseError> {
+    let css = value
+        .to_css_string(PrinterOptions::default())
+        .map_err(|error| {
+            DgCssParseError::new(format!("failed to serialize @font-face family: {error}"))
+        })?;
+    Ok(unquote(&css))
+}
+
+fn lower_keyframes_rule(
+    rule: &KeyframesRule<'_>,
+    variables: &BTreeMap<String, DgCssValue>,
+    warnings: &mut Vec<DgStyleWarning>,
+) -> Result<Option<DgKeyframes>, DgCssParseError> {
+    let name = keyframes_name(rule.name.clone());
+    let mut frames = Vec::new();
+    for keyframe in &rule.keyframes {
+        let declaration_specs = lower_declarations(
+            &keyframe.declarations,
+            variables,
+            warnings,
+            Some("@keyframes"),
+        )?;
+        let mut visual = VisualStyle::default();
+        for (property, _) in declaration_specs {
+            if let DgStyleProperty::Visual(declaration) = property {
+                apply_visual_declaration(&mut visual, &declaration);
+            }
+        }
+        if visual_style_is_empty(&visual) {
+            continue;
+        }
+        for selector in &keyframe.selectors {
+            if let Some(offset) = keyframe_selector_offset(selector) {
+                frames.push(DgKeyframe {
+                    offset,
+                    visual: visual.clone(),
+                });
+            }
+        }
+    }
+    if frames.is_empty() {
+        warnings.push(DgStyleWarning {
+            property: format!("@keyframes {name}"),
+            message: "keyframes rule has no supported visual declarations".to_string(),
+        });
+        return Ok(None);
+    }
+    frames.sort_by(|a, b| a.offset.total_cmp(&b.offset));
+    Ok(Some(DgKeyframes { name, frames }))
+}
+
+fn keyframes_name(name: KeyframesName<'_>) -> String {
+    match name {
+        KeyframesName::Ident(ident) => ident.0.as_ref().to_string(),
+        KeyframesName::Custom(name) => name.as_ref().to_string(),
+    }
+}
+
+fn keyframe_selector_offset(selector: &KeyframeSelector) -> Option<f32> {
+    match selector {
+        KeyframeSelector::From => Some(0.0),
+        KeyframeSelector::To => Some(1.0),
+        KeyframeSelector::Percentage(value) => Some(value.0.clamp(0.0, 1.0)),
+        KeyframeSelector::TimelineRangePercentage(_) => None,
+    }
 }
 
 fn supports_condition_matches(
@@ -3781,7 +4326,7 @@ fn media_query_expression(query: &MediaQuery<'_>) -> Result<DgMediaExpression, S
         MediaType::Print => DgMediaExpression::Never,
         MediaType::Custom(media_type) => {
             return Err(format!(
-                "unsupported @media type {media_type:?}; only screen/all width, height, and orientation queries are supported"
+                "unsupported @media type {media_type:?}; only screen/all width, height, aspect-ratio, resolution, color-gamut, orientation, pointer, hover, update, scripting, forced-colors, prefers-contrast, inverted-colors, dynamic-range, video-dynamic-range, prefers-reduced-motion, and prefers-color-scheme queries are supported"
             ));
         }
     };
@@ -3822,7 +4367,7 @@ fn media_condition_expression(
             })
         }
         LightningMediaCondition::Unknown(_) => Err(
-            "unsupported @media condition; only width, height, and orientation queries are supported"
+            "unsupported @media condition; only width, height, aspect-ratio, resolution, color-gamut, orientation, pointer, hover, update, scripting, forced-colors, prefers-contrast, inverted-colors, dynamic-range, video-dynamic-range, prefers-reduced-motion, and prefers-color-scheme queries are supported"
                 .to_string(),
         ),
     }
@@ -3852,10 +4397,7 @@ fn media_feature_expression(
             )?,
             media_constraint_expression(name, media_comparison(*end_operator), end)?,
         ])),
-        QueryFeature::Boolean { name } => Err(format!(
-            "unsupported @media feature {feature}; only width, height, and orientation queries are supported",
-            feature = media_feature_name_label(name)
-        )),
+        QueryFeature::Boolean { name } => media_boolean_feature_expression(name),
     }
 }
 
@@ -3869,7 +4411,151 @@ fn media_plain_feature_expression(
     ) {
         return media_orientation_expression(name, value);
     }
+    if matches!(name, MediaFeatureName::Standard(MediaFeatureId::ColorGamut)) {
+        return media_color_gamut_expression(name, value);
+    }
+    if matches!(name, MediaFeatureName::Standard(MediaFeatureId::Pointer)) {
+        return media_pointer_expression(name, value, false);
+    }
+    if matches!(name, MediaFeatureName::Standard(MediaFeatureId::AnyPointer)) {
+        return media_pointer_expression(name, value, true);
+    }
+    if matches!(name, MediaFeatureName::Standard(MediaFeatureId::Hover)) {
+        return media_hover_expression(name, value, false);
+    }
+    if matches!(name, MediaFeatureName::Standard(MediaFeatureId::AnyHover)) {
+        return media_hover_expression(name, value, true);
+    }
+    if matches!(
+        name,
+        MediaFeatureName::Standard(MediaFeatureId::PrefersReducedMotion)
+    ) {
+        return media_reduced_motion_expression(name, value);
+    }
+    if matches!(
+        name,
+        MediaFeatureName::Standard(MediaFeatureId::PrefersColorScheme)
+    ) {
+        return media_color_scheme_expression(name, value);
+    }
+    if matches!(name, MediaFeatureName::Standard(MediaFeatureId::Update)) {
+        return media_update_expression(name, value);
+    }
+    if matches!(name, MediaFeatureName::Standard(MediaFeatureId::Scripting)) {
+        return media_scripting_expression(name, value);
+    }
+    if matches!(
+        name,
+        MediaFeatureName::Standard(MediaFeatureId::ForcedColors)
+    ) {
+        return media_forced_colors_expression(name, value);
+    }
+    if matches!(
+        name,
+        MediaFeatureName::Standard(MediaFeatureId::PrefersContrast)
+    ) {
+        return media_contrast_expression(name, value);
+    }
+    if matches!(
+        name,
+        MediaFeatureName::Standard(MediaFeatureId::InvertedColors)
+    ) {
+        return media_inverted_colors_expression(name, value);
+    }
+    if matches!(
+        name,
+        MediaFeatureName::Standard(MediaFeatureId::DynamicRange)
+    ) {
+        return media_dynamic_range_expression(name, value, false);
+    }
+    if matches!(
+        name,
+        MediaFeatureName::Standard(MediaFeatureId::VideoDynamicRange)
+    ) {
+        return media_dynamic_range_expression(name, value, true);
+    }
     media_constraint_expression(name, DgMediaComparison::Equal, value)
+}
+
+fn media_boolean_feature_expression(
+    name: &MediaFeatureName<'_, MediaFeatureId>,
+) -> Result<DgMediaExpression, String> {
+    if matches!(
+        name,
+        MediaFeatureName::Standard(MediaFeatureId::PrefersReducedMotion)
+    ) {
+        return Ok(DgMediaExpression::PrefersReducedMotion(true));
+    }
+    if matches!(name, MediaFeatureName::Standard(MediaFeatureId::Pointer)) {
+        return Ok(DgMediaExpression::Not(Box::new(
+            DgMediaExpression::Pointer(DgMediaPointer::None),
+        )));
+    }
+    if matches!(name, MediaFeatureName::Standard(MediaFeatureId::AnyPointer)) {
+        return Ok(DgMediaExpression::Not(Box::new(
+            DgMediaExpression::AnyPointer(DgMediaPointer::None),
+        )));
+    }
+    if matches!(name, MediaFeatureName::Standard(MediaFeatureId::Hover)) {
+        return Ok(DgMediaExpression::Hover(DgMediaHover::Hover));
+    }
+    if matches!(name, MediaFeatureName::Standard(MediaFeatureId::AnyHover)) {
+        return Ok(DgMediaExpression::AnyHover(DgMediaHover::Hover));
+    }
+    if matches!(name, MediaFeatureName::Standard(MediaFeatureId::Update)) {
+        return Ok(DgMediaExpression::Not(Box::new(DgMediaExpression::Update(
+            DgMediaUpdate::None,
+        ))));
+    }
+    if matches!(name, MediaFeatureName::Standard(MediaFeatureId::Scripting)) {
+        return Ok(DgMediaExpression::Not(Box::new(
+            DgMediaExpression::Scripting(DgMediaScripting::None),
+        )));
+    }
+    if matches!(
+        name,
+        MediaFeatureName::Standard(MediaFeatureId::ForcedColors)
+    ) {
+        return Ok(DgMediaExpression::Not(Box::new(
+            DgMediaExpression::ForcedColors(DgMediaForcedColors::None),
+        )));
+    }
+    if matches!(
+        name,
+        MediaFeatureName::Standard(MediaFeatureId::PrefersContrast)
+    ) {
+        return Ok(DgMediaExpression::Not(Box::new(
+            DgMediaExpression::PrefersContrast(DgMediaContrast::NoPreference),
+        )));
+    }
+    if matches!(
+        name,
+        MediaFeatureName::Standard(MediaFeatureId::InvertedColors)
+    ) {
+        return Ok(DgMediaExpression::Not(Box::new(
+            DgMediaExpression::InvertedColors(DgMediaInvertedColors::None),
+        )));
+    }
+    if matches!(
+        name,
+        MediaFeatureName::Standard(MediaFeatureId::DynamicRange)
+    ) {
+        return Ok(DgMediaExpression::DynamicRange(
+            DgMediaDynamicRange::Standard,
+        ));
+    }
+    if matches!(
+        name,
+        MediaFeatureName::Standard(MediaFeatureId::VideoDynamicRange)
+    ) {
+        return Ok(DgMediaExpression::VideoDynamicRange(
+            DgMediaDynamicRange::Standard,
+        ));
+    }
+    Err(format!(
+        "unsupported @media feature {feature}; only width, height, aspect-ratio, resolution, color-gamut, orientation, pointer, hover, update, scripting, forced-colors, prefers-contrast, inverted-colors, dynamic-range, video-dynamic-range, prefers-reduced-motion, and prefers-color-scheme queries are supported",
+        feature = media_feature_name_label(name)
+    ))
 }
 
 fn media_orientation_expression(
@@ -3895,6 +4581,280 @@ fn media_orientation_expression(
     Ok(DgMediaExpression::Orientation(orientation))
 }
 
+fn media_color_gamut_expression(
+    name: &MediaFeatureName<'_, MediaFeatureId>,
+    value: &MediaFeatureValue<'_>,
+) -> Result<DgMediaExpression, String> {
+    let MediaFeatureValue::Ident(ident) = value else {
+        return Err(format!(
+            "unsupported @media value for {feature}; only srgb, p3, and rec2020 are supported",
+            feature = media_feature_name_label(name)
+        ));
+    };
+    let gamut = match ident.as_ref() {
+        value if value.eq_ignore_ascii_case("srgb") => DgMediaColorGamut::Srgb,
+        value if value.eq_ignore_ascii_case("p3") => DgMediaColorGamut::P3,
+        value if value.eq_ignore_ascii_case("rec2020") => DgMediaColorGamut::Rec2020,
+        _ => {
+            return Err(format!(
+                "unsupported @media value for {feature}; only srgb, p3, and rec2020 are supported",
+                feature = media_feature_name_label(name)
+            ));
+        }
+    };
+    Ok(DgMediaExpression::ColorGamut(gamut))
+}
+
+fn media_pointer_expression(
+    name: &MediaFeatureName<'_, MediaFeatureId>,
+    value: &MediaFeatureValue<'_>,
+    any: bool,
+) -> Result<DgMediaExpression, String> {
+    let MediaFeatureValue::Ident(ident) = value else {
+        return Err(format!(
+            "unsupported @media value for {feature}; only none, coarse, and fine are supported",
+            feature = media_feature_name_label(name)
+        ));
+    };
+    let pointer = match ident.as_ref() {
+        value if value.eq_ignore_ascii_case("none") => DgMediaPointer::None,
+        value if value.eq_ignore_ascii_case("coarse") => DgMediaPointer::Coarse,
+        value if value.eq_ignore_ascii_case("fine") => DgMediaPointer::Fine,
+        _ => {
+            return Err(format!(
+                "unsupported @media value for {feature}; only none, coarse, and fine are supported",
+                feature = media_feature_name_label(name)
+            ));
+        }
+    };
+    Ok(if any {
+        DgMediaExpression::AnyPointer(pointer)
+    } else {
+        DgMediaExpression::Pointer(pointer)
+    })
+}
+
+fn media_hover_expression(
+    name: &MediaFeatureName<'_, MediaFeatureId>,
+    value: &MediaFeatureValue<'_>,
+    any: bool,
+) -> Result<DgMediaExpression, String> {
+    let MediaFeatureValue::Ident(ident) = value else {
+        return Err(format!(
+            "unsupported @media value for {feature}; only none and hover are supported",
+            feature = media_feature_name_label(name)
+        ));
+    };
+    let hover = match ident.as_ref() {
+        value if value.eq_ignore_ascii_case("none") => DgMediaHover::None,
+        value if value.eq_ignore_ascii_case("hover") => DgMediaHover::Hover,
+        _ => {
+            return Err(format!(
+                "unsupported @media value for {feature}; only none and hover are supported",
+                feature = media_feature_name_label(name)
+            ));
+        }
+    };
+    Ok(if any {
+        DgMediaExpression::AnyHover(hover)
+    } else {
+        DgMediaExpression::Hover(hover)
+    })
+}
+
+fn media_reduced_motion_expression(
+    name: &MediaFeatureName<'_, MediaFeatureId>,
+    value: &MediaFeatureValue<'_>,
+) -> Result<DgMediaExpression, String> {
+    let MediaFeatureValue::Ident(ident) = value else {
+        return Err(format!(
+            "unsupported @media value for {feature}; only reduce and no-preference are supported",
+            feature = media_feature_name_label(name)
+        ));
+    };
+    let reduce = match ident.as_ref() {
+        value if value.eq_ignore_ascii_case("reduce") => true,
+        value if value.eq_ignore_ascii_case("no-preference") => false,
+        _ => {
+            return Err(format!(
+                "unsupported @media value for {feature}; only reduce and no-preference are supported",
+                feature = media_feature_name_label(name)
+            ));
+        }
+    };
+    Ok(DgMediaExpression::PrefersReducedMotion(reduce))
+}
+
+fn media_color_scheme_expression(
+    name: &MediaFeatureName<'_, MediaFeatureId>,
+    value: &MediaFeatureValue<'_>,
+) -> Result<DgMediaExpression, String> {
+    let MediaFeatureValue::Ident(ident) = value else {
+        return Err(format!(
+            "unsupported @media value for {feature}; only dark and light are supported",
+            feature = media_feature_name_label(name)
+        ));
+    };
+    let scheme = match ident.as_ref() {
+        value if value.eq_ignore_ascii_case("dark") => DgMediaColorScheme::Dark,
+        value if value.eq_ignore_ascii_case("light") => DgMediaColorScheme::Light,
+        _ => {
+            return Err(format!(
+                "unsupported @media value for {feature}; only dark and light are supported",
+                feature = media_feature_name_label(name)
+            ));
+        }
+    };
+    Ok(DgMediaExpression::PrefersColorScheme(scheme))
+}
+
+fn media_update_expression(
+    name: &MediaFeatureName<'_, MediaFeatureId>,
+    value: &MediaFeatureValue<'_>,
+) -> Result<DgMediaExpression, String> {
+    let MediaFeatureValue::Ident(ident) = value else {
+        return Err(format!(
+            "unsupported @media value for {feature}; only none, slow, and fast are supported",
+            feature = media_feature_name_label(name)
+        ));
+    };
+    let update = match ident.as_ref() {
+        value if value.eq_ignore_ascii_case("none") => DgMediaUpdate::None,
+        value if value.eq_ignore_ascii_case("slow") => DgMediaUpdate::Slow,
+        value if value.eq_ignore_ascii_case("fast") => DgMediaUpdate::Fast,
+        _ => {
+            return Err(format!(
+                "unsupported @media value for {feature}; only none, slow, and fast are supported",
+                feature = media_feature_name_label(name)
+            ));
+        }
+    };
+    Ok(DgMediaExpression::Update(update))
+}
+
+fn media_scripting_expression(
+    name: &MediaFeatureName<'_, MediaFeatureId>,
+    value: &MediaFeatureValue<'_>,
+) -> Result<DgMediaExpression, String> {
+    let MediaFeatureValue::Ident(ident) = value else {
+        return Err(format!(
+            "unsupported @media value for {feature}; only none, initial-only, and enabled are supported",
+            feature = media_feature_name_label(name)
+        ));
+    };
+    let scripting = match ident.as_ref() {
+        value if value.eq_ignore_ascii_case("none") => DgMediaScripting::None,
+        value if value.eq_ignore_ascii_case("initial-only") => DgMediaScripting::InitialOnly,
+        value if value.eq_ignore_ascii_case("enabled") => DgMediaScripting::Enabled,
+        _ => {
+            return Err(format!(
+                "unsupported @media value for {feature}; only none, initial-only, and enabled are supported",
+                feature = media_feature_name_label(name)
+            ));
+        }
+    };
+    Ok(DgMediaExpression::Scripting(scripting))
+}
+
+fn media_forced_colors_expression(
+    name: &MediaFeatureName<'_, MediaFeatureId>,
+    value: &MediaFeatureValue<'_>,
+) -> Result<DgMediaExpression, String> {
+    let MediaFeatureValue::Ident(ident) = value else {
+        return Err(format!(
+            "unsupported @media value for {feature}; only none and active are supported",
+            feature = media_feature_name_label(name)
+        ));
+    };
+    let forced_colors = match ident.as_ref() {
+        value if value.eq_ignore_ascii_case("none") => DgMediaForcedColors::None,
+        value if value.eq_ignore_ascii_case("active") => DgMediaForcedColors::Active,
+        _ => {
+            return Err(format!(
+                "unsupported @media value for {feature}; only none and active are supported",
+                feature = media_feature_name_label(name)
+            ));
+        }
+    };
+    Ok(DgMediaExpression::ForcedColors(forced_colors))
+}
+
+fn media_contrast_expression(
+    name: &MediaFeatureName<'_, MediaFeatureId>,
+    value: &MediaFeatureValue<'_>,
+) -> Result<DgMediaExpression, String> {
+    let MediaFeatureValue::Ident(ident) = value else {
+        return Err(format!(
+            "unsupported @media value for {feature}; only no-preference, more, less, and custom are supported",
+            feature = media_feature_name_label(name)
+        ));
+    };
+    let contrast = match ident.as_ref() {
+        value if value.eq_ignore_ascii_case("no-preference") => DgMediaContrast::NoPreference,
+        value if value.eq_ignore_ascii_case("more") => DgMediaContrast::More,
+        value if value.eq_ignore_ascii_case("less") => DgMediaContrast::Less,
+        value if value.eq_ignore_ascii_case("custom") => DgMediaContrast::Custom,
+        _ => {
+            return Err(format!(
+                "unsupported @media value for {feature}; only no-preference, more, less, and custom are supported",
+                feature = media_feature_name_label(name)
+            ));
+        }
+    };
+    Ok(DgMediaExpression::PrefersContrast(contrast))
+}
+
+fn media_inverted_colors_expression(
+    name: &MediaFeatureName<'_, MediaFeatureId>,
+    value: &MediaFeatureValue<'_>,
+) -> Result<DgMediaExpression, String> {
+    let MediaFeatureValue::Ident(ident) = value else {
+        return Err(format!(
+            "unsupported @media value for {feature}; only none and inverted are supported",
+            feature = media_feature_name_label(name)
+        ));
+    };
+    let inverted_colors = match ident.as_ref() {
+        value if value.eq_ignore_ascii_case("none") => DgMediaInvertedColors::None,
+        value if value.eq_ignore_ascii_case("inverted") => DgMediaInvertedColors::Inverted,
+        _ => {
+            return Err(format!(
+                "unsupported @media value for {feature}; only none and inverted are supported",
+                feature = media_feature_name_label(name)
+            ));
+        }
+    };
+    Ok(DgMediaExpression::InvertedColors(inverted_colors))
+}
+
+fn media_dynamic_range_expression(
+    name: &MediaFeatureName<'_, MediaFeatureId>,
+    value: &MediaFeatureValue<'_>,
+    video: bool,
+) -> Result<DgMediaExpression, String> {
+    let MediaFeatureValue::Ident(ident) = value else {
+        return Err(format!(
+            "unsupported @media value for {feature}; only standard and high are supported",
+            feature = media_feature_name_label(name)
+        ));
+    };
+    let dynamic_range = match ident.as_ref() {
+        value if value.eq_ignore_ascii_case("standard") => DgMediaDynamicRange::Standard,
+        value if value.eq_ignore_ascii_case("high") => DgMediaDynamicRange::High,
+        _ => {
+            return Err(format!(
+                "unsupported @media value for {feature}; only standard and high are supported",
+                feature = media_feature_name_label(name)
+            ));
+        }
+    };
+    Ok(if video {
+        DgMediaExpression::VideoDynamicRange(dynamic_range)
+    } else {
+        DgMediaExpression::DynamicRange(dynamic_range)
+    })
+}
+
 fn media_constraint_expression(
     name: &MediaFeatureName<'_, MediaFeatureId>,
     comparison: DgMediaComparison,
@@ -3902,13 +4862,13 @@ fn media_constraint_expression(
 ) -> Result<DgMediaExpression, String> {
     let feature = media_feature_name(name).ok_or_else(|| {
         format!(
-            "unsupported @media feature {feature}; only width, height, and orientation queries are supported",
+            "unsupported @media feature {feature}; only width, height, aspect-ratio, resolution, color-gamut, orientation, pointer, hover, update, scripting, forced-colors, prefers-contrast, inverted-colors, dynamic-range, video-dynamic-range, prefers-reduced-motion, and prefers-color-scheme queries are supported",
             feature = media_feature_name_label(name)
         )
     })?;
-    let value = media_feature_length_px(value).ok_or_else(|| {
+    let value = media_feature_constraint_value(feature, value).ok_or_else(|| {
         format!(
-            "unsupported @media value for {feature}; only absolute length values are supported",
+            "unsupported @media value for {feature}; only absolute length, aspect-ratio ratio, and resolution values are supported",
             feature = media_feature_name_label(name)
         )
     })?;
@@ -3923,6 +4883,10 @@ fn media_feature_name(name: &MediaFeatureName<'_, MediaFeatureId>) -> Option<DgM
     match name {
         MediaFeatureName::Standard(MediaFeatureId::Width) => Some(DgMediaFeature::Width),
         MediaFeatureName::Standard(MediaFeatureId::Height) => Some(DgMediaFeature::Height),
+        MediaFeatureName::Standard(MediaFeatureId::AspectRatio) => {
+            Some(DgMediaFeature::AspectRatio)
+        }
+        MediaFeatureName::Standard(MediaFeatureId::Resolution) => Some(DgMediaFeature::Resolution),
         _ => None,
     }
 }
@@ -3931,14 +4895,75 @@ fn media_feature_name_label(name: &MediaFeatureName<'_, MediaFeatureId>) -> Stri
     match name {
         MediaFeatureName::Standard(MediaFeatureId::Width) => "width".to_string(),
         MediaFeatureName::Standard(MediaFeatureId::Height) => "height".to_string(),
+        MediaFeatureName::Standard(MediaFeatureId::AspectRatio) => "aspect-ratio".to_string(),
+        MediaFeatureName::Standard(MediaFeatureId::Resolution) => "resolution".to_string(),
+        MediaFeatureName::Standard(MediaFeatureId::ColorGamut) => "color-gamut".to_string(),
         MediaFeatureName::Standard(MediaFeatureId::Orientation) => "orientation".to_string(),
+        MediaFeatureName::Standard(MediaFeatureId::Pointer) => "pointer".to_string(),
+        MediaFeatureName::Standard(MediaFeatureId::AnyPointer) => "any-pointer".to_string(),
+        MediaFeatureName::Standard(MediaFeatureId::Hover) => "hover".to_string(),
+        MediaFeatureName::Standard(MediaFeatureId::AnyHover) => "any-hover".to_string(),
+        MediaFeatureName::Standard(MediaFeatureId::Update) => "update".to_string(),
+        MediaFeatureName::Standard(MediaFeatureId::Scripting) => "scripting".to_string(),
+        MediaFeatureName::Standard(MediaFeatureId::ForcedColors) => "forced-colors".to_string(),
+        MediaFeatureName::Standard(MediaFeatureId::PrefersContrast) => {
+            "prefers-contrast".to_string()
+        }
+        MediaFeatureName::Standard(MediaFeatureId::InvertedColors) => "inverted-colors".to_string(),
+        MediaFeatureName::Standard(MediaFeatureId::DynamicRange) => "dynamic-range".to_string(),
+        MediaFeatureName::Standard(MediaFeatureId::VideoDynamicRange) => {
+            "video-dynamic-range".to_string()
+        }
+        MediaFeatureName::Standard(MediaFeatureId::PrefersReducedMotion) => {
+            "prefers-reduced-motion".to_string()
+        }
+        MediaFeatureName::Standard(MediaFeatureId::PrefersColorScheme) => {
+            "prefers-color-scheme".to_string()
+        }
         other => format!("{other:?}"),
+    }
+}
+
+fn media_feature_constraint_value(
+    feature: DgMediaFeature,
+    value: &MediaFeatureValue<'_>,
+) -> Option<f32> {
+    match feature {
+        DgMediaFeature::Width | DgMediaFeature::Height => media_feature_length_px(value),
+        DgMediaFeature::AspectRatio => media_feature_ratio(value),
+        DgMediaFeature::Resolution => media_feature_resolution_dppx(value),
     }
 }
 
 fn media_feature_length_px(value: &MediaFeatureValue<'_>) -> Option<f32> {
     match value {
         MediaFeatureValue::Length(length) => length.to_px(),
+        _ => None,
+    }
+}
+
+fn media_feature_ratio(value: &MediaFeatureValue<'_>) -> Option<f32> {
+    match value {
+        MediaFeatureValue::Ratio(ratio)
+            if ratio.0.is_finite() && ratio.1.is_finite() && ratio.1 > 0.0 =>
+        {
+            Some(ratio.0 / ratio.1)
+        }
+        _ => None,
+    }
+}
+
+fn media_feature_resolution_dppx(value: &MediaFeatureValue<'_>) -> Option<f32> {
+    match value {
+        MediaFeatureValue::Resolution(CssResolution::Dppx(value)) if value.is_finite() => {
+            Some(*value)
+        }
+        MediaFeatureValue::Resolution(CssResolution::Dpi(value)) if value.is_finite() => {
+            Some(*value / 96.0)
+        }
+        MediaFeatureValue::Resolution(CssResolution::Dpcm(value)) if value.is_finite() => {
+            Some(*value * 2.54 / 96.0)
+        }
         _ => None,
     }
 }
@@ -3968,7 +4993,15 @@ fn collect_root_variables(
     variables: &mut BTreeMap<String, DgCssValue>,
     warnings: &mut Vec<DgStyleWarning>,
 ) -> Result<(), DgCssParseError> {
-    for rule in sheet.rules.0.iter() {
+    collect_immediate_root_variables(&sheet.rules, variables, warnings)
+}
+
+fn collect_immediate_root_variables<R>(
+    rules_list: &CssRuleList<'_, R>,
+    variables: &mut BTreeMap<String, DgCssValue>,
+    warnings: &mut Vec<DgStyleWarning>,
+) -> Result<(), DgCssParseError> {
+    for rule in rules_list.0.iter() {
         let CssRule::Style(style_rule) = rule else {
             continue;
         };
@@ -4071,6 +5104,54 @@ fn lower_declaration(
         DgStylePropertyName::Transition(property) => {
             lower_transition(name, property, value, variables)
         }
+        DgStylePropertyName::Animation(property) => {
+            lower_animation(name, property, value, variables)
+        }
+        DgStylePropertyName::Generated(property) => {
+            lower_generated(name, property, value, variables)
+        }
+    }
+}
+
+fn lower_generated(
+    name: &str,
+    property: DgGeneratedPropertyName,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<Option<DgStyleProperty>, DgStyleWarning> {
+    let declaration = match property {
+        DgGeneratedPropertyName::Content => {
+            let value = resolve_keyword(value, variables);
+            let trimmed = value.trim();
+            if trimmed.eq_ignore_ascii_case("none") || trimmed.eq_ignore_ascii_case("normal") {
+                DgGeneratedDeclaration::Content(None)
+            } else if let Some(attr) = parse_generated_attr(trimmed) {
+                DgGeneratedDeclaration::Content(Some(GeneratedContent::Attr(attr)))
+            } else if is_quoted(trimmed) {
+                DgGeneratedDeclaration::Content(Some(GeneratedContent::Text(unquote(trimmed))))
+            } else {
+                return Err(parse_warning(
+                    name,
+                    value.as_str(),
+                    "quoted string, attr(name), none, or normal",
+                ));
+            }
+        }
+    };
+    Ok(Some(DgStyleProperty::Generated(declaration)))
+}
+
+fn apply_animation_declaration(style: &mut AnimationStyle, declaration: &DgAnimationDeclaration) {
+    match declaration {
+        DgAnimationDeclaration::Shorthand(value) => *style = value.clone(),
+        DgAnimationDeclaration::Name(value) => style.name = value.clone(),
+        DgAnimationDeclaration::Duration(value) => style.duration_ms = Some(*value),
+        DgAnimationDeclaration::Delay(value) => style.delay_ms = Some(*value),
+        DgAnimationDeclaration::TimingFunction(value) => style.timing_function = Some(*value),
+        DgAnimationDeclaration::IterationCount(value) => style.iteration_count = Some(*value),
+        DgAnimationDeclaration::Direction(value) => style.direction = Some(*value),
+        DgAnimationDeclaration::FillMode(value) => style.fill_mode = Some(*value),
+        DgAnimationDeclaration::PlayState(value) => style.play_state = Some(*value),
     }
 }
 
@@ -4156,6 +5237,12 @@ fn lower_layout(
         DgLayoutPropertyName::GridTemplateRows => DgLayoutDeclaration::GridTemplateRows(
             parse_grid_template_value(name, value, variables)?,
         ),
+        DgLayoutPropertyName::GridTemplateAreas => DgLayoutDeclaration::GridTemplateAreas(
+            parse_grid_template_areas_value(name, value, variables)?,
+        ),
+        DgLayoutPropertyName::GridArea => {
+            DgLayoutDeclaration::GridArea(parse_grid_area_value(name, value, variables)?)
+        }
         DgLayoutPropertyName::GridColumn => {
             DgLayoutDeclaration::GridColumn(parse_grid_placement_value(name, value)?)
         }
@@ -4204,6 +5291,9 @@ fn lower_visual(
             Some(paint) => DgVisualDeclaration::BackgroundPaint(paint),
             None => DgVisualDeclaration::Background(parse_color_value(name, value, variables)?),
         },
+        DgVisualPropertyName::BackdropFilter => DgVisualDeclaration::BackdropFilter(
+            parse_backdrop_filter_value(name, value, variables)?,
+        ),
         DgVisualPropertyName::Foreground => {
             DgVisualDeclaration::Foreground(parse_color_value(name, value, variables)?)
         }
@@ -4370,6 +5460,163 @@ fn lower_transition(
     Ok(Some(DgStyleProperty::Transition(declaration)))
 }
 
+fn lower_animation(
+    name: &str,
+    property: DgAnimationPropertyName,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<Option<DgStyleProperty>, DgStyleWarning> {
+    let declaration = match property {
+        DgAnimationPropertyName::Animation => {
+            DgAnimationDeclaration::Shorthand(parse_animation_shorthand(name, value, variables)?)
+        }
+        DgAnimationPropertyName::Name => {
+            let name = resolve_keyword(value, variables);
+            let name = name.trim();
+            if name.eq_ignore_ascii_case("none") {
+                DgAnimationDeclaration::Name(None)
+            } else if name.is_empty() {
+                return Err(parse_warning("animation-name", value, "animation name"));
+            } else {
+                DgAnimationDeclaration::Name(Some(unquote(name)))
+            }
+        }
+        DgAnimationPropertyName::Duration => {
+            DgAnimationDeclaration::Duration(parse_time_ms_value(name, value, variables)?)
+        }
+        DgAnimationPropertyName::Delay => {
+            DgAnimationDeclaration::Delay(parse_time_ms_value(name, value, variables)?)
+        }
+        DgAnimationPropertyName::TimingFunction => {
+            let keyword = resolve_keyword(value, variables);
+            let timing = transition_timing_from_keyword(&keyword)
+                .ok_or_else(|| parse_warning(name, value, "animation timing function"))?;
+            DgAnimationDeclaration::TimingFunction(timing)
+        }
+        DgAnimationPropertyName::IterationCount => DgAnimationDeclaration::IterationCount(
+            parse_animation_iteration_count_value(name, value, variables)?,
+        ),
+        DgAnimationPropertyName::Direction => {
+            let keyword = resolve_keyword(value, variables);
+            let direction = animation_direction_from_keyword(&keyword)
+                .ok_or_else(|| parse_warning(name, value, "animation direction"))?;
+            DgAnimationDeclaration::Direction(direction)
+        }
+        DgAnimationPropertyName::FillMode => {
+            let keyword = resolve_keyword(value, variables);
+            let fill_mode = animation_fill_mode_from_keyword(&keyword)
+                .ok_or_else(|| parse_warning(name, value, "animation fill mode"))?;
+            DgAnimationDeclaration::FillMode(fill_mode)
+        }
+        DgAnimationPropertyName::PlayState => {
+            let keyword = resolve_keyword(value, variables);
+            let play_state = animation_play_state_from_keyword(&keyword)
+                .ok_or_else(|| parse_warning(name, value, "animation play state"))?;
+            DgAnimationDeclaration::PlayState(play_state)
+        }
+    };
+    Ok(Some(DgStyleProperty::Animation(declaration)))
+}
+
+fn parse_animation_shorthand(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<AnimationStyle, DgStyleWarning> {
+    let value = resolve_keyword(value, variables);
+    let first = split_selector_list(&value)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| value.clone())
+        .trim()
+        .to_string();
+    if first.eq_ignore_ascii_case("none") {
+        return Ok(AnimationStyle {
+            name: None,
+            duration_ms: Some(0),
+            delay_ms: Some(0),
+            timing_function: Some(TransitionTimingFunction::Ease),
+            iteration_count: Some(AnimationIterationCount::One),
+            direction: Some(AnimationDirection::Normal),
+            fill_mode: Some(AnimationFillMode::None),
+            play_state: Some(AnimationPlayState::Running),
+        });
+    }
+
+    let mut style = AnimationStyle {
+        name: None,
+        duration_ms: Some(0),
+        delay_ms: Some(0),
+        timing_function: Some(TransitionTimingFunction::Ease),
+        iteration_count: Some(AnimationIterationCount::One),
+        direction: Some(AnimationDirection::Normal),
+        fill_mode: Some(AnimationFillMode::None),
+        play_state: Some(AnimationPlayState::Running),
+    };
+    let mut saw_duration = false;
+    let mut saw_name = false;
+    let tokens = split_css_whitespace_tokens(&first)
+        .ok_or_else(|| parse_warning(name, value.as_str(), "animation shorthand"))?;
+    for token in tokens {
+        if let Some(timing) = transition_timing_from_keyword(&token) {
+            style.timing_function = Some(timing);
+            continue;
+        }
+        if let Some(time) = parse_time_ms(&token) {
+            if !saw_duration {
+                style.duration_ms = Some(time);
+                saw_duration = true;
+            } else {
+                style.delay_ms = Some(time);
+            }
+            continue;
+        }
+        if let Ok(count) = parse_animation_iteration_count_value(name, &token, variables) {
+            style.iteration_count = Some(count);
+            continue;
+        }
+        if let Some(direction) = animation_direction_from_keyword(&token) {
+            style.direction = Some(direction);
+            continue;
+        }
+        if let Some(fill_mode) = animation_fill_mode_from_keyword(&token) {
+            style.fill_mode = Some(fill_mode);
+            continue;
+        }
+        if let Some(play_state) = animation_play_state_from_keyword(&token) {
+            style.play_state = Some(play_state);
+            continue;
+        }
+
+        let token_lower = token.trim().to_ascii_lowercase();
+        if token_lower == "auto"
+            || token_lower.starts_with("scroll(")
+            || token_lower.starts_with("view(")
+        {
+            return Err(DgStyleWarning {
+                property: name.to_string(),
+                message:
+                    "animation shorthand supports name, duration, timing, delay, iteration count, direction, fill mode, and play state only"
+                        .to_string(),
+            });
+        }
+        if saw_name {
+            return Err(parse_warning(
+                name,
+                value.as_str(),
+                "single animation shorthand",
+            ));
+        }
+        let animation_name = unquote(token.trim());
+        if animation_name.is_empty() {
+            return Err(parse_warning(name, value.as_str(), "animation name"));
+        }
+        style.name = Some(animation_name);
+        saw_name = true;
+    }
+    Ok(style)
+}
+
 fn parse_transition_shorthand(
     name: &str,
     value: &str,
@@ -4506,6 +5753,52 @@ fn transition_property_from_keyword(value: &str) -> Option<TransitionProperty> {
     }
 }
 
+fn parse_animation_iteration_count_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<AnimationIterationCount, DgStyleWarning> {
+    let value = resolve_keyword(value, variables);
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("infinite") {
+        return Ok(AnimationIterationCount::Infinite);
+    }
+    let count = value
+        .parse::<f32>()
+        .ok()
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .ok_or_else(|| parse_warning(name, value, "animation iteration count"))?;
+    Ok(AnimationIterationCount::Count(count.round() as u32))
+}
+
+fn animation_direction_from_keyword(value: &str) -> Option<AnimationDirection> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "normal" => Some(AnimationDirection::Normal),
+        "reverse" => Some(AnimationDirection::Reverse),
+        "alternate" => Some(AnimationDirection::Alternate),
+        "alternate-reverse" => Some(AnimationDirection::AlternateReverse),
+        _ => None,
+    }
+}
+
+fn animation_fill_mode_from_keyword(value: &str) -> Option<AnimationFillMode> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "none" => Some(AnimationFillMode::None),
+        "forwards" => Some(AnimationFillMode::Forwards),
+        "backwards" => Some(AnimationFillMode::Backwards),
+        "both" => Some(AnimationFillMode::Both),
+        _ => None,
+    }
+}
+
+fn animation_play_state_from_keyword(value: &str) -> Option<AnimationPlayState> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "running" => Some(AnimationPlayState::Running),
+        "paused" => Some(AnimationPlayState::Paused),
+        _ => None,
+    }
+}
+
 fn parse_transform_value(
     name: &str,
     value: &str,
@@ -4518,6 +5811,28 @@ fn parse_transform_value(
     let transform = parse_transform_functions(&value)
         .ok_or_else(|| parse_warning(name, value.as_str(), "transform"))?;
     Ok(transform)
+}
+
+fn parse_backdrop_filter_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<Option<BackdropFilterStyle>, DgStyleWarning> {
+    let value = resolve_keyword(value, variables);
+    let trimmed = value.trim();
+    if trimmed.eq_ignore_ascii_case("none") {
+        return Ok(None);
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    let args = lower
+        .strip_prefix("blur(")
+        .and_then(|value| value.strip_suffix(')'))
+        .map(str::trim)
+        .ok_or_else(|| parse_warning(name, value.as_str(), "blur(<length>)"))?;
+    let blur = length_px(&parse_px_length_value(name, args, variables)?)
+        .unwrap_or(0.0)
+        .max(0.0);
+    Ok(Some(BackdropFilterStyle { blur }))
 }
 
 fn parse_translate_value(
@@ -5128,6 +6443,10 @@ fn is_part_name(value: &str) -> bool {
 }
 
 fn parse_pseudo_selector(value: &str, compound: &mut DgCompoundSelector) -> Option<()> {
+    if matches!(value, "before" | "after") && compound.part.is_none() {
+        compound.part = Some(value.to_string());
+        return Some(());
+    }
     if let Some(pseudo) = parse_pseudo(value) {
         compound.pseudo.push(pseudo);
         return Some(());
@@ -5800,6 +7119,130 @@ fn parse_grid_template_value(
     Ok(tracks)
 }
 
+fn parse_grid_template_areas_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<DgGridTemplateAreas, DgStyleWarning> {
+    let value = resolve_keyword(value, variables);
+    if value.trim().eq_ignore_ascii_case("none") {
+        return Ok(DgGridTemplateAreas {
+            columns: 0,
+            rows: 0,
+            areas: Vec::new(),
+        });
+    }
+    let rows = parse_grid_area_rows(&value)
+        .ok_or_else(|| parse_warning(name, &value, "quoted grid area rows"))?;
+    if rows.is_empty() {
+        return Err(parse_warning(name, &value, "quoted grid area rows"));
+    }
+    let first_columns = rows[0].len();
+    if first_columns == 0 || first_columns > u16::MAX as usize || rows.len() > u16::MAX as usize {
+        return Err(parse_warning(name, &value, "non-empty grid area rows"));
+    }
+    if rows.iter().any(|row| row.len() != first_columns) {
+        return Err(parse_warning(name, &value, "equal-width grid area rows"));
+    }
+
+    let mut bounds: BTreeMap<String, (usize, usize, usize, usize)> = BTreeMap::new();
+    for (row_index, row) in rows.iter().enumerate() {
+        for (column_index, cell) in row.iter().enumerate() {
+            if is_grid_null_cell(cell) {
+                continue;
+            }
+            if !is_grid_area_name(cell) {
+                return Err(parse_warning(name, cell, "grid area name"));
+            }
+            bounds
+                .entry(cell.clone())
+                .and_modify(|(_, row_end, column_start, column_end)| {
+                    *row_end = row_index + 1;
+                    *column_start = (*column_start).min(column_index);
+                    *column_end = (*column_end).max(column_index + 1);
+                })
+                .or_insert((row_index, row_index + 1, column_index, column_index + 1));
+        }
+    }
+
+    let mut areas = Vec::with_capacity(bounds.len());
+    for (area_name, (row_start, row_end, column_start, column_end)) in bounds {
+        for row in rows.iter().take(row_end).skip(row_start) {
+            for cell in row.iter().take(column_end).skip(column_start) {
+                if cell != &area_name {
+                    return Err(parse_warning(name, &area_name, "rectangular grid area"));
+                }
+            }
+        }
+        areas.push(DgGridTemplateArea {
+            name: area_name,
+            row_start: (row_start + 1) as u16,
+            row_end: (row_end + 1) as u16,
+            column_start: (column_start + 1) as u16,
+            column_end: (column_end + 1) as u16,
+        });
+    }
+
+    Ok(DgGridTemplateAreas {
+        columns: first_columns as u16,
+        rows: rows.len() as u16,
+        areas,
+    })
+}
+
+fn parse_grid_area_rows(value: &str) -> Option<Vec<Vec<String>>> {
+    let mut rows = Vec::new();
+    let mut rest = value.trim();
+    while !rest.is_empty() {
+        let quote = rest.chars().next()?;
+        if quote != '"' && quote != '\'' {
+            return None;
+        }
+        let mut row = String::new();
+        let mut escaped = false;
+        let mut end_index = None;
+        for (offset, ch) in rest[quote.len_utf8()..].char_indices() {
+            if escaped {
+                row.push(ch);
+                escaped = false;
+                continue;
+            }
+            if ch == '\\' {
+                escaped = true;
+                continue;
+            }
+            if ch == quote {
+                end_index = Some(quote.len_utf8() + offset + ch.len_utf8());
+                break;
+            }
+            row.push(ch);
+        }
+        let end = end_index?;
+        let cells: Vec<String> = row.split_whitespace().map(str::to_string).collect();
+        if cells.is_empty() {
+            return None;
+        }
+        rows.push(cells);
+        rest = rest[end..].trim_start();
+    }
+    Some(rows)
+}
+
+fn is_grid_null_cell(value: &str) -> bool {
+    !value.is_empty() && value.chars().all(|ch| ch == '.')
+}
+
+fn is_grid_area_name(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !first.is_ascii_alphabetic() && first != '_' {
+        return false;
+    }
+    chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+}
+
 fn parse_grid_repeat(
     name: &str,
     token: &str,
@@ -5824,12 +7267,23 @@ fn parse_grid_repeat(
     }
     let mut parsed = Vec::with_capacity(track_tokens.len());
     for track in track_tokens {
-        if parse_grid_repeat(name, track).is_some() {
-            return Some(Err(parse_warning(
-                name,
-                token,
-                "non-nested repeat track list",
-            )));
+        if let Some(nested) = parse_grid_repeat(name, track) {
+            let nested = match nested {
+                Ok(nested) => nested,
+                Err(warning) => return Some(Err(warning)),
+            };
+            if nested
+                .iter()
+                .any(|track| matches!(track, DgGridTrackSize::Repeat { .. }))
+            {
+                return Some(Err(parse_warning(
+                    name,
+                    token,
+                    "non-nested auto-repeat track list",
+                )));
+            }
+            parsed.extend(nested);
+            continue;
         }
         match parse_grid_track_size(name, track) {
             Ok(track) => parsed.push(track),
@@ -6032,6 +7486,20 @@ fn parse_grid_placement_value(name: &str, value: &str) -> Result<DgGridPlacement
             end: parse_grid_line(name, end)?,
         }),
         _ => Err(parse_warning(name, value, "grid placement")),
+    }
+}
+
+fn parse_grid_area_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<String, DgStyleWarning> {
+    let value = resolve_keyword(value, variables);
+    let value = value.trim();
+    if is_grid_area_name(value) && !value.eq_ignore_ascii_case("auto") {
+        Ok(value.to_string())
+    } else {
+        Err(parse_warning(name, value, "named grid area"))
     }
 }
 
@@ -7136,6 +8604,19 @@ fn is_identifier_like(value: &str) -> bool {
         && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
 }
 
+fn parse_generated_attr(value: &str) -> Option<String> {
+    let lower = value.to_ascii_lowercase();
+    let inner = lower.strip_prefix("attr(")?.strip_suffix(')')?.trim();
+    if inner.is_empty()
+        || !inner
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+    {
+        return None;
+    }
+    Some(inner.to_string())
+}
+
 fn is_quoted(value: &str) -> bool {
     (value.starts_with('"') && value.ends_with('"'))
         || (value.starts_with('\'') && value.ends_with('\''))
@@ -7163,6 +8644,10 @@ mod tests {
             (
                 "background-color",
                 DgStylePropertyName::Visual(DgVisualPropertyName::Background),
+            ),
+            (
+                "backdrop-filter",
+                DgStylePropertyName::Visual(DgVisualPropertyName::BackdropFilter),
             ),
             (
                 "border-top-right-radius",
@@ -7236,6 +8721,46 @@ mod tests {
             (
                 "transition-delay",
                 DgStylePropertyName::Transition(DgTransitionPropertyName::Delay),
+            ),
+            (
+                "animation",
+                DgStylePropertyName::Animation(DgAnimationPropertyName::Animation),
+            ),
+            (
+                "animation-name",
+                DgStylePropertyName::Animation(DgAnimationPropertyName::Name),
+            ),
+            (
+                "animation-duration",
+                DgStylePropertyName::Animation(DgAnimationPropertyName::Duration),
+            ),
+            (
+                "animation-timing-function",
+                DgStylePropertyName::Animation(DgAnimationPropertyName::TimingFunction),
+            ),
+            (
+                "animation-delay",
+                DgStylePropertyName::Animation(DgAnimationPropertyName::Delay),
+            ),
+            (
+                "animation-iteration-count",
+                DgStylePropertyName::Animation(DgAnimationPropertyName::IterationCount),
+            ),
+            (
+                "animation-direction",
+                DgStylePropertyName::Animation(DgAnimationPropertyName::Direction),
+            ),
+            (
+                "animation-fill-mode",
+                DgStylePropertyName::Animation(DgAnimationPropertyName::FillMode),
+            ),
+            (
+                "animation-play-state",
+                DgStylePropertyName::Animation(DgAnimationPropertyName::PlayState),
+            ),
+            (
+                "content",
+                DgStylePropertyName::Generated(DgGeneratedPropertyName::Content),
             ),
             (
                 "table-row-height",
@@ -8646,6 +10171,94 @@ mod tests {
     }
 
     #[test]
+    fn backdrop_filter_blur_parses_to_visual_style() {
+        let parsed = parse_stylesheet(
+            "Panel.glass { backdrop-filter: blur(14px); }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        assert!(matches!(
+            parsed.rules[0].declarations[0].property,
+            DgStyleProperty::Visual(DgVisualDeclaration::BackdropFilter(Some(filter)))
+                if (filter.blur - 14.0).abs() < 0.001
+        ));
+
+        let mut style = NodeStyle::default();
+        apply_property_to_style(&mut style, &parsed.rules[0].declarations[0].property);
+        assert_eq!(style.visual.backdrop_filter.unwrap().blur, 14.0);
+    }
+
+    #[test]
+    fn generated_before_after_content_cascades_to_part_styles() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "run",
+                "type": "button",
+                "props": {"text": "Run"}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Button::before {
+                    content: ">";
+                    width: 16px;
+                    color: accent;
+                    font-weight: 700;
+                }
+                Button::after {
+                    content: "NEW";
+                    text-align: right;
+                    color: success;
+                }
+                Badge::after {
+                    content: attr(level);
+                }
+                "#,
+            )
+            .unwrap();
+
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+        let button = &tree.children[0];
+        let before = button.style.parts.parts.get("before").unwrap();
+        assert_eq!(
+            before.content,
+            Some(GeneratedContent::Text(">".to_string()))
+        );
+        assert_eq!(before.layout.width, Some(16.0));
+        assert_eq!(
+            before.text.color,
+            Some(ColorRef::Token("accent".to_string()))
+        );
+        let after = button.style.parts.parts.get("after").unwrap();
+        assert_eq!(
+            after.content,
+            Some(GeneratedContent::Text("NEW".to_string()))
+        );
+        assert_eq!(after.text.text_align, Some(TextAlign::Right));
+
+        let mut badge = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "state",
+            "type": "badge",
+            "props": {"text": "Ready", "level": "success"}
+        }))
+        .unwrap();
+        apply_stylesheets_to_tree(&mut badge, &mut store);
+        let generated_level = badge.style.parts.parts.get("after").unwrap();
+        assert_eq!(
+            generated_level.content,
+            Some(GeneratedContent::Attr("level".to_string()))
+        );
+    }
+
+    #[test]
     fn unsupported_css_lengths_are_reported_as_warnings() {
         let parsed = parse_stylesheet(
             "Button { letter-spacing: 50%; border-radius: 50%; }",
@@ -9013,18 +10626,94 @@ mod tests {
     }
 
     #[test]
-    fn grid_repeat_rejects_nested_repeat() {
+    fn grid_template_areas_and_named_grid_area_parse() {
         let parsed = parse_stylesheet(
-            "Panel { display: grid; grid-template-columns: repeat(auto-fit, repeat(2, 120px)); }",
+            r#"Panel.dashboard { display: grid; grid-template-areas: "sidebar main main" "sidebar footer footer"; } Panel.sidebar { grid-area: sidebar; }"#,
             StylesheetOrigin::User,
         )
         .unwrap();
 
-        assert!(parsed
-            .warnings
-            .iter()
-            .any(|warning| warning.property == "grid-template-columns"
-                && warning.message.contains("non-nested")));
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                &declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::GridTemplateAreas(areas))
+                    if areas.columns == 3
+                        && areas.rows == 2
+                        && areas.areas.iter().any(|area| area.name == "sidebar"
+                            && area.row_start == 1
+                            && area.row_end == 3
+                            && area.column_start == 1
+                            && area.column_end == 2)
+                        && areas.areas.iter().any(|area| area.name == "main"
+                            && area.row_start == 1
+                            && area.row_end == 2
+                            && area.column_start == 2
+                            && area.column_end == 4)
+            )
+        }));
+        assert!(parsed.rules[1].declarations.iter().any(|declaration| {
+            matches!(
+                &declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::GridArea(name))
+                    if name == "sidebar"
+            )
+        }));
+    }
+
+    #[test]
+    fn grid_template_areas_reject_non_rectangular_areas() {
+        let parsed = parse_stylesheet(
+            r#"Panel { grid-template-areas: "a a" "a b"; }"#,
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.warnings.iter().any(|warning| {
+            warning.property == "grid-template-areas"
+                && warning.message.contains("rectangular grid area")
+        }));
+    }
+
+    #[test]
+    fn grid_repeat_flattens_nested_finite_repeat() {
+        let parsed = parse_stylesheet(
+            "Panel { display: grid; grid-template-columns: repeat(2, repeat(2, 120px 1fr)); }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                &declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::GridTemplateColumns(tracks))
+                    if tracks == &vec![
+                        DgGridTrackSize::LogicalPx(120.0),
+                        DgGridTrackSize::Fraction(1.0),
+                        DgGridTrackSize::LogicalPx(120.0),
+                        DgGridTrackSize::Fraction(1.0),
+                        DgGridTrackSize::LogicalPx(120.0),
+                        DgGridTrackSize::Fraction(1.0),
+                        DgGridTrackSize::LogicalPx(120.0),
+                        DgGridTrackSize::Fraction(1.0),
+                    ]
+            )
+        }));
+    }
+
+    #[test]
+    fn grid_repeat_rejects_nested_auto_repeat() {
+        let parsed = parse_stylesheet(
+            "Panel { display: grid; grid-template-columns: repeat(2, repeat(auto-fit, 120px)); }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.warnings.iter().any(|warning| {
+            warning.property == "grid-template-columns"
+                && warning.message.contains("non-nested auto-repeat")
+        }));
     }
 
     #[test]
@@ -9679,6 +11368,163 @@ mod tests {
     }
 
     #[test]
+    fn keyframes_and_animation_longhands_parse_to_styles() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "pulse",
+                "type": "badge",
+                "props": {"text": "LIVE"}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                @keyframes breathe {
+                    from { opacity: 0.52; transform: scale(0.98); }
+                    50% { opacity: 1; }
+                    to { opacity: 0.72; transform: scale(1.04); }
+                }
+
+                Badge {
+                    animation-name: breathe;
+                    animation-duration: 1200ms;
+                    animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+                    animation-iteration-count: infinite;
+                    animation-direction: alternate;
+                    animation-fill-mode: both;
+                    animation-play-state: paused;
+                }
+                "#,
+            )
+            .unwrap();
+
+        assert!(store.warnings().is_empty(), "{:?}", store.warnings());
+        let keyframes = store.keyframes();
+        let breathe = keyframes.get("breathe").expect("breathe keyframes");
+        assert_eq!(breathe.frames.len(), 3);
+        assert_eq!(breathe.frames[0].offset, 0.0);
+        assert_eq!(breathe.frames[1].offset, 0.5);
+        assert_eq!(breathe.frames[2].offset, 1.0);
+
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+        let badge = tree.children.first().unwrap();
+        assert_eq!(badge.style.animation.name.as_deref(), Some("breathe"));
+        assert_eq!(badge.style.animation.duration_ms, Some(1200));
+        assert_eq!(
+            badge.style.animation.iteration_count,
+            Some(AnimationIterationCount::Infinite)
+        );
+        assert_eq!(
+            badge.style.animation.direction,
+            Some(AnimationDirection::Alternate)
+        );
+        assert_eq!(
+            badge.style.animation.fill_mode,
+            Some(AnimationFillMode::Both)
+        );
+        assert_eq!(
+            badge.style.animation.play_state,
+            Some(AnimationPlayState::Paused)
+        );
+    }
+
+    #[test]
+    fn animation_shorthand_parses_to_animation_style() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "pulse",
+                "type": "badge",
+                "props": {"text": "LIVE"}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                @keyframes breathe {
+                    from { opacity: 0.52; }
+                    to { opacity: 1; }
+                }
+
+                Badge {
+                    animation: 1.4s cubic-bezier(0.16, 1, 0.3, 1) 120ms infinite alternate both paused breathe;
+                }
+                "#,
+            )
+            .unwrap();
+
+        assert!(store.warnings().is_empty(), "{:?}", store.warnings());
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+        let badge = tree.children.first().unwrap();
+        assert_eq!(badge.style.animation.name.as_deref(), Some("breathe"));
+        assert_eq!(badge.style.animation.duration_ms, Some(1400));
+        assert_eq!(badge.style.animation.delay_ms, Some(120));
+        assert_eq!(
+            badge.style.animation.timing_function,
+            Some(TransitionTimingFunction::CubicBezier {
+                x1: 0.16,
+                y1: 1.0,
+                x2: 0.3,
+                y2: 1.0,
+            })
+        );
+        assert_eq!(
+            badge.style.animation.iteration_count,
+            Some(AnimationIterationCount::Infinite)
+        );
+        assert_eq!(
+            badge.style.animation.direction,
+            Some(AnimationDirection::Alternate)
+        );
+        assert_eq!(
+            badge.style.animation.fill_mode,
+            Some(AnimationFillMode::Both)
+        );
+        assert_eq!(
+            badge.style.animation.play_state,
+            Some(AnimationPlayState::Paused)
+        );
+    }
+
+    #[test]
+    fn font_face_rules_collect_local_url_sources() {
+        let store = parse_stylesheet(
+            r#"
+            @font-face {
+                font-family: "Dragon Demo UI";
+                src: local("Segoe UI"),
+                     url("C:/Windows/Fonts/segoeui.ttf") format("truetype");
+            }
+            Label.title { font-family: "Dragon Demo UI"; }
+            "#,
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(store.warnings.is_empty(), "{:?}", store.warnings);
+        assert_eq!(store.font_faces.len(), 1);
+        assert_eq!(store.font_faces[0].family, "Dragon Demo UI");
+        assert_eq!(store.font_faces[0].sources.len(), 1);
+        assert_eq!(
+            store.font_faces[0].sources[0].url,
+            "C:/Windows/Fonts/segoeui.ttf"
+        );
+        assert_eq!(
+            store.font_faces[0].sources[0].format.as_deref(),
+            Some("truetype")
+        );
+    }
+
+    #[test]
     fn transition_shorthand_keeps_cubic_bezier_function_token() {
         let parsed = parse_stylesheet(
             "Button { transition: background 220ms cubic-bezier(0.16, 1, 0.3, 1) 40ms; }",
@@ -10144,6 +11990,759 @@ mod tests {
     }
 
     #[test]
+    fn media_rules_support_viewport_aspect_ratio() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "status",
+                "type": "label",
+                "props": {"text": "Status"}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Label { font-size: 12px; color: white; }
+                @media (min-aspect-ratio: 3/2) {
+                    Label { font-size: 18px; }
+                }
+                @media (aspect-ratio <= 1/1) {
+                    Label { color: accent; }
+                }
+                "#,
+            )
+            .unwrap();
+
+        assert!(store.warnings().is_empty(), "{:?}", store.warnings());
+
+        apply_stylesheets_to_tree_for_media(
+            &mut tree,
+            &mut store,
+            DgMediaEnvironment::new(900.0, 600.0),
+        );
+        assert_eq!(tree.children[0].style.text.font_size, Some(18.0));
+        assert_eq!(
+            tree.children[0].style.text.color,
+            Some(ColorRef::Rgba([1.0, 1.0, 1.0, 1.0]))
+        );
+
+        apply_stylesheets_to_tree_for_media(
+            &mut tree,
+            &mut store,
+            DgMediaEnvironment::new(600.0, 900.0),
+        );
+        assert_eq!(tree.children[0].style.text.font_size, Some(12.0));
+        assert_eq!(
+            tree.children[0].style.text.color,
+            Some(ColorRef::Token("accent".to_string()))
+        );
+    }
+
+    #[test]
+    fn media_rules_support_viewport_resolution() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "status",
+                "type": "label",
+                "props": {"text": "Status"}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Label { font-size: 12px; color: white; }
+                @media (min-resolution: 2dppx) {
+                    Label { font-size: 18px; }
+                }
+                @media (resolution >= 192dpi) {
+                    Label { color: accent; }
+                }
+                "#,
+            )
+            .unwrap();
+
+        assert!(store.warnings().is_empty(), "{:?}", store.warnings());
+
+        apply_stylesheets_to_tree_for_media(
+            &mut tree,
+            &mut store,
+            DgMediaEnvironment::with_resolution(900.0, 600.0, 1.0),
+        );
+        assert_eq!(tree.children[0].style.text.font_size, Some(12.0));
+        assert_eq!(
+            tree.children[0].style.text.color,
+            Some(ColorRef::Rgba([1.0, 1.0, 1.0, 1.0]))
+        );
+
+        apply_stylesheets_to_tree_for_media(
+            &mut tree,
+            &mut store,
+            DgMediaEnvironment::with_resolution(900.0, 600.0, 2.0),
+        );
+        assert_eq!(tree.children[0].style.text.font_size, Some(18.0));
+        assert_eq!(
+            tree.children[0].style.text.color,
+            Some(ColorRef::Token("accent".to_string()))
+        );
+    }
+
+    #[test]
+    fn media_rules_support_reduced_motion_preference() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "pulse",
+                "type": "badge",
+                "props": {"text": "Live"}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Badge {
+                    animation-name: pulse;
+                    animation-play-state: running;
+                }
+                @media (prefers-reduced-motion: reduce) {
+                    Badge { animation-play-state: paused; }
+                }
+                @media (prefers-reduced-motion: no-preference) {
+                    Badge { border-width: 2px; }
+                }
+                "#,
+            )
+            .unwrap();
+
+        assert!(store.warnings().is_empty(), "{:?}", store.warnings());
+
+        apply_stylesheets_to_tree_for_media(
+            &mut tree,
+            &mut store,
+            DgMediaEnvironment::with_preferences(900.0, 600.0, 1.0, false),
+        );
+        assert_eq!(
+            tree.children[0].style.animation.play_state,
+            Some(AnimationPlayState::Running)
+        );
+        assert_eq!(tree.children[0].style.visual.border_width, Some(2.0));
+
+        apply_stylesheets_to_tree_for_media(
+            &mut tree,
+            &mut store,
+            DgMediaEnvironment::with_preferences(900.0, 600.0, 1.0, true),
+        );
+        assert_eq!(
+            tree.children[0].style.animation.play_state,
+            Some(AnimationPlayState::Paused)
+        );
+        assert_ne!(tree.children[0].style.visual.border_width, Some(2.0));
+    }
+
+    #[test]
+    fn media_rules_support_color_scheme_preference() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "card",
+                "type": "panel",
+                "props": {"title": "Card"}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Panel { border-width: 1px; }
+                @media (prefers-color-scheme: dark) {
+                    Panel { background: #101820; }
+                }
+                @media (prefers-color-scheme: light) {
+                    Panel { background: #f5f7fb; border-width: 3px; }
+                }
+                "#,
+            )
+            .unwrap();
+
+        assert!(store.warnings().is_empty(), "{:?}", store.warnings());
+
+        apply_stylesheets_to_tree_for_media(
+            &mut tree,
+            &mut store,
+            DgMediaEnvironment::with_color_scheme(
+                900.0,
+                600.0,
+                1.0,
+                DgMediaColorGamut::Srgb,
+                DgMediaPointer::Fine,
+                DgMediaPointer::Fine,
+                DgMediaHover::Hover,
+                DgMediaHover::Hover,
+                false,
+                DgMediaColorScheme::Dark,
+            ),
+        );
+        assert_eq!(
+            tree.children[0].style.visual.background,
+            Some(ColorRef::Rgba([
+                0x10 as f32 / 255.0,
+                0x18 as f32 / 255.0,
+                0x20 as f32 / 255.0,
+                1.0
+            ]))
+        );
+        assert_eq!(tree.children[0].style.visual.border_width, Some(1.0));
+
+        apply_stylesheets_to_tree_for_media(
+            &mut tree,
+            &mut store,
+            DgMediaEnvironment::with_color_scheme(
+                900.0,
+                600.0,
+                1.0,
+                DgMediaColorGamut::Srgb,
+                DgMediaPointer::Fine,
+                DgMediaPointer::Fine,
+                DgMediaHover::Hover,
+                DgMediaHover::Hover,
+                false,
+                DgMediaColorScheme::Light,
+            ),
+        );
+        assert_eq!(
+            tree.children[0].style.visual.background,
+            Some(ColorRef::Rgba([
+                0xf5 as f32 / 255.0,
+                0xf7 as f32 / 255.0,
+                0xfb as f32 / 255.0,
+                1.0
+            ]))
+        );
+        assert_eq!(tree.children[0].style.visual.border_width, Some(3.0));
+    }
+
+    #[test]
+    fn media_rules_support_color_gamut() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "card",
+                "type": "panel",
+                "props": {"title": "Card"}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Panel { border-width: 1px; }
+                @media (color-gamut: srgb) {
+                    Panel { border-width: 2px; }
+                }
+                @media (color-gamut: p3) {
+                    Panel { border-radius: 12px; }
+                }
+                "#,
+            )
+            .unwrap();
+
+        assert!(store.warnings().is_empty(), "{:?}", store.warnings());
+
+        apply_stylesheets_to_tree_for_media(
+            &mut tree,
+            &mut store,
+            DgMediaEnvironment::with_color_scheme(
+                900.0,
+                600.0,
+                1.0,
+                DgMediaColorGamut::Srgb,
+                DgMediaPointer::Fine,
+                DgMediaPointer::Fine,
+                DgMediaHover::Hover,
+                DgMediaHover::Hover,
+                false,
+                DgMediaColorScheme::Dark,
+            ),
+        );
+        assert_eq!(tree.children[0].style.visual.border_width, Some(2.0));
+        assert_ne!(tree.children[0].style.visual.border_radius, Some(12.0));
+
+        apply_stylesheets_to_tree_for_media(
+            &mut tree,
+            &mut store,
+            DgMediaEnvironment::with_color_scheme(
+                900.0,
+                600.0,
+                1.0,
+                DgMediaColorGamut::P3,
+                DgMediaPointer::Fine,
+                DgMediaPointer::Fine,
+                DgMediaHover::Hover,
+                DgMediaHover::Hover,
+                false,
+                DgMediaColorScheme::Dark,
+            ),
+        );
+        assert_eq!(tree.children[0].style.visual.border_width, Some(2.0));
+        assert_eq!(tree.children[0].style.visual.border_radius, Some(12.0));
+    }
+
+    #[test]
+    fn media_rules_support_pointer_and_hover_capabilities() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "button",
+                "type": "button",
+                "props": {"text": "Run"}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Button { border-width: 1px; }
+                @media (pointer: fine) and (hover: hover) {
+                    Button { border-width: 2px; }
+                }
+                @media (any-pointer: coarse) {
+                    Button { border-radius: 14px; }
+                }
+                @media (any-hover: none) {
+                    Button { opacity: 0.7; }
+                }
+                "#,
+            )
+            .unwrap();
+
+        assert!(store.warnings().is_empty(), "{:?}", store.warnings());
+
+        apply_stylesheets_to_tree_for_media(
+            &mut tree,
+            &mut store,
+            DgMediaEnvironment::with_color_scheme(
+                900.0,
+                600.0,
+                1.0,
+                DgMediaColorGamut::Srgb,
+                DgMediaPointer::Fine,
+                DgMediaPointer::Fine,
+                DgMediaHover::Hover,
+                DgMediaHover::Hover,
+                false,
+                DgMediaColorScheme::Dark,
+            ),
+        );
+        assert_eq!(tree.children[0].style.visual.border_width, Some(2.0));
+        assert_ne!(tree.children[0].style.visual.border_radius, Some(14.0));
+        assert_ne!(tree.children[0].style.visual.opacity, Some(0.7));
+
+        apply_stylesheets_to_tree_for_media(
+            &mut tree,
+            &mut store,
+            DgMediaEnvironment::with_color_scheme(
+                900.0,
+                600.0,
+                1.0,
+                DgMediaColorGamut::Srgb,
+                DgMediaPointer::Coarse,
+                DgMediaPointer::Coarse,
+                DgMediaHover::None,
+                DgMediaHover::None,
+                false,
+                DgMediaColorScheme::Dark,
+            ),
+        );
+        assert_eq!(tree.children[0].style.visual.border_width, Some(1.0));
+        assert_eq!(tree.children[0].style.visual.border_radius, Some(14.0));
+        assert_eq!(tree.children[0].style.visual.opacity, Some(0.7));
+    }
+
+    #[test]
+    fn media_rules_support_update_capability() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "badge",
+                "type": "badge",
+                "props": {"text": "Live"}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Badge { border-width: 1px; opacity: 0.8; }
+                @media (update: fast) {
+                    Badge { border-width: 3px; }
+                }
+                @media (update) {
+                    Badge { border-radius: 8px; }
+                }
+                @media (update: slow) {
+                    Badge { opacity: 0.5; }
+                }
+                "#,
+            )
+            .unwrap();
+
+        assert!(store.warnings().is_empty(), "{:?}", store.warnings());
+
+        let mut fast = DgMediaEnvironment::new(900.0, 600.0);
+        fast.update = DgMediaUpdate::Fast;
+        apply_stylesheets_to_tree_for_media(&mut tree, &mut store, fast);
+        assert_eq!(tree.children[0].style.visual.border_width, Some(3.0));
+        assert_eq!(tree.children[0].style.visual.border_radius, Some(8.0));
+        assert_eq!(tree.children[0].style.visual.opacity, Some(0.8));
+
+        let mut slow = DgMediaEnvironment::new(900.0, 600.0);
+        slow.update = DgMediaUpdate::Slow;
+        apply_stylesheets_to_tree_for_media(&mut tree, &mut store, slow);
+        assert_eq!(tree.children[0].style.visual.border_width, Some(1.0));
+        assert_eq!(tree.children[0].style.visual.border_radius, Some(8.0));
+        assert_eq!(tree.children[0].style.visual.opacity, Some(0.5));
+    }
+
+    #[test]
+    fn media_rules_support_scripting_capability() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "badge",
+                "type": "badge",
+                "props": {"text": "Native"}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Badge { border-width: 1px; opacity: 0.8; }
+                @media (scripting: none) {
+                    Badge { border-width: 3px; }
+                }
+                @media (scripting) {
+                    Badge { opacity: 0.5; }
+                }
+                @media (scripting: enabled) {
+                    Badge { border-radius: 12px; }
+                }
+                "#,
+            )
+            .unwrap();
+
+        assert!(store.warnings().is_empty(), "{:?}", store.warnings());
+
+        let mut none = DgMediaEnvironment::new(900.0, 600.0);
+        none.scripting = DgMediaScripting::None;
+        apply_stylesheets_to_tree_for_media(&mut tree, &mut store, none);
+        assert_eq!(tree.children[0].style.visual.border_width, Some(3.0));
+        assert_eq!(tree.children[0].style.visual.opacity, Some(0.8));
+        assert_ne!(tree.children[0].style.visual.border_radius, Some(12.0));
+
+        let mut enabled = DgMediaEnvironment::new(900.0, 600.0);
+        enabled.scripting = DgMediaScripting::Enabled;
+        apply_stylesheets_to_tree_for_media(&mut tree, &mut store, enabled);
+        assert_eq!(tree.children[0].style.visual.border_width, Some(1.0));
+        assert_eq!(tree.children[0].style.visual.opacity, Some(0.5));
+        assert_eq!(tree.children[0].style.visual.border_radius, Some(12.0));
+    }
+
+    #[test]
+    fn media_rules_support_forced_colors_capability() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "button",
+                "type": "button",
+                "props": {"text": "Export"}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Button { border-width: 1px; opacity: 0.8; }
+                @media (forced-colors: none) {
+                    Button { border-width: 3px; }
+                }
+                @media (forced-colors) {
+                    Button { opacity: 0.5; }
+                }
+                @media (forced-colors: active) {
+                    Button { border-radius: 12px; }
+                }
+                "#,
+            )
+            .unwrap();
+
+        assert!(store.warnings().is_empty(), "{:?}", store.warnings());
+
+        let mut none = DgMediaEnvironment::new(900.0, 600.0);
+        none.forced_colors = DgMediaForcedColors::None;
+        apply_stylesheets_to_tree_for_media(&mut tree, &mut store, none);
+        assert_eq!(tree.children[0].style.visual.border_width, Some(3.0));
+        assert_eq!(tree.children[0].style.visual.opacity, Some(0.8));
+        assert_ne!(tree.children[0].style.visual.border_radius, Some(12.0));
+
+        let mut active = DgMediaEnvironment::new(900.0, 600.0);
+        active.forced_colors = DgMediaForcedColors::Active;
+        apply_stylesheets_to_tree_for_media(&mut tree, &mut store, active);
+        assert_eq!(tree.children[0].style.visual.border_width, Some(1.0));
+        assert_eq!(tree.children[0].style.visual.opacity, Some(0.5));
+        assert_eq!(tree.children[0].style.visual.border_radius, Some(12.0));
+    }
+
+    #[test]
+    fn media_rules_support_contrast_preference() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "card",
+                "type": "panel",
+                "props": {"title": "Card"}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Panel { border-width: 1px; opacity: 0.8; }
+                @media (prefers-contrast: no-preference) {
+                    Panel { border-width: 2px; }
+                }
+                @media (prefers-contrast) {
+                    Panel { opacity: 1; }
+                }
+                @media (prefers-contrast: more) {
+                    Panel { border-radius: 12px; }
+                }
+                "#,
+            )
+            .unwrap();
+
+        assert!(store.warnings().is_empty(), "{:?}", store.warnings());
+
+        let mut no_preference = DgMediaEnvironment::new(900.0, 600.0);
+        no_preference.prefers_contrast = DgMediaContrast::NoPreference;
+        apply_stylesheets_to_tree_for_media(&mut tree, &mut store, no_preference);
+        assert_eq!(tree.children[0].style.visual.border_width, Some(2.0));
+        assert_eq!(tree.children[0].style.visual.opacity, Some(0.8));
+        assert_ne!(tree.children[0].style.visual.border_radius, Some(12.0));
+
+        let mut more = DgMediaEnvironment::new(900.0, 600.0);
+        more.prefers_contrast = DgMediaContrast::More;
+        apply_stylesheets_to_tree_for_media(&mut tree, &mut store, more);
+        assert_eq!(tree.children[0].style.visual.border_width, Some(1.0));
+        assert_eq!(tree.children[0].style.visual.opacity, Some(1.0));
+        assert_eq!(tree.children[0].style.visual.border_radius, Some(12.0));
+    }
+
+    #[test]
+    fn media_rules_support_inverted_colors_capability() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "button",
+                "type": "button",
+                "props": {"text": "Inspect"}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Button { border-width: 1px; opacity: 0.8; }
+                @media (inverted-colors: none) {
+                    Button { border-width: 3px; }
+                }
+                @media (inverted-colors) {
+                    Button { opacity: 0.5; }
+                }
+                @media (inverted-colors: inverted) {
+                    Button { border-radius: 12px; }
+                }
+                "#,
+            )
+            .unwrap();
+
+        assert!(store.warnings().is_empty(), "{:?}", store.warnings());
+
+        let mut none = DgMediaEnvironment::new(900.0, 600.0);
+        none.inverted_colors = DgMediaInvertedColors::None;
+        apply_stylesheets_to_tree_for_media(&mut tree, &mut store, none);
+        assert_eq!(tree.children[0].style.visual.border_width, Some(3.0));
+        assert_eq!(tree.children[0].style.visual.opacity, Some(0.8));
+        assert_ne!(tree.children[0].style.visual.border_radius, Some(12.0));
+
+        let mut inverted = DgMediaEnvironment::new(900.0, 600.0);
+        inverted.inverted_colors = DgMediaInvertedColors::Inverted;
+        apply_stylesheets_to_tree_for_media(&mut tree, &mut store, inverted);
+        assert_eq!(tree.children[0].style.visual.border_width, Some(1.0));
+        assert_eq!(tree.children[0].style.visual.opacity, Some(0.5));
+        assert_eq!(tree.children[0].style.visual.border_radius, Some(12.0));
+    }
+
+    #[test]
+    fn media_rules_support_dynamic_range_capabilities() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "button",
+                "type": "button",
+                "props": {"text": "Inspect"}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Button { border-width: 1px; border-radius: 4px; opacity: 0.4; }
+                @media (dynamic-range) {
+                    Button { border-width: 2px; }
+                }
+                @media (dynamic-range: high) {
+                    Button { border-radius: 12px; }
+                }
+                @media (video-dynamic-range: high) {
+                    Button { opacity: 1; }
+                }
+                "#,
+            )
+            .unwrap();
+
+        assert!(store.warnings().is_empty(), "{:?}", store.warnings());
+
+        let mut standard = DgMediaEnvironment::new(900.0, 600.0);
+        standard.dynamic_range = DgMediaDynamicRange::Standard;
+        standard.video_dynamic_range = DgMediaDynamicRange::Standard;
+        apply_stylesheets_to_tree_for_media(&mut tree, &mut store, standard);
+        assert_eq!(tree.children[0].style.visual.border_width, Some(2.0));
+        assert_eq!(tree.children[0].style.visual.border_radius, Some(4.0));
+        assert_eq!(tree.children[0].style.visual.opacity, Some(0.4));
+
+        let mut high_canvas = DgMediaEnvironment::new(900.0, 600.0);
+        high_canvas.dynamic_range = DgMediaDynamicRange::High;
+        high_canvas.video_dynamic_range = DgMediaDynamicRange::Standard;
+        apply_stylesheets_to_tree_for_media(&mut tree, &mut store, high_canvas);
+        assert_eq!(tree.children[0].style.visual.border_width, Some(2.0));
+        assert_eq!(tree.children[0].style.visual.border_radius, Some(12.0));
+        assert_eq!(tree.children[0].style.visual.opacity, Some(0.4));
+
+        let mut high_video = DgMediaEnvironment::new(900.0, 600.0);
+        high_video.dynamic_range = DgMediaDynamicRange::High;
+        high_video.video_dynamic_range = DgMediaDynamicRange::High;
+        apply_stylesheets_to_tree_for_media(&mut tree, &mut store, high_video);
+        assert_eq!(tree.children[0].style.visual.border_width, Some(2.0));
+        assert_eq!(tree.children[0].style.visual.border_radius, Some(12.0));
+        assert_eq!(tree.children[0].style.visual.opacity, Some(1.0));
+    }
+
+    #[test]
+    fn media_scoped_root_variables_apply_to_nested_rules() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "card",
+                "type": "panel",
+                "props": {"title": "Card"}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                :root { --card-bg: #101820; --card-radius: 4px; }
+                Panel { background: var(--card-bg); border-radius: var(--card-radius); }
+                @media (min-width: 800px) {
+                    :root {
+                        --card-bg: #f5f7fb;
+                        --card-radius: 12px;
+                    }
+                    Panel { background: var(--card-bg); border-radius: var(--card-radius); }
+                }
+                "#,
+            )
+            .unwrap();
+
+        assert!(store.warnings().is_empty(), "{:?}", store.warnings());
+
+        apply_stylesheets_to_tree_for_media(
+            &mut tree,
+            &mut store,
+            DgMediaEnvironment::new(600.0, 600.0),
+        );
+        assert_eq!(
+            tree.children[0].style.visual.background,
+            Some(ColorRef::Rgba([
+                0x10 as f32 / 255.0,
+                0x18 as f32 / 255.0,
+                0x20 as f32 / 255.0,
+                1.0
+            ]))
+        );
+        assert_eq!(tree.children[0].style.visual.border_radius, Some(4.0));
+
+        apply_stylesheets_to_tree_for_media(
+            &mut tree,
+            &mut store,
+            DgMediaEnvironment::new(900.0, 600.0),
+        );
+        assert_eq!(
+            tree.children[0].style.visual.background,
+            Some(ColorRef::Rgba([
+                0xf5 as f32 / 255.0,
+                0xf7 as f32 / 255.0,
+                0xfb as f32 / 255.0,
+                1.0
+            ]))
+        );
+        assert_eq!(tree.children[0].style.visual.border_radius, Some(12.0));
+    }
+
+    #[test]
     fn supports_rules_gate_declaration_and_selector_queries() {
         let mut tree = crate::document::parse_widget_node(&serde_json::json!({
             "id": "root",
@@ -10165,7 +12764,7 @@ mod tests {
                 @supports (display: grid) and (selector(Button.primary)) {
                     Button.primary { background: success; }
                 }
-                @supports not (backdrop-filter: blur(8px)) {
+                @supports (backdrop-filter: blur(8px)) {
                     Button.primary { border-radius: 12px; }
                 }
                 @supports (display: inline-grid) or (selector(Widget.unknown)) {

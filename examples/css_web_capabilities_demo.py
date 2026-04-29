@@ -12,6 +12,11 @@ import dragongui as dg
 app = dg.App(theme=dg.Theme.dark(accent="#5aa9ff", radius=8))
 app.stylesheet(
     """
+    @font-face {
+        font-family: "Dragon Demo UI";
+        src: url("C:/Windows/Fonts/segoeui.ttf") format("truetype");
+    }
+
     :root {
         --card-shadow: 0 2px 10px rgba(0, 0, 0, 0.18), 0 18px 44px rgba(0, 0, 0, 0.34);
         --soft-shadow: 0 1px 5px rgba(0, 0, 0, 0.16), 0 8px 24px rgba(0, 0, 0, 0.22);
@@ -23,6 +28,23 @@ app.stylesheet(
         --button-shadow-color: rgba(0, 0, 0, 0.20);
         --inputs-offset: 560px;
         --inputs-min: 220px;
+    }
+
+    @keyframes live-pulse {
+        from {
+            opacity: 0.70;
+            scale: 0.97;
+        }
+
+        50% {
+            opacity: 1;
+            scale: 1.05;
+        }
+
+        to {
+            opacity: 0.82;
+            scale: 1;
+        }
     }
 
     Window {
@@ -71,8 +93,11 @@ app.stylesheet(
 
     Panel.grid-demo {
         display: grid;
-        grid-template-columns: fit-content(190px) repeat(auto-fill, minmax(150px, 1fr));
+        grid-template-columns: fit-content(190px) repeat(1, repeat(2, minmax(150px, 1fr)));
         grid-template-rows: fit-content(58px) 76px;
+        grid-template-areas:
+            "sidebar main main"
+            "sidebar left right";
         column-gap: calc(1% + 6px);
         row-gap: calc(1% + 6px);
         overflow: visible;
@@ -108,9 +133,14 @@ app.stylesheet(
         }
     }
 
+    @supports (backdrop-filter: blur(12px)) {
+        Panel.grid-sidebar {
+            backdrop-filter: blur(12px);
+        }
+    }
+
     Panel.grid-sidebar {
-        grid-column: 1;
-        grid-row: 1 / span 2;
+        grid-area: sidebar;
         background:
             radial-gradient(circle at 22% 18%, rgba(255, 211, 106, 0.18) 0%, rgba(255, 211, 106, 0.05) 34%, transparent 68%),
             radial-gradient(circle at 80% 82%, rgba(90, 169, 255, 0.16) 0%, transparent 62%),
@@ -119,20 +149,29 @@ app.stylesheet(
     }
 
     Panel.grid-main {
-        grid-column: 2 / span 2;
-        grid-row: 1;
+        grid-area: main;
+    }
+
+    Panel.grid-main::after {
+        content: attr(title);
+        width: 118px;
+        padding: 8px;
+        color: rgba(116, 221, 176, 0.92);
+        font-size: 11px;
+        font-weight: 800;
+        text-align: right;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
     }
 
     Panel.grid-left {
-        grid-column: 2;
-        grid-row: 2;
+        grid-area: left;
         position: relative;
         overflow: visible;
     }
 
     Panel.grid-right {
-        grid-column: 3;
-        grid-row: 2;
+        grid-area: right;
     }
 
     Panel.horizontal-strip {
@@ -159,6 +198,7 @@ app.stylesheet(
     Panel.hero {
         background: var(--hero-bg);
         background-noise: 0.02;
+        backdrop-filter: blur(18px);
     }
 
     Window > VLayout > Panel.hero > HLayout > Button[key="primary-action"] {
@@ -198,6 +238,7 @@ app.stylesheet(
     }
 
     Label.headline {
+        font-family: "Dragon Demo UI";
         color: white;
         font-size: 24px;
         font-weight: 800;
@@ -309,6 +350,20 @@ app.stylesheet(
         color: white;
     }
 
+    Badge.live {
+        background: rgba(116, 221, 176, 0.24);
+        border-color: rgba(116, 221, 176, 0.62);
+        color: white;
+        animation: 1400ms cubic-bezier(0.16, 1, 0.3, 1) infinite alternate both running live-pulse;
+    }
+
+    Badge.paused {
+        background: rgba(116, 221, 176, 0.16);
+        border-color: rgba(116, 221, 176, 0.38);
+        color: rgba(232, 245, 255, 0.76);
+        animation: 1400ms cubic-bezier(0.16, 1, 0.3, 1) infinite alternate both paused live-pulse;
+    }
+
     Badge[level] {
         border-width: 1px;
     }
@@ -385,18 +440,105 @@ app.stylesheet(
     }
 
     @media (min-width: 1100px) {
+        :root {
+            --grid-min: 180px;
+        }
+
         Label.headline {
             font-size: 28px;
         }
 
         Panel.grid-demo {
-            grid-template-columns: fit-content(220px) repeat(auto-fill, minmax(180px, 1fr));
+            grid-template-columns: fit-content(220px) repeat(1, repeat(2, minmax(var(--grid-min), 1fr)));
         }
     }
 
     @media (orientation: landscape) {
         Panel.horizontal-strip {
             width: 320px;
+        }
+    }
+
+    @media (min-aspect-ratio: 4/3) {
+        Panel.grid-demo {
+            grid-template-columns: fit-content(220px) repeat(1, repeat(2, minmax(160px, 1fr)));
+        }
+    }
+
+    @media (min-resolution: 1dppx) {
+        Button.ghost {
+            border-color: rgba(255, 255, 255, 0.20);
+        }
+    }
+
+    @media (color-gamut: srgb) {
+        Badge.live {
+            border-color: rgba(255, 255, 255, 0.24);
+        }
+    }
+
+    @media (update: fast) {
+        Badge.live {
+            box-shadow: 0 0 0 1px rgba(116, 221, 176, 0.24), 0 8px 20px rgba(116, 221, 176, 0.16);
+        }
+    }
+
+    @media (scripting: none) {
+        Badge.info {
+            border-width: 1px;
+            border-color: rgba(90, 169, 255, 0.70);
+        }
+    }
+
+    @media (forced-colors: none) {
+        Button.ghost {
+            color: rgba(235, 244, 255, 0.92);
+        }
+    }
+
+    @media (prefers-contrast: no-preference) {
+        Panel.hero {
+            box-shadow:
+                0 2px 10px rgba(0, 0, 0, 0.18),
+                0 18px 44px rgba(0, 0, 0, 0.34);
+        }
+    }
+
+    @media (inverted-colors: none) {
+        Badge.paused {
+            border-color: rgba(116, 221, 176, 0.46);
+        }
+    }
+
+    @media (dynamic-range: standard) {
+        Badge.info {
+            box-shadow: 0 0 0 1px rgba(90, 169, 255, 0.18);
+        }
+    }
+
+    @media (video-dynamic-range: standard) {
+        Panel.status-card {
+            border-color: rgba(255, 255, 255, 0.16);
+        }
+    }
+
+    @media (pointer: fine) and (hover: hover) {
+        Button.motion:hover {
+            box-shadow:
+                0 8px 18px rgba(90, 169, 255, 0.28),
+                0 0 0 1px rgba(255, 255, 255, 0.12);
+        }
+    }
+
+    @media (prefers-color-scheme: dark) {
+        Panel.hero {
+            border-color: rgba(116, 221, 176, 0.28);
+        }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        Badge.live {
+            animation-play-state: paused;
         }
     }
     """
@@ -421,19 +563,20 @@ with dg.VLayout(style={"gap": 14}):
                 class_="caption callout",
             )
             dg.Label(
-                "Hover/open/selected transitions with custom easing, paint-only transforms, percent "
-                "and var() calc sizing/spacing, CSS Grid, overflow, relative offsets, absolute pins, and fixed badges.",
+                "Hover/open/selected transitions with custom easing, keyframe animation, generated content, frosted backdrop-filter surfaces, paint-only transforms, percent "
+                "and var() calc sizing/spacing, media-scoped CSS variables, CSS Grid, overflow, relative offsets, absolute pins, and fixed badges.",
                 class_="caption callout",
             )
             dg.Label(
-                "Resize the window to exercise width, height, and orientation @media rules.",
+                "Resize the window or change the OS app theme to exercise width, height, orientation, aspect-ratio, resolution, pointer/hover, update, scripting, forced-colors, contrast, inverted-colors, dynamic-range, video-dynamic-range, color-gamut, color-scheme, and reduced-motion @media rules.",
                 class_="caption callout",
             )
         with dg.HLayout(style={"gap": 10, "height": 38}):
             dg.Button("Run Workflow", key="primary-action")
             dg.Button("Hover Motion", class_="motion")
             dg.Button("View CSS", class_="ghost")
-            dg.Badge("new", level="info")
+            dg.Badge("live", level="success", class_="live")
+            dg.Badge("paused", level="info", class_="paused")
 
     with dg.HLayout(style={"gap": 14, "flex": 1}):
         with dg.Panel("Inputs", class_="compact inputs"):
@@ -443,7 +586,7 @@ with dg.VLayout(style={"gap": 14}):
             dg.NumberInput(72, min=0, max=100)
             dg.ProgressBar(0.72, label="72% confidence")
 
-        with dg.Panel("Status", class_="compact"):
+        with dg.Panel("Status", class_="compact status-card"):
             dg.Label("Live Metrics", class_="kicker")
             dg.Label(
                 "1,248.50",

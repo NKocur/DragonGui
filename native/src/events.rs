@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::document::{WidgetKind, WidgetNode};
 use crate::layout::{LayoutResult, Rect};
-use crate::style::SLIDER_TRACK_MARGIN_LP;
+use crate::style::{VisualStyle, SLIDER_TRACK_MARGIN_LP};
 
 // ---------------------------------------------------------------------------
 // ChangeValue — argument passed to on_change callbacks
@@ -129,6 +129,8 @@ pub struct WidgetState {
     pub selected_t: HashMap<String, f32>,
     /// Expansion animation progress keyed by widget id, where 0.0 is collapsed and 1.0 is expanded.
     pub expanded_t: HashMap<String, f32>,
+    /// Continuous CSS animation visual overrides keyed by widget id.
+    pub animation_visuals: HashMap<String, VisualStyle>,
     /// Widget that received a pointer-down (not yet released).
     pub pressed: Option<String>,
     /// Dropdown whose menu is currently open.

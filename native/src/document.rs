@@ -252,6 +252,8 @@ impl WidgetKind {
 /// Layout-relevant properties extracted from each node's `props` object.
 #[derive(Debug, Clone, Default)]
 pub struct NodeProps {
+    /// Original serialized props for CSS generated content attr(...) lookups.
+    pub raw_props: Map<String, Value>,
     /// Fixed pixel width (Panel with `width` set).
     pub fixed_width: Option<f32>,
     /// Fixed pixel height.
@@ -387,6 +389,7 @@ pub fn style_map_from_value(value: Option<&Value>) -> Map<String, Value> {
 }
 
 fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
+    let raw_props = props.as_object().cloned().unwrap_or_default();
     let fixed_width = props
         .get("width")
         .and_then(|v| v.as_f64())
@@ -534,6 +537,7 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
     NodeProps {
+        raw_props,
         fixed_width,
         fixed_height,
         orientation,

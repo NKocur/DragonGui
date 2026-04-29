@@ -6,7 +6,8 @@ and which limitations are intentional.
 
 DragonGUI CSS is a native-widget styling subset. It is not browser CSS: there
 is no DOM, HTML parser, JavaScript, general browser layout engine, full media
-query system, animation system, or full CSS compatibility promise.
+query system, or full CSS compatibility promise. Animation support is limited
+to a first slice of visual `@keyframes` properties.
 
 ## Entry Points
 
@@ -47,14 +48,21 @@ Supported top-level CSS:
 - Comma selector lists.
 - `:root` custom property declarations.
 - `!important` on declarations.
-- First-slice `@media` blocks for viewport width/height/orientation queries.
+- First-slice `@media` blocks for viewport
+  width/height/aspect-ratio/resolution/color-gamut/orientation/pointer/hover/
+  update/scripting/forced-colors/contrast/inverted-colors/dynamic-range/
+  video-dynamic-range/color-scheme/reduced-motion queries.
 - First-slice `@supports` blocks for DragonGUI declaration and selector
   feature queries.
+- First-slice `@keyframes` blocks for visual animation keyframes.
+- First-slice `@font-face` blocks for local `.ttf`, `.otf`, and `.ttc` files.
+- First-slice generated content through `::before`, `::after`, and
+  `content: "..."`.
 
 Ignored or unsupported:
 
-- At-rules such as `@keyframes` and `@font-face` are not part of the current
-  public subset.
+- Remote font URLs, `data:` font URLs, WOFF/WOFF2 loading, and packaged font
+  asset resolution are not part of the current public subset.
 - Invalid CSS produces a stylesheet parse error.
 - Unsupported selectors and unsupported declarations produce warnings and are
   skipped while the rest of the stylesheet continues.
@@ -86,9 +94,18 @@ Important details:
 
 ## Media Queries
 
-First-slice `@media` supports viewport width, height, and orientation queries
-in logical CSS pixels. DragonGUI reapplies stylesheets against the current
-window size during layout and resize.
+First-slice `@media` supports viewport width, height, aspect-ratio,
+resolution, color-gamut, orientation, update, scripting, forced-colors,
+contrast, inverted-colors, dynamic-range, video-dynamic-range, color-scheme,
+and reduced-motion queries in logical CSS pixels.
+Pointer, hover, update, scripting, and forced-colors queries reflect
+DragonGUI's current desktop native rendering model. Resolution uses the current
+window scale factor as CSS dppx. Color-gamut currently defaults to `srgb`.
+Color-scheme uses the platform
+window theme when winit can report one, and falls back to the active theme
+background when platform detection is unavailable. DragonGUI reapplies
+stylesheets against the current window size, theme, scale, and platform theme
+during layout, resize, and theme-change events.
 
 Supported forms:
 
@@ -97,17 +114,88 @@ Supported forms:
 @media (min-height: 600px) and (max-height: 900px) { ... }
 @media screen and (width >= 900px), (height <= 520px) { ... }
 @media (orientation: landscape) { ... }
+@media (min-aspect-ratio: 4/3) { ... }
+@media (min-resolution: 2dppx) { ... }
+@media (color-gamut: srgb) { ... }
+@media (pointer: fine) and (hover: hover) { ... }
+@media (update: fast) { ... }
+@media (scripting: none) { ... }
+@media (forced-colors: none) { ... }
+@media (prefers-contrast: no-preference) { ... }
+@media (inverted-colors: none) { ... }
+@media (dynamic-range: standard) { ... }
+@media (video-dynamic-range: high) { ... }
+@media (prefers-color-scheme: dark) { ... }
+@media (prefers-reduced-motion: reduce) { ... }
 ```
 
 Limitations:
 
-- Supported features are `width`, `height`, and `orientation`.
+- Supported features are `width`, `height`, `aspect-ratio`, `resolution`,
+  `color-gamut`, `orientation`, `pointer`, `any-pointer`, `hover`,
+  `any-hover`, `update`, `scripting`, `forced-colors`,
+  `prefers-contrast`, `inverted-colors`, `dynamic-range`,
+  `video-dynamic-range`, `prefers-color-scheme`, and `prefers-reduced-motion`.
 - Width and height values must be absolute lengths convertible to pixels.
+- Aspect-ratio values may use ratios such as `4/3` or numbers such as `1.6`.
+- Resolution values may use `dppx`, `x`, `dpi`, or `dpcm`.
+- Color-gamut values are `srgb`, `p3`, and `rec2020`; DragonGUI currently
+  assumes `srgb`, so wider gamut queries do not match until platform display
+  detection is added.
 - Orientation values are `portrait` and `landscape`; square viewports match
   `portrait`.
-- Container queries, `@font-face`, and `@keyframes` remain unsupported.
-- Custom properties are still collected from top-level `:root`; media-scoped
-  `:root` variables are not a browser-compatible cascade.
+- Pointer values are `none`, `coarse`, and `fine`; DragonGUI currently reports
+  `fine` for `pointer` and `any-pointer`.
+- Hover values are `none` and `hover`; DragonGUI currently reports `hover` for
+  `hover` and `any-hover`.
+- Update values are `none`, `slow`, and `fast`; DragonGUI currently reports
+  `fast` for normal native window rendering.
+- Scripting values are `none`, `initial-only`, and `enabled`; DragonGUI
+  currently reports `none`.
+- Forced-colors values are `none` and `active`; DragonGUI currently reports
+  `none` until platform high-contrast/forced-colors integration is added.
+- Contrast values are `no-preference`, `more`, `less`, and `custom`;
+  DragonGUI currently reports `no-preference` until platform contrast
+  preference integration is added.
+- Inverted-colors values are `none` and `inverted`; DragonGUI currently
+  reports `none` until platform inverted-colors integration is added.
+- Dynamic-range and video-dynamic-range values are `standard` and `high`;
+  DragonGUI currently reports `standard` for both until platform display
+  dynamic-range integration is added.
+- Color-scheme values are `dark` and `light`; DragonGUI uses winit's platform
+  window theme when available and falls back to active theme background
+  luminance when unavailable.
+- Reduced-motion values are `reduce` and `no-preference`; DragonGUI currently
+  defaults to `no-preference` until OS preference integration is added.
+- Container queries and broader media features remain unsupported.
+- Custom properties are collected from top-level `:root`, with a first slice of
+  directly nested `:root` variables inside matching `@media` or static true
+  `@supports` blocks.
+
+## Font Faces
+
+First-slice `@font-face` support loads local font files into the native text
+backend and maps the declared CSS family name to the loaded font family when
+the font database exposes one.
+
+Supported form:
+
+```css
+@font-face {
+    font-family: "Report UI";
+    src: url("C:/Windows/Fonts/segoeui.ttf") format("truetype");
+}
+```
+
+Limitations:
+
+- Only local `url(...)` sources are attempted.
+- Supported extensions are `.ttf`, `.otf`, and `.ttc`.
+- Relative paths resolve from the current process working directory.
+- Missing or unsupported font files are skipped by the renderer and reported
+  once in `debug_snapshot()["gpu"]["renderer"]["font_warnings"]`.
+- Remote URLs, `data:` URLs, WOFF/WOFF2, and packaged app asset resolution are
+  still pending.
 
 ## Feature Queries
 
@@ -121,6 +209,7 @@ Supported forms:
 @supports (display: grid) { ... }
 @supports not (backdrop-filter: blur(8px)) { ... }
 @supports (width: calc(100% - 240px)) and (selector(Panel > Button.primary)) { ... }
+@supports (backdrop-filter: blur(8px)) { ... }
 ```
 
 Limitations:
@@ -128,6 +217,10 @@ Limitations:
 - `@supports` conditions are not runtime state; they only test the DragonGUI CSS
   subset supported by the current build.
 - Unsupported declaration and selector queries simply evaluate to false.
+
+Supported feature queries reflect DragonGUI's native subset, not browser
+support. For example, `backdrop-filter: blur(...)` currently means the
+first-slice DragonGUI frosted-surface treatment is available.
 - `@supports` can be nested with supported `@media` rules.
 
 Specificity model:
@@ -208,7 +301,6 @@ Unsupported selector forms:
 - Ancestor pseudo-states, such as `Panel:hover Button`.
 - Ancestor pseudo-states inside selector functions, such as
   `Panel:is(:hover) Button`.
-- Browser pseudo-elements such as `::before` and `::after`.
 
 ## Pseudo-States
 
@@ -386,8 +478,10 @@ Supported layout properties:
 | `gap` | logical px, percent, compatible `calc()` | Container gap. `auto` warns and is ignored. |
 | `row-gap` | logical px, percent, compatible `calc()` | Grid/flex row gap. |
 | `column-gap` | logical px, percent, compatible `calc()` | Grid/flex column gap. |
-| `grid-template-columns` | track list | First-slice CSS Grid columns. Supports px, percent, `fr`, `auto`, `minmax()`, `fit-content()`, `repeat(n, ...)`, and `repeat(auto-fit/auto-fill, ...)`. |
-| `grid-template-rows` | track list | First-slice CSS Grid rows. Supports px, percent, `fr`, `auto`, `minmax()`, `fit-content()`, `repeat(n, ...)`, and `repeat(auto-fit/auto-fill, ...)`. |
+| `grid-template-columns` | track list | First-slice CSS Grid columns. Supports px, percent, `fr`, `auto`, `minmax()`, `fit-content()`, nested finite `repeat(n, ...)`, and non-nested `repeat(auto-fit, ...)` / `repeat(auto-fill, ...)`. |
+| `grid-template-rows` | track list | First-slice CSS Grid rows. Supports px, percent, `fr`, `auto`, `minmax()`, `fit-content()`, nested finite `repeat(n, ...)`, and non-nested `repeat(auto-fit, ...)` / `repeat(auto-fill, ...)`. |
+| `grid-template-areas` | quoted rows | Defines rectangular named grid regions, such as `"side main" "side footer"`. |
+| `grid-area` | named area | Places a child into a named parent `grid-template-areas` region. Explicit `grid-column` / `grid-row` placement wins if both are set. |
 | `grid-column` | line placement | Supports `auto`, line numbers, and `span n`, including `start / end`. |
 | `grid-row` | line placement | Supports `auto`, line numbers, and `span n`, including `start / end`. |
 | `overflow` | `visible`, `hidden`, `scroll`, `auto` | First-slice overflow behavior. `visible` lets children escape clipping; `hidden` clips; `scroll`/`auto` opt into scroll state. |
@@ -596,6 +690,53 @@ border-radius, opacity, color, accent, track-color, thumb-color, box-shadow,
 transform, translate, scale, rotate
 ```
 
+## Animations
+
+Supported animation CSS:
+
+| Property | Accepted Values | Effect |
+| --- | --- | --- |
+| `@keyframes` | `from`, `to`, and percentage selectors | Defines visual keyframes. |
+| `animation` | one shorthand animation | Sets name, duration, timing, delay, iteration count, direction, fill mode, and play state. |
+| `animation-name` | keyframe name or `none` | Selects one keyframe animation for the widget. |
+| `animation-duration` | `ms` or `s` time | Duration for one iteration. |
+| `animation-timing-function` | `linear`, `ease`, `ease-in`, `ease-out`, `ease-in-out`, `cubic-bezier(x1, y1, x2, y2)` | Eases progress between keyframes. |
+| `animation-delay` | `ms` or `s` time | Delays animation start. |
+| `animation-iteration-count` | positive number or `infinite` | Repeats the animation. Fractional counts are rounded to the nearest whole iteration in the first slice. |
+| `animation-direction` | `normal`, `reverse`, `alternate`, `alternate-reverse` | Controls playback direction. |
+| `animation-fill-mode` | `none`, `forwards`, `backwards`, `both` | Applies first or last keyframe outside the active interval. |
+| `animation-play-state` | `running`, `paused` | Runs or freezes the animation at its first directed frame. |
+
+Current runtime support:
+
+- One animation can run per widget.
+- Keyframes support visual declarations such as solid colors, opacity,
+  borders, shadows, background paints, and transforms.
+- Runtime interpolation matches transition support: solid colors and numeric
+  visual fields interpolate; gradient paints and shadows switch at midpoint;
+  transforms interpolate translate, scale, and rotation.
+- Layout, text size, grid/flex, multiple animations, composition, timelines,
+  and OS reduced-motion preference integration are not supported yet.
+
+## Backdrop Filter
+
+Supported backdrop filter CSS:
+
+| Property | Accepted Values | Effect |
+| --- | --- | --- |
+| `backdrop-filter` | `none` or `blur(<px>)` | Enables the first-slice frosted-surface treatment on supported widget surfaces. |
+
+Current runtime support:
+
+- Supported surfaces are `Panel`, `Modal`, `Tooltip`, and `Toast`.
+- The first slice is clipped to the widget's rounded rectangle.
+- The renderer applies a subtle frosted tint/noise treatment derived from the
+  blur amount.
+- This is not a full browser-compatible sampled framebuffer blur yet. True
+  backdrop sampling still requires an offscreen scene texture and blur pass.
+- `brightness()`, `saturate()`, multiple filters, and filter interpolation are
+  not supported.
+
 ## Color Values
 
 Supported color syntax:
@@ -672,15 +813,21 @@ Capabilities:
 - Custom properties are collected from `:root`.
 - `:root` variables are collected before normal declarations are lowered, so
   variables can be used before they appear in source order.
+- Direct `:root` variables inside a matching `@media` block can be used by
+  declarations inside that same media block.
+- Direct `:root` variables inside a static true `@supports` block can be used
+  by declarations inside that same supports block.
 - Variable values can resolve to numbers, lengths, colors, keywords, or strings.
 - `var(--name)` is supported as a whole property value.
 - `var(--name, fallback)` is supported as a whole property value.
 - `var()` is supported inside larger parseable property values, including
-  borders, shadows, gradients, and transition shorthands.
+  borders, shadows, gradients, grid tracks, and transition shorthands.
 
 Limitations:
 
-- Scoped custom properties are not supported.
+- Scoped custom properties on arbitrary widget selectors are not supported.
+- Media/support-scoped variables are parse-time scoped to declarations inside
+  the same block; this is not full inherited browser custom-property cascade.
 - `calc()` is only supported as a whole layout value for sizing and supported
   spacing properties. `var()` inside `calc()` is supported for length terms and
   scalar multipliers/divisors.
@@ -709,6 +856,7 @@ Supported parts:
 | `Tab` | `tab`, `accent`, `badge` |
 | `NavItem` | `item`, `accent`, `badge` |
 | `DataFrameTable` | `header`, `row`, `row-selected`, `grid-line` |
+| Most rendered widgets | `before`, `after` generated content |
 
 Part property support:
 
@@ -720,6 +868,7 @@ Part property support:
 | `height` | supported where renderer uses it | ignored with warning |
 | `padding` | supported when uniform | ignored with warning |
 | `gap` | parsed; reserved for renderer-specific future use | ignored with warning |
+| `content` | supported for `before` / `after` generated content | supported for `before` / `after` generated content |
 | Widget-specific table properties | ignored | ignored |
 
 Examples:
@@ -758,6 +907,14 @@ Dropdown::item-hover {
 Checkbox:checked::indicator {
     background: success;
 }
+
+Panel.summary::after {
+    content: "new";
+    width: 42px;
+    color: success;
+    font-size: 11px;
+    text-align: right;
+}
 ```
 
 Unsupported part selectors:
@@ -766,6 +923,12 @@ Unsupported part selectors:
 - Parent-side part selectors in child rules are rejected.
 - CSS part names should use dashed names such as `stepper-up`. Snake-case part
   names are normalized only for inline style dictionaries.
+
+Generated `::before` / `::after` content is renderer-owned text. It does not
+participate in layout, receive input, or create child widgets. The first slice
+supports quoted string content, `attr(name)` lookups against widget metadata and
+serialized props, plus visual/text styling. Counters and independent
+generated-content layout are not supported.
 
 ## Inline Style Dictionaries
 
@@ -1009,35 +1172,47 @@ Selector limitations:
 
 Property limitations:
 
-- CSS Grid is first-slice only: no named grid areas, subgrid, nested repeat, or
-  dense auto-placement support. `minmax()` supports px, percent, and `auto`
-  minimums plus px, percent, `fr`, and `auto` maximums. `fit-content()`
-  supports px or percent arguments. `repeat(auto-fit, ...)` and
-  `repeat(auto-fill, ...)` are supported for non-nested track lists.
+- CSS Grid is first-slice only: named grid areas are supported for rectangular
+  regions and nested finite `repeat(n, ...)` track lists are supported, but
+  subgrid, nested auto-repeat, and dense auto-placement remain unsupported.
+  `minmax()` supports px, percent, and `auto` minimums plus px, percent, `fr`,
+  and `auto` maximums. `fit-content()` supports px or percent arguments.
+  `repeat(auto-fit, ...)` and `repeat(auto-fill, ...)` are supported for
+  non-nested auto-repeat track lists.
 - Mixed-unit `calc()` requires a definite parent axis and may not resolve in
   every flex/auto sizing case.
 - Percent and compatible `calc()` spacing are first-slice only for padding,
   uniform margin, and gap properties. `auto` spacing is limited to uniform
   margin.
 - No general transitions beyond first-slice whole-widget hover, `:open`,
-  `:selected`, `:expanded`, and `:collapsed` paint/transform transitions. No
-  animations.
+  `:selected`, `:expanded`, and `:collapsed` paint/transform transitions.
+- Animations are limited to the first-slice visual `@keyframes` support
+  described above.
+- Backdrop filters are limited to the first-slice frosted-surface treatment
+  described above.
+- Generated content is text-only and does not affect layout.
 - No image backgrounds.
 - Overflow is first-slice only: visible scrollbar indicators and scrollbar part
   styling are `Panel`-only, and overlay clipping remains renderer-managed.
 - Positioning is first-slice only: no global stacking contexts or transformed
   hit testing yet. `absolute` and `fixed` currently expect explicit or intrinsic
   widget size.
-- Media queries are first-slice only: viewport `width`/`height` and
-  `orientation` conditions are supported, but container queries and other media
-  features are not.
+- Media queries are first-slice only: viewport `width`/`height`,
+  `aspect-ratio`, `resolution`, `color-gamut`, `orientation`, `pointer`,
+  `any-pointer`, `hover`, `any-hover`, `update`, `scripting`, `forced-colors`,
+  `prefers-contrast`, `inverted-colors`, `dynamic-range`,
+  `video-dynamic-range`, `prefers-color-scheme`, and `prefers-reduced-motion`
+  conditions are supported, but container queries and other media features are
+  not.
 - No per-side border shorthand.
 - No CSS table column width controls.
 - No scatter-specific CSS properties.
 
 Variable limitations:
 
-- No scoped variables.
+- No arbitrary widget-scoped variables.
+- Media/support-scoped `:root` variables are first-slice parse-time scoped, not
+  full inherited browser custom-property cascade.
 - No cross-stylesheet variable sharing guarantee.
 - No dynamic variable recomputation beyond stylesheet reparse.
 

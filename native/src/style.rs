@@ -119,6 +119,7 @@ pub struct NodeStyle {
     pub text: TextStyle,
     pub widget: WidgetStyle,
     pub transition: TransitionStyle,
+    pub animation: AnimationStyle,
     pub parts: NodePartStyles,
     pub hover: VisualStyle,
     pub active: VisualStyle,
@@ -137,6 +138,51 @@ pub struct TransitionStyle {
     pub duration_ms: Option<u64>,
     pub delay_ms: Option<u64>,
     pub timing_function: Option<TransitionTimingFunction>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AnimationIterationCount {
+    #[default]
+    One,
+    Infinite,
+    Count(u32),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AnimationDirection {
+    #[default]
+    Normal,
+    Reverse,
+    Alternate,
+    AlternateReverse,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AnimationFillMode {
+    #[default]
+    None,
+    Forwards,
+    Backwards,
+    Both,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AnimationPlayState {
+    #[default]
+    Running,
+    Paused,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AnimationStyle {
+    pub name: Option<String>,
+    pub duration_ms: Option<u64>,
+    pub delay_ms: Option<u64>,
+    pub timing_function: Option<TransitionTimingFunction>,
+    pub iteration_count: Option<AnimationIterationCount>,
+    pub direction: Option<AnimationDirection>,
+    pub fill_mode: Option<AnimationFillMode>,
+    pub play_state: Option<AnimationPlayState>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -292,6 +338,8 @@ pub struct LayoutStyle {
     pub flex_shrink: Option<f32>,
     pub grid_template_columns: Option<Vec<GridTrackSize>>,
     pub grid_template_rows: Option<Vec<GridTrackSize>>,
+    pub grid_template_areas: Option<GridTemplateAreas>,
+    pub grid_area: Option<String>,
     pub grid_column: Option<GridPlacementStyle>,
     pub grid_row: Option<GridPlacementStyle>,
 }
@@ -399,10 +447,33 @@ pub struct GridPlacementStyle {
     pub end: GridLineStyle,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GridTemplateAreas {
+    pub columns: u16,
+    pub rows: u16,
+    pub areas: Vec<GridTemplateArea>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GridTemplateArea {
+    pub name: String,
+    pub row_start: u16,
+    pub row_end: u16,
+    pub column_start: u16,
+    pub column_end: u16,
+}
+
+impl GridTemplateAreas {
+    pub fn area_named(&self, name: &str) -> Option<&GridTemplateArea> {
+        self.areas.iter().find(|area| area.name == name)
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct VisualStyle {
     pub background: Option<ColorRef>,
     pub background_paint: Option<BackgroundPaint>,
+    pub backdrop_filter: Option<BackdropFilterStyle>,
     pub foreground: Option<ColorRef>,
     pub border_color: Option<ColorRef>,
     pub border_width: Option<f32>,
@@ -415,6 +486,11 @@ pub struct VisualStyle {
     pub background_noise: Option<f32>,
     pub box_shadows: Option<Vec<BoxShadow>>,
     pub transform: Option<TransformStyle>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BackdropFilterStyle {
+    pub blur: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -573,6 +649,13 @@ pub struct PartStyle {
     pub layout: PartLayoutStyle,
     pub visual: VisualStyle,
     pub text: TextStyle,
+    pub content: Option<GeneratedContent>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GeneratedContent {
+    Text(String),
+    Attr(String),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -762,6 +845,7 @@ impl NodeStyle {
         parse_text(map, &mut style.text);
         parse_widget(map, &mut style.widget);
         parse_transition(map, &mut style.transition);
+        parse_animation(map, &mut style.animation);
         parse_parts(map.get("parts"), &mut style.parts);
         style.hover = nested_visual(map.get("hover"));
         style.active = nested_visual(map.get("active"));
@@ -784,6 +868,7 @@ impl VisualStyle {
                 .background_paint
                 .clone()
                 .or_else(|| self.background_paint.clone()),
+            backdrop_filter: other.backdrop_filter.or(self.backdrop_filter),
             foreground: other.foreground.clone().or_else(|| self.foreground.clone()),
             border_color: other
                 .border_color
@@ -894,6 +979,10 @@ fn parse_layout(map: &serde_json::Map<String, Value>, out: &mut LayoutStyle) {
     out.overflow_x = text_value(map, "overflow_x", "overflow-x").and_then(parse_overflow);
     out.overflow_y = text_value(map, "overflow_y", "overflow-y").and_then(parse_overflow);
     out.position = text_value(map, "position", "position").and_then(parse_position);
+    out.grid_area = text_value(map, "grid_area", "grid-area").and_then(|value| {
+        let value = value.trim();
+        (!value.is_empty()).then(|| value.to_string())
+    });
     out.top = number(map.get("top"));
     out.right = number(map.get("right"));
     out.bottom = number(map.get("bottom"));
@@ -908,6 +997,8 @@ fn parse_layout(map: &serde_json::Map<String, Value>, out: &mut LayoutStyle) {
 fn parse_visual(map: &serde_json::Map<String, Value>, out: &mut VisualStyle) {
     out.background = color_ref(map.get("background"));
     out.background_paint = out.background.clone().map(BackgroundPaint::Color);
+    out.backdrop_filter =
+        value_for_keys(map, "backdrop_filter", "backdrop-filter").and_then(parse_backdrop_filter);
     out.foreground = color_ref(map.get("foreground")).or_else(|| color_ref(map.get("color")));
     out.border_color = color_ref(map.get("border_color"));
     out.border_width = number(map.get("border_width"));
@@ -989,6 +1080,59 @@ fn parse_transition(map: &serde_json::Map<String, Value>, out: &mut TransitionSt
     }
 }
 
+fn parse_animation(map: &serde_json::Map<String, Value>, out: &mut AnimationStyle) {
+    if let Some(name) = text_value(map, "animation_name", "animation-name") {
+        if name.trim().eq_ignore_ascii_case("none") {
+            out.name = None;
+        } else {
+            out.name = Some(name.trim().to_string());
+        }
+    }
+    if let Some(duration) =
+        value_for_keys(map, "animation_duration", "animation-duration").and_then(parse_duration_ms)
+    {
+        out.duration_ms = Some(duration);
+    }
+    if let Some(delay) =
+        value_for_keys(map, "animation_delay", "animation-delay").and_then(parse_duration_ms)
+    {
+        out.delay_ms = Some(delay);
+    }
+    if let Some(timing) = text_value(
+        map,
+        "animation_timing_function",
+        "animation-timing-function",
+    )
+    .and_then(parse_transition_timing_function)
+    {
+        out.timing_function = Some(timing);
+    }
+    if let Some(count) = value_for_keys(
+        map,
+        "animation_iteration_count",
+        "animation-iteration-count",
+    )
+    .and_then(parse_animation_iteration_count)
+    {
+        out.iteration_count = Some(count);
+    }
+    if let Some(direction) = text_value(map, "animation_direction", "animation-direction")
+        .and_then(parse_animation_direction)
+    {
+        out.direction = Some(direction);
+    }
+    if let Some(fill_mode) = text_value(map, "animation_fill_mode", "animation-fill-mode")
+        .and_then(parse_animation_fill_mode)
+    {
+        out.fill_mode = Some(fill_mode);
+    }
+    if let Some(play_state) = text_value(map, "animation_play_state", "animation-play-state")
+        .and_then(parse_animation_play_state)
+    {
+        out.play_state = Some(play_state);
+    }
+}
+
 fn parse_parts(value: Option<&Value>, out: &mut NodePartStyles) {
     let Some(Value::Object(parts)) = value else {
         return;
@@ -1035,6 +1179,7 @@ fn part_style_from_map(map: &serde_json::Map<String, Value>) -> PartStyle {
     parse_part_layout(map, &mut style.layout);
     parse_visual(map, &mut style.visual);
     parse_text(map, &mut style.text);
+    style.content = text_value(map, "content", "content").and_then(parse_generated_content);
     style
 }
 
@@ -1057,11 +1202,13 @@ fn part_style_is_empty(style: &PartStyle) -> bool {
         && style.layout.gap.is_none()
         && visual_style_is_empty(&style.visual)
         && text_style_is_empty(&style.text)
+        && style.content.is_none()
 }
 
-fn visual_style_is_empty(style: &VisualStyle) -> bool {
+pub(crate) fn visual_style_is_empty(style: &VisualStyle) -> bool {
     style.background.is_none()
         && style.background_paint.is_none()
+        && style.backdrop_filter.is_none()
         && style.foreground.is_none()
         && style.border_color.is_none()
         && style.border_width.is_none()
@@ -1257,12 +1404,56 @@ fn parse_transition_property(value: &str) -> Option<TransitionProperty> {
         "track-color" => Some(TransitionProperty::TrackColor),
         "thumb-color" => Some(TransitionProperty::ThumbColor),
         "box-shadow" => Some(TransitionProperty::BoxShadow),
+        "transform" | "translate" | "scale" | "rotate" => Some(TransitionProperty::Transform),
         _ => None,
     }
 }
 
 fn parse_transition_timing_function(value: &str) -> Option<TransitionTimingFunction> {
     TransitionTimingFunction::parse(value)
+}
+
+fn parse_animation_iteration_count(value: &Value) -> Option<AnimationIterationCount> {
+    if let Some(n) = value.as_f64() {
+        return (n.is_finite() && n > 0.0)
+            .then_some(AnimationIterationCount::Count(n.round() as u32));
+    }
+    let text = value.as_str()?.trim();
+    if text.eq_ignore_ascii_case("infinite") {
+        return Some(AnimationIterationCount::Infinite);
+    }
+    text.parse::<f32>()
+        .ok()
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .map(|value| AnimationIterationCount::Count(value.round() as u32))
+}
+
+fn parse_animation_direction(value: &str) -> Option<AnimationDirection> {
+    match value.trim().to_ascii_lowercase().replace('_', "-").as_str() {
+        "normal" => Some(AnimationDirection::Normal),
+        "reverse" => Some(AnimationDirection::Reverse),
+        "alternate" => Some(AnimationDirection::Alternate),
+        "alternate-reverse" => Some(AnimationDirection::AlternateReverse),
+        _ => None,
+    }
+}
+
+fn parse_animation_fill_mode(value: &str) -> Option<AnimationFillMode> {
+    match value.trim().to_ascii_lowercase().replace('_', "-").as_str() {
+        "none" => Some(AnimationFillMode::None),
+        "forwards" => Some(AnimationFillMode::Forwards),
+        "backwards" => Some(AnimationFillMode::Backwards),
+        "both" => Some(AnimationFillMode::Both),
+        _ => None,
+    }
+}
+
+fn parse_animation_play_state(value: &str) -> Option<AnimationPlayState> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "running" => Some(AnimationPlayState::Running),
+        "paused" => Some(AnimationPlayState::Paused),
+        _ => None,
+    }
 }
 
 fn parse_transform_style(value: &Value) -> Option<TransformStyle> {
@@ -1298,6 +1489,32 @@ fn parse_transform_style(value: &Value) -> Option<TransformStyle> {
         }
         _ => None,
     }
+}
+
+fn parse_backdrop_filter(value: &Value) -> Option<BackdropFilterStyle> {
+    match value {
+        Value::Number(number) => number
+            .as_f64()
+            .filter(|value| value.is_finite() && *value >= 0.0)
+            .map(|value| BackdropFilterStyle { blur: value as f32 }),
+        Value::String(text) => parse_backdrop_filter_text(text),
+        Value::Object(map) => number(map.get("blur")).map(|blur| BackdropFilterStyle {
+            blur: blur.max(0.0),
+        }),
+        _ => None,
+    }
+}
+
+fn parse_backdrop_filter_text(value: &str) -> Option<BackdropFilterStyle> {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("none") {
+        return None;
+    }
+    let lower = value.to_ascii_lowercase();
+    let args = lower.strip_prefix("blur(")?.strip_suffix(')')?.trim();
+    parse_transform_length(args)
+        .filter(|blur| blur.is_finite() && *blur >= 0.0)
+        .map(|blur| BackdropFilterStyle { blur })
 }
 
 pub(crate) fn parse_transform_functions(value: &str) -> Option<TransformStyle> {
@@ -1417,6 +1634,47 @@ fn text_value<'a>(
     dashed: &str,
 ) -> Option<&'a str> {
     value_for_keys(map, snake, dashed).and_then(Value::as_str)
+}
+
+fn parse_generated_content(value: &str) -> Option<GeneratedContent> {
+    let value = value.trim();
+    if value.is_empty()
+        || value.eq_ignore_ascii_case("none")
+        || value.eq_ignore_ascii_case("normal")
+    {
+        return None;
+    }
+    if let Some(attr) = parse_generated_attr(value) {
+        return Some(GeneratedContent::Attr(attr));
+    }
+    Some(GeneratedContent::Text(unquote_generated_content(value)))
+}
+
+fn parse_generated_attr(value: &str) -> Option<String> {
+    let lower = value.to_ascii_lowercase();
+    let open = lower.strip_prefix("attr(")?;
+    let close = open.strip_suffix(')')?;
+    let name = close.trim();
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'))
+    {
+        return None;
+    }
+    Some(name.to_ascii_lowercase())
+}
+
+fn unquote_generated_content(value: &str) -> String {
+    let bytes = value.as_bytes();
+    if bytes.len() >= 2
+        && ((bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"')
+            || (bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\''))
+    {
+        value[1..value.len() - 1].to_string()
+    } else {
+        value.to_string()
+    }
 }
 
 fn parse_display(value: &str) -> Option<DisplayStyle> {

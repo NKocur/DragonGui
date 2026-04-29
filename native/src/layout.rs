@@ -7,9 +7,10 @@ use crate::document::{WidgetKind, WidgetNode};
 use crate::events::WidgetState;
 use crate::style::{
     badge_width_for_text, collapsible_header_height_for_style, tabs_header_height_for_style,
-    DisplayStyle, FlexDirectionStyle, GridLineStyle, GridPlacementStyle, GridTrackFitContentSize,
-    GridTrackMaxSize, GridTrackMinSize, GridTrackRepeatKind, GridTrackSize, LayoutLength,
-    LineHeight, OverflowStyle, PositionStyle, BADGE_GAP_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP,
+    DisplayStyle, FlexDirectionStyle, GridLineStyle, GridPlacementStyle, GridTemplateAreas,
+    GridTrackFitContentSize, GridTrackMaxSize, GridTrackMinSize, GridTrackRepeatKind,
+    GridTrackSize, LayoutLength, LineHeight, OverflowStyle, PositionStyle, BADGE_GAP_LP,
+    CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP,
 };
 use crate::theme::Theme;
 
@@ -99,6 +100,7 @@ pub fn compute_layout(
         None,
         false,
         state,
+        None,
     );
 
     tree.compute_layout(
@@ -138,6 +140,7 @@ fn build_node(
     parent_kind: Option<&WidgetKind>,
     layout_modal_children: bool,
     state: Option<&WidgetState>,
+    parent_grid_areas: Option<&GridTemplateAreas>,
 ) -> NodeId {
     let mut style = style_for(
         node,
@@ -148,6 +151,7 @@ fn build_node(
         layout_modal_children,
         state,
     );
+    apply_parent_grid_area_placement(&mut style, node, parent_grid_areas);
     if let Some((w, h)) = size_override {
         style.size = taffy::geometry::Size {
             width: Dimension::Length(w),
@@ -181,6 +185,7 @@ fn build_node(
                     Some(&node.kind),
                     layout_modal_children,
                     state,
+                    node.style.layout.grid_template_areas.as_ref(),
                 )
             })
             .collect()
@@ -191,6 +196,31 @@ fn build_node(
         tree.new_with_children(style, &child_ids)
             .expect("taffy new_with_children failed")
     }
+}
+
+fn apply_parent_grid_area_placement(
+    style: &mut Style,
+    node: &WidgetNode,
+    parent_grid_areas: Option<&GridTemplateAreas>,
+) {
+    if style.grid_column.start != GridPlacement::Auto || style.grid_row.start != GridPlacement::Auto
+    {
+        return;
+    }
+    let Some(area_name) = node.style.layout.grid_area.as_deref() else {
+        return;
+    };
+    let Some(area) = parent_grid_areas.and_then(|areas| areas.area_named(area_name)) else {
+        return;
+    };
+    style.grid_column = taffy::geometry::Line {
+        start: GridPlacement::from_line_index(area.column_start as i16),
+        end: GridPlacement::from_line_index(area.column_end as i16),
+    };
+    style.grid_row = taffy::geometry::Line {
+        start: GridPlacement::from_line_index(area.row_start as i16),
+        end: GridPlacement::from_line_index(area.row_end as i16),
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -1753,6 +1783,7 @@ fn layout_modal(
         None,
         true,
         None,
+        None,
     );
     tree.compute_layout(
         root_id,
@@ -3045,6 +3076,67 @@ mod tests {
             start: GridLineStyle::Line(1),
             end: GridLineStyle::Line(2),
         });
+        grid.children = vec![sidebar, main];
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![grid],
+        );
+
+        let layout = compute_layout(&root, 800.0, 400.0, 1.0, &Theme::dark(), None);
+        let sidebar = layout.rects.get("sidebar").unwrap();
+        let main = layout.rects.get("main").unwrap();
+
+        assert_eq!(sidebar.w, 180.0);
+        assert_eq!(sidebar.h, 200.0);
+        assert_eq!(main.x, 180.0);
+        assert_eq!(main.w, 420.0);
+        assert_eq!(main.h, 80.0);
+    }
+
+    #[test]
+    fn grid_template_areas_place_named_children() {
+        let mut grid = node("grid", WidgetKind::Panel, NodeProps::default(), vec![]);
+        grid.style.layout.display = Some(DisplayStyle::Grid);
+        grid.style.layout.width_value = Some(LayoutLength::LogicalPx(600.0));
+        grid.style.layout.height_value = Some(LayoutLength::LogicalPx(220.0));
+        grid.style.layout.padding = Some(0.0);
+        grid.style.layout.gap = Some(0.0);
+        grid.style.layout.grid_template_columns = Some(vec![
+            GridTrackSize::LogicalPx(180.0),
+            GridTrackSize::Fraction(1.0),
+            GridTrackSize::Fraction(2.0),
+        ]);
+        grid.style.layout.grid_template_rows = Some(vec![
+            GridTrackSize::LogicalPx(80.0),
+            GridTrackSize::LogicalPx(120.0),
+        ]);
+        grid.style.layout.grid_template_areas = Some(GridTemplateAreas {
+            columns: 3,
+            rows: 2,
+            areas: vec![
+                crate::style::GridTemplateArea {
+                    name: "sidebar".to_string(),
+                    row_start: 1,
+                    row_end: 3,
+                    column_start: 1,
+                    column_end: 2,
+                },
+                crate::style::GridTemplateArea {
+                    name: "main".to_string(),
+                    row_start: 1,
+                    row_end: 2,
+                    column_start: 2,
+                    column_end: 4,
+                },
+            ],
+        });
+
+        let mut sidebar = node("sidebar", WidgetKind::Panel, NodeProps::default(), vec![]);
+        sidebar.style.layout.grid_area = Some("sidebar".to_string());
+        let mut main = node("main", WidgetKind::Panel, NodeProps::default(), vec![]);
+        main.style.layout.grid_area = Some("main".to_string());
         grid.children = vec![sidebar, main];
         let root = node(
             "window",

@@ -21,11 +21,11 @@ use crate::style::{
     part_style_active_for_state as style_part_style_active_for_state,
     part_visual_for_state as style_part_visual_for_state, selected_part_style_for_state,
     state_part_style_for_state, tabs_header_height_for_style, uniform_layout_padding,
-    BackgroundPaint, ColorRef, NodeStyle, PartStyle, PositionStyle, TransformStyle,
-    TransitionProperty, VisualStyle, BORDER_WIDTH_LP, CARET_WIDTH_LP, CHECKBOX_BOX_LP,
-    CHECKBOX_LEFT_PAD_LP, DROPDOWN_CHEVRON_WIDTH_LP, FOCUS_RING_LP, PANEL_ACCENT_WIDTH_LP,
-    SLIDER_THUMB_WIDTH_LP, SLIDER_TRACK_HEIGHT_LP, SLIDER_TRACK_MARGIN_LP, TAB_ACTIVE_BAR_LP,
-    TAB_GAP_LP, TAB_INACTIVE_BOTTOM_INSET_LP, TAB_TOP_INSET_LP,
+    BackdropFilterStyle, BackgroundPaint, ColorRef, NodeStyle, PartStyle, PositionStyle,
+    TransformStyle, TransitionProperty, VisualStyle, BORDER_WIDTH_LP, CARET_WIDTH_LP,
+    CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP, DROPDOWN_CHEVRON_WIDTH_LP, FOCUS_RING_LP,
+    PANEL_ACCENT_WIDTH_LP, SLIDER_THUMB_WIDTH_LP, SLIDER_TRACK_HEIGHT_LP, SLIDER_TRACK_MARGIN_LP,
+    TAB_ACTIVE_BAR_LP, TAB_GAP_LP, TAB_INACTIVE_BOTTOM_INSET_LP, TAB_TOP_INSET_LP,
 };
 use crate::table;
 use crate::theme::{Color, Theme};
@@ -288,10 +288,10 @@ impl PrimitivesRenderer {
         caret_positions: &HashMap<String, [f32; 2]>,
         toasts: &[ToastOverlay],
         stylesheets: &StylesheetStore,
-        window_w: f32,
-        window_h: f32,
+        media: DgMediaEnvironment,
     ) {
-        let media = DgMediaEnvironment::from_physical_size(window_w, window_h, scale_factor);
+        let window_w = media.width * scale_factor;
+        let window_h = media.height * scale_factor;
         self.instances.clear();
         emit_rects(
             tree,
@@ -592,6 +592,33 @@ fn apply_background_noise_to_instances(instances: &mut [RectInstance], noise: Op
     }
 }
 
+fn backdrop_filter_noise(visual: &VisualStyle) -> Option<f32> {
+    visual
+        .backdrop_filter
+        .map(|filter| (filter.blur / 720.0).clamp(0.0, 0.045))
+        .filter(|noise| *noise > 0.0)
+}
+
+fn widget_supports_backdrop_filter(kind: WidgetKind) -> bool {
+    matches!(
+        kind,
+        WidgetKind::Panel | WidgetKind::Modal | WidgetKind::Tooltip | WidgetKind::Toast
+    )
+}
+
+fn emit_backdrop_filter_tint(
+    out: &mut Vec<RectInstance>,
+    rect: [f32; 4],
+    radii: [f32; 4],
+    filter: BackdropFilterStyle,
+) {
+    if filter.blur <= 0.0 {
+        return;
+    }
+    let alpha = (filter.blur / 180.0).clamp(0.025, 0.095);
+    out.push(inst_radii(rect, [1.0, 1.0, 1.0, alpha], radii));
+}
+
 fn paint_transform_for_node(
     node: &WidgetNode,
     visual_transform: Option<TransformStyle>,
@@ -745,6 +772,10 @@ fn visual_for<'a>(
         visual = visual.merged(&node.style.disabled);
         changed = true;
     }
+    if let Some(animation) = state.animation_visuals.get(&node.id) {
+        visual = visual.merged(animation);
+        changed = true;
+    }
     if changed {
         Cow::Owned(visual)
     } else {
@@ -752,7 +783,7 @@ fn visual_for<'a>(
     }
 }
 
-fn interpolate_visual_style(
+pub(crate) fn interpolate_visual_style(
     from: &VisualStyle,
     to: &VisualStyle,
     instant: &VisualStyle,
@@ -772,6 +803,7 @@ fn interpolate_visual_style(
         } else {
             instant.background_paint.clone()
         },
+        backdrop_filter: instant.backdrop_filter,
         foreground: if transition_allows_any(
             properties,
             &[TransitionProperty::Foreground, TransitionProperty::Color],
@@ -3472,6 +3504,12 @@ fn emit_rects(
             | WidgetKind::Toast
             | WidgetKind::Unknown => {}
         }
+        if let Some(filter) = visual
+            .backdrop_filter
+            .filter(|_| widget_supports_backdrop_filter(node.kind))
+        {
+            emit_backdrop_filter_tint(out, [x, y, w, h], radii, filter);
+        }
         if widget_supports_box_shadow(node.kind) || node.kind == WidgetKind::Modal {
             emit_inset_box_shadows(out, [x, y, w, h], radii, &visual, theme, sf);
         }
@@ -3482,7 +3520,9 @@ fn emit_rects(
         );
         apply_background_noise_to_instances(
             &mut out[own_primitive_start..],
-            visual.background_noise,
+            visual
+                .background_noise
+                .or_else(|| backdrop_filter_noise(&visual)),
         );
     }
 

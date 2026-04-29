@@ -40,8 +40,13 @@ restyled without rebuilding the Python document.
 ## Media Queries
 
 DragonGUI supports a first slice of `@media` for responsive app layouts. Width,
-height, and orientation are evaluated from the logical viewport and stylesheets
-are reapplied on window resize.
+height, aspect ratio, resolution, orientation, pointer/hover capability,
+display update capability, scripting availability, forced-colors mode,
+contrast preference, inverted-colors mode, dynamic range capability,
+color-scheme preference, and
+reduced-motion preference are evaluated from the logical viewport, active theme, current desktop
+input/display assumptions, and window scale factor, and stylesheets are
+reapplied on window resize.
 
 ```css
 @media (max-width: 760px) {
@@ -65,12 +70,125 @@ are reapplied on window resize.
         width: 320px;
     }
 }
+
+@media (min-aspect-ratio: 4/3) {
+    Panel.dashboard {
+        grid-template-columns: 280px 1fr;
+    }
+}
+
+@media (min-resolution: 2dppx) {
+    Button.icon {
+        border-width: 1px;
+    }
+}
+
+@media (color-gamut: srgb) {
+    Badge.live {
+        border-color: rgba(255, 255, 255, 0.24);
+    }
+}
+
+@media (pointer: fine) and (hover: hover) {
+    Button:hover {
+        box-shadow: 0 8px 18px rgba(90, 169, 255, 0.28);
+    }
+}
+
+@media (update: fast) {
+    Badge.live {
+        box-shadow: 0 0 0 1px rgba(116, 221, 176, 0.24);
+    }
+}
+
+@media (scripting: none) {
+    Badge.native {
+        border-color: accent;
+    }
+}
+
+@media (forced-colors: none) {
+    Button.ghost {
+        color: text;
+    }
+}
+
+@media (prefers-contrast: no-preference) {
+    Panel.hero {
+        box-shadow: 0 18px 44px rgba(0, 0, 0, 0.34);
+    }
+}
+
+@media (inverted-colors: none) {
+    Badge.status {
+        border-color: success;
+    }
+}
+
+@media (dynamic-range: standard) {
+    Panel.preview {
+        border-color: rgba(255, 255, 255, 0.18);
+    }
+}
+
+@media (video-dynamic-range: high) {
+    Image.preview {
+        box-shadow: 0 0 0 1px accent;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    Badge.live {
+        animation-play-state: paused;
+    }
+}
+
+@media (prefers-color-scheme: dark) {
+    Panel.hero {
+        border-color: rgba(255, 255, 255, 0.22);
+    }
+}
 ```
 
-Supported media features are `width`, `height`, and `orientation`;
+Supported media features are `width`, `height`, `aspect-ratio`, `resolution`,
+`color-gamut`, `orientation`, `pointer`, `any-pointer`, `hover`, `any-hover`,
+`update`, `scripting`, `forced-colors`, `prefers-contrast`,
+`inverted-colors`, `dynamic-range`, `video-dynamic-range`,
+`prefers-color-scheme`, and `prefers-reduced-motion`;
 comma-separated query lists, `and`, `or`, `not`, and range syntax are accepted
-when the resulting conditions only use those features. Container queries,
-`@font-face`, and `@keyframes` are still unsupported.
+when the resulting conditions only use those features. `prefers-color-scheme`
+uses the platform window theme when winit can report one, and falls back to the
+active theme background when platform detection is unavailable. `color-gamut`
+currently defaults to `srgb` until platform display-gamut detection is added. `pointer` /
+`any-pointer` currently default to `fine`, `hover` / `any-hover` default to
+`hover`, `update` defaults to `fast`, `scripting` defaults to `none`, and
+`forced-colors` defaults to `none`, matching DragonGUI's current desktop native
+rendering model. DragonGUI currently defaults `prefers-contrast` and
+`prefers-reduced-motion` to `no-preference`, `inverted-colors` to `none`, and
+both dynamic-range features to `standard`,
+until OS preference hooks are added. Container queries and broader media
+features are still unsupported.
+
+## Font Faces
+
+DragonGUI supports a first slice of `@font-face` for local font files.
+
+```css
+@font-face {
+    font-family: "Report UI";
+    src: url("C:/Windows/Fonts/segoeui.ttf") format("truetype");
+}
+
+Label.title {
+    font-family: "Report UI";
+}
+```
+
+Supported sources are local `url(...)` files with `.ttf`, `.otf`, or `.ttc`
+extensions. Remote URLs, `data:` URLs, bundled package asset resolution, and
+WOFF/WOFF2 loading are not supported yet. Relative paths are resolved from the
+current process working directory. Missing files and unsupported font sources
+emit one-time renderer diagnostics and appear in `debug_snapshot()["gpu"]["renderer"]["font_warnings"]`.
 
 DragonGUI also supports a first slice of static `@supports` feature queries.
 Declaration queries use the DragonGUI property parser, selector queries use the
@@ -83,9 +201,9 @@ DragonGUI selector subset, and false queries skip their nested rules.
     }
 }
 
-@supports not (backdrop-filter: blur(8px)) {
+@supports (backdrop-filter: blur(8px)) {
     Panel.floating {
-        background: rgba(18, 25, 39, 0.94);
+        backdrop-filter: blur(8px);
     }
 }
 ```
@@ -165,7 +283,8 @@ Boolean attributes are present only when true.
 Unsupported selector forms produce warnings and are ignored. Examples:
 
 - Ancestor pseudo-states inside selector functions, such as `Panel:is(:hover) Button`.
-- Browser pseudo-elements such as `::before` and `::after`.
+- Browser pseudo-elements other than DragonGUI's first-slice generated
+  `::before` and `::after`.
 
 ## Widget Type Names
 
@@ -245,6 +364,8 @@ Supported layout properties:
 | `column-gap` | logical pixels, percent, compatible `calc()` |
 | `grid-template-columns` | first-slice grid track list |
 | `grid-template-rows` | first-slice grid track list |
+| `grid-template-areas` | quoted named grid-area rows |
+| `grid-area` | named grid area for a child |
 | `grid-column` | line or span placement |
 | `grid-row` | line or span placement |
 | `overflow` | `visible`, `hidden`, `scroll`, `auto` |
@@ -263,9 +384,12 @@ terms, such as `calc(220px + 40px)`, `calc(20% + 30%)`, or
 axis has a definite size.
 
 First-slice CSS Grid supports `display: grid`, track lists using px, percent,
-`fr`, `auto`, `minmax()`, `fit-content()`, `repeat(n, ...)`, and
-`repeat(auto-fit/auto-fill, ...)`, plus `grid-column` and `grid-row`
-placements such as `1`, `2 / 4`, and `1 / span 2`.
+`fr`, `auto`, `minmax()`, `fit-content()`, nested finite `repeat(n, ...)`, and
+non-nested `repeat(auto-fit, ...)` / `repeat(auto-fill, ...)`, plus
+`grid-column` and `grid-row` placements such as `1`, `2 / 4`, and
+`1 / span 2`. Named `grid-template-areas` and child `grid-area` placement are
+also supported for rectangular named regions. `subgrid`, nested auto-repeat,
+and dense auto-placement are not supported yet.
 
 First-slice overflow supports explicit clipping with `hidden`, child escape
 with `visible`, and scroll opt-in with `auto` or `scroll`. `overflow-x`
@@ -392,6 +516,7 @@ Supported parts:
 | `Tab` | `tab`, `accent`, `badge` |
 | `NavItem` | `item`, `accent`, `badge` |
 | `DataFrameTable` | `header`, `row`, `row-selected`, `grid-line` |
+| Most rendered widgets | `before`, `after` generated content |
 
 Part styles support the same visual and text properties as widgets. `Panel::accent`
 is rendered as a left-side fill slice clipped to the panel's inner rounded shape,
@@ -401,6 +526,13 @@ lines, and border to the table's rounded shape, which keeps tables clean inside
 rounded panels. `Image` textures are clipped to the image widget's rounded
 content box inside the border. Dropdown and menu item fills are clipped to their
 rounded popup bounds.
+
+`::before` and `::after` are generated-content hooks, not real widget parts.
+They support `content: "..."`, `content: attr(name)`, plus visual/text styling
+for non-interactive prefix or suffix text. `attr(name)` reads widget metadata
+such as `id`, `key`, `class`, and serialized widget props such as `title`,
+`level`, or `value`. Generated content does not participate in layout, create
+hit targets, or support counters.
 
 Rounded `Scatter3D` clipping is not part of the current CSS slice. Scatter uses
 a rectangular 3D viewport and needs a dedicated stencil/mask implementation for
@@ -493,10 +625,26 @@ Panel {
 }
 ```
 
-V2 supports global `:root` variables only. Scoped custom properties are not
-implemented. `var()` may be used as a whole property value or inside larger
-parseable values such as borders, shadows, gradients, and transition
-shorthands.
+V2 supports global `:root` variables and a first slice of media/support-scoped
+`:root` variables. A variable declared directly inside a matching `@media` or
+static true `@supports` block can be used by declarations inside that same
+block:
+
+```css
+@media (min-width: 900px) {
+    :root {
+        --card-min: 180px;
+    }
+
+    Panel.dashboard {
+        grid-template-columns: repeat(2, minmax(var(--card-min), 1fr));
+    }
+}
+```
+
+Scoped custom properties on arbitrary widgets are not implemented. `var()` may
+be used as a whole property value or inside larger parseable values such as
+borders, shadows, gradients, grid tracks, and transition shorthands.
 
 ## Debugging
 

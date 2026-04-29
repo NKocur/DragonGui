@@ -1,5 +1,6 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 use glyphon::cosmic_text::{FeatureTag, FontFeatures};
 use glyphon::{
@@ -25,9 +26,10 @@ use crate::style::{
     collapsible_header_height_for_style, expanded_part_style_for_state,
     number_stepper_width_for_style, open_part_style_for_state, selected_part_style_for_state,
     state_part_style_for_state, uniform_layout_padding, FontFamily, FontStyle, FontVariantNumeric,
-    LineHeight, NodeStyle, PositionStyle, TextAlign, TextOverflow, TextSpacing, TextStyle,
-    TextTransform, TransformStyle, VisualStyle, BADGE_GAP_LP, BORDER_WIDTH_LP, CHECKBOX_BOX_LP,
-    CHECKBOX_LEFT_PAD_LP, DROPDOWN_CHEVRON_WIDTH_LP, PANEL_ACCENT_WIDTH_LP, TAB_GAP_LP,
+    GeneratedContent, LineHeight, NodeStyle, PartLayoutStyle, PartStyle, PositionStyle, TextAlign,
+    TextOverflow, TextSpacing, TextStyle, TextTransform, TransformStyle, VisualStyle, BADGE_GAP_LP,
+    BORDER_WIDTH_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP, DROPDOWN_CHEVRON_WIDTH_LP,
+    PANEL_ACCENT_WIDTH_LP, TAB_GAP_LP,
 };
 use crate::table;
 use crate::theme::Theme;
@@ -65,6 +67,7 @@ struct TextEntry {
 }
 
 type TextBufferCache = HashMap<TextKey, Vec<Buffer>>;
+type FontFamilyAliases = HashMap<String, String>;
 
 #[derive(Clone, Copy, Debug, Default)]
 struct TextRenderOptions {
@@ -124,6 +127,9 @@ fn text_options_for_parts(node: &WidgetNode, parts: &[&str]) -> TextRenderOption
 
 pub struct TextRendererDg {
     font_system: FontSystem,
+    attempted_font_sources: HashSet<String>,
+    font_warnings: Vec<String>,
+    font_aliases: FontFamilyAliases,
     swash_cache: SwashCache,
     atlas: TextAtlas,
     renderer: TextRenderer,
@@ -159,6 +165,9 @@ impl TextRendererDg {
         );
         Self {
             font_system,
+            attempted_font_sources: HashSet::new(),
+            font_warnings: Vec::new(),
+            font_aliases: HashMap::new(),
             swash_cache,
             atlas,
             renderer,
@@ -183,17 +192,19 @@ impl TextRendererDg {
         resources: &ResourceRegistry,
         toasts: &[ToastOverlay],
         stylesheets: &StylesheetStore,
-        window_w: f32,
-        window_h: f32,
+        media: DgMediaEnvironment,
     ) -> HashMap<String, [f32; 2]> {
         let pad = theme.spacing * sf;
         let open_dropdown = state.open_dropdown.as_deref();
         let dropdown_overlay = dropdown_overlay_rect(layout, state, theme, sf);
         let menu_overlays = active_menu_overlay_rects(tree, layout, state, theme, sf);
         let tooltip_overlay = active_tooltip_overlay_rect(tree, layout, theme, state, sf);
-        let media = DgMediaEnvironment::from_physical_size(window_w, window_h, sf);
+        let window_w = media.width * sf;
+        let window_h = media.height * sf;
+        self.sync_stylesheet_fonts(stylesheets);
 
         let mut entries = std::mem::take(&mut self.entries);
+        let font_aliases = &self.font_aliases;
         let mut caret_positions = HashMap::new();
         let mut cache: TextBufferCache = HashMap::new();
         for entry in entries.drain(..) {
@@ -209,6 +220,7 @@ impl TextRendererDg {
             menu_overlays,
             tooltip_overlay,
             &mut self.font_system,
+            font_aliases,
             sf,
             pad,
             &mut cache,
@@ -226,6 +238,7 @@ impl TextRendererDg {
             menu_overlays,
             tooltip_overlay,
             &mut self.font_system,
+            font_aliases,
             sf,
             pad,
             &mut cache,
@@ -238,6 +251,7 @@ impl TextRendererDg {
             state,
             theme,
             &mut self.font_system,
+            font_aliases,
             sf,
             pad,
             &mut cache,
@@ -250,6 +264,7 @@ impl TextRendererDg {
             state,
             theme,
             &mut self.font_system,
+            font_aliases,
             sf,
             pad,
             &mut cache,
@@ -262,6 +277,7 @@ impl TextRendererDg {
             state,
             theme,
             &mut self.font_system,
+            font_aliases,
             sf,
             stylesheets,
             media,
@@ -278,6 +294,7 @@ impl TextRendererDg {
             dropdown_overlay,
             menu_overlays,
             &mut self.font_system,
+            font_aliases,
             sf,
             pad,
             &mut cache,
@@ -288,6 +305,7 @@ impl TextRendererDg {
             toasts,
             theme,
             &mut self.font_system,
+            font_aliases,
             sf,
             window_w,
             window_h,
@@ -299,6 +317,71 @@ impl TextRendererDg {
         );
         self.entries = entries;
         caret_positions
+    }
+
+    fn sync_stylesheet_fonts(&mut self, stylesheets: &StylesheetStore) {
+        for font_face in stylesheets.font_faces() {
+            for source in &font_face.sources {
+                let key = source.url.clone();
+                if self.attempted_font_sources.contains(&key) {
+                    continue;
+                }
+                self.attempted_font_sources.insert(key);
+                if !is_supported_font_source(&source.url) {
+                    self.record_font_warning(
+                        &font_face.family,
+                        &source.url,
+                        "unsupported font source; only local .ttf, .otf, and .ttc files are supported",
+                    );
+                    continue;
+                }
+                let Some(path) = font_source_path(&source.url) else {
+                    self.record_font_warning(
+                        &font_face.family,
+                        &source.url,
+                        "unsupported font URL; remote and data URLs are not supported",
+                    );
+                    continue;
+                };
+                let before = self.font_system.db().faces().count();
+                if self.font_system.db_mut().load_font_file(&path).is_err() {
+                    self.record_font_warning(
+                        &font_face.family,
+                        &source.url,
+                        "failed to load font file",
+                    );
+                    continue;
+                }
+                let actual_family = {
+                    self.font_system
+                        .db()
+                        .faces()
+                        .skip(before)
+                        .find_map(|face| face.families.first().map(|(name, _)| name.clone()))
+                };
+                if let Some(actual_family) = actual_family {
+                    self.font_aliases
+                        .insert(font_face.family.clone(), actual_family);
+                } else {
+                    self.record_font_warning(
+                        &font_face.family,
+                        &source.url,
+                        "font file loaded but exposed no usable font family",
+                    );
+                }
+                break;
+            }
+        }
+    }
+
+    fn record_font_warning(&mut self, family: &str, source: &str, message: &str) {
+        let warning = format!("@font-face {family:?} source {source:?}: {message}");
+        eprintln!("DragonGUI: {warning}");
+        self.font_warnings.push(warning);
+    }
+
+    pub(crate) fn font_warnings(&self) -> &[String] {
+        &self.font_warnings
     }
 
     /// Upload glyph data to the GPU.  Call this once per frame before `render`.
@@ -358,6 +441,35 @@ impl TextRendererDg {
 }
 
 // ---------------------------------------------------------------------------
+fn is_supported_font_source(url: &str) -> bool {
+    let lower = url.split('?').next().unwrap_or(url).to_ascii_lowercase();
+    matches!(
+        Path::new(&lower).extension().and_then(|ext| ext.to_str()),
+        Some("ttf" | "otf" | "ttc")
+    )
+}
+
+fn font_source_path(url: &str) -> Option<PathBuf> {
+    if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("data:") {
+        return None;
+    }
+    let mut path = url.split('?').next().unwrap_or(url).replace('\\', "/");
+    if let Some(stripped) = path.strip_prefix("file:///") {
+        path = stripped.to_string();
+    } else if let Some(stripped) = path.strip_prefix("file://") {
+        path = stripped.to_string();
+    }
+    if cfg!(windows) && path.starts_with('/') && path.get(2..3) == Some(":") {
+        path.remove(0);
+    }
+    let path = PathBuf::from(path);
+    if path.is_absolute() {
+        Some(path)
+    } else {
+        std::env::current_dir().ok().map(|cwd| cwd.join(path))
+    }
+}
+
 // Widget-tree → TextEntry mapping
 // ---------------------------------------------------------------------------
 
@@ -371,6 +483,7 @@ fn collect_text(
     menu_overlays: [Option<Rect>; 2],
     tooltip_overlay: Option<Rect>,
     font_system: &mut FontSystem,
+    font_aliases: &FontFamilyAliases,
     sf: f32,
     pad: f32,
     cache: &mut TextBufferCache,
@@ -708,6 +821,7 @@ fn collect_text(
                                 .unwrap_or(0.0);
                             push_text_entry_impl(
                                 font_system,
+                                font_aliases,
                                 out,
                                 text,
                                 font_size,
@@ -729,6 +843,7 @@ fn collect_text(
                         } else {
                             push_text_entry(
                                 font_system,
+                                font_aliases,
                                 out,
                                 text,
                                 font_size,
@@ -762,6 +877,7 @@ fn collect_text(
                 sf,
                 state,
                 font_system,
+                font_aliases,
                 out,
                 cache,
                 caret_positions,
@@ -771,6 +887,42 @@ fn collect_text(
                 tooltip_overlay,
             );
         }
+        emit_generated_content_text(
+            node,
+            "before",
+            layout,
+            state,
+            theme,
+            font_system,
+            font_aliases,
+            sf,
+            pad,
+            cache,
+            caret_positions,
+            out,
+            open_dropdown,
+            dropdown_overlay,
+            menu_overlays,
+            tooltip_overlay,
+        );
+        emit_generated_content_text(
+            node,
+            "after",
+            layout,
+            state,
+            theme,
+            font_system,
+            font_aliases,
+            sf,
+            pad,
+            cache,
+            caret_positions,
+            out,
+            open_dropdown,
+            dropdown_overlay,
+            menu_overlays,
+            tooltip_overlay,
+        );
         apply_translate_to_text_entries(
             &mut out[own_text_start..],
             visual_transform_for_text(node, state),
@@ -789,6 +941,7 @@ fn collect_text(
             menu_overlays,
             tooltip_overlay,
             font_system,
+            font_aliases,
             sf,
             pad,
             cache,
@@ -796,6 +949,286 @@ fn collect_text(
             out,
         );
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_generated_content_text(
+    node: &WidgetNode,
+    part: &str,
+    layout: &LayoutResult,
+    state: &WidgetState,
+    theme: &Theme,
+    font_system: &mut FontSystem,
+    font_aliases: &FontFamilyAliases,
+    sf: f32,
+    _pad: f32,
+    cache: &mut TextBufferCache,
+    caret_positions: &mut HashMap<String, [f32; 2]>,
+    out: &mut Vec<TextEntry>,
+    open_dropdown: Option<&str>,
+    dropdown_overlay: Option<Rect>,
+    menu_overlays: [Option<Rect>; 2],
+    tooltip_overlay: Option<Rect>,
+) {
+    let Some(style) = generated_part_style_for_state(node, state, part) else {
+        return;
+    };
+    let Some(content) = style
+        .content
+        .as_ref()
+        .and_then(|content| generated_content_text(node, content))
+        .filter(|content| !content.is_empty())
+    else {
+        return;
+    };
+    let Some(r) = layout.rects.get(&node.id).copied() else {
+        return;
+    };
+    if r.w <= 0.0 || r.h <= 0.0 {
+        return;
+    }
+    let font_size = style
+        .text
+        .font_size
+        .or(node.style.text.font_size)
+        .map(|size| size.max(8.0) * sf)
+        .unwrap_or_else(|| text_font_size(node, theme, sf));
+    let line_height =
+        text_line_height_from_styles(Some(&style.text), &node.style.text, font_size, theme, sf);
+    let font_family = style
+        .text
+        .font_family
+        .as_ref()
+        .or(node.style.text.font_family.as_ref());
+    let font_weight = style
+        .text
+        .font_weight
+        .or(node.style.text.font_weight)
+        .unwrap_or(Weight::NORMAL.0);
+    let generated_pad = style.layout.padding.unwrap_or(theme.spacing * 0.5).max(0.0) * sf;
+    let width = style.layout.width.map(|width| width.max(1.0) * sf);
+    let left = if part == "after" {
+        width
+            .map(|width| (r.x + r.w - generated_pad - width).max(r.x + generated_pad))
+            .unwrap_or(r.x + generated_pad)
+    } else {
+        r.x + generated_pad
+    };
+    let right = if part == "after" {
+        r.x + r.w - generated_pad
+    } else {
+        width
+            .map(|width| (left + width).min(r.x + r.w - generated_pad))
+            .unwrap_or(r.x + r.w - generated_pad)
+    };
+    if right <= left {
+        return;
+    }
+    let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+    let Some(clip_rect) = (Rect {
+        x: left,
+        y: r.y,
+        w: right - left,
+        h: r.h,
+    })
+    .intersect(layout.visible_rect(&node.id).unwrap_or(r)) else {
+        return;
+    };
+    if is_obscured_by_overlay(
+        node,
+        &clip_rect,
+        open_dropdown,
+        dropdown_overlay,
+        menu_overlays,
+        tooltip_overlay,
+    ) {
+        return;
+    }
+    let color = part_style_text_color(&style, theme)
+        .unwrap_or_else(|| text_color(node, state, theme, false));
+    let align = style.text.text_align.unwrap_or(if part == "after" {
+        TextAlign::Right
+    } else {
+        TextAlign::Left
+    });
+    let bounds = TextBounds {
+        left: clip_rect.x as i32,
+        top: clip_rect.y as i32,
+        right: (clip_rect.x + clip_rect.w) as i32,
+        bottom: (clip_rect.y + clip_rect.h) as i32,
+    };
+    push_text_entry(
+        font_system,
+        font_aliases,
+        out,
+        &content,
+        font_size,
+        line_height,
+        font_family,
+        font_weight,
+        left,
+        top,
+        bounds,
+        color,
+        align,
+        cache,
+        None,
+        caret_positions,
+        text_options_from_styles(Some(&style.text), &node.style.text),
+    );
+}
+
+fn generated_content_text(node: &WidgetNode, content: &GeneratedContent) -> Option<String> {
+    match content {
+        GeneratedContent::Text(value) => Some(value.clone()),
+        GeneratedContent::Attr(name) => widget_attr_value(node, name),
+    }
+}
+
+fn widget_attr_value(node: &WidgetNode, name: &str) -> Option<String> {
+    match name {
+        "id" => Some(node.id.clone()),
+        "key" => node.key.clone(),
+        "class" | "class_" => node.class_name.clone(),
+        "type" => Some(widget_kind_name(node.kind).to_string()),
+        _ => node.props.raw_props.get(name).and_then(json_attr_value),
+    }
+    .filter(|value| !value.is_empty())
+}
+
+fn json_attr_value(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::Null => None,
+        serde_json::Value::String(value) => Some(value.clone()),
+        serde_json::Value::Bool(value) => Some(value.to_string()),
+        serde_json::Value::Number(value) => Some(value.to_string()),
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => Some(value.to_string()),
+    }
+}
+
+fn widget_kind_name(kind: WidgetKind) -> &'static str {
+    match kind {
+        WidgetKind::Window => "window",
+        WidgetKind::HLayout => "h_layout",
+        WidgetKind::VLayout => "v_layout",
+        WidgetKind::Panel => "panel",
+        WidgetKind::Collapsible => "collapsible",
+        WidgetKind::Modal => "modal",
+        WidgetKind::Badge => "badge",
+        WidgetKind::Tag => "tag",
+        WidgetKind::Button => "button",
+        WidgetKind::Checkbox => "checkbox",
+        WidgetKind::Dropdown => "dropdown",
+        WidgetKind::Label => "label",
+        WidgetKind::Slider => "slider",
+        WidgetKind::NumberInput => "number_input",
+        WidgetKind::ProgressBar => "progress_bar",
+        WidgetKind::TextInput => "text_input",
+        WidgetKind::TextArea => "text_area",
+        WidgetKind::Separator => "separator",
+        WidgetKind::Spacer => "spacer",
+        WidgetKind::StatusBar => "status_bar",
+        WidgetKind::MenuBar => "menu_bar",
+        WidgetKind::Menu => "menu",
+        WidgetKind::MenuItem => "menu_item",
+        WidgetKind::ContextMenu => "context_menu",
+        WidgetKind::Tooltip => "tooltip",
+        WidgetKind::Toast => "toast",
+        WidgetKind::Tabs => "tabs",
+        WidgetKind::Tab => "tab",
+        WidgetKind::Pages => "pages",
+        WidgetKind::Page => "page",
+        WidgetKind::Sidebar => "sidebar",
+        WidgetKind::NavItem => "nav_item",
+        WidgetKind::Scatter3D => "scatter_3d",
+        WidgetKind::DataFrameTable => "dataframe_table",
+        WidgetKind::Image => "image",
+        WidgetKind::Unknown => "unknown",
+    }
+}
+
+fn generated_part_style_for_state(
+    node: &WidgetNode,
+    state: &WidgetState,
+    part: &str,
+) -> Option<PartStyle> {
+    let mut style = PartStyle::default();
+    let mut found = false;
+    let mut merge = |overlay: Option<&PartStyle>| {
+        if let Some(overlay) = overlay {
+            merge_generated_part_style(&mut style, overlay);
+            found = true;
+        }
+    };
+    merge(base_part_style(&node.style, part));
+    merge(checked_part_style_for_state(
+        &node.style,
+        &node.id,
+        state,
+        part,
+    ));
+    merge(open_part_style_for_state(
+        &node.style,
+        &node.id,
+        state,
+        part,
+    ));
+    merge(expanded_part_style_for_state(
+        &node.style,
+        &node.id,
+        state,
+        part,
+    ));
+    merge(collapsed_part_style_for_state(
+        &node.style,
+        &node.id,
+        state,
+        part,
+    ));
+    merge(selected_part_style_for_state(
+        &node.style,
+        &node.id,
+        state,
+        part,
+    ));
+    merge(state_part_style_for_state(
+        &node.style,
+        &node.id,
+        state,
+        part,
+    ));
+    found.then_some(style)
+}
+
+fn merge_generated_part_style(base: &mut PartStyle, overlay: &PartStyle) {
+    merge_generated_part_layout(&mut base.layout, &overlay.layout);
+    base.visual = base.visual.merged(&overlay.visual);
+    merge_generated_text_style(&mut base.text, &overlay.text);
+    base.content = overlay.content.clone().or_else(|| base.content.clone());
+}
+
+fn merge_generated_part_layout(base: &mut PartLayoutStyle, overlay: &PartLayoutStyle) {
+    base.width = overlay.width.or(base.width);
+    base.height = overlay.height.or(base.height);
+    base.padding = overlay.padding.or(base.padding);
+    base.gap = overlay.gap.or(base.gap);
+}
+
+fn merge_generated_text_style(base: &mut TextStyle, overlay: &TextStyle) {
+    base.font_size = overlay.font_size.or(base.font_size);
+    base.font_family = overlay
+        .font_family
+        .clone()
+        .or_else(|| base.font_family.clone());
+    base.font_weight = overlay.font_weight.or(base.font_weight);
+    base.color = overlay.color.clone().or_else(|| base.color.clone());
+    base.text_align = overlay.text_align.or(base.text_align);
+    base.text_transform = overlay.text_transform.or(base.text_transform);
+    base.letter_spacing = overlay.letter_spacing.or(base.letter_spacing);
+    base.line_height = overlay.line_height.or(base.line_height);
+    base.font_style = overlay.font_style.or(base.font_style);
+    base.font_variant_numeric = overlay.font_variant_numeric.or(base.font_variant_numeric);
+    base.text_overflow = overlay.text_overflow.or(base.text_overflow);
 }
 
 #[derive(Clone, Copy)]
@@ -1071,6 +1504,10 @@ fn state_visual_for(node: &WidgetNode, state: &WidgetState) -> Option<VisualStyl
         visual = visual.merged(&node.style.disabled);
         changed = true;
     }
+    if let Some(animation) = state.animation_visuals.get(&node.id) {
+        visual = visual.merged(animation);
+        changed = true;
+    }
     changed.then_some(visual)
 }
 
@@ -1257,6 +1694,7 @@ fn emit_badge_text(
     sf: f32,
     state: &WidgetState,
     font_system: &mut FontSystem,
+    font_aliases: &FontFamilyAliases,
     out: &mut Vec<TextEntry>,
     cache: &mut TextBufferCache,
     caret_positions: &mut HashMap<String, [f32; 2]>,
@@ -1315,6 +1753,7 @@ fn emit_badge_text(
     let color = part_text_color(node, state, theme, &["badge"], contrast_glyph_color(bg));
     push_text_entry(
         font_system,
+        font_aliases,
         out,
         badge,
         badge_font_size,
@@ -1393,6 +1832,7 @@ fn collect_dropdown_overlay_text(
     state: &WidgetState,
     theme: &Theme,
     font_system: &mut FontSystem,
+    font_aliases: &FontFamilyAliases,
     sf: f32,
     pad: f32,
     cache: &mut TextBufferCache,
@@ -1434,6 +1874,7 @@ fn collect_dropdown_overlay_text(
                     part_text_color(node, state, theme, part_names, glyph_color(theme.text));
                 push_text_entry(
                     font_system,
+                    font_aliases,
                     out,
                     item,
                     font_size,
@@ -1466,6 +1907,7 @@ fn collect_dropdown_overlay_text(
             state,
             theme,
             font_system,
+            font_aliases,
             sf,
             pad,
             cache,
@@ -1481,6 +1923,7 @@ fn collect_menu_overlay_text(
     state: &WidgetState,
     theme: &Theme,
     font_system: &mut FontSystem,
+    font_aliases: &FontFamilyAliases,
     sf: f32,
     pad: f32,
     cache: &mut TextBufferCache,
@@ -1494,6 +1937,7 @@ fn collect_menu_overlay_text(
             state,
             theme,
             font_system,
+            font_aliases,
             sf,
             pad,
             cache,
@@ -1509,6 +1953,7 @@ fn collect_menu_overlay_text(
             state,
             theme,
             font_system,
+            font_aliases,
             sf,
             pad,
             cache,
@@ -1526,6 +1971,7 @@ fn collect_single_menu_overlay_text(
     state: &WidgetState,
     theme: &Theme,
     font_system: &mut FontSystem,
+    font_aliases: &FontFamilyAliases,
     sf: f32,
     pad: f32,
     cache: &mut TextBufferCache,
@@ -1558,6 +2004,7 @@ fn collect_single_menu_overlay_text(
         };
         push_text_entry(
             font_system,
+            font_aliases,
             out,
             &item.value,
             font_size,
@@ -1588,6 +2035,7 @@ fn collect_tooltip_text(
     state: &WidgetState,
     theme: &Theme,
     font_system: &mut FontSystem,
+    font_aliases: &FontFamilyAliases,
     sf: f32,
     stylesheets: &StylesheetStore,
     media: DgMediaEnvironment,
@@ -1624,6 +2072,7 @@ fn collect_tooltip_text(
     let opacity = overlay_opacity(&style, 1.0);
     push_wrapped_text_entry(
         font_system,
+        font_aliases,
         out,
         text,
         font_size,
@@ -1656,6 +2105,7 @@ fn collect_rich_tooltip_text(
     dropdown_overlay: Option<Rect>,
     menu_overlays: [Option<Rect>; 2],
     font_system: &mut FontSystem,
+    font_aliases: &FontFamilyAliases,
     sf: f32,
     pad: f32,
     cache: &mut TextBufferCache,
@@ -1676,6 +2126,7 @@ fn collect_rich_tooltip_text(
             menu_overlays,
             None,
             font_system,
+            font_aliases,
             sf,
             pad,
             cache,
@@ -1689,6 +2140,7 @@ fn collect_toast_text(
     toasts: &[ToastOverlay],
     theme: &Theme,
     font_system: &mut FontSystem,
+    font_aliases: &FontFamilyAliases,
     sf: f32,
     window_w: f32,
     window_h: f32,
@@ -1735,6 +2187,7 @@ fn collect_toast_text(
         let opacity = overlay_opacity(&style, toast.opacity);
         push_wrapped_text_entry(
             font_system,
+            font_aliases,
             out,
             &toast.message,
             font_size,
@@ -1769,6 +2222,7 @@ fn collect_table_text(
     menu_overlays: [Option<Rect>; 2],
     tooltip_overlay: Option<Rect>,
     font_system: &mut FontSystem,
+    font_aliases: &FontFamilyAliases,
     sf: f32,
     pad: f32,
     cache: &mut TextBufferCache,
@@ -1823,6 +2277,7 @@ fn collect_table_text(
                 ) {
                     push_text_entry(
                         font_system,
+                        font_aliases,
                         out,
                         "#",
                         header_font_size,
@@ -1881,6 +2336,7 @@ fn collect_table_text(
                     ) {
                         push_text_entry(
                             font_system,
+                            font_aliases,
                             out,
                             name,
                             header_font_size,
@@ -1946,6 +2402,7 @@ fn collect_table_text(
                     ) {
                         push_text_entry(
                             font_system,
+                            font_aliases,
                             out,
                             &table::source_row(table_state, row).to_string(),
                             row_font_size,
@@ -1993,6 +2450,7 @@ fn collect_table_text(
                         ) {
                             push_text_entry(
                                 font_system,
+                                font_aliases,
                                 out,
                                 &value,
                                 row_font_size,
@@ -2028,6 +2486,7 @@ fn collect_table_text(
             menu_overlays,
             tooltip_overlay,
             font_system,
+            font_aliases,
             sf,
             pad,
             cache,
@@ -2127,6 +2586,7 @@ fn display_text<'a>(node: &'a WidgetNode, state: &'a WidgetState) -> Option<(&'a
 
 fn push_text_entry(
     font_system: &mut FontSystem,
+    font_aliases: &FontFamilyAliases,
     out: &mut Vec<TextEntry>,
     text: &str,
     font_size: f32,
@@ -2145,6 +2605,7 @@ fn push_text_entry(
 ) {
     push_text_entry_impl(
         font_system,
+        font_aliases,
         out,
         text,
         font_size,
@@ -2168,6 +2629,7 @@ fn push_text_entry(
 #[allow(clippy::too_many_arguments)]
 fn push_wrapped_text_entry(
     font_system: &mut FontSystem,
+    font_aliases: &FontFamilyAliases,
     out: &mut Vec<TextEntry>,
     text: &str,
     font_size: f32,
@@ -2185,6 +2647,7 @@ fn push_wrapped_text_entry(
 ) {
     push_text_entry_impl(
         font_system,
+        font_aliases,
         out,
         text,
         font_size,
@@ -2208,6 +2671,7 @@ fn push_wrapped_text_entry(
 #[allow(clippy::too_many_arguments)]
 fn push_text_entry_impl(
     font_system: &mut FontSystem,
+    font_aliases: &FontFamilyAliases,
     out: &mut Vec<TextEntry>,
     text: &str,
     font_size: f32,
@@ -2241,6 +2705,7 @@ fn push_text_entry_impl(
         font_size,
         line_height,
         font_family,
+        font_aliases,
         font_weight,
         avail_w,
         wrap,
@@ -2253,7 +2718,7 @@ fn push_text_entry_impl(
     let letter_spacing = resolved_letter_spacing_em(options.letter_spacing, font_size);
     let key = TextKey {
         text: text.to_string(),
-        font_family: font_family_key(font_family),
+        font_family: font_family_key(font_family, font_aliases),
         font_weight,
         font_style,
         tabular_nums,
@@ -2270,7 +2735,7 @@ fn push_text_entry_impl(
             let mut buf = Buffer::new(font_system, Metrics::new(font_size, line_height));
             buf.set_size(font_system, Some(avail_w), None);
             buf.set_wrap(font_system, if wrap { Wrap::Word } else { Wrap::None });
-            let attrs = text_attrs(font_family, font_weight, options, font_size);
+            let attrs = text_attrs(font_family, font_aliases, font_weight, options, font_size);
             buf.set_text(font_system, text, &attrs, Shaping::Advanced, None);
             buf.shape_until_scroll(font_system, false);
             buf
@@ -2311,6 +2776,7 @@ fn prepare_display_text<'a>(
     font_size: f32,
     line_height: f32,
     font_family: Option<&FontFamily>,
+    font_aliases: &FontFamilyAliases,
     font_weight: u16,
     avail_w: f32,
     wrap: bool,
@@ -2331,6 +2797,7 @@ fn prepare_display_text<'a>(
         font_size,
         line_height,
         font_family,
+        font_aliases,
         font_weight,
         options,
     ) <= avail_w
@@ -2343,6 +2810,7 @@ fn prepare_display_text<'a>(
         font_size,
         line_height,
         font_family,
+        font_aliases,
         font_weight,
         options,
         avail_w,
@@ -2382,6 +2850,7 @@ fn ellipsize_text(
     font_size: f32,
     line_height: f32,
     font_family: Option<&FontFamily>,
+    font_aliases: &FontFamilyAliases,
     font_weight: u16,
     options: TextRenderOptions,
     avail_w: f32,
@@ -2393,6 +2862,7 @@ fn ellipsize_text(
         font_size,
         line_height,
         font_family,
+        font_aliases,
         font_weight,
         options,
     ) > avail_w
@@ -2412,6 +2882,7 @@ fn ellipsize_text(
             font_size,
             line_height,
             font_family,
+            font_aliases,
             font_weight,
             options,
         ) <= avail_w
@@ -2431,30 +2902,32 @@ fn text_width_for_measurement(
     font_size: f32,
     line_height: f32,
     font_family: Option<&FontFamily>,
+    font_aliases: &FontFamilyAliases,
     font_weight: u16,
     options: TextRenderOptions,
 ) -> f32 {
     let mut buf = Buffer::new(font_system, Metrics::new(font_size, line_height));
     buf.set_size(font_system, Some(1_000_000.0), None);
     buf.set_wrap(font_system, Wrap::None);
-    let attrs = text_attrs(font_family, font_weight, options, font_size);
+    let attrs = text_attrs(font_family, font_aliases, font_weight, options, font_size);
     buf.set_text(font_system, text, &attrs, Shaping::Advanced, None);
     buf.shape_until_scroll(font_system, false);
     text_width_for_buffer(&buf)
 }
 
-fn text_attrs(
-    font_family: Option<&FontFamily>,
+fn text_attrs<'a>(
+    font_family: Option<&'a FontFamily>,
+    font_aliases: &'a FontFamilyAliases,
     font_weight: u16,
     options: TextRenderOptions,
     font_size: f32,
-) -> Attrs<'_> {
+) -> Attrs<'a> {
     let glyph_style = match options.font_style.unwrap_or(FontStyle::Normal) {
         FontStyle::Normal => GlyphStyle::Normal,
         FontStyle::Italic => GlyphStyle::Italic,
     };
     let mut attrs = Attrs::new()
-        .family(to_glyphon_family(font_family))
+        .family(to_glyphon_family(font_family, font_aliases))
         .weight(Weight(font_weight))
         .style(glyph_style);
     if let Some(spacing) = resolved_letter_spacing_em(options.letter_spacing, font_size) {
@@ -2476,25 +2949,35 @@ fn resolved_letter_spacing_em(spacing: Option<TextSpacing>, font_size: f32) -> O
     }
 }
 
-fn font_family_key(family: Option<&FontFamily>) -> String {
+fn font_family_key(family: Option<&FontFamily>, aliases: &FontFamilyAliases) -> String {
     match family {
         Some(FontFamily::Serif) => "serif".to_string(),
         Some(FontFamily::SansSerif) | None => "sans-serif".to_string(),
         Some(FontFamily::Monospace) => "monospace".to_string(),
         Some(FontFamily::Cursive) => "cursive".to_string(),
         Some(FontFamily::Fantasy) => "fantasy".to_string(),
-        Some(FontFamily::Name(name)) => format!("name:{name}"),
+        Some(FontFamily::Name(name)) => {
+            format!("name:{}", aliases.get(name).unwrap_or(name))
+        }
     }
 }
 
-fn to_glyphon_family(family: Option<&FontFamily>) -> Family<'_> {
+fn to_glyphon_family<'a>(
+    family: Option<&'a FontFamily>,
+    aliases: &'a FontFamilyAliases,
+) -> Family<'a> {
     match family {
         Some(FontFamily::Serif) => Family::Serif,
         Some(FontFamily::SansSerif) | None => Family::SansSerif,
         Some(FontFamily::Monospace) => Family::Monospace,
         Some(FontFamily::Cursive) => Family::Cursive,
         Some(FontFamily::Fantasy) => Family::Fantasy,
-        Some(FontFamily::Name(name)) => Family::Name(name.as_str()),
+        Some(FontFamily::Name(name)) => Family::Name(
+            aliases
+                .get(name)
+                .map(String::as_str)
+                .unwrap_or(name.as_str()),
+        ),
     }
 }
 
@@ -2607,6 +3090,25 @@ mod tests {
             style: Default::default(),
             children: Vec::new(),
         }
+    }
+
+    #[test]
+    fn generated_content_attr_reads_widget_props() {
+        let mut badge = node("state", WidgetKind::Badge);
+        badge.props.raw_props.insert(
+            "level".to_string(),
+            serde_json::Value::String("success".to_string()),
+        );
+        badge.class_name = Some("metric".to_string());
+
+        assert_eq!(
+            generated_content_text(&badge, &GeneratedContent::Attr("level".to_string())).as_deref(),
+            Some("success")
+        );
+        assert_eq!(
+            generated_content_text(&badge, &GeneratedContent::Attr("class".to_string())).as_deref(),
+            Some("metric")
+        );
     }
 
     #[test]
@@ -2739,6 +3241,7 @@ mod tests {
         let mut font_system = FontSystem::new();
         let resources = ResourceRegistry::default();
         let mut cache = TextBufferCache::default();
+        let font_aliases = FontFamilyAliases::default();
         let mut caret_positions = HashMap::new();
         let mut unobscured = Vec::new();
         collect_table_text(
@@ -2752,6 +3255,7 @@ mod tests {
             [None, None],
             None,
             &mut font_system,
+            &font_aliases,
             1.0,
             6.0,
             &mut cache,
@@ -2777,6 +3281,7 @@ mod tests {
                 h: metrics.row_h,
             }),
             &mut font_system,
+            &font_aliases,
             1.0,
             6.0,
             &mut cache,

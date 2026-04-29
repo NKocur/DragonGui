@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -13,14 +13,15 @@ use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
-use winit::window::{Window, WindowId};
+use winit::window::{Theme as WinitTheme, Window, WindowId};
 
 use crate::commands::{
     Command, CommandBridge, CommandValue, Dirty, RuntimeEvent, ScatterTelemetry, TableColumnPacket,
 };
 use crate::css_style::{
     apply_stylesheets_to_tree_for_media, matched_part_rule_labels_for_tree_with_media,
-    matched_rule_labels_for_tree_with_media, DgMediaEnvironment, StylesheetOrigin, StylesheetStore,
+    matched_rule_labels_for_tree_with_media, DgKeyframes, DgMediaColorGamut, DgMediaColorScheme,
+    DgMediaEnvironment, DgMediaHover, DgMediaPointer, StylesheetOrigin, StylesheetStore,
 };
 use crate::document::{self, NodeProps, ScatterSpec, WidgetKind, WidgetNode};
 use crate::error::DragonError;
@@ -34,17 +35,19 @@ use crate::layout::{
 };
 use crate::overlays::menu_popup_width;
 use crate::primitives::{
-    panel_scrollbar_geometry, PanelScrollbarAxis, PanelScrollbarAxisGeometry, PrimitivesRenderer,
+    interpolate_visual_style, panel_scrollbar_geometry, PanelScrollbarAxis,
+    PanelScrollbarAxisGeometry, PrimitivesRenderer,
 };
 use crate::resources::ResourceRegistry;
 use crate::scatter::{self, PointInstance, ScatterWidget};
 use crate::style::{
     collapsible_header_height_for_style, number_stepper_width, number_stepper_width_for_style,
-    BackgroundPaint, BoxShadow, ColorRef, DisplayStyle, FlexDirectionStyle, FontFamily, FontStyle,
-    FontVariantNumeric, GridLineStyle, GridPlacementStyle, GridTrackSize, LayoutLength,
-    LayoutStyle, LineHeight, NodeStyle, OverflowStyle, PartLayoutStyle, PartStyle, PositionStyle,
-    TextAlign, TextOverflow, TextSpacing, TextStyle, TextTransform, TransitionStyle,
-    TransitionTimingFunction, VisualStyle, WidgetStyle,
+    AnimationDirection, AnimationFillMode, AnimationIterationCount, AnimationPlayState,
+    AnimationStyle, BackgroundPaint, BoxShadow, ColorRef, DisplayStyle, FlexDirectionStyle,
+    FontFamily, FontStyle, FontVariantNumeric, GeneratedContent, GridLineStyle, GridPlacementStyle,
+    GridTrackSize, LayoutLength, LayoutStyle, LineHeight, NodeStyle, OverflowStyle,
+    PartLayoutStyle, PartStyle, PositionStyle, TextAlign, TextOverflow, TextSpacing, TextStyle,
+    TextTransform, TransitionStyle, TransitionTimingFunction, VisualStyle, WidgetStyle,
 };
 use crate::table::{self, TableHit};
 use crate::text::TextRendererDg;
@@ -742,6 +745,26 @@ fn grid_placement_json(value: GridPlacementStyle) -> Value {
     })
 }
 
+fn grid_template_areas_json(value: &crate::style::GridTemplateAreas) -> Value {
+    json!({
+        "columns": value.columns,
+        "rows": value.rows,
+        "areas": value
+            .areas
+            .iter()
+            .map(|area| {
+                json!({
+                    "name": area.name,
+                    "row_start": area.row_start,
+                    "row_end": area.row_end,
+                    "column_start": area.column_start,
+                    "column_end": area.column_end,
+                })
+            })
+            .collect::<Vec<_>>(),
+    })
+}
+
 fn insert_color_ref(map: &mut Map<String, Value>, key: &str, value: &Option<ColorRef>) {
     if let Some(value) = value {
         map.insert(key.to_string(), color_ref_json(value));
@@ -852,6 +875,15 @@ fn layout_style_snapshot(style: &LayoutStyle) -> Value {
             Value::Array(value.iter().map(grid_track_json).collect()),
         );
     }
+    if let Some(value) = &style.grid_template_areas {
+        map.insert(
+            "grid_template_areas".to_string(),
+            grid_template_areas_json(value),
+        );
+    }
+    if let Some(value) = &style.grid_area {
+        map.insert("grid_area".to_string(), json!(value));
+    }
     if let Some(value) = style.grid_column {
         map.insert("grid_column".to_string(), grid_placement_json(value));
     }
@@ -868,6 +900,14 @@ fn visual_style_snapshot(style: &VisualStyle) -> Value {
         if let Some(value) = background_paint_json(paint) {
             map.insert("background_paint".to_string(), value);
         }
+    }
+    if let Some(filter) = style.backdrop_filter {
+        map.insert(
+            "backdrop_filter".to_string(),
+            json!({
+                "blur": filter.blur,
+            }),
+        );
     }
     insert_color_ref(&mut map, "foreground", &style.foreground);
     insert_color_ref(&mut map, "border_color", &style.border_color);
@@ -993,6 +1033,83 @@ fn transition_style_snapshot(style: &TransitionStyle) -> Value {
     Value::Object(map)
 }
 
+fn animation_style_snapshot(style: &AnimationStyle) -> Value {
+    let mut map = Map::new();
+    if let Some(name) = &style.name {
+        map.insert("name".to_string(), json!(name));
+    }
+    if let Some(duration) = style.duration_ms {
+        map.insert("duration_ms".to_string(), json!(duration));
+    }
+    if let Some(delay) = style.delay_ms {
+        map.insert("delay_ms".to_string(), json!(delay));
+    }
+    if let Some(timing) = style.timing_function {
+        map.insert(
+            "timing_function".to_string(),
+            json!(transition_timing_name(timing)),
+        );
+    }
+    if let Some(count) = style.iteration_count {
+        map.insert(
+            "iteration_count".to_string(),
+            animation_iteration_json(count),
+        );
+    }
+    if let Some(direction) = style.direction {
+        map.insert(
+            "direction".to_string(),
+            json!(animation_direction_name(direction)),
+        );
+    }
+    if let Some(fill_mode) = style.fill_mode {
+        map.insert(
+            "fill_mode".to_string(),
+            json!(animation_fill_mode_name(fill_mode)),
+        );
+    }
+    if let Some(play_state) = style.play_state {
+        map.insert(
+            "play_state".to_string(),
+            json!(animation_play_state_name(play_state)),
+        );
+    }
+    Value::Object(map)
+}
+
+fn animation_iteration_json(value: AnimationIterationCount) -> Value {
+    match value {
+        AnimationIterationCount::One => json!(1),
+        AnimationIterationCount::Infinite => json!("infinite"),
+        AnimationIterationCount::Count(count) => json!(count),
+    }
+}
+
+fn animation_direction_name(value: AnimationDirection) -> &'static str {
+    match value {
+        AnimationDirection::Normal => "normal",
+        AnimationDirection::Reverse => "reverse",
+        AnimationDirection::Alternate => "alternate",
+        AnimationDirection::AlternateReverse => "alternate-reverse",
+    }
+}
+
+fn animation_fill_mode_name(value: AnimationFillMode) -> &'static str {
+    match value {
+        AnimationFillMode::None => "none",
+        AnimationFillMode::Forwards => "forwards",
+        AnimationFillMode::Backwards => "backwards",
+        AnimationFillMode::Both => "both",
+    }
+}
+
+fn animation_play_state_name(value: AnimationPlayState) -> &'static str {
+    match value {
+        AnimationPlayState::Running => "running",
+        AnimationPlayState::Paused => "paused",
+    }
+}
+
 fn transition_property_name(property: crate::style::TransitionProperty) -> &'static str {
     match property {
         crate::style::TransitionProperty::All => "all",
@@ -1083,7 +1200,20 @@ fn part_style_snapshot(style: &PartStyle) -> Value {
     );
     insert_object_if_non_empty(&mut map, "visual", visual_style_snapshot(&style.visual));
     insert_object_if_non_empty(&mut map, "text", text_style_snapshot(&style.text));
+    if let Some(content) = &style.content {
+        map.insert(
+            "content".to_string(),
+            json!(generated_content_snapshot(content)),
+        );
+    }
     Value::Object(map)
+}
+
+fn generated_content_snapshot(content: &GeneratedContent) -> String {
+    match content {
+        GeneratedContent::Text(value) => value.clone(),
+        GeneratedContent::Attr(name) => format!("attr({name})"),
+    }
 }
 
 fn insert_object_if_non_empty(map: &mut Map<String, Value>, key: &str, value: Value) {
@@ -1160,6 +1290,11 @@ fn node_style_snapshot(
         &mut map,
         "transition",
         transition_style_snapshot(&style.transition),
+    );
+    insert_object_if_non_empty(
+        &mut map,
+        "animation",
+        animation_style_snapshot(&style.animation),
     );
     insert_object_if_non_empty(
         &mut map,
@@ -1374,6 +1509,32 @@ fn theme_snapshot(theme: &Theme) -> Value {
         "spacing": theme.spacing,
         "font_size": theme.font_size,
     })
+}
+
+fn theme_color_scheme(theme: &Theme) -> DgMediaColorScheme {
+    let [r, g, b, _] = theme.background;
+    let luminance = 0.2126 * linear_srgb(r) + 0.7152 * linear_srgb(g) + 0.0722 * linear_srgb(b);
+    if luminance > 0.5 {
+        DgMediaColorScheme::Light
+    } else {
+        DgMediaColorScheme::Dark
+    }
+}
+
+fn winit_theme_color_scheme(theme: WinitTheme) -> DgMediaColorScheme {
+    match theme {
+        WinitTheme::Light => DgMediaColorScheme::Light,
+        WinitTheme::Dark => DgMediaColorScheme::Dark,
+    }
+}
+
+fn linear_srgb(value: f32) -> f32 {
+    let value = value.clamp(0.0, 1.0);
+    if value <= 0.04045 {
+        value / 12.92
+    } else {
+        ((value + 0.055) / 1.055).powf(2.4)
+    }
 }
 
 fn now_epoch_ms() -> f64 {
@@ -1619,7 +1780,20 @@ fn pseudo_style_value_changes_text(key: &str, value: &Value) -> bool {
 mod style_patch_tests {
     use super::*;
     use crate::css_style::apply_stylesheets_to_tree;
+    use crate::style::TransformStyle;
     use serde_json::json;
+
+    #[test]
+    fn winit_theme_maps_to_css_color_scheme() {
+        assert_eq!(
+            winit_theme_color_scheme(WinitTheme::Light),
+            DgMediaColorScheme::Light
+        );
+        assert_eq!(
+            winit_theme_color_scheme(WinitTheme::Dark),
+            DgMediaColorScheme::Dark
+        );
+    }
 
     #[test]
     fn merge_style_patch_sets_and_removes_keys() {
@@ -1797,6 +1971,45 @@ mod style_patch_tests {
             transition_timing_name(fast_out),
             "cubic-bezier(0.16, 1, 0.3, 1)"
         );
+    }
+
+    #[test]
+    fn keyframe_animation_visual_interpolates_transform_and_opacity() {
+        let keyframes = DgKeyframes {
+            name: "pulse".to_string(),
+            frames: vec![
+                crate::css_style::DgKeyframe {
+                    offset: 0.0,
+                    visual: VisualStyle {
+                        opacity: Some(0.5),
+                        transform: Some(TransformStyle {
+                            scale_x: 0.9,
+                            scale_y: 0.9,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                },
+                crate::css_style::DgKeyframe {
+                    offset: 1.0,
+                    visual: VisualStyle {
+                        opacity: Some(1.0),
+                        transform: Some(TransformStyle {
+                            scale_x: 1.1,
+                            scale_y: 1.1,
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                },
+            ],
+        };
+
+        let visual = animation_visual_at(&keyframes, 0.25, &Theme::dark()).unwrap();
+        assert!((visual.opacity.unwrap() - 0.625).abs() < 0.001);
+        let transform = visual.transform.unwrap();
+        assert!((transform.scale_x - 0.95).abs() < 0.001);
+        assert!((transform.scale_y - 0.95).abs() < 0.001);
     }
 
     #[test]
@@ -2309,6 +2522,7 @@ struct WgpuState {
     theme: Theme,
     stylesheets: StylesheetStore,
     scale_factor: f32,
+    platform_color_scheme: Option<DgMediaColorScheme>,
     scatter: Option<ScatterWidget>,
     scatter_widget_id: Option<String>,
     scatter_decode_scratch: Vec<PointInstance>,
@@ -2333,6 +2547,7 @@ struct WgpuState {
     selected_state_snapshot: HashSet<String>,
     expanded_transitions: HashMap<String, HoverTransition>,
     expanded_state_snapshot: HashSet<String>,
+    animation_epoch: Instant,
     scatter_metrics: ScatterMetrics,
 }
 
@@ -2488,6 +2703,175 @@ fn cubic_bezier_axis_derivative(t: f32, p1: f32, p2: f32) -> f32 {
     let b = 3.0 * (p2 - p1) - c;
     let a = 1.0 - c - b;
     (3.0 * a * t + 2.0 * b) * t + c
+}
+
+fn animation_config(
+    style: &AnimationStyle,
+) -> Option<(
+    String,
+    Duration,
+    Duration,
+    TransitionTimingFunction,
+    AnimationIterationCount,
+    AnimationDirection,
+    AnimationFillMode,
+    AnimationPlayState,
+)> {
+    let name = style.name.clone()?;
+    let duration_ms = style.duration_ms?;
+    if duration_ms == 0 {
+        return None;
+    }
+    Some((
+        name,
+        Duration::from_millis(duration_ms),
+        Duration::from_millis(style.delay_ms.unwrap_or(0)),
+        style
+            .timing_function
+            .unwrap_or(TransitionTimingFunction::Ease),
+        style
+            .iteration_count
+            .unwrap_or(AnimationIterationCount::One),
+        style.direction.unwrap_or(AnimationDirection::Normal),
+        style.fill_mode.unwrap_or(AnimationFillMode::None),
+        style.play_state.unwrap_or(AnimationPlayState::Running),
+    ))
+}
+
+fn animation_iteration_total(count: AnimationIterationCount) -> Option<u32> {
+    match count {
+        AnimationIterationCount::One => Some(1),
+        AnimationIterationCount::Count(value) => Some(value.max(1)),
+        AnimationIterationCount::Infinite => None,
+    }
+}
+
+fn animation_directed_progress(t: f32, iteration: u32, direction: AnimationDirection) -> f32 {
+    match direction {
+        AnimationDirection::Normal => t,
+        AnimationDirection::Reverse => 1.0 - t,
+        AnimationDirection::Alternate => {
+            if iteration % 2 == 0 {
+                t
+            } else {
+                1.0 - t
+            }
+        }
+        AnimationDirection::AlternateReverse => {
+            if iteration % 2 == 0 {
+                1.0 - t
+            } else {
+                t
+            }
+        }
+    }
+}
+
+fn animation_fill_progress(direction: AnimationDirection) -> f32 {
+    match direction {
+        AnimationDirection::Normal | AnimationDirection::Alternate => 1.0,
+        AnimationDirection::Reverse | AnimationDirection::AlternateReverse => 0.0,
+    }
+}
+
+fn animation_visual_at(
+    keyframes: &DgKeyframes,
+    progress: f32,
+    theme: &Theme,
+) -> Option<VisualStyle> {
+    let frames = &keyframes.frames;
+    let first = frames.first()?;
+    let last = frames.last()?;
+    if progress <= first.offset {
+        return Some(first.visual.clone());
+    }
+    if progress >= last.offset {
+        return Some(last.visual.clone());
+    }
+    for pair in frames.windows(2) {
+        let from = &pair[0];
+        let to = &pair[1];
+        if progress >= from.offset && progress <= to.offset {
+            let span = (to.offset - from.offset).max(0.0001);
+            let local = ((progress - from.offset) / span).clamp(0.0, 1.0);
+            return Some(interpolate_visual_style(
+                &from.visual,
+                &to.visual,
+                &to.visual,
+                local,
+                theme,
+                None,
+            ));
+        }
+    }
+    Some(last.visual.clone())
+}
+
+fn collect_animation_visuals(
+    node: &WidgetNode,
+    keyframes: &BTreeMap<String, DgKeyframes>,
+    elapsed: Duration,
+    theme: &Theme,
+    out: &mut HashMap<String, VisualStyle>,
+    active: &mut bool,
+) {
+    if let Some(visual) = node_animation_visual(node, keyframes, elapsed, theme, active) {
+        out.insert(node.id.clone(), visual);
+    }
+    for child in &node.children {
+        collect_animation_visuals(child, keyframes, elapsed, theme, out, active);
+    }
+}
+
+fn node_animation_visual(
+    node: &WidgetNode,
+    keyframes: &BTreeMap<String, DgKeyframes>,
+    elapsed: Duration,
+    theme: &Theme,
+    active: &mut bool,
+) -> Option<VisualStyle> {
+    let (name, duration, delay, timing, iteration_count, direction, fill_mode, play_state) =
+        animation_config(&node.style.animation)?;
+    let keyframes = keyframes.get(&name)?;
+    if play_state == AnimationPlayState::Paused {
+        return animation_visual_at(
+            keyframes,
+            animation_directed_progress(0.0, 0, direction),
+            theme,
+        );
+    }
+    if elapsed < delay {
+        *active = true;
+        return match fill_mode {
+            AnimationFillMode::Backwards | AnimationFillMode::Both => animation_visual_at(
+                keyframes,
+                animation_directed_progress(0.0, 0, direction),
+                theme,
+            ),
+            AnimationFillMode::None | AnimationFillMode::Forwards => None,
+        };
+    }
+
+    let active_elapsed = elapsed - delay;
+    let duration_secs = duration.as_secs_f32().max(0.0001);
+    let raw_iterations = active_elapsed.as_secs_f32() / duration_secs;
+    let iteration = raw_iterations.floor() as u32;
+    if let Some(total) = animation_iteration_total(iteration_count) {
+        if iteration >= total {
+            return match fill_mode {
+                AnimationFillMode::Forwards | AnimationFillMode::Both => {
+                    animation_visual_at(keyframes, animation_fill_progress(direction), theme)
+                }
+                AnimationFillMode::None | AnimationFillMode::Backwards => None,
+            };
+        }
+    }
+
+    *active = true;
+    let local = raw_iterations.fract();
+    let directed = animation_directed_progress(local, iteration, direction);
+    let eased = ease_transition(directed, timing);
+    animation_visual_at(keyframes, eased, theme)
 }
 
 fn clear_style_transition_state(
@@ -2699,6 +3083,7 @@ impl WgpuState {
             theme,
             stylesheets: spec.stylesheets,
             scale_factor,
+            platform_color_scheme: window.theme().map(winit_theme_color_scheme),
             scatter,
             scatter_widget_id,
             scatter_decode_scratch: scatter_points,
@@ -2720,6 +3105,7 @@ impl WgpuState {
             selected_state_snapshot,
             expanded_transitions: HashMap::new(),
             expanded_state_snapshot,
+            animation_epoch: Instant::now(),
             scatter_metrics: ScatterMetrics::default(),
         };
 
@@ -2729,10 +3115,19 @@ impl WgpuState {
     }
 
     fn media_environment(&self) -> DgMediaEnvironment {
-        DgMediaEnvironment::from_physical_size(
-            self.config.width as f32,
-            self.config.height as f32,
-            self.scale_factor,
+        let scale_factor = self.scale_factor.max(0.001);
+        DgMediaEnvironment::with_color_scheme(
+            self.config.width as f32 / scale_factor,
+            self.config.height as f32 / scale_factor,
+            scale_factor,
+            DgMediaColorGamut::Srgb,
+            DgMediaPointer::Fine,
+            DgMediaPointer::Fine,
+            DgMediaHover::Hover,
+            DgMediaHover::Hover,
+            false,
+            self.platform_color_scheme
+                .unwrap_or_else(|| theme_color_scheme(&self.theme)),
         )
     }
 
@@ -2743,12 +3138,21 @@ impl WgpuState {
         }
     }
 
+    fn set_platform_color_scheme(&mut self, scheme: DgMediaColorScheme) {
+        if self.platform_color_scheme == Some(scheme) {
+            return;
+        }
+        self.platform_color_scheme = Some(scheme);
+        self.apply_layout();
+    }
+
     /// Recompute layout and push scatter viewport + primitives + text to GPU.
     fn apply_layout(&mut self) {
         self.reapply_stylesheets_for_current_viewport();
         self.sync_open_transitions();
         self.sync_selected_transitions();
         self.sync_expanded_transitions();
+        let media = self.media_environment();
         // Destructure to get separate borrows of each field.
         let WgpuState {
             widget_tree,
@@ -2816,8 +3220,7 @@ impl WgpuState {
                     resources,
                     toast_overlays,
                     stylesheets,
-                    config.width as f32,
-                    config.height as f32,
+                    media,
                 )
             } else {
                 HashMap::new()
@@ -2837,8 +3240,7 @@ impl WgpuState {
                 caret_positions,
                 toast_overlays,
                 stylesheets,
-                config.width as f32,
-                config.height as f32,
+                media,
             );
         }
 
@@ -2846,6 +3248,7 @@ impl WgpuState {
     }
 
     fn rebuild_primitives(&mut self) {
+        let media = self.media_environment();
         let WgpuState {
             widget_tree,
             current_layout,
@@ -2858,7 +3261,6 @@ impl WgpuState {
             caret_positions,
             toast_overlays,
             stylesheets,
-            config,
             ..
         } = self;
 
@@ -2879,13 +3281,13 @@ impl WgpuState {
                 caret_positions,
                 toast_overlays,
                 stylesheets,
-                config.width as f32,
-                config.height as f32,
+                media,
             );
         }
     }
 
     fn rebuild_text(&mut self) {
+        let media = self.media_environment();
         let WgpuState {
             widget_tree,
             current_layout,
@@ -2897,7 +3299,6 @@ impl WgpuState {
             resources,
             toast_overlays,
             stylesheets,
-            config,
             ..
         } = self;
 
@@ -2916,8 +3317,7 @@ impl WgpuState {
                 resources,
                 toast_overlays,
                 stylesheets,
-                config.width as f32,
-                config.height as f32,
+                media,
             );
         } else {
             caret_positions.clear();
@@ -3365,6 +3765,38 @@ impl WgpuState {
         changed
     }
 
+    fn tick_css_animations(&mut self) -> bool {
+        let Some(tree) = self.widget_tree.as_ref() else {
+            return false;
+        };
+        let keyframes = self.stylesheets.keyframes();
+        if keyframes.is_empty() {
+            if let Some(state) = &mut self.widget_state {
+                return !std::mem::take(&mut state.animation_visuals).is_empty();
+            }
+            return false;
+        }
+        let now = Instant::now();
+        let elapsed = now.saturating_duration_since(self.animation_epoch);
+        let mut visuals = HashMap::new();
+        let mut active = false;
+        collect_animation_visuals(
+            tree,
+            &keyframes,
+            elapsed,
+            &self.theme,
+            &mut visuals,
+            &mut active,
+        );
+        let Some(state) = &mut self.widget_state else {
+            return false;
+        };
+        let had_visuals = !state.animation_visuals.is_empty();
+        let has_visuals = !visuals.is_empty();
+        state.animation_visuals = visuals;
+        had_visuals || has_visuals || active
+    }
+
     fn cancel_hover_transitions(&mut self) -> bool {
         clear_style_transition_state(
             &mut self.hover_transitions,
@@ -3380,6 +3812,12 @@ impl WgpuState {
             || !self.open_transitions.is_empty()
             || !self.selected_transitions.is_empty()
             || !self.expanded_transitions.is_empty()
+    }
+
+    fn has_css_animations(&self) -> bool {
+        self.widget_state
+            .as_ref()
+            .is_some_and(|state| !state.animation_visuals.is_empty())
     }
 
     fn resize(&mut self, width: u32, height: u32) {
@@ -4128,6 +4566,7 @@ impl WgpuState {
                 "surface_format": format!("{:?}", self.config.format),
                 "has_primitives": self.primitives.is_some(),
                 "has_text": self.text.is_some(),
+                "font_warnings": self.text.as_ref().map(|text| text.font_warnings()).unwrap_or(&[]),
                 "has_scatter": self.scatter.is_some(),
                 "scatter_widget_id": self.scatter_widget_id.as_deref(),
                 "widget_count": self.widget_kinds.len(),
@@ -6712,8 +7151,12 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                 gpu.rebuild_visuals();
                 request_redraw = true;
             }
+            if gpu.tick_css_animations() {
+                gpu.rebuild_visuals();
+                request_redraw = true;
+            }
             next_deadline = gpu.next_toast_deadline();
-            if gpu.has_style_transitions() {
+            if gpu.has_style_transitions() || gpu.has_css_animations() {
                 let transition_deadline = Instant::now() + Duration::from_millis(16);
                 next_deadline = Some(
                     next_deadline
@@ -6756,6 +7199,13 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                     .unwrap_or_default();
                 if let Some(gpu) = &mut self.gpu {
                     gpu.set_scale_factor(scale_factor, new_size);
+                }
+                self.request_redraw();
+            }
+
+            WindowEvent::ThemeChanged(theme) => {
+                if let Some(gpu) = &mut self.gpu {
+                    gpu.set_platform_color_scheme(winit_theme_color_scheme(theme));
                 }
                 self.request_redraw();
             }
