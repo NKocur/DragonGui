@@ -89,7 +89,7 @@ Helper builders:
 
 | Widget | Features |
 | --- | --- |
-| `Label(text)` | Static text. `set_value(value)` updates text. |
+| `Label(text, wrap=True)` | Static text. Wraps by default inside constrained containers; pass `wrap=False` for single-line labels. `set_value(value)` updates text. |
 | `Badge(text, level="info")` | Compact status/count pill. `level` may be `neutral`, `info`, `success`, `warning`, `danger`, or `error`. Supports `set_value(value)` and `set_level(level)`. |
 | `Tag(text, level="neutral")` | Compact bordered status label with the same API as `Badge`. |
 | `Button(text, on_click=None, badge=None, disabled=False)` | Clickable button. Emits `click` when `on_click` is supplied and not disabled. `click()` invokes the Python callback directly. Optional badge supports `set_badge(value)`. |

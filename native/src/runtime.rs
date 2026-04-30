@@ -955,6 +955,14 @@ fn visual_style_snapshot(style: &VisualStyle) -> Value {
             map.insert("background_paint".to_string(), value);
         }
     }
+    if let Some(interpolation) = style.gradient_interpolation {
+        let value = match interpolation {
+            crate::style::GradientInterpolation::Srgb => "srgb",
+            crate::style::GradientInterpolation::LinearSrgb => "linear-srgb",
+            crate::style::GradientInterpolation::Oklab => "oklab",
+        };
+        map.insert("gradient_interpolation".to_string(), json!(value));
+    }
     if let Some(filter) = style.backdrop_filter {
         map.insert(
             "backdrop_filter".to_string(),
@@ -1049,6 +1057,23 @@ fn background_paint_json(paint: &BackgroundPaint) -> Option<Value> {
                     "position": stop.position,
                 })
             }).collect::<Vec<_>>(),
+        })),
+        BackgroundPaint::BlobGradient(gradient) => Some(json!({
+            "type": "blob_gradient",
+            "blobs": gradient.blobs.iter().map(|blob| {
+                json!({
+                    "center": blob.center,
+                    "radius": blob.radius,
+                    "color": color_ref_json(&blob.color),
+                })
+            }).collect::<Vec<_>>(),
+        })),
+        BackgroundPaint::MeshGradient(gradient) => Some(json!({
+            "type": "mesh_gradient",
+            "top_left": color_ref_json(&gradient.top_left),
+            "top_right": color_ref_json(&gradient.top_right),
+            "bottom_left": color_ref_json(&gradient.bottom_left),
+            "bottom_right": color_ref_json(&gradient.bottom_right),
         })),
     }
 }

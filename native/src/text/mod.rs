@@ -1,8 +1,10 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use base64::Engine;
+use flate2::read::ZlibDecoder;
 use glyphon::cosmic_text::{FeatureTag, FontFeatures};
 use glyphon::{
     Attrs, Buffer, Cache, Color, Family, FontSystem, Metrics, Resolution, Shaping,
@@ -27,11 +29,11 @@ use crate::style::{
     checked_part_style_for_state, collapsed_part_style_for_state,
     collapsible_header_height_for_style, expanded_part_style_for_state,
     number_stepper_width_for_style, open_part_style_for_state, selected_part_style_for_state,
-    state_part_style_for_state, uniform_layout_padding, FontFamily, FontStyle, FontVariantNumeric,
-    GeneratedContent, LineHeight, NodeStyle, PartLayoutStyle, PartStyle, PositionStyle, TextAlign,
-    TextOverflow, TextSpacing, TextStyle, TextTransform, TransformStyle, VisualStyle, BADGE_GAP_LP,
-    BORDER_WIDTH_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP, DROPDOWN_CHEVRON_WIDTH_LP,
-    PANEL_ACCENT_WIDTH_LP, TAB_GAP_LP,
+    standalone_badge_horizontal_padding_lp, state_part_style_for_state, uniform_layout_padding,
+    FontFamily, FontStyle, FontVariantNumeric, GeneratedContent, LineHeight, NodeStyle,
+    PartLayoutStyle, PartStyle, PositionStyle, TextAlign, TextOverflow, TextSpacing, TextStyle,
+    TextTransform, TransformStyle, VisualStyle, BADGE_GAP_LP, BORDER_WIDTH_LP, CHECKBOX_BOX_LP,
+    CHECKBOX_LEFT_PAD_LP, DROPDOWN_CHEVRON_WIDTH_LP, PANEL_ACCENT_WIDTH_LP, TAB_GAP_LP,
 };
 use crate::table;
 use crate::theme::Theme;
@@ -66,6 +68,7 @@ struct TextEntry {
     top: f32,
     scale: f32,
     clip: TextBounds,
+    untransformed_clip: TextBounds,
     color: Color,
 }
 
@@ -347,13 +350,18 @@ impl TextRendererDg {
                     }
                     DgFontFaceSourceKind::Url => {
                         let source_label = font_face_source_label(source.kind, &source.url);
-                        let resolved = match resolve_font_source(&source.url) {
-                            Ok(resolved) => resolved,
-                            Err(message) => {
-                                self.record_font_warning(&font_face.family, &source_label, message);
-                                continue;
-                            }
-                        };
+                        let resolved =
+                            match resolve_font_source(&source.url, source.format.as_deref()) {
+                                Ok(resolved) => resolved,
+                                Err(message) => {
+                                    self.record_font_warning(
+                                        &font_face.family,
+                                        &source_label,
+                                        message,
+                                    );
+                                    continue;
+                                }
+                            };
                         let before = self.font_system.db().faces().count();
                         match resolved {
                             ResolvedFontSource::File(path) => {
@@ -489,7 +497,15 @@ enum ResolvedFontSource {
     Data(Vec<u8>),
 }
 
-fn resolve_font_source(url: &str) -> Result<ResolvedFontSource, &'static str> {
+fn resolve_font_source(
+    url: &str,
+    declared_format: Option<&str>,
+) -> Result<ResolvedFontSource, &'static str> {
+    if declared_format.is_some_and(|format| !is_supported_font_format(format)) {
+        return Err(
+            "unsupported font format; only truetype, opentype, collection, and woff are supported",
+        );
+    }
     if url
         .get(..5)
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case("data:"))
@@ -499,18 +515,54 @@ fn resolve_font_source(url: &str) -> Result<ResolvedFontSource, &'static str> {
     if url.starts_with("http://") || url.starts_with("https://") {
         return Err("remote font URLs are not supported");
     }
-    if !is_supported_font_file_source(url) {
-        return Err("unsupported font source; only local(...), local .ttf, .otf, and .ttc files, and data: font URLs with sfnt data are supported");
+    if !is_supported_font_file_source(url, declared_format) {
+        return Err("unsupported font source; only local(...), local .ttf, .otf, .ttc, and .woff files, and data: font URLs with sfnt or WOFF1 data are supported");
     }
-    Ok(ResolvedFontSource::File(font_source_path(url)))
+    let path = font_source_path(url);
+    if font_source_format(url, declared_format).is_some_and(|format| format == "woff") {
+        let data = std::fs::read(&path).map_err(|_| "failed to read WOFF font file")?;
+        return decode_woff_font_data(&data).map(ResolvedFontSource::Data);
+    }
+    Ok(ResolvedFontSource::File(path))
 }
 
-fn is_supported_font_file_source(url: &str) -> bool {
-    let lower = url.split('?').next().unwrap_or(url).to_ascii_lowercase();
+fn is_supported_font_file_source(url: &str, declared_format: Option<&str>) -> bool {
+    if declared_format.is_some_and(is_supported_font_format) {
+        return true;
+    }
     matches!(
-        Path::new(&lower).extension().and_then(|ext| ext.to_str()),
-        Some("ttf" | "otf" | "ttc")
+        font_source_extension(url).as_deref(),
+        Some("ttf" | "otf" | "ttc" | "woff")
     )
+}
+
+fn font_source_format(url: &str, declared_format: Option<&str>) -> Option<String> {
+    declared_format
+        .and_then(normalize_font_format)
+        .or_else(|| font_source_extension(url))
+}
+
+fn is_supported_font_format(format: &str) -> bool {
+    matches!(
+        normalize_font_format(format).as_deref(),
+        Some("ttf" | "ttc" | "otf" | "truetype" | "opentype" | "collection" | "woff")
+    )
+}
+
+fn normalize_font_format(format: &str) -> Option<String> {
+    let format = format.trim().trim_matches('"').trim_matches('\'');
+    if format.is_empty() {
+        return None;
+    }
+    Some(format.to_ascii_lowercase())
+}
+
+fn font_source_extension(url: &str) -> Option<String> {
+    let lower = url.split('?').next().unwrap_or(url).to_ascii_lowercase();
+    Path::new(&lower)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(str::to_string)
 }
 
 fn font_source_path(url: &str) -> PathBuf {
@@ -520,6 +572,7 @@ fn font_source_path(url: &str) -> PathBuf {
     } else if let Some(stripped) = path.strip_prefix("file://") {
         path = stripped.to_string();
     }
+    path = percent_decode_path(&path);
     if cfg!(windows) && path.starts_with('/') && path.get(2..3) == Some(":") {
         path.remove(0);
     }
@@ -531,6 +584,35 @@ fn font_source_path(url: &str) -> PathBuf {
             Ok(cwd) => cwd.join(path),
             Err(_) => path,
         }
+    }
+}
+
+fn percent_decode_path(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if bytes[index] == b'%' && index + 2 < bytes.len() {
+            let hi = hex_value(bytes[index + 1]);
+            let lo = hex_value(bytes[index + 2]);
+            if let (Some(hi), Some(lo)) = (hi, lo) {
+                out.push((hi << 4) | lo);
+                index += 3;
+                continue;
+            }
+        }
+        out.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| value.to_string())
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
     }
 }
 
@@ -547,10 +629,13 @@ fn decode_font_data_url(url: &str) -> Result<Vec<u8>, &'static str> {
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(payload.trim())
         .map_err(|_| "invalid base64 data in font URL")?;
-    if !is_supported_sfnt_font_data(&decoded) {
-        return Err("unsupported font data; only sfnt TrueType/OpenType/TTC data is supported");
+    if is_supported_sfnt_font_data(&decoded) {
+        return Ok(decoded);
     }
-    Ok(decoded)
+    if is_woff_font_data(&decoded) {
+        return decode_woff_font_data(&decoded);
+    }
+    Err("unsupported font data; only sfnt TrueType/OpenType/TTC or WOFF1 data is supported")
 }
 
 fn is_supported_sfnt_font_data(data: &[u8]) -> bool {
@@ -563,8 +648,153 @@ fn is_supported_sfnt_font_data(data: &[u8]) -> bool {
         || signature == b"true"
 }
 
+fn is_woff_font_data(data: &[u8]) -> bool {
+    data.get(..4) == Some(&b"wOFF"[..])
+}
+
 // Widget-tree → TextEntry mapping
 // ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+struct WoffTable {
+    tag: [u8; 4],
+    checksum: u32,
+    offset: u32,
+    orig_len: u32,
+    data: Vec<u8>,
+}
+
+fn decode_woff_font_data(data: &[u8]) -> Result<Vec<u8>, &'static str> {
+    if data.len() < 44 || !is_woff_font_data(data) {
+        return Err("invalid WOFF font data");
+    }
+    let flavor = read_be_u32(data, 4).ok_or("invalid WOFF font data")?;
+    let length = read_be_u32(data, 8).ok_or("invalid WOFF font data")? as usize;
+    let num_tables = read_be_u16(data, 12).ok_or("invalid WOFF font data")? as usize;
+    let total_sfnt_size = read_be_u32(data, 16).ok_or("invalid WOFF font data")? as usize;
+    if length > data.len() || num_tables == 0 {
+        return Err("invalid WOFF font data");
+    }
+    let directory_len = num_tables
+        .checked_mul(20)
+        .and_then(|value| 44usize.checked_add(value))
+        .ok_or("invalid WOFF font data")?;
+    if directory_len > length {
+        return Err("invalid WOFF font data");
+    }
+
+    let mut tables = Vec::with_capacity(num_tables);
+    for index in 0..num_tables {
+        let entry = 44 + index * 20;
+        let tag = data
+            .get(entry..entry + 4)
+            .and_then(|value| value.try_into().ok())
+            .ok_or("invalid WOFF font data")?;
+        let offset = read_be_u32(data, entry + 4).ok_or("invalid WOFF font data")?;
+        let comp_len = read_be_u32(data, entry + 8).ok_or("invalid WOFF font data")?;
+        let orig_len = read_be_u32(data, entry + 12).ok_or("invalid WOFF font data")?;
+        let checksum = read_be_u32(data, entry + 16).ok_or("invalid WOFF font data")?;
+        if comp_len > orig_len {
+            return Err("invalid WOFF font data");
+        }
+        let start = offset as usize;
+        let end = start
+            .checked_add(comp_len as usize)
+            .ok_or("invalid WOFF font data")?;
+        let compressed = data.get(start..end).ok_or("invalid WOFF font data")?;
+        let table_data = if comp_len == orig_len {
+            compressed.to_vec()
+        } else {
+            let mut decoder = ZlibDecoder::new(compressed);
+            let mut out = Vec::with_capacity(orig_len as usize);
+            decoder
+                .read_to_end(&mut out)
+                .map_err(|_| "invalid compressed WOFF table data")?;
+            if out.len() != orig_len as usize {
+                return Err("invalid compressed WOFF table data");
+            }
+            out
+        };
+        tables.push(WoffTable {
+            tag,
+            checksum,
+            offset,
+            orig_len,
+            data: table_data,
+        });
+    }
+
+    tables.sort_by_key(|table| table.tag);
+    let header_len = 12usize
+        .checked_add(num_tables.checked_mul(16).ok_or("invalid WOFF font data")?)
+        .ok_or("invalid WOFF font data")?;
+    let mut next_offset = header_len;
+    for table in &mut tables {
+        next_offset = align4(next_offset).ok_or("invalid WOFF font data")?;
+        table.offset = next_offset as u32;
+        next_offset = next_offset
+            .checked_add(table.orig_len as usize)
+            .ok_or("invalid WOFF font data")?;
+        next_offset = align4(next_offset).ok_or("invalid WOFF font data")?;
+    }
+    if total_sfnt_size != 0 && total_sfnt_size != next_offset {
+        return Err("invalid WOFF font data");
+    }
+
+    let mut sfnt = Vec::with_capacity(next_offset);
+    write_be_u32(&mut sfnt, flavor);
+    write_be_u16(&mut sfnt, num_tables as u16);
+    let max_power = 1usize << (usize::BITS - 1 - num_tables.leading_zeros());
+    let search_range = max_power * 16;
+    let entry_selector = max_power.trailing_zeros() as u16;
+    let range_shift = num_tables * 16 - search_range;
+    write_be_u16(&mut sfnt, search_range as u16);
+    write_be_u16(&mut sfnt, entry_selector);
+    write_be_u16(&mut sfnt, range_shift as u16);
+    for table in &tables {
+        sfnt.extend_from_slice(&table.tag);
+        write_be_u32(&mut sfnt, table.checksum);
+        write_be_u32(&mut sfnt, table.offset);
+        write_be_u32(&mut sfnt, table.orig_len);
+    }
+    for table in &tables {
+        while sfnt.len() < table.offset as usize {
+            sfnt.push(0);
+        }
+        sfnt.extend_from_slice(&table.data);
+        while sfnt.len() % 4 != 0 {
+            sfnt.push(0);
+        }
+    }
+    if !is_supported_sfnt_font_data(&sfnt) {
+        return Err("invalid WOFF font data");
+    }
+    Ok(sfnt)
+}
+
+fn read_be_u16(data: &[u8], offset: usize) -> Option<u16> {
+    Some(u16::from_be_bytes(
+        data.get(offset..offset + 2)?.try_into().ok()?,
+    ))
+}
+
+fn read_be_u32(data: &[u8], offset: usize) -> Option<u32> {
+    Some(u32::from_be_bytes(
+        data.get(offset..offset + 4)?.try_into().ok()?,
+    ))
+}
+
+fn write_be_u16(out: &mut Vec<u8>, value: u16) {
+    out.extend_from_slice(&value.to_be_bytes());
+}
+
+fn write_be_u32(out: &mut Vec<u8>, value: u32) {
+    out.extend_from_slice(&value.to_be_bytes());
+}
+
+fn align4(value: usize) -> Option<usize> {
+    value.checked_add(3).map(|value| value & !3)
+}
 
 fn collect_text(
     node: &WidgetNode,
@@ -664,7 +894,7 @@ fn collect_text(
             (display_text(node, state), layout.rects.get(&node.id))
         {
             if r.w > 0.0 && r.h > 0.0 {
-                let node_clip = layout.visible_rect(&node.id);
+                let node_clip = Some(*r);
                 let (left, top, clip_left, clip_top, clip_right, clip_bottom) = match node.kind {
                     WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal => {
                         let title_pad = panel_title_padding(node, theme, sf);
@@ -739,8 +969,19 @@ fn collect_text(
                         )
                     }
                     WidgetKind::Badge | WidgetKind::Tag => {
+                        let (pad_left, pad_right) =
+                            standalone_badge_horizontal_padding_lp(&node.style);
+                        let pad_left = pad_left * sf;
+                        let pad_right = pad_right * sf;
                         let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
-                        (r.x + pad, top, r.x + pad, r.y, r.x + r.w - pad, r.y + r.h)
+                        (
+                            r.x + pad_left,
+                            top,
+                            r.x + pad_left,
+                            r.y,
+                            r.x + r.w - pad_right,
+                            r.y + r.h,
+                        )
                     }
                     WidgetKind::NumberInput => {
                         let step_w = number_stepper_width_for_style(&node.style, r.w, sf);
@@ -801,7 +1042,11 @@ fn collect_text(
                         )
                     }
                     _ => {
-                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        let top = if node.kind == WidgetKind::Label && r.h > line_height * 1.4 {
+                            r.y
+                        } else {
+                            r.y + ((r.h - line_height) * 0.5).max(0.0)
+                        };
                         (r.x + pad, top, r.x + pad, r.y, r.x + r.w - pad, r.y + r.h)
                     }
                 };
@@ -875,6 +1120,18 @@ fn collect_text(
                 } else {
                     align
                 };
+                let before_reserve =
+                    generated_content_reserved_width(node, state, "before", theme, sf);
+                let after_reserve =
+                    generated_content_reserved_width(node, state, "after", theme, sf);
+                let (left, clip_left, clip_right) = if before_reserve > 0.0 || after_reserve > 0.0 {
+                    let adjusted_left = left + before_reserve;
+                    let adjusted_clip_left = clip_left + before_reserve;
+                    let adjusted_clip_right = (clip_right - after_reserve).max(adjusted_clip_left);
+                    (adjusted_left, adjusted_clip_left, adjusted_clip_right)
+                } else {
+                    (left, clip_left, clip_right)
+                };
                 let clip_rect = node_clip.and_then(|node_clip| {
                     (Rect {
                         x: clip_left,
@@ -929,6 +1186,26 @@ fn collect_text(
                                 scroll_y,
                                 cache,
                                 if placeholder { None } else { caret },
+                                caret_positions,
+                                text_options,
+                            );
+                        } else if node.kind == WidgetKind::Label && node.props.wrap.unwrap_or(true)
+                        {
+                            push_wrapped_text_entry(
+                                font_system,
+                                font_aliases,
+                                out,
+                                text,
+                                font_size,
+                                line_height,
+                                font_family,
+                                font_weight,
+                                left,
+                                top,
+                                text_bounds,
+                                color,
+                                align,
+                                cache,
                                 caret_positions,
                                 text_options,
                             );
@@ -1044,6 +1321,10 @@ fn collect_text(
             [r.x + r.w * 0.5, r.y + r.h * 0.5],
         );
     }
+    apply_paint_clip_to_text_entries(
+        &mut out[subtree_text_start..],
+        layout.paint_clip_rect(&node.id),
+    );
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1119,12 +1400,13 @@ fn emit_generated_content_text(
     if right <= left {
         return;
     }
-    let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+    let (top, clip_y, clip_bottom) =
+        generated_content_vertical_bounds(node, r, line_height, theme, sf);
     let Some(clip_rect) = (Rect {
         x: left,
-        y: r.y,
+        y: clip_y,
         w: right - left,
-        h: r.h,
+        h: (clip_bottom - clip_y).max(0.0),
     })
     .intersect(layout.visible_rect(&node.id).unwrap_or(r)) else {
         return;
@@ -1173,11 +1455,69 @@ fn emit_generated_content_text(
     );
 }
 
+fn generated_content_vertical_bounds(
+    node: &WidgetNode,
+    r: Rect,
+    line_height: f32,
+    theme: &Theme,
+    sf: f32,
+) -> (f32, f32, f32) {
+    if matches!(
+        node.kind,
+        WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal
+    ) {
+        let title_pad = panel_title_padding(node, theme, sf);
+        let top = r.y + title_pad.top;
+        return (top, r.y, (top + line_height).min(r.y + r.h));
+    }
+    (r.y + ((r.h - line_height) * 0.5).max(0.0), r.y, r.y + r.h)
+}
+
 fn generated_content_text(node: &WidgetNode, content: &GeneratedContent) -> Option<String> {
     match content {
         GeneratedContent::Text(value) => Some(value.clone()),
         GeneratedContent::Attr(name) => widget_attr_value(node, name),
     }
+}
+
+fn generated_content_reserved_width(
+    node: &WidgetNode,
+    state: &WidgetState,
+    part: &str,
+    theme: &Theme,
+    sf: f32,
+) -> f32 {
+    let Some(style) = generated_part_style_for_state(node, state, part) else {
+        return 0.0;
+    };
+    let Some(content) = style
+        .content
+        .as_ref()
+        .and_then(|content| generated_content_text(node, content))
+        .filter(|content| !content.is_empty())
+    else {
+        return 0.0;
+    };
+    if let Some(width) = style.layout.width {
+        return width.max(1.0) * sf;
+    }
+    let font_size = style
+        .text
+        .font_size
+        .or(node.style.text.font_size)
+        .map(|size| size.max(8.0) * sf)
+        .unwrap_or_else(|| text_font_size(node, theme, sf));
+    let padding = style.layout.padding.unwrap_or(theme.spacing * 0.5).max(0.0) * sf;
+    let gap = style.layout.gap.unwrap_or(theme.spacing * 0.35).max(0.0) * sf;
+    estimate_generated_text_width(&content, font_size) + padding * 2.0 + gap
+}
+
+fn estimate_generated_text_width(text: &str, font_size: f32) -> f32 {
+    text.lines()
+        .map(|line| line.chars().count() as f32)
+        .fold(0.0, f32::max)
+        * font_size
+        * 0.56
 }
 
 fn widget_attr_value(node: &WidgetNode, name: &str) -> Option<String> {
@@ -1655,8 +1995,75 @@ fn apply_transform_to_text_entries(
         entry.left = origin[0] + (entry.left - origin[0]) * text_scale + dx;
         entry.top = origin[1] + (entry.top - origin[1]) * text_scale + dy;
         entry.scale *= text_scale;
-        entry.clip = transformed_text_bounds(entry.clip, origin, text_scale, dx, dy);
+        entry.clip = transform_text_clip_to_painted_position(
+            entry.clip,
+            entry.untransformed_clip,
+            origin,
+            text_scale,
+            dx,
+            dy,
+        );
     }
+}
+
+fn apply_paint_clip_to_text_entries(entries: &mut [TextEntry], clip: Option<Rect>) {
+    let Some(clip) = clip else {
+        return;
+    };
+    let clip_bounds = TextBounds {
+        left: clip.x.floor() as i32,
+        top: clip.y.floor() as i32,
+        right: (clip.x + clip.w).ceil() as i32,
+        bottom: (clip.y + clip.h).ceil() as i32,
+    };
+    for entry in entries {
+        entry.clip = intersect_text_bounds(entry.clip, clip_bounds);
+    }
+}
+
+fn intersect_text_bounds(a: TextBounds, b: TextBounds) -> TextBounds {
+    let left = a.left.max(b.left);
+    let top = a.top.max(b.top);
+    let right = a.right.min(b.right);
+    let bottom = a.bottom.min(b.bottom);
+    if right <= left || bottom <= top {
+        return TextBounds {
+            left,
+            top,
+            right: left,
+            bottom: top,
+        };
+    }
+    TextBounds {
+        left,
+        top,
+        right,
+        bottom,
+    }
+}
+
+fn transform_text_clip_to_painted_position(
+    current_clip: TextBounds,
+    untransformed_clip: TextBounds,
+    origin: [f32; 2],
+    scale: f32,
+    dx: f32,
+    dy: f32,
+) -> TextBounds {
+    let mut transformed = transformed_text_bounds(untransformed_clip, origin, scale, dx, dy);
+    if current_clip.left > untransformed_clip.left {
+        transformed.left = transformed.left.max(current_clip.left);
+    }
+    if current_clip.top > untransformed_clip.top {
+        transformed.top = transformed.top.max(current_clip.top);
+    }
+    if current_clip.right < untransformed_clip.right {
+        transformed.right = transformed.right.min(current_clip.right);
+    }
+    if current_clip.bottom < untransformed_clip.bottom {
+        transformed.bottom = transformed.bottom.min(current_clip.bottom);
+    }
+    transformed
 }
 
 fn transformed_text_bounds(
@@ -2867,12 +3274,12 @@ fn push_text_entry_impl(
         TextAlign::Center => {
             let text_w = text_width_for_buffer(&buf);
             let bounds_w = (clip.right - clip.left).max(1) as f32;
-            left + ((bounds_w - text_w).max(0.0) * 0.5)
+            clip.left as f32 + ((bounds_w - text_w).max(0.0) * 0.5)
         }
         TextAlign::Right => {
             let text_w = text_width_for_buffer(&buf);
             let bounds_w = (clip.right - clip.left).max(1) as f32;
-            left + (bounds_w - text_w).max(0.0)
+            clip.left as f32 + (bounds_w - text_w).max(0.0)
         }
     };
 
@@ -2883,6 +3290,7 @@ fn push_text_entry_impl(
         top,
         scale: 1.0,
         clip,
+        untransformed_clip: clip,
         color,
     });
 }
@@ -3352,6 +3760,12 @@ mod tests {
                 right: 88,
                 bottom: 30,
             },
+            untransformed_clip: TextBounds {
+                left: 18,
+                top: 8,
+                right: 88,
+                bottom: 30,
+            },
             color: Color::rgb(255, 255, 255),
         }];
 
@@ -3375,6 +3789,125 @@ mod tests {
         assert_eq!(entries[0].clip.top, -1);
         assert_eq!(entries[0].clip.right, 111);
         assert_eq!(entries[0].clip.bottom, 32);
+    }
+
+    #[test]
+    fn relative_positioned_text_clips_against_painted_offset() {
+        let mut font_system = FontSystem::new();
+        let buffer = Buffer::new(&mut font_system, Metrics::new(12.0, 16.0));
+        let key = TextKey {
+            text: "z 2".to_string(),
+            font_family: String::new(),
+            font_weight: Weight::NORMAL.0,
+            font_style: FontStyle::Normal,
+            tabular_nums: false,
+            letter_spacing_milli: 0,
+            font_size_milli: 12000,
+            line_height_milli: 16000,
+            width_milli: 80000,
+            wrap: false,
+        };
+        let mut entries = vec![TextEntry {
+            key,
+            buffer,
+            left: 20.0,
+            top: 10.0,
+            scale: 1.0,
+            clip: TextBounds {
+                left: 10,
+                top: 30,
+                right: 110,
+                bottom: 50,
+            },
+            untransformed_clip: TextBounds {
+                left: 10,
+                top: 10,
+                right: 110,
+                bottom: 50,
+            },
+            color: Color::rgb(255, 255, 255),
+        }];
+
+        apply_transform_to_text_entries(
+            &mut entries,
+            Some(TransformStyle {
+                translate_x: 0.0,
+                translate_y: 18.0,
+                scale_x: 1.0,
+                scale_y: 1.0,
+                rotate_deg: 0.0,
+            }),
+            1.0,
+            [60.0, 30.0],
+        );
+
+        assert_eq!(entries[0].top, 28.0);
+        assert_eq!(entries[0].clip.top, 30);
+        assert_eq!(entries[0].clip.bottom, 68);
+    }
+
+    #[test]
+    fn paint_clip_applies_after_relative_text_offset() {
+        let mut font_system = FontSystem::new();
+        let buffer = Buffer::new(&mut font_system, Metrics::new(12.0, 16.0));
+        let key = TextKey {
+            text: "z 2".to_string(),
+            font_family: String::new(),
+            font_weight: Weight::NORMAL.0,
+            font_style: FontStyle::Normal,
+            tabular_nums: false,
+            letter_spacing_milli: 0,
+            font_size_milli: 12000,
+            line_height_milli: 16000,
+            width_milli: 80000,
+            wrap: false,
+        };
+        let mut entries = vec![TextEntry {
+            key,
+            buffer,
+            left: 20.0,
+            top: 10.0,
+            scale: 1.0,
+            clip: TextBounds {
+                left: 10,
+                top: 10,
+                right: 110,
+                bottom: 50,
+            },
+            untransformed_clip: TextBounds {
+                left: 10,
+                top: 10,
+                right: 110,
+                bottom: 50,
+            },
+            color: Color::rgb(255, 255, 255),
+        }];
+
+        apply_transform_to_text_entries(
+            &mut entries,
+            Some(TransformStyle {
+                translate_x: 0.0,
+                translate_y: 18.0,
+                scale_x: 1.0,
+                scale_y: 1.0,
+                rotate_deg: 0.0,
+            }),
+            1.0,
+            [60.0, 30.0],
+        );
+        apply_paint_clip_to_text_entries(
+            &mut entries,
+            Some(Rect {
+                x: 0.0,
+                y: 30.0,
+                w: 200.0,
+                h: 40.0,
+            }),
+        );
+
+        assert_eq!(entries[0].top, 28.0);
+        assert_eq!(entries[0].clip.top, 30);
+        assert_eq!(entries[0].clip.bottom, 68);
     }
 
     #[test]
@@ -3442,6 +3975,292 @@ mod tests {
             .expect("child label text");
         assert_eq!(entry.left, -30.0);
         assert_eq!(entry.scale, 2.0);
+    }
+
+    #[test]
+    fn label_text_entries_wrap_by_default() {
+        let mut label = node("label", WidgetKind::Label);
+        label.props.text = Some("This label should wrap inside its narrow layout rect".to_string());
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "label".to_string(),
+            Rect {
+                x: 8.0,
+                y: 10.0,
+                w: 120.0,
+                h: 72.0,
+            },
+        );
+
+        let theme = Theme::dark();
+        let state = WidgetState::default();
+        let mut font_system = FontSystem::new();
+        let font_aliases = FontFamilyAliases::default();
+        let mut cache = TextBufferCache::default();
+        let mut caret_positions = HashMap::new();
+        let mut entries = Vec::new();
+        collect_text(
+            &label,
+            &layout,
+            &state,
+            &theme,
+            None,
+            None,
+            [None, None],
+            None,
+            &mut font_system,
+            &font_aliases,
+            1.0,
+            0.0,
+            &mut cache,
+            &mut caret_positions,
+            &mut entries,
+        );
+
+        let entry = entries.first().expect("label text entry");
+        assert!(entry.key.wrap, "label text should use the wrapping path");
+        assert_eq!(entry.top, 10.0);
+    }
+
+    #[test]
+    fn label_text_entries_can_disable_wrap() {
+        let mut label = node("label", WidgetKind::Label);
+        label.props.text = Some("Single line".to_string());
+        label.props.wrap = Some(false);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "label".to_string(),
+            Rect {
+                x: 8.0,
+                y: 10.0,
+                w: 120.0,
+                h: 32.0,
+            },
+        );
+
+        let theme = Theme::dark();
+        let state = WidgetState::default();
+        let mut font_system = FontSystem::new();
+        let font_aliases = FontFamilyAliases::default();
+        let mut cache = TextBufferCache::default();
+        let mut caret_positions = HashMap::new();
+        let mut entries = Vec::new();
+        collect_text(
+            &label,
+            &layout,
+            &state,
+            &theme,
+            None,
+            None,
+            [None, None],
+            None,
+            &mut font_system,
+            &font_aliases,
+            1.0,
+            0.0,
+            &mut cache,
+            &mut caret_positions,
+            &mut entries,
+        );
+
+        let entry = entries.first().expect("label text entry");
+        assert!(
+            !entry.key.wrap,
+            "label wrap=false should keep single-line path"
+        );
+    }
+
+    #[test]
+    fn generated_before_text_reserves_space_before_label_text() {
+        let mut label = node("label", WidgetKind::Label);
+        label.props.text = Some("Declaration query".to_string());
+        label.props.wrap = Some(false);
+        label.style.parts.parts.insert(
+            "before".to_string(),
+            PartStyle {
+                content: Some(GeneratedContent::Text("PASS ".to_string())),
+                text: TextStyle {
+                    font_weight: Some(Weight::BOLD.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "label".to_string(),
+            Rect {
+                x: 8.0,
+                y: 10.0,
+                w: 220.0,
+                h: 32.0,
+            },
+        );
+
+        let theme = Theme::dark();
+        let state = WidgetState::default();
+        let mut font_system = FontSystem::new();
+        let font_aliases = FontFamilyAliases::default();
+        let mut cache = TextBufferCache::default();
+        let mut caret_positions = HashMap::new();
+        let mut entries = Vec::new();
+        collect_text(
+            &label,
+            &layout,
+            &state,
+            &theme,
+            None,
+            None,
+            [None, None],
+            None,
+            &mut font_system,
+            &font_aliases,
+            1.0,
+            0.0,
+            &mut cache,
+            &mut caret_positions,
+            &mut entries,
+        );
+
+        let main = entries
+            .iter()
+            .find(|entry| entry.key.text == "Declaration query")
+            .expect("main label text");
+        let before = entries
+            .iter()
+            .find(|entry| entry.key.text == "PASS ")
+            .expect("generated before text");
+
+        assert!(
+            main.left > before.left + 24.0,
+            "generated before text did not reserve inline space: before_left={} main_left={}",
+            before.left,
+            main.left
+        );
+    }
+
+    #[test]
+    fn padded_badge_center_text_stays_inside_clip() {
+        let mut badge = node("badge", WidgetKind::Badge);
+        badge.props.text = Some("margin auto".to_string());
+        badge.style.layout.padding_left = Some(10.0);
+        badge.style.layout.padding_right = Some(10.0);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "badge".to_string(),
+            Rect {
+                x: 8.0,
+                y: 10.0,
+                w: 124.0,
+                h: 28.0,
+            },
+        );
+
+        let theme = Theme::dark();
+        let state = WidgetState::default();
+        let mut font_system = FontSystem::new();
+        let font_aliases = FontFamilyAliases::default();
+        let mut cache = TextBufferCache::default();
+        let mut caret_positions = HashMap::new();
+        let mut entries = Vec::new();
+        collect_text(
+            &badge,
+            &layout,
+            &state,
+            &theme,
+            None,
+            None,
+            [None, None],
+            None,
+            &mut font_system,
+            &font_aliases,
+            1.0,
+            theme.spacing,
+            &mut cache,
+            &mut caret_positions,
+            &mut entries,
+        );
+
+        let entry = entries.first().expect("badge text entry");
+        let text_right = entry.left + text_width_for_buffer(&entry.buffer);
+        assert!(
+            text_right <= entry.clip.right as f32,
+            "badge text should stay inside clip: text_right={text_right}, clip_right={}",
+            entry.clip.right
+        );
+    }
+
+    #[test]
+    fn panel_generated_after_anchors_to_title_band() {
+        let mut panel = node("panel", WidgetKind::Panel);
+        panel.style.layout.padding = Some(12.0);
+        panel.style.parts.parts.insert(
+            "after".to_string(),
+            PartStyle {
+                content: Some(GeneratedContent::Text("STAMP".to_string())),
+                layout: PartLayoutStyle {
+                    width: Some(72.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "panel".to_string(),
+            Rect {
+                x: 8.0,
+                y: 10.0,
+                w: 220.0,
+                h: 160.0,
+            },
+        );
+
+        let theme = Theme::dark();
+        let state = WidgetState::default();
+        let mut font_system = FontSystem::new();
+        let font_aliases = FontFamilyAliases::default();
+        let mut cache = TextBufferCache::default();
+        let mut caret_positions = HashMap::new();
+        let mut entries = Vec::new();
+        collect_text(
+            &panel,
+            &layout,
+            &state,
+            &theme,
+            None,
+            None,
+            [None, None],
+            None,
+            &mut font_system,
+            &font_aliases,
+            1.0,
+            0.0,
+            &mut cache,
+            &mut caret_positions,
+            &mut entries,
+        );
+
+        let stamp = entries
+            .iter()
+            .find(|entry| entry.key.text == "STAMP")
+            .expect("generated panel after text");
+
+        assert!(
+            stamp.top < 40.0,
+            "panel generated text should anchor near the title band, got top={}",
+            stamp.top
+        );
+        assert!(
+            stamp.clip.bottom < 50,
+            "panel generated text clip should stay in the title band, got bottom={}",
+            stamp.clip.bottom
+        );
     }
 
     #[test]
@@ -3554,7 +4373,7 @@ mod tests {
 
     #[test]
     fn font_source_resolves_base64_data_font_url() {
-        let source = resolve_font_source("data:font/ttf;base64,AAEAAA==");
+        let source = resolve_font_source("data:font/ttf;base64,AAEAAA==", Some("truetype"));
 
         match source {
             Ok(ResolvedFontSource::Data(data)) => assert_eq!(data, b"\0\x01\0\0"),
@@ -3563,19 +4382,80 @@ mod tests {
     }
 
     #[test]
+    fn font_source_resolves_base64_woff_font_url() {
+        let woff = minimal_woff_font_data();
+        let url = format!(
+            "data:font/woff;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(woff)
+        );
+        let source = resolve_font_source(&url, Some("woff"));
+
+        match source {
+            Ok(ResolvedFontSource::Data(data)) => assert!(is_supported_sfnt_font_data(&data)),
+            _ => panic!("expected decoded WOFF font data"),
+        }
+    }
+
+    #[test]
     fn font_source_rejects_unsupported_data_font_payload() {
-        let source = resolve_font_source("data:font/woff;base64,d09GRg==");
+        let source = resolve_font_source("data:font/woff2;base64,d09GMg==", None);
 
         assert!(matches!(
             source,
-            Err("unsupported font data; only sfnt TrueType/OpenType/TTC data is supported")
+            Err(
+                "unsupported font data; only sfnt TrueType/OpenType/TTC or WOFF1 data is supported"
+            )
         ));
     }
 
     #[test]
     fn font_source_rejects_remote_urls() {
-        let source = resolve_font_source("https://example.com/font.ttf");
+        let source = resolve_font_source("https://example.com/font.ttf", None);
 
         assert!(matches!(source, Err("remote font URLs are not supported")));
+    }
+
+    #[test]
+    fn font_source_rejects_unsupported_declared_format() {
+        let source = resolve_font_source("data:font/woff2;base64,d09GMg==", Some("woff2"));
+
+        assert!(matches!(
+            source,
+            Err(
+                "unsupported font format; only truetype, opentype, collection, and woff are supported"
+            )
+        ));
+    }
+
+    #[test]
+    fn font_source_file_url_decodes_percent_escaped_path() {
+        let path = font_source_path("file:///C:/Demo%20Fonts/Report%20UI.ttf?cache=1");
+
+        assert!(path.to_string_lossy().contains("Demo Fonts"));
+        assert!(path.to_string_lossy().contains("Report UI.ttf"));
+    }
+
+    fn minimal_woff_font_data() -> Vec<u8> {
+        let mut data = Vec::new();
+        write_be_u32(&mut data, u32::from_be_bytes(*b"wOFF"));
+        write_be_u32(&mut data, u32::from_be_bytes(*b"OTTO"));
+        write_be_u32(&mut data, 68);
+        write_be_u16(&mut data, 1);
+        write_be_u16(&mut data, 0);
+        write_be_u32(&mut data, 32);
+        write_be_u16(&mut data, 0);
+        write_be_u16(&mut data, 0);
+        write_be_u32(&mut data, 0);
+        write_be_u32(&mut data, 0);
+        write_be_u32(&mut data, 0);
+        write_be_u32(&mut data, 0);
+        write_be_u32(&mut data, 0);
+        data.extend_from_slice(b"head");
+        write_be_u32(&mut data, 64);
+        write_be_u32(&mut data, 4);
+        write_be_u32(&mut data, 4);
+        write_be_u32(&mut data, 0);
+        data.extend_from_slice(b"OTTO");
+        data
     }
 }

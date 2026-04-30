@@ -21,11 +21,12 @@ use crate::style::{
     part_style_active_for_state as style_part_style_active_for_state,
     part_visual_for_state as style_part_visual_for_state, selected_part_style_for_state,
     state_part_style_for_state, tabs_header_height_for_style, uniform_layout_padding,
-    BackdropFilterStyle, BackgroundPaint, ColorRef, NodeStyle, PartStyle, PositionStyle,
-    TransformStyle, TransitionProperty, VisualStyle, BORDER_WIDTH_LP, CARET_WIDTH_LP,
-    CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP, DROPDOWN_CHEVRON_WIDTH_LP, FOCUS_RING_LP,
-    PANEL_ACCENT_WIDTH_LP, SLIDER_THUMB_WIDTH_LP, SLIDER_TRACK_HEIGHT_LP, SLIDER_TRACK_MARGIN_LP,
-    TAB_ACTIVE_BAR_LP, TAB_GAP_LP, TAB_INACTIVE_BOTTOM_INSET_LP, TAB_TOP_INSET_LP,
+    BackdropFilterStyle, BackgroundPaint, ColorRef, GradientInterpolation, NodeStyle, PartStyle,
+    PositionStyle, TransformStyle, TransitionProperty, VisualStyle, BORDER_WIDTH_LP,
+    CARET_WIDTH_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP, DROPDOWN_CHEVRON_WIDTH_LP,
+    FOCUS_RING_LP, PANEL_ACCENT_WIDTH_LP, SLIDER_THUMB_WIDTH_LP, SLIDER_TRACK_HEIGHT_LP,
+    SLIDER_TRACK_MARGIN_LP, TAB_ACTIVE_BAR_LP, TAB_GAP_LP, TAB_INACTIVE_BOTTOM_INSET_LP,
+    TAB_TOP_INSET_LP,
 };
 use crate::table;
 use crate::theme::{Color, Theme};
@@ -63,9 +64,15 @@ pub struct RectInstance {
     pub color4: [f32; 4],
     /// Gradient stop positions for color, color2, color3, and color4.
     pub gradient_stops: [f32; 4],
+    /// Fifth RGBA colour for richer gradient paints.
+    pub color5: [f32; 4],
+    /// Sixth RGBA colour for richer gradient paints.
+    pub color6: [f32; 4],
+    /// Additional gradient stop positions for color5 and color6.
+    pub gradient_stops2: [f32; 4],
 }
 
-static RECT_ATTRS: [wgpu::VertexAttribute; 12] = [
+static RECT_ATTRS: [wgpu::VertexAttribute; 15] = [
     wgpu::VertexAttribute {
         format: wgpu::VertexFormat::Float32x4,
         offset: 0,
@@ -125,6 +132,21 @@ static RECT_ATTRS: [wgpu::VertexAttribute; 12] = [
         format: wgpu::VertexFormat::Float32x4,
         offset: 176,
         shader_location: 11,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 192,
+        shader_location: 12,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 208,
+        shader_location: 13,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 224,
+        shader_location: 14,
     },
 ];
 
@@ -411,6 +433,9 @@ fn inst_radii_clipped(
         color3: color,
         color4: color,
         gradient_stops: [0.0, 1.0, 1.0, 1.0],
+        color5: color,
+        color6: color,
+        gradient_stops2: [1.0, 1.0, 1.0, 1.0],
     }
 }
 
@@ -444,6 +469,35 @@ fn inst_rounded_triangle_clipped(
         color3: color,
         color4: color,
         gradient_stops: [0.0, 1.0, 1.0, 1.0],
+        color5: color,
+        color6: color,
+        gradient_stops2: [1.0, 1.0, 1.0, 1.0],
+    }
+}
+
+fn inst_outline_ring_clipped(
+    rect: [f32; 4],
+    color: [f32; 4],
+    radii: [f32; 4],
+    thickness: f32,
+    clip: [f32; 4],
+) -> RectInstance {
+    RectInstance {
+        rect,
+        color,
+        radii,
+        clip,
+        params: [1.0, 0.0, 3.0, 0.0],
+        color2: color,
+        paint: [0.0, 0.0, 0.0, thickness.max(0.0)],
+        transform: [0.0, 0.0, 1.0, 1.0],
+        transform2: [0.0, 0.0, 0.0, 0.0],
+        color3: color,
+        color4: color,
+        gradient_stops: [0.0, 1.0, 1.0, 1.0],
+        color5: color,
+        color6: color,
+        gradient_stops2: [1.0, 1.0, 1.0, 1.0],
     }
 }
 
@@ -452,22 +506,57 @@ fn default_local_clip(rect: [f32; 4]) -> [f32; 4] {
 }
 
 fn local_clip_for_rect(rect: [f32; 4], clip: Option<Rect>) -> Option<[f32; 4]> {
+    local_clip_for_translated_rect(rect, [0.0, 0.0], clip)
+}
+
+fn local_clip_for_translated_rect(
+    rect: [f32; 4],
+    translate: [f32; 2],
+    clip: Option<Rect>,
+) -> Option<[f32; 4]> {
     let Some(clip) = clip else {
         return Some(default_local_clip(rect));
     };
+    let aa_pad = 1.0;
     let visible = Rect {
-        x: rect[0],
-        y: rect[1],
-        w: rect[2],
-        h: rect[3],
+        x: rect[0] + translate[0] - aa_pad,
+        y: rect[1] + translate[1] - aa_pad,
+        w: rect[2] + aa_pad * 2.0,
+        h: rect[3] + aa_pad * 2.0,
     }
     .intersect(clip)?;
     Some([
-        visible.x - rect[0],
-        visible.y - rect[1],
-        visible.x + visible.w - rect[0],
-        visible.y + visible.h - rect[1],
+        visible.x - (rect[0] + translate[0]),
+        visible.y - (rect[1] + translate[1]),
+        visible.x + visible.w - (rect[0] + translate[0]),
+        visible.y + visible.h - (rect[1] + translate[1]),
     ])
+}
+
+fn intersect_local_clip(current: [f32; 4], next: [f32; 4]) -> Option<[f32; 4]> {
+    let clip = [
+        current[0].max(next[0]),
+        current[1].max(next[1]),
+        current[2].min(next[2]),
+        current[3].min(next[3]),
+    ];
+    (clip[2] > clip[0] && clip[3] > clip[1]).then_some(clip)
+}
+
+fn apply_paint_clip(instances: &mut [RectInstance], clip: Option<Rect>) {
+    let Some(clip) = clip else {
+        return;
+    };
+    for inst in instances {
+        let next = local_clip_for_translated_rect(
+            inst.rect,
+            [inst.transform[0], inst.transform[1]],
+            Some(clip),
+        );
+        inst.clip = next
+            .and_then(|next| intersect_local_clip(inst.clip, next))
+            .unwrap_or([1.0, 1.0, 0.0, 0.0]);
+    }
 }
 
 fn inst_shadow_clipped(
@@ -490,6 +579,9 @@ fn inst_shadow_clipped(
         color3: color,
         color4: color,
         gradient_stops: [0.0, 1.0, 1.0, 1.0],
+        color5: color,
+        color6: color,
+        gradient_stops2: [1.0, 1.0, 1.0, 1.0],
     }
 }
 
@@ -514,14 +606,18 @@ fn inst_inset_shadow(
         color3: color,
         color4: color,
         gradient_stops: [0.0, 1.0, 1.0, 1.0],
+        color5: color,
+        color6: color,
+        gradient_stops2: [1.0, 1.0, 1.0, 1.0],
     }
 }
 
 fn inst_linear_gradient(
     rect: [f32; 4],
-    colors: [[f32; 4]; 4],
-    stops: [f32; 4],
+    colors: [[f32; 4]; GRADIENT_STOP_CAPACITY],
+    stops: [f32; GRADIENT_STOP_CAPACITY],
     count: f32,
+    interpolation: f32,
     radii: [f32; 4],
     angle_deg: f32,
 ) -> RectInstance {
@@ -536,18 +632,22 @@ fn inst_linear_gradient(
         color2: colors[1],
         paint: [1.0, dir[0], dir[1], count],
         transform: [0.0, 0.0, 1.0, 1.0],
-        transform2: [0.0, 0.0, 0.0, 0.0],
+        transform2: [0.0, 0.0, interpolation, 0.0],
         color3: colors[2],
         color4: colors[3],
-        gradient_stops: stops,
+        gradient_stops: [stops[0], stops[1], stops[2], stops[3]],
+        color5: colors[4],
+        color6: colors[5],
+        gradient_stops2: [stops[4], stops[5], 1.0, 1.0],
     }
 }
 
 fn inst_radial_gradient(
     rect: [f32; 4],
-    colors: [[f32; 4]; 4],
-    stops: [f32; 4],
+    colors: [[f32; 4]; GRADIENT_STOP_CAPACITY],
+    stops: [f32; GRADIENT_STOP_CAPACITY],
     count: f32,
+    interpolation: f32,
     radii: [f32; 4],
     center: [f32; 2],
 ) -> RectInstance {
@@ -560,10 +660,71 @@ fn inst_radial_gradient(
         color2: colors[1],
         paint: [2.0, center[0], center[1], count],
         transform: [0.0, 0.0, 1.0, 1.0],
-        transform2: [0.0, 0.0, 0.0, 0.0],
+        transform2: [0.0, 0.0, interpolation, 0.0],
         color3: colors[2],
         color4: colors[3],
-        gradient_stops: stops,
+        gradient_stops: [stops[0], stops[1], stops[2], stops[3]],
+        color5: colors[4],
+        color6: colors[5],
+        gradient_stops2: [stops[4], stops[5], 1.0, 1.0],
+    }
+}
+
+fn inst_blob_gradient(
+    rect: [f32; 4],
+    colors: [[f32; 4]; 4],
+    centers: [[f32; 2]; 4],
+    radii_values: [f32; 4],
+    count: f32,
+    interpolation: f32,
+    radii: [f32; 4],
+) -> RectInstance {
+    RectInstance {
+        rect,
+        color: colors[0],
+        radii,
+        clip: [-1.0, -1.0, rect[2] + 1.0, rect[3] + 1.0],
+        params: [1.0, 0.0, 0.0, 0.0],
+        color2: colors[1],
+        paint: [3.0, 0.0, 0.0, count],
+        transform: [0.0, 0.0, 1.0, 1.0],
+        transform2: [0.0, 0.0, interpolation, 0.0],
+        color3: colors[2],
+        color4: colors[3],
+        gradient_stops: [centers[0][0], centers[0][1], centers[1][0], centers[1][1]],
+        color5: [
+            radii_values[0],
+            radii_values[1],
+            radii_values[2],
+            radii_values[3],
+        ],
+        color6: [0.0, 0.0, 0.0, 0.0],
+        gradient_stops2: [centers[2][0], centers[2][1], centers[3][0], centers[3][1]],
+    }
+}
+
+fn inst_mesh_gradient(
+    rect: [f32; 4],
+    colors: [[f32; 4]; 4],
+    interpolation: f32,
+    radii: [f32; 4],
+) -> RectInstance {
+    RectInstance {
+        rect,
+        color: colors[0],
+        radii,
+        clip: [-1.0, -1.0, rect[2] + 1.0, rect[3] + 1.0],
+        params: [1.0, 0.0, 0.0, 0.0],
+        color2: colors[1],
+        paint: [4.0, 0.0, 0.0, 4.0],
+        transform: [0.0, 0.0, 1.0, 1.0],
+        transform2: [0.0, 0.0, interpolation, 0.0],
+        color3: colors[2],
+        color4: colors[3],
+        gradient_stops: [0.0, 1.0, 0.0, 1.0],
+        color5: [0.0, 0.0, 0.0, 0.0],
+        color6: [0.0, 0.0, 0.0, 0.0],
+        gradient_stops2: [1.0, 1.0, 1.0, 1.0],
     }
 }
 
@@ -584,31 +745,6 @@ fn push_masked_rect(
         rect[1] + rect[3] - mask_rect[1],
     ];
     out.push(inst_radii_clipped(mask_rect, color, radii, clip));
-}
-
-fn push_masked_rect_clipped(
-    out: &mut Vec<RectInstance>,
-    mask_rect: [f32; 4],
-    color: [f32; 4],
-    radii: [f32; 4],
-    rect: [f32; 4],
-    clip: Option<Rect>,
-) {
-    let rect = if let Some(clip) = clip {
-        let Some(visible) = (Rect {
-            x: rect[0],
-            y: rect[1],
-            w: rect[2],
-            h: rect[3],
-        })
-        .intersect(clip) else {
-            return;
-        };
-        [visible.x, visible.y, visible.w, visible.h]
-    } else {
-        rect
-    };
-    push_masked_rect(out, mask_rect, color, radii, rect);
 }
 
 fn apply_transform_to_instances(
@@ -735,7 +871,13 @@ fn inset_radii(radii: [f32; 4], inset: f32) -> [f32; 4] {
 }
 
 fn outset_radii(radii: [f32; 4], outset: f32) -> [f32; 4] {
-    radii.map(|radius| (radius + outset).max(0.0))
+    radii.map(|radius| {
+        if radius <= 0.0 {
+            0.0
+        } else {
+            (radius + outset).max(0.0)
+        }
+    })
 }
 
 fn mix(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
@@ -745,6 +887,24 @@ fn mix(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
         a[1] + (b[1] - a[1]) * t,
         a[2] + (b[2] - a[2]) * t,
         a[3] + (b[3] - a[3]) * t,
+    ]
+}
+
+fn mix_premultiplied_alpha(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
+    let t = t.clamp(0.0, 1.0);
+    let left_alpha = a[3].clamp(0.0, 1.0);
+    let right_alpha = b[3].clamp(0.0, 1.0);
+    let alpha = left_alpha + (right_alpha - left_alpha) * t;
+    if alpha <= 0.0001 {
+        return [0.0, 0.0, 0.0, 0.0];
+    }
+    let left = [a[0] * left_alpha, a[1] * left_alpha, a[2] * left_alpha];
+    let right = [b[0] * right_alpha, b[1] * right_alpha, b[2] * right_alpha];
+    [
+        (left[0] + (right[0] - left[0]) * t) / alpha,
+        (left[1] + (right[1] - left[1]) * t) / alpha,
+        (left[2] + (right[2] - left[2]) * t) / alpha,
+        alpha,
     ]
 }
 
@@ -947,6 +1107,7 @@ pub(crate) fn interpolate_visual_style(
         } else {
             instant.background_paint.clone()
         },
+        gradient_interpolation: instant.gradient_interpolation,
         backdrop_filter: instant.backdrop_filter,
         foreground: if transition_allows_any(
             properties,
@@ -1200,18 +1361,33 @@ enum FillPaint {
     Solid([f32; 4]),
     Layers(Vec<FillPaint>),
     LinearGradient {
-        colors: [[f32; 4]; 4],
-        stops: [f32; 4],
+        colors: [[f32; 4]; GRADIENT_STOP_CAPACITY],
+        stops: [f32; GRADIENT_STOP_CAPACITY],
         count: f32,
+        interpolation: f32,
         angle_deg: f32,
     },
     RadialGradient {
-        colors: [[f32; 4]; 4],
-        stops: [f32; 4],
+        colors: [[f32; 4]; GRADIENT_STOP_CAPACITY],
+        stops: [f32; GRADIENT_STOP_CAPACITY],
         count: f32,
+        interpolation: f32,
         center: [f32; 2],
     },
+    BlobGradient {
+        colors: [[f32; 4]; 4],
+        centers: [[f32; 2]; 4],
+        radii: [f32; 4],
+        count: f32,
+        interpolation: f32,
+    },
+    MeshGradient {
+        colors: [[f32; 4]; 4],
+        interpolation: f32,
+    },
 }
+
+const GRADIENT_STOP_CAPACITY: usize = 6;
 
 fn apply_opacity(mut color: [f32; 4], opacity: Option<f32>) -> [f32; 4] {
     if let Some(opacity) = opacity {
@@ -1802,6 +1978,7 @@ fn resolve_background_paint_layer(
                 colors,
                 stops,
                 count: signed_gradient_stop_count(count, gradient.repeating),
+                interpolation: gradient_interpolation_mode(visual.gradient_interpolation),
                 angle_deg: gradient.angle_deg,
             }
         }
@@ -1812,9 +1989,30 @@ fn resolve_background_paint_layer(
                 colors,
                 stops,
                 count: signed_gradient_stop_count(count, gradient.repeating),
+                interpolation: gradient_interpolation_mode(visual.gradient_interpolation),
                 center: gradient.center,
             }
         }
+        BackgroundPaint::BlobGradient(gradient) if !gradient.blobs.is_empty() => {
+            let (colors, centers, radii, count) =
+                resolve_blob_gradient(&gradient.blobs, theme, visual.opacity);
+            FillPaint::BlobGradient {
+                colors,
+                centers,
+                radii,
+                count,
+                interpolation: gradient_interpolation_mode(visual.gradient_interpolation),
+            }
+        }
+        BackgroundPaint::MeshGradient(gradient) => FillPaint::MeshGradient {
+            colors: [
+                apply_opacity(gradient.top_left.resolve(theme), visual.opacity),
+                apply_opacity(gradient.top_right.resolve(theme), visual.opacity),
+                apply_opacity(gradient.bottom_left.resolve(theme), visual.opacity),
+                apply_opacity(gradient.bottom_right.resolve(theme), visual.opacity),
+            ],
+            interpolation: gradient_interpolation_mode(visual.gradient_interpolation),
+        },
         BackgroundPaint::Layers(layers) if !layers.is_empty() => FillPaint::Layers(
             layers
                 .iter()
@@ -1838,15 +2036,28 @@ fn signed_gradient_stop_count(count: u32, repeating: bool) -> f32 {
     }
 }
 
+fn gradient_interpolation_mode(mode: Option<GradientInterpolation>) -> f32 {
+    match mode.unwrap_or(GradientInterpolation::Srgb) {
+        GradientInterpolation::Srgb => 0.0,
+        GradientInterpolation::LinearSrgb => 1.0,
+        GradientInterpolation::Oklab => 2.0,
+    }
+}
+
 fn resolve_gradient_stops(
     stops: &[crate::style::GradientStop],
     theme: &Theme,
     opacity: Option<f32>,
-) -> ([[f32; 4]; 4], [f32; 4], u32) {
+) -> (
+    [[f32; 4]; GRADIENT_STOP_CAPACITY],
+    [f32; GRADIENT_STOP_CAPACITY],
+    u32,
+) {
     let resolved: Vec<([f32; 4], f32)> = normalize_gradient_stops(stops, theme, opacity);
-    if resolved.len() <= 4 {
-        let mut colors = [[0.0, 0.0, 0.0, 0.0]; 4];
-        let mut positions = [0.0, 1.0, 1.0, 1.0];
+    if resolved.len() <= GRADIENT_STOP_CAPACITY {
+        let mut colors = [[0.0, 0.0, 0.0, 0.0]; GRADIENT_STOP_CAPACITY];
+        let mut positions = [1.0; GRADIENT_STOP_CAPACITY];
+        positions[0] = 0.0;
         for (index, (color, position)) in resolved.iter().enumerate() {
             colors[index] = *color;
             positions[index] = *position;
@@ -1861,12 +2072,36 @@ fn resolve_gradient_stops(
         return (colors, positions, resolved.len().max(2) as u32);
     }
 
-    let sample_positions = [0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0];
-    let mut colors = [[0.0, 0.0, 0.0, 0.0]; 4];
+    let sample_positions = [0.0, 0.20, 0.40, 0.60, 0.80, 1.0];
+    let mut colors = [[0.0, 0.0, 0.0, 0.0]; GRADIENT_STOP_CAPACITY];
     for (index, position) in sample_positions.iter().enumerate() {
         colors[index] = gradient_color_at(&resolved, *position);
     }
-    (colors, sample_positions, 4)
+    (colors, sample_positions, GRADIENT_STOP_CAPACITY as u32)
+}
+
+fn resolve_blob_gradient(
+    blobs: &[crate::style::BlobGradientStop],
+    theme: &Theme,
+    opacity: Option<f32>,
+) -> ([[f32; 4]; 4], [[f32; 2]; 4], [f32; 4], f32) {
+    let mut colors = [[0.0, 0.0, 0.0, 0.0]; 4];
+    let mut centers = [[0.5, 0.5]; 4];
+    let mut radii = [0.42; 4];
+    let count = blobs.len().min(4);
+    for (index, blob) in blobs.iter().take(4).enumerate() {
+        colors[index] = apply_opacity(blob.color.resolve(theme), opacity);
+        centers[index] = blob.center;
+        radii[index] = blob.radius;
+    }
+    if count > 0 {
+        for index in count..4 {
+            colors[index] = colors[count - 1];
+            centers[index] = centers[count - 1];
+            radii[index] = radii[count - 1];
+        }
+    }
+    (colors, centers, radii, count.max(1) as f32)
 }
 
 fn normalize_gradient_stops(
@@ -1929,7 +2164,7 @@ fn gradient_color_at(stops: &[([f32; 4], f32)], position: f32) -> [f32; 4] {
         let (right_color, right_pos) = pair[1];
         if position <= right_pos {
             let span = (right_pos - left_pos).abs().max(0.0001);
-            return mix(left_color, right_color, (position - left_pos) / span);
+            return mix_premultiplied_alpha(left_color, right_color, (position - left_pos) / span);
         }
     }
     stops.last().map(|(color, _)| *color).unwrap_or(stops[0].0)
@@ -1952,18 +2187,51 @@ fn emit_paint_rect_radii(
             colors,
             stops,
             count,
+            interpolation,
             angle_deg,
         } => out.push(inst_linear_gradient(
-            rect, colors, stops, count, radii, angle_deg,
+            rect,
+            colors,
+            stops,
+            count,
+            interpolation,
+            radii,
+            angle_deg,
         )),
         FillPaint::RadialGradient {
             colors,
             stops,
             count,
+            interpolation,
             center,
         } => out.push(inst_radial_gradient(
-            rect, colors, stops, count, radii, center,
+            rect,
+            colors,
+            stops,
+            count,
+            interpolation,
+            radii,
+            center,
         )),
+        FillPaint::BlobGradient {
+            colors,
+            centers,
+            radii: blob_radii,
+            count,
+            interpolation,
+        } => out.push(inst_blob_gradient(
+            rect,
+            colors,
+            centers,
+            blob_radii,
+            count,
+            interpolation,
+            radii,
+        )),
+        FillPaint::MeshGradient {
+            colors,
+            interpolation,
+        } => out.push(inst_mesh_gradient(rect, colors, interpolation, radii)),
     }
 }
 
@@ -2070,11 +2338,22 @@ fn emit_bordered_rect_radii(
     radii: [f32; 4],
     border_w: f32,
 ) {
-    out.push(inst_radii(rect, border, radii));
+    let width = border_w.max(0.0);
+    if width <= 0.0 {
+        out.push(inst_radii(rect, fill, radii));
+        return;
+    }
     out.push(inst_radii(
-        inset_rect(rect, border_w),
+        inset_rect(rect, width),
         fill,
-        inset_radii(radii, border_w),
+        inset_radii(radii, width),
+    ));
+    out.push(inst_outline_ring_clipped(
+        rect,
+        border,
+        radii,
+        width,
+        default_local_clip(rect),
     ));
 }
 
@@ -2086,13 +2365,24 @@ fn emit_bordered_paint_rect_radii(
     radii: [f32; 4],
     border_w: f32,
 ) {
-    out.push(inst_radii(rect, border, radii));
+    let width = border_w.max(0.0);
+    if width <= 0.0 {
+        emit_paint_rect_radii(out, rect, fill, radii);
+        return;
+    }
     emit_paint_rect_radii(
         out,
-        inset_rect(rect, border_w),
+        inset_rect(rect, width),
         fill,
-        inset_radii(radii, border_w),
+        inset_radii(radii, width),
     );
+    out.push(inst_outline_ring_clipped(
+        rect,
+        border,
+        radii,
+        width,
+        default_local_clip(rect),
+    ));
 }
 
 fn emit_box_shadows(
@@ -2232,45 +2522,17 @@ fn emit_outline(
         rect[2] + pad * 2.0,
         rect[3] + pad * 2.0,
     ];
-    let inner = [
-        rect[0] - offset,
-        rect[1] - offset,
-        rect[2] + offset * 2.0,
-        rect[3] + offset * 2.0,
-    ];
     let outer_radii = outset_radii(radii, pad);
-    push_masked_rect_clipped(
-        out,
+    let Some(local_clip) = local_clip_for_rect(outer, clip) else {
+        return;
+    };
+    out.push(inst_outline_ring_clipped(
         outer,
         color,
         outer_radii,
-        [outer[0], outer[1], outer[2], width],
-        clip,
-    );
-    push_masked_rect_clipped(
-        out,
-        outer,
-        color,
-        outer_radii,
-        [outer[0], inner[1] + inner[3], outer[2], width],
-        clip,
-    );
-    push_masked_rect_clipped(
-        out,
-        outer,
-        color,
-        outer_radii,
-        [outer[0], inner[1], width, inner[3]],
-        clip,
-    );
-    push_masked_rect_clipped(
-        out,
-        outer,
-        color,
-        outer_radii,
-        [inner[0] + inner[2], inner[1], width, inner[3]],
-        clip,
-    );
+        width,
+        local_clip,
+    ));
 }
 
 fn emit_focus_ring_radii(
@@ -2314,11 +2576,15 @@ fn emit_rects(
     }
     let subtree_primitive_start = out.len();
     let mut subtree_transform = None;
-    if let Some(r) = layout.visible_rect(&node.id) {
+    let mut subtree_paint_clip = None;
+    if layout.visible_rect(&node.id).is_some() {
         let own_primitive_start = out.len();
-        let full_rect = layout.rects.get(&node.id).copied().unwrap_or(r);
+        let Some(full_rect) = layout.rects.get(&node.id).copied() else {
+            return;
+        };
         let paint_clip = layout.paint_clip_rect(&node.id);
-        let [x, y, w, h] = [r.x, r.y, r.w, r.h];
+        subtree_paint_clip = paint_clip;
+        let [x, y, w, h] = [full_rect.x, full_rect.y, full_rect.w, full_rect.h];
         let visual = visual_for(node, state, theme);
         let border_w = visual.border_width.unwrap_or(BORDER_WIDTH_LP).max(0.0) * sf;
         let radius_lp = visual.border_radius.unwrap_or(theme.radius).max(0.0);
@@ -2404,15 +2670,19 @@ fn emit_rects(
                 } else {
                     FillPaint::Solid(styled_bg.unwrap_or(theme.surface))
                 };
+                let border_color =
+                    styled_border.unwrap_or_else(|| control_border(node, theme, state));
                 emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], radii, out);
-                emit_bordered_paint_rect_radii(
-                    out,
-                    [x, y, w, h],
-                    styled_border.unwrap_or_else(|| control_border(node, theme, state)),
-                    fill,
-                    radii,
-                    border_w,
-                );
+                if border_w > 0.0 {
+                    emit_paint_rect_radii(
+                        out,
+                        inset_rect([x, y, w, h], border_w),
+                        fill,
+                        inset_radii(radii, border_w),
+                    );
+                } else {
+                    emit_paint_rect_radii(out, [x, y, w, h], fill, radii);
+                }
                 let header_fill = resolve_color(&header_visual.background, theme)
                     .map(|color| apply_opacity(color, header_visual.opacity))
                     .unwrap_or_else(|| {
@@ -2471,9 +2741,18 @@ fn emit_rects(
                             border_w.max(1.0),
                         ],
                         resolve_color(&header_visual.border_color, theme)
-                            .or(styled_border)
+                            .or(Some(border_color))
                             .unwrap_or(theme.border),
                         0.0,
+                    ));
+                }
+                if border_w > 0.0 {
+                    out.push(inst_outline_ring_clipped(
+                        [x, y, w, h],
+                        border_color,
+                        radii,
+                        border_w,
+                        default_local_clip([x, y, w, h]),
                     ));
                 }
                 let full_rect = layout
@@ -3589,7 +3868,7 @@ fn emit_rects(
                 ));
                 if let Some(table_state) = state.table(&node.id) {
                     let metrics = table::metrics_for_node(node, theme, sf);
-                    let visible = table::visible(table_state, &r, metrics);
+                    let visible = table::visible(table_state, &full_rect, metrics);
                     let table_right = x + w;
                     let table_bottom = y + h;
                     let header_h = metrics.header_h.min(h);
@@ -3625,7 +3904,9 @@ fn emit_rects(
                     }
 
                     for col_offset in 0..visible.col_count {
-                        let Some((col_x, _)) = table::column_bounds(&r, metrics, col_offset) else {
+                        let Some((col_x, _)) =
+                            table::column_bounds(&full_rect, metrics, col_offset)
+                        else {
                             continue;
                         };
                         if col_x < table_right {
@@ -3644,9 +3925,11 @@ fn emit_rects(
                             && sort_col < visible.first_col + visible.col_count
                             && header_h > 0.0
                         {
-                            if let Some((_, col_right)) =
-                                table::column_bounds(&r, metrics, sort_col - visible.first_col)
-                            {
+                            if let Some((_, col_right)) = table::column_bounds(
+                                &full_rect,
+                                metrics,
+                                sort_col - visible.first_col,
+                            ) {
                                 let indicator_w = DROPDOWN_CHEVRON_WIDTH_LP * sf;
                                 let inset = (theme.spacing * 0.5 * sf).max(2.0 * sf);
                                 let marker_right = col_right.min(table_right) - inset;
@@ -3687,7 +3970,8 @@ fn emit_rects(
 
                     for row_offset in 0..visible.row_count {
                         let row = visible.first_row + row_offset;
-                        let Some((row_y, row_bottom)) = table::row_bounds(&r, metrics, row_offset)
+                        let Some((row_y, row_bottom)) =
+                            table::row_bounds(&full_rect, metrics, row_offset)
                         else {
                             continue;
                         };
@@ -3736,9 +4020,11 @@ fn emit_rects(
                         if selected_col >= visible.first_col
                             && selected_col < visible.first_col + visible.col_count
                         {
-                            if let Some((col_x, col_right)) =
-                                table::column_bounds(&r, metrics, selected_col - visible.first_col)
-                            {
+                            if let Some((col_x, col_right)) = table::column_bounds(
+                                &full_rect,
+                                metrics,
+                                selected_col - visible.first_col,
+                            ) {
                                 push_masked_rect(
                                     out,
                                     table_rect,
@@ -3838,6 +4124,7 @@ fn emit_rects(
             origin,
         );
     }
+    apply_paint_clip(&mut out[subtree_primitive_start..], subtree_paint_clip);
 }
 
 fn standalone_badge_level_color(node: &WidgetNode, theme: &Theme) -> [f32; 4] {
@@ -4346,8 +4633,9 @@ mod tests {
     use super::*;
     use crate::document::NodeProps;
     use crate::style::{
-        BackdropFilterStyle, BackgroundPaint, BoxShadow, ColorRef, GradientStop, LinearGradient,
-        OverflowStyle, PartLayoutStyle, PartStyle, RadialGradient, TextStyle, VisualStyle,
+        BackdropFilterStyle, BackgroundPaint, BlobGradient, BlobGradientStop, BoxShadow, ColorRef,
+        GradientStop, LinearGradient, MeshGradient, OverflowStyle, PartLayoutStyle, PartStyle,
+        RadialGradient, TextStyle, VisualStyle,
     };
 
     fn node(id: &str, kind: WidgetKind) -> WidgetNode {
@@ -4437,8 +4725,9 @@ mod tests {
     }
 
     #[test]
-    fn solid_outline_emits_paint_only_ring_segments() {
+    fn solid_outline_preserves_square_corners() {
         let mut button = node("run", WidgetKind::Button);
+        button.style.visual.border_radius = Some(0.0);
         button.style.visual.outline_color = Some(ColorRef::Rgba([0.10, 0.20, 0.30, 0.40]));
         button.style.visual.outline_width = Some(2.0);
         button.style.visual.outline_offset = Some(3.0);
@@ -4469,14 +4758,317 @@ mod tests {
             .iter()
             .filter(|inst| inst.color == [0.10, 0.20, 0.30, 0.40])
             .collect();
-        assert_eq!(outline.len(), 4);
-        assert!(outline
+        assert_eq!(outline.len(), 1);
+        assert_eq!(outline[0].rect, [5.0, 5.0, 110.0, 40.0]);
+        assert_eq!(outline[0].radii, [0.0; 4]);
+        assert_eq!(outline[0].clip, [-1.0, -1.0, 111.0, 41.0]);
+        assert_eq!(outline[0].params[2], 3.0);
+        assert_eq!(outline[0].paint[3], 2.0);
+    }
+
+    #[test]
+    fn solid_outline_expands_rounded_corners() {
+        let mut button = node("run", WidgetKind::Button);
+        button.style.visual.border_radius = Some(8.0);
+        button.style.visual.outline_color = Some(ColorRef::Rgba([0.10, 0.20, 0.30, 0.40]));
+        button.style.visual.outline_width = Some(2.0);
+        button.style.visual.outline_offset = Some(3.0);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "run".to_string(),
+            Rect {
+                x: 10.0,
+                y: 10.0,
+                w: 100.0,
+                h: 30.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &button,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let outline: Vec<_> = out
             .iter()
-            .all(|inst| inst.rect == [5.0, 5.0, 110.0, 40.0]));
-        assert_eq!(outline[0].clip, [0.0, 0.0, 110.0, 2.0]);
-        assert_eq!(outline[1].clip, [0.0, 38.0, 110.0, 40.0]);
-        assert_eq!(outline[2].clip, [0.0, 2.0, 2.0, 38.0]);
-        assert_eq!(outline[3].clip, [108.0, 2.0, 110.0, 38.0]);
+            .filter(|inst| inst.color == [0.10, 0.20, 0.30, 0.40])
+            .collect();
+        assert_eq!(outline.len(), 1);
+        assert_eq!(outline[0].rect, [5.0, 5.0, 110.0, 40.0]);
+        assert_eq!(outline[0].radii, [13.0; 4]);
+        assert_eq!(outline[0].params[2], 3.0);
+        assert_eq!(outline[0].paint[3], 2.0);
+    }
+
+    #[test]
+    fn bordered_rounded_rect_uses_ring_border() {
+        let mut out = Vec::new();
+
+        emit_bordered_rect_radii(
+            &mut out,
+            [10.0, 12.0, 100.0, 40.0],
+            [0.1, 0.2, 0.3, 1.0],
+            [0.4, 0.5, 0.6, 1.0],
+            [9.0, 8.0, 7.0, 6.0],
+            2.0,
+        );
+
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].rect, [12.0, 14.0, 96.0, 36.0]);
+        assert_eq!(out[0].radii, [7.0, 6.0, 5.0, 4.0]);
+        assert_eq!(out[1].rect, [10.0, 12.0, 100.0, 40.0]);
+        assert_eq!(out[1].radii, [9.0, 8.0, 7.0, 6.0]);
+        assert_eq!(out[1].params[2], 3.0);
+        assert_eq!(out[1].paint[3], 2.0);
+    }
+
+    #[test]
+    fn zero_width_border_paints_fill_without_ring() {
+        let mut out = Vec::new();
+
+        emit_bordered_rect_radii(
+            &mut out,
+            [10.0, 12.0, 100.0, 40.0],
+            [0.1, 0.2, 0.3, 1.0],
+            [0.4, 0.5, 0.6, 1.0],
+            [9.0, 8.0, 7.0, 6.0],
+            0.0,
+        );
+
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].rect, [10.0, 12.0, 100.0, 40.0]);
+        assert_eq!(out[0].radii, [9.0, 8.0, 7.0, 6.0]);
+        assert_eq!(out[0].color, [0.4, 0.5, 0.6, 1.0]);
+    }
+
+    #[test]
+    fn clipped_panel_keeps_full_paint_rect_and_uses_local_clip() {
+        let mut panel = node("panel", WidgetKind::Panel);
+        panel.style.visual.background = Some(ColorRef::Rgba([0.4, 0.5, 0.6, 1.0]));
+        panel.style.visual.border_color = Some(ColorRef::Rgba([0.1, 0.2, 0.3, 1.0]));
+        panel.style.visual.border_width = Some(2.0);
+        panel.style.visual.border_radius = Some(8.0);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "panel".to_string(),
+            Rect {
+                x: 10.0,
+                y: 20.0,
+                w: 120.0,
+                h: 80.0,
+            },
+        );
+        layout.clips.insert(
+            "panel".to_string(),
+            Rect {
+                x: 10.0,
+                y: 42.0,
+                w: 120.0,
+                h: 58.0,
+            },
+        );
+        layout.paint_clips.insert(
+            "panel".to_string(),
+            Rect {
+                x: 10.0,
+                y: 42.0,
+                w: 120.0,
+                h: 58.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &panel,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let fill = out
+            .iter()
+            .find(|inst| inst.color == [0.4, 0.5, 0.6, 1.0])
+            .expect("panel fill should be emitted");
+        assert_eq!(fill.rect, [12.0, 22.0, 116.0, 76.0]);
+        assert_eq!(fill.clip, [-1.0, 20.0, 117.0, 77.0]);
+
+        let border = out
+            .iter()
+            .find(|inst| inst.color == [0.1, 0.2, 0.3, 1.0])
+            .expect("panel border should be emitted");
+        assert_eq!(border.rect, [10.0, 20.0, 120.0, 80.0]);
+        assert_eq!(border.clip, [0.0, 22.0, 120.0, 80.0]);
+    }
+
+    #[test]
+    fn fully_visible_panel_keeps_antialias_clip_pad() {
+        let mut panel = node("panel", WidgetKind::Panel);
+        panel.style.visual.background = Some(ColorRef::Rgba([0.4, 0.5, 0.6, 1.0]));
+        panel.style.visual.border_color = Some(ColorRef::Rgba([0.1, 0.2, 0.3, 1.0]));
+        panel.style.visual.border_width = Some(2.0);
+        panel.style.visual.border_radius = Some(8.0);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "panel".to_string(),
+            Rect {
+                x: 20.0,
+                y: 24.0,
+                w: 120.0,
+                h: 80.0,
+            },
+        );
+        layout.clips.insert(
+            "panel".to_string(),
+            Rect {
+                x: 20.0,
+                y: 24.0,
+                w: 120.0,
+                h: 80.0,
+            },
+        );
+        layout.paint_clips.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 400.0,
+                h: 300.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &panel,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let border = out
+            .iter()
+            .find(|inst| inst.color == [0.1, 0.2, 0.3, 1.0])
+            .expect("panel border should be emitted");
+        assert_eq!(border.rect, [20.0, 24.0, 120.0, 80.0]);
+        assert_eq!(border.clip, [-1.0, -1.0, 121.0, 81.0]);
+    }
+
+    #[test]
+    fn relative_positioned_widget_clips_against_painted_offset() {
+        let mut badge = node("badge", WidgetKind::Badge);
+        badge.style.layout.position = Some(PositionStyle::Relative);
+        badge.style.layout.top = Some(18.0);
+        badge.style.visual.background = Some(ColorRef::Rgba([0.4, 0.5, 0.6, 1.0]));
+        badge.style.visual.border_color = Some(ColorRef::Rgba([0.1, 0.2, 0.3, 1.0]));
+        badge.style.visual.border_width = Some(1.0);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "badge".to_string(),
+            Rect {
+                x: 10.0,
+                y: 10.0,
+                w: 100.0,
+                h: 40.0,
+            },
+        );
+        layout.clips.insert(
+            "badge".to_string(),
+            Rect {
+                x: 10.0,
+                y: 30.0,
+                w: 100.0,
+                h: 20.0,
+            },
+        );
+        layout.paint_clips.insert(
+            "badge".to_string(),
+            Rect {
+                x: 0.0,
+                y: 30.0,
+                w: 200.0,
+                h: 80.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &badge,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let border = out
+            .iter()
+            .find(|inst| inst.color == [0.1, 0.2, 0.3, 1.0])
+            .expect("badge border should be emitted");
+        assert_eq!(border.transform[1], 18.0);
+        assert_eq!(border.clip[1], 2.0);
+    }
+
+    #[test]
+    fn collapsible_border_ring_paints_after_header_fill() {
+        let mut collapsible = node("advanced", WidgetKind::Collapsible);
+        collapsible.props.expanded = Some(true);
+        collapsible.style.visual.background = Some(ColorRef::Rgba([0.04, 0.05, 0.06, 1.0]));
+        collapsible.style.visual.border_color = Some(ColorRef::Rgba([0.10, 0.70, 0.30, 1.0]));
+        collapsible.style.visual.border_width = Some(2.0);
+        collapsible.style.visual.border_radius = Some(8.0);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "advanced".to_string(),
+            Rect {
+                x: 10.0,
+                y: 12.0,
+                w: 180.0,
+                h: 88.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &collapsible,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let header_fill_index = out
+            .iter()
+            .position(|inst| inst.color == Theme::dark().surface_alt)
+            .expect("collapsible header fill should be emitted");
+        let border_index = out
+            .iter()
+            .position(|inst| {
+                inst.color == [0.10, 0.70, 0.30, 1.0]
+                    && inst.params[2] == 3.0
+                    && inst.paint[3] == 2.0
+            })
+            .expect("collapsible border ring should be emitted");
+
+        assert!(border_index > header_fill_index);
     }
 
     #[test]
@@ -4533,7 +5125,7 @@ mod tests {
 
         let shadow = out.first().expect("shadow instance");
         assert_eq!(shadow.rect, [5.0, 87.0, 114.0, 54.0]);
-        assert_eq!(shadow.clip, [0.0, 0.0, 114.0, 23.0]);
+        assert_eq!(shadow.clip, [-1.0, -1.0, 115.0, 23.0]);
     }
 
     #[test]
@@ -4745,6 +5337,232 @@ mod tests {
         assert_eq!(fill.color4, [0.0, 0.0, 1.0, 1.0]);
         assert_eq!(fill.gradient_stops, [0.0, 0.25, 1.0, 1.0]);
         assert_eq!(fill.paint[3], 3.0);
+    }
+
+    #[test]
+    fn six_stop_linear_gradient_emits_extended_stop_data() {
+        let mut panel = node("panel", WidgetKind::Panel);
+        panel.style.visual.background_paint =
+            Some(BackgroundPaint::LinearGradient(LinearGradient {
+                angle_deg: 90.0,
+                repeating: false,
+                stops: vec![
+                    GradientStop {
+                        color: ColorRef::Rgba([1.0, 0.0, 0.0, 1.0]),
+                        position: Some(0.0),
+                    },
+                    GradientStop {
+                        color: ColorRef::Rgba([1.0, 0.5, 0.0, 1.0]),
+                        position: Some(0.18),
+                    },
+                    GradientStop {
+                        color: ColorRef::Rgba([1.0, 1.0, 0.0, 1.0]),
+                        position: Some(0.34),
+                    },
+                    GradientStop {
+                        color: ColorRef::Rgba([0.0, 1.0, 0.0, 1.0]),
+                        position: Some(0.52),
+                    },
+                    GradientStop {
+                        color: ColorRef::Rgba([0.0, 0.0, 1.0, 1.0]),
+                        position: Some(0.76),
+                    },
+                    GradientStop {
+                        color: ColorRef::Rgba([0.5, 0.0, 1.0, 1.0]),
+                        position: Some(1.0),
+                    },
+                ],
+            }));
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 50.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &panel,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let fill = out
+            .iter()
+            .find(|inst| inst.paint[0] == 1.0)
+            .expect("gradient fill instance");
+        assert_eq!(fill.color5, [0.0, 0.0, 1.0, 1.0]);
+        assert_eq!(fill.color6, [0.5, 0.0, 1.0, 1.0]);
+        assert_eq!(fill.gradient_stops, [0.0, 0.18, 0.34, 0.52]);
+        assert_eq!(fill.gradient_stops2[0], 0.76);
+        assert_eq!(fill.gradient_stops2[1], 1.0);
+        assert_eq!(fill.paint[3], 6.0);
+    }
+
+    #[test]
+    fn gradient_interpolation_reaches_rect_instance() {
+        let mut panel = node("panel", WidgetKind::Panel);
+        panel.style.visual.gradient_interpolation = Some(GradientInterpolation::Oklab);
+        panel.style.visual.background_paint =
+            Some(BackgroundPaint::LinearGradient(LinearGradient {
+                angle_deg: 90.0,
+                repeating: false,
+                stops: vec![
+                    GradientStop {
+                        color: ColorRef::Rgba([1.0, 0.0, 0.0, 1.0]),
+                        position: Some(0.0),
+                    },
+                    GradientStop {
+                        color: ColorRef::Rgba([0.0, 0.0, 1.0, 1.0]),
+                        position: Some(1.0),
+                    },
+                ],
+            }));
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 50.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &panel,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let fill = out
+            .iter()
+            .find(|inst| inst.paint[0] == 1.0)
+            .expect("gradient fill instance");
+        assert_eq!(fill.transform2[2], 2.0);
+    }
+
+    #[test]
+    fn blob_gradient_reaches_rect_instance() {
+        let mut panel = node("panel", WidgetKind::Panel);
+        panel.style.visual.gradient_interpolation = Some(GradientInterpolation::Oklab);
+        panel.style.visual.background_paint = Some(BackgroundPaint::BlobGradient(BlobGradient {
+            blobs: vec![
+                BlobGradientStop {
+                    center: [0.2, 0.3],
+                    radius: 0.42,
+                    color: ColorRef::Rgba([1.0, 0.0, 0.0, 0.5]),
+                },
+                BlobGradientStop {
+                    center: [0.8, 0.4],
+                    radius: 0.38,
+                    color: ColorRef::Rgba([0.0, 0.0, 1.0, 0.45]),
+                },
+            ],
+        }));
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 50.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &panel,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let fill = out
+            .iter()
+            .find(|inst| inst.paint[0] == 3.0)
+            .expect("blob gradient fill instance");
+        assert_eq!(fill.paint[3], 2.0);
+        assert_eq!(fill.gradient_stops, [0.2, 0.3, 0.8, 0.4]);
+        assert_eq!(fill.color5[0], 0.42);
+        assert_eq!(fill.color5[1], 0.38);
+        assert_eq!(fill.transform2[2], 2.0);
+    }
+
+    #[test]
+    fn mesh_gradient_reaches_rect_instance() {
+        let mut panel = node("panel", WidgetKind::Panel);
+        panel.style.visual.gradient_interpolation = Some(GradientInterpolation::Oklab);
+        panel.style.visual.background_paint = Some(BackgroundPaint::MeshGradient(MeshGradient {
+            top_left: ColorRef::Rgba([0.1, 0.2, 0.8, 1.0]),
+            top_right: ColorRef::Rgba([0.8, 0.2, 0.5, 1.0]),
+            bottom_left: ColorRef::Rgba([0.1, 0.7, 0.5, 1.0]),
+            bottom_right: ColorRef::Rgba([0.05, 0.08, 0.14, 1.0]),
+        }));
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 50.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &panel,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let fill = out
+            .iter()
+            .find(|inst| inst.paint[0] == 4.0)
+            .expect("mesh gradient fill instance");
+        assert_eq!(fill.color, [0.1, 0.2, 0.8, 1.0]);
+        assert_eq!(fill.color2, [0.8, 0.2, 0.5, 1.0]);
+        assert_eq!(fill.color3, [0.1, 0.7, 0.5, 1.0]);
+        assert_eq!(fill.color4, [0.05, 0.08, 0.14, 1.0]);
+        assert_eq!(fill.transform2[2], 2.0);
+    }
+
+    #[test]
+    fn gradient_sampling_uses_premultiplied_alpha() {
+        let stops = vec![([1.0, 0.0, 0.0, 1.0], 0.0), ([0.0, 0.0, 0.0, 0.0], 1.0)];
+
+        let color = gradient_color_at(&stops, 0.5);
+
+        assert!((color[0] - 1.0).abs() < 0.0001);
+        assert!((color[1] - 0.0).abs() < 0.0001);
+        assert!((color[2] - 0.0).abs() < 0.0001);
+        assert!((color[3] - 0.5).abs() < 0.0001);
     }
 
     #[test]

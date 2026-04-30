@@ -75,6 +75,37 @@ pub(crate) fn badge_width_for_text(style: &NodeStyle, badge: &str, theme: &Theme
     ((text_w + BADGE_PAD_X_LP * 2.0).max(BADGE_MIN_HEIGHT_LP) * sf).max(1.0)
 }
 
+pub(crate) fn standalone_badge_width_for_text(
+    style: &NodeStyle,
+    badge: &str,
+    theme: &Theme,
+    sf: f32,
+) -> f32 {
+    if let Some(width_lp) = style.layout.width {
+        return (width_lp.max(1.0) * sf).max(1.0);
+    }
+    let font_size = badge_font_size_lp(style, theme);
+    let text_w = badge.chars().count() as f32 * font_size * 0.90;
+    let (left, right) = standalone_badge_horizontal_padding_lp(style);
+    ((text_w + left + right + 8.0).max(BADGE_MIN_HEIGHT_LP) * sf).max(1.0)
+}
+
+pub(crate) fn standalone_badge_horizontal_padding_lp(style: &NodeStyle) -> (f32, f32) {
+    let left = style
+        .layout
+        .padding_left
+        .or(style.layout.padding)
+        .unwrap_or(BADGE_PAD_X_LP)
+        .max(0.0);
+    let right = style
+        .layout
+        .padding_right
+        .or(style.layout.padding)
+        .unwrap_or(BADGE_PAD_X_LP)
+        .max(0.0);
+    (left, right)
+}
+
 pub(crate) fn tabs_header_height_for_style(style: &NodeStyle, theme: &Theme, sf: f32) -> f32 {
     let height_lp = style
         .parts
@@ -558,6 +589,7 @@ impl GridTemplateAreas {
 pub struct VisualStyle {
     pub background: Option<ColorRef>,
     pub background_paint: Option<BackgroundPaint>,
+    pub gradient_interpolation: Option<GradientInterpolation>,
     pub backdrop_filter: Option<BackdropFilterStyle>,
     pub foreground: Option<ColorRef>,
     pub border_color: Option<ColorRef>,
@@ -574,6 +606,13 @@ pub struct VisualStyle {
     pub background_noise: Option<f32>,
     pub box_shadows: Option<Vec<BoxShadow>>,
     pub transform: Option<TransformStyle>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GradientInterpolation {
+    Srgb,
+    LinearSrgb,
+    Oklab,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -637,6 +676,8 @@ pub enum BackgroundPaint {
     Color(ColorRef),
     LinearGradient(LinearGradient),
     RadialGradient(RadialGradient),
+    BlobGradient(BlobGradient),
+    MeshGradient(MeshGradient),
     Layers(Vec<BackgroundPaint>),
 }
 
@@ -658,6 +699,26 @@ pub struct RadialGradient {
 pub struct GradientStop {
     pub color: ColorRef,
     pub position: Option<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlobGradient {
+    pub blobs: Vec<BlobGradientStop>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlobGradientStop {
+    pub center: [f32; 2],
+    pub radius: f32,
+    pub color: ColorRef,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MeshGradient {
+    pub top_left: ColorRef,
+    pub top_right: ColorRef,
+    pub bottom_left: ColorRef,
+    pub bottom_right: ColorRef,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -980,6 +1041,7 @@ impl VisualStyle {
                 .background_paint
                 .clone()
                 .or_else(|| self.background_paint.clone()),
+            gradient_interpolation: other.gradient_interpolation.or(self.gradient_interpolation),
             backdrop_filter: other.backdrop_filter.or(self.backdrop_filter),
             foreground: other.foreground.clone().or_else(|| self.foreground.clone()),
             border_color: other
@@ -1125,6 +1187,9 @@ fn parse_layout(map: &serde_json::Map<String, Value>, out: &mut LayoutStyle) {
 fn parse_visual(map: &serde_json::Map<String, Value>, out: &mut VisualStyle) {
     out.background = color_ref(map.get("background"));
     out.background_paint = out.background.clone().map(BackgroundPaint::Color);
+    out.gradient_interpolation =
+        value_for_keys(map, "gradient_interpolation", "gradient-interpolation")
+            .and_then(parse_gradient_interpolation);
     out.backdrop_filter =
         value_for_keys(map, "backdrop_filter", "backdrop-filter").and_then(parse_backdrop_filter);
     out.foreground = color_ref(map.get("foreground")).or_else(|| color_ref(map.get("color")));
@@ -1350,6 +1415,7 @@ fn part_style_is_empty(style: &PartStyle) -> bool {
 pub(crate) fn visual_style_is_empty(style: &VisualStyle) -> bool {
     style.background.is_none()
         && style.background_paint.is_none()
+        && style.gradient_interpolation.is_none()
         && style.backdrop_filter.is_none()
         && style.foreground.is_none()
         && style.border_color.is_none()
@@ -1430,6 +1496,21 @@ fn parse_text_overflow(value: &str) -> Option<TextOverflow> {
     match value.trim().to_ascii_lowercase().as_str() {
         "clip" => Some(TextOverflow::Clip),
         "ellipsis" => Some(TextOverflow::Ellipsis),
+        _ => None,
+    }
+}
+
+fn parse_gradient_interpolation(value: &Value) -> Option<GradientInterpolation> {
+    match value
+        .as_str()?
+        .trim()
+        .to_ascii_lowercase()
+        .replace('_', "-")
+        .as_str()
+    {
+        "srgb" => Some(GradientInterpolation::Srgb),
+        "linear-srgb" => Some(GradientInterpolation::LinearSrgb),
+        "oklab" => Some(GradientInterpolation::Oklab),
         _ => None,
     }
 }
@@ -2197,6 +2278,23 @@ mod tests {
         assert_eq!(filter.blur, 8.0);
         assert!((filter.brightness - 1.2).abs() < 0.001);
         assert_eq!(filter.saturate, 0.75);
+    }
+
+    #[test]
+    fn standalone_badge_width_accounts_for_widget_padding() {
+        let mut style = NodeStyle::default();
+        style.layout.padding_left = Some(12.0);
+        style.layout.padding_right = Some(18.0);
+        style.text.font_size = Some(12.0);
+
+        let width = standalone_badge_width_for_text(&style, "margin auto", &Theme::dark(), 1.0);
+        let unstyled =
+            badge_width_for_text(&NodeStyle::default(), "margin auto", &Theme::dark(), 1.0);
+
+        assert!(
+            width > unstyled,
+            "standalone badge width should grow with styled padding: styled={width}, unstyled={unstyled}"
+        );
     }
 
     #[test]

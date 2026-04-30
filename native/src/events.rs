@@ -1260,12 +1260,14 @@ pub fn hit_test_hover(
             is_interactive(&node.kind)
                 || node.props.tooltip.is_some()
                 || has_rich_tooltip_target(tree, &node.id)
+                || has_hover_visual(&node.style.hover)
         });
     }
     hit_test_with(tree, layout, pos, |node| {
         is_interactive(&node.kind)
             || node.props.tooltip.is_some()
             || has_rich_tooltip_target(tree, &node.id)
+            || has_hover_visual(&node.style.hover)
     })
 }
 
@@ -1298,6 +1300,28 @@ fn has_rich_tooltip_target(node: &WidgetNode, target: &str) -> bool {
             .children
             .iter()
             .any(|child| has_rich_tooltip_target(child, target))
+}
+
+fn has_hover_visual(visual: &VisualStyle) -> bool {
+    visual.background.is_some()
+        || visual.background_paint.is_some()
+        || visual.gradient_interpolation.is_some()
+        || visual.backdrop_filter.is_some()
+        || visual.foreground.is_some()
+        || visual.border_color.is_some()
+        || visual.border_width.is_some()
+        || visual.outline_color.is_some()
+        || visual.outline_width.is_some()
+        || visual.outline_offset.is_some()
+        || visual.border_radius.is_some()
+        || !visual.corner_radii.is_empty()
+        || visual.accent.is_some()
+        || visual.track_color.is_some()
+        || visual.thumb_color.is_some()
+        || visual.opacity.is_some()
+        || visual.background_noise.is_some()
+        || visual.box_shadows.is_some()
+        || visual.transform.is_some()
 }
 
 fn hit_test_with<F>(
@@ -1584,6 +1608,41 @@ mod tests {
         let hit = hit_test_hover(&root, &layout, [30.0, 30.0]);
 
         assert_eq!(hit, Some(("progress".to_string(), WidgetKind::ProgressBar)));
+    }
+
+    #[test]
+    fn hover_hit_test_accepts_noninteractive_widgets_with_hover_style() {
+        let mut panel = node("card", WidgetKind::Panel, NodeProps::default(), vec![]);
+        panel.style.hover.background = Some(crate::style::ColorRef::Rgba([0.1, 0.2, 0.3, 1.0]));
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![panel],
+        );
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "window".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 400.0,
+                h: 200.0,
+            },
+        );
+        layout.rects.insert(
+            "card".to_string(),
+            Rect {
+                x: 20.0,
+                y: 20.0,
+                w: 160.0,
+                h: 80.0,
+            },
+        );
+
+        let hit = hit_test_hover(&root, &layout, [30.0, 30.0]);
+
+        assert_eq!(hit, Some(("card".to_string(), WidgetKind::Panel)));
     }
 
     #[test]

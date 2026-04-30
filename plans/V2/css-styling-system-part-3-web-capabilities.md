@@ -35,7 +35,13 @@ The most important visible gaps today are:
 - Flat surfaces with no elevation.
 - Only first-slice gradients; intermediate stop interpolation, first-slice
   repeating gradients, and comma-separated background layers have landed.
-  Gradient `background-image` now lowers into the same paint model, layers over
+  Gradient rendering now carries up to six GPU stops per rect, uses
+  premultiplied-alpha interpolation for transparent fades, and supports
+  `gradient-interpolation: srgb | linear-srgb | oklab`. DragonGUI-specific
+  `blob-gradient(...)` organic background paint has landed for up to four soft
+  color fields, and `mesh-gradient(...)` four-corner image-like paint has
+  landed for smooth raster-gradient-style surfaces. Gradient
+  `background-image` now lowers into the same paint model, layers over
   `background-color`, and supports `none`; URL image backgrounds remain
   unsupported.
 - Transition easing now includes standard keywords, step timing, and custom
@@ -384,7 +390,8 @@ Button {
 Still unsupported:
 
 - Nested fallback expressions beyond one level unless trivial to support.
-- Scoped variables.
+- Inherited variables across descendant widget subtrees. Selector-local
+  variables inside the same declaration block are implemented.
 - Cross-stylesheet variable sharing guarantees.
 
 ### Implementation Notes
@@ -486,7 +493,7 @@ Add CSS gradient backgrounds:
 - `linear-gradient(...)`
 - `radial-gradient(...)`
 
-Initial support should focus on common two-to-four stop gradients.
+Initial support should focus on common two-to-six stop gradients.
 
 ### Style Model
 
@@ -1279,45 +1286,58 @@ It should not have:
 ## CSS3-17: Responsive At-Rules And Fonts
 
 Status: First `@media` implementation slice landed. Stylesheets now lower
-viewport width/height/aspect-ratio/resolution/color-gamut/orientation,
-pointer/hover/update/scripting/forced-colors capability, and
+viewport width/height/aspect-ratio/resolution/prefixed device-pixel-ratio aliases/device-width/device-height/
+device-aspect-ratio/horizontal-viewport-segments/vertical-viewport-segments/
+color/color-index/monochrome/color-gamut/video-color-gamut/orientation/scan/grid/environment-blending,
+pointer/hover/nav-controls/overflow-block/overflow-inline/update/scripting/forced-colors capability, and
 `prefers-contrast` / `inverted-colors` / `dynamic-range` /
-`video-dynamic-range` / `prefers-color-scheme` / `prefers-reduced-motion`
-`prefers-reduced-transparency` / `prefers-reduced-data` media rules into rule
-metadata, cascade matching
+`video-dynamic-range` / `display-mode` / `prefers-color-scheme` /
+`prefers-reduced-motion` / `prefers-reduced-transparency` /
+`prefers-reduced-data` media rules into rule metadata, cascade matching
 filters them against the current logical window size, platform window theme
 when available, active theme fallback color scheme, assumed desktop
 input/display capabilities, and scale factor, and the runtime reapplies CSS on
 layout/resize/theme-change events. First static `@supports`
-implementation slice landed for DragonGUI declaration and selector feature
-queries. Container queries and other media features remain pending. First
+implementation slice landed for DragonGUI declaration, selector, and
+`font-format(...)` / `at-rule(...)` / `font-tech(...)` feature queries. Container queries remain pending. First
 `@font-face` slice landed for installed local font families referenced through
-`local(...)`, local `.ttf`, `.otf`, and `.ttc` files referenced through
-`url(...)`, and base64 `data:` URLs containing sfnt font data.
+`local(...)`, local `.ttf`, `.otf`, `.ttc`, and `.woff` files referenced through
+path or `file://` `url(...)`, and base64 `data:` URLs containing sfnt or WOFF1
+font data. Font `format(...)` descriptors are honored for supported formats and
+unsupported descriptors are skipped.
 
 Code-backed remaining work:
 
 - Container queries.
-- Media features beyond the currently supported viewport, resolution,
-  orientation, color-gamut, pointer/hover/update/scripting/forced-colors,
-  contrast, inverted-colors, dynamic-range, video-dynamic-range, color-scheme,
-  reduced-motion, reduced-transparency, and reduced-data subset.
+- Broader/custom media-query parity beyond the standard feature ids currently
+  parsed by lightningcss and lowered by DragonGUI.
 - Platform detection for display gamut, pointer/hover capability, forced-colors
   mode, contrast preference, inverted-colors mode, dynamic-range capability,
   OS reduced-motion preference, reduced-transparency preference, and
   reduced-data preference. The runtime currently assumes `srgb`, fine pointer,
-  hover support, `update: fast`, `scripting: none`, `forced-colors: none`,
+  hover support, `nav-controls: none`, `update: fast`, `scripting: none`, `forced-colors: none`,
   `prefers-contrast: no-preference`, `inverted-colors: none`,
   `prefers-reduced-motion: no-preference`,
   `prefers-reduced-transparency: no-preference`, and
   `prefers-reduced-data: no-preference`; both dynamic-range features currently
-  default to `standard`. Color scheme now uses winit's
+  default to `standard`, `display-mode` defaults to `standalone`, and
+  overflow-block/inline default to `scroll`. `color` defaults to `8`,
+  `color-index` defaults to `0`, `monochrome` defaults to `0`, `scan` defaults
+  to `progressive`, `grid` defaults to `0`, and `environment-blending`
+  defaults to `opaque`. `device-width` / `device-height` /
+  `device-aspect-ratio` mirror the logical app viewport, and both viewport
+  segment features default to `1`; `video-color-gamut` mirrors `color-gamut`.
+  `-webkit-device-pixel-ratio` and `-moz-device-pixel-ratio` map to the same
+  current dppx scale factor as `resolution`.
+  Color
+  scheme now uses winit's
   platform window theme when available and falls back to active DragonGUI theme
   luminance when unavailable.
 - Full inherited custom property cascade semantics. Top-level `:root`
-  variables and first-slice parse-time `:root` variables inside matching
-  `@media` / static true `@supports` blocks are implemented.
-- Remote font URLs, WOFF/WOFF2 loading, and packaged font asset resolution.
+  variables, first-slice parse-time `:root` variables inside matching
+  `@media` / static true `@supports` blocks, and selector-local variables
+  used by declarations in the same rule block are implemented.
+- Remote font URLs, WOFF2 loading, and packaged font asset resolution.
 
 ### Scope
 
@@ -1345,20 +1365,14 @@ Needs:
 - Runtime viewport width/height in style context. Implemented for logical
   window size.
 - Reapply styles on window resize when media query match changes. Implemented.
-- Remaining: media features beyond
-  `width`/`height`/`aspect-ratio`/`resolution`/`color-gamut`/`orientation`/
-  `pointer`/`any-pointer`/`hover`/`any-hover`/`update`/`scripting`/
-  `forced-colors`/`prefers-contrast`/`inverted-colors`/`dynamic-range`/
-  `video-dynamic-range`/`prefers-color-scheme`/`prefers-reduced-motion`/
-  `prefers-reduced-transparency`/`prefers-reduced-data`,
-  container queries, OS reduced-motion preference
-  integration, OS reduced-transparency/data preference integration, platform
-  forced-colors/contrast/inverted-colors/dynamic-range detection, platform
-  input/display capability detection, and full inherited
-  media-scoped custom property cascade
-  semantics. First-slice parse-time `:root` variables inside matching `@media`
-  and static true `@supports` blocks are implemented for declarations inside
-  the same block.
+- Remaining: container queries, broader/custom media-query parity, OS
+  reduced-motion preference integration, OS reduced-transparency/data
+  preference integration, platform forced-colors/contrast/inverted-colors/
+  dynamic-range detection, platform display-mode detection, platform
+  input/display capability detection, and full inherited media-scoped custom
+  property cascade semantics. First-slice parse-time `:root` variables inside
+  matching `@media` and static true `@supports` blocks, plus selector-local
+  variables used in the same declaration block, are implemented.
 
 ### `@supports`
 
@@ -1380,8 +1394,19 @@ Needs:
   Implemented.
 - `not`, `and`, and `or` conditions. Implemented.
 - Nesting with supported `@media` rules. Implemented.
+- `font-format(...)` support for DragonGUI's current font loader formats.
+  Implemented for `truetype`, `opentype`, `collection`, and `woff`, plus local
+  file-extension aliases `ttf`, `otf`, and `ttc`; `woff2`,
+  `embedded-opentype`, and `svg` currently evaluate false.
+- `at-rule(...)` support for DragonGUI's current at-rule parser surface.
+  Implemented for `media`, `supports`, `keyframes`, and `font-face`;
+  unsupported at-rules such as `container` currently evaluate false.
+- `font-tech(...)` support for DragonGUI's current text shaping features.
+  Implemented for `features-opentype`; color font technologies, palettes,
+  incremental font transfer, and variable-font feature claims currently
+  evaluate false.
 - Remaining: browser capability parity and feature functions beyond
-  `selector(...)`.
+  `selector(...)`, `font-format(...)`, `at-rule(...)`, and `font-tech(...)`.
 
 ### Container Queries
 
@@ -1397,7 +1422,7 @@ First useful subset:
     font-family: "Report UI";
     src:
         local("Segoe UI"),
-        url("C:/Windows/Fonts/segoeui.ttf") format("truetype");
+        url("file:///C:/Windows/Fonts/segoeui.ttf") format("truetype");
 }
 ```
 
@@ -1409,8 +1434,13 @@ Implemented:
 - Map declared CSS families to installed local font families when a matching
   `local(...)` source is present.
 - Load supported local font files into glyphon's font database at text rebuild.
+- Accept local path and `file://` font URLs, including percent-escaped
+  `file://` paths.
+- Honor supported `format(...)` descriptors and skip unsupported descriptors.
 - Decode base64 `data:` font URLs containing sfnt TrueType/OpenType/TTC data
   into glyphon's font database at text rebuild.
+- Decode local `.woff` files and base64 `data:` WOFF1 font URLs into sfnt data
+  before loading them into glyphon's font database at text rebuild.
 - Map the declared CSS family to the loaded font's exposed family name when
   available.
 - Report one-time renderer diagnostics for missing, unsupported, or unusable
@@ -1421,8 +1451,8 @@ Remaining planning decisions:
 
 - Decide whether DragonGUI ships bundled fonts, only supports user-provided
   font files, or supports both. Current implementation supports installed
-  local font families, user-provided local font files, and base64 sfnt data
-  URLs.
+  local font families, user-provided local path or `file://` sfnt/WOFF1 font
+  files, and base64 sfnt/WOFF1 data URLs.
 - Estimate wheel/sdist size impact before adding bundled assets.
 - Define how font files are referenced from CSS in packaged applications.
 - Update maturin/pyproject packaging rules before the renderer work starts.
@@ -1430,7 +1460,7 @@ Remaining planning decisions:
 Remaining:
 
 - Remote URLs.
-- WOFF/WOFF2 loading.
+- WOFF2 loading.
 - Packaging story for wheels/sdists.
 
 ## Implementation Milestones
@@ -1470,8 +1500,12 @@ Status: In progress. `box-shadow` landed for comma-separated outset and inset
 shadows on rect-backed surfaces, including clipping outset shadows against
 inherited scroll/overflow paint viewports. First `linear-gradient()` and
 `radial-gradient()` slices landed for rect-backed backgrounds. Gradient
-rendering now interpolates up to four stop colors, sampling longer gradients
-down to four GPU stops. First-slice repeating gradients have landed for
+rendering now interpolates up to six stop colors, sampling longer gradients
+down to six GPU stops. Transparent fades use premultiplied-alpha interpolation
+to avoid dark halos, and gradient stop blending can opt into `linear-srgb` or
+`oklab` color spaces. `blob-gradient(...)` has landed as a DragonGUI-specific
+organic background paint, and `mesh-gradient(...)` has landed as a
+DragonGUI-specific four-corner image-like gradient. First-slice repeating gradients have landed for
 explicit final stop ranges. Comma-separated background layers now paint
 back-to-front, enabling radial glow overlays on linear bases. `background-noise`
 has landed as a low-amplitude procedural dither/noise pass for softening
@@ -1685,16 +1719,23 @@ Evaluate and implement selectively:
 - Generated content. First text-only `::before` / `::after` and `attr(...)`
   slice implemented; layout-aware generated boxes remain pending.
 - `@media`. First viewport
-  `width`/`height`/`aspect-ratio`/`resolution`/`color-gamut`/`orientation`/
-  `pointer`/`any-pointer`/`hover`/`any-hover`/`update`/`scripting`/
+  `width`/`height`/`aspect-ratio`/`resolution`/
+  `-webkit-device-pixel-ratio`/`-moz-device-pixel-ratio`/`device-width`/
+  `device-height`/`device-aspect-ratio`/`horizontal-viewport-segments`/
+  `vertical-viewport-segments`/`color`/`color-index`/
+  `monochrome`/`color-gamut`/`video-color-gamut`/`orientation`/`scan`/`grid`/
+  `environment-blending`/
+  `pointer`/`any-pointer`/`hover`/`any-hover`/`nav-controls`/`overflow-block`/
+  `overflow-inline`/`update`/`scripting`/
   `forced-colors`/`prefers-contrast`/`inverted-colors`/`dynamic-range`/
-  `video-dynamic-range`/`prefers-color-scheme`/`prefers-reduced-motion`/
-  `prefers-reduced-transparency`/`prefers-reduced-data` slice implemented;
-  broader media features remain pending.
+  `video-dynamic-range`/`display-mode`/`prefers-color-scheme`/
+  `prefers-reduced-motion`/`prefers-reduced-transparency`/
+  `prefers-reduced-data` slice implemented;
+  broader/custom media parity and platform-backed detection remain pending.
 - `@supports`. First static declaration and selector feature-query slice
   implemented.
-- `@font-face`. First installed-family, local font-file, and base64 data-URL
-  loading slice implemented; remote fonts, WOFF/WOFF2, and packaged asset
+- `@font-face`. First installed-family, local sfnt/WOFF1 font-file, and
+  base64 sfnt/WOFF1 data-URL loading slice implemented; remote fonts, WOFF2, and packaged asset
   resolution remain pending.
 
 These should not block the earlier visible wins.

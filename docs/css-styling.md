@@ -40,10 +40,13 @@ restyled without rebuilding the Python document.
 ## Media Queries
 
 DragonGUI supports a first slice of `@media` for responsive app layouts. Width,
-height, aspect ratio, resolution, orientation, pointer/hover capability,
+height, aspect ratio, resolution, device size, viewport segments,
+color-depth capability, orientation, pointer/hover capability,
+navigation-control capability, scan mode, grid-device capability,
+environment blending mode, overflow capability,
 display update capability, scripting availability, forced-colors mode,
 contrast preference, inverted-colors mode, dynamic range capability,
-color-scheme preference, reduced-motion preference, reduced-transparency
+display mode, color-scheme preference, reduced-motion preference, reduced-transparency
 preference, and reduced-data preference are evaluated from the logical
 viewport, active theme, current desktop input/display assumptions, and window
 scale factor, and stylesheets are reapplied on window resize.
@@ -83,15 +86,75 @@ scale factor, and stylesheets are reapplied on window resize.
     }
 }
 
+@media (-webkit-device-pixel-ratio >= 1) {
+    Button.icon {
+        border-color: accent;
+    }
+}
+
+@media (device-width >= 900px) and (device-aspect-ratio >= 4/3) {
+    Panel.dashboard {
+        border-radius: 14px;
+    }
+}
+
+@media (horizontal-viewport-segments: 1) and (vertical-viewport-segments: 1) {
+    Badge.native {
+        outline: 1px solid rgba(90, 169, 255, 0.18);
+    }
+}
+
 @media (color-gamut: srgb) {
     Badge.live {
         border-color: rgba(255, 255, 255, 0.24);
     }
 }
 
+@media (video-color-gamut: srgb) {
+    Image.preview {
+        border-color: rgba(90, 169, 255, 0.2);
+    }
+}
+
+@media (color >= 8) and (monochrome: 0) {
+    Panel.dashboard {
+        border-color: rgba(90, 169, 255, 0.24);
+    }
+}
+
+@media (color-index: 0) {
+    Badge.live {
+        opacity: 0.96;
+    }
+}
+
+@media (scan: progressive) and (environment-blending: opaque) {
+    Panel.hero {
+        outline: 1px solid rgba(255, 255, 255, 0.16);
+    }
+}
+
+@media (grid: 0) {
+    Badge.live {
+        outline: 1px solid rgba(116, 221, 176, 0.18);
+    }
+}
+
 @media (pointer: fine) and (hover: hover) {
     Button:hover {
         box-shadow: 0 8px 18px rgba(90, 169, 255, 0.28);
+    }
+}
+
+@media (nav-controls: none) {
+    Button.back {
+        display: flex;
+    }
+}
+
+@media (overflow-block: scroll) and (overflow-inline: scroll) {
+    Panel.dashboard {
+        outline: 1px solid rgba(116, 221, 176, 0.2);
     }
 }
 
@@ -137,6 +200,12 @@ scale factor, and stylesheets are reapplied on window resize.
     }
 }
 
+@media (display-mode: standalone) {
+    Button.launch {
+        outline: 1px solid accent;
+    }
+}
+
 @media (prefers-reduced-motion: reduce) {
     Badge.live {
         animation-play-state: paused;
@@ -168,23 +237,38 @@ preserved. Negative `animation-delay` values are accepted and start animations
 partway through; multiple simultaneous animations are still unsupported.
 
 Supported media features are `width`, `height`, `aspect-ratio`, `resolution`,
-`color-gamut`, `orientation`, `pointer`, `any-pointer`, `hover`, `any-hover`,
+`-webkit-device-pixel-ratio`, `-moz-device-pixel-ratio`,
+`device-width`, `device-height`, `device-aspect-ratio`,
+`horizontal-viewport-segments`, `vertical-viewport-segments`,
+`color`, `color-index`, `monochrome`, `color-gamut`, `video-color-gamut`,
+`orientation`, `pointer`, `any-pointer`, `hover`, `any-hover`, `nav-controls`,
+`scan`, `grid`, `environment-blending`, `overflow-block`, `overflow-inline`,
 `update`, `scripting`, `forced-colors`, `prefers-contrast`,
 `inverted-colors`, `dynamic-range`, `video-dynamic-range`,
-`prefers-color-scheme`, `prefers-reduced-motion`,
+`display-mode`, `prefers-color-scheme`, `prefers-reduced-motion`,
 `prefers-reduced-transparency`, and `prefers-reduced-data`;
 comma-separated query lists, `and`, `or`, `not`, and range syntax are accepted
 when the resulting conditions only use those features. `prefers-color-scheme`
 uses the platform window theme when winit can report one, and falls back to the
 active theme background when platform detection is unavailable. `color-gamut`
-currently defaults to `srgb` until platform display-gamut detection is added. `pointer` /
+currently defaults to `srgb` until platform display-gamut detection is added.
+The prefixed device-pixel-ratio aliases map to DragonGUI's dppx resolution.
+`video-color-gamut` currently mirrors `color-gamut` and defaults to `srgb`.
+`device-width`, `device-height`, and `device-aspect-ratio` currently mirror the
+logical app viewport; both viewport segment features default to `1`.
+`color` defaults to `8`, while `color-index` and `monochrome` default to `0`
+for normal native color displays. `scan` defaults to `progressive`, `grid`
+defaults to `0`, and `environment-blending` defaults to `opaque`. `pointer` /
 `any-pointer` currently default to `fine`, `hover` / `any-hover` default to
-`hover`, `update` defaults to `fast`, `scripting` defaults to `none`, and
+`hover`, `nav-controls` defaults to `none`, `overflow-block` and
+`overflow-inline` default to `scroll`, `update`
+defaults to `fast`, `scripting` defaults to `none`, and
 `forced-colors` defaults to `none`, matching DragonGUI's current desktop native
 rendering model. DragonGUI currently defaults `prefers-contrast`,
 `prefers-reduced-motion`, `prefers-reduced-transparency`, and
 `prefers-reduced-data` to `no-preference`, `inverted-colors` to `none`, and
-both dynamic-range features to `standard`, until OS preference hooks are added.
+both dynamic-range features to `standard`; `display-mode` defaults to
+`standalone` for DragonGUI's native app window, until platform mode hooks are added.
 Container queries and broader media features are still unsupported.
 
 ## Font Faces
@@ -197,7 +281,7 @@ families, local font files, and base64 `data:` font URLs.
     font-family: "Report UI";
     src:
         local("Segoe UI"),
-        url("C:/Windows/Fonts/segoeui.ttf") format("truetype");
+        url("file:///C:/Windows/Fonts/segoeui.ttf") format("truetype");
 }
 
 Label.title {
@@ -205,17 +289,25 @@ Label.title {
 }
 ```
 
-Supported sources are `local("Family Name")` entries, local `url(...)` files
-with `.ttf`, `.otf`, or `.ttc` extensions, and base64 `data:` URLs containing
-sfnt TrueType/OpenType/TTC data. Remote URLs, bundled package asset resolution,
-and WOFF/WOFF2 loading are not supported yet. Relative paths are resolved from
-the current process working directory. Missing families, missing files, and
-unsupported font sources emit one-time renderer diagnostics and appear in
+Supported sources are `local("Family Name")` entries, local path or `file://`
+`url(...)` files with `.ttf`, `.otf`, `.ttc`, or `.woff` extensions, and base64
+`data:` URLs containing sfnt TrueType/OpenType/TTC or WOFF1 data. WOFF1 sources
+are decoded to sfnt data before loading. The optional `format(...)` descriptor
+is honored; unsupported formats such as `woff2`, `embedded-opentype`, and `svg`
+are skipped. Remote URLs, bundled package asset resolution, and WOFF2 loading
+are not supported yet. Relative paths are resolved from the current process
+working directory. Percent-escaped `file://` paths are decoded before loading.
+Missing families, missing files, and unsupported font sources emit one-time
+renderer diagnostics and appear in
 `debug_snapshot()["gpu"]["renderer"]["font_warnings"]`.
 
 DragonGUI also supports a first slice of static `@supports` feature queries.
 Declaration queries use the DragonGUI property parser, selector queries use the
-DragonGUI selector subset, and false queries skip their nested rules.
+DragonGUI selector subset, `font-format(...)` reflects DragonGUI's current
+font loader formats, including the `ttf`, `otf`, and `ttc` aliases for local
+file sources. `at-rule(...)` reflects DragonGUI's current at-rule parser
+surface, `font-tech(...)` reflects DragonGUI's current text shaping features,
+and false queries skip their nested rules.
 
 ```css
 @supports (display: grid) and (selector(Panel > Button.primary)) {
@@ -227,6 +319,24 @@ DragonGUI selector subset, and false queries skip their nested rules.
 @supports (backdrop-filter: blur(8px) brightness(110%) saturate(1.1)) {
     Panel.floating {
         backdrop-filter: blur(8px) brightness(110%) saturate(1.1);
+    }
+}
+
+@supports font-format(woff) {
+    Label.caption {
+        letter-spacing: 0.015em;
+    }
+}
+
+@supports at-rule(@media) {
+    Badge.info {
+        border-radius: 9px;
+    }
+}
+
+@supports font-tech(features-opentype) {
+    Label.value {
+        font-variant-numeric: tabular-nums;
     }
 }
 ```
@@ -485,8 +595,10 @@ Supported visual properties:
 
 | CSS | Notes |
 | --- | --- |
-| `background` / `background-color` | theme token, color, gradient, or layered paint |
-| `background-image` | `linear-gradient(...)`, `radial-gradient(...)`, repeating gradients, layered gradients, or `none`; layers over `background-color`; `url(...)` is not supported |
+| `background` / `background-color` | theme token, color, gradient, `blob-gradient(...)`, `mesh-gradient(...)`, or layered paint |
+| `background-image` | `linear-gradient(...)`, `radial-gradient(...)`, `blob-gradient(...)`, `mesh-gradient(...)`, repeating gradients, layered gradients, or `none`; layers over `background-color`; `url(...)` is not supported |
+| `background-noise` | subtle procedural noise for rect-backed gradient backgrounds |
+| `gradient-interpolation` | `srgb`, `linear-srgb`, or `oklab`; defaults to `srgb` |
 | `foreground` | theme token or color |
 | `color` | text color and foreground |
 | `border-color` | theme token or color |
@@ -632,7 +744,10 @@ They support `content: "..."`, `content: attr(name)`, plus visual/text styling
 for non-interactive prefix or suffix text. `attr(name)` reads widget metadata
 such as `id`, `key`, `class`, and serialized widget props such as `title`,
 `level`, or `value`. Generated content does not participate in layout, create
-hit targets, or support counters.
+hit targets, or support counters. Controls align generated content through the
+control centerline; titled containers such as `Panel`, `Sidebar`, and `Modal`
+anchor generated content to the title band so stamps do not float over child
+controls.
 
 Rounded `Scatter3D` surfaces clip the 3D viewport and picking region to the
 computed per-corner border radii. Overflow support is first-slice: horizontal
@@ -744,9 +859,22 @@ block:
 }
 ```
 
-Scoped custom properties on arbitrary widgets are not implemented. `var()` may
-be used as a whole property value or inside larger parseable values such as
-borders, shadows, gradients, grid tracks, and transition shorthands.
+Selector-local custom properties are also supported inside the same declaration
+block:
+
+```css
+Panel.card {
+    --card-bg: linear-gradient(135deg, #172235, #0f1724);
+    --card-radius: 14px;
+    background: var(--card-bg);
+    border-radius: var(--card-radius);
+}
+```
+
+Inherited custom properties across arbitrary widget subtrees are not
+implemented. `var()` may be used as a whole property value or inside larger
+parseable values such as borders, shadows, gradients, grid tracks, and
+transition shorthands.
 
 ## Debugging
 

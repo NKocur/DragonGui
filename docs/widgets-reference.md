@@ -193,9 +193,15 @@ Supported background paint values:
 - Solid colors through the color syntax above.
 - `linear-gradient(...)`, `radial-gradient(...)`, and comma-separated paint
   layers on `background` for rect-backed widget surfaces. The renderer supports
-  up to four stop colors per rect instance.
+  up to six stop colors per rect instance.
+- DragonGUI-specific `blob-gradient(...)` organic background paint with up to
+  four soft fields.
+- DragonGUI-specific `mesh-gradient(...)` four-corner background paint for
+  smooth image-like gradients.
 - Subtle procedural gradient noise through `background-noise`, usually with
   values around `0.01..0.03`.
+- Gradient stop interpolation through `gradient-interpolation`, with `srgb`,
+  `linear-srgb`, and `oklab` modes.
 
 Supported length values are logical pixels for most properties. Unitless
 numbers and `px` values are accepted. Percent lengths, `auto`, and compatible
@@ -922,7 +928,7 @@ CSS:
 Constructor:
 
 ```python
-dg.Label(text, id=None, key=None, class_=None, style=None, tooltip=None, parent=...)
+dg.Label(text, id=None, key=None, class_=None, style=None, tooltip=None, wrap=True, parent=...)
 ```
 
 Options:
@@ -930,6 +936,7 @@ Options:
 | Option | Notes |
 | --- | --- |
 | `text` | Display text. |
+| `wrap` | When true, labels wrap inside constrained containers and reserve approximate multiline height. Pass false for a single-line label. |
 
 Live methods:
 

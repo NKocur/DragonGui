@@ -6,11 +6,12 @@ use taffy::style::Overflow;
 use crate::document::{WidgetKind, WidgetNode};
 use crate::events::WidgetState;
 use crate::style::{
-    badge_width_for_text, collapsible_header_height_for_style, tabs_header_height_for_style,
-    DisplayStyle, FlexDirectionStyle, GridAutoFlowStyle, GridLineStyle, GridPlacementStyle,
-    GridTemplateAreas, GridTrackFitContentSize, GridTrackMaxSize, GridTrackMinSize,
-    GridTrackRepeatKind, GridTrackSize, LayoutLength, LineHeight, OverflowStyle, PositionStyle,
-    BADGE_GAP_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP,
+    badge_width_for_text, collapsible_header_height_for_style, standalone_badge_width_for_text,
+    tabs_header_height_for_style, DisplayStyle, FlexDirectionStyle, GridAutoFlowStyle,
+    GridLineStyle, GridPlacementStyle, GridTemplateAreas, GridTrackFitContentSize,
+    GridTrackMaxSize, GridTrackMinSize, GridTrackRepeatKind, GridTrackSize, LayoutLength,
+    LineHeight, OverflowStyle, PositionStyle, TextOverflow, BADGE_GAP_LP, CHECKBOX_BOX_LP,
+    CHECKBOX_LEFT_PAD_LP,
 };
 use crate::theme::Theme;
 
@@ -128,8 +129,11 @@ pub fn compute_layout(
     apply_navigation_layout(root, &mut result, scale_factor, theme, state);
     apply_modal_layout(root, &mut result, scale_factor, theme);
     apply_tooltip_layout(root, &mut result, scale_factor, theme, state);
+    compute_clips(root, &mut result, scale_factor, theme);
     apply_scroll_offsets(root, &mut result, state);
     apply_fixed_positions(root, &mut result, scale_factor);
+    result.clips.clear();
+    result.paint_clips.clear();
     compute_clips(root, &mut result, scale_factor, theme);
     result
 }
@@ -166,7 +170,7 @@ fn build_node(
             height: Dimension::Length(h),
         };
     }
-    let child_parent_size = definite_content_size(&style).or(parent_size);
+    let child_parent_size = definite_content_size(&style, parent_size);
     let child_ids: Vec<NodeId> = if matches!(
         node.kind,
         WidgetKind::Tabs
@@ -270,6 +274,7 @@ fn style_for(
             flex_direction: FlexDirection::Row,
             align_items: Some(AlignItems::Stretch),
             flex_grow: 1.0,
+            flex_shrink: 0.0,
             size: Size {
                 width: Dimension::Auto,
                 height: Dimension::Auto,
@@ -286,6 +291,7 @@ fn style_for(
             flex_direction: FlexDirection::Column,
             align_items: Some(AlignItems::Stretch),
             flex_grow: 1.0,
+            flex_shrink: 0.0,
             size: Size {
                 width: Dimension::Auto,
                 height: Dimension::Auto,
@@ -495,10 +501,16 @@ fn style_for(
             ..Default::default()
         },
 
-        WidgetKind::Label
-        | WidgetKind::Slider
-        | WidgetKind::ProgressBar
-        | WidgetKind::TextInput => Style {
+        WidgetKind::Label => Style {
+            size: Size {
+                width: Dimension::Auto,
+                height: Dimension::Length(label_height_lp(node, theme, parent_size) * sf),
+            },
+            flex_shrink: 0.0,
+            ..Default::default()
+        },
+
+        WidgetKind::Slider | WidgetKind::ProgressBar | WidgetKind::TextInput => Style {
             size: Size {
                 width: Dimension::Auto,
                 height: Dimension::Length(ctrl_h),
@@ -722,7 +734,9 @@ fn intrinsic_leaf_width(node: &WidgetNode, theme: &Theme) -> Option<f32> {
             .text
             .as_deref()
             .filter(|text| !text.is_empty())
-            .map(|text| badge_width_for_text(&node.style, text, theme, 1.0).clamp(24.0, 220.0)),
+            .map(|text| {
+                standalone_badge_width_for_text(&node.style, text, theme, 1.0).clamp(24.0, 220.0)
+            }),
         WidgetKind::Menu => {
             Some((text_w.unwrap_or(0.0) + pad + MENU_LABEL_WIDTH_SAFETY_LP).clamp(44.0, 180.0))
         }
@@ -781,6 +795,74 @@ fn text_area_height_lp(node: &WidgetNode, theme: &Theme) -> f32 {
     let font_size = node_font_size_lp(node, theme);
     let line_height = (font_size + 6.0).max(theme.font_size + 4.0);
     rows * line_height + theme.spacing * 2.0
+}
+
+fn label_height_lp(node: &WidgetNode, theme: &Theme, parent_size: Option<(f32, f32)>) -> f32 {
+    let control_h = node_control_height_lp(node, theme);
+    if !label_wraps(node) {
+        return control_h;
+    }
+    let Some(text) = node.props.text.as_deref().filter(|text| !text.is_empty()) else {
+        return control_h;
+    };
+    let Some((parent_width, _)) = parent_size else {
+        return control_h;
+    };
+    let font_size = node_font_size_lp(node, theme);
+    let line_height = node_line_height_lp(node, theme);
+    let available_width = parent_width.max(font_size);
+    (estimate_wrapped_text_lines(text, font_size, available_width) as f32 * line_height)
+        .max(control_h)
+}
+
+fn label_wraps(node: &WidgetNode) -> bool {
+    node.props.wrap.unwrap_or(true) && node.style.text.text_overflow != Some(TextOverflow::Ellipsis)
+}
+
+fn node_line_height_lp(node: &WidgetNode, theme: &Theme) -> f32 {
+    let font_size = node_font_size_lp(node, theme);
+    match node.style.text.line_height {
+        Some(LineHeight::Multiplier(value)) => (font_size * value.max(0.1)).max(1.0),
+        Some(LineHeight::LogicalPx(value)) => value.max(1.0),
+        None => (font_size + 5.0).max(theme.font_size + 3.0),
+    }
+}
+
+fn estimate_wrapped_text_lines(text: &str, font_size: f32, available_width: f32) -> usize {
+    let approx_char_width = (font_size * 0.56).max(1.0);
+    let max_chars = (available_width / approx_char_width).floor().max(1.0) as usize;
+    text.lines()
+        .map(|line| estimate_wrapped_line_count(line, max_chars))
+        .sum::<usize>()
+        .max(1)
+}
+
+fn estimate_wrapped_line_count(line: &str, max_chars: usize) -> usize {
+    if line.trim().is_empty() {
+        return 1;
+    }
+    let mut lines = 1usize;
+    let mut current = 0usize;
+    for word in line.split_whitespace() {
+        let word_len = word.chars().count();
+        if current == 0 {
+            current = word_len;
+            while current > max_chars {
+                lines += 1;
+                current = current.saturating_sub(max_chars);
+            }
+        } else if current + 1 + word_len <= max_chars {
+            current += 1 + word_len;
+        } else {
+            lines += 1;
+            current = word_len;
+            while current > max_chars {
+                lines += 1;
+                current = current.saturating_sub(max_chars);
+            }
+        }
+    }
+    lines
 }
 
 fn checkbox_box_width_lp(node: &WidgetNode) -> f32 {
@@ -1207,9 +1289,10 @@ fn lp_value(value: LengthPercentage) -> f32 {
     }
 }
 
-fn definite_content_size(style: &Style) -> Option<(f32, f32)> {
-    let width = definite_dimension(style.size.width)?;
-    let height = definite_dimension(style.size.height)?;
+fn definite_content_size(style: &Style, parent_size: Option<(f32, f32)>) -> Option<(f32, f32)> {
+    let width = definite_dimension(style.size.width).or_else(|| parent_size.map(|size| size.0))?;
+    let height =
+        definite_dimension(style.size.height).or_else(|| parent_size.map(|size| size.1))?;
     let padding_x = lp_value(style.padding.left) + lp_value(style.padding.right);
     let padding_y = lp_value(style.padding.top) + lp_value(style.padding.bottom);
     Some(((width - padding_x).max(0.0), (height - padding_y).max(0.0)))
@@ -1405,10 +1488,11 @@ pub(crate) fn scroll_container_max_x(node: &WidgetNode, result: &LayoutResult) -
     let Some(rect) = result.rects.get(&node.id).copied() else {
         return 0.0;
     };
+    let viewport = result.clips.get(&node.id).copied().unwrap_or(rect);
     let Some(content) = scroll_content_bounds(node, result) else {
         return 0.0;
     };
-    (content.right - (rect.x + rect.w)).max(0.0)
+    (content.right - (viewport.x + viewport.w)).max(0.0)
 }
 
 pub(crate) fn scroll_container_max_y(node: &WidgetNode, result: &LayoutResult) -> f32 {
@@ -1418,10 +1502,11 @@ pub(crate) fn scroll_container_max_y(node: &WidgetNode, result: &LayoutResult) -
     let Some(rect) = result.rects.get(&node.id).copied() else {
         return 0.0;
     };
+    let viewport = result.clips.get(&node.id).copied().unwrap_or(rect);
     let Some(content) = scroll_content_bounds(node, result) else {
         return 0.0;
     };
-    (content.bottom - (rect.y + rect.h)).max(0.0)
+    (content.bottom - (viewport.y + viewport.h)).max(0.0)
 }
 
 fn scroll_container_child_clip(
@@ -1462,8 +1547,10 @@ fn scroll_container_child_clip(
 
 fn child_clip_for_overflow(node: &WidgetNode, parent_clip: Rect, node_clip: Rect) -> Rect {
     match node_overflow_y(node).or_else(|| node_overflow_x(node)) {
+        Some(OverflowStyle::Hidden | OverflowStyle::Scroll | OverflowStyle::Auto) => node_clip,
         Some(OverflowStyle::Visible) => parent_clip,
-        _ => node_clip,
+        None if node.kind == WidgetKind::HLayout || node.kind == WidgetKind::VLayout => parent_clip,
+        None => node_clip,
     }
 }
 
@@ -2078,6 +2165,42 @@ mod tests {
     }
 
     #[test]
+    fn standalone_badge_intrinsic_width_fits_long_text_in_row() {
+        let mut badge = node(
+            "margin-auto",
+            WidgetKind::Badge,
+            NodeProps {
+                text: Some("margin auto".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        badge.style.layout.padding_left = Some(10.0);
+        badge.style.layout.padding_right = Some(10.0);
+
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "row",
+                WidgetKind::HLayout,
+                NodeProps::default(),
+                vec![badge],
+            )],
+        );
+
+        let layout = compute_layout(&root, 420.0, 120.0, 1.0, &Theme::dark(), None);
+        let badge_rect = layout.rects.get("margin-auto").expect("badge rect");
+
+        assert!(
+            badge_rect.w >= 135.0,
+            "margin-auto badge should get enough intrinsic width, got {}",
+            badge_rect.w
+        );
+    }
+
+    #[test]
     fn inactive_tooltip_does_not_consume_window_flow() {
         let mut tooltip = node(
             "tip",
@@ -2501,6 +2624,47 @@ mod tests {
         assert!(
             wide.w > narrow.w,
             "large CSS font-size should increase intrinsic text width: wide={wide:?} narrow={narrow:?}"
+        );
+    }
+
+    #[test]
+    fn label_wraps_and_reserves_multiline_height_in_narrow_panel() {
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "panel",
+                WidgetKind::Panel,
+                NodeProps {
+                    fixed_width: Some(180.0),
+                    ..NodeProps::default()
+                },
+                vec![node(
+                    "label",
+                    WidgetKind::Label,
+                    NodeProps {
+                        text: Some(
+                            "This label should wrap onto several lines inside a narrow panel"
+                                .to_string(),
+                        ),
+                        ..NodeProps::default()
+                    },
+                    vec![],
+                )],
+            )],
+        );
+
+        let layout = compute_layout(&root, 420.0, 260.0, 1.0, &Theme::dark(), None);
+        let label = layout.rects.get("label").unwrap();
+
+        assert!(
+            label.h
+                > node_control_height_lp(
+                    &node("baseline", WidgetKind::Label, NodeProps::default(), vec![]),
+                    &Theme::dark()
+                ),
+            "wrapped label did not reserve multiline height: {label:?}"
         );
     }
 
@@ -3611,6 +3775,75 @@ mod tests {
     }
 
     #[test]
+    fn plain_hlayout_allows_child_paint_to_escape_for_outlines() {
+        let mut button = node("button", WidgetKind::Button, NodeProps::default(), vec![]);
+        button.style.visual.outline_width = Some(2.0);
+        button.style.visual.outline_offset = Some(2.0);
+        let mut row = node(
+            "row",
+            WidgetKind::HLayout,
+            NodeProps::default(),
+            vec![button],
+        );
+        row.style.layout.height = Some(30.0);
+        row.style.layout.flex_grow = Some(0.0);
+        row.style.layout.flex_shrink = Some(0.0);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![row],
+        );
+
+        let layout = compute_layout(&root, 220.0, 80.0, 1.0, &Theme::dark(), None);
+        let row_rect = layout.rects.get("row").unwrap();
+        let button_paint_clip = layout.paint_clip_rect("button").unwrap();
+
+        assert!(
+            button_paint_clip.y < row_rect.y
+                || button_paint_clip.y + button_paint_clip.h > row_rect.y + row_rect.h,
+            "button paint clip should not be confined to a plain HLayout row: row={row_rect:?} paint_clip={button_paint_clip:?}"
+        );
+    }
+
+    #[test]
+    fn explicit_hidden_hlayout_clips_child_paint() {
+        let mut button = node("button", WidgetKind::Button, NodeProps::default(), vec![]);
+        button.style.visual.outline_width = Some(2.0);
+        button.style.visual.outline_offset = Some(2.0);
+        let mut row = node(
+            "row",
+            WidgetKind::HLayout,
+            NodeProps::default(),
+            vec![button],
+        );
+        row.style.layout.height = Some(30.0);
+        row.style.layout.flex_grow = Some(0.0);
+        row.style.layout.flex_shrink = Some(0.0);
+        row.style.layout.overflow = Some(OverflowStyle::Hidden);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![row],
+        );
+
+        let layout = compute_layout(&root, 220.0, 80.0, 1.0, &Theme::dark(), None);
+        let row_rect = layout.rects.get("row").unwrap();
+        let button_paint_clip = layout.paint_clip_rect("button").unwrap();
+
+        assert_eq!(
+            (
+                button_paint_clip.y,
+                button_paint_clip.h,
+                row_rect.y,
+                row_rect.h
+            ),
+            (row_rect.y, row_rect.h, row_rect.y, row_rect.h)
+        );
+    }
+
+    #[test]
     fn overflow_auto_opts_non_panel_container_into_scroll() {
         let mut scroller = node(
             "scroller",
@@ -3692,6 +3925,306 @@ mod tests {
             }
         }
         assert!(saw_visible_child);
+    }
+
+    #[test]
+    fn titled_scroll_panel_max_scroll_reveals_last_child() {
+        let mut children = vec![node(
+            "intro",
+            WidgetKind::Label,
+            NodeProps {
+                text: Some("Wheel inside this panel.".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        )];
+        for index in 1..=9 {
+            children.push(node(
+                &format!("action-{index}"),
+                WidgetKind::Button,
+                NodeProps {
+                    text: Some(format!("Scrollable action {index}")),
+                    ..NodeProps::default()
+                },
+                vec![],
+            ));
+        }
+        let mut panel = node(
+            "panel",
+            WidgetKind::Panel,
+            NodeProps {
+                text: Some("Vertical auto".to_string()),
+                ..NodeProps::default()
+            },
+            children,
+        );
+        panel.style.layout.height = Some(205.0);
+        panel.style.layout.padding = Some(14.0);
+        panel.style.layout.gap = Some(8.0);
+        panel.style.layout.overflow_y = Some(OverflowStyle::Auto);
+        panel.style.layout.overflow_x = Some(OverflowStyle::Hidden);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![panel],
+        );
+        let mut state = WidgetState::default();
+        state.container_scroll_y.insert("panel".to_string(), 999.0);
+
+        let layout = compute_layout(&root, 360.0, 240.0, 1.0, &Theme::dark(), Some(&state));
+        let last_rect = layout.rects.get("action-9").unwrap();
+        let last_clip = layout.clips.get("action-9").unwrap();
+
+        assert!(
+            last_clip.h >= last_rect.h - 0.5,
+            "last child should be fully visible at max scroll: rect={last_rect:?} clip={last_clip:?} scroll={:?} max={:?}",
+            layout.scroll_y.get("panel"),
+            layout.scroll_max_y.get("panel")
+        );
+    }
+
+    #[test]
+    fn overflow_probe_vertical_panel_reveals_last_child_at_startup_size() {
+        let mut vertical_children = vec![
+            node(
+                "vertical-title",
+                WidgetKind::Label,
+                NodeProps {
+                    text: Some("Vertical auto".to_string()),
+                    ..NodeProps::default()
+                },
+                vec![],
+            ),
+            node(
+                "vertical-intro",
+                WidgetKind::Label,
+                NodeProps {
+                    text: Some("Wheel inside this panel.".to_string()),
+                    ..NodeProps::default()
+                },
+                vec![],
+            ),
+        ];
+        for index in 1..=9 {
+            vertical_children.push(node(
+                &format!("probe-action-{index}"),
+                WidgetKind::Button,
+                NodeProps {
+                    text: Some(format!("Scrollable action {index}")),
+                    ..NodeProps::default()
+                },
+                vec![],
+            ));
+        }
+        let mut vertical = node(
+            "vertical-panel",
+            WidgetKind::Panel,
+            NodeProps::default(),
+            vertical_children,
+        );
+        vertical.style.layout.width = Some(330.0);
+        vertical.style.layout.height = Some(220.0);
+        vertical.style.layout.padding = Some(14.0);
+        vertical.style.layout.padding_bottom = Some(20.0);
+        vertical.style.layout.gap = Some(8.0);
+        vertical.style.layout.overflow_y = Some(OverflowStyle::Auto);
+        vertical.style.layout.overflow_x = Some(OverflowStyle::Hidden);
+
+        let mut hidden = node(
+            "hidden-panel",
+            WidgetKind::Panel,
+            NodeProps::default(),
+            vec![],
+        );
+        hidden.style.layout.width = Some(330.0);
+        hidden.style.layout.height = Some(220.0);
+        hidden.style.layout.padding = Some(14.0);
+        hidden.style.layout.gap = Some(8.0);
+
+        let mut row = node(
+            "top-row",
+            WidgetKind::HLayout,
+            NodeProps::default(),
+            vec![vertical, hidden],
+        );
+        row.style.layout.gap = Some(12.0);
+
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![
+                node(
+                    "title",
+                    WidgetKind::Label,
+                    NodeProps {
+                        text: Some("Overflow and scrollbar parts".to_string()),
+                        ..NodeProps::default()
+                    },
+                    vec![],
+                ),
+                node(
+                    "caption",
+                    WidgetKind::Label,
+                    NodeProps {
+                        text: Some(
+                            "This probe isolates overflow clipping, vertical scroll, horizontal scroll, both-axis scroll, and ::scrollbar-track / ::scrollbar-thumb styling.".to_string(),
+                        ),
+                        ..NodeProps::default()
+                    },
+                    vec![],
+                ),
+                row,
+            ],
+        );
+        let mut state = WidgetState::default();
+        state
+            .container_scroll_y
+            .insert("vertical-panel".to_string(), 999.0);
+
+        let layout = compute_layout(&root, 780.0, 700.0, 1.0, &Theme::dark(), Some(&state));
+        let panel_rect = layout.rects.get("vertical-panel").unwrap();
+        let panel_clip = layout.clips.get("vertical-panel").unwrap();
+        let last_rect = layout.rects.get("probe-action-9").unwrap();
+        let last_clip = layout.clips.get("probe-action-9").unwrap();
+
+        assert!(
+            panel_clip.h >= panel_rect.h - 0.5,
+            "vertical panel itself should be visible at startup size: rect={panel_rect:?} clip={panel_clip:?}"
+        );
+        assert!(
+            last_clip.h >= last_rect.h - 0.5,
+            "last probe button should be fully visible at max scroll: rect={last_rect:?} clip={last_clip:?} scroll={:?} max={:?}",
+            layout.scroll_y.get("vertical-panel"),
+            layout.scroll_max_y.get("vertical-panel")
+        );
+    }
+
+    #[test]
+    fn partially_clipped_scroll_panel_uses_visible_viewport_for_max_scroll() {
+        let mut children = Vec::new();
+        for index in 1..=9 {
+            children.push(node(
+                &format!("clipped-action-{index}"),
+                WidgetKind::Button,
+                NodeProps {
+                    text: Some(format!("Scrollable action {index}")),
+                    ..NodeProps::default()
+                },
+                vec![],
+            ));
+        }
+        let mut panel = node("panel", WidgetKind::Panel, NodeProps::default(), children);
+        panel.style.layout.height = Some(220.0);
+        panel.style.layout.padding = Some(14.0);
+        panel.style.layout.gap = Some(8.0);
+        panel.style.layout.overflow_y = Some(OverflowStyle::Auto);
+
+        let mut spacer = node("spacer", WidgetKind::Spacer, NodeProps::default(), vec![]);
+        spacer.style.layout.height = Some(130.0);
+        spacer.style.layout.flex_grow = Some(0.0);
+        spacer.style.layout.flex_shrink = Some(0.0);
+
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![spacer, panel],
+        );
+        let mut state = WidgetState::default();
+        state.container_scroll_y.insert("panel".to_string(), 999.0);
+
+        let layout = compute_layout(&root, 300.0, 300.0, 1.0, &Theme::dark(), Some(&state));
+        let panel_rect = layout.rects.get("panel").unwrap();
+        let panel_clip = layout.clips.get("panel").unwrap();
+        let last_rect = layout.rects.get("clipped-action-9").unwrap();
+        let last_clip = layout.clips.get("clipped-action-9").unwrap();
+
+        assert!(
+            panel_clip.h < panel_rect.h,
+            "test requires panel to be clipped by the window: rect={panel_rect:?} clip={panel_clip:?}"
+        );
+        assert!(
+            last_clip.h >= last_rect.h - 0.5,
+            "last child should be fully visible inside clipped viewport at max scroll: rect={last_rect:?} clip={last_clip:?} scroll={:?} max={:?}",
+            layout.scroll_y.get("panel"),
+            layout.scroll_max_y.get("panel")
+        );
+    }
+
+    #[test]
+    fn scroll_vlayout_preserves_hlayout_row_content_height() {
+        let mut rows = Vec::new();
+        for row_index in 1..=4 {
+            let mut panel = node(
+                &format!("panel-{row_index}"),
+                WidgetKind::Panel,
+                NodeProps::default(),
+                vec![
+                    node(
+                        &format!("label-{row_index}"),
+                        WidgetKind::Label,
+                        NodeProps {
+                            text: Some(format!("Row {row_index} content")),
+                            ..NodeProps::default()
+                        },
+                        vec![],
+                    ),
+                    node(
+                        &format!("button-{row_index}"),
+                        WidgetKind::Button,
+                        NodeProps::default(),
+                        vec![],
+                    ),
+                    node(
+                        &format!("extra-{row_index}"),
+                        WidgetKind::Button,
+                        NodeProps::default(),
+                        vec![],
+                    ),
+                ],
+            );
+            panel.style.layout.min_height = Some(150.0);
+            panel.style.layout.padding = Some(12.0);
+            panel.style.layout.gap = Some(8.0);
+            let row = node(
+                &format!("row-{row_index}"),
+                WidgetKind::HLayout,
+                NodeProps::default(),
+                vec![panel],
+            );
+            rows.push(row);
+        }
+        let mut root_scroller = node("scroller", WidgetKind::VLayout, NodeProps::default(), rows);
+        root_scroller.style.layout.height = Some(300.0);
+        root_scroller.style.layout.gap = Some(12.0);
+        root_scroller.style.layout.overflow_y = Some(OverflowStyle::Auto);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![root_scroller],
+        );
+
+        let state = WidgetState::default();
+        let layout = compute_layout(&root, 420.0, 320.0, 1.0, &Theme::dark(), Some(&state));
+        for row_index in 1..=4 {
+            let row = layout.rects.get(&format!("row-{row_index}")).unwrap();
+            let panel = layout.rects.get(&format!("panel-{row_index}")).unwrap();
+            assert!(
+                row.h >= panel.h - 0.5,
+                "row should not clip its panel content height: row={row:?} panel={panel:?}"
+            );
+            assert!(
+                panel.h >= 150.0,
+                "panel min-height should survive inside scroll row: {panel:?}"
+            );
+        }
+        assert!(
+            layout.scroll_max_y.get("scroller").copied().unwrap_or(0.0) > 0.0,
+            "content rows should overflow the root scroller instead of shrinking"
+        );
     }
 
     #[test]

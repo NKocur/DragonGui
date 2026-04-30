@@ -49,22 +49,23 @@ Supported top-level CSS:
 - `:root` custom property declarations.
 - `!important` on declarations.
 - First-slice `@media` blocks for viewport
-  width/height/aspect-ratio/resolution/color-gamut/orientation/pointer/hover/
-  update/scripting/forced-colors/contrast/inverted-colors/dynamic-range/
-  video-dynamic-range/color-scheme/reduced-motion/reduced-transparency/
-  reduced-data queries.
+  width/height/aspect-ratio/resolution/device-pixel-ratio-aliases/device-size/viewport-segments/color/color-index/monochrome/
+  color-gamut/video-color-gamut/orientation/scan/grid/environment-blending/pointer/hover/nav-controls/
+  overflow/update/scripting/forced-colors/contrast/inverted-colors/
+  dynamic-range/video-dynamic-range/display-mode/color-scheme/reduced-motion/
+  reduced-transparency/reduced-data queries.
 - First-slice `@supports` blocks for DragonGUI declaration and selector
   feature queries.
 - First-slice `@keyframes` blocks for visual animation keyframes.
 - First-slice `@font-face` blocks for installed local family names, local
-  `.ttf`, `.otf`, and `.ttc` files, and base64 `data:` URLs containing sfnt
-  font data.
+  `.ttf`, `.otf`, `.ttc`, and `.woff` path or `file://` files, and base64
+  `data:` URLs containing sfnt or WOFF1 font data.
 - First-slice generated content through `::before`, `::after`, and
   `content: "..."`.
 
 Ignored or unsupported:
 
-- Remote font URLs, WOFF/WOFF2 loading, and packaged font asset resolution are
+- Remote font URLs, WOFF2 loading, and packaged font asset resolution are
   not part of the current public subset.
 - Invalid CSS produces a stylesheet parse error.
 - Unsupported selectors and unsupported declarations produce warnings and are
@@ -98,11 +99,15 @@ Important details:
 ## Media Queries
 
 First-slice `@media` supports viewport width, height, aspect-ratio,
-resolution, color-gamut, orientation, update, scripting, forced-colors,
-contrast, inverted-colors, dynamic-range, video-dynamic-range, color-scheme,
-reduced-motion, reduced-transparency, and reduced-data queries in logical CSS
-pixels.
-Pointer, hover, update, scripting, and forced-colors queries reflect
+resolution, `-webkit-device-pixel-ratio`, `-moz-device-pixel-ratio`,
+device-width, device-height, device-aspect-ratio,
+horizontal-viewport-segments, vertical-viewport-segments, color, color-index,
+monochrome, color-gamut, video-color-gamut, orientation,
+scan, grid, environment-blending, overflow-block, overflow-inline, update,
+scripting, forced-colors, contrast, inverted-colors, dynamic-range,
+video-dynamic-range, color-scheme, display-mode, reduced-motion,
+reduced-transparency, and reduced-data queries in logical CSS pixels.
+Pointer, hover, nav-controls, update, scripting, and forced-colors queries reflect
 DragonGUI's current desktop native rendering model. Resolution uses the current
 window scale factor as CSS dppx. Color-gamut currently defaults to `srgb`.
 Color-scheme uses the platform
@@ -120,8 +125,18 @@ Supported forms:
 @media (orientation: landscape) { ... }
 @media (min-aspect-ratio: 4/3) { ... }
 @media (min-resolution: 2dppx) { ... }
+@media (-webkit-device-pixel-ratio >= 1) { ... }
+@media (device-width >= 900px) and (device-aspect-ratio >= 4/3) { ... }
+@media (horizontal-viewport-segments: 1) and (vertical-viewport-segments: 1) { ... }
+@media (color >= 8) and (monochrome: 0) { ... }
+@media (color-index: 0) { ... }
 @media (color-gamut: srgb) { ... }
+@media (video-color-gamut: srgb) { ... }
+@media (scan: progressive) and (environment-blending: opaque) { ... }
+@media (grid: 0) { ... }
 @media (pointer: fine) and (hover: hover) { ... }
+@media (nav-controls: none) { ... }
+@media (overflow-block: scroll) and (overflow-inline: scroll) { ... }
 @media (update: fast) { ... }
 @media (scripting: none) { ... }
 @media (forced-colors: none) { ... }
@@ -129,6 +144,7 @@ Supported forms:
 @media (inverted-colors: none) { ... }
 @media (dynamic-range: standard) { ... }
 @media (video-dynamic-range: high) { ... }
+@media (display-mode: standalone) { ... }
 @media (prefers-color-scheme: dark) { ... }
 @media (prefers-reduced-motion: reduce) { ... }
 @media (prefers-reduced-transparency: no-preference) { ... }
@@ -138,23 +154,54 @@ Supported forms:
 Limitations:
 
 - Supported features are `width`, `height`, `aspect-ratio`, `resolution`,
-  `color-gamut`, `orientation`, `pointer`, `any-pointer`, `hover`,
-  `any-hover`, `update`, `scripting`, `forced-colors`,
+  `-webkit-device-pixel-ratio`, `-moz-device-pixel-ratio`,
+  `device-width`, `device-height`, `device-aspect-ratio`,
+  `horizontal-viewport-segments`, `vertical-viewport-segments`,
+  `color`, `color-index`, `monochrome`, `color-gamut`, `video-color-gamut`,
+  `orientation`, `pointer`, `any-pointer`, `hover`, `any-hover`,
+  `nav-controls`, `scan`, `grid`, `environment-blending`, `overflow-block`,
+  `overflow-inline`, `update`, `scripting`, `forced-colors`,
   `prefers-contrast`, `inverted-colors`, `dynamic-range`,
-  `video-dynamic-range`, `prefers-color-scheme`, `prefers-reduced-motion`,
-  `prefers-reduced-transparency`, and `prefers-reduced-data`.
+  `video-dynamic-range`, `display-mode`, `prefers-color-scheme`,
+  `prefers-reduced-motion`, `prefers-reduced-transparency`, and
+  `prefers-reduced-data`.
 - Width and height values must be absolute lengths convertible to pixels.
 - Aspect-ratio values may use ratios such as `4/3` or numbers such as `1.6`.
 - Resolution values may use `dppx`, `x`, `dpi`, or `dpcm`.
+- The prefixed `-webkit-device-pixel-ratio` and `-moz-device-pixel-ratio`
+  compatibility aliases take non-negative numbers and compare against the same
+  current window scale factor as `resolution`.
+- Device width and height values must be absolute lengths convertible to pixels;
+  device aspect-ratio values may use ratios or numbers. DragonGUI currently
+  mirrors the logical app viewport for device-size queries.
+- Horizontal and vertical viewport segment values must be non-negative
+  integers. DragonGUI currently reports one segment on each axis.
+- Color, color-index, and monochrome values must be non-negative integers.
+  DragonGUI currently reports `color: 8`, `color-index: 0`, and
+  `monochrome: 0` for normal native color displays.
 - Color-gamut values are `srgb`, `p3`, and `rec2020`; DragonGUI currently
   assumes `srgb`, so wider gamut queries do not match until platform display
   detection is added.
+- Video-color-gamut values are `srgb`, `p3`, and `rec2020`; DragonGUI
+  currently mirrors the graphics plane and reports `srgb`.
 - Orientation values are `portrait` and `landscape`; square viewports match
   `portrait`.
+- Scan values are `interlace` and `progressive`; DragonGUI currently reports
+  `progressive` for native window rendering.
+- Grid values are `0` and `1`; DragonGUI currently reports `0`, meaning a
+  bitmap display rather than a character-cell grid device.
+- Environment-blending values are `opaque`, `additive`, and `subtractive`;
+  DragonGUI currently reports `opaque`.
 - Pointer values are `none`, `coarse`, and `fine`; DragonGUI currently reports
   `fine` for `pointer` and `any-pointer`.
 - Hover values are `none` and `hover`; DragonGUI currently reports `hover` for
   `hover` and `any-hover`.
+- Nav-controls values are `none` and `back`; DragonGUI currently reports
+  `none` because native app windows do not expose a browser back control.
+- Overflow-block values are `none`, `scroll`, `optional-paged`, and `paged`;
+  DragonGUI currently reports `scroll` for native window rendering.
+- Overflow-inline values are `none` and `scroll`; DragonGUI currently reports
+  `scroll` for native window rendering.
 - Update values are `none`, `slow`, and `fast`; DragonGUI currently reports
   `fast` for normal native window rendering.
 - Scripting values are `none`, `initial-only`, and `enabled`; DragonGUI
@@ -169,6 +216,9 @@ Limitations:
 - Dynamic-range and video-dynamic-range values are `standard` and `high`;
   DragonGUI currently reports `standard` for both until platform display
   dynamic-range integration is added.
+- Display-mode values are `browser`, `minimal-ui`, `standalone`, `fullscreen`,
+  `window-controls-overlay`, and `picture-in-picture`; DragonGUI currently
+  reports `standalone` for its native app window.
 - Color-scheme values are `dark` and `light`; DragonGUI uses winit's platform
   window theme when available and falls back to active theme background
   luminance when unavailable.
@@ -197,27 +247,35 @@ Supported form:
     font-family: "Report UI";
     src:
         local("Segoe UI"),
-        url("C:/Windows/Fonts/segoeui.ttf") format("truetype");
+        url("file:///C:/Windows/Fonts/segoeui.ttf") format("truetype");
 }
 ```
 
 Limitations:
 
-- Supported sources are `local("Family Name")` and local `url(...)` files.
-- Supported file extensions are `.ttf`, `.otf`, and `.ttc`.
+- Supported sources are `local("Family Name")`, local path `url(...)` files,
+  and local `file://` `url(...)` files.
+- Supported file extensions are `.ttf`, `.otf`, `.ttc`, and `.woff`.
+- Supported `format(...)` descriptors are `truetype`, `opentype`,
+  `collection`, and `woff`; unsupported descriptors are skipped.
 - `data:` URLs are supported when they are base64-encoded sfnt TrueType,
-  OpenType, or TTC data.
+  OpenType, TTC, or WOFF1 data. WOFF1 sources are decoded to sfnt data before
+  loading.
 - Relative paths resolve from the current process working directory.
+- Percent-escaped `file://` paths are decoded before loading.
 - Missing local families and missing or unsupported font files are skipped by
   the renderer and reported once in
   `debug_snapshot()["gpu"]["renderer"]["font_warnings"]`.
-- Remote URLs, WOFF/WOFF2, and packaged app asset resolution are still pending.
+- Remote URLs, WOFF2, and packaged app asset resolution are still pending.
 
 ## Feature Queries
 
 First-slice `@supports` evaluates statically while the stylesheet is lowered.
-Declaration queries use DragonGUI's CSS property parser, and selector queries
-use DragonGUI's selector subset parser.
+Declaration queries use DragonGUI's CSS property parser, selector queries use
+DragonGUI's selector subset parser, and `font-format(...)` checks the current
+DragonGUI font loader formats. `at-rule(...)` checks the DragonGUI at-rule
+parser surface. `font-tech(...)` checks DragonGUI's current text shaping
+features.
 
 Supported forms:
 
@@ -226,6 +284,9 @@ Supported forms:
 @supports not (backdrop-filter: blur(8px)) { ... }
 @supports (width: calc(100% - 240px)) and (selector(Panel > Button.primary)) { ... }
 @supports (backdrop-filter: blur(8px)) { ... }
+@supports font-format(woff) { ... }
+@supports at-rule(@media) { ... }
+@supports font-tech(features-opentype) { ... }
 ```
 
 Limitations:
@@ -233,6 +294,17 @@ Limitations:
 - `@supports` conditions are not runtime state; they only test the DragonGUI CSS
   subset supported by the current build.
 - Unsupported declaration and selector queries simply evaluate to false.
+- `font-format(...)` evaluates true for `truetype`, `opentype`,
+  `collection`, and `woff`. DragonGUI also accepts file-extension aliases
+  `ttf`, `otf`, and `ttc` because the native font loader accepts those local
+  file sources. It currently evaluates false for `woff2`, `embedded-opentype`,
+  and `svg`.
+- `at-rule(...)` evaluates true for `media`, `supports`, `keyframes`, and
+  `font-face`; it currently evaluates false for unsupported at-rules such as
+  `container`.
+- `font-tech(...)` evaluates true for `features-opentype`; it currently
+  evaluates false for color font technologies, palettes, incremental font
+  transfer, and variable-font feature claims.
 
 Supported feature queries reflect DragonGUI's native subset, not browser
 support. For example, `backdrop-filter: blur(...) brightness(...)` currently
@@ -565,10 +637,11 @@ Supported visual properties:
 
 | Property | Accepted Values | Effect |
 | --- | --- | --- |
-| `background` | color, `linear-gradient(...)`, `radial-gradient(...)`, or comma-separated paint layers | Fill/background paint. |
+| `background` | color, `linear-gradient(...)`, `radial-gradient(...)`, `blob-gradient(...)`, `mesh-gradient(...)`, or comma-separated paint layers | Fill/background paint. |
 | `background-color` | color | Solid fill/background color. |
-| `background-image` | `linear-gradient(...)`, `radial-gradient(...)`, repeating gradients, comma-separated gradient layers, or `none` | Gradient/image paint subset. Layers over `background-color`; `none` clears back to the solid color. `url(...)` sources are not supported. |
+| `background-image` | `linear-gradient(...)`, `radial-gradient(...)`, `blob-gradient(...)`, `mesh-gradient(...)`, repeating gradients, comma-separated gradient layers, or `none` | Gradient/image paint subset. Layers over `background-color`; `none` clears back to the solid color. `url(...)` sources are not supported. |
 | `background-noise` | number | Adds subtle deterministic noise to rect-backed gradient backgrounds. Clamped to `0.0..0.25`. |
+| `gradient-interpolation` | `srgb`, `linear-srgb`, or `oklab` | Selects the color interpolation space for gradient stops on rect-backed surfaces. Defaults to `srgb`. |
 | `foreground` | color | Foreground glyph/control color for renderers that use visual foreground. |
 | `border-color` | color | Border color. |
 | `border-width` | logical px | Border width. |
@@ -606,11 +679,24 @@ Notes:
 - `linear-gradient(...)` currently supports angles and `to ...` directions.
   `radial-gradient(...)` currently supports centered circle gradients and
   `circle at <x> <y>` percent/keyword centers.
-  The renderer interpolates up to four explicit or inferred color stops. Longer
-  gradients are sampled down to four GPU stops.
+  The renderer interpolates up to six explicit or inferred color stops. Longer
+  gradients are sampled down to six GPU stops. Transparent stops interpolate
+  with premultiplied alpha to avoid dark halos when colors fade to transparent.
+  `gradient-interpolation: linear-srgb` blends stops in linear-light sRGB;
+  `gradient-interpolation: oklab` blends stops through Oklab before converting
+  back to sRGB for output.
 - `repeating-linear-gradient(...)` and `repeating-radial-gradient(...)` are
   supported when the final explicit stop is less than `100%`; the renderer
   repeats that stop range across the shape.
+- `blob-gradient(...)` is a DragonGUI-specific paint for organic blob
+  backgrounds. It accepts up to four entries in the form
+  `at <x> <y> <color> <radius>`, with percent centers and radius values such
+  as `at 22% 30% rgba(90, 169, 255, 0.68) 46%`. Blob layers combine soft
+  fields in the shader rather than drawing separate geometric circles.
+- `mesh-gradient(...)` is a DragonGUI-specific image-like four-corner gradient.
+  It accepts four colors in top-left, top-right, bottom-left, bottom-right
+  order and bilinearly blends across the rect. This is intended for smooth
+  raster-gradient style surfaces rather than circular blob effects.
 - Multiple comma-separated color/gradient background layers can be painted
   back-to-front. This is useful for a soft radial glow over a linear base.
 - `background-noise` is a small procedural dither/noise pass for rect-backed
@@ -896,6 +982,8 @@ Capabilities:
   declarations inside that same media block.
 - Direct `:root` variables inside a static true `@supports` block can be used
   by declarations inside that same supports block.
+- Custom properties declared inside a normal selector block can be used by
+  declarations in that same block.
 - Variable values can resolve to numbers, lengths, colors, keywords, or strings.
 - `var(--name)` is supported as a whole property value.
 - `var(--name, fallback)` is supported as a whole property value.
@@ -904,7 +992,8 @@ Capabilities:
 
 Limitations:
 
-- Scoped custom properties on arbitrary widget selectors are not supported.
+- Selector-local custom properties do not inherit into descendant widget
+  rules.
 - Media/support-scoped variables are parse-time scoped to declarations inside
   the same block; this is not full inherited browser custom-property cascade.
 - `calc()` is only supported as a whole layout value for sizing and supported
@@ -1017,7 +1106,9 @@ Generated `::before` / `::after` content is renderer-owned text. It does not
 participate in layout, receive input, or create child widgets. The first slice
 supports quoted string content, `attr(name)` lookups against widget metadata and
 serialized props, plus visual/text styling. Counters and independent
-generated-content layout are not supported.
+generated-content layout are not supported. Controls align generated content to
+the control centerline, while titled containers such as `Panel`, `Sidebar`, and
+`Modal` anchor it to the title band.
 
 ## Inline Style Dictionaries
 
@@ -1183,7 +1274,7 @@ effects include:
 - `linear-gradient(...)`, `radial-gradient(...)`, layered backgrounds,
   gradient `background-image`, and subtle `background-noise` render on normal
   rect-backed widget surfaces and respect rounded rect clipping. The renderer
-  supports up to four stop colors per rect instance.
+  supports up to six stop colors per rect instance.
 - Slider uses `track-color`, `thumb-color`, and `Slider::track`,
   `Slider::fill`, `Slider::thumb`.
 - ProgressBar uses `ProgressBar::track`, `ProgressBar::fill`, and
@@ -1289,12 +1380,19 @@ Property limitations:
   hit testing yet. `absolute` and `fixed` currently expect explicit or intrinsic
   widget size.
 - Media queries are first-slice only: viewport `width`/`height`,
-  `aspect-ratio`, `resolution`, `color-gamut`, `orientation`, `pointer`,
-  `any-pointer`, `hover`, `any-hover`, `update`, `scripting`, `forced-colors`,
+  `aspect-ratio`, `resolution`, `-webkit-device-pixel-ratio`,
+  `-moz-device-pixel-ratio`, `device-width`, `device-height`,
+  `device-aspect-ratio`, `horizontal-viewport-segments`,
+  `vertical-viewport-segments`, `color`, `color-index`, `monochrome`,
+  `color-gamut`, `video-color-gamut`, `orientation`, `scan`, `grid`,
+  `environment-blending`, `pointer`,
+  `any-pointer`, `hover`, `any-hover`, `overflow-block`, `overflow-inline`,
+  `nav-controls`, `update`, `scripting`, `forced-colors`,
   `prefers-contrast`, `inverted-colors`, `dynamic-range`,
-  `video-dynamic-range`, `prefers-color-scheme`, `prefers-reduced-motion`,
-  `prefers-reduced-transparency`, and `prefers-reduced-data` conditions are
-  supported, but container queries and other media features are not.
+  `video-dynamic-range`, `display-mode`, `prefers-color-scheme`,
+  `prefers-reduced-motion`, `prefers-reduced-transparency`, and
+  `prefers-reduced-data` conditions are supported, but container queries and
+  other media features are not.
 - No per-side border shorthand.
 - No per-column table width controls; `DataFrameTable` supports uniform
   `table-column-width` and `table-index-width`.

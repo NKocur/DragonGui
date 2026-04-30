@@ -19,7 +19,7 @@ app.stylesheet(
     """
     @font-face {
         font-family: "Dragon Demo UI";
-        src: url("C:/Windows/Fonts/segoeui.ttf") format("truetype");
+        src: url("file:///C:/Windows/Fonts/segoeui.ttf") format("truetype");
     }
 
     :root {
@@ -89,6 +89,19 @@ app.stylesheet(
             linear-gradient(150deg, rgba(54, 75, 116, 0.24) 0%, rgba(18, 25, 39, 0.94) 100%);
         background-noise: 0.016;
         box-shadow: var(--soft-shadow);
+    }
+
+    Panel.scoped-vars {
+        --scope-bg:
+            radial-gradient(circle at 18% 22%, rgba(116, 221, 176, 0.18), transparent 58%),
+            linear-gradient(135deg, rgba(90, 169, 255, 0.16), rgba(255, 255, 255, 0.055));
+        --scope-border: rgba(116, 221, 176, 0.34);
+        --scope-radius: 12px;
+        background: var(--scope-bg);
+        border-color: var(--scope-border);
+        border-radius: var(--scope-radius);
+        padding: 10px;
+        box-shadow: inset 0 1px 0 var(--scope-border);
     }
 
     Panel.inputs {
@@ -758,9 +771,61 @@ app.stylesheet(
         }
     }
 
+    @media (-webkit-device-pixel-ratio >= 1) {
+        Button.motion {
+            border-color: rgba(116, 221, 176, 0.30);
+        }
+    }
+
+    @media (device-width >= 900px) and (device-aspect-ratio >= 4/3) {
+        Panel.status-card {
+            border-radius: 14px;
+        }
+    }
+
+    @media (horizontal-viewport-segments: 1) and (vertical-viewport-segments: 1) {
+        Badge.info {
+            outline: 1px solid rgba(90, 169, 255, 0.18);
+            outline-offset: 2px;
+        }
+    }
+
     @media (color-gamut: srgb) {
         Badge.live {
             border-color: rgba(255, 255, 255, 0.24);
+        }
+    }
+
+    @media (video-color-gamut: srgb) {
+        Panel.status-card {
+            border-color: rgba(90, 169, 255, 0.20);
+        }
+    }
+
+    @media (color >= 8) and (monochrome: 0) {
+        Panel.status-card {
+            outline: 1px solid rgba(90, 169, 255, 0.12);
+            outline-offset: 2px;
+        }
+    }
+
+    @media (color-index: 0) {
+        Badge.paused {
+            opacity: 0.96;
+        }
+    }
+
+    @media (scan: progressive) and (environment-blending: opaque) {
+        Panel.hero {
+            outline: 1px solid rgba(255, 255, 255, 0.10);
+            outline-offset: 3px;
+        }
+    }
+
+    @media (grid: 0) {
+        Badge.live {
+            outline: 1px solid rgba(116, 221, 176, 0.18);
+            outline-offset: 2px;
         }
     }
 
@@ -809,11 +874,55 @@ app.stylesheet(
         }
     }
 
+    @media (display-mode: standalone) {
+        Button.ghost {
+            outline: 1px solid rgba(255, 255, 255, 0.14);
+            outline-offset: 2px;
+        }
+    }
+
+    @media (overflow-block: scroll) and (overflow-inline: scroll) {
+        Panel.grid-demo {
+            outline: 1px solid rgba(116, 221, 176, 0.16);
+            outline-offset: 2px;
+        }
+    }
+
     @media (pointer: fine) and (hover: hover) {
         Button.motion:hover {
             box-shadow:
                 0 8px 18px rgba(90, 169, 255, 0.28),
                 0 0 0 1px rgba(255, 255, 255, 0.12);
+        }
+    }
+
+    @media (nav-controls: none) {
+        Button.ghost {
+            background: rgba(255, 255, 255, 0.055);
+        }
+    }
+
+    @supports font-format(woff) {
+        Label.caption {
+            letter-spacing: 0.015em;
+        }
+    }
+
+    @supports font-format(ttf) {
+        Label.kicker {
+            font-style: italic;
+        }
+    }
+
+    @supports at-rule(@media) {
+        Badge.info {
+            border-radius: 9px;
+        }
+    }
+
+    @supports font-tech(features-opentype) {
+        Label.value {
+            font-variant-numeric: tabular-nums;
         }
     }
 
@@ -896,7 +1005,7 @@ with dg.VLayout(style={"gap": 14}):
                 class_="caption callout",
             )
             dg.Label(
-                "Resize the window or change the OS app theme to exercise width, height, orientation, aspect-ratio, resolution, pointer/hover, update, scripting, forced-colors, contrast, inverted-colors, dynamic-range, video-dynamic-range, color-gamut, color-scheme, reduced-motion, reduced-transparency, and reduced-data @media rules.",
+                "Resize the window or change the OS app theme to exercise width, height, orientation, aspect-ratio, resolution, device size, viewport segments, color depth, scan/grid, environment-blending, pointer/hover, nav-controls, overflow-block/inline, update, scripting, forced-colors, contrast, inverted-colors, dynamic-range, video color/dynamic range, display-mode, color-gamut, color-scheme, reduced-motion, reduced-transparency, and reduced-data @media rules.",
                 class_="caption callout",
             )
         with dg.HLayout(style={"gap": 10, "height": 38}):
@@ -937,6 +1046,8 @@ with dg.VLayout(style={"gap": 14}):
                 "the card shadow separates the panel from the window surface.",
                 class_="caption",
             )
+            with dg.Panel(class_="scoped-vars"):
+                dg.Label("Selector-local CSS variables", class_="caption")
             dg.DataFrameTable(
                 DashboardFrame(),
                 page_size=8,
