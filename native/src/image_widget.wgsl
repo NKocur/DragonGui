@@ -16,6 +16,8 @@ struct Instance {
     @location(0) rect: vec4<f32>,
     @location(1) uv: vec4<f32>,
     @location(2) radii: vec4<f32>,
+    @location(3) transform: vec4<f32>, // x/y translation pixels, z/w scale
+    @location(4) transform2: vec4<f32>, // x rotation radians
 };
 
 struct VsOut {
@@ -38,9 +40,19 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32, instance: Instance) -> VsOu
     );
     let corner = corners[vertex_index];
     let pixel = instance.rect.xy + corner * instance.rect.zw;
+    let center = instance.rect.xy + instance.rect.zw * 0.5;
+    let scaled = (pixel - center) * instance.transform.zw;
+    let angle = instance.transform2.x;
+    let c = cos(angle);
+    let s = sin(angle);
+    let rotated = vec2<f32>(
+        scaled.x * c - scaled.y * s,
+        scaled.x * s + scaled.y * c,
+    );
+    let transformed_pixel = center + rotated + instance.transform.xy;
     let ndc = vec2<f32>(
-        pixel.x / uniforms.screen_size.x * 2.0 - 1.0,
-        1.0 - pixel.y / uniforms.screen_size.y * 2.0,
+        transformed_pixel.x / uniforms.screen_size.x * 2.0 - 1.0,
+        1.0 - transformed_pixel.y / uniforms.screen_size.y * 2.0,
     );
 
     var out: VsOut;

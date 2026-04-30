@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use base64::Engine;
 use glyphon::cosmic_text::{FeatureTag, FontFeatures};
 use glyphon::{
     Attrs, Buffer, Cache, Color, Family, FontSystem, Metrics, Resolution, Shaping,
@@ -10,7 +11,8 @@ use glyphon::{
 };
 
 use crate::css_style::{
-    computed_style_for_virtual_element_with_media, DgMediaEnvironment, StylesheetStore,
+    computed_style_for_virtual_element_with_media, DgFontFaceSourceKind, DgMediaEnvironment,
+    StylesheetStore,
 };
 use crate::document::{WidgetKind, WidgetNode};
 use crate::events::WidgetState;
@@ -62,6 +64,7 @@ struct TextEntry {
     buffer: Buffer,
     left: f32,
     top: f32,
+    scale: f32,
     clip: TextBounds,
     color: Color,
 }
@@ -322,54 +325,69 @@ impl TextRendererDg {
     fn sync_stylesheet_fonts(&mut self, stylesheets: &StylesheetStore) {
         for font_face in stylesheets.font_faces() {
             for source in &font_face.sources {
-                let key = source.url.clone();
+                let key = font_face_source_key(&font_face.family, source.kind, &source.url);
                 if self.attempted_font_sources.contains(&key) {
                     continue;
                 }
                 self.attempted_font_sources.insert(key);
-                if !is_supported_font_source(&source.url) {
-                    self.record_font_warning(
-                        &font_face.family,
-                        &source.url,
-                        "unsupported font source; only local .ttf, .otf, and .ttc files are supported",
-                    );
-                    continue;
+                match source.kind {
+                    DgFontFaceSourceKind::Local => {
+                        if let Some(actual_family) =
+                            local_font_family_alias(&self.font_system, &source.url)
+                        {
+                            self.font_aliases
+                                .insert(font_face.family.clone(), actual_family);
+                            break;
+                        }
+                        self.record_font_warning(
+                            &font_face.family,
+                            &font_face_source_label(source.kind, &source.url),
+                            "local font family was not found",
+                        );
+                    }
+                    DgFontFaceSourceKind::Url => {
+                        let source_label = font_face_source_label(source.kind, &source.url);
+                        let resolved = match resolve_font_source(&source.url) {
+                            Ok(resolved) => resolved,
+                            Err(message) => {
+                                self.record_font_warning(&font_face.family, &source_label, message);
+                                continue;
+                            }
+                        };
+                        let before = self.font_system.db().faces().count();
+                        match resolved {
+                            ResolvedFontSource::File(path) => {
+                                if self.font_system.db_mut().load_font_file(&path).is_err() {
+                                    self.record_font_warning(
+                                        &font_face.family,
+                                        &source_label,
+                                        "failed to load font file",
+                                    );
+                                    continue;
+                                }
+                            }
+                            ResolvedFontSource::Data(data) => {
+                                self.font_system.db_mut().load_font_data(data);
+                            }
+                        }
+                        let actual_family = {
+                            self.font_system.db().faces().skip(before).find_map(|face| {
+                                face.families.first().map(|(name, _)| name.clone())
+                            })
+                        };
+                        if let Some(actual_family) = actual_family {
+                            self.font_aliases
+                                .insert(font_face.family.clone(), actual_family);
+                        } else {
+                            self.record_font_warning(
+                                &font_face.family,
+                                &source_label,
+                                "font file loaded but exposed no usable font family",
+                            );
+                        }
+                        break;
+                    }
                 }
-                let Some(path) = font_source_path(&source.url) else {
-                    self.record_font_warning(
-                        &font_face.family,
-                        &source.url,
-                        "unsupported font URL; remote and data URLs are not supported",
-                    );
-                    continue;
-                };
-                let before = self.font_system.db().faces().count();
-                if self.font_system.db_mut().load_font_file(&path).is_err() {
-                    self.record_font_warning(
-                        &font_face.family,
-                        &source.url,
-                        "failed to load font file",
-                    );
-                    continue;
-                }
-                let actual_family = {
-                    self.font_system
-                        .db()
-                        .faces()
-                        .skip(before)
-                        .find_map(|face| face.families.first().map(|(name, _)| name.clone()))
-                };
-                if let Some(actual_family) = actual_family {
-                    self.font_aliases
-                        .insert(font_face.family.clone(), actual_family);
-                } else {
-                    self.record_font_warning(
-                        &font_face.family,
-                        &source.url,
-                        "font file loaded but exposed no usable font family",
-                    );
-                }
-                break;
             }
         }
     }
@@ -407,7 +425,7 @@ impl TextRendererDg {
                 buffer: &e.buffer,
                 left: e.left,
                 top: e.top,
-                scale: 1.0,
+                scale: e.scale,
                 bounds: e.clip,
                 default_color: e.color,
                 custom_glyphs: &[],
@@ -441,7 +459,53 @@ impl TextRendererDg {
 }
 
 // ---------------------------------------------------------------------------
-fn is_supported_font_source(url: &str) -> bool {
+fn font_face_source_key(family: &str, kind: DgFontFaceSourceKind, source: &str) -> String {
+    format!("{family}|{kind:?}|{source}")
+}
+
+fn font_face_source_label(kind: DgFontFaceSourceKind, source: &str) -> String {
+    match kind {
+        DgFontFaceSourceKind::Local => format!("local({source})"),
+        DgFontFaceSourceKind::Url => source.to_string(),
+    }
+}
+
+fn local_font_family_alias(font_system: &FontSystem, requested: &str) -> Option<String> {
+    font_system.db().faces().find_map(|face| {
+        let first = face.families.first().map(|(name, _)| name.clone())?;
+        face.families
+            .iter()
+            .any(|(name, _)| font_family_name_matches(name, requested))
+            .then_some(first)
+    })
+}
+
+fn font_family_name_matches(actual: &str, requested: &str) -> bool {
+    actual == requested || actual.eq_ignore_ascii_case(requested)
+}
+
+enum ResolvedFontSource {
+    File(PathBuf),
+    Data(Vec<u8>),
+}
+
+fn resolve_font_source(url: &str) -> Result<ResolvedFontSource, &'static str> {
+    if url
+        .get(..5)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("data:"))
+    {
+        return decode_font_data_url(url).map(ResolvedFontSource::Data);
+    }
+    if url.starts_with("http://") || url.starts_with("https://") {
+        return Err("remote font URLs are not supported");
+    }
+    if !is_supported_font_file_source(url) {
+        return Err("unsupported font source; only local(...), local .ttf, .otf, and .ttc files, and data: font URLs with sfnt data are supported");
+    }
+    Ok(ResolvedFontSource::File(font_source_path(url)))
+}
+
+fn is_supported_font_file_source(url: &str) -> bool {
     let lower = url.split('?').next().unwrap_or(url).to_ascii_lowercase();
     matches!(
         Path::new(&lower).extension().and_then(|ext| ext.to_str()),
@@ -449,10 +513,7 @@ fn is_supported_font_source(url: &str) -> bool {
     )
 }
 
-fn font_source_path(url: &str) -> Option<PathBuf> {
-    if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("data:") {
-        return None;
-    }
+fn font_source_path(url: &str) -> PathBuf {
     let mut path = url.split('?').next().unwrap_or(url).replace('\\', "/");
     if let Some(stripped) = path.strip_prefix("file:///") {
         path = stripped.to_string();
@@ -464,10 +525,42 @@ fn font_source_path(url: &str) -> Option<PathBuf> {
     }
     let path = PathBuf::from(path);
     if path.is_absolute() {
-        Some(path)
+        path
     } else {
-        std::env::current_dir().ok().map(|cwd| cwd.join(path))
+        match std::env::current_dir() {
+            Ok(cwd) => cwd.join(path),
+            Err(_) => path,
+        }
     }
+}
+
+fn decode_font_data_url(url: &str) -> Result<Vec<u8>, &'static str> {
+    let Some((metadata, payload)) = url[5..].split_once(',') else {
+        return Err("invalid data: font URL");
+    };
+    if !metadata
+        .split(';')
+        .any(|part| part.eq_ignore_ascii_case("base64"))
+    {
+        return Err("unsupported data: font URL; only base64-encoded font data is supported");
+    }
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(payload.trim())
+        .map_err(|_| "invalid base64 data in font URL")?;
+    if !is_supported_sfnt_font_data(&decoded) {
+        return Err("unsupported font data; only sfnt TrueType/OpenType/TTC data is supported");
+    }
+    Ok(decoded)
+}
+
+fn is_supported_sfnt_font_data(data: &[u8]) -> bool {
+    let Some(signature) = data.get(..4) else {
+        return false;
+    };
+    signature == b"\0\x01\0\0"
+        || signature == b"OTTO"
+        || signature == b"ttcf"
+        || signature == b"true"
 }
 
 // Widget-tree → TextEntry mapping
@@ -496,6 +589,7 @@ fn collect_text(
     if node.kind == WidgetKind::Modal && !node.props.open.unwrap_or(false) {
         return;
     }
+    let subtree_text_start = out.len();
     let primary_part_text = match node.kind {
         WidgetKind::ProgressBar => base_part_style(&node.style, "label").map(|part| &part.text),
         WidgetKind::Tab => base_part_style(&node.style, "tab").map(|part| &part.text),
@@ -547,8 +641,6 @@ fn collect_text(
             | WidgetKind::Tab
             | WidgetKind::NavItem
     );
-    let own_text_start = out.len();
-
     if is_text_widget {
         let mut caret = None;
         if matches!(
@@ -923,11 +1015,6 @@ fn collect_text(
             menu_overlays,
             tooltip_overlay,
         );
-        apply_translate_to_text_entries(
-            &mut out[own_text_start..],
-            visual_transform_for_text(node, state),
-            sf,
-        );
     }
 
     for (_, child) in stacking_children(node) {
@@ -947,6 +1034,14 @@ fn collect_text(
             cache,
             caret_positions,
             out,
+        );
+    }
+    if let Some(r) = layout.rects.get(&node.id) {
+        apply_transform_to_text_entries(
+            &mut out[subtree_text_start..],
+            visual_transform_for_text(node, state),
+            sf,
+            [r.x + r.w * 0.5, r.y + r.h * 0.5],
         );
     }
 }
@@ -1539,25 +1634,47 @@ fn stacking_children(node: &WidgetNode) -> Vec<(usize, &WidgetNode)> {
     children
 }
 
-fn apply_translate_to_text_entries(
+fn apply_transform_to_text_entries(
     entries: &mut [TextEntry],
     transform: Option<TransformStyle>,
     sf: f32,
+    origin: [f32; 2],
 ) {
-    let Some(transform) =
-        transform.filter(|transform| transform.translate_x != 0.0 || transform.translate_y != 0.0)
-    else {
+    let Some(transform) = transform.filter(|transform| {
+        transform.translate_x != 0.0
+            || transform.translate_y != 0.0
+            || transform.scale_x != 1.0
+            || transform.scale_y != 1.0
+    }) else {
         return;
     };
     let dx = transform.translate_x * sf;
     let dy = transform.translate_y * sf;
+    let text_scale = ((transform.scale_x.abs() + transform.scale_y.abs()) * 0.5).max(0.01);
     for entry in entries {
-        entry.left += dx;
-        entry.top += dy;
-        entry.clip.left += dx.round() as i32;
-        entry.clip.right += dx.round() as i32;
-        entry.clip.top += dy.round() as i32;
-        entry.clip.bottom += dy.round() as i32;
+        entry.left = origin[0] + (entry.left - origin[0]) * text_scale + dx;
+        entry.top = origin[1] + (entry.top - origin[1]) * text_scale + dy;
+        entry.scale *= text_scale;
+        entry.clip = transformed_text_bounds(entry.clip, origin, text_scale, dx, dy);
+    }
+}
+
+fn transformed_text_bounds(
+    bounds: TextBounds,
+    origin: [f32; 2],
+    scale: f32,
+    dx: f32,
+    dy: f32,
+) -> TextBounds {
+    let left = origin[0] + (bounds.left as f32 - origin[0]) * scale + dx;
+    let right = origin[0] + (bounds.right as f32 - origin[0]) * scale + dx;
+    let top = origin[1] + (bounds.top as f32 - origin[1]) * scale + dy;
+    let bottom = origin[1] + (bounds.bottom as f32 - origin[1]) * scale + dy;
+    TextBounds {
+        left: left.min(right).floor() as i32,
+        top: top.min(bottom).floor() as i32,
+        right: left.max(right).ceil() as i32,
+        bottom: top.max(bottom).ceil() as i32,
     }
 }
 
@@ -2764,6 +2881,7 @@ fn push_text_entry_impl(
         buffer: buf,
         left: aligned_left,
         top,
+        scale: 1.0,
         clip,
         color,
     });
@@ -3207,6 +3325,126 @@ mod tests {
     }
 
     #[test]
+    fn paint_transform_scales_text_entries_around_widget_center() {
+        let mut font_system = FontSystem::new();
+        let buffer = Buffer::new(&mut font_system, Metrics::new(12.0, 16.0));
+        let key = TextKey {
+            text: "Run".to_string(),
+            font_family: String::new(),
+            font_weight: Weight::NORMAL.0,
+            font_style: FontStyle::Normal,
+            tabular_nums: false,
+            letter_spacing_milli: 0,
+            font_size_milli: 12000,
+            line_height_milli: 16000,
+            width_milli: 80000,
+            wrap: false,
+        };
+        let mut entries = vec![TextEntry {
+            key,
+            buffer,
+            left: 20.0,
+            top: 10.0,
+            scale: 1.0,
+            clip: TextBounds {
+                left: 18,
+                top: 8,
+                right: 88,
+                bottom: 30,
+            },
+            color: Color::rgb(255, 255, 255),
+        }];
+
+        apply_transform_to_text_entries(
+            &mut entries,
+            Some(TransformStyle {
+                translate_x: 2.0,
+                translate_y: 1.0,
+                scale_x: 1.5,
+                scale_y: 1.5,
+                rotate_deg: 45.0,
+            }),
+            2.0,
+            [50.0, 30.0],
+        );
+
+        assert_eq!(entries[0].left, 9.0);
+        assert_eq!(entries[0].top, 2.0);
+        assert_eq!(entries[0].scale, 1.5);
+        assert_eq!(entries[0].clip.left, 6);
+        assert_eq!(entries[0].clip.top, -1);
+        assert_eq!(entries[0].clip.right, 111);
+        assert_eq!(entries[0].clip.bottom, 32);
+    }
+
+    #[test]
+    fn container_transform_propagates_to_child_text_entries() {
+        let mut panel = node("panel", WidgetKind::Panel);
+        panel.style.visual.transform = Some(TransformStyle {
+            translate_x: 0.0,
+            translate_y: 0.0,
+            scale_x: 2.0,
+            scale_y: 2.0,
+            rotate_deg: 0.0,
+        });
+        let mut label = node("label", WidgetKind::Label);
+        label.props.text = Some("Child".to_string());
+        panel.children.push(label);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 100.0,
+            },
+        );
+        layout.rects.insert(
+            "label".to_string(),
+            Rect {
+                x: 10.0,
+                y: 10.0,
+                w: 40.0,
+                h: 24.0,
+            },
+        );
+
+        let theme = Theme::dark();
+        let state = WidgetState::default();
+        let mut font_system = FontSystem::new();
+        let font_aliases = FontFamilyAliases::default();
+        let mut cache = TextBufferCache::default();
+        let mut caret_positions = HashMap::new();
+        let mut transformed = Vec::new();
+        collect_text(
+            &panel,
+            &layout,
+            &state,
+            &theme,
+            None,
+            None,
+            [None, None],
+            None,
+            &mut font_system,
+            &font_aliases,
+            1.0,
+            0.0,
+            &mut cache,
+            &mut caret_positions,
+            &mut transformed,
+        );
+
+        let entry = transformed
+            .iter()
+            .find(|entry| entry.key.text == "Child")
+            .expect("child label text");
+        assert_eq!(entry.left, -30.0);
+        assert_eq!(entry.scale, 2.0);
+    }
+
+    #[test]
     fn table_tooltip_obscures_only_intersecting_text_bounds() {
         let table = node("table", WidgetKind::DataFrameTable);
         let theme = Theme::dark();
@@ -3291,5 +3529,53 @@ mod tests {
 
         assert!(unobscured.len() > partially_obscured.len());
         assert!(!partially_obscured.is_empty());
+    }
+
+    #[test]
+    fn local_font_family_alias_matches_loaded_system_family() {
+        let font_system = FontSystem::new();
+        let Some(first_family) = font_system
+            .db()
+            .faces()
+            .find_map(|face| face.families.first().map(|(name, _)| name.clone()))
+        else {
+            return;
+        };
+
+        assert_eq!(
+            local_font_family_alias(&font_system, &first_family).as_deref(),
+            Some(first_family.as_str())
+        );
+        assert_eq!(
+            local_font_family_alias(&font_system, &first_family.to_ascii_lowercase()).as_deref(),
+            Some(first_family.as_str())
+        );
+    }
+
+    #[test]
+    fn font_source_resolves_base64_data_font_url() {
+        let source = resolve_font_source("data:font/ttf;base64,AAEAAA==");
+
+        match source {
+            Ok(ResolvedFontSource::Data(data)) => assert_eq!(data, b"\0\x01\0\0"),
+            _ => panic!("expected decoded sfnt font data"),
+        }
+    }
+
+    #[test]
+    fn font_source_rejects_unsupported_data_font_payload() {
+        let source = resolve_font_source("data:font/woff;base64,d09GRg==");
+
+        assert!(matches!(
+            source,
+            Err("unsupported font data; only sfnt TrueType/OpenType/TTC data is supported")
+        ));
+    }
+
+    #[test]
+    fn font_source_rejects_remote_urls() {
+        let source = resolve_font_source("https://example.com/font.ttf");
+
+        assert!(matches!(source, Err("remote font URLs are not supported")));
     }
 }

@@ -60,7 +60,12 @@ struct Uniforms {
     view_proj: [[f32; 4]; 4],
     screen_size: [f32; 2],
     style: u32,
-    _pad: f32,
+    point_size: f32,
+    clip_radii: [f32; 4],
+}
+
+fn point_size_override_value(point_size: Option<f32>) -> f32 {
+    point_size.map(|size| size.max(0.0)).unwrap_or(-1.0)
 }
 
 // ---------------------------------------------------------------------------
@@ -82,6 +87,8 @@ pub struct ScatterWidget {
     /// Saved for camera reset (R / Home).
     fit_center: glam::Vec3,
     fit_radius: f32,
+    point_size_override: f32,
+    clip_radii: [f32; 4],
 }
 
 impl ScatterWidget {
@@ -185,6 +192,8 @@ impl ScatterWidget {
             height,
             fit_center,
             fit_radius,
+            point_size_override: -1.0,
+            clip_radii: [0.0; 4],
         }
     }
 
@@ -226,19 +235,42 @@ impl ScatterWidget {
             view_proj: vp.to_cols_array_2d(),
             screen_size: [self.width as f32, self.height as f32],
             style: 0, // circle
-            _pad: 0.0,
+            point_size: self.point_size_override,
+            clip_radii: self.clip_radii,
         };
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+    }
+
+    pub fn set_point_size_override(&mut self, point_size: Option<f32>, queue: &wgpu::Queue) {
+        self.point_size_override = point_size_override_value(point_size);
+        self.update_camera(queue);
+    }
+
+    fn effective_point_size(&self, base_size: f32) -> f32 {
+        if self.point_size_override >= 0.0 {
+            self.point_size_override
+        } else {
+            base_size
+        }
     }
 
     /// Place the scatter inside a sub-region of the window.
     ///
     /// Updates the stored offset, dimensions, camera aspect ratio, and
     /// uniform buffer.  Call this after every layout recomputation.
-    pub fn set_layout_rect(&mut self, x: f32, y: f32, w: f32, h: f32, queue: &wgpu::Queue) {
+    pub fn set_layout_rect(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        clip_radii: [f32; 4],
+        queue: &wgpu::Queue,
+    ) {
         self.offset = [x, y];
         self.width = w as u32;
         self.height = h as u32;
+        self.clip_radii = clamp_clip_radii(clip_radii, w, h);
         self.camera.aspect = w / h.max(1.0);
         self.update_camera(queue);
     }
@@ -255,7 +287,16 @@ impl ScatterWidget {
         let top = self.offset[1];
         let right = left + self.width as f32;
         let bottom = top + self.height as f32;
-        x >= left && x < right && y >= top && y < bottom
+        if x < left || x >= right || y < top || y >= bottom {
+            return false;
+        }
+        rounded_clip_contains(
+            x - left,
+            y - top,
+            self.width as f32,
+            self.height as f32,
+            self.clip_radii,
+        )
     }
 
     pub fn pick_point(
@@ -286,7 +327,7 @@ impl ScatterWidget {
             let screen_y = (0.5 - ndc.y * 0.5) * self.height as f32;
             let dx = screen_x - local_x;
             let dy = screen_y - local_y;
-            let threshold = radius_px.max(point.size * 0.75);
+            let threshold = radius_px.max(self.effective_point_size(point.size) * 0.75);
             let dist2 = dx * dx + dy * dy;
             if dist2 > threshold * threshold {
                 continue;
@@ -325,4 +366,87 @@ impl ScatterWidget {
             pass.draw(0..6, 0..self.point_count);
         }
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn point_size_override_uses_negative_sentinel_for_default() {
+        assert_eq!(point_size_override_value(None), -1.0);
+        assert_eq!(point_size_override_value(Some(6.0)), 6.0);
+        assert_eq!(point_size_override_value(Some(-2.0)), 0.0);
+    }
+
+    #[test]
+    fn scatter_uniform_layout_stays_wgpu_aligned() {
+        assert_eq!(std::mem::size_of::<Uniforms>(), 96);
+    }
+
+    #[test]
+    fn rounded_clip_contains_respects_corner_radii() {
+        assert!(rounded_clip_contains(10.0, 10.0, 100.0, 60.0, [0.0; 4]));
+        assert!(!rounded_clip_contains(
+            2.0,
+            2.0,
+            100.0,
+            60.0,
+            [20.0, 0.0, 0.0, 0.0]
+        ));
+        assert!(rounded_clip_contains(
+            18.0,
+            18.0,
+            100.0,
+            60.0,
+            [20.0, 0.0, 0.0, 0.0]
+        ));
+    }
+}
+
+fn clamp_clip_radii(radii: [f32; 4], width: f32, height: f32) -> [f32; 4] {
+    let limit = width.min(height).max(0.0) * 0.5;
+    radii.map(|radius| radius.max(0.0).min(limit))
+}
+
+fn rounded_clip_contains(
+    local_x: f32,
+    local_y: f32,
+    width: f32,
+    height: f32,
+    radii: [f32; 4],
+) -> bool {
+    if local_x < 0.0 || local_y < 0.0 || local_x >= width || local_y >= height {
+        return false;
+    }
+    let max_radius = radii.iter().copied().fold(0.0_f32, f32::max);
+    if max_radius <= f32::EPSILON {
+        return true;
+    }
+    let cx = local_x - width * 0.5;
+    let cy = local_y - height * 0.5;
+    let radius = if cy < 0.0 {
+        if cx < 0.0 {
+            radii[0]
+        } else {
+            radii[1]
+        }
+    } else if cx < 0.0 {
+        radii[3]
+    } else {
+        radii[2]
+    };
+    if radius <= f32::EPSILON {
+        return true;
+    }
+    let half_w = width * 0.5;
+    let half_h = height * 0.5;
+    let qx = cx.abs() - (half_w - radius);
+    let qy = cy.abs() - (half_h - radius);
+    let outside_x = qx.max(0.0);
+    let outside_y = qy.max(0.0);
+    let outside = (outside_x * outside_x + outside_y * outside_y).sqrt();
+    let inside = qx.max(qy).min(0.0);
+    let dist = outside + inside - radius;
+    dist <= 0.75
 }

@@ -1,11 +1,14 @@
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use bytemuck::{Pod, Zeroable};
 
 use crate::document::{WidgetKind, WidgetNode};
+use crate::events::WidgetState;
 use crate::layout::{LayoutResult, Rect};
-use crate::style::BORDER_WIDTH_LP;
+use crate::primitives::visual_for as visual_for_widget;
+use crate::style::{PositionStyle, TransformStyle, BORDER_WIDTH_LP};
 use crate::theme::Theme;
 
 #[repr(C)]
@@ -14,9 +17,11 @@ struct ImageInstance {
     rect: [f32; 4],
     uv: [f32; 4],
     radii: [f32; 4],
+    transform: [f32; 4],
+    transform2: [f32; 4],
 }
 
-static IMAGE_ATTRS: [wgpu::VertexAttribute; 3] = [
+static IMAGE_ATTRS: [wgpu::VertexAttribute; 5] = [
     wgpu::VertexAttribute {
         format: wgpu::VertexFormat::Float32x4,
         offset: 0,
@@ -31,6 +36,16 @@ static IMAGE_ATTRS: [wgpu::VertexAttribute; 3] = [
         format: wgpu::VertexFormat::Float32x4,
         offset: 32,
         shader_location: 2,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 48,
+        shader_location: 3,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 64,
+        shader_location: 4,
     },
 ];
 
@@ -251,9 +266,10 @@ impl ImageRenderer {
         layout: &LayoutResult,
         theme: &Theme,
         sf: f32,
+        state: Option<&WidgetState>,
     ) {
         let mut specs = Vec::new();
-        collect_image_specs(tree, layout, theme, sf, &mut specs);
+        collect_image_specs(tree, layout, theme, sf, state, &mut specs);
 
         let active_paths: HashSet<String> = specs.iter().map(|spec| spec.path.clone()).collect();
         self.images.retain(|path, _| active_paths.contains(path));
@@ -295,7 +311,14 @@ impl ImageRenderer {
             let radii = spec
                 .radii
                 .map(|radius| radius.min(rect[2] * 0.5).min(rect[3] * 0.5));
-            self.instances.push(ImageInstance { rect, uv, radii });
+            let (transform, transform2) = encoded_transform(spec.transform, sf);
+            self.instances.push(ImageInstance {
+                rect,
+                uv,
+                radii,
+                transform,
+                transform2,
+            });
             self.draws.push(ImageDraw { path: spec.path });
         }
 
@@ -347,6 +370,7 @@ struct ImageSpec {
     rect: Rect,
     fit: ImageFit,
     radii: [f32; 4],
+    transform: Option<TransformStyle>,
 }
 
 fn collect_image_specs(
@@ -354,30 +378,22 @@ fn collect_image_specs(
     layout: &LayoutResult,
     theme: &Theme,
     sf: f32,
+    state: Option<&WidgetState>,
     out: &mut Vec<ImageSpec>,
 ) {
+    let subtree_start = out.len();
     if node.kind == WidgetKind::Image {
         if let (Some(path), Some(rect)) = (
             node.props.image_path.as_ref(),
             layout.visible_rect(&node.id),
         ) {
-            let border_w = node
-                .style
-                .visual
-                .border_width
-                .unwrap_or(BORDER_WIDTH_LP)
-                .max(0.0)
-                * sf;
+            let visual = state
+                .map(|state| visual_for_widget(node, state, theme))
+                .unwrap_or_else(|| Cow::Borrowed(&node.style.visual));
+            let border_w = visual.border_width.unwrap_or(BORDER_WIDTH_LP).max(0.0) * sf;
             let content = inset_rect(rect, border_w);
-            let radius = node
-                .style
-                .visual
-                .border_radius
-                .unwrap_or(theme.radius)
-                .max(0.0);
-            let radii = node
-                .style
-                .visual
+            let radius = visual.border_radius.unwrap_or(theme.radius).max(0.0);
+            let radii = visual
                 .corner_radii
                 .resolve(radius)
                 .map(|radius| (radius.max(0.0) * sf - border_w).max(0.0));
@@ -386,12 +402,106 @@ fn collect_image_specs(
                 rect: content,
                 fit: ImageFit::from_node(node),
                 radii,
+                transform: None,
             });
         }
     }
     for child in &node.children {
-        collect_image_specs(child, layout, theme, sf, out);
+        collect_image_specs(child, layout, theme, sf, state, out);
     }
+    if let Some(rect) = layout.rects.get(&node.id) {
+        let visual = state
+            .map(|state| visual_for_widget(node, state, theme))
+            .unwrap_or_else(|| Cow::Borrowed(&node.style.visual));
+        apply_transform_to_specs(
+            &mut out[subtree_start..],
+            paint_transform_for_node(node, visual.transform),
+            sf,
+            [rect.x + rect.w * 0.5, rect.y + rect.h * 0.5],
+        );
+    }
+}
+
+fn apply_transform_to_specs(
+    specs: &mut [ImageSpec],
+    transform: Option<TransformStyle>,
+    sf: f32,
+    origin: [f32; 2],
+) {
+    let Some(transform) = transform.filter(|transform| !transform.is_identity()) else {
+        return;
+    };
+    for spec in specs {
+        let composed = compose_transform_for_rect(spec.rect, spec.transform, transform, sf, origin);
+        spec.transform = (!composed.is_identity()).then_some(composed);
+    }
+}
+
+fn compose_transform_for_rect(
+    rect: Rect,
+    existing: Option<TransformStyle>,
+    parent: TransformStyle,
+    sf: f32,
+    origin: [f32; 2],
+) -> TransformStyle {
+    let existing = existing.unwrap_or_default();
+    let center = [rect.x + rect.w * 0.5, rect.y + rect.h * 0.5];
+    let current_center = [
+        center[0] + existing.translate_x * sf,
+        center[1] + existing.translate_y * sf,
+    ];
+    let parent_scale = [parent.scale_x, parent.scale_y];
+    let rotation = parent.rotate_deg.to_radians();
+    let cos_r = rotation.cos();
+    let sin_r = rotation.sin();
+    let scaled = [
+        (current_center[0] - origin[0]) * parent_scale[0],
+        (current_center[1] - origin[1]) * parent_scale[1],
+    ];
+    let rotated = [
+        scaled[0] * cos_r - scaled[1] * sin_r,
+        scaled[0] * sin_r + scaled[1] * cos_r,
+    ];
+    let transformed_center = [
+        origin[0] + rotated[0] + parent.translate_x * sf,
+        origin[1] + rotated[1] + parent.translate_y * sf,
+    ];
+    TransformStyle {
+        translate_x: (transformed_center[0] - center[0]) / sf,
+        translate_y: (transformed_center[1] - center[1]) / sf,
+        scale_x: existing.scale_x * parent.scale_x,
+        scale_y: existing.scale_y * parent.scale_y,
+        rotate_deg: existing.rotate_deg + parent.rotate_deg,
+    }
+}
+
+fn paint_transform_for_node(
+    node: &WidgetNode,
+    visual_transform: Option<TransformStyle>,
+) -> Option<TransformStyle> {
+    let mut transform = visual_transform.unwrap_or_default();
+    if node.style.layout.position == Some(PositionStyle::Relative) {
+        transform.translate_x += node.style.layout.left.unwrap_or(0.0);
+        transform.translate_x -= node.style.layout.right.unwrap_or(0.0);
+        transform.translate_y += node.style.layout.top.unwrap_or(0.0);
+        transform.translate_y -= node.style.layout.bottom.unwrap_or(0.0);
+    }
+    (!transform.is_identity()).then_some(transform)
+}
+
+fn encoded_transform(transform: Option<TransformStyle>, sf: f32) -> ([f32; 4], [f32; 4]) {
+    let Some(transform) = transform.filter(|transform| !transform.is_identity()) else {
+        return ([0.0, 0.0, 1.0, 1.0], [0.0, 0.0, 0.0, 0.0]);
+    };
+    (
+        [
+            transform.translate_x * sf,
+            transform.translate_y * sf,
+            transform.scale_x,
+            transform.scale_y,
+        ],
+        [transform.rotate_deg.to_radians(), 0.0, 0.0, 0.0],
+    )
 }
 
 fn inset_rect(rect: Rect, inset: f32) -> Rect {
@@ -505,5 +615,146 @@ fn fit_rect_and_uv(rect: Rect, image_w: u32, image_h: u32, fit: ImageFit) -> ([f
                 (slot, [0.0, (1.0 - uv_h) * 0.5, 1.0, uv_h])
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::document::NodeProps;
+
+    fn node(id: &str, kind: WidgetKind) -> WidgetNode {
+        WidgetNode {
+            id: id.to_string(),
+            key: None,
+            class_name: None,
+            kind,
+            props: NodeProps::default(),
+            style_json: Default::default(),
+            inline_style: Default::default(),
+            style: Default::default(),
+            children: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn image_spec_carries_widget_transform_to_texture_instance() {
+        let mut image = node("hero", WidgetKind::Image);
+        image.props.image_path = Some("examples/hero.png".to_string());
+        image.style.visual.border_width = Some(2.0);
+        image.style.visual.transform = Some(TransformStyle {
+            translate_x: 3.0,
+            translate_y: -2.0,
+            scale_x: 1.1,
+            scale_y: 0.9,
+            rotate_deg: 8.0,
+        });
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "hero".to_string(),
+            Rect {
+                x: 10.0,
+                y: 20.0,
+                w: 100.0,
+                h: 80.0,
+            },
+        );
+
+        let mut specs = Vec::new();
+        collect_image_specs(&image, &layout, &Theme::dark(), 2.0, None, &mut specs);
+
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].rect.x, 14.0);
+        assert_eq!(specs[0].rect.y, 24.0);
+        assert_eq!(specs[0].rect.w, 92.0);
+        assert_eq!(specs[0].rect.h, 72.0);
+        let (transform, transform2) = encoded_transform(specs[0].transform, 2.0);
+        assert_eq!(transform, [6.0, -4.0, 1.1, 0.9]);
+        assert!((transform2[0] - 8.0_f32.to_radians()).abs() < 0.001);
+    }
+
+    #[test]
+    fn image_spec_interpolates_state_visual_transform_for_texture_instance() {
+        let mut image = node("hero", WidgetKind::Image);
+        image.props.image_path = Some("examples/hero.png".to_string());
+        image.style.hover.transform = Some(TransformStyle {
+            translate_x: 0.0,
+            translate_y: -4.0,
+            scale_x: 1.04,
+            scale_y: 1.04,
+            rotate_deg: 2.0,
+        });
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "hero".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 120.0,
+                h: 80.0,
+            },
+        );
+        let mut state = WidgetState::default();
+        state.hovered = Some("hero".to_string());
+        state.hover_t.insert("hero".to_string(), 0.5);
+
+        let mut specs = Vec::new();
+        collect_image_specs(
+            &image,
+            &layout,
+            &Theme::dark(),
+            1.5,
+            Some(&state),
+            &mut specs,
+        );
+
+        let (transform, transform2) = encoded_transform(specs[0].transform, 1.5);
+        assert_eq!(transform, [0.0, -3.0, 1.02, 1.02]);
+        assert!((transform2[0] - 1.0_f32.to_radians()).abs() < 0.001);
+    }
+
+    #[test]
+    fn container_transform_propagates_to_child_image_texture_instance() {
+        let mut panel = node("panel", WidgetKind::Panel);
+        panel.style.visual.transform = Some(TransformStyle {
+            translate_x: 0.0,
+            translate_y: 0.0,
+            scale_x: 2.0,
+            scale_y: 2.0,
+            rotate_deg: 0.0,
+        });
+        let mut image = node("hero", WidgetKind::Image);
+        image.props.image_path = Some("examples/hero.png".to_string());
+        image.style.visual.border_width = Some(0.0);
+        panel.children.push(image);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 100.0,
+            },
+        );
+        layout.rects.insert(
+            "hero".to_string(),
+            Rect {
+                x: 10.0,
+                y: 10.0,
+                w: 20.0,
+                h: 20.0,
+            },
+        );
+
+        let mut specs = Vec::new();
+        collect_image_specs(&panel, &layout, &Theme::dark(), 1.0, None, &mut specs);
+
+        let (transform, transform2) = encoded_transform(specs[0].transform, 1.0);
+        assert_eq!(transform, [-30.0, -30.0, 2.0, 2.0]);
+        assert_eq!(transform2[0], 0.0);
     }
 }

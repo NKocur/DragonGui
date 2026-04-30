@@ -119,10 +119,16 @@ pub struct WidgetState {
     pub focus_order: Vec<String>,
     /// Keyboard-focused widget id.
     pub focused: Option<String>,
+    /// Focus animation progress keyed by widget id, where 0.0 is unfocused and 1.0 is focused.
+    pub focus_t: HashMap<String, f32>,
     /// Widget currently under the cursor (interactive widgets only).
     pub hovered: Option<String>,
     /// Hover animation progress keyed by widget id, where 0.0 is base and 1.0 is hover.
     pub hover_t: HashMap<String, f32>,
+    /// Checked animation progress keyed by widget id, where 0.0 is unchecked and 1.0 is checked.
+    pub checked_t: HashMap<String, f32>,
+    /// Active animation progress keyed by widget id, where 0.0 is base and 1.0 is active.
+    pub active_t: HashMap<String, f32>,
     /// Open animation progress keyed by widget id, where 0.0 is closed and 1.0 is open.
     pub open_t: HashMap<String, f32>,
     /// Selected animation progress keyed by widget id, where 0.0 is unselected and 1.0 is selected.

@@ -106,8 +106,20 @@ def _color_hex(value: Sequence[int]) -> str:
 
 
 _SUPPORTED_PARTS_BY_KIND: dict[str, set[str]] = {
-    "panel": {"accent"},
-    "collapsible": {"header", "indicator", "body"},
+    "h_layout": {"scrollbar-track", "scrollbar-thumb"},
+    "v_layout": {"scrollbar-track", "scrollbar-thumb"},
+    "pages": {"scrollbar-track", "scrollbar-thumb"},
+    "page": {"scrollbar-track", "scrollbar-thumb"},
+    "sidebar": {"scrollbar-track", "scrollbar-thumb"},
+    "panel": {"accent", "scrollbar-track", "scrollbar-thumb"},
+    "collapsible": {
+        "header",
+        "indicator",
+        "body",
+        "scrollbar-track",
+        "scrollbar-thumb",
+    },
+    "modal": {"scrim", "scrollbar-track", "scrollbar-thumb"},
     "button": {"badge"},
     "number_input": {
         "field",

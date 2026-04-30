@@ -43,10 +43,10 @@ DragonGUI supports a first slice of `@media` for responsive app layouts. Width,
 height, aspect ratio, resolution, orientation, pointer/hover capability,
 display update capability, scripting availability, forced-colors mode,
 contrast preference, inverted-colors mode, dynamic range capability,
-color-scheme preference, and
-reduced-motion preference are evaluated from the logical viewport, active theme, current desktop
-input/display assumptions, and window scale factor, and stylesheets are
-reapplied on window resize.
+color-scheme preference, reduced-motion preference, reduced-transparency
+preference, and reduced-data preference are evaluated from the logical
+viewport, active theme, current desktop input/display assumptions, and window
+scale factor, and stylesheets are reapplied on window resize.
 
 ```css
 @media (max-width: 760px) {
@@ -143,6 +143,18 @@ reapplied on window resize.
     }
 }
 
+@media (prefers-reduced-transparency: no-preference) {
+    Panel.glass {
+        backdrop-filter: blur(12px);
+    }
+}
+
+@media (prefers-reduced-data: no-preference) {
+    Badge.live {
+        animation-play-state: running;
+    }
+}
+
 @media (prefers-color-scheme: dark) {
     Panel.hero {
         border-color: rgba(255, 255, 255, 0.22);
@@ -150,11 +162,17 @@ reapplied on window resize.
 }
 ```
 
+Animation shorthand and longhand comma lists use the first item in DragonGUI's
+one-animation slice. Finite fractional `animation-iteration-count` values are
+preserved. Negative `animation-delay` values are accepted and start animations
+partway through; multiple simultaneous animations are still unsupported.
+
 Supported media features are `width`, `height`, `aspect-ratio`, `resolution`,
 `color-gamut`, `orientation`, `pointer`, `any-pointer`, `hover`, `any-hover`,
 `update`, `scripting`, `forced-colors`, `prefers-contrast`,
 `inverted-colors`, `dynamic-range`, `video-dynamic-range`,
-`prefers-color-scheme`, and `prefers-reduced-motion`;
+`prefers-color-scheme`, `prefers-reduced-motion`,
+`prefers-reduced-transparency`, and `prefers-reduced-data`;
 comma-separated query lists, `and`, `or`, `not`, and range syntax are accepted
 when the resulting conditions only use those features. `prefers-color-scheme`
 uses the platform window theme when winit can report one, and falls back to the
@@ -163,20 +181,23 @@ currently defaults to `srgb` until platform display-gamut detection is added. `p
 `any-pointer` currently default to `fine`, `hover` / `any-hover` default to
 `hover`, `update` defaults to `fast`, `scripting` defaults to `none`, and
 `forced-colors` defaults to `none`, matching DragonGUI's current desktop native
-rendering model. DragonGUI currently defaults `prefers-contrast` and
-`prefers-reduced-motion` to `no-preference`, `inverted-colors` to `none`, and
-both dynamic-range features to `standard`,
-until OS preference hooks are added. Container queries and broader media
-features are still unsupported.
+rendering model. DragonGUI currently defaults `prefers-contrast`,
+`prefers-reduced-motion`, `prefers-reduced-transparency`, and
+`prefers-reduced-data` to `no-preference`, `inverted-colors` to `none`, and
+both dynamic-range features to `standard`, until OS preference hooks are added.
+Container queries and broader media features are still unsupported.
 
 ## Font Faces
 
-DragonGUI supports a first slice of `@font-face` for local font files.
+DragonGUI supports a first slice of `@font-face` for installed local font
+families, local font files, and base64 `data:` font URLs.
 
 ```css
 @font-face {
     font-family: "Report UI";
-    src: url("C:/Windows/Fonts/segoeui.ttf") format("truetype");
+    src:
+        local("Segoe UI"),
+        url("C:/Windows/Fonts/segoeui.ttf") format("truetype");
 }
 
 Label.title {
@@ -184,11 +205,13 @@ Label.title {
 }
 ```
 
-Supported sources are local `url(...)` files with `.ttf`, `.otf`, or `.ttc`
-extensions. Remote URLs, `data:` URLs, bundled package asset resolution, and
-WOFF/WOFF2 loading are not supported yet. Relative paths are resolved from the
-current process working directory. Missing files and unsupported font sources
-emit one-time renderer diagnostics and appear in `debug_snapshot()["gpu"]["renderer"]["font_warnings"]`.
+Supported sources are `local("Family Name")` entries, local `url(...)` files
+with `.ttf`, `.otf`, or `.ttc` extensions, and base64 `data:` URLs containing
+sfnt TrueType/OpenType/TTC data. Remote URLs, bundled package asset resolution,
+and WOFF/WOFF2 loading are not supported yet. Relative paths are resolved from
+the current process working directory. Missing families, missing files, and
+unsupported font sources emit one-time renderer diagnostics and appear in
+`debug_snapshot()["gpu"]["renderer"]["font_warnings"]`.
 
 DragonGUI also supports a first slice of static `@supports` feature queries.
 Declaration queries use the DragonGUI property parser, selector queries use the
@@ -201,9 +224,9 @@ DragonGUI selector subset, and false queries skip their nested rules.
     }
 }
 
-@supports (backdrop-filter: blur(8px)) {
+@supports (backdrop-filter: blur(8px) brightness(110%) saturate(1.1)) {
     Panel.floating {
-        backdrop-filter: blur(8px);
+        backdrop-filter: blur(8px) brightness(110%) saturate(1.1);
     }
 }
 ```
@@ -226,6 +249,13 @@ Within a stylesheet, the cascade key is:
 Inline styles remain the strongest normal author style. This preserves existing
 apps and lets local widget overrides win over global stylesheet rules.
 
+Inline color values accept theme tokens, hex colors, `transparent`, the common
+named colors, and practical `rgb()`, `rgba()`, `hsl()`, `hsla()`, `hwb()`,
+`lab()`, `lch()`, `oklab()`, `oklch()`, `color(srgb ...)`, and
+`color(srgb-linear ...)` strings.
+Python `Theme` color fields accept the same literal color strings, without
+theme tokens or `var(...)`.
+
 ## Selectors
 
 Supported selectors:
@@ -246,10 +276,27 @@ Panel Button { ... }            /* descendant */
 Panel.controls > Button { ... } /* direct child */
 Panel > * { ... }               /* universal child target */
 Panel > HLayout > Button { ... }/* child chain */
+Panel:has(Button.primary) { ... } /* descendant presence */
+Panel:has(> Button.primary) { ... } /* direct child presence */
+Panel:has(> Button:first-child) { ... } /* direct child structural presence */
+Panel:has(> Label:only-child) { ... } /* direct only-child structural presence */
+Panel:has(> Panel:empty) { ... } /* direct empty child presence */
+Panel:has(HLayout > Badge) { ... } /* descendant child-chain presence */
+Panel:has(+ Button.primary) { ... } /* next sibling presence */
+Panel:has(~ Badge.success) { ... } /* later sibling presence */
+Panel:has(> Checkbox:checked) { ... } /* data-backed state presence */
+Panel:has(Panel:has(Button.primary)) { ... } /* nested target presence */
+Panel:has(Panel:has(> Badge.success) > Button.primary) { ... } /* nested ancestor-chain presence */
 Button:hover { ... }            /* pseudo-state */
 Button:not(.ghost) { ... }      /* selector function */
 Panel > *:nth-child(3n+1) { ... } /* structural formula */
+Panel > *:nth-last-child(2) { ... } /* reverse structural formula */
+Panel > Panel:empty { ... }       /* no child widgets */
+Panel > Label:only-child { ... } /* structural only child */
 Panel > *:nth-child(2 of Panel > Button.primary) { ... } /* filtered structural formula */
+Panel > *:nth-last-child(1 of Button.primary) { ... } /* reverse filtered structural formula */
+Panel > *:nth-child(1 of Button:first-child) { ... } /* structural filtered formula */
+Panel > *:nth-child(1 of Checkbox:checked) { ... } /* data-backed state filter */
 ```
 
 Supported pseudo-states:
@@ -279,9 +326,26 @@ presence, exact (`=`), word (`~=`), prefix (`^=`), suffix (`$=`), substring
 (`*=`), and dash-match (`|=`). Value selectors support ASCII case flags:
 `i` for case-insensitive matching and `s` for case-sensitive matching.
 Boolean attributes are present only when true.
+`:empty` matches widgets with no child widgets; display text and scalar props
+do not count as children.
+`:nth-last-child(...)` accepts the same integer, odd/even, `an+b`, and
+`of <selector-list>` forms as `:nth-child(...)`, but counts from the end of
+the sibling list.
 
 Unsupported selector forms produce warnings and are ignored. Examples:
 
+- Broader `:has(...)` stateful and widget-part arguments. The supported slice
+  checks descendant compound and selector-chain arguments, data-backed target
+  state pseudos (`:disabled`, `:checked`, `:open`, `:expanded`, and
+  `:collapsed`), nested `:has(...)` on the argument target and ancestor-side
+  compounds in descendant or direct-child argument chains, structural target
+  pseudos such as `:first-child`, `:last-child`, `:only-child`, `:empty`,
+  and `:nth-last-child(...)`,
+  and leading `>`, `+`, or `~` for direct children or following siblings.
+  Dynamic target state pseudos such as `:hover`, `:active`, `:focus`, and
+  `:selected`, widget-part
+  arguments, and sibling-relative nested `:has(...)` on an ancestor side of an
+  argument selector chain remain unsupported.
 - Ancestor pseudo-states inside selector functions, such as `Panel:is(:hover) Button`.
 - Browser pseudo-elements other than DragonGUI's first-slice generated
   `::before` and `::after`.
@@ -358,13 +422,18 @@ Supported layout properties:
 | `padding-right` | logical pixels, percent, compatible `calc()` |
 | `padding-top` | logical pixels, percent, compatible `calc()` |
 | `padding-bottom` | logical pixels, percent, compatible `calc()` |
-| `margin` | uniform logical pixels, percent, `auto`, or compatible `calc()` |
+| `margin` | one to four logical-pixel, percent, `auto`, or compatible `calc()` values |
+| `margin-left` | logical pixels, percent, `auto`, compatible `calc()` |
+| `margin-right` | logical pixels, percent, `auto`, compatible `calc()` |
+| `margin-top` | logical pixels, percent, `auto`, compatible `calc()` |
+| `margin-bottom` | logical pixels, percent, `auto`, compatible `calc()` |
 | `gap` | logical pixels, percent, compatible `calc()` |
 | `row-gap` | logical pixels, percent, compatible `calc()` |
 | `column-gap` | logical pixels, percent, compatible `calc()` |
 | `grid-template-columns` | first-slice grid track list |
 | `grid-template-rows` | first-slice grid track list |
 | `grid-template-areas` | quoted named grid-area rows |
+| `grid-auto-flow` | `row`, `column`, optional `dense` |
 | `grid-area` | named grid area for a child |
 | `grid-column` | line or span placement |
 | `grid-row` | line or span placement |
@@ -376,8 +445,8 @@ Supported layout properties:
 | `z-index` | integer sibling stacking hint |
 
 Percent lengths and first-slice `calc()` are supported for sizing, padding,
-uniform margin, and gap properties above. `auto` is supported for sizing and
-uniform margin; padding and gap reject `auto`. `calc()` currently supports
+margin, and gap properties above. `auto` is supported for sizing and margin;
+padding and gap reject `auto`. `calc()` currently supports
 addition, subtraction, and simple scalar multiply/divide for pixel and percent
 terms, such as `calc(220px + 40px)`, `calc(20% + 30%)`, or
 `calc(100% - 240px)`. Mixed percent/pixel expressions resolve when the parent
@@ -388,20 +457,22 @@ First-slice CSS Grid supports `display: grid`, track lists using px, percent,
 non-nested `repeat(auto-fit, ...)` / `repeat(auto-fill, ...)`, plus
 `grid-column` and `grid-row` placements such as `1`, `2 / 4`, and
 `1 / span 2`. Named `grid-template-areas` and child `grid-area` placement are
-also supported for rectangular named regions. `subgrid`, nested auto-repeat,
-and dense auto-placement are not supported yet.
+also supported for rectangular named regions. `grid-auto-flow` supports
+`row`, `column`, `row dense`, `column dense`, and `dense` shorthand.
+`subgrid` and nested auto-repeat are not supported yet.
 
 First-slice overflow supports explicit clipping with `hidden`, child escape
 with `visible`, and scroll opt-in with `auto` or `scroll`. `overflow-x`
 containers can scroll horizontally with horizontal wheel input or shift-wheel;
-`overflow-y` containers use the vertical wheel path. Scrollable panels draw
-inset vertical and horizontal overlay scrollbars that stay inside rounded panel
-corners and leave the corner clear when both axes overflow.
+`overflow-y` containers use the vertical wheel path. Scroll containers draw
+vertical and horizontal overlay scrollbar indicators when their opted-in axes
+overflow; panels additionally keep the indicators inside rounded corners and
+leave the corner clear when both axes overflow.
 Users can drag the thumb, click the track, or use PageUp/PageDown/Home/End when
 keyboard focus is inside a scroll container. Shift changes those keys to the
-horizontal axis when horizontal overflow exists. `Panel::scrollbar-track`
-styles the track and supports `width` plus uniform `padding` for the axis
-inset; `Panel::scrollbar-thumb` styles the thumb.
+horizontal axis when horizontal overflow exists. Scrollable layout/container
+widgets expose `::scrollbar-track` and `::scrollbar-thumb`; the track part
+supports `width` plus uniform `padding` for the axis inset.
 
 First-slice positioning supports paint-only `relative` offsets,
 layout-backed `absolute` children inside their parent, and viewport-backed
@@ -414,17 +485,24 @@ Supported visual properties:
 
 | CSS | Notes |
 | --- | --- |
-| `background` / `background-color` | theme token or hex color |
-| `foreground` | theme token or hex color |
+| `background` / `background-color` | theme token, color, gradient, or layered paint |
+| `background-image` | `linear-gradient(...)`, `radial-gradient(...)`, repeating gradients, layered gradients, or `none`; layers over `background-color`; `url(...)` is not supported |
+| `foreground` | theme token or color |
 | `color` | text color and foreground |
-| `border-color` | theme token or hex color |
+| `border-color` | theme token or color |
 | `border-width` | logical pixels |
+| `border-style` | `solid`, `none`, or `hidden`; uniform only |
 | `border-radius` | logical pixels |
 | `border-top-left-radius` | logical pixels |
 | `border-top-right-radius` | logical pixels |
 | `border-bottom-right-radius` | logical pixels |
 | `border-bottom-left-radius` | logical pixels |
 | `border` | `none`, `0`, or `<width> solid <color>` |
+| `outline` | `none`, `0`, or `<width> solid <color>` |
+| `outline-color` | theme token or color |
+| `outline-width` | logical pixels |
+| `outline-style` | `solid`, `none`, or `hidden`; uniform only |
+| `outline-offset` | logical pixels; negative values clamp to zero |
 | `box-shadow` | comma-separated outset or `inset` soft shadow layers |
 | `opacity` | `0.0` to `1.0` |
 | `accent` | widget accent color |
@@ -435,6 +513,10 @@ Supported visual properties:
 | `scale` | paint-only one or two numeric scale factors |
 | `rotate` | paint-only angle |
 
+Transforms do not affect layout or hit testing. Descendant rect surfaces,
+scrollbars, and image textures follow transformed widget subtrees. Text follows
+translate and uniform scale; text rotation is still unsupported.
+
 Supported color forms:
 
 - Theme tokens such as `surface`, `accent`, `border`, `danger`.
@@ -443,6 +525,13 @@ Supported color forms:
 - `#RGBA`
 - `#RRGGBB`
 - `#RRGGBBAA`
+- `transparent`
+- Common named colors.
+- `rgb(...)` / `rgba(...)`
+- `hsl(...)` / `hsla(...)`
+- `hwb(...)`
+- `lab(...)` / `lch(...)` / `oklab(...)` / `oklch(...)`
+- `color(srgb ...)` / `color(srgb-linear ...)`
 
 ## Text Properties
 
@@ -453,7 +542,7 @@ Supported text properties:
 | `font-size` | logical pixels |
 | `font-family` | `serif`, `sans-serif`, `monospace`, or named family |
 | `font-weight` | `normal`, `bold`, or numeric `100` to `900` |
-| `color` | theme token or hex color |
+| `color` | theme token or color |
 | `text-align` | `left`, `center`, `right` |
 
 Text properties inherit down the widget tree. Layout and visual properties do
@@ -465,8 +554,12 @@ Supported widget-specific properties:
 
 | CSS | Widget |
 | --- | --- |
+| `text-area-rows` | `TextArea` |
+| `scatter-point-size` | `Scatter3D` |
 | `table-row-height` | `DataFrameTable` |
 | `table-header-height` | `DataFrameTable` |
+| `table-column-width` | `DataFrameTable` |
+| `table-index-width` | `DataFrameTable` |
 
 ## Widget Parts
 
@@ -504,8 +597,14 @@ Supported parts:
 
 | Widget | Parts |
 | --- | --- |
-| `Panel` | `accent` |
-| `Collapsible` | `header`, `indicator`, `body` |
+| `HLayout` | `scrollbar-track`, `scrollbar-thumb` |
+| `VLayout` | `scrollbar-track`, `scrollbar-thumb` |
+| `Pages` | `scrollbar-track`, `scrollbar-thumb` |
+| `Page` | `scrollbar-track`, `scrollbar-thumb` |
+| `Sidebar` | `scrollbar-track`, `scrollbar-thumb` |
+| `Panel` | `accent`, `scrollbar-track`, `scrollbar-thumb` |
+| `Collapsible` | `header`, `indicator`, `body`, `scrollbar-track`, `scrollbar-thumb` |
+| `Modal` | `scrim`, `scrollbar-track`, `scrollbar-thumb` |
 | `Button` | `badge` |
 | `NumberInput` | `field`, `stepper`, `stepper-up`, `stepper-down`, `stepper-divider`, `divider`, `caret` |
 | `Dropdown` | `field`, `chevron`, `menu`, `item`, `item-selected`, `item-hover` |
@@ -518,14 +617,15 @@ Supported parts:
 | `DataFrameTable` | `header`, `row`, `row-selected`, `grid-line` |
 | Most rendered widgets | `before`, `after` generated content |
 
-Part styles support the same visual and text properties as widgets. `Panel::accent`
-is rendered as a left-side fill slice clipped to the panel's inner rounded shape,
-so its `width` can change without manually matching the panel corner radius. A
-`DataFrameTable` with `border-radius` clips its header, rows, selection, grid
-lines, and border to the table's rounded shape, which keeps tables clean inside
-rounded panels. `Image` textures are clipped to the image widget's rounded
-content box inside the border. Dropdown and menu item fills are clipped to their
-rounded popup bounds.
+Part styles support the same visual and text properties as widgets.
+`Panel::accent` is rendered as a left-side fill slice clipped to the panel's
+inner rounded shape, so its `width` can change without manually matching the
+panel corner radius. `Modal::scrim` styles the full-screen overlay behind the
+modal surface. A `DataFrameTable` with `border-radius` clips its header, rows,
+selection, grid lines, and border to the table's rounded shape, which keeps
+tables clean inside rounded panels. `Image` textures are clipped to the image
+widget's rounded content box inside the border. Dropdown and menu item fills
+are clipped to their rounded popup bounds.
 
 `::before` and `::after` are generated-content hooks, not real widget parts.
 They support `content: "..."`, `content: attr(name)`, plus visual/text styling
@@ -534,10 +634,12 @@ such as `id`, `key`, `class`, and serialized widget props such as `title`,
 `level`, or `value`. Generated content does not participate in layout, create
 hit targets, or support counters.
 
-Rounded `Scatter3D` clipping is not part of the current CSS slice. Scatter uses
-a rectangular 3D viewport and needs a dedicated stencil/mask implementation for
-rounded clipping. Overflow support is first-slice: horizontal scrolling works,
-but visible scrollbars are currently limited to `Panel` scroll containers.
+Rounded `Scatter3D` surfaces clip the 3D viewport and picking region to the
+computed per-corner border radii. Overflow support is first-slice: horizontal
+scrolling works for opted-in scroll containers, and overlay scrollbar
+indicators render for overflowing scroll axes. Outset shadows inside
+scroll/overflow containers are clipped to the inherited paint viewport without
+shrinking the shadow to the visible portion of the widget.
 
 Runtime `Toast` overlays and simple string `Tooltip` overlays have no CSS parts.
 Style their surface and text through the type selector instead:

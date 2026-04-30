@@ -3,7 +3,7 @@ use serde_json::{Map, Value};
 
 use crate::css_style::{StylesheetOrigin, StylesheetStore};
 use crate::style::NodeStyle;
-use crate::theme::{parse_hex_color as parse_hex_color_str, Theme};
+use crate::theme::{parse_web_color, Theme};
 
 // ---------------------------------------------------------------------------
 // Top-level typed document used only for window geometry.
@@ -87,24 +87,24 @@ fn find_scatter_value(v: &serde_json::Value) -> Option<ScatterSpec> {
 /// Parse a `Theme` from the top-level `"theme"` key in the app document.
 ///
 /// Returns `None` if no `"theme"` key is present; callers fall back to
-/// `Theme::dark()`.  Unknown or malformed tokens are silently replaced with
+/// `Theme::dark()`.  Unknown or malformed color values are replaced with
 /// the corresponding dark-theme default.
 pub fn parse_theme_from_doc(doc: &serde_json::Value) -> Option<Theme> {
     let t = doc.get("theme")?;
     let dark = Theme::dark();
     Some(Theme {
-        background: parse_hex_color(t.get("background")).unwrap_or(dark.background),
-        surface: parse_hex_color(t.get("surface")).unwrap_or(dark.surface),
-        surface_alt: parse_hex_color(t.get("surface_alt")).unwrap_or(dark.surface_alt),
-        text: parse_hex_color(t.get("text")).unwrap_or(dark.text),
-        muted_text: parse_hex_color(t.get("muted_text")).unwrap_or(dark.muted_text),
-        accent: parse_hex_color(t.get("accent")).unwrap_or(dark.accent),
-        border: parse_hex_color(t.get("border")).unwrap_or(dark.border),
-        danger: parse_hex_color(t.get("danger")).unwrap_or(dark.danger),
-        warning: parse_hex_color(t.get("warning")).unwrap_or(dark.warning),
-        success: parse_hex_color(t.get("success")).unwrap_or(dark.success),
-        focus: parse_hex_color(t.get("focus")).unwrap_or(dark.focus),
-        disabled: parse_hex_color(t.get("disabled")).unwrap_or(dark.disabled),
+        background: parse_theme_color(t.get("background")).unwrap_or(dark.background),
+        surface: parse_theme_color(t.get("surface")).unwrap_or(dark.surface),
+        surface_alt: parse_theme_color(t.get("surface_alt")).unwrap_or(dark.surface_alt),
+        text: parse_theme_color(t.get("text")).unwrap_or(dark.text),
+        muted_text: parse_theme_color(t.get("muted_text")).unwrap_or(dark.muted_text),
+        accent: parse_theme_color(t.get("accent")).unwrap_or(dark.accent),
+        border: parse_theme_color(t.get("border")).unwrap_or(dark.border),
+        danger: parse_theme_color(t.get("danger")).unwrap_or(dark.danger),
+        warning: parse_theme_color(t.get("warning")).unwrap_or(dark.warning),
+        success: parse_theme_color(t.get("success")).unwrap_or(dark.success),
+        focus: parse_theme_color(t.get("focus")).unwrap_or(dark.focus),
+        disabled: parse_theme_color(t.get("disabled")).unwrap_or(dark.disabled),
         radius: t
             .get("radius")
             .and_then(|v| v.as_f64())
@@ -123,8 +123,8 @@ pub fn parse_theme_from_doc(doc: &serde_json::Value) -> Option<Theme> {
     })
 }
 
-fn parse_hex_color(v: Option<&serde_json::Value>) -> Option<[f32; 4]> {
-    parse_hex_color_str(v?.as_str()?)
+fn parse_theme_color(v: Option<&serde_json::Value>) -> Option<[f32; 4]> {
+    parse_web_color(v?.as_str()?)
 }
 
 pub fn parse_stylesheets_from_doc(doc: &serde_json::Value) -> StylesheetStore {
@@ -586,6 +586,47 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn parse_theme_accepts_web_color_syntax() {
+        let doc = json!({
+            "theme": {
+                "background": "hsl(222, 28%, 9%)",
+                "surface": "rgba(18, 25, 39, 0.92)",
+                "surface_alt": "#1238",
+                "text": "white",
+                "muted_text": "rgb(100% 50% 0% / 40%)",
+                "accent": "transparent",
+                "border": "not a color",
+                "radius": 12,
+                "spacing": 10,
+                "font_size": 15
+            }
+        });
+
+        let theme = parse_theme_from_doc(&doc).expect("theme");
+        assert_color_close(theme.background, [0.0648, 0.0792, 0.1152, 1.0]);
+        assert_color_close(
+            theme.surface,
+            [18.0 / 255.0, 25.0 / 255.0, 39.0 / 255.0, 0.92],
+        );
+        assert_color_close(
+            theme.surface_alt,
+            [
+                0x11 as f32 / 255.0,
+                0x22 as f32 / 255.0,
+                0x33 as f32 / 255.0,
+                0x88 as f32 / 255.0,
+            ],
+        );
+        assert_eq!(theme.text, [1.0, 1.0, 1.0, 1.0]);
+        assert_color_close(theme.muted_text, [1.0, 0.5, 0.0, 0.4]);
+        assert_eq!(theme.accent, [0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(theme.border, Theme::dark().border);
+        assert_eq!(theme.radius, 12.0);
+        assert_eq!(theme.spacing, 10.0);
+        assert_eq!(theme.font_size, 15.0);
+    }
+
+    #[test]
     fn parse_widget_tree_retains_raw_style_for_live_patches() {
         let doc = json!({
             "window": {
@@ -635,6 +676,15 @@ mod tests {
         assert_eq!(image.props.image_fit.as_deref(), Some("cover"));
         assert_eq!(image.props.fixed_width, Some(160.0));
         assert_eq!(image.props.fixed_height, Some(90.0));
+    }
+
+    fn assert_color_close(actual: [f32; 4], expected: [f32; 4]) {
+        for (actual, expected) in actual.iter().zip(expected) {
+            assert!(
+                (actual - expected).abs() < 0.003,
+                "expected {expected}, got {actual}"
+            );
+        }
     }
 
     #[test]

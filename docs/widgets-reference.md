@@ -69,16 +69,18 @@ Styles can be loaded before `app.run(...)` or while the app is live.
 | Direct child | `Panel.controls > Button` | Checks immediate parent. |
 | Child chain | `Window > Panel > HLayout > Button` | Multi-level direct-child chains are supported. |
 | Pseudo-state | `Button:hover` | Supported pseudo-states are listed below. |
-| Structural child | `Button:first-child`, `Button:nth-child(3n+1)`, `*:nth-child(2 of Button.primary)` | Matches by sibling position, optionally filtered by a compound selector list. |
-| Selector function | `Button:not(.ghost)` | `:not(...)`, `:is(...)`, and `:where(...)` support compound selector lists. |
+| Structural child | `Button:first-child`, `Button:nth-child(3n+1)`, `*:nth-child(2 of Button.primary)`, `*:nth-child(1 of Button:first-child)`, `*:nth-child(1 of Checkbox:checked)` | Matches by sibling position, optionally filtered by a compound selector list or supported selector chain. |
+| Selector function | `Button:not(.ghost)`, `Panel:has(HLayout > Badge)`, `Panel:has(> Button:first-child)`, `Panel:has(+ Button.primary)`, `Panel:has(> Checkbox:checked)`, `Panel:has(Panel:has(Button.primary))`, `Panel:has(Panel:has(> Badge) > Button.primary)` | `:not(...)`, `:is(...)`, and `:where(...)` support compound selector lists; `:has(...)` supports descendant selector chains, direct child arguments with leading `>`, following sibling arguments with leading `+` or `~`, data-backed target state pseudos, nested `:has(...)` on the argument target, and nested `:has(...)` on ancestor-side compounds in descendant or direct-child argument chains. |
 | Widget part | `NumberInput::stepper` | Part hooks style renderer-owned sub-elements. |
 
 Unsupported selector forms warn and are ignored: browser pseudo-elements and
 ancestor pseudo-states inside selector functions such as
-`Panel:is(:hover) Button`.
+`Panel:is(:hover) Button`, plus broader `:has(...)` dynamic stateful and
+widget-part arguments.
 `:nth-child(...)` supports integer indexes, `odd`, `even`, `an+b` formulas
 such as `3n+1` and `-n+3`, and `of <selector-list>` filters for compound
-selector lists.
+selector lists, supported selector chains, structural target filters, and
+data-backed target state filters.
 
 ### Supported Pseudo-States
 
@@ -130,6 +132,7 @@ Visual properties:
 - `foreground`
 - `border-color`
 - `border-width`
+- `border-style: solid`, `border-style: none`, or `border-style: hidden`
 - `border-radius`
 - `border-top-left-radius`
 - `border-top-right-radius`
@@ -158,8 +161,12 @@ Text properties:
 
 Widget-specific properties:
 
+- `text-area-rows`
+- `scatter-point-size`
 - `table-row-height`
 - `table-header-height`
+- `table-column-width`
+- `table-index-width`
 
 Text properties inherit down the widget tree. Layout and visual properties do
 not inherit.
@@ -177,7 +184,7 @@ Supported color values:
 - `#RRGGBB`
 - `#RRGGBBAA`
 - `transparent`, common named colors, `rgb(...)`, `rgba(...)`, `hsl(...)`,
-  and `hsla(...)`.
+  `hsla(...)`, and `hwb(...)`.
 - Global `:root` variables through `var(--name)` and
   `var(--name, fallback)`, including inside larger parseable property values.
 
@@ -204,10 +211,11 @@ simple `repeat(n, ...)`.
 First-slice overflow is available through CSS with `overflow`, `overflow-x`,
 and `overflow-y`. `visible` lets children escape container clipping, `hidden`
 clips children, and `auto`/`scroll` opt containers into scroll state.
-Horizontal scroll uses horizontal wheel input or shift-wheel; scrollable panels
-draw vertical and horizontal overlay scrollbars for overflowing axes. Panel
-scrollbar thumbs can be dragged, and clicking a track moves the thumb toward
-that position.
+Horizontal scroll uses horizontal wheel input or shift-wheel; scroll containers
+draw vertical and horizontal overlay scrollbars for overflowing opted-in axes.
+Scrollbar thumbs can be dragged, and clicking a track moves the thumb toward
+that position. Scrollable layout/container widgets expose
+`::scrollbar-track` and `::scrollbar-thumb` CSS part hooks.
 
 ### Inline Part Styles
 
@@ -299,6 +307,11 @@ Helpers:
 CSS:
 
 - Theme fields are available as CSS tokens.
+- Color fields accept the same literal color strings as CSS and inline styles:
+  hex colors, `transparent`, common named colors, `rgb()/rgba()`,
+  `hsl()/hsla()`, and `hwb()`, plus `lab()`, `lch()`, `oklab()`, `oklch()`,
+  `color(srgb ...)`, and `color(srgb-linear ...)`. Theme fields do not resolve
+  other theme tokens or `var(...)`.
 - `radius` and `font_size` also feed built-in framework stylesheet variables.
 
 ### Toast Notifications
@@ -423,7 +436,7 @@ dg.HLayout(id=None, key=None, class_=None, style=None, tooltip=None, parent=...)
 CSS:
 
 - Type selector: `HLayout`.
-- No widget parts.
+- Parts: `scrollbar-track`, `scrollbar-thumb`.
 - Typically styled with `gap`, `padding`, `height`, `flex`, and background.
 
 ### `VLayout`
@@ -437,7 +450,7 @@ dg.VLayout(id=None, key=None, class_=None, style=None, tooltip=None, parent=...)
 CSS:
 
 - Type selector: `VLayout`.
-- No widget parts.
+- Parts: `scrollbar-track`, `scrollbar-thumb`.
 - Typically styled with `gap`, `padding`, `width`, `flex`, and background.
 
 ### `Panel`
@@ -518,7 +531,8 @@ Live methods:
 CSS:
 
 - Type selector: `Collapsible`.
-- Parts: `header`, `indicator`, `body`.
+- Parts: `header`, `indicator`, `body`, `scrollbar-track`,
+  `scrollbar-thumb`.
 - `:disabled`, `:expanded`, and `:collapsed` are supported.
 
 ### `Modal`
@@ -558,10 +572,10 @@ Live methods:
 CSS:
 
 - Type selector: `Modal`.
-- No widget parts.
+- Parts: `scrim`, `scrollbar-track`, `scrollbar-thumb`.
 - `:open` is supported while the modal is visible.
-- The modal surface uses normal visual/text CSS. The full-screen scrim is not
-  currently exposed as a CSS part.
+- The modal surface uses normal visual/text CSS. `Modal::scrim` styles the
+  full-screen overlay behind the modal surface.
 
 ### `Separator`
 
@@ -812,7 +826,7 @@ Live methods:
 CSS:
 
 - Type selector: `Pages`.
-- No widget parts.
+- Parts: `scrollbar-track`, `scrollbar-thumb`.
 
 ### `Page`
 
@@ -832,7 +846,7 @@ Options:
 CSS:
 
 - Type selector: `Page`.
-- No widget parts.
+- Parts: `scrollbar-track`, `scrollbar-thumb`.
 - `:selected` is supported for the active page.
 
 ### `Sidebar`
@@ -853,7 +867,7 @@ Options:
 CSS:
 
 - Type selector: `Sidebar`.
-- No widget parts.
+- Parts: `scrollbar-track`, `scrollbar-thumb`.
 
 ### `NavItem`
 
@@ -1064,7 +1078,8 @@ CSS:
 - Type selector: `TextArea`.
 - No widget parts.
 - Uses TextInput-like surface styling plus multi-line text layout.
-- There is no CSS `rows` property. Use CSS `height` to control rendered size.
+- Widget-specific property: `text-area-rows`.
+- CSS `height` still forces an exact rendered size.
 
 ### `NumberInput`
 
@@ -1270,6 +1285,10 @@ CSS:
 - Type selector: `Image`.
 - No widget parts.
 - `border-radius` clips the texture to the image content box inside the border.
+- Paint-only `transform`, `translate`, `scale`, `rotate`, and relative
+  positioning move the rendered texture with the image widget. Ancestor
+  transforms also apply to the rendered texture as part of the transformed
+  subtree.
 
 ### `Scatter3D`
 
@@ -1305,10 +1324,9 @@ CSS:
 
 - Type selector: `Scatter3D`.
 - No widget parts.
-- CSS can style the container/surface, but the 3D viewport is currently
-  rectangular. Rounded scatter clipping is not implemented.
-- Setting `border-radius` on `Scatter3D` currently has no visual effect on the
-  3D viewport.
+- Widget-specific property: `scatter-point-size`.
+- CSS can style the container/surface. `border-radius` and per-corner radii
+  clip the 3D viewport and the picking region.
 - `Scatter3D` does not currently accept a `disabled` option; `on_pick` remains
   active whenever picking is enabled.
 
@@ -1344,7 +1362,7 @@ CSS:
 - Type selector: `DataFrameTable`.
 - Parts: `header`, `row`, `row-selected`, `grid-line`.
 - Widget-specific properties: `table-row-height`,
-  `table-header-height`.
+  `table-header-height`, `table-column-width`, `table-index-width`.
 - `border-radius` clips header, rows, selection, grid lines, and border to the
   table's rounded shape.
 - `DataFrameTable` does not currently accept a `disabled` option; `on_select`
@@ -1438,8 +1456,14 @@ Notable non-selectors:
 
 | Widget | Parts |
 | --- | --- |
+| `HLayout` | `scrollbar-track`, `scrollbar-thumb` |
+| `VLayout` | `scrollbar-track`, `scrollbar-thumb` |
+| `Pages` | `scrollbar-track`, `scrollbar-thumb` |
+| `Page` | `scrollbar-track`, `scrollbar-thumb` |
+| `Sidebar` | `scrollbar-track`, `scrollbar-thumb` |
 | `Panel` | `accent`, `scrollbar-track`, `scrollbar-thumb` |
-| `Collapsible` | `header`, `indicator`, `body` |
+| `Collapsible` | `header`, `indicator`, `body`, `scrollbar-track`, `scrollbar-thumb` |
+| `Modal` | `scrim`, `scrollbar-track`, `scrollbar-thumb` |
 | `Button` | `badge` |
 | `NumberInput` | `field`, `stepper`, `stepper-up`, `stepper-down`, `stepper-divider`, `divider`, `caret` |
 | `Dropdown` | `field`, `chevron`, `menu`, `item`, `item-selected`, `item-hover` |
@@ -1457,10 +1481,6 @@ Widgets without parts still support normal type/class/id CSS styling.
 
 These are known missing pieces rather than accidental omissions:
 
-- Modal scrim styling is not exposed as a CSS part yet. A future part should
-  allow custom scrim color and opacity.
-- `TextArea` sizing is controlled by constructor `rows` or CSS `height`; there
-  is no CSS `rows` property.
-- `Scatter3D` rounded clipping is not implemented. Its 3D viewport remains
-  rectangular even inside rounded panels.
+- `TextArea` sizing is controlled by constructor `rows`, CSS
+  `text-area-rows`, or CSS `height`.
 - A dedicated log/console output widget is not currently implemented.

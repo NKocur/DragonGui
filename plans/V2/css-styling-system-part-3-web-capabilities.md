@@ -35,18 +35,31 @@ The most important visible gaps today are:
 - Flat surfaces with no elevation.
 - Only first-slice gradients; intermediate stop interpolation, first-slice
   repeating gradients, and comma-separated background layers have landed.
-- Transition easing now includes standard keywords and custom cubic-bezier
-  curves; broader animation support is still pending.
+  Gradient `background-image` now lowers into the same paint model, layers over
+  `background-color`, and supports `none`; URL image backgrounds remain
+  unsupported.
+- Transition easing now includes standard keywords, step timing, and custom
+  cubic-bezier curves; broader animation support is still pending.
 - Limited typography controls.
 - Limited color syntax.
 - Limited responsive layout primitives.
 - First interactive state selector and selector-chain slices landed for
   `:open`, `:expanded`, `:collapsed`, `:selected`, descendant selectors,
-  multi-level child chains, `[key="..."]`, and simple structural child
-  selectors. Selector functions have landed for compound selector arguments,
-  including target pseudo-state arguments. Universal selectors and attribute
-  selectors for widget metadata/scalar props have also landed, including
-  presence, string operators, and case flags.
+  multi-level child chains, `[key="..."]`, structural child selectors, and
+  structural filters inside `:nth-child(... of ...)` and
+  `:nth-last-child(... of ...)`. Selector functions have landed for compound
+  selector arguments, including target pseudo-state arguments. Universal
+  selectors and attribute selectors for widget
+  metadata/scalar props have also landed, including
+  presence, string operators, and case flags. First-slice `:has(...)` support
+  has landed for descendant compound selectors, descendant selector chains,
+  direct child arguments, direct child structural pseudos, and following
+  sibling arguments with leading `+` or `~`. Nested `:has(...)` on the
+  argument target and on ancestor-side compounds in descendant or direct-child
+  argument chains has also landed. Data-backed state target arguments for
+  `:has(...)`, `:nth-child(... of ...)`, and `:nth-last-child(... of ...)`
+  have landed for `:disabled`, `:checked`, `:open`, `:expanded`, and
+  `:collapsed`.
 
 The first implementation slices should prioritize features that visibly improve
 existing demos with low architectural risk.
@@ -100,7 +113,7 @@ Implementation should primarily touch these areas:
 | Priority | Feature | Effort | Visual Impact |
 | --- | --- | --- | --- |
 | 1 | `text-transform`, `letter-spacing`, `line-height`, `font-style`, `font-variant-numeric` | Low | High |
-| 2 | `transparent`, named colors, `rgb()`, `rgba()`, `hsl()` | Low | High |
+| 2 | `transparent`, named colors, `rgb()`, `rgba()`, `hsl()`, `hwb()` | Low | High |
 | 3 | `text-overflow: ellipsis` | Low-Medium | Medium |
 | 4 | `var(--name, fallback)` | Low | Medium |
 | 5 | `box-shadow` | Medium | Very High |
@@ -271,13 +284,20 @@ Add practical web color syntax:
 - `rgba(...)`
 - `hsl(...)`
 - `hsla(...)`
+- `hwb(...)`
+- `lab(...)`. Implemented by converting CIE Lab D50 into sRGB.
+- `lch(...)`. Implemented by converting CIE LCH D50 into Lab, then sRGB.
+- `oklab(...)`. Implemented by converting Oklab into sRGB.
+- `oklch(...)`. Implemented by converting Oklch into sRGB.
+- `color(srgb ...)`. Implemented by lowering direct sRGB channels to RGBA.
+- `color(srgb-linear ...)`. Implemented by applying the sRGB transfer function
+  to linear sRGB channels before lowering to RGBA.
 
 Defer:
 
-- `oklch(...)`
-- `lab(...)`
-- `color(...)`
-- Wide-gamut color spaces.
+- `color(...)` spaces other than `srgb` and `srgb-linear`.
+- Wide-gamut color spaces such as `display-p3`, `a98-rgb`, `prophoto-rgb`,
+  and `rec2020`.
 
 ### Style Model
 
@@ -285,6 +305,11 @@ Keep the existing color resolution model where possible:
 
 - Existing theme tokens continue to resolve through `ColorRef`.
 - Literal colors lower to RGBA.
+- Inline style dictionaries use the same practical web color parser for
+  `transparent`, common named colors, `rgb()`/`rgba()`, `hsl()`/`hsla()`,
+  `hwb()`, and CSS hex alpha forms.
+- Python `Theme` color fields use the same practical web color parser for
+  literal colors, without theme token or `var(...)` resolution.
 - Unknown identifiers should keep warning behavior but should also appear in
   debug snapshot warnings. Falling back to `theme.danger` is useful visually but
   should not be the only signal.
@@ -309,6 +334,11 @@ Parsing rules:
 - `rgb(255, 255, 255)` and `rgba(255, 255, 255, 0.5)`.
 - Percent channels can be deferred if Lightning CSS does not lower them cleanly.
 - `hsl()` converts to RGBA during lowering.
+- `hwb()` converts to RGBA during lowering.
+- `lab()`, `lch()`, `oklab()`, and `oklch()` convert to sRGB RGBA during
+  lowering.
+- `color(srgb ...)` and `color(srgb-linear ...)` convert to RGBA during
+  lowering.
 - Alpha is clamped to `0.0..1.0`.
 
 ### Acceptance Criteria
@@ -321,6 +351,11 @@ Parsing rules:
 ### Tests
 
 - Parser tests for named colors and functional colors.
+- Inline style parser tests for web color strings.
+- Theme parser tests for web color strings.
+- Shared parser tests for `lab()`, `lch()`, `oklab()`, and `oklch()`.
+- Shared parser tests for `color(srgb ...)`, `color(srgb-linear ...)`, and
+  rejection of wide-gamut `color(...)` spaces.
 - Cascade test mixing tokens, hex, rgba, and variables.
 - Example update showing translucent panels and ghost buttons.
 
@@ -388,10 +423,11 @@ Supported:
 - Blur radius.
 - Optional spread radius.
 - Color.
+- Outset shadows are clipped against the inherited scroll/overflow paint
+  viewport without shrinking the shadow shape to the visible widget rect.
 
 Deferred:
 
-- Shadow clipping against scroll containers.
 - Shadow on arbitrary non-rect primitives.
 
 ### Style Model
@@ -492,7 +528,7 @@ Initial supported subset:
 Deferred:
 
 - Complex radial sizing keywords.
-- Background images.
+- URL/image-file background images.
 - Advanced background layer options such as positioning, sizing, and blend
   modes.
 
@@ -578,23 +614,40 @@ Improve selector expressiveness:
 - `:not(...)`.
 - `:is(...)`.
 - `:where(...)`.
+- First-slice `:has(...)` for descendant compound selectors, descendant
+  selector chains, direct child arguments, direct child structural pseudos, and
+  following sibling arguments with leading `+` or `~`; nested `:has(...)` is
+  supported when the nested function is on the argument target or on an
+  ancestor-side compound in descendant or direct-child argument chains.
 - Universal selectors: `*`, `Panel > *`.
-- Structural child selectors: `:first-child`, `:last-child`, and
-  `:nth-child(...)` with integer, odd/even, `an+b` formulas, and
-  `of <selector-list>` filters for compound selector lists and supported
-  selector chains.
+- Structural child selectors: `:first-child`, `:last-child`, `:only-child`,
+  `:empty`, `:nth-child(...)`, and `:nth-last-child(...)` with integer,
+  odd/even, `an+b` formulas, and `of <selector-list>` filters for compound
+  selector lists and supported selector chains.
 
 Status note: descendant selectors, multi-level child chains, `[key="..."]`,
-`:first-child`, `:last-child`, `:nth-child(...)` integer/odd/even/an+b
-formulas, filtered `:nth-child(... of <selector-list>)` for compound selector
-lists and supported selector chains, and selector functions with compound
-selector arguments have landed.
+`:first-child`, `:last-child`, `:only-child`, `:empty`, `:nth-child(...)`
+integer/odd/even/an+b formulas, `:nth-last-child(...)` reverse formulas,
+filtered `:nth-child(... of <selector-list>)`, and filtered
+`:nth-last-child(... of <selector-list>)` for compound selector lists,
+supported selector chains, and structural target filters, and selector
+functions with compound selector arguments have landed.
 Target pseudo-state
 arguments inside selector functions have also landed. Universal selectors have
 landed for whole compounds such as `*`, `*.class`, `*:hover`, and chain targets
 such as `Panel > *`. Attribute selectors have landed for stable widget
 metadata and parsed scalar props, including presence, string operators, and
-case flags.
+case flags. First-slice `:has(...)` matching has landed for descendant
+compound selectors and descendant selector chains. Optional leading `>` syntax
+restricts an argument to direct children, and direct child structural pseudos
+are supported. Leading `+` and `~` arguments now check immediate and later
+following siblings. Nested `:has(...)` on the argument target now works, such
+as `Panel:has(Panel:has(Button.primary))`, and nested `:has(...)` on an
+ancestor-side compound in descendant or direct-child argument chains now works,
+such as `Panel:has(Panel:has(> Badge.success) > Button.primary)`. Data-backed
+target state pseudos now work inside `:has(...)` arguments and
+`:nth-child(... of ...)` and `:nth-last-child(... of ...)` filters for
+`:disabled`, `:checked`, `:open`, `:expanded`, and `:collapsed`.
 
 ### Implementation Notes
 
@@ -615,9 +668,12 @@ Needed model changes:
 
 ### Deferred
 
-- `:has(...)`.
-- Stateful, structural, and widget-part target selectors inside
-  `:nth-child(... of <selector>)` filters.
+- Broader `:has(...)` support for dynamic stateful target selectors such as
+  `:hover`, `:active`, `:focus`, and `:selected`, widget-part descendant,
+  child, or sibling target selectors, plus sibling-relative nested `:has(...)`
+  on ancestor-side selectors inside argument chains.
+- Dynamic stateful and widget-part target selectors inside `:nth-child(... of
+  <selector>)` and `:nth-last-child(... of <selector>)` filters.
 
 ### Acceptance Criteria
 
@@ -628,10 +684,27 @@ Needed model changes:
 - `Panel > *` works.
 - `Panel > *:nth-child(2 of Button.primary)` works.
 - `Panel > *:nth-child(2 of Panel > Button.primary)` works.
+- `Panel > *:nth-child(1 of Button:first-child)` works.
+- `Panel > Button:nth-last-child(2)` works.
+- `Panel > *:nth-last-child(1 of Button.primary)` works.
+- `Panel > Label:only-child` works.
+- `Panel > Panel.empty-target:empty` works for no child widgets.
+- `Panel:has(> Label:only-child)` works for direct child structural pseudos.
+- `Panel:has(> Panel.empty-target:empty)` works for direct child structural
+  pseudos.
 - `Button:not(:disabled)` works.
 - `:is(Button, Label).callout` works.
 - `:where(.quiet)` works with zero specificity.
 - `Button:is(:hover, :focus)` works.
+- `Panel:has(Button.primary)` works for descendant compounds.
+- `Panel:has(HLayout > Badge.success)` works for descendant selector chains.
+- `Panel:has(> Button.primary)` works for direct child compounds.
+- `Panel:has(> Button:first-child)` works for direct child structural pseudos.
+- `Panel:has(+ Button.primary)` works for immediate following siblings.
+- `Panel:has(~ Badge.success)` works for later following siblings.
+- `Panel:has(Panel:has(Button.primary))` works for nested target `:has(...)`.
+- `Panel:has(Panel:has(> Badge.success) > Button.primary)` works for nested
+  ancestor-side `:has(...)` in direct-child argument chains.
 - Unsupported complex selectors warn clearly.
 
 ## CSS3-8: Transitions
@@ -720,11 +793,15 @@ Initial timing functions:
 - `ease-in`
 - `ease-out`
 - `ease-in-out`
+- `step-start`
+- `step-end`
+- `steps(n, start | end)`
 - `cubic-bezier(x1, y1, x2, y2)`
 
-Status note: custom cubic-bezier timing has landed for transition longhands and
-the one-item transition shorthand. The x control points are validated to the CSS
-`0..1` range.
+Status note: custom cubic-bezier timing and first-slice step timing have landed
+for transition and animation timing longhands and their one-item shorthands.
+The cubic-bezier x control points are validated to the CSS `0..1` range; step
+counts must be positive and support `start`/`end` plus `step-start`/`step-end`.
 
 ### Acceptance Criteria
 
@@ -786,8 +863,8 @@ Enable percent/auto/calc first on:
 - `max-width`
 - `max-height`
 - `padding` with logical pixels, percent, and compatible `calc()`.
-- uniform `margin` with logical pixels, percent, `auto`, and compatible
-  `calc()`.
+- `margin` and margin longhands with logical pixels, percent, `auto`, and
+  compatible `calc()`.
 - `gap`, `row-gap`, and `column-gap` with logical pixels, percent, and
   compatible `calc()`.
 
@@ -833,7 +910,8 @@ Status: In progress. First Taffy-backed grid slice landed for `display: grid`,
 `grid-template-columns`, `grid-template-rows`, `grid-column`, `grid-row`,
 `column-gap`, and `row-gap`. Track parsing currently supports px, percent,
 `fr`, `auto`, `minmax()`, `fit-content()`, small-count and nested finite
-`repeat(n, ...)`, and `repeat(auto-fit/auto-fill, ...)`.
+`repeat(n, ...)`, and `repeat(auto-fit/auto-fill, ...)`. `grid-auto-flow`
+has landed for `row`, `column`, and dense auto-placement.
 
 ### Scope
 
@@ -845,6 +923,7 @@ Initial properties:
 - `grid-template-columns`
 - `grid-template-rows`
 - `grid-template-areas`
+- `grid-auto-flow`
 - `grid-area`
 - `grid-column`
 - `grid-row`
@@ -854,7 +933,7 @@ Initial properties:
 Defer:
 
 - Subgrid.
-- Dense auto-placement and other auto-placement edge cases.
+- Other auto-placement edge cases beyond Taffy's `grid-auto-flow` support.
 - Nested auto-repeat syntax beyond the safe subset. Non-nested
   `repeat(auto-fit, ...)` and `repeat(auto-fill, ...)` are implemented.
 
@@ -883,6 +962,7 @@ Panel.sidebar {
 
 - A dashboard demo can place sidebar, header, main content, and inspector using
   CSS grid. First demo slice added to `examples/css_web_capabilities_demo.py`.
+- The demo exercises dense `grid-auto-flow` auto-placement.
 - Grid layout coexists with existing flex containers.
 - Unsupported grid syntax warns instead of silently mislaying widgets.
 
@@ -892,15 +972,17 @@ Status: In progress. First public overflow slice landed for `overflow`,
 `overflow-x`, and `overflow-y`. `visible` lets children escape normal container
 clipping, `hidden` clips, and `auto` / `scroll` opt containers into scroll
 state. Vertical scrolling uses the normal wheel path; horizontal scrolling uses
-horizontal wheel input or shift-wheel. Scrollable panels now render inset
-vertical and horizontal overlay scrollbars that stay inside rounded panel
-surfaces, remain centered on the panel surface, and leave the bottom-right
-corner clear when both axes overflow. Panel scrollbar thumbs can be dragged,
-and clicking the track updates the scroll offset. `Panel::scrollbar-track` and
-`Panel::scrollbar-thumb` styling parts have landed for track/thumb width, track
-axis inset, background, border, radius, and opacity. PageUp/PageDown/Home/End
-keyboard scrolling has landed for the nearest scrollable ancestor of the
-focused widget, with Shift using the horizontal axis when available.
+horizontal wheel input or shift-wheel. Scroll containers now render vertical
+and horizontal overlay scrollbar indicators for overflowing opted-in axes;
+panels keep those indicators inset inside rounded panel surfaces, centered on
+the panel surface, and clear of the bottom-right corner when both axes
+overflow. Scrollbar thumbs can be dragged, and clicking the track updates the
+scroll offset. Scrollable layout/container widgets expose
+`::scrollbar-track` and `::scrollbar-thumb`; styling parts have landed for
+track/thumb width, track axis inset, background, border, radius, and opacity.
+PageUp/PageDown/Home/End keyboard scrolling has landed for the nearest
+scrollable ancestor of the focused widget, with Shift using the horizontal axis
+when available.
 
 ### Scope
 
@@ -925,8 +1007,8 @@ This is not only a layout property. It requires:
 
 First slice limitations:
 
-- Visible scrollbar indicators and scrollbar styling are currently limited to
-  Panel track/thumb CSS parts.
+- Scrollbar styling is currently limited to scrollable layout/container widget
+  track/thumb CSS parts.
 - Overlay clipping remains renderer-managed and top-layer content is not clipped
   by normal containers.
 
@@ -1060,10 +1142,19 @@ requests while animations are active, and visual interpolation/reuse of the
 transition paint interpolation model. The first slice supports one animation
 per widget and visual declarations only. The `animation` shorthand is now
 implemented for the supported longhand fields, including first-slice
-`animation-play-state: running | paused`. Multiple animations, layout/text
-animation, composition, timelines, and OS reduced-motion preference integration
-remain pending. CSS `prefers-reduced-motion` media matching has landed and
-defaults to `no-preference` until DragonGUI receives an OS preference hook.
+`animation-play-state: running | paused`. Animation shorthand and longhand
+comma lists now accept the first item for the one-animation slice. Timing
+functions include standard keywords, custom `cubic-bezier(...)`, `step-start`,
+`step-end`, and `steps(n, start | end)`. Finite fractional
+`animation-iteration-count` values are preserved and resolve forward-filled
+final state at the corresponding partial iteration. Negative `animation-delay`
+values are accepted and start animations partway through their timeline.
+Multiple simultaneous animations, layout/text animation, composition,
+timelines, and OS reduced-motion preference integration remain pending. CSS
+`prefers-reduced-motion` media matching has landed and defaults to
+`no-preference` until DragonGUI receives an OS preference hook. Outline color,
+width, and offset now participate in the same visual transition and keyframe
+interpolation path as other numeric/color paint fields.
 
 ### Scope
 
@@ -1079,6 +1170,11 @@ Add:
 - `animation-fill-mode`
 - `animation-play-state`. First slice supports `running` and `paused`.
 - `animation` shorthand. Implemented for one animation using supported fields.
+- Comma-separated animation shorthand and longhand lists. Implemented by using
+  the first item for the one-animation slice.
+- Fractional finite `animation-iteration-count` values. Implemented.
+- Negative `animation-delay`. Implemented for longhand and one-animation
+  shorthand.
 
 Initial animatable properties should match transition support.
 
@@ -1102,15 +1198,21 @@ Initial animatable properties should match transition support.
 Status: In progress. First CSS/style-model slice landed for
 `backdrop-filter: blur(px)` with debug/computed-style visibility and a
 rounded frosted-surface renderer treatment for `Panel`, `Modal`, `Tooltip`,
-and `Toast`. This is not the full sampled framebuffer blur yet; true backdrop
-sampling still needs an offscreen scene texture and blur pass.
+and `Toast`. `brightness()` / `saturate()` and whitespace-separated filter
+lists now parse into the style model and influence the first-slice tint
+treatment. `Modal::scrim` is exposed as a renderer-owned CSS part for custom
+scrim background and opacity. This is not the full sampled framebuffer blur
+yet; true backdrop sampling still needs an offscreen scene texture and blur
+pass.
 
 ### Scope
 
 Add a limited `backdrop-filter` subset:
 
 - `blur(px)`
-- Optional brightness/saturation later.
+- `brightness(number | percent)`
+- `saturate(number | percent)`
+- Whitespace-separated filter lists using the supported functions.
 
 ### Renderer Requirements
 
@@ -1128,7 +1230,8 @@ Only for:
 
 ### Acceptance Criteria
 
-- Modal scrim can blur content behind it.
+- Modal scrim can be styled through `Modal::scrim`; true blur of content behind
+  it remains pending.
 - Blur respects rounded rect clipping.
 - GPU cost is documented.
 
@@ -1180,15 +1283,17 @@ viewport width/height/aspect-ratio/resolution/color-gamut/orientation,
 pointer/hover/update/scripting/forced-colors capability, and
 `prefers-contrast` / `inverted-colors` / `dynamic-range` /
 `video-dynamic-range` / `prefers-color-scheme` / `prefers-reduced-motion`
-media rules into rule metadata, cascade matching
+`prefers-reduced-transparency` / `prefers-reduced-data` media rules into rule
+metadata, cascade matching
 filters them against the current logical window size, platform window theme
 when available, active theme fallback color scheme, assumed desktop
 input/display capabilities, and scale factor, and the runtime reapplies CSS on
 layout/resize/theme-change events. First static `@supports`
 implementation slice landed for DragonGUI declaration and selector feature
 queries. Container queries and other media features remain pending. First
-`@font-face` slice landed for local `.ttf`, `.otf`, and `.ttc` files referenced
-through `url(...)`.
+`@font-face` slice landed for installed local font families referenced through
+`local(...)`, local `.ttf`, `.otf`, and `.ttc` files referenced through
+`url(...)`, and base64 `data:` URLs containing sfnt font data.
 
 Code-backed remaining work:
 
@@ -1196,21 +1301,23 @@ Code-backed remaining work:
 - Media features beyond the currently supported viewport, resolution,
   orientation, color-gamut, pointer/hover/update/scripting/forced-colors,
   contrast, inverted-colors, dynamic-range, video-dynamic-range, color-scheme,
-  and reduced-motion subset.
+  reduced-motion, reduced-transparency, and reduced-data subset.
 - Platform detection for display gamut, pointer/hover capability, forced-colors
   mode, contrast preference, inverted-colors mode, dynamic-range capability,
-  and OS reduced-motion preference. The runtime currently assumes `srgb`, fine pointer, hover
-  support, `update: fast`, `scripting: none`, `forced-colors: none`,
-  `prefers-contrast: no-preference`, `inverted-colors: none`, and
-  `prefers-reduced-motion: no-preference`; both dynamic-range features
-  currently default to `standard`. Color scheme now uses winit's
+  OS reduced-motion preference, reduced-transparency preference, and
+  reduced-data preference. The runtime currently assumes `srgb`, fine pointer,
+  hover support, `update: fast`, `scripting: none`, `forced-colors: none`,
+  `prefers-contrast: no-preference`, `inverted-colors: none`,
+  `prefers-reduced-motion: no-preference`,
+  `prefers-reduced-transparency: no-preference`, and
+  `prefers-reduced-data: no-preference`; both dynamic-range features currently
+  default to `standard`. Color scheme now uses winit's
   platform window theme when available and falls back to active DragonGUI theme
   luminance when unavailable.
 - Full inherited custom property cascade semantics. Top-level `:root`
   variables and first-slice parse-time `:root` variables inside matching
   `@media` / static true `@supports` blocks are implemented.
-- Remote font URLs, `data:` font URLs, WOFF/WOFF2 loading, and packaged font
-  asset resolution.
+- Remote font URLs, WOFF/WOFF2 loading, and packaged font asset resolution.
 
 ### Scope
 
@@ -1242,10 +1349,12 @@ Needs:
   `width`/`height`/`aspect-ratio`/`resolution`/`color-gamut`/`orientation`/
   `pointer`/`any-pointer`/`hover`/`any-hover`/`update`/`scripting`/
   `forced-colors`/`prefers-contrast`/`inverted-colors`/`dynamic-range`/
-  `video-dynamic-range`/`prefers-color-scheme`/`prefers-reduced-motion`,
+  `video-dynamic-range`/`prefers-color-scheme`/`prefers-reduced-motion`/
+  `prefers-reduced-transparency`/`prefers-reduced-data`,
   container queries, OS reduced-motion preference
-  integration, platform forced-colors/contrast/inverted-colors/dynamic-range
-  detection, platform input/display capability detection, and full inherited
+  integration, OS reduced-transparency/data preference integration, platform
+  forced-colors/contrast/inverted-colors/dynamic-range detection, platform
+  input/display capability detection, and full inherited
   media-scoped custom property cascade
   semantics. First-slice parse-time `:root` variables inside matching `@media`
   and static true `@supports` blocks are implemented for declarations inside
@@ -1286,16 +1395,22 @@ First useful subset:
 ```css
 @font-face {
     font-family: "Report UI";
-    src: url("C:/Windows/Fonts/segoeui.ttf") format("truetype");
+    src:
+        local("Segoe UI"),
+        url("C:/Windows/Fonts/segoeui.ttf") format("truetype");
 }
 ```
 
 Implemented:
 
-- Parse `@font-face` `font-family` and local `url(...)` `src` descriptors into
-  DragonGUI stylesheet IR.
+- Parse `@font-face` `font-family`, `local(...)`, and local `url(...)` `src`
+  descriptors into DragonGUI stylesheet IR.
 - Merge font-face records across framework/theme/user stylesheet origins.
+- Map declared CSS families to installed local font families when a matching
+  `local(...)` source is present.
 - Load supported local font files into glyphon's font database at text rebuild.
+- Decode base64 `data:` font URLs containing sfnt TrueType/OpenType/TTC data
+  into glyphon's font database at text rebuild.
 - Map the declared CSS family to the loaded font's exposed family name when
   available.
 - Report one-time renderer diagnostics for missing, unsupported, or unusable
@@ -1305,15 +1420,16 @@ Implemented:
 Remaining planning decisions:
 
 - Decide whether DragonGUI ships bundled fonts, only supports user-provided
-  font files, or supports both. Current implementation only supports
-  user-provided local font files.
+  font files, or supports both. Current implementation supports installed
+  local font families, user-provided local font files, and base64 sfnt data
+  URLs.
 - Estimate wheel/sdist size impact before adding bundled assets.
 - Define how font files are referenced from CSS in packaged applications.
 - Update maturin/pyproject packaging rules before the renderer work starts.
 
 Remaining:
 
-- Remote URLs and `data:` URLs.
+- Remote URLs.
 - WOFF/WOFF2 loading.
 - Packaging story for wheels/sdists.
 
@@ -1337,6 +1453,7 @@ Implement:
 - named colors
 - `rgb()` / `rgba()`
 - `hsl()` / `hsla()`
+- `hwb()`
 - `var(--name, fallback)`, including embedded `var()` inside larger parseable
   property values.
 
@@ -1350,20 +1467,31 @@ Why first:
 ### Milestone B: Elevation And Rich Paint
 
 Status: In progress. `box-shadow` landed for comma-separated outset and inset
-shadows on rect-backed surfaces. First `linear-gradient()` and
+shadows on rect-backed surfaces, including clipping outset shadows against
+inherited scroll/overflow paint viewports. First `linear-gradient()` and
 `radial-gradient()` slices landed for rect-backed backgrounds. Gradient
 rendering now interpolates up to four stop colors, sampling longer gradients
 down to four GPU stops. First-slice repeating gradients have landed for
 explicit final stop ranges. Comma-separated background layers now paint
 back-to-front, enabling radial glow overlays on linear bases. `background-noise`
 has landed as a low-amplitude procedural dither/noise pass for softening
-gradient banding on rect-backed backgrounds.
+gradient banding on rect-backed backgrounds. `background-image` now accepts the
+same gradient and layered gradient paint subset, layers over
+`background-color`, and supports `none`; URL/image-file background sources
+remain deferred. Uniform `border-style` longhand support has landed for
+`solid`, `none`, and `hidden`, mapping to the current uniform border renderer.
+First-slice `outline`, `outline-color`, `outline-width`, `outline-style`, and
+`outline-offset` support has landed as a paint-only solid/none ring for
+rect-backed widget surfaces.
 
 Implement:
 
 - `box-shadow`
 - `linear-gradient()`
 - `radial-gradient()`
+- `border-style` for the uniform `solid`/`none`/`hidden` subset. Implemented.
+- `outline` and outline longhands for the solid/none paint-only subset.
+  Implemented.
 
 Why second:
 
@@ -1376,13 +1504,23 @@ Status: In progress. Public state selectors landed for `:open`, `:expanded`,
 `:collapsed`, and `:selected` with whole-widget and part styling. Selector
 chains also landed for descendants, deeper direct-child chains, `[key="..."]`,
 `:first-child`, `:last-child`, `:nth-child(...)` integer/odd/even/an+b
-formulas, and filtered `:nth-child(... of <selector-list>)` for compound
-selector lists and supported selector chains. Selector functions have landed
-for compound selector arguments, including target pseudo-state arguments.
+formulas, `:nth-last-child(...)` reverse formulas, `:only-child`, `:empty`,
+and filtered `:nth-child(... of <selector-list>)` and
+`:nth-last-child(... of <selector-list>)` for compound selector lists,
+supported selector chains, and structural target filters.
+Selector functions have landed for compound selector arguments, including
+target pseudo-state arguments.
 Universal selectors have landed for
 `*`, `*.class`, `*:hover`, and chain targets such as `Panel > *`. Attribute
 selectors have landed for widget metadata and parsed scalar props, including
-presence, string operators, and case flags.
+presence, string operators, and case flags. First-slice `:has(...)` support
+has landed for descendant compound selectors, descendant selector chains,
+direct child arguments, direct child structural pseudos, and following sibling
+arguments with leading `+` or `~`. Nested `:has(...)` on the argument target
+and on ancestor-side compounds in descendant or direct-child argument chains
+has also landed. Data-backed state target arguments for `:has(...)` and
+`:nth-child(... of ...)` and `:nth-last-child(... of ...)` have landed for
+`:disabled`, `:checked`, `:open`, `:expanded`, and `:collapsed`.
 
 Implement:
 
@@ -1398,11 +1536,21 @@ Implement:
   explicit ASCII case-sensitivity flags.
 - Structural child selectors. Implemented for `:first-child`, `:last-child`,
   integer `:nth-child(n)`, `:nth-child(odd)`, `:nth-child(even)`, and `an+b`
-  formulas such as `3n+1` and `-n+3`. Filtered
-  `:nth-child(... of <selector-list>)` is implemented for compound selector
-  lists and supported descendant or child selector chains.
+  formulas such as `3n+1` and `-n+3`, plus `:nth-last-child(...)` with the
+  same pattern syntax. Filtered `:nth-child(... of <selector-list>)` and
+  `:nth-last-child(... of <selector-list>)` are implemented for compound
+  selector lists, supported descendant or child selector chains, and
+  structural target filters. Data-backed state target filters are implemented
+  for `:disabled`, `:checked`, `:open`, `:expanded`, and `:collapsed`.
 - Selector functions such as `:not()`, `:is()`, and `:where()`. Implemented
   for compound selector arguments, including target pseudo-state arguments.
+- First-slice `:has(...)`. Implemented for descendant compound selectors,
+  descendant selector chains, direct child arguments, and direct child
+  structural pseudos, immediate and later following sibling arguments, and
+  nested `:has(...)` on the argument target and on ancestor-side compounds in
+  descendant or direct-child argument chains. Data-backed state target
+  arguments are implemented for `:disabled`, `:checked`, `:open`, `:expanded`,
+  and `:collapsed`.
 - Universal selectors. Implemented for whole compounds and selector chains.
 
 Why third:
@@ -1413,35 +1561,43 @@ Why third:
 ### Milestone D: Motion
 
 Status: In progress. First CSS transition slice landed for parser/style-model
-support, debug snapshots, whole-widget hover paint transitions, and
-whole-widget `:open` / `:selected` paint transitions for tracked widgets. First
-paint-only transform slice also landed for `translate`, `scale`, and `rotate`
+support, debug snapshots, whole-widget hover/`:focus`/`:active` paint transitions, and
+whole-widget `:checked`, `:open`, and `:selected` paint transitions for tracked
+widgets. First paint-only transform slice also landed for `translate`, `scale`, and `rotate`
 on rect-backed widget surfaces, with CSS transform longhands now lowering into
 the same transform model. Runtime support currently interpolates solid color,
 numeric visual fields, and transform fields. Stylesheet changes, inline style
 patches, full layout rebuilds, and widget replacement paths now cancel active
-style transition progress. `transition-property` is honored for hover, `:open`,
-`:selected`, and expanded/collapsed whole-widget transitions, with unlisted
-visual fields snapping to the current state. Timing functions include the
-standard easing keywords and custom `cubic-bezier(...)` curves. Layout, text
-scale/rotate, child subtree transforms, image texture transforms, and layout
-animation for expanding/collapsing content remain pending. First visual
-`@keyframes` animation support has also landed on top of this interpolation
-model, with one shorthand/animation per widget and visual declarations only.
+style transition progress. `transition-property` is honored for hover, `:focus`,
+`:active`, `:open`, `:checked`, `:selected`, and expanded/collapsed whole-widget
+transitions, with unlisted visual fields snapping to the current state. Timing
+functions include the standard easing keywords and custom `cubic-bezier(...)`
+curves. Outline color, width, and offset now interpolate through both runtime transitions and
+visual keyframes. Paint transforms now apply to widget render subtrees:
+descendant primitive rects, scrollbars, and image textures follow ancestor
+transforms, while text follows translate and uniform scale. Layout transitions,
+text rotation, and layout animation for expanding/collapsing content remain
+pending. First visual `@keyframes` animation support has also landed on
+top of this interpolation model, with one shorthand/animation per widget and
+visual declarations only.
 
 Implement:
 
-- Paint-only CSS transitions. First whole-widget hover, `:open`, and
-  `:selected` slices implemented. Expanded/collapsed whole-widget paint
-  transitions also implemented.
+- Paint-only CSS transitions. First whole-widget hover, `:focus`, `:active`,
+  `:checked`, `:open`, and `:selected` slices implemented. Expanded/collapsed
+  whole-widget paint transitions also implemented.
 - Timing functions. Implemented for `linear`, `ease`, `ease-in`, `ease-out`,
-  `ease-in-out`, and `cubic-bezier(...)`.
+  `ease-in-out`, `step-start`, `step-end`, `steps(n, start | end)`, and
+  `cubic-bezier(...)`.
 - Paint-only transforms. First rect-surface slice implemented for
-  `transform` plus `translate`, `scale`, and `rotate` longhands; text follows
-  translate only.
+  `transform` plus `translate`, `scale`, and `rotate` longhands. Descendant
+  primitive rects, scrollbars, and image textures follow transformed widget
+  subtrees; text follows translate and uniform scale.
 - Continuous animation. First visual `@keyframes` and animation longhand slice
   implemented. `animation` shorthand implemented for one supported animation.
-  `animation-play-state` implemented for `running` and `paused`.
+  `animation-play-state` implemented for `running` and `paused`. Fractional
+  finite iteration counts are preserved, and negative animation delays are
+  supported.
 
 Why fourth:
 
@@ -1456,7 +1612,7 @@ Status: In progress. First percent/auto sizing slice landed for `width`,
 typed layout values through CSS lowering into Taffy. First `calc()` sizing slice
 landed for pixel, percent, and mixed pixel/percent sizing expressions when the
 parent axis is definite. The follow-up typed spacing slice landed for padding,
-uniform margin, `gap`, `row-gap`, and `column-gap`; uniform margin also
+margin shorthand/longhands, `gap`, `row-gap`, and `column-gap`; margin also
 supports `auto`. `var()` terms inside `calc()` are supported for lengths and
 scalar multipliers/divisors. Mixed-unit calc in fully auto-sized parent axes
 remains pending. The CSS Grid slice now includes named
@@ -1469,7 +1625,8 @@ Implement:
 - `auto` sizing. First sizing-property slice implemented.
 - `calc()`. First sizing slice implemented, including mixed pixel/percent
   expressions when the parent axis is definite.
-- Typed spacing. First padding, uniform margin, and gap slice implemented.
+- Typed spacing. First padding, margin shorthand/longhand, and gap slice
+  implemented.
 - CSS Grid. First Taffy-backed track and placement slice implemented. Named
   `grid-template-areas` and `grid-area` placement implemented for rectangular
   regions. `minmax()`
@@ -1478,6 +1635,7 @@ Implement:
   implemented for px and percent arguments. Auto-repeat parsing/lowering
   implemented for `repeat(auto-fit, ...)` and `repeat(auto-fill, ...)`.
   Nested finite repeat track lists are flattened before layout.
+  `grid-auto-flow` parses and lowers row/column dense auto-placement.
 
 Why fifth:
 
@@ -1490,11 +1648,23 @@ Implement:
 
 - General `overflow`. First visible/hidden/auto/scroll slice implemented.
 - Scroll state. Vertical and horizontal scroll offsets now work for opted-in
-  containers; `Panel` scroll containers now render vertical and horizontal
-  overlay indicators with mouse click/drag operation. PageUp/PageDown/Home/End
-  keyboard scrolling now targets the focused scroll context, with mouse-position
-  fallback.
+  containers; scroll containers now render vertical and horizontal overlay
+  indicators with mouse click/drag operation. PageUp/PageDown/Home/End keyboard
+  scrolling now targets the focused scroll context, with mouse-position
+  fallback. Scrollbar track/thumb CSS parts now apply to scrollable
+  layout/container widgets.
 - Clip stack. First explicit visible/hidden child clip behavior implemented.
+- TextArea sizing. DragonGUI-specific `text-area-rows` is implemented as a
+  widget property that drives the TextArea preferred height while preserving
+  `height` as the exact-size override.
+- DataFrameTable sizing. Uniform `table-column-width` and
+  `table-index-width` are implemented through the table metrics path used by
+  rendering, visible range calculation, and hit testing.
+- Scatter3D styling. Uniform `scatter-point-size` is implemented as a
+  widget-specific property backed by the scatter shader uniform path, so point
+  size can change without repacking point data. Rounded Scatter3D clipping is
+  implemented for the 3D viewport and picking region using computed per-corner
+  border radii.
 
 Why separate:
 
@@ -1510,19 +1680,22 @@ Evaluate and implement selectively:
 - `@keyframes`. First visual animation slice and one-animation shorthand
   implemented; broader animation compatibility remains pending.
 - Backdrop filter. First `blur(px)` frosted-surface treatment implemented;
-  true sampled framebuffer blur remains pending.
+  `brightness()` / `saturate()` and supported filter lists now influence that
+  treatment. True sampled framebuffer blur remains pending.
 - Generated content. First text-only `::before` / `::after` and `attr(...)`
   slice implemented; layout-aware generated boxes remain pending.
 - `@media`. First viewport
   `width`/`height`/`aspect-ratio`/`resolution`/`color-gamut`/`orientation`/
   `pointer`/`any-pointer`/`hover`/`any-hover`/`update`/`scripting`/
   `forced-colors`/`prefers-contrast`/`inverted-colors`/`dynamic-range`/
-  `video-dynamic-range`/`prefers-color-scheme`/`prefers-reduced-motion` slice
-  implemented; broader media features remain pending.
+  `video-dynamic-range`/`prefers-color-scheme`/`prefers-reduced-motion`/
+  `prefers-reduced-transparency`/`prefers-reduced-data` slice implemented;
+  broader media features remain pending.
 - `@supports`. First static declaration and selector feature-query slice
   implemented.
-- `@font-face`. First local font-file loading slice implemented; remote fonts,
-  WOFF/WOFF2, and packaged asset resolution remain pending.
+- `@font-face`. First installed-family, local font-file, and base64 data-URL
+  loading slice implemented; remote fonts, WOFF/WOFF2, and packaged asset
+  resolution remain pending.
 
 These should not block the earlier visible wins.
 

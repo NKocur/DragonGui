@@ -340,9 +340,10 @@ Button:hover {
 """)
 ```
 
-Supported CSS selectors include type selectors, class selectors, explicit id
-selectors, direct-child selectors, and the `:hover`, `:active`, `:focus`, and
-`:disabled` pseudo-states. Text properties inherit down the widget tree.
+Supported CSS selectors include type, class, id, key, attribute, descendant,
+direct-child, structural, selector-function, and widget-part selectors, along
+with public pseudo-states such as `:hover`, `:active`, `:focus`, and
+`:disabled`. Text properties inherit down the widget tree.
 
 See `docs/css-styling.md` for the full supported CSS subset.
 
@@ -427,6 +428,11 @@ Theme tokens include:
 
 The native renderer also resolves derived tokens such as accent mix and accent
 dark variants.
+
+Python `Theme` color fields accept literal CSS-style color strings: hex forms
+including alpha, `transparent`, common named colors, `rgb()/rgba()`, and
+`hsl()/hsla()`, and `hwb()`, plus `lab()`, `lch()`, `oklab()`, `oklch()`,
+`color(srgb ...)`, and `color(srgb-linear ...)`.
 
 ## Rust Backend
 

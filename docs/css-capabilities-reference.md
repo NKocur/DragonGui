@@ -51,18 +51,21 @@ Supported top-level CSS:
 - First-slice `@media` blocks for viewport
   width/height/aspect-ratio/resolution/color-gamut/orientation/pointer/hover/
   update/scripting/forced-colors/contrast/inverted-colors/dynamic-range/
-  video-dynamic-range/color-scheme/reduced-motion queries.
+  video-dynamic-range/color-scheme/reduced-motion/reduced-transparency/
+  reduced-data queries.
 - First-slice `@supports` blocks for DragonGUI declaration and selector
   feature queries.
 - First-slice `@keyframes` blocks for visual animation keyframes.
-- First-slice `@font-face` blocks for local `.ttf`, `.otf`, and `.ttc` files.
+- First-slice `@font-face` blocks for installed local family names, local
+  `.ttf`, `.otf`, and `.ttc` files, and base64 `data:` URLs containing sfnt
+  font data.
 - First-slice generated content through `::before`, `::after`, and
   `content: "..."`.
 
 Ignored or unsupported:
 
-- Remote font URLs, `data:` font URLs, WOFF/WOFF2 loading, and packaged font
-  asset resolution are not part of the current public subset.
+- Remote font URLs, WOFF/WOFF2 loading, and packaged font asset resolution are
+  not part of the current public subset.
 - Invalid CSS produces a stylesheet parse error.
 - Unsupported selectors and unsupported declarations produce warnings and are
   skipped while the rest of the stylesheet continues.
@@ -97,7 +100,8 @@ Important details:
 First-slice `@media` supports viewport width, height, aspect-ratio,
 resolution, color-gamut, orientation, update, scripting, forced-colors,
 contrast, inverted-colors, dynamic-range, video-dynamic-range, color-scheme,
-and reduced-motion queries in logical CSS pixels.
+reduced-motion, reduced-transparency, and reduced-data queries in logical CSS
+pixels.
 Pointer, hover, update, scripting, and forced-colors queries reflect
 DragonGUI's current desktop native rendering model. Resolution uses the current
 window scale factor as CSS dppx. Color-gamut currently defaults to `srgb`.
@@ -127,6 +131,8 @@ Supported forms:
 @media (video-dynamic-range: high) { ... }
 @media (prefers-color-scheme: dark) { ... }
 @media (prefers-reduced-motion: reduce) { ... }
+@media (prefers-reduced-transparency: no-preference) { ... }
+@media (prefers-reduced-data: no-preference) { ... }
 ```
 
 Limitations:
@@ -135,7 +141,8 @@ Limitations:
   `color-gamut`, `orientation`, `pointer`, `any-pointer`, `hover`,
   `any-hover`, `update`, `scripting`, `forced-colors`,
   `prefers-contrast`, `inverted-colors`, `dynamic-range`,
-  `video-dynamic-range`, `prefers-color-scheme`, and `prefers-reduced-motion`.
+  `video-dynamic-range`, `prefers-color-scheme`, `prefers-reduced-motion`,
+  `prefers-reduced-transparency`, and `prefers-reduced-data`.
 - Width and height values must be absolute lengths convertible to pixels.
 - Aspect-ratio values may use ratios such as `4/3` or numbers such as `1.6`.
 - Resolution values may use `dppx`, `x`, `dpi`, or `dpcm`.
@@ -167,6 +174,11 @@ Limitations:
   luminance when unavailable.
 - Reduced-motion values are `reduce` and `no-preference`; DragonGUI currently
   defaults to `no-preference` until OS preference integration is added.
+- Reduced-transparency values are `reduce` and `no-preference`; DragonGUI
+  currently defaults to `no-preference` until OS preference integration is
+  added.
+- Reduced-data values are `reduce` and `no-preference`; DragonGUI currently
+  defaults to `no-preference` until OS/network preference integration is added.
 - Container queries and broader media features remain unsupported.
 - Custom properties are collected from top-level `:root`, with a first slice of
   directly nested `:root` variables inside matching `@media` or static true
@@ -174,28 +186,32 @@ Limitations:
 
 ## Font Faces
 
-First-slice `@font-face` support loads local font files into the native text
-backend and maps the declared CSS family name to the loaded font family when
-the font database exposes one.
+First-slice `@font-face` support maps declared CSS family names to installed
+local font families or loads local/file-embedded font data into the native text
+backend.
 
 Supported form:
 
 ```css
 @font-face {
     font-family: "Report UI";
-    src: url("C:/Windows/Fonts/segoeui.ttf") format("truetype");
+    src:
+        local("Segoe UI"),
+        url("C:/Windows/Fonts/segoeui.ttf") format("truetype");
 }
 ```
 
 Limitations:
 
-- Only local `url(...)` sources are attempted.
-- Supported extensions are `.ttf`, `.otf`, and `.ttc`.
+- Supported sources are `local("Family Name")` and local `url(...)` files.
+- Supported file extensions are `.ttf`, `.otf`, and `.ttc`.
+- `data:` URLs are supported when they are base64-encoded sfnt TrueType,
+  OpenType, or TTC data.
 - Relative paths resolve from the current process working directory.
-- Missing or unsupported font files are skipped by the renderer and reported
-  once in `debug_snapshot()["gpu"]["renderer"]["font_warnings"]`.
-- Remote URLs, `data:` URLs, WOFF/WOFF2, and packaged app asset resolution are
-  still pending.
+- Missing local families and missing or unsupported font files are skipped by
+  the renderer and reported once in
+  `debug_snapshot()["gpu"]["renderer"]["font_warnings"]`.
+- Remote URLs, WOFF/WOFF2, and packaged app asset resolution are still pending.
 
 ## Feature Queries
 
@@ -219,8 +235,8 @@ Limitations:
 - Unsupported declaration and selector queries simply evaluate to false.
 
 Supported feature queries reflect DragonGUI's native subset, not browser
-support. For example, `backdrop-filter: blur(...)` currently means the
-first-slice DragonGUI frosted-surface treatment is available.
+support. For example, `backdrop-filter: blur(...) brightness(...)` currently
+means the first-slice DragonGUI frosted-surface treatment is available.
 - `@supports` can be nested with supported `@media` rules.
 
 Specificity model:
@@ -255,9 +271,9 @@ Supported selector forms:
 | Direct child | `Panel.controls > Button` |
 | Multi-level child chain | `Window > Panel > HLayout > Button` |
 | Direct child targeting a part | `Panel.controls > NumberInput::stepper` |
-| Structural child | `Button:first-child` |
-| Structural nth child | `NavItem:nth-child(3n+1)`, `Panel > *:nth-child(2 of Panel > Button.primary)` |
-| Selector function | `Button:not(:disabled)`, `Button:is(:hover, :focus)`, `:where(.quiet)` |
+| Structural child | `Button:first-child`, `Button:last-child`, `Label:only-child`, `Panel:empty` |
+| Structural nth child | `NavItem:nth-child(3n+1)`, `NavItem:nth-last-child(2n+1)`, `Panel > *:nth-child(2 of Panel > Button.primary)`, `Panel > *:nth-last-child(1 of Button:first-child)` |
+| Selector function | `Button:not(:disabled)`, `Button:is(:hover, :focus)`, `:where(.quiet)`, `Panel:has(> Button:first-child)`, `Panel:has(+ Button.primary)`, `Panel:has(Panel:has(Button.primary))`, `Panel:has(Panel:has(> Badge) > Button.primary)` |
 | Comma list | `Button, Dropdown, TextInput` |
 
 Selector behavior:
@@ -281,17 +297,42 @@ Selector behavior:
 - Descendant selectors match any ancestor in the widget tree.
 - Direct child selectors only check the immediate parent.
 - Pseudo-states in selector chains apply to the target widget, not ancestors.
-- `:first-child`, `:last-child`, and `:nth-child(...)` use the target
-  widget's sibling position among all children of its parent.
-- `:nth-child(...)` supports integer indexes, `odd`, `even`, and `an+b`
-  formulas such as `3n+1`, `n+2`, and `-n+3`. It also supports the
-  `of <selector-list>` filtering form for compound selector lists and
-  supported descendant or child selector chains, such as
-  `:nth-child(2 of Panel > Button.primary, Badge[level="info"])`.
+- `:first-child`, `:last-child`, `:only-child`, `:nth-child(...)`, and
+  `:nth-last-child(...)` use the target widget's sibling position among all
+  children of its parent.
+- `:empty` matches widgets with no child widgets. Widget text and scalar props
+  do not count as children.
+- `:nth-child(...)` and `:nth-last-child(...)` support integer indexes, `odd`,
+  `even`, and `an+b` formulas such as `3n+1`, `n+2`, and `-n+3`.
+  `:nth-last-child(...)` counts from the end of the sibling list. Both forms
+  support the `of <selector-list>` filtering form for compound selector lists
+  and supported descendant or child selector chains, such as
+  `:nth-child(2 of Panel > Button.primary, Badge[level="info"])` and
+  `:nth-last-child(1 of Button.metric)`. Filter target selectors may include
+  structural pseudos such as `Button:first-child` and `Label:nth-child(2)`,
+  plus data-backed state pseudos such as `Checkbox:checked` and
+  `Collapsible:collapsed`.
 - `:not(...)`, `:is(...)`, and `:where(...)` support comma-separated
   compound selector arguments, including target pseudo-state arguments such as
   `:hover`, `:focus`, and `:disabled`. `:where(...)` contributes zero
   specificity.
+- `:has(...)` supports descendant compound selectors and selector chains, such
+  as `Panel:has(Button.primary)` and `Panel:has(HLayout > Badge.success)`.
+  A leading `>` restricts the argument to direct children, so
+  `Panel:has(> Badge[level="warning"])` and
+  `Panel:has(> Button:first-child)` only check immediate children. Structural
+  target pseudos such as `:first-child`, `:last-child`, `:only-child`,
+  `:empty`, and `:nth-last-child(...)` are supported in `:has(...)`
+  arguments. Leading `+` and `~`
+  arguments check following siblings, such as
+  `Panel:has(+ Button.primary)` and `Panel:has(~ Badge[level="success"])`.
+  Nested `:has(...)` is supported when it appears on the argument target, such
+  as `Panel:has(Panel:has(Button.primary))`, and on ancestor-side compounds in
+  descendant or direct-child argument chains, such as
+  `Panel:has(Panel:has(> Badge) > Button.primary)`. Target arguments may use
+  data-backed state pseudos (`:disabled`, `:checked`, `:open`, `:expanded`,
+  and `:collapsed`). Dynamic state pseudos and widget-part arguments are not
+  supported.
 - Part selectors are only valid on the target widget, not the parent side of a
   selector chain.
 
@@ -301,6 +342,9 @@ Unsupported selector forms:
 - Ancestor pseudo-states, such as `Panel:hover Button`.
 - Ancestor pseudo-states inside selector functions, such as
   `Panel:is(:hover) Button`.
+- Broader `:has(...)` arguments, such as dynamic stateful
+  `Panel:has(Button:hover)`, widget-part arguments, and sibling-relative
+  nested `:has(...)` on an ancestor side of a selector chain.
 
 ## Pseudo-States
 
@@ -474,13 +518,18 @@ Supported layout properties:
 | `padding-right` | logical px, percent, compatible `calc()` | Right padding. |
 | `padding-top` | logical px, percent, compatible `calc()` | Top padding. |
 | `padding-bottom` | logical px, percent, compatible `calc()` | Bottom padding. |
-| `margin` | uniform logical px, percent, `auto`, or compatible `calc()` | Uniform margin. Non-uniform values warn and are ignored. |
+| `margin` | 1 to 4 logical-px, percent, `auto`, or compatible `calc()` values | Expands to per-side margin. |
+| `margin-left` | logical px, percent, `auto`, compatible `calc()` | Left margin. |
+| `margin-right` | logical px, percent, `auto`, compatible `calc()` | Right margin. |
+| `margin-top` | logical px, percent, `auto`, compatible `calc()` | Top margin. |
+| `margin-bottom` | logical px, percent, `auto`, compatible `calc()` | Bottom margin. |
 | `gap` | logical px, percent, compatible `calc()` | Container gap. `auto` warns and is ignored. |
 | `row-gap` | logical px, percent, compatible `calc()` | Grid/flex row gap. |
 | `column-gap` | logical px, percent, compatible `calc()` | Grid/flex column gap. |
 | `grid-template-columns` | track list | First-slice CSS Grid columns. Supports px, percent, `fr`, `auto`, `minmax()`, `fit-content()`, nested finite `repeat(n, ...)`, and non-nested `repeat(auto-fit, ...)` / `repeat(auto-fill, ...)`. |
 | `grid-template-rows` | track list | First-slice CSS Grid rows. Supports px, percent, `fr`, `auto`, `minmax()`, `fit-content()`, nested finite `repeat(n, ...)`, and non-nested `repeat(auto-fit, ...)` / `repeat(auto-fill, ...)`. |
 | `grid-template-areas` | quoted rows | Defines rectangular named grid regions, such as `"side main" "side footer"`. |
+| `grid-auto-flow` | `row`, `column`, optional `dense` | Controls CSS Grid auto-placement direction and dense packing. `dense` alone maps to `row dense`. |
 | `grid-area` | named area | Places a child into a named parent `grid-template-areas` region. Explicit `grid-column` / `grid-row` placement wins if both are set. |
 | `grid-column` | line placement | Supports `auto`, line numbers, and `span n`, including `start / end`. |
 | `grid-row` | line placement | Supports `auto`, line numbers, and `span n`, including `start / end`. |
@@ -496,11 +545,11 @@ Length handling:
 - Unitless numbers are logical pixels.
 - `px` values are logical pixels.
 - Percent lengths are supported for `width`, `height`, `min-*`, `max-*`,
-  padding, uniform margin, and gap properties.
-- `auto` is supported for `width`, `height`, `min-*`, `max-*`, and uniform
-  margin. Padding and gap reject `auto`.
+  padding, margin, and gap properties.
+- `auto` is supported for `width`, `height`, `min-*`, `max-*`, and margin.
+  Padding and gap reject `auto`.
 - `calc()` is supported for `width`, `height`, `min-*`, `max-*`, padding,
-  uniform margin, and gap properties. Supported operators are `+`, `-`, simple
+  margin, and gap properties. Supported operators are `+`, `-`, simple
   `*` by a scalar, and simple `/` by a scalar. Mixed percent/pixel expressions
   such as `calc(100% - 240px)` resolve when the parent axis has a definite
   size. `var(--name)` and `var(--name, fallback)` may be used as calc terms.
@@ -517,17 +566,24 @@ Supported visual properties:
 | Property | Accepted Values | Effect |
 | --- | --- | --- |
 | `background` | color, `linear-gradient(...)`, `radial-gradient(...)`, or comma-separated paint layers | Fill/background paint. |
-| `background-noise` | number | Adds subtle deterministic noise to rect-backed gradient backgrounds. Clamped to `0.0..0.25`. |
 | `background-color` | color | Solid fill/background color. |
+| `background-image` | `linear-gradient(...)`, `radial-gradient(...)`, repeating gradients, comma-separated gradient layers, or `none` | Gradient/image paint subset. Layers over `background-color`; `none` clears back to the solid color. `url(...)` sources are not supported. |
+| `background-noise` | number | Adds subtle deterministic noise to rect-backed gradient backgrounds. Clamped to `0.0..0.25`. |
 | `foreground` | color | Foreground glyph/control color for renderers that use visual foreground. |
 | `border-color` | color | Border color. |
 | `border-width` | logical px | Border width. |
+| `border-style` | `solid`, `none`, or `hidden` | Uniform border style subset. `none` and `hidden` reset the rendered border; `solid` uses the current border width and color. |
 | `border-radius` | logical px | Uniform corner radius. |
 | `border-top-left-radius` | logical px | Per-corner radius override. |
 | `border-top-right-radius` | logical px | Per-corner radius override. |
 | `border-bottom-right-radius` | logical px | Per-corner radius override. |
 | `border-bottom-left-radius` | logical px | Per-corner radius override. |
 | `border` | `none`, `0`, or `<width> solid <color>` | Shorthand for border reset, width, and color. Only `solid` and `none` styles are supported. |
+| `outline` | `none`, `0`, or `<width> solid <color>` | Paint-only outline shorthand for rect-backed widget surfaces. |
+| `outline-color` | color | Outline color. |
+| `outline-width` | logical px | Outline width. |
+| `outline-style` | `solid`, `none`, or `hidden` | Outline style subset. `none` and `hidden` reset the rendered outline. |
+| `outline-offset` | logical px | Offset between the widget edge and outline. Negative offsets are clamped to zero in the first slice. |
 | `box-shadow` | comma-separated `inset? <offset-x> <offset-y> <blur?> <spread?> <color>` layers | Outset and inset soft shadows for rect-backed widget surfaces. |
 | `opacity` | number | Clamped to `0.0..1.0`. |
 | `accent` | color | Widget accent color. |
@@ -544,7 +600,9 @@ Notes:
   is not set.
 - `box-shadow` supports one or more comma-separated outset or `inset` shadows.
   Outset shadows paint before the widget surface; inset shadows paint above the
-  surface and below child widgets.
+  surface and below child widgets. Outset shadows inside scroll/overflow
+  containers are clipped to the inherited paint viewport while keeping the full
+  shadow shape.
 - `linear-gradient(...)` currently supports angles and `to ...` directions.
   `radial-gradient(...)` currently supports centered circle gradients and
   `circle at <x> <y>` percent/keyword centers.
@@ -558,24 +616,25 @@ Notes:
 - `background-noise` is a small procedural dither/noise pass for rect-backed
   gradient backgrounds. Values around `0.01..0.03` are intended for softening
   gradient banding without looking visibly grainy.
-- Browser `background-image`, `border-style`, `border-left`, and `outline` are
-  not supported.
+- Browser `background-image: url(...)` and side-specific border properties such
+  as `border-left` are not supported. `border-style` / `outline-style` are
+  uniform only; dashed, dotted, double, and per-side styles are not supported.
 - General clipping/overflow is first-slice only. Specific renderers also
   implement clipping where designed, such as `Image`, `DataFrameTable`,
   dropdown menus, menu rows, and panel accent fills.
-- Scrollable `Panel` widgets render inset overlay scrollbars for vertical and
-  horizontal overflow. Scrollbars are kept inside rounded panel corners and
+- Scroll containers render overlay scrollbar indicators for opted-in axes when
+  content overflows. Panel scrollbars are kept inside rounded panel corners and
   centered on the panel surface. When both axes overflow, the indicators leave
   the bottom-right corner clear. Users can drag the thumb or click the track to
   update the scroll offset. PageUp/PageDown/Home/End scroll the nearest
   scrollable ancestor when keyboard focus is inside a scroll container; Shift
   uses the horizontal axis when horizontal overflow exists.
-  `Panel::scrollbar-track` supports `width`, uniform `padding`, background,
-  border, radius, and opacity.
-  `Panel::scrollbar-thumb` supports `width`, background, border, radius, and
-  opacity.
-- `Scatter3D` currently ignores rounded clipping; its 3D viewport remains
-  rectangular.
+  Scrollable layout/container widgets expose `::scrollbar-track` and
+  `::scrollbar-thumb`. The track part supports `width`, uniform `padding`,
+  background, border, radius, and opacity; the thumb part supports `width`,
+  background, border, radius, and opacity.
+- `Scatter3D` clips its 3D viewport and picking region to the computed
+  per-corner border radii.
 - `transform` and the `translate` / `scale` / `rotate` longhands are
   paint-only. They do not affect layout or hit testing.
 - `position: relative` is paint-only in the first slice. It offsets the
@@ -641,15 +700,19 @@ Supported widget-specific CSS:
 
 | Property | Widget | Effect |
 | --- | --- | --- |
+| `text-area-rows` | `TextArea` | Preferred visible row count. Rounded to an integer and clamped to at least 1. |
+| `scatter-point-size` | `Scatter3D` | Uniform screen-space point size in logical pixels. |
 | `table-row-height` | `DataFrameTable` | Row height in logical pixels. |
 | `table-header-height` | `DataFrameTable` | Header height in logical pixels. |
+| `table-column-width` | `DataFrameTable` | Uniform body/header column width in logical pixels. |
+| `table-index-width` | `DataFrameTable` | Row-index gutter width in logical pixels. |
 
 Unsupported widget-specific needs:
 
-- There is no CSS `rows` property for `TextArea`; use constructor `rows` or CSS
-  `height`.
-- There is no table column width CSS yet.
-- There is no scatter colormap CSS property.
+- `TextArea` supports DragonGUI's `text-area-rows` property; CSS `height`
+  still forces an exact rendered size.
+- There is no scatter colormap CSS property; use the `Scatter3D` constructor or
+  `set_colormap()`.
 
 ## Transitions
 
@@ -660,21 +723,23 @@ Supported transition CSS:
 | `transition` | `<property> <duration> <timing?> <delay?>` | Shorthand for one transition item. |
 | `transition-property` | comma-separated supported property names or `none` | Selects paint properties for runtime transition eligibility. |
 | `transition-duration` | `ms` or `s` time | Duration. `0ms` disables transition behavior. |
-| `transition-timing-function` | `linear`, `ease`, `ease-in`, `ease-out`, `ease-in-out`, `cubic-bezier(x1, y1, x2, y2)` | Easing curve. Cubic-bezier x control points must be between `0` and `1`. |
+| `transition-timing-function` | `linear`, `ease`, `ease-in`, `ease-out`, `ease-in-out`, `step-start`, `step-end`, `steps(n, start/end)`, `cubic-bezier(x1, y1, x2, y2)` | Easing curve. Cubic-bezier x control points must be between `0` and `1`; step counts must be positive. |
 | `transition-delay` | `ms` or `s` time | Start delay. |
 
 Current runtime support:
 
-- Runtime transitions apply to whole-widget hover paint changes and
-  whole-widget `:open`, `:selected`, `:expanded`, and `:collapsed` paint
-  changes for widgets with tracked state.
+- Runtime transitions apply to whole-widget hover, `:focus`, and `:active`
+  paint changes and whole-widget `:checked`, `:open`, `:selected`,
+  `:expanded`, and `:collapsed` paint changes for widgets with tracked state.
 - Solid color and numeric visual fields interpolate. Gradient paints and
-  shadows currently switch at the midpoint.
+  shadows currently switch at the midpoint. Outline color, width, and offset
+  interpolate as visual fields.
 - `transform` transitions interpolate translate, scale, and rotation for
-  rect-backed widget surfaces. Text currently follows translate only.
-- `transition-property` is honored for hover, `:open`, `:selected`,
-  `:expanded`, and `:collapsed` transitions. Unlisted visual fields snap to the
-  current state instead of interpolating.
+  rect-backed widget surfaces. Text currently follows translate and uniform
+  scale, but not rotation.
+- `transition-property` is honored for hover, `:focus`, `:active`, `:checked`,
+  `:open`, `:selected`, `:expanded`, and `:collapsed` transitions. Unlisted visual
+  fields snap to the current state instead of interpolating.
 - Layout, text size, and grid/flex transitions are not supported.
 - Active transitions are runtime-only and do not appear as persistent computed
   style.
@@ -686,7 +751,8 @@ Supported transition property names:
 
 ```text
 all, background, background-color, foreground, border-color, border-width,
-border-radius, opacity, color, accent, track-color, thumb-color, box-shadow,
+border-radius, outline, outline-color, outline-width, outline-offset,
+outline-style, opacity, color, accent, track-color, thumb-color, box-shadow,
 transform, translate, scale, rotate
 ```
 
@@ -700,9 +766,9 @@ Supported animation CSS:
 | `animation` | one shorthand animation | Sets name, duration, timing, delay, iteration count, direction, fill mode, and play state. |
 | `animation-name` | keyframe name or `none` | Selects one keyframe animation for the widget. |
 | `animation-duration` | `ms` or `s` time | Duration for one iteration. |
-| `animation-timing-function` | `linear`, `ease`, `ease-in`, `ease-out`, `ease-in-out`, `cubic-bezier(x1, y1, x2, y2)` | Eases progress between keyframes. |
-| `animation-delay` | `ms` or `s` time | Delays animation start. |
-| `animation-iteration-count` | positive number or `infinite` | Repeats the animation. Fractional counts are rounded to the nearest whole iteration in the first slice. |
+| `animation-timing-function` | `linear`, `ease`, `ease-in`, `ease-out`, `ease-in-out`, `step-start`, `step-end`, `steps(n, start/end)`, `cubic-bezier(x1, y1, x2, y2)` | Eases progress between keyframes. |
+| `animation-delay` | positive or negative `ms` / `s` time | Delays animation start. Negative delays start the animation as if it had already been running. |
+| `animation-iteration-count` | positive number, fractional number, or `infinite` | Repeats the animation. Finite fractional counts end at the corresponding partial keyframe when a forward fill mode is active. |
 | `animation-direction` | `normal`, `reverse`, `alternate`, `alternate-reverse` | Controls playback direction. |
 | `animation-fill-mode` | `none`, `forwards`, `backwards`, `both` | Applies first or last keyframe outside the active interval. |
 | `animation-play-state` | `running`, `paused` | Runs or freezes the animation at its first directed frame. |
@@ -710,6 +776,8 @@ Supported animation CSS:
 Current runtime support:
 
 - One animation can run per widget.
+- Comma-separated animation shorthand or longhand lists are accepted by using
+  the first item. Multiple simultaneous animations remain unsupported.
 - Keyframes support visual declarations such as solid colors, opacity,
   borders, shadows, background paints, and transforms.
 - Runtime interpolation matches transition support: solid colors and numeric
@@ -724,22 +792,22 @@ Supported backdrop filter CSS:
 
 | Property | Accepted Values | Effect |
 | --- | --- | --- |
-| `backdrop-filter` | `none` or `blur(<px>)` | Enables the first-slice frosted-surface treatment on supported widget surfaces. |
+| `backdrop-filter` | `none`, `blur(<px>)`, `brightness(number \| percent)`, `saturate(number \| percent)`, or supported whitespace-separated filter lists | Enables the first-slice frosted-surface treatment on supported widget surfaces. |
 
 Current runtime support:
 
 - Supported surfaces are `Panel`, `Modal`, `Tooltip`, and `Toast`.
 - The first slice is clipped to the widget's rounded rectangle.
 - The renderer applies a subtle frosted tint/noise treatment derived from the
-  blur amount.
+  blur amount and brightness/saturation factors.
 - This is not a full browser-compatible sampled framebuffer blur yet. True
   backdrop sampling still requires an offscreen scene texture and blur pass.
-- `brightness()`, `saturate()`, multiple filters, and filter interpolation are
-  not supported.
+- Filter interpolation is not supported.
 
 ## Color Values
 
-Supported color syntax:
+Supported color syntax for stylesheet declarations, inline style dictionaries,
+and Python `Theme` color fields:
 
 - Theme tokens.
 - Derived theme tokens.
@@ -754,7 +822,15 @@ Supported color syntax:
 - `rgba(...)`
 - `hsl(...)`
 - `hsla(...)`
-- `var(--name)` when the variable resolves to a color, token, or string token.
+- `hwb(...)`
+- `lab(...)`
+- `lch(...)`
+- `oklab(...)`
+- `oklch(...)`
+- `color(srgb ...)`
+- `color(srgb-linear ...)`
+- `var(--name)` in stylesheets when the variable resolves to a color, token,
+  or string token. Python `Theme` fields do not support `var(...)`.
 
 Theme tokens:
 
@@ -781,10 +857,13 @@ Derived tokens:
 
 Unsupported color syntax:
 
-- `oklch(...)`
-- `lab(...)`
-- `color(...)`
+- `color(...)` spaces other than `srgb` and `srgb-linear`, including
+  `display-p3`, `a98-rgb`, `prophoto-rgb`, `rec2020`, and `xyz`.
+- Other CSS Color 4 function variants outside the listed supported subset.
 - Full browser named color inventory beyond the common names listed above.
+- Wide-gamut color spaces remain unsupported in declarations; supported color
+  functions are converted or clipped into DragonGUI's current sRGB renderer
+  path.
 
 Identifier-like color values are treated as DragonGUI theme tokens. An unknown
 token logs a warning to stderr at render time and falls back to the theme
@@ -844,8 +923,14 @@ Supported parts:
 
 | Widget | Parts |
 | --- | --- |
+| `HLayout` | `scrollbar-track`, `scrollbar-thumb` |
+| `VLayout` | `scrollbar-track`, `scrollbar-thumb` |
+| `Pages` | `scrollbar-track`, `scrollbar-thumb` |
+| `Page` | `scrollbar-track`, `scrollbar-thumb` |
+| `Sidebar` | `scrollbar-track`, `scrollbar-thumb` |
 | `Panel` | `accent`, `scrollbar-track`, `scrollbar-thumb` |
-| `Collapsible` | `header`, `indicator`, `body` |
+| `Collapsible` | `header`, `indicator`, `body`, `scrollbar-track`, `scrollbar-thumb` |
+| `Modal` | `scrim`, `scrollbar-track`, `scrollbar-thumb` |
 | `Button` | `badge` |
 | `NumberInput` | `field`, `stepper`, `stepper-up`, `stepper-down`, `stepper-divider`, `divider`, `caret` |
 | `Dropdown` | `field`, `chevron`, `menu`, `item`, `item-selected`, `item-hover` |
@@ -869,7 +954,7 @@ Part property support:
 | `padding` | supported when uniform | ignored with warning |
 | `gap` | parsed; reserved for renderer-specific future use | ignored with warning |
 | `content` | supported for `before` / `after` generated content | supported for `before` / `after` generated content |
-| Widget-specific table properties | ignored | ignored |
+| Widget-specific properties | ignored | ignored |
 
 Examples:
 
@@ -889,6 +974,10 @@ Panel::scrollbar-track {
 Panel::scrollbar-thumb {
     background: accent;
     border-radius: 999px;
+}
+
+HLayout::scrollbar-thumb {
+    background: success;
 }
 
 NumberInput::stepper {
@@ -1060,21 +1149,23 @@ effects include:
 - `Panel::accent` is drawn as a left-side fill slice clipped inside the panel.
 - `box-shadow` emits paint-only soft shadows. Outset shadows paint before the
   widget surface; inset shadows paint above the surface and below child
-  widgets. It does not affect layout or hit testing.
+  widgets. Outset shadows are clipped against inherited scroll/overflow paint
+  viewports. It does not affect layout or hit testing.
 - `DataFrameTable` with `border-radius` clips header, rows, selection, grid
   lines, and border to the table shape.
 - `Image` with `border-radius` clips the texture to the image content box inside
-  the border.
+  the border. Image textures also follow the image widget's paint transform.
 - Dropdown popup and menu item fills are clipped to rounded popup bounds.
-- `:open`, `:expanded`, `:collapsed`, and `:selected` are resolved from
-  runtime widget state and can style both whole widgets and widget parts.
-- Whole-widget `:hover`, `:open`, `:selected`, `:expanded`, and `:collapsed`
-  visual changes can transition when the widget has a non-zero CSS transition
-  duration.
-- `transform` and the `translate` / `scale` / `rotate` longhands apply to
-  primitive rect surfaces around the widget's own center. Text follows
-  translate, but not scale or rotate yet. Child widgets and image textures are
-  not transformed in the first slice.
+- `:checked`, `:open`, `:expanded`, `:collapsed`, and `:selected` are resolved
+  from runtime widget state and can style both whole widgets and widget parts.
+- Whole-widget `:hover`, `:focus`, `:active`, `:checked`, `:open`,
+  `:selected`, `:expanded`, and `:collapsed` visual changes can transition when the widget
+  has a non-zero CSS transition duration. Outline color, width, and offset
+  follow this transition path.
+- `transform` and the `translate` / `scale` / `rotate` longhands apply to the
+  widget render subtree around the widget's own center. Descendant primitive
+  rects, scrollbars, and `Image` textures follow the transformed subtree. Text
+  follows translate and uniform scale, but not rotate yet.
 - `position: relative` reuses the paint offset path for widget surfaces and
   text. It is intended for small visual nudges and badges, not full overlay
   layout.
@@ -1089,10 +1180,10 @@ effects include:
 - `z-index` is local to sibling widgets. It is useful for overlapping relative
   badges or small decorative elements, but it is not a full browser stacking
   context implementation.
-- `linear-gradient(...)`, `radial-gradient(...)`, layered backgrounds, and
-  subtle `background-noise` render on normal rect-backed widget surfaces and
-  respect rounded rect clipping. The renderer supports up to four stop colors
-  per rect instance.
+- `linear-gradient(...)`, `radial-gradient(...)`, layered backgrounds,
+  gradient `background-image`, and subtle `background-noise` render on normal
+  rect-backed widget surfaces and respect rounded rect clipping. The renderer
+  supports up to four stop colors per rect instance.
 - Slider uses `track-color`, `thumb-color`, and `Slider::track`,
   `Slider::fill`, `Slider::thumb`.
 - ProgressBar uses `ProgressBar::track`, `ProgressBar::fill`, and
@@ -1105,10 +1196,8 @@ effects include:
 
 Known renderer gaps:
 
-- Visible scrollbar indicators and scrollbar CSS parts are currently limited to
-  `Panel` scroll containers.
-- No rounded clipping for `Scatter3D`.
-- No modal scrim CSS part.
+- Scrollbar CSS parts are currently limited to scrollable layout/container
+  widgets.
 - No CSS-controlled toast position/duration.
 
 ## Debugging And Audit Hooks
@@ -1155,7 +1244,6 @@ Warnings are also generated for:
 - Unsupported selector forms.
 - Unsupported length forms, including percentages and `auto` on properties
   that do not support them.
-- Non-uniform `margin`.
 - Unsupported widget parts.
 - Stateful part layout declarations.
 - Unsupported inline parts that reach the native validator.
@@ -1166,15 +1254,17 @@ Selector limitations:
 
 - No ancestor pseudo-states in selector chains.
 - No browser pseudo-elements.
-- `:nth-child(... of <selector>)` filters reject widget parts, target
-  pseudo-states, target structural pseudos, `:root`, and otherwise unsupported
+- `:nth-child(... of <selector>)` and `:nth-last-child(... of <selector>)`
+  filters reject widget parts, dynamic target pseudo-states such as `:hover`,
+  `:active`, `:focus`, and `:selected`, `:root`, and otherwise unsupported
   selector forms inside the filter.
 
 Property limitations:
 
 - CSS Grid is first-slice only: named grid areas are supported for rectangular
-  regions and nested finite `repeat(n, ...)` track lists are supported, but
-  subgrid, nested auto-repeat, and dense auto-placement remain unsupported.
+  regions, nested finite `repeat(n, ...)` track lists are supported, and
+  `grid-auto-flow` supports row/column dense auto-placement, but subgrid and
+  nested auto-repeat remain unsupported.
   `minmax()` supports px, percent, and `auto` minimums plus px, percent, `fr`,
   and `auto` maximums. `fit-content()` supports px or percent arguments.
   `repeat(auto-fit, ...)` and `repeat(auto-fill, ...)` are supported for
@@ -1182,18 +1272,19 @@ Property limitations:
 - Mixed-unit `calc()` requires a definite parent axis and may not resolve in
   every flex/auto sizing case.
 - Percent and compatible `calc()` spacing are first-slice only for padding,
-  uniform margin, and gap properties. `auto` spacing is limited to uniform
-  margin.
-- No general transitions beyond first-slice whole-widget hover, `:open`,
-  `:selected`, `:expanded`, and `:collapsed` paint/transform transitions.
+  margin, and gap properties. `auto` spacing is supported for margin.
+- No general transitions beyond first-slice whole-widget hover, `:focus`,
+  `:active`, `:checked`, `:open`, `:selected`, `:expanded`, and `:collapsed` paint/transform
+  transitions.
 - Animations are limited to the first-slice visual `@keyframes` support
   described above.
 - Backdrop filters are limited to the first-slice frosted-surface treatment
   described above.
 - Generated content is text-only and does not affect layout.
 - No image backgrounds.
-- Overflow is first-slice only: visible scrollbar indicators and scrollbar part
-  styling are `Panel`-only, and overlay clipping remains renderer-managed.
+- Overflow is first-slice only: scrollbar part styling is available on
+  scrollable layout/container widgets, and overlay clipping remains
+  renderer-managed.
 - Positioning is first-slice only: no global stacking contexts or transformed
   hit testing yet. `absolute` and `fixed` currently expect explicit or intrinsic
   widget size.
@@ -1201,12 +1292,13 @@ Property limitations:
   `aspect-ratio`, `resolution`, `color-gamut`, `orientation`, `pointer`,
   `any-pointer`, `hover`, `any-hover`, `update`, `scripting`, `forced-colors`,
   `prefers-contrast`, `inverted-colors`, `dynamic-range`,
-  `video-dynamic-range`, `prefers-color-scheme`, and `prefers-reduced-motion`
-  conditions are supported, but container queries and other media features are
-  not.
+  `video-dynamic-range`, `prefers-color-scheme`, `prefers-reduced-motion`,
+  `prefers-reduced-transparency`, and `prefers-reduced-data` conditions are
+  supported, but container queries and other media features are not.
 - No per-side border shorthand.
-- No CSS table column width controls.
-- No scatter-specific CSS properties.
+- No per-column table width controls; `DataFrameTable` supports uniform
+  `table-column-width` and `table-index-width`.
+- Scatter-specific CSS is limited to uniform `scatter-point-size`.
 
 Variable limitations:
 
@@ -1218,8 +1310,6 @@ Variable limitations:
 
 Renderer limitations:
 
-- `Scatter3D` viewport is rectangular.
-- Modal scrim is not CSS-addressable.
 - Toast stacking geometry is API/runtime controlled, not CSS controlled.
 - Parts cannot change layout by pseudo-state.
 

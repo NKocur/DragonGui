@@ -8,8 +8,8 @@ use crate::css_style::{
 use crate::document::{WidgetKind, WidgetNode};
 use crate::events::{NavigationItem, SortDirection, WidgetState};
 use crate::layout::{
-    panel_title_gap_lp, panel_title_line_height_lp, panel_title_top_padding_lp,
-    scroll_container_max_x, scroll_container_max_y, LayoutResult, Rect,
+    is_scroll_container_node, panel_title_gap_lp, panel_title_line_height_lp,
+    panel_title_top_padding_lp, scroll_container_max_x, scroll_container_max_y, LayoutResult, Rect,
 };
 use crate::overlays::{menu_popup_rect, rich_tooltip_target, tooltip_target};
 use crate::style::{
@@ -447,12 +447,41 @@ fn inst_rounded_triangle_clipped(
     }
 }
 
-fn inst_shadow(rect: [f32; 4], color: [f32; 4], radii: [f32; 4], blur: f32) -> RectInstance {
+fn default_local_clip(rect: [f32; 4]) -> [f32; 4] {
+    [-1.0, -1.0, rect[2] + 1.0, rect[3] + 1.0]
+}
+
+fn local_clip_for_rect(rect: [f32; 4], clip: Option<Rect>) -> Option<[f32; 4]> {
+    let Some(clip) = clip else {
+        return Some(default_local_clip(rect));
+    };
+    let visible = Rect {
+        x: rect[0],
+        y: rect[1],
+        w: rect[2],
+        h: rect[3],
+    }
+    .intersect(clip)?;
+    Some([
+        visible.x - rect[0],
+        visible.y - rect[1],
+        visible.x + visible.w - rect[0],
+        visible.y + visible.h - rect[1],
+    ])
+}
+
+fn inst_shadow_clipped(
+    rect: [f32; 4],
+    color: [f32; 4],
+    radii: [f32; 4],
+    blur: f32,
+    clip: [f32; 4],
+) -> RectInstance {
     RectInstance {
         rect,
         color,
         radii,
-        clip: [-1.0, -1.0, rect[2] + 1.0, rect[3] + 1.0],
+        clip,
         params: [blur.max(1.0), blur.max(0.0), 1.0, 0.0],
         color2: color,
         paint: [0.0, 0.0, 0.0, 0.0],
@@ -557,24 +586,71 @@ fn push_masked_rect(
     out.push(inst_radii_clipped(mask_rect, color, radii, clip));
 }
 
+fn push_masked_rect_clipped(
+    out: &mut Vec<RectInstance>,
+    mask_rect: [f32; 4],
+    color: [f32; 4],
+    radii: [f32; 4],
+    rect: [f32; 4],
+    clip: Option<Rect>,
+) {
+    let rect = if let Some(clip) = clip {
+        let Some(visible) = (Rect {
+            x: rect[0],
+            y: rect[1],
+            w: rect[2],
+            h: rect[3],
+        })
+        .intersect(clip) else {
+            return;
+        };
+        [visible.x, visible.y, visible.w, visible.h]
+    } else {
+        rect
+    };
+    push_masked_rect(out, mask_rect, color, radii, rect);
+}
+
 fn apply_transform_to_instances(
     instances: &mut [RectInstance],
     transform: Option<TransformStyle>,
     sf: f32,
+    origin: [f32; 2],
 ) {
     let Some(transform) = transform.filter(|transform| !transform.is_identity()) else {
         return;
     };
-    let encoded = [
-        transform.translate_x * sf,
-        transform.translate_y * sf,
-        transform.scale_x,
-        transform.scale_y,
-    ];
+    let parent_translate = [transform.translate_x * sf, transform.translate_y * sf];
+    let parent_scale = [transform.scale_x, transform.scale_y];
     let rotation = transform.rotate_deg.to_radians();
+    let cos_r = rotation.cos();
+    let sin_r = rotation.sin();
     for instance in instances {
-        instance.transform = encoded;
-        instance.transform2[0] = rotation;
+        let center = [
+            instance.rect[0] + instance.rect[2] * 0.5,
+            instance.rect[1] + instance.rect[3] * 0.5,
+        ];
+        let current_center = [
+            center[0] + instance.transform[0],
+            center[1] + instance.transform[1],
+        ];
+        let scaled = [
+            (current_center[0] - origin[0]) * parent_scale[0],
+            (current_center[1] - origin[1]) * parent_scale[1],
+        ];
+        let rotated = [
+            scaled[0] * cos_r - scaled[1] * sin_r,
+            scaled[0] * sin_r + scaled[1] * cos_r,
+        ];
+        let transformed_center = [
+            origin[0] + rotated[0] + parent_translate[0],
+            origin[1] + rotated[1] + parent_translate[1],
+        ];
+        instance.transform[0] = transformed_center[0] - center[0];
+        instance.transform[1] = transformed_center[1] - center[1];
+        instance.transform[2] *= parent_scale[0];
+        instance.transform[3] *= parent_scale[1];
+        instance.transform2[0] += rotation;
     }
 }
 
@@ -612,11 +688,26 @@ fn emit_backdrop_filter_tint(
     radii: [f32; 4],
     filter: BackdropFilterStyle,
 ) {
-    if filter.blur <= 0.0 {
+    if filter.is_identity() {
         return;
     }
-    let alpha = (filter.blur / 180.0).clamp(0.025, 0.095);
-    out.push(inst_radii(rect, [1.0, 1.0, 1.0, alpha], radii));
+    let blur_alpha = if filter.blur > 0.0 {
+        (filter.blur / 180.0).clamp(0.025, 0.095)
+    } else {
+        0.0
+    };
+    let brightness_delta = (filter.brightness - 1.0).clamp(-1.0, 1.0);
+    let saturate_delta = (filter.saturate - 1.0).abs().min(2.0);
+    let alpha =
+        (blur_alpha + brightness_delta.abs() * 0.10 + saturate_delta * 0.025).clamp(0.015, 0.16);
+    let color = if brightness_delta < -0.001 {
+        [0.0, 0.0, 0.0, alpha]
+    } else if filter.saturate > 1.0 {
+        [0.92, 0.97, 1.0, alpha]
+    } else {
+        [1.0, 1.0, 1.0, alpha]
+    };
+    out.push(inst_radii(rect, color, radii));
 }
 
 fn paint_transform_for_node(
@@ -666,7 +757,7 @@ fn darken(color: [f32; 4], t: f32) -> [f32; 4] {
     mix(color, [0.0, 0.0, 0.0, color[3]], t)
 }
 
-fn visual_for<'a>(
+pub(crate) fn visual_for<'a>(
     node: &'a WidgetNode,
     state: &WidgetState,
     theme: &Theme,
@@ -674,7 +765,26 @@ fn visual_for<'a>(
     let base = &node.style.visual;
     let mut visual = base.clone();
     let mut changed = false;
-    merge_checked_visual_state(&mut visual, node, state, &mut changed);
+    if let Some(t) = state.checked_t.get(&node.id).copied() {
+        let base_state = visual.clone();
+        let checked = visual.merged(&node.style.checked);
+        let current_state = if state.checked.get(&node.id).copied().unwrap_or(false) {
+            &checked
+        } else {
+            &base_state
+        };
+        visual = interpolate_visual_style(
+            &base_state,
+            &checked,
+            current_state,
+            t,
+            theme,
+            node.style.transition.properties.as_deref(),
+        );
+        changed = true;
+    } else {
+        merge_checked_visual_state(&mut visual, node, state, &mut changed);
+    }
     if let Some(t) = state.open_t.get(&node.id).copied() {
         let base_state = visual.clone();
         let open = visual.merged(&node.style.open);
@@ -761,8 +871,42 @@ fn visual_for<'a>(
         visual = visual.merged(&node.style.hover);
         changed = true;
     }
-    if state.pressed.as_deref() == Some(node.id.as_str()) {
+    if let Some(t) = state.active_t.get(&node.id).copied() {
+        let base_state = visual.clone();
+        let active = visual.merged(&node.style.active);
+        let current_state = if state.pressed.as_deref() == Some(node.id.as_str()) {
+            &active
+        } else {
+            &base_state
+        };
+        visual = interpolate_visual_style(
+            &base_state,
+            &active,
+            current_state,
+            t,
+            theme,
+            node.style.transition.properties.as_deref(),
+        );
+        changed = true;
+    } else if state.pressed.as_deref() == Some(node.id.as_str()) {
         visual = visual.merged(&node.style.active);
+        changed = true;
+    } else if let Some(t) = state.focus_t.get(&node.id).copied() {
+        let base_state = visual.clone();
+        let focus = visual.merged(&node.style.focus);
+        let current_state = if state.focused.as_deref() == Some(node.id.as_str()) {
+            &focus
+        } else {
+            &base_state
+        };
+        visual = interpolate_visual_style(
+            &base_state,
+            &focus,
+            current_state,
+            t,
+            theme,
+            node.style.transition.properties.as_deref(),
+        );
         changed = true;
     } else if state.focused.as_deref() == Some(node.id.as_str()) {
         visual = visual.merged(&node.style.focus);
@@ -821,6 +965,39 @@ pub(crate) fn interpolate_visual_style(
             interpolate_option_f32(from.border_width, to.border_width, t)
         } else {
             instant.border_width
+        },
+        outline_color: if transition_allows_any(
+            properties,
+            &[
+                TransitionProperty::Outline,
+                TransitionProperty::OutlineColor,
+            ],
+        ) {
+            interpolate_color_ref(&from.outline_color, &to.outline_color, t, theme)
+        } else {
+            instant.outline_color.clone()
+        },
+        outline_width: if transition_allows_any(
+            properties,
+            &[
+                TransitionProperty::Outline,
+                TransitionProperty::OutlineWidth,
+            ],
+        ) {
+            interpolate_option_f32(from.outline_width, to.outline_width, t)
+        } else {
+            instant.outline_width
+        },
+        outline_offset: if transition_allows_any(
+            properties,
+            &[
+                TransitionProperty::Outline,
+                TransitionProperty::OutlineOffset,
+            ],
+        ) {
+            interpolate_option_f32(from.outline_offset, to.outline_offset, t)
+        } else {
+            instant.outline_offset
         },
         border_radius: if transition_allows(properties, TransitionProperty::BorderRadius) {
             interpolate_option_f32(from.border_radius, to.border_radius, t)
@@ -1510,6 +1687,9 @@ fn rect_array(rect: Rect) -> [f32; 4] {
 }
 
 fn panel_scrollbar_title_inset(node: &WidgetNode, theme: &Theme, sf: f32) -> f32 {
+    if node.kind != WidgetKind::Panel {
+        return 0.0;
+    }
     if !node
         .props
         .text
@@ -1922,6 +2102,7 @@ fn emit_box_shadows(
     visual: &VisualStyle,
     theme: &Theme,
     sf: f32,
+    clip: Option<Rect>,
 ) {
     let Some(shadows) = &visual.box_shadows else {
         return;
@@ -1962,11 +2143,15 @@ fn emit_box_shadows(
         if cover_rect[2] <= 0.0 || cover_rect[3] <= 0.0 {
             continue;
         }
-        out.push(inst_shadow(
+        let Some(local_clip) = local_clip_for_rect(cover_rect, clip) else {
+            continue;
+        };
+        out.push(inst_shadow_clipped(
             cover_rect,
             color,
             outset_radii(radii, spread),
             blur,
+            local_clip,
         ));
     }
 }
@@ -2010,6 +2195,84 @@ fn widget_supports_box_shadow(kind: WidgetKind) -> bool {
     )
 }
 
+fn widget_supports_outline(kind: WidgetKind) -> bool {
+    !matches!(
+        kind,
+        WidgetKind::Window | WidgetKind::Tooltip | WidgetKind::Spacer
+    )
+}
+
+fn emit_outline(
+    out: &mut Vec<RectInstance>,
+    rect: [f32; 4],
+    radii: [f32; 4],
+    visual: &VisualStyle,
+    theme: &Theme,
+    sf: f32,
+    clip: Option<Rect>,
+) {
+    let has_outline = visual.outline_width.is_some() || visual.outline_color.is_some();
+    if !has_outline {
+        return;
+    }
+    let width = visual.outline_width.unwrap_or(1.0).max(0.0) * sf;
+    if width <= 0.0 {
+        return;
+    }
+    let mut color = resolve_color(&visual.outline_color, theme).unwrap_or(theme.focus);
+    color = apply_opacity(color, visual.opacity);
+    if color[3] <= 0.001 {
+        return;
+    }
+    let offset = visual.outline_offset.unwrap_or(0.0).max(0.0) * sf;
+    let pad = offset + width;
+    let outer = [
+        rect[0] - pad,
+        rect[1] - pad,
+        rect[2] + pad * 2.0,
+        rect[3] + pad * 2.0,
+    ];
+    let inner = [
+        rect[0] - offset,
+        rect[1] - offset,
+        rect[2] + offset * 2.0,
+        rect[3] + offset * 2.0,
+    ];
+    let outer_radii = outset_radii(radii, pad);
+    push_masked_rect_clipped(
+        out,
+        outer,
+        color,
+        outer_radii,
+        [outer[0], outer[1], outer[2], width],
+        clip,
+    );
+    push_masked_rect_clipped(
+        out,
+        outer,
+        color,
+        outer_radii,
+        [outer[0], inner[1] + inner[3], outer[2], width],
+        clip,
+    );
+    push_masked_rect_clipped(
+        out,
+        outer,
+        color,
+        outer_radii,
+        [outer[0], inner[1], width, inner[3]],
+        clip,
+    );
+    push_masked_rect_clipped(
+        out,
+        outer,
+        color,
+        outer_radii,
+        [inner[0] + inner[2], inner[1], width, inner[3]],
+        clip,
+    );
+}
+
 fn emit_focus_ring_radii(
     node: &WidgetNode,
     theme: &Theme,
@@ -2049,8 +2312,12 @@ fn emit_rects(
     if node.kind == WidgetKind::Modal && !node.props.open.unwrap_or(false) {
         return;
     }
+    let subtree_primitive_start = out.len();
+    let mut subtree_transform = None;
     if let Some(r) = layout.visible_rect(&node.id) {
         let own_primitive_start = out.len();
+        let full_rect = layout.rects.get(&node.id).copied().unwrap_or(r);
+        let paint_clip = layout.paint_clip_rect(&node.id);
         let [x, y, w, h] = [r.x, r.y, r.w, r.h];
         let visual = visual_for(node, state, theme);
         let border_w = visual.border_width.unwrap_or(BORDER_WIDTH_LP).max(0.0) * sf;
@@ -2063,8 +2330,25 @@ fn emit_rects(
             resolve_color(&visual.border_color, theme).map(|c| apply_opacity(c, visual.opacity));
         let styled_accent =
             resolve_color(&visual.accent, theme).map(|c| apply_opacity(c, visual.opacity));
+        subtree_transform = paint_transform_for_node(node, visual.transform).map(|transform| {
+            (
+                transform,
+                [
+                    full_rect.x + full_rect.w * 0.5,
+                    full_rect.y + full_rect.h * 0.5,
+                ],
+            )
+        });
         if widget_supports_box_shadow(node.kind) {
-            emit_box_shadows(out, [x, y, w, h], radii, &visual, theme, sf);
+            emit_box_shadows(
+                out,
+                [full_rect.x, full_rect.y, full_rect.w, full_rect.h],
+                radii,
+                &visual,
+                theme,
+                sf,
+                paint_clip,
+            );
         }
         match node.kind {
             WidgetKind::Panel => {
@@ -2218,13 +2502,16 @@ fn emit_rects(
 
             WidgetKind::Modal => {
                 let root = root_rect(layout).unwrap_or(Rect { x, y, w, h });
-                out.push(inst(
+                let scrim_visual = part_visual_for(node, state, "scrim");
+                let scrim_fallback = apply_opacity([0.0, 0.0, 0.0, 0.52], scrim_visual.opacity);
+                emit_paint_rect_radii(
+                    out,
                     [root.x, root.y, root.w, root.h],
-                    [0.0, 0.0, 0.0, 0.52],
-                    0.0,
-                ));
+                    resolve_background_paint(&scrim_visual, theme, scrim_fallback),
+                    [0.0; 4],
+                );
                 if visual.box_shadows.is_some() {
-                    emit_box_shadows(out, [x, y, w, h], radii, &visual, theme, sf);
+                    emit_box_shadows(out, [x, y, w, h], radii, &visual, theme, sf, paint_clip);
                 } else {
                     let shadow = 6.0 * sf;
                     out.push(inst_radii(
@@ -3259,11 +3546,14 @@ fn emit_rects(
             }
 
             WidgetKind::Scatter3D => {
-                let border = styled_border.unwrap_or(theme.border);
-                out.push(inst([x, y, w, border_w], border, 0.0));
-                out.push(inst([x, y + h - border_w, w, border_w], border, 0.0));
-                out.push(inst([x, y, border_w, h], border, 0.0));
-                out.push(inst([x + w - border_w, y, border_w, h], border, 0.0));
+                emit_bordered_rect_radii(
+                    out,
+                    [x, y, w, h],
+                    styled_border.unwrap_or(theme.border),
+                    styled_bg.unwrap_or([0.0, 0.0, 0.0, 0.0]),
+                    radii,
+                    border_w,
+                );
             }
 
             WidgetKind::DataFrameTable => {
@@ -3513,11 +3803,17 @@ fn emit_rects(
         if widget_supports_box_shadow(node.kind) || node.kind == WidgetKind::Modal {
             emit_inset_box_shadows(out, [x, y, w, h], radii, &visual, theme, sf);
         }
-        apply_transform_to_instances(
-            &mut out[own_primitive_start..],
-            paint_transform_for_node(node, visual.transform),
-            sf,
-        );
+        if widget_supports_outline(node.kind) {
+            emit_outline(
+                out,
+                [full_rect.x, full_rect.y, full_rect.w, full_rect.h],
+                radii,
+                &visual,
+                theme,
+                sf,
+                paint_clip,
+            );
+        }
         apply_background_noise_to_instances(
             &mut out[own_primitive_start..],
             visual
@@ -3529,10 +3825,18 @@ fn emit_rects(
     for (_, child) in stacking_children(node) {
         emit_rects(child, layout, theme, sf, state, caret_positions, out);
     }
-    if node.kind == WidgetKind::Panel {
+    if is_scroll_container_node(node) {
         if let Some(r) = layout.visible_rect(&node.id) {
             emit_panel_scrollbar(node, layout, state, theme, sf, [r.x, r.y, r.w, r.h], out);
         }
+    }
+    if let Some((transform, origin)) = subtree_transform {
+        apply_transform_to_instances(
+            &mut out[subtree_primitive_start..],
+            Some(transform),
+            sf,
+            origin,
+        );
     }
 }
 
@@ -3748,7 +4052,7 @@ fn emit_dropdown_overlays(
             let border_w = menu_visual.border_width.unwrap_or(BORDER_WIDTH_LP).max(0.0) * sf;
             let menu_rect = [r.x, r.y + r.h, r.w, menu_h];
             if menu_visual.box_shadows.is_some() {
-                emit_box_shadows(out, menu_rect, menu_radii, &menu_visual, theme, sf);
+                emit_box_shadows(out, menu_rect, menu_radii, &menu_visual, theme, sf, None);
             } else {
                 let shadow_offset = 3.0 * sf;
                 out.push(inst_radii(
@@ -3876,6 +4180,7 @@ fn emit_tooltip_surface(
             &visual,
             theme,
             sf,
+            None,
         );
     } else {
         let shadow = 4.0 * sf;
@@ -3922,6 +4227,7 @@ fn emit_static_tooltip_surface(
             &shadow_visual,
             theme,
             sf,
+            None,
         );
     } else {
         let shadow = 4.0 * sf;
@@ -4010,6 +4316,7 @@ fn emit_toast_overlays(
                 &shadow_visual,
                 theme,
                 sf,
+                None,
             );
         } else {
             let shadow = 4.0 * sf;
@@ -4039,8 +4346,8 @@ mod tests {
     use super::*;
     use crate::document::NodeProps;
     use crate::style::{
-        BackgroundPaint, BoxShadow, ColorRef, GradientStop, LinearGradient, PartLayoutStyle,
-        PartStyle, RadialGradient, TextStyle,
+        BackdropFilterStyle, BackgroundPaint, BoxShadow, ColorRef, GradientStop, LinearGradient,
+        OverflowStyle, PartLayoutStyle, PartStyle, RadialGradient, TextStyle, VisualStyle,
     };
 
     fn node(id: &str, kind: WidgetKind) -> WidgetNode {
@@ -4104,6 +4411,129 @@ mod tests {
         assert_eq!(shadow.rect, [5.0, 7.0, 114.0, 44.0]);
         assert_eq!(shadow.color, [0.0, 0.0, 0.0, 0.25]);
         assert_eq!(shadow.params, [6.0, 6.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn backdrop_filter_brightness_and_saturation_affect_tint_instance() {
+        let mut out = Vec::new();
+        emit_backdrop_filter_tint(
+            &mut out,
+            [10.0, 12.0, 100.0, 40.0],
+            [8.0; 4],
+            BackdropFilterStyle {
+                blur: 12.0,
+                brightness: 1.2,
+                saturate: 1.3,
+            },
+        );
+
+        let tint = out.first().expect("backdrop tint instance");
+        assert_eq!(tint.rect, [10.0, 12.0, 100.0, 40.0]);
+        assert_eq!(tint.radii, [8.0; 4]);
+        assert_eq!(tint.color[0], 0.92);
+        assert_eq!(tint.color[1], 0.97);
+        assert_eq!(tint.color[2], 1.0);
+        assert!((tint.color[3] - 0.09416667).abs() < 0.0001);
+    }
+
+    #[test]
+    fn solid_outline_emits_paint_only_ring_segments() {
+        let mut button = node("run", WidgetKind::Button);
+        button.style.visual.outline_color = Some(ColorRef::Rgba([0.10, 0.20, 0.30, 0.40]));
+        button.style.visual.outline_width = Some(2.0);
+        button.style.visual.outline_offset = Some(3.0);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "run".to_string(),
+            Rect {
+                x: 10.0,
+                y: 10.0,
+                w: 100.0,
+                h: 30.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &button,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let outline: Vec<_> = out
+            .iter()
+            .filter(|inst| inst.color == [0.10, 0.20, 0.30, 0.40])
+            .collect();
+        assert_eq!(outline.len(), 4);
+        assert!(outline
+            .iter()
+            .all(|inst| inst.rect == [5.0, 5.0, 110.0, 40.0]));
+        assert_eq!(outline[0].clip, [0.0, 0.0, 110.0, 2.0]);
+        assert_eq!(outline[1].clip, [0.0, 38.0, 110.0, 40.0]);
+        assert_eq!(outline[2].clip, [0.0, 2.0, 2.0, 38.0]);
+        assert_eq!(outline[3].clip, [108.0, 2.0, 110.0, 38.0]);
+    }
+
+    #[test]
+    fn clipped_box_shadow_keeps_full_shape_and_uses_inherited_paint_clip() {
+        let mut button = node("run", WidgetKind::Button);
+        button.style.visual.box_shadows = Some(vec![BoxShadow {
+            offset_x: 2.0,
+            offset_y: 4.0,
+            blur: 6.0,
+            spread: 1.0,
+            color: ColorRef::Rgba([0.0, 0.0, 0.0, 0.25]),
+            inset: false,
+        }]);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "run".to_string(),
+            Rect {
+                x: 10.0,
+                y: 90.0,
+                w: 100.0,
+                h: 40.0,
+            },
+        );
+        layout.clips.insert(
+            "run".to_string(),
+            Rect {
+                x: 10.0,
+                y: 90.0,
+                w: 100.0,
+                h: 20.0,
+            },
+        );
+        layout.paint_clips.insert(
+            "run".to_string(),
+            Rect {
+                x: 0.0,
+                y: 50.0,
+                w: 200.0,
+                h: 60.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &button,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let shadow = out.first().expect("shadow instance");
+        assert_eq!(shadow.rect, [5.0, 87.0, 114.0, 54.0]);
+        assert_eq!(shadow.clip, [0.0, 0.0, 114.0, 23.0]);
     }
 
     #[test]
@@ -4743,6 +5173,132 @@ mod tests {
     }
 
     #[test]
+    fn modal_scrim_uses_scrim_part_style() {
+        let mut modal = node("modal", WidgetKind::Modal);
+        modal.props.open = Some(true);
+        modal.style.parts.parts.insert(
+            "scrim".to_string(),
+            PartStyle {
+                visual: VisualStyle {
+                    background: Some(ColorRef::Rgba([0.10, 0.20, 0.30, 0.40])),
+                    opacity: Some(0.5),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "window".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 300.0,
+                h: 200.0,
+            },
+        );
+        layout.rects.insert(
+            "modal".to_string(),
+            Rect {
+                x: 50.0,
+                y: 40.0,
+                w: 120.0,
+                h: 80.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &modal,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        assert!(
+            has_rect(&out, [0.10, 0.20, 0.30, 0.20], [0.0, 0.0, 300.0, 200.0]),
+            "modal scrim should use styled scrim background and opacity"
+        );
+    }
+
+    #[test]
+    fn explicit_layout_scroll_container_emits_scrollbar_indicator() {
+        let mut row = node("row", WidgetKind::HLayout);
+        row.style.layout.overflow_x = Some(OverflowStyle::Auto);
+        row.style.layout.overflow_y = Some(OverflowStyle::Hidden);
+        row.style.parts.parts.insert(
+            "scrollbar-track".to_string(),
+            PartStyle {
+                layout: PartLayoutStyle {
+                    width: Some(5.0),
+                    padding: Some(10.0),
+                    ..Default::default()
+                },
+                visual: VisualStyle {
+                    background: Some(ColorRef::Rgba([0.12, 0.22, 0.32, 0.42])),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        row.style.parts.parts.insert(
+            "scrollbar-thumb".to_string(),
+            PartStyle {
+                layout: PartLayoutStyle {
+                    width: Some(7.0),
+                    ..Default::default()
+                },
+                visual: VisualStyle {
+                    background: Some(ColorRef::Rgba([0.52, 0.62, 0.72, 0.82])),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "row".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 140.0,
+                h: 52.0,
+            },
+        );
+        layout.scroll_max_x.insert("row".to_string(), 180.0);
+        layout.scroll_x.insert("row".to_string(), 40.0);
+        let mut out = Vec::new();
+
+        emit_rects(
+            &row,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let track = out
+            .iter()
+            .find(|inst| inst.color == [0.12, 0.22, 0.32, 0.42])
+            .expect("styled HLayout scrollbar track");
+        let thumb = out
+            .iter()
+            .find(|inst| inst.color == [0.52, 0.62, 0.72, 0.82])
+            .expect("styled HLayout scrollbar thumb");
+        assert_eq!(track.rect[3], 5.0);
+        assert_eq!(thumb.rect[3], 7.0);
+        assert!(thumb.rect[0] > track.rect[0]);
+        assert!(thumb.rect[0] + thumb.rect[2] <= track.rect[0] + track.rect[2]);
+    }
+
+    #[test]
     fn radial_gradient_background_emits_gradient_rect_instance() {
         let mut panel = node("panel", WidgetKind::Panel);
         panel.style.visual.background_paint =
@@ -4878,6 +5434,124 @@ mod tests {
     }
 
     #[test]
+    fn checked_transition_progress_interpolates_visual_fields() {
+        let mut checkbox = node("enabled", WidgetKind::Checkbox);
+        checkbox.style.visual.background = Some(ColorRef::Rgba([0.0, 0.0, 0.0, 1.0]));
+        checkbox.style.visual.border_width = Some(1.0);
+        checkbox.style.checked.background = Some(ColorRef::Rgba([0.2, 0.8, 0.4, 1.0]));
+        checkbox.style.checked.border_width = Some(5.0);
+        let mut state = WidgetState::default();
+        state.checked.insert("enabled".to_string(), true);
+        state.checked_t.insert("enabled".to_string(), 0.5);
+
+        let theme = Theme::dark();
+        let visual = visual_for(&checkbox, &state, &theme);
+
+        assert_eq!(
+            visual.background,
+            Some(ColorRef::Rgba([0.1, 0.4, 0.2, 1.0]))
+        );
+        assert_eq!(visual.border_width, Some(3.0));
+    }
+
+    #[test]
+    fn active_transition_progress_interpolates_visual_fields() {
+        let mut button = node("submit", WidgetKind::Button);
+        button.style.visual.background = Some(ColorRef::Rgba([0.0, 0.0, 0.0, 1.0]));
+        button.style.visual.border_width = Some(1.0);
+        button.style.active.background = Some(ColorRef::Rgba([0.8, 0.2, 0.1, 1.0]));
+        button.style.active.border_width = Some(5.0);
+        let mut state = WidgetState {
+            pressed: Some("submit".to_string()),
+            ..Default::default()
+        };
+        state.active_t.insert("submit".to_string(), 0.5);
+
+        let theme = Theme::dark();
+        let visual = visual_for(&button, &state, &theme);
+
+        assert_eq!(
+            visual.background,
+            Some(ColorRef::Rgba([0.4, 0.1, 0.05, 1.0]))
+        );
+        assert_eq!(visual.border_width, Some(3.0));
+    }
+
+    #[test]
+    fn focus_transition_progress_interpolates_visual_fields() {
+        let mut input = node("amount", WidgetKind::TextInput);
+        input.style.visual.background = Some(ColorRef::Rgba([0.0, 0.0, 0.0, 1.0]));
+        input.style.visual.border_width = Some(1.0);
+        input.style.focus.background = Some(ColorRef::Rgba([0.1, 0.4, 0.9, 1.0]));
+        input.style.focus.border_width = Some(3.0);
+        let mut state = WidgetState {
+            focused: Some("amount".to_string()),
+            ..Default::default()
+        };
+        state.focus_t.insert("amount".to_string(), 0.5);
+
+        let theme = Theme::dark();
+        let visual = visual_for(&input, &state, &theme);
+
+        assert_eq!(
+            visual.background,
+            Some(ColorRef::Rgba([0.05, 0.2, 0.45, 1.0]))
+        );
+        assert_eq!(visual.border_width, Some(2.0));
+    }
+
+    #[test]
+    fn outline_transition_properties_interpolate_visual_fields() {
+        let mut badge = node("status", WidgetKind::Badge);
+        badge.style.visual.outline_color = Some(ColorRef::Rgba([0.0, 0.0, 0.0, 1.0]));
+        badge.style.visual.outline_width = Some(1.0);
+        badge.style.visual.outline_offset = Some(2.0);
+        badge.style.hover.outline_color = Some(ColorRef::Rgba([1.0, 0.5, 0.0, 1.0]));
+        badge.style.hover.outline_width = Some(5.0);
+        badge.style.hover.outline_offset = Some(10.0);
+        badge.style.transition.properties = Some(vec![
+            TransitionProperty::OutlineColor,
+            TransitionProperty::OutlineWidth,
+        ]);
+
+        let theme = Theme::dark();
+        let mut state = WidgetState {
+            hovered: Some("status".to_string()),
+            ..Default::default()
+        };
+        state.hover_t.insert("status".to_string(), 0.5);
+        let visual = visual_for(&badge, &state, &theme);
+
+        assert_eq!(
+            visual.outline_color,
+            Some(ColorRef::Rgba([0.5, 0.25, 0.0, 1.0]))
+        );
+        assert_eq!(visual.outline_width, Some(3.0));
+        assert_eq!(visual.outline_offset, Some(10.0));
+    }
+
+    #[test]
+    fn outline_transition_shorthand_interpolates_offset_too() {
+        let mut badge = node("status", WidgetKind::Badge);
+        badge.style.visual.outline_width = Some(1.0);
+        badge.style.visual.outline_offset = Some(2.0);
+        badge.style.hover.outline_width = Some(5.0);
+        badge.style.hover.outline_offset = Some(10.0);
+        badge.style.transition.properties = Some(vec![TransitionProperty::Outline]);
+
+        let theme = Theme::dark();
+        let mut state = WidgetState {
+            hovered: Some("status".to_string()),
+            ..Default::default()
+        };
+        state.hover_t.insert("status".to_string(), 0.5);
+        let visual = visual_for(&badge, &state, &theme);
+
+        assert_eq!(visual.outline_width, Some(3.0));
+        assert_eq!(visual.outline_offset, Some(6.0));
+    }
+
+    #[test]
     fn open_transition_progress_interpolates_visual_fields() {
         let mut dropdown = node("mode", WidgetKind::Dropdown);
         dropdown.style.visual.background = Some(ColorRef::Rgba([0.0, 0.0, 0.0, 1.0]));
@@ -4988,6 +5662,54 @@ mod tests {
         let surface = out.last().expect("button surface primitive");
         assert_eq!(surface.transform, [6.0, -4.0, 1.05, 0.95]);
         assert!((surface.transform2[0] - 5.0_f32.to_radians()).abs() < 0.001);
+    }
+
+    #[test]
+    fn container_transform_propagates_to_child_widget_primitives() {
+        let mut panel = node("panel", WidgetKind::Panel);
+        panel.style.visual.transform = Some(TransformStyle {
+            translate_x: 0.0,
+            translate_y: 0.0,
+            scale_x: 2.0,
+            scale_y: 2.0,
+            rotate_deg: 0.0,
+        });
+        panel.children.push(node("run", WidgetKind::Button));
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 100.0,
+            },
+        );
+        layout.rects.insert(
+            "run".to_string(),
+            Rect {
+                x: 10.0,
+                y: 10.0,
+                w: 20.0,
+                h: 20.0,
+            },
+        );
+
+        let mut out = Vec::new();
+        emit_rects(
+            &panel,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let child_surface = out.last().expect("child button primitive");
+        assert_eq!(child_surface.transform, [-30.0, -30.0, 2.0, 2.0]);
+        assert_eq!(child_surface.transform2[0], 0.0);
     }
 
     #[test]

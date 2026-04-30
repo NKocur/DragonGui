@@ -7,10 +7,10 @@ use crate::document::{WidgetKind, WidgetNode};
 use crate::events::WidgetState;
 use crate::style::{
     badge_width_for_text, collapsible_header_height_for_style, tabs_header_height_for_style,
-    DisplayStyle, FlexDirectionStyle, GridLineStyle, GridPlacementStyle, GridTemplateAreas,
-    GridTrackFitContentSize, GridTrackMaxSize, GridTrackMinSize, GridTrackRepeatKind,
-    GridTrackSize, LayoutLength, LineHeight, OverflowStyle, PositionStyle, BADGE_GAP_LP,
-    CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP,
+    DisplayStyle, FlexDirectionStyle, GridAutoFlowStyle, GridLineStyle, GridPlacementStyle,
+    GridTemplateAreas, GridTrackFitContentSize, GridTrackMaxSize, GridTrackMinSize,
+    GridTrackRepeatKind, GridTrackSize, LayoutLength, LineHeight, OverflowStyle, PositionStyle,
+    BADGE_GAP_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP,
 };
 use crate::theme::Theme;
 
@@ -52,6 +52,7 @@ impl Rect {
 pub struct LayoutResult {
     pub rects: HashMap<String, Rect>,
     pub clips: HashMap<String, Rect>,
+    pub paint_clips: HashMap<String, Rect>,
     pub scroll_x: HashMap<String, f32>,
     pub scroll_y: HashMap<String, f32>,
     pub scroll_max_x: HashMap<String, f32>,
@@ -65,6 +66,13 @@ impl LayoutResult {
             .get(id)
             .copied()
             .or_else(|| self.rects.get(id).copied())
+            .filter(|rect| rect.w > 0.0 && rect.h > 0.0)
+    }
+
+    pub fn paint_clip_rect(&self, id: &str) -> Option<Rect> {
+        self.paint_clips
+            .get(id)
+            .copied()
             .filter(|rect| rect.w > 0.0 && rect.h > 0.0)
     }
 }
@@ -763,7 +771,13 @@ fn estimate_text_width(text: &str, font_size: f32) -> f32 {
 }
 
 fn text_area_height_lp(node: &WidgetNode, theme: &Theme) -> f32 {
-    let rows = node.props.rows.unwrap_or(4).max(1) as f32;
+    let rows = node
+        .style
+        .widget
+        .text_area_rows
+        .unwrap_or_else(|| node.props.rows.unwrap_or(4) as f32)
+        .round()
+        .max(1.0);
     let font_size = node_font_size_lp(node, theme);
     let line_height = (font_size + 6.0).max(theme.font_size + 4.0);
     rows * line_height + theme.spacing * 2.0
@@ -931,6 +945,9 @@ fn apply_node_style(
             .map(|track| grid_track_size(track, sf))
             .collect();
     }
+    if let Some(flow) = layout.grid_auto_flow {
+        style.grid_auto_flow = grid_auto_flow(flow);
+    }
     if let Some(placement) = layout.grid_column {
         style.grid_column = grid_placement(placement);
     }
@@ -963,34 +980,47 @@ fn apply_node_style(
             y: taffy_overflow(overflow_y.unwrap_or(OverflowStyle::Hidden)),
         };
     }
-    if layout.margin.is_some() || layout.margin_value.is_some() {
+    let margin_all_value = layout
+        .margin_value
+        .or_else(|| layout.margin.map(LayoutLength::LogicalPx));
+    if margin_all_value.is_some()
+        || layout.margin.is_some()
+        || layout.margin_left.is_some()
+        || layout.margin_right.is_some()
+        || layout.margin_top.is_some()
+        || layout.margin_bottom.is_some()
+        || layout.margin_left_value.is_some()
+        || layout.margin_right_value.is_some()
+        || layout.margin_top_value.is_some()
+        || layout.margin_bottom_value.is_some()
+    {
         let current = style.margin;
         let parent_width = parent_size.map(|size| size.0);
         style.margin = taffy::geometry::Rect {
             left: layout_length_percentage_auto(
-                layout.margin_value,
-                layout.margin,
+                layout.margin_left_value.or(margin_all_value),
+                layout.margin_left.or(layout.margin),
                 sf,
                 parent_width,
             )
             .unwrap_or(current.left),
             right: layout_length_percentage_auto(
-                layout.margin_value,
-                layout.margin,
+                layout.margin_right_value.or(margin_all_value),
+                layout.margin_right.or(layout.margin),
                 sf,
                 parent_width,
             )
             .unwrap_or(current.right),
             top: layout_length_percentage_auto(
-                layout.margin_value,
-                layout.margin,
+                layout.margin_top_value.or(margin_all_value),
+                layout.margin_top.or(layout.margin),
                 sf,
                 parent_width,
             )
             .unwrap_or(current.top),
             bottom: layout_length_percentage_auto(
-                layout.margin_value,
-                layout.margin,
+                layout.margin_bottom_value.or(margin_all_value),
+                layout.margin_bottom.or(layout.margin),
                 sf,
                 parent_width,
             )
@@ -1104,6 +1134,15 @@ fn grid_track_repeat_kind(value: GridTrackRepeatKind) -> GridTrackRepetition {
     match value {
         GridTrackRepeatKind::AutoFit => GridTrackRepetition::AutoFit,
         GridTrackRepeatKind::AutoFill => GridTrackRepetition::AutoFill,
+    }
+}
+
+fn grid_auto_flow(value: GridAutoFlowStyle) -> taffy::style::GridAutoFlow {
+    match value {
+        GridAutoFlowStyle::Row => taffy::style::GridAutoFlow::Row,
+        GridAutoFlowStyle::Column => taffy::style::GridAutoFlow::Column,
+        GridAutoFlowStyle::RowDense => taffy::style::GridAutoFlow::RowDense,
+        GridAutoFlowStyle::ColumnDense => taffy::style::GridAutoFlow::ColumnDense,
     }
 }
 
@@ -1298,6 +1337,7 @@ fn collect(
 
 fn compute_clips(root: &WidgetNode, result: &mut LayoutResult, sf: f32, theme: &Theme) {
     result.clips.clear();
+    result.paint_clips.clear();
     let Some(root_rect) = result.rects.get(&root.id).copied() else {
         return;
     };
@@ -1320,6 +1360,7 @@ fn compute_node_clips(
     } else {
         parent_clip
     };
+    result.paint_clips.insert(node.id.clone(), parent_clip);
     let clip = rect.intersect(parent_clip).unwrap_or(Rect {
         x: rect.x,
         y: rect.y,
@@ -2272,6 +2313,32 @@ mod tests {
     }
 
     #[test]
+    fn text_area_css_rows_override_constructor_rows() {
+        let mut notes = node(
+            "notes",
+            WidgetKind::TextArea,
+            NodeProps {
+                text: Some("one\ntwo".to_string()),
+                rows: Some(2),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        notes.style.widget.text_area_rows = Some(6.0);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![notes],
+        );
+
+        let layout = compute_layout(&root, 400.0, 300.0, 1.0, &Theme::dark(), None);
+        let notes = layout.rects.get("notes").unwrap();
+
+        assert!(notes.h > Theme::dark().control_height() * 2.0);
+    }
+
+    #[test]
     fn window_body_flexes_between_menu_and_status_bars() {
         let root = node(
             "window",
@@ -3041,6 +3108,42 @@ mod tests {
     }
 
     #[test]
+    fn margin_edges_lower_to_taffy() {
+        let mut first = node("first", WidgetKind::Panel, NodeProps::default(), vec![]);
+        first.style.layout.width_value = Some(LayoutLength::LogicalPx(50.0));
+        first.style.layout.height_value = Some(LayoutLength::LogicalPx(20.0));
+        first.style.layout.margin_right_value = Some(LayoutLength::LogicalPx(10.0));
+        first.style.layout.flex_grow = Some(0.0);
+        first.style.layout.flex_shrink = Some(0.0);
+
+        let mut second = node("second", WidgetKind::Panel, NodeProps::default(), vec![]);
+        second.style.layout.width_value = Some(LayoutLength::LogicalPx(50.0));
+        second.style.layout.height_value = Some(LayoutLength::LogicalPx(20.0));
+        second.style.layout.margin_left_value = Some(LayoutLength::LogicalPx(20.0));
+        second.style.layout.flex_grow = Some(0.0);
+        second.style.layout.flex_shrink = Some(0.0);
+
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "row",
+                WidgetKind::HLayout,
+                NodeProps::default(),
+                vec![first, second],
+            )],
+        );
+
+        let layout = compute_layout(&root, 400.0, 160.0, 1.0, &Theme::dark(), None);
+        let first = layout.rects.get("first").unwrap();
+        let second = layout.rects.get("second").unwrap();
+
+        assert_eq!(first.x, 0.0);
+        assert_eq!(second.x, 80.0);
+    }
+
+    #[test]
     fn grid_layout_places_children_on_template_tracks() {
         let mut grid = node("grid", WidgetKind::Panel, NodeProps::default(), vec![]);
         grid.style.layout.display = Some(DisplayStyle::Grid);
@@ -3219,6 +3322,18 @@ mod tests {
     }
 
     #[test]
+    fn grid_auto_flow_lowers_to_taffy() {
+        assert_eq!(
+            grid_auto_flow(GridAutoFlowStyle::Row),
+            taffy::style::GridAutoFlow::Row
+        );
+        assert_eq!(
+            grid_auto_flow(GridAutoFlowStyle::ColumnDense),
+            taffy::style::GridAutoFlow::ColumnDense
+        );
+    }
+
+    #[test]
     fn child_visible_clip_does_not_escape_fixed_height_parent() {
         let mut panel = node(
             "panel",
@@ -3308,6 +3423,49 @@ mod tests {
         assert!(scroll_container_max_y(root.children.first().unwrap(), &unscrolled) > 0.0);
         assert_eq!(scrolled.scroll_y.get("panel").copied(), Some(36.0));
         assert_eq!(scrolled.scroll_max_y.get("panel").copied(), Some(36.0));
+    }
+
+    #[test]
+    fn child_paint_clip_tracks_inherited_scroll_viewport_not_child_rect() {
+        let mut panel = node(
+            "panel",
+            WidgetKind::Panel,
+            NodeProps::default(),
+            vec![
+                node("first", WidgetKind::Button, NodeProps::default(), vec![]),
+                node("second", WidgetKind::Button, NodeProps::default(), vec![]),
+            ],
+        );
+        panel.style.layout.height = Some(44.0);
+        panel.style.layout.padding = Some(0.0);
+        panel.style.layout.gap = Some(0.0);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![panel],
+        );
+
+        let layout = compute_layout(&root, 240.0, 80.0, 1.0, &Theme::dark(), None);
+
+        let panel_clip = layout.clips.get("panel").copied().unwrap();
+        let second_rect = layout.rects.get("second").copied().unwrap();
+        let second_clip = layout.clips.get("second").copied().unwrap();
+        let second_paint_clip = layout.paint_clip_rect("second").unwrap();
+
+        assert!(
+            second_clip.h < second_rect.h,
+            "test needs second child partially clipped: rect={second_rect:?} clip={second_clip:?}"
+        );
+        assert_eq!(
+            (
+                second_paint_clip.x,
+                second_paint_clip.y,
+                second_paint_clip.w,
+                second_paint_clip.h,
+            ),
+            (panel_clip.x, panel_clip.y, panel_clip.w, panel_clip.h)
+        );
     }
 
     #[test]

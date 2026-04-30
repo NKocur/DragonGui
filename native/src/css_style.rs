@@ -25,14 +25,15 @@ use crate::style::{
     visual_style_is_empty, AnimationDirection, AnimationFillMode, AnimationIterationCount,
     AnimationPlayState, AnimationStyle, BackdropFilterStyle, BackgroundPaint, BoxShadow,
     CalcLength, ColorRef, DisplayStyle, FlexDirectionStyle, FontFamily, FontStyle,
-    FontVariantNumeric, GeneratedContent, GradientStop, GridLineStyle, GridPlacementStyle,
-    GridTemplateArea, GridTemplateAreas, GridTrackFitContentSize, GridTrackMaxSize,
-    GridTrackMinSize, GridTrackRepeatKind, GridTrackSize, LayoutLength, LayoutStyle, LineHeight,
-    LinearGradient, NodePartStyles, NodeStyle, OverflowStyle, PartLayoutStyle, PartStyle,
-    PositionStyle, RadialGradient, TextAlign, TextOverflow, TextSpacing, TextStyle, TextTransform,
-    TransformStyle, TransitionProperty, TransitionStyle, TransitionTimingFunction, VisualStyle,
+    FontVariantNumeric, GeneratedContent, GradientStop, GridAutoFlowStyle, GridLineStyle,
+    GridPlacementStyle, GridTemplateArea, GridTemplateAreas, GridTrackFitContentSize,
+    GridTrackMaxSize, GridTrackMinSize, GridTrackRepeatKind, GridTrackSize, LayoutLength,
+    LayoutStyle, LineHeight, LinearGradient, NodePartStyles, NodeStyle, OverflowStyle,
+    PartLayoutStyle, PartStyle, PositionStyle, RadialGradient, TextAlign, TextOverflow,
+    TextSpacing, TextStyle, TextTransform, TransformStyle, TransitionProperty, TransitionStyle,
+    TransitionTimingFunction, VisualStyle,
 };
-use crate::theme::{parse_hex_color, Color, Theme};
+use crate::theme::{parse_web_color, Color, Theme};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum StylesheetOrigin {
@@ -111,6 +112,8 @@ pub struct DgMediaEnvironment {
     pub inverted_colors: DgMediaInvertedColors,
     pub dynamic_range: DgMediaDynamicRange,
     pub video_dynamic_range: DgMediaDynamicRange,
+    pub prefers_reduced_transparency: bool,
+    pub prefers_reduced_data: bool,
 }
 
 impl DgMediaEnvironment {
@@ -172,6 +175,8 @@ impl DgMediaEnvironment {
             inverted_colors: DgMediaInvertedColors::None,
             dynamic_range: DgMediaDynamicRange::Standard,
             video_dynamic_range: DgMediaDynamicRange::Standard,
+            prefers_reduced_transparency: false,
+            prefers_reduced_data: false,
         }
     }
 
@@ -245,6 +250,8 @@ enum DgMediaExpression {
     InvertedColors(DgMediaInvertedColors),
     DynamicRange(DgMediaDynamicRange),
     VideoDynamicRange(DgMediaDynamicRange),
+    PrefersReducedTransparency(bool),
+    PrefersReducedData(bool),
     And(Vec<DgMediaExpression>),
     Or(Vec<DgMediaExpression>),
     Not(Box<DgMediaExpression>),
@@ -351,6 +358,11 @@ impl DgMediaExpression {
             }
             DgMediaExpression::VideoDynamicRange(expected) => environment
                 .is_some_and(|environment| environment.video_dynamic_range.supports(*expected)),
+            DgMediaExpression::PrefersReducedTransparency(expected) => environment
+                .is_some_and(|environment| environment.prefers_reduced_transparency == *expected),
+            DgMediaExpression::PrefersReducedData(expected) => {
+                environment.is_some_and(|environment| environment.prefers_reduced_data == *expected)
+            }
             DgMediaExpression::And(expressions) => expressions
                 .iter()
                 .all(|expression| expression.matches(environment)),
@@ -592,12 +604,17 @@ pub enum DgLayoutDeclaration {
     PaddingTop(DgCssLength),
     PaddingBottom(DgCssLength),
     Margin(DgBoxEdges<DgCssLength>),
+    MarginLeft(DgCssLength),
+    MarginRight(DgCssLength),
+    MarginTop(DgCssLength),
+    MarginBottom(DgCssLength),
     Gap(DgCssLength),
     RowGap(DgCssLength),
     ColumnGap(DgCssLength),
     GridTemplateColumns(Vec<DgGridTrackSize>),
     GridTemplateRows(Vec<DgGridTrackSize>),
     GridTemplateAreas(DgGridTemplateAreas),
+    GridAutoFlow(DgGridAutoFlow),
     GridArea(String),
     GridColumn(DgGridPlacement),
     GridRow(DgGridPlacement),
@@ -616,16 +633,23 @@ pub enum DgLayoutDeclaration {
 pub enum DgVisualDeclaration {
     Background(DgCssColor),
     BackgroundPaint(DgBackgroundPaint),
+    BackgroundImage(Option<DgBackgroundPaint>),
     BackdropFilter(Option<BackdropFilterStyle>),
     Foreground(DgCssColor),
     BorderColor(DgCssColor),
     BorderWidth(DgCssLength),
+    BorderStyle(DgBorderStyle),
+    OutlineColor(DgCssColor),
+    OutlineWidth(DgCssLength),
+    OutlineStyle(DgBorderStyle),
+    OutlineOffset(DgCssLength),
     BorderRadius(DgCssLength),
     BorderTopLeftRadius(DgCssLength),
     BorderTopRightRadius(DgCssLength),
     BorderBottomRightRadius(DgCssLength),
     BorderBottomLeftRadius(DgCssLength),
     Border(DgBorder),
+    Outline(DgBorder),
     Opacity(DgCssNumber),
     Accent(DgCssColor),
     TrackColor(DgCssColor),
@@ -655,8 +679,12 @@ pub enum DgTextDeclaration {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum DgWidgetDeclaration {
+    TextAreaRows(DgCssNumber),
+    ScatterPointSize(DgCssLength),
     TableRowHeight(DgCssLength),
     TableHeaderHeight(DgCssLength),
+    TableColumnWidth(DgCssLength),
+    TableIndexWidth(DgCssLength),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -673,7 +701,7 @@ pub enum DgAnimationDeclaration {
     Shorthand(AnimationStyle),
     Name(Option<String>),
     Duration(u64),
-    Delay(u64),
+    Delay(i64),
     TimingFunction(TransitionTimingFunction),
     IterationCount(AnimationIterationCount),
     Direction(AnimationDirection),
@@ -728,6 +756,14 @@ pub enum DgGridTrackSize {
 pub enum DgGridTrackRepeatKind {
     AutoFit,
     AutoFill,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DgGridAutoFlow {
+    Row,
+    Column,
+    RowDense,
+    ColumnDense,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -932,12 +968,47 @@ impl DgSelector {
         }
     }
 
-    fn target_contains_structural_pseudo(&self) -> bool {
+    fn target_contains_style_slot_pseudo(&self) -> bool {
         match self {
             DgSelector::Root => false,
-            DgSelector::Compound(selector) => selector.contains_structural_pseudo(),
-            DgSelector::Child { child, .. } => child.contains_structural_pseudo(),
-            DgSelector::Chain(chain) => chain.target.contains_structural_pseudo(),
+            DgSelector::Compound(selector) => selector.contains_style_slot_pseudo(),
+            DgSelector::Child { child, .. } => child.contains_style_slot_pseudo(),
+            DgSelector::Chain(chain) => chain.target.contains_style_slot_pseudo(),
+        }
+    }
+
+    fn target_state_pseudos_are_snapshot_matchable(&self) -> bool {
+        match self {
+            DgSelector::Root => true,
+            DgSelector::Compound(selector) => selector.state_pseudos_are_snapshot_matchable(),
+            DgSelector::Child { child, .. } => child.state_pseudos_are_snapshot_matchable(),
+            DgSelector::Chain(chain) => chain.target.state_pseudos_are_snapshot_matchable(),
+        }
+    }
+
+    fn target_contains_has_function(&self) -> bool {
+        match self {
+            DgSelector::Root => false,
+            DgSelector::Compound(selector) => selector.contains_has_function(),
+            DgSelector::Child { child, .. } => child.contains_has_function(),
+            DgSelector::Chain(chain) => chain.target.contains_has_function(),
+        }
+    }
+
+    fn contains_has_sibling_relation(&self) -> bool {
+        match self {
+            DgSelector::Root => false,
+            DgSelector::Compound(selector) => selector.contains_has_sibling_relation(),
+            DgSelector::Child { parent, child } => {
+                parent.contains_has_sibling_relation() || child.contains_has_sibling_relation()
+            }
+            DgSelector::Chain(chain) => {
+                chain
+                    .ancestors
+                    .iter()
+                    .any(|(_, selector)| selector.contains_has_sibling_relation())
+                    || chain.target.contains_has_sibling_relation()
+            }
         }
     }
 
@@ -1315,6 +1386,7 @@ impl DgCompoundSelector {
     fn matches_ancestor(&self, ancestor: &StyleAncestor<'_>) -> bool {
         self.pseudo.is_empty()
             && self.structural.is_empty()
+            && !self.contains_has_function()
             && self.matches_identity(
                 ancestor.id,
                 ancestor.key,
@@ -1369,12 +1441,34 @@ impl DgCompoundSelector {
                 .any(DgSelectorFunction::contains_state_pseudo)
     }
 
-    fn contains_structural_pseudo(&self) -> bool {
-        !self.structural.is_empty()
+    fn contains_style_slot_pseudo(&self) -> bool {
+        !self.pseudo.is_empty()
             || self
                 .functions
                 .iter()
-                .any(DgSelectorFunction::contains_structural_pseudo)
+                .any(DgSelectorFunction::contains_style_slot_pseudo)
+    }
+
+    fn state_pseudos_are_snapshot_matchable(&self) -> bool {
+        self.pseudo
+            .iter()
+            .all(|pseudo| pseudo.is_snapshot_matchable())
+            && self
+                .functions
+                .iter()
+                .all(DgSelectorFunction::state_pseudos_are_snapshot_matchable)
+    }
+
+    fn contains_has_function(&self) -> bool {
+        self.functions
+            .iter()
+            .any(DgSelectorFunction::contains_has_function)
+    }
+
+    fn contains_has_sibling_relation(&self) -> bool {
+        self.functions
+            .iter()
+            .any(DgSelectorFunction::contains_has_sibling_relation)
     }
 
     fn label(&self) -> String {
@@ -1425,17 +1519,67 @@ impl DgCompoundSelector {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct DgSelectorFunction {
     pub kind: DgSelectorFunctionKind,
-    pub selectors: Vec<DgCompoundSelector>,
+    pub selectors: Vec<DgSelectorFunctionArgument>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct DgSelectorFunctionArgument {
+    pub selector: DgSelector,
+    pub relation: DgSelectorFunctionRelation,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DgSelectorFunctionRelation {
+    Descendant,
+    Child,
+    NextSibling,
+    SubsequentSibling,
+}
+
+impl DgSelectorFunctionArgument {
+    fn new(selector: DgSelector) -> Self {
+        Self {
+            selector,
+            relation: DgSelectorFunctionRelation::Descendant,
+        }
+    }
+
+    fn direct_child(selector: DgSelector) -> Self {
+        Self {
+            selector,
+            relation: DgSelectorFunctionRelation::Child,
+        }
+    }
+
+    fn next_sibling(selector: DgSelector) -> Self {
+        Self {
+            selector,
+            relation: DgSelectorFunctionRelation::NextSibling,
+        }
+    }
+
+    fn subsequent_sibling(selector: DgSelector) -> Self {
+        Self {
+            selector,
+            relation: DgSelectorFunctionRelation::SubsequentSibling,
+        }
+    }
+
+    fn compound(selector: DgCompoundSelector) -> Self {
+        Self::new(DgSelector::Compound(selector))
+    }
 }
 
 impl DgSelectorFunction {
     fn specificity(&self) -> Specificity {
         match self.kind {
             DgSelectorFunctionKind::Where => Specificity::ZERO,
-            DgSelectorFunctionKind::Not | DgSelectorFunctionKind::Is => self
+            DgSelectorFunctionKind::Not
+            | DgSelectorFunctionKind::Is
+            | DgSelectorFunctionKind::Has => self
                 .selectors
                 .iter()
-                .map(DgCompoundSelector::specificity)
+                .map(|selector| selector.selector.specificity())
                 .max()
                 .unwrap_or(Specificity::ZERO),
         }
@@ -1446,11 +1590,15 @@ impl DgSelectorFunction {
             DgSelectorFunctionKind::Not => !self
                 .selectors
                 .iter()
-                .any(|selector| selector.matches_element(element)),
+                .any(|selector| selector.selector.matches(element)),
             DgSelectorFunctionKind::Is | DgSelectorFunctionKind::Where => self
                 .selectors
                 .iter()
-                .any(|selector| selector.matches_element(element)),
+                .any(|selector| selector.selector.matches(element)),
+            DgSelectorFunctionKind::Has => self
+                .selectors
+                .iter()
+                .any(|selector| has_selector_matches_element(element, selector)),
         }
     }
 
@@ -1459,24 +1607,59 @@ impl DgSelectorFunction {
             DgSelectorFunctionKind::Not => !self
                 .selectors
                 .iter()
-                .any(|selector| selector.matches_ancestor(ancestor)),
+                .any(|selector| selector.selector.matches_ancestor(ancestor)),
             DgSelectorFunctionKind::Is | DgSelectorFunctionKind::Where => self
                 .selectors
                 .iter()
-                .any(|selector| selector.matches_ancestor(ancestor)),
+                .any(|selector| selector.selector.matches_ancestor(ancestor)),
+            DgSelectorFunctionKind::Has => false,
         }
     }
 
     fn contains_state_pseudo(&self) -> bool {
         self.selectors
             .iter()
-            .any(DgCompoundSelector::contains_state_pseudo)
+            .any(|selector| selector.selector.target_contains_state_pseudo())
     }
 
-    fn contains_structural_pseudo(&self) -> bool {
+    fn contains_style_slot_pseudo(&self) -> bool {
+        if self.kind == DgSelectorFunctionKind::Has {
+            return false;
+        }
         self.selectors
             .iter()
-            .any(DgCompoundSelector::contains_structural_pseudo)
+            .any(|selector| selector.selector.target_contains_style_slot_pseudo())
+    }
+
+    fn state_pseudos_are_snapshot_matchable(&self) -> bool {
+        self.selectors.iter().all(|selector| {
+            selector
+                .selector
+                .target_state_pseudos_are_snapshot_matchable()
+        })
+    }
+
+    fn contains_has_function(&self) -> bool {
+        self.kind == DgSelectorFunctionKind::Has
+            || self
+                .selectors
+                .iter()
+                .any(|selector| selector.selector.target_contains_has_function())
+    }
+
+    fn contains_has_sibling_relation(&self) -> bool {
+        (self.kind == DgSelectorFunctionKind::Has
+            && self.selectors.iter().any(|selector| {
+                matches!(
+                    selector.relation,
+                    DgSelectorFunctionRelation::NextSibling
+                        | DgSelectorFunctionRelation::SubsequentSibling
+                )
+            }))
+            || self
+                .selectors
+                .iter()
+                .any(|selector| selector.selector.contains_has_sibling_relation())
     }
 
     fn label(&self) -> String {
@@ -1484,11 +1667,23 @@ impl DgSelectorFunction {
             DgSelectorFunctionKind::Not => "not",
             DgSelectorFunctionKind::Is => "is",
             DgSelectorFunctionKind::Where => "where",
+            DgSelectorFunctionKind::Has => "has",
         };
         let selectors = self
             .selectors
             .iter()
-            .map(DgCompoundSelector::label)
+            .map(|selector| match (self.kind, selector.relation) {
+                (DgSelectorFunctionKind::Has, DgSelectorFunctionRelation::Child) => {
+                    format!("> {}", selector.selector.label())
+                }
+                (DgSelectorFunctionKind::Has, DgSelectorFunctionRelation::NextSibling) => {
+                    format!("+ {}", selector.selector.label())
+                }
+                (DgSelectorFunctionKind::Has, DgSelectorFunctionRelation::SubsequentSibling) => {
+                    format!("~ {}", selector.selector.label())
+                }
+                _ => selector.selector.label(),
+            })
             .collect::<Vec<_>>()
             .join(", ");
         format!("{name}({selectors})")
@@ -1500,6 +1695,7 @@ pub enum DgSelectorFunctionKind {
     Not,
     Is,
     Where,
+    Has,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1529,13 +1725,27 @@ impl DgPseudoClass {
             DgPseudoClass::Selected => "selected",
         }
     }
+
+    fn is_snapshot_matchable(self) -> bool {
+        matches!(
+            self,
+            DgPseudoClass::Disabled
+                | DgPseudoClass::Checked
+                | DgPseudoClass::Open
+                | DgPseudoClass::Expanded
+                | DgPseudoClass::Collapsed
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DgStructuralPseudo {
     FirstChild,
     LastChild,
+    OnlyChild,
+    Empty,
     NthChild(DgNthChild),
+    NthLastChild(DgNthChild),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -1556,12 +1766,18 @@ pub enum DgNthChild {
 impl DgStructuralPseudo {
     fn specificity_extra(&self) -> Specificity {
         match self {
-            DgStructuralPseudo::NthChild(child) => child.specificity_extra(),
+            DgStructuralPseudo::NthChild(child) | DgStructuralPseudo::NthLastChild(child) => {
+                child.specificity_extra()
+            }
             _ => Specificity::ZERO,
         }
     }
 
     fn matches_element(&self, element: &StyleElement<'_>) -> bool {
+        if matches!(self, DgStructuralPseudo::Empty) {
+            return element.children.is_some_and(|children| children.is_empty());
+        }
+
         let (Some(index), Some(count)) = (element.sibling_index, element.sibling_count) else {
             return false;
         };
@@ -1569,10 +1785,16 @@ impl DgStructuralPseudo {
             return false;
         }
         let one_based = index + 1;
+        let reverse_one_based = count - index;
         match self {
             DgStructuralPseudo::FirstChild => index == 0,
             DgStructuralPseudo::LastChild => one_based == count,
+            DgStructuralPseudo::OnlyChild => index == 0 && count == 1,
+            DgStructuralPseudo::Empty => false,
             DgStructuralPseudo::NthChild(child) => child.matches_element(element, one_based),
+            DgStructuralPseudo::NthLastChild(child) => {
+                child.matches_element_from_end(element, reverse_one_based)
+            }
         }
     }
 
@@ -1580,7 +1802,12 @@ impl DgStructuralPseudo {
         match self {
             DgStructuralPseudo::FirstChild => "first-child".to_string(),
             DgStructuralPseudo::LastChild => "last-child".to_string(),
+            DgStructuralPseudo::OnlyChild => "only-child".to_string(),
+            DgStructuralPseudo::Empty => "empty".to_string(),
             DgStructuralPseudo::NthChild(child) => format!("nth-child({})", child.label()),
+            DgStructuralPseudo::NthLastChild(child) => {
+                format!("nth-last-child({})", child.label())
+            }
         }
     }
 }
@@ -1607,6 +1834,24 @@ impl DgNthChild {
             }
             DgNthChild::Of { pattern, selectors } => {
                 nth_child_of_matches(pattern, selectors, element)
+            }
+        }
+    }
+
+    fn matches_element_from_end(
+        &self,
+        element: &StyleElement<'_>,
+        reverse_one_based: usize,
+    ) -> bool {
+        match self {
+            DgNthChild::Odd => reverse_one_based % 2 == 1,
+            DgNthChild::Even => reverse_one_based % 2 == 0,
+            DgNthChild::Exact(expected) => *expected == reverse_one_based,
+            DgNthChild::Formula { step, offset } => {
+                nth_child_formula_matches(reverse_one_based as i64, *step, *offset)
+            }
+            DgNthChild::Of { pattern, selectors } => {
+                nth_last_child_of_matches(pattern, selectors, element)
             }
         }
     }
@@ -1662,6 +1907,40 @@ fn nth_child_of_matches(
     current_matches && pattern.matches_element(element, filtered_index)
 }
 
+fn nth_last_child_of_matches(
+    pattern: &DgNthChild,
+    selectors: &[DgSelector],
+    element: &StyleElement<'_>,
+) -> bool {
+    let (Some(siblings), Some(index)) = (element.siblings, element.sibling_index) else {
+        return false;
+    };
+    if index >= siblings.len() {
+        return false;
+    }
+
+    let mut filtered_index = 0usize;
+    let mut current_matches = false;
+    for sibling_index in (0..siblings.len()).rev() {
+        let sibling = &siblings[sibling_index];
+        if sibling_matches_nth_child_filter(
+            sibling,
+            sibling_index,
+            siblings.len(),
+            element,
+            selectors,
+        ) {
+            filtered_index += 1;
+            if sibling_index == index {
+                current_matches = true;
+                break;
+            }
+        }
+    }
+
+    current_matches && pattern.matches_element_from_end(element, filtered_index)
+}
+
 fn sibling_matches_nth_child_filter(
     sibling: &StyleSibling,
     sibling_index: usize,
@@ -1677,14 +1956,287 @@ fn sibling_matches_nth_child_filter(
         classes: &classes,
         kind: sibling.kind,
         ancestors: base.ancestors,
-        pseudo: &[],
+        pseudo: &sibling.pseudo,
         sibling_index: Some(sibling_index),
         sibling_count: Some(sibling_count),
         siblings: base.siblings,
+        children: Some(&sibling.children),
     };
     selectors
         .iter()
         .any(|selector| selector.matches(&sibling_element))
+}
+
+fn has_selector_matches_element(
+    element: &StyleElement<'_>,
+    selector: &DgSelectorFunctionArgument,
+) -> bool {
+    match selector.relation {
+        DgSelectorFunctionRelation::Descendant | DgSelectorFunctionRelation::Child => element
+            .children
+            .is_some_and(|children| has_selector_matches_children(children, selector)),
+        DgSelectorFunctionRelation::NextSibling => {
+            let (Some(siblings), Some(index)) = (element.siblings, element.sibling_index) else {
+                return false;
+            };
+            siblings.get(index + 1).is_some_and(|sibling| {
+                has_selector_matches_relative_sibling(
+                    sibling,
+                    index + 1,
+                    siblings.len(),
+                    siblings,
+                    selector,
+                )
+            })
+        }
+        DgSelectorFunctionRelation::SubsequentSibling => {
+            let (Some(siblings), Some(index)) = (element.siblings, element.sibling_index) else {
+                return false;
+            };
+            siblings
+                .iter()
+                .enumerate()
+                .skip(index + 1)
+                .any(|(sibling_index, sibling)| {
+                    has_selector_matches_relative_sibling(
+                        sibling,
+                        sibling_index,
+                        siblings.len(),
+                        siblings,
+                        selector,
+                    )
+                })
+        }
+    }
+}
+
+fn has_selector_matches_children(
+    children: &[StyleSibling],
+    selector: &DgSelectorFunctionArgument,
+) -> bool {
+    children.iter().enumerate().any(|(index, child)| {
+        style_sibling_matches_has_selector(child, index, children.len(), children, selector, &[])
+            || (selector.relation == DgSelectorFunctionRelation::Descendant
+                && has_selector_matches_descendants(child, selector, &[child]))
+    })
+}
+
+fn has_selector_matches_relative_sibling(
+    sibling: &StyleSibling,
+    sibling_index: usize,
+    sibling_count: usize,
+    siblings: &[StyleSibling],
+    selector: &DgSelectorFunctionArgument,
+) -> bool {
+    style_sibling_matches_has_selector(
+        sibling,
+        sibling_index,
+        sibling_count,
+        siblings,
+        selector,
+        &[],
+    ) || (matches!(
+        selector.selector,
+        DgSelector::Child { .. } | DgSelector::Chain(_)
+    ) && has_selector_matches_descendants(sibling, selector, &[sibling]))
+}
+
+fn has_selector_matches_descendants(
+    parent: &StyleSibling,
+    selector: &DgSelectorFunctionArgument,
+    ancestor_path: &[&StyleSibling],
+) -> bool {
+    parent.children.iter().enumerate().any(|(index, child)| {
+        style_sibling_matches_has_selector(
+            child,
+            index,
+            parent.children.len(),
+            &parent.children,
+            selector,
+            ancestor_path,
+        ) || {
+            let mut child_path = Vec::with_capacity(ancestor_path.len() + 1);
+            child_path.push(child);
+            child_path.extend_from_slice(ancestor_path);
+            has_selector_matches_descendants(child, selector, &child_path)
+        }
+    })
+}
+
+fn style_sibling_matches_has_selector(
+    child: &StyleSibling,
+    child_index: usize,
+    child_count: usize,
+    siblings: &[StyleSibling],
+    selector: &DgSelectorFunctionArgument,
+    ancestor_path: &[&StyleSibling],
+) -> bool {
+    let classes: Vec<&str> = child.classes.iter().map(String::as_str).collect();
+    let ancestor_classes: Vec<Vec<&str>> = ancestor_path
+        .iter()
+        .map(|ancestor| ancestor.classes.iter().map(String::as_str).collect())
+        .collect();
+    let style_ancestors: Vec<StyleAncestor<'_>> = ancestor_path
+        .iter()
+        .zip(ancestor_classes.iter())
+        .map(|(ancestor, classes)| StyleAncestor {
+            id: ancestor.id.as_str(),
+            key: ancestor.key.as_deref(),
+            attributes: &ancestor.attributes,
+            classes,
+            kind: ancestor.kind,
+        })
+        .collect();
+    let child_element = StyleElement {
+        id: child.id.as_str(),
+        key: child.key.as_deref(),
+        attributes: &child.attributes,
+        classes: &classes,
+        kind: child.kind,
+        ancestors: &style_ancestors,
+        pseudo: &child.pseudo,
+        sibling_index: Some(child_index),
+        sibling_count: Some(child_count),
+        siblings: Some(siblings),
+        children: Some(&child.children),
+    };
+    has_argument_selector_matches(&selector.selector, &child_element, ancestor_path)
+}
+
+fn has_argument_selector_matches(
+    selector: &DgSelector,
+    element: &StyleElement<'_>,
+    ancestor_path: &[&StyleSibling],
+) -> bool {
+    match selector {
+        DgSelector::Root => false,
+        DgSelector::Compound(selector) => selector.matches_element(element),
+        DgSelector::Child { parent, child } => {
+            child.matches_element(element)
+                && ancestor_path.first().is_some_and(|ancestor| {
+                    has_argument_selector_matches_sibling(parent, ancestor, &ancestor_path[1..])
+                })
+        }
+        DgSelector::Chain(chain) => has_argument_chain_matches(chain, element, ancestor_path),
+    }
+}
+
+fn has_argument_chain_matches(
+    chain: &DgSelectorChain,
+    element: &StyleElement<'_>,
+    ancestor_path: &[&StyleSibling],
+) -> bool {
+    if !chain.target.matches_element(element) {
+        return false;
+    }
+
+    let mut ancestor_idx = 0;
+    for (combinator, selector) in &chain.ancestors {
+        match combinator {
+            DgCombinator::Child => {
+                let Some(ancestor) = ancestor_path.get(ancestor_idx) else {
+                    return false;
+                };
+                if !has_argument_compound_matches_sibling(
+                    selector,
+                    ancestor,
+                    &ancestor_path[ancestor_idx + 1..],
+                ) {
+                    return false;
+                }
+                ancestor_idx += 1;
+            }
+            DgCombinator::Descendant => {
+                let Some(found_idx) = ancestor_path[ancestor_idx..].iter().enumerate().position(
+                    |(offset, ancestor)| {
+                        has_argument_compound_matches_sibling(
+                            selector,
+                            ancestor,
+                            &ancestor_path[ancestor_idx + offset + 1..],
+                        )
+                    },
+                ) else {
+                    return false;
+                };
+                ancestor_idx += found_idx + 1;
+            }
+        }
+    }
+    true
+}
+
+fn has_argument_selector_matches_sibling(
+    selector: &DgSelector,
+    sibling: &StyleSibling,
+    ancestor_path: &[&StyleSibling],
+) -> bool {
+    let classes: Vec<&str> = sibling.classes.iter().map(String::as_str).collect();
+    let ancestor_classes: Vec<Vec<&str>> = ancestor_path
+        .iter()
+        .map(|ancestor| ancestor.classes.iter().map(String::as_str).collect())
+        .collect();
+    let style_ancestors: Vec<StyleAncestor<'_>> = ancestor_path
+        .iter()
+        .zip(ancestor_classes.iter())
+        .map(|(ancestor, classes)| StyleAncestor {
+            id: ancestor.id.as_str(),
+            key: ancestor.key.as_deref(),
+            attributes: &ancestor.attributes,
+            classes,
+            kind: ancestor.kind,
+        })
+        .collect();
+    let element = StyleElement {
+        id: sibling.id.as_str(),
+        key: sibling.key.as_deref(),
+        attributes: &sibling.attributes,
+        classes: &classes,
+        kind: sibling.kind,
+        ancestors: &style_ancestors,
+        pseudo: &sibling.pseudo,
+        sibling_index: None,
+        sibling_count: None,
+        siblings: None,
+        children: Some(&sibling.children),
+    };
+    has_argument_selector_matches(selector, &element, ancestor_path)
+}
+
+fn has_argument_compound_matches_sibling(
+    selector: &DgCompoundSelector,
+    sibling: &StyleSibling,
+    ancestor_path: &[&StyleSibling],
+) -> bool {
+    let classes: Vec<&str> = sibling.classes.iter().map(String::as_str).collect();
+    let ancestor_classes: Vec<Vec<&str>> = ancestor_path
+        .iter()
+        .map(|ancestor| ancestor.classes.iter().map(String::as_str).collect())
+        .collect();
+    let style_ancestors: Vec<StyleAncestor<'_>> = ancestor_path
+        .iter()
+        .zip(ancestor_classes.iter())
+        .map(|(ancestor, classes)| StyleAncestor {
+            id: ancestor.id.as_str(),
+            key: ancestor.key.as_deref(),
+            attributes: &ancestor.attributes,
+            classes,
+            kind: ancestor.kind,
+        })
+        .collect();
+    let element = StyleElement {
+        id: sibling.id.as_str(),
+        key: sibling.key.as_deref(),
+        attributes: &sibling.attributes,
+        classes: &classes,
+        kind: sibling.kind,
+        ancestors: &style_ancestors,
+        pseudo: &sibling.pseudo,
+        sibling_index: None,
+        sibling_count: None,
+        siblings: None,
+        children: Some(&sibling.children),
+    };
+    selector.matches_element(&element)
 }
 
 fn nth_child_formula_matches(index: i64, step: i64, offset: i64) -> bool {
@@ -1733,6 +2285,7 @@ pub struct StyleElement<'a> {
     pub sibling_index: Option<usize>,
     pub sibling_count: Option<usize>,
     pub siblings: Option<&'a [StyleSibling]>,
+    pub children: Option<&'a [StyleSibling]>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1750,7 +2303,9 @@ pub struct StyleSibling {
     pub key: Option<String>,
     pub attributes: Vec<StyleAttribute>,
     pub classes: Vec<String>,
+    pub pseudo: Vec<DgPseudoClass>,
     pub kind: WidgetKind,
+    pub children: Vec<StyleSibling>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -1798,12 +2353,17 @@ pub enum DgLayoutPropertyName {
     PaddingTop,
     PaddingBottom,
     Margin,
+    MarginLeft,
+    MarginRight,
+    MarginTop,
+    MarginBottom,
     Gap,
     RowGap,
     ColumnGap,
     GridTemplateColumns,
     GridTemplateRows,
     GridTemplateAreas,
+    GridAutoFlow,
     GridArea,
     GridColumn,
     GridRow,
@@ -1821,10 +2381,17 @@ pub enum DgLayoutPropertyName {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DgVisualPropertyName {
     Background,
+    BackgroundImage,
     BackdropFilter,
     Foreground,
     BorderColor,
     BorderWidth,
+    BorderStyle,
+    OutlineColor,
+    OutlineWidth,
+    OutlineStyle,
+    OutlineOffset,
+    Outline,
     BorderRadius,
     BorderTopLeftRadius,
     BorderTopRightRadius,
@@ -1859,8 +2426,12 @@ pub enum DgTextPropertyName {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DgWidgetPropertyName {
+    TextAreaRows,
+    ScatterPointSize,
     TableRowHeight,
     TableHeaderHeight,
+    TableColumnWidth,
+    TableIndexWidth,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1910,13 +2481,15 @@ impl DgStylePropertyName {
     ///
     /// Layout: display, flex-direction, flex, flex-grow, flex-shrink, width,
     /// height, min-width, min-height, max-width, max-height, padding,
-    /// padding-left, padding-right, padding-top, padding-bottom, margin, gap,
+    /// padding-left, padding-right, padding-top, padding-bottom, margin,
+    /// margin-left, margin-right, margin-top, margin-bottom, gap,
     /// grid-template-columns, grid-template-rows, grid-template-areas,
-    /// grid-area, grid-column, grid-row, overflow, position, top, right,
+    /// grid-auto-flow, grid-area, grid-column, grid-row, overflow, position, top, right,
     /// bottom, left.
     ///
-    /// Visual: background, background-color, foreground, border-color,
-    /// border-width, border-radius, border-top-left-radius,
+    /// Visual: background, background-color, background-image, foreground,
+    /// border-color, border-width, border-style, outline, outline-color,
+    /// outline-width, outline-style, outline-offset, border-radius, border-top-left-radius,
     /// border-top-right-radius, border-bottom-right-radius,
     /// border-bottom-left-radius, border, box-shadow, opacity, accent, track-color,
     /// thumb-color, transform, translate, scale, rotate.
@@ -1925,7 +2498,8 @@ impl DgStylePropertyName {
     /// text-transform, letter-spacing, line-height, font-style,
     /// font-variant-numeric, text-overflow.
     ///
-    /// Widget: table-row-height, table-header-height.
+    /// Widget: text-area-rows, scatter-point-size, table-row-height,
+    /// table-header-height, table-column-width, table-index-width.
     pub fn from_css_name(name: &str) -> Result<Self, DgStyleWarning> {
         let normalized = name.trim().to_ascii_lowercase();
         if normalized.starts_with("--") && normalized.len() > 2 {
@@ -1949,12 +2523,17 @@ impl DgStylePropertyName {
             "padding-top" => Ok(Self::Layout(DgLayoutPropertyName::PaddingTop)),
             "padding-bottom" => Ok(Self::Layout(DgLayoutPropertyName::PaddingBottom)),
             "margin" => Ok(Self::Layout(DgLayoutPropertyName::Margin)),
+            "margin-left" => Ok(Self::Layout(DgLayoutPropertyName::MarginLeft)),
+            "margin-right" => Ok(Self::Layout(DgLayoutPropertyName::MarginRight)),
+            "margin-top" => Ok(Self::Layout(DgLayoutPropertyName::MarginTop)),
+            "margin-bottom" => Ok(Self::Layout(DgLayoutPropertyName::MarginBottom)),
             "gap" => Ok(Self::Layout(DgLayoutPropertyName::Gap)),
             "row-gap" => Ok(Self::Layout(DgLayoutPropertyName::RowGap)),
             "column-gap" => Ok(Self::Layout(DgLayoutPropertyName::ColumnGap)),
             "grid-template-columns" => Ok(Self::Layout(DgLayoutPropertyName::GridTemplateColumns)),
             "grid-template-rows" => Ok(Self::Layout(DgLayoutPropertyName::GridTemplateRows)),
             "grid-template-areas" => Ok(Self::Layout(DgLayoutPropertyName::GridTemplateAreas)),
+            "grid-auto-flow" => Ok(Self::Layout(DgLayoutPropertyName::GridAutoFlow)),
             "grid-area" => Ok(Self::Layout(DgLayoutPropertyName::GridArea)),
             "grid-column" => Ok(Self::Layout(DgLayoutPropertyName::GridColumn)),
             "grid-row" => Ok(Self::Layout(DgLayoutPropertyName::GridRow)),
@@ -1968,10 +2547,17 @@ impl DgStylePropertyName {
             "left" => Ok(Self::Layout(DgLayoutPropertyName::Left)),
             "z-index" => Ok(Self::Layout(DgLayoutPropertyName::ZIndex)),
             "background" | "background-color" => Ok(Self::Visual(DgVisualPropertyName::Background)),
+            "background-image" => Ok(Self::Visual(DgVisualPropertyName::BackgroundImage)),
             "backdrop-filter" => Ok(Self::Visual(DgVisualPropertyName::BackdropFilter)),
             "foreground" => Ok(Self::Visual(DgVisualPropertyName::Foreground)),
             "border-color" => Ok(Self::Visual(DgVisualPropertyName::BorderColor)),
             "border-width" => Ok(Self::Visual(DgVisualPropertyName::BorderWidth)),
+            "border-style" => Ok(Self::Visual(DgVisualPropertyName::BorderStyle)),
+            "outline-color" => Ok(Self::Visual(DgVisualPropertyName::OutlineColor)),
+            "outline-width" => Ok(Self::Visual(DgVisualPropertyName::OutlineWidth)),
+            "outline-style" => Ok(Self::Visual(DgVisualPropertyName::OutlineStyle)),
+            "outline-offset" => Ok(Self::Visual(DgVisualPropertyName::OutlineOffset)),
+            "outline" => Ok(Self::Visual(DgVisualPropertyName::Outline)),
             "border-radius" => Ok(Self::Visual(DgVisualPropertyName::BorderRadius)),
             "border-top-left-radius" => Ok(Self::Visual(DgVisualPropertyName::BorderTopLeftRadius)),
             "border-top-right-radius" => {
@@ -2026,8 +2612,12 @@ impl DgStylePropertyName {
             "animation-fill-mode" => Ok(Self::Animation(DgAnimationPropertyName::FillMode)),
             "animation-play-state" => Ok(Self::Animation(DgAnimationPropertyName::PlayState)),
             "content" => Ok(Self::Generated(DgGeneratedPropertyName::Content)),
+            "text-area-rows" => Ok(Self::Widget(DgWidgetPropertyName::TextAreaRows)),
+            "scatter-point-size" => Ok(Self::Widget(DgWidgetPropertyName::ScatterPointSize)),
             "table-row-height" => Ok(Self::Widget(DgWidgetPropertyName::TableRowHeight)),
             "table-header-height" => Ok(Self::Widget(DgWidgetPropertyName::TableHeaderHeight)),
+            "table-column-width" => Ok(Self::Widget(DgWidgetPropertyName::TableColumnWidth)),
+            "table-index-width" => Ok(Self::Widget(DgWidgetPropertyName::TableIndexWidth)),
             _ => Err(DgStyleWarning::unsupported_property(name)),
         }
     }
@@ -2178,9 +2768,32 @@ impl StyleSibling {
                 .map(str::to_string)
                 .collect(),
             attributes: node_style_attributes(node),
+            pseudo: node_snapshot_pseudo_classes(node),
             kind: node.kind,
+            children: node.children.iter().map(StyleSibling::from_node).collect(),
         }
     }
+}
+
+fn node_snapshot_pseudo_classes(node: &WidgetNode) -> Vec<DgPseudoClass> {
+    let mut pseudos = Vec::new();
+    if node.props.disabled {
+        pseudos.push(DgPseudoClass::Disabled);
+    }
+    if node.kind == WidgetKind::Checkbox && node.props.checked.unwrap_or(false) {
+        pseudos.push(DgPseudoClass::Checked);
+    }
+    if node.kind == WidgetKind::Modal && node.props.open == Some(true) {
+        pseudos.push(DgPseudoClass::Open);
+    }
+    if node.kind == WidgetKind::Collapsible {
+        if node.props.expanded.unwrap_or(true) {
+            pseudos.push(DgPseudoClass::Expanded);
+        } else {
+            pseudos.push(DgPseudoClass::Collapsed);
+        }
+    }
+    pseudos
 }
 
 fn node_style_attributes(node: &WidgetNode) -> Vec<StyleAttribute> {
@@ -2293,7 +2906,7 @@ fn selector_match_slots(
     selector: &DgSelector,
     base_element: &StyleElement<'_>,
 ) -> Vec<Option<DgPseudoClass>> {
-    if !selector.target_contains_state_pseudo() {
+    if !selector.target_contains_style_slot_pseudo() {
         return selector
             .matches(base_element)
             .then_some(vec![None])
@@ -2443,6 +3056,7 @@ pub fn computed_style_for_virtual_element_with_media(
         sibling_index: None,
         sibling_count: None,
         siblings: None,
+        children: None,
     };
     let mut matched = Vec::new();
     for rule in rules.iter() {
@@ -2545,6 +3159,8 @@ fn matched_part_rule_labels_for_node(
         })
         .collect();
     let attributes = node_style_attributes(node);
+    let child_siblings: Vec<StyleSibling> =
+        node.children.iter().map(StyleSibling::from_node).collect();
     let element = StyleElement {
         id: node.id.as_str(),
         key: node.key.as_deref(),
@@ -2556,6 +3172,7 @@ fn matched_part_rule_labels_for_node(
         sibling_index,
         sibling_count,
         siblings,
+        children: Some(&child_siblings),
     };
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for rule in rules
@@ -2646,6 +3263,8 @@ fn matched_rule_labels_for_node(
         })
         .collect();
     let attributes = node_style_attributes(node);
+    let child_siblings: Vec<StyleSibling> =
+        node.children.iter().map(StyleSibling::from_node).collect();
     let element = StyleElement {
         id: node.id.as_str(),
         key: node.key.as_deref(),
@@ -2657,6 +3276,7 @@ fn matched_rule_labels_for_node(
         sibling_index,
         sibling_count,
         siblings,
+        children: Some(&child_siblings),
     };
     rules
         .iter()
@@ -2696,6 +3316,9 @@ fn apply_stylesheets_to_node(
         })
         .collect();
     let attributes = node_style_attributes(node);
+    let child_count = node.children.len();
+    let child_siblings: Vec<StyleSibling> =
+        node.children.iter().map(StyleSibling::from_node).collect();
     let element = StyleElement {
         id: node.id.as_str(),
         key: node.key.as_deref(),
@@ -2707,6 +3330,7 @@ fn apply_stylesheets_to_node(
         sibling_index,
         sibling_count,
         siblings,
+        children: Some(&child_siblings),
     };
     // Pseudo-state selectors are matched against base and single-state contexts
     // here. Their declarations are precomputed into hover/active/focus/disabled
@@ -2779,9 +3403,6 @@ fn apply_stylesheets_to_node(
 
     ancestors.push(AncestorSnapshot::from_node(node));
     let child_text = node.style.text.clone();
-    let child_count = node.children.len();
-    let child_siblings: Vec<StyleSibling> =
-        node.children.iter().map(StyleSibling::from_node).collect();
     for (index, child) in node.children.iter_mut().enumerate() {
         apply_stylesheets_to_node(
             child,
@@ -2805,7 +3426,7 @@ fn record_stateful_part_layout_warnings(
     rule: &DgStyleRule,
     part: &str,
 ) {
-    if !rule.selector.target_contains_state_pseudo() {
+    if !rule.selector.target_contains_style_slot_pseudo() {
         return;
     }
 
@@ -2919,9 +3540,15 @@ fn widget_kind_supports_part(kind: WidgetKind, part: &str) -> bool {
             WidgetKind::Window | WidgetKind::Spacer | WidgetKind::Unknown
         );
     }
+    if matches!(part, "scrollbar-track" | "scrollbar-thumb")
+        && widget_kind_supports_scrollbar_part(kind)
+    {
+        return true;
+    }
     match kind {
-        WidgetKind::Panel => matches!(part, "accent" | "scrollbar-track" | "scrollbar-thumb"),
+        WidgetKind::Panel => matches!(part, "accent"),
         WidgetKind::Collapsible => matches!(part, "header" | "indicator" | "body"),
+        WidgetKind::Modal => matches!(part, "scrim"),
         WidgetKind::Button => matches!(part, "badge"),
         WidgetKind::NumberInput => matches!(
             part,
@@ -2948,6 +3575,20 @@ fn widget_kind_supports_part(kind: WidgetKind, part: &str) -> bool {
         }
         _ => false,
     }
+}
+
+fn widget_kind_supports_scrollbar_part(kind: WidgetKind) -> bool {
+    matches!(
+        kind,
+        WidgetKind::HLayout
+            | WidgetKind::VLayout
+            | WidgetKind::Pages
+            | WidgetKind::Page
+            | WidgetKind::Sidebar
+            | WidgetKind::Panel
+            | WidgetKind::Collapsible
+            | WidgetKind::Modal
+    )
 }
 
 fn merge_node_style(base: &mut NodeStyle, overlay: &NodeStyle) {
@@ -2994,7 +3635,15 @@ fn merge_layout_style(base: &mut LayoutStyle, overlay: &LayoutStyle) {
     base.padding_top_value = overlay.padding_top_value.or(base.padding_top_value);
     base.padding_bottom_value = overlay.padding_bottom_value.or(base.padding_bottom_value);
     base.margin = overlay.margin.or(base.margin);
+    base.margin_left = overlay.margin_left.or(base.margin_left);
+    base.margin_right = overlay.margin_right.or(base.margin_right);
+    base.margin_top = overlay.margin_top.or(base.margin_top);
+    base.margin_bottom = overlay.margin_bottom.or(base.margin_bottom);
     base.margin_value = overlay.margin_value.or(base.margin_value);
+    base.margin_left_value = overlay.margin_left_value.or(base.margin_left_value);
+    base.margin_right_value = overlay.margin_right_value.or(base.margin_right_value);
+    base.margin_top_value = overlay.margin_top_value.or(base.margin_top_value);
+    base.margin_bottom_value = overlay.margin_bottom_value.or(base.margin_bottom_value);
     base.gap = overlay.gap.or(base.gap);
     base.row_gap = overlay.row_gap.or(base.row_gap);
     base.column_gap = overlay.column_gap.or(base.column_gap);
@@ -3024,6 +3673,7 @@ fn merge_layout_style(base: &mut LayoutStyle, overlay: &LayoutStyle) {
         .grid_template_areas
         .clone()
         .or_else(|| base.grid_template_areas.clone());
+    base.grid_auto_flow = overlay.grid_auto_flow.or(base.grid_auto_flow);
     base.grid_area = overlay.grid_area.clone().or_else(|| base.grid_area.clone());
     base.grid_column = overlay.grid_column.or(base.grid_column);
     base.grid_row = overlay.grid_row.or(base.grid_row);
@@ -3051,8 +3701,12 @@ fn merge_text_style(base: &mut TextStyle, overlay: &TextStyle) {
 }
 
 fn merge_widget_style(base: &mut crate::style::WidgetStyle, overlay: &crate::style::WidgetStyle) {
+    base.text_area_rows = overlay.text_area_rows.or(base.text_area_rows);
+    base.scatter_point_size = overlay.scatter_point_size.or(base.scatter_point_size);
     base.table_row_height = overlay.table_row_height.or(base.table_row_height);
     base.table_header_height = overlay.table_header_height.or(base.table_header_height);
+    base.table_column_width = overlay.table_column_width.or(base.table_column_width);
+    base.table_index_width = overlay.table_index_width.or(base.table_index_width);
 }
 
 fn merge_transition_style(
@@ -3310,11 +3964,38 @@ fn apply_layout_declaration(style: &mut LayoutStyle, declaration: &DgLayoutDecla
             style.padding_bottom_value = layout_length(value);
         }
         DgLayoutDeclaration::Margin(edges) => {
+            style.margin_top = length_px(&edges.top);
+            style.margin_right = length_px(&edges.right);
+            style.margin_bottom = length_px(&edges.bottom);
+            style.margin_left = length_px(&edges.left);
+            style.margin_top_value = layout_length(&edges.top);
+            style.margin_right_value = layout_length(&edges.right);
+            style.margin_bottom_value = layout_length(&edges.bottom);
+            style.margin_left_value = layout_length(&edges.left);
             if edges.top == edges.right && edges.right == edges.bottom && edges.bottom == edges.left
             {
                 style.margin = length_px(&edges.top);
                 style.margin_value = layout_length(&edges.top);
+            } else {
+                style.margin = None;
+                style.margin_value = None;
             }
+        }
+        DgLayoutDeclaration::MarginLeft(value) => {
+            style.margin_left = length_px(value);
+            style.margin_left_value = layout_length(value);
+        }
+        DgLayoutDeclaration::MarginRight(value) => {
+            style.margin_right = length_px(value);
+            style.margin_right_value = layout_length(value);
+        }
+        DgLayoutDeclaration::MarginTop(value) => {
+            style.margin_top = length_px(value);
+            style.margin_top_value = layout_length(value);
+        }
+        DgLayoutDeclaration::MarginBottom(value) => {
+            style.margin_bottom = length_px(value);
+            style.margin_bottom_value = layout_length(value);
         }
         DgLayoutDeclaration::Gap(value) => {
             style.gap = length_px(value);
@@ -3336,6 +4017,9 @@ fn apply_layout_declaration(style: &mut LayoutStyle, declaration: &DgLayoutDecla
         }
         DgLayoutDeclaration::GridTemplateAreas(value) => {
             style.grid_template_areas = Some(grid_template_areas_from_css(value))
+        }
+        DgLayoutDeclaration::GridAutoFlow(value) => {
+            style.grid_auto_flow = Some(grid_auto_flow_from_css(*value))
         }
         DgLayoutDeclaration::GridArea(value) => style.grid_area = Some(value.clone()),
         DgLayoutDeclaration::GridColumn(value) => {
@@ -3380,6 +4064,15 @@ fn grid_track_repeat_kind_from_css(value: DgGridTrackRepeatKind) -> GridTrackRep
     match value {
         DgGridTrackRepeatKind::AutoFit => GridTrackRepeatKind::AutoFit,
         DgGridTrackRepeatKind::AutoFill => GridTrackRepeatKind::AutoFill,
+    }
+}
+
+fn grid_auto_flow_from_css(value: DgGridAutoFlow) -> GridAutoFlowStyle {
+    match value {
+        DgGridAutoFlow::Row => GridAutoFlowStyle::Row,
+        DgGridAutoFlow::Column => GridAutoFlowStyle::Column,
+        DgGridAutoFlow::RowDense => GridAutoFlowStyle::RowDense,
+        DgGridAutoFlow::ColumnDense => GridAutoFlowStyle::ColumnDense,
     }
 }
 
@@ -3451,6 +4144,9 @@ fn apply_visual_declaration(style: &mut VisualStyle, declaration: &DgVisualDecla
             style.background = None;
             style.background_paint = Some(background_paint_from_css(value));
         }
+        DgVisualDeclaration::BackgroundImage(value) => {
+            apply_background_image_declaration(style, value);
+        }
         DgVisualDeclaration::BackdropFilter(value) => style.backdrop_filter = *value,
         DgVisualDeclaration::Foreground(value) => {
             style.foreground = Some(color_ref_from_css(value))
@@ -3459,6 +4155,23 @@ fn apply_visual_declaration(style: &mut VisualStyle, declaration: &DgVisualDecla
             style.border_color = Some(color_ref_from_css(value));
         }
         DgVisualDeclaration::BorderWidth(value) => style.border_width = length_px(value),
+        DgVisualDeclaration::BorderStyle(value) => {
+            if matches!(value, DgBorderStyle::None) {
+                style.border_width = Some(0.0);
+                style.border_color = Some(ColorRef::Rgba([0.0, 0.0, 0.0, 0.0]));
+            }
+        }
+        DgVisualDeclaration::OutlineColor(value) => {
+            style.outline_color = Some(color_ref_from_css(value));
+        }
+        DgVisualDeclaration::OutlineWidth(value) => style.outline_width = length_px(value),
+        DgVisualDeclaration::OutlineStyle(value) => {
+            if matches!(value, DgBorderStyle::None) {
+                style.outline_width = Some(0.0);
+                style.outline_color = Some(ColorRef::Rgba([0.0, 0.0, 0.0, 0.0]));
+            }
+        }
+        DgVisualDeclaration::OutlineOffset(value) => style.outline_offset = length_px(value),
         DgVisualDeclaration::BorderRadius(value) => style.border_radius = length_px(value),
         DgVisualDeclaration::BorderTopLeftRadius(value) => {
             style.corner_radii.top_left = length_px(value)
@@ -3480,6 +4193,16 @@ fn apply_visual_declaration(style: &mut VisualStyle, declaration: &DgVisualDecla
             DgBorderStyle::Solid => {
                 style.border_width = length_px(&border.width);
                 style.border_color = Some(color_ref_from_css(&border.color));
+            }
+        },
+        DgVisualDeclaration::Outline(outline) => match outline.style {
+            DgBorderStyle::None => {
+                style.outline_width = Some(0.0);
+                style.outline_color = Some(ColorRef::Rgba([0.0, 0.0, 0.0, 0.0]));
+            }
+            DgBorderStyle::Solid => {
+                style.outline_width = length_px(&outline.width);
+                style.outline_color = Some(color_ref_from_css(&outline.color));
             }
         },
         DgVisualDeclaration::Opacity(value) => style.opacity = Some(value.0.clamp(0.0, 1.0)),
@@ -3514,6 +4237,29 @@ fn apply_visual_declaration(style: &mut VisualStyle, declaration: &DgVisualDecla
     }
 }
 
+fn apply_background_image_declaration(style: &mut VisualStyle, value: &Option<DgBackgroundPaint>) {
+    style.background_paint = match value {
+        Some(value) => {
+            let paint = background_paint_from_css(value);
+            Some(match style.background.clone() {
+                Some(background) => background_image_over_color(paint, background),
+                None => paint,
+            })
+        }
+        None => style.background.clone().map(BackgroundPaint::Color),
+    };
+}
+
+fn background_image_over_color(paint: BackgroundPaint, color: ColorRef) -> BackgroundPaint {
+    match paint {
+        BackgroundPaint::Layers(mut layers) => {
+            layers.push(BackgroundPaint::Color(color));
+            BackgroundPaint::Layers(layers)
+        }
+        paint => BackgroundPaint::Layers(vec![paint, BackgroundPaint::Color(color)]),
+    }
+}
+
 fn apply_text_declaration(style: &mut TextStyle, declaration: &DgTextDeclaration) {
     match declaration {
         DgTextDeclaration::FontSize(value) => style.font_size = length_px(value),
@@ -3541,10 +4287,18 @@ fn apply_widget_declaration(
     declaration: &DgWidgetDeclaration,
 ) {
     match declaration {
+        DgWidgetDeclaration::TextAreaRows(value) => {
+            style.text_area_rows = Some(value.0.round().max(1.0))
+        }
+        DgWidgetDeclaration::ScatterPointSize(value) => {
+            style.scatter_point_size = length_px(value).map(|size| size.max(0.0))
+        }
         DgWidgetDeclaration::TableRowHeight(value) => style.table_row_height = length_px(value),
         DgWidgetDeclaration::TableHeaderHeight(value) => {
             style.table_header_height = length_px(value)
         }
+        DgWidgetDeclaration::TableColumnWidth(value) => style.table_column_width = length_px(value),
+        DgWidgetDeclaration::TableIndexWidth(value) => style.table_index_width = length_px(value),
     }
 }
 
@@ -3838,8 +4592,15 @@ pub struct DgFontFace {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DgFontFaceSource {
+    pub kind: DgFontFaceSourceKind,
     pub url: String,
     pub format: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DgFontFaceSourceKind {
+    Url,
+    Local,
 }
 
 #[derive(Debug, Clone)]
@@ -4164,25 +4925,39 @@ fn lower_font_face_rule(
             }
             FontFaceProperty::Source(values) => {
                 for source in values {
-                    if let FontFaceSource::Url(url_source) = source {
-                        let format = url_source
-                            .format
-                            .as_ref()
-                            .map(|format| {
-                                format
-                                    .to_css_string(PrinterOptions::default())
-                                    .map(|value| unquote(&value))
-                            })
-                            .transpose()
-                            .map_err(|error| {
-                                DgCssParseError::new(format!(
-                                    "failed to serialize @font-face format: {error}"
-                                ))
-                            })?;
-                        sources.push(DgFontFaceSource {
-                            url: url_source.url.url.as_ref().to_string(),
-                            format,
-                        });
+                    match source {
+                        FontFaceSource::Url(url_source) => {
+                            let format = url_source
+                                .format
+                                .as_ref()
+                                .map(|format| {
+                                    format
+                                        .to_css_string(PrinterOptions::default())
+                                        .map(|value| unquote(&value))
+                                })
+                                .transpose()
+                                .map_err(|error| {
+                                    DgCssParseError::new(format!(
+                                        "failed to serialize @font-face format: {error}"
+                                    ))
+                                })?;
+                            sources.push(DgFontFaceSource {
+                                kind: DgFontFaceSourceKind::Url,
+                                url: url_source.url.url.as_ref().to_string(),
+                                format,
+                            });
+                        }
+                        FontFaceSource::Local(local) => {
+                            let family = font_face_family_to_string(local)?;
+                            if family.trim().is_empty() {
+                                continue;
+                            }
+                            sources.push(DgFontFaceSource {
+                                kind: DgFontFaceSourceKind::Local,
+                                url: family,
+                                format: None,
+                            });
+                        }
                     }
                 }
             }
@@ -4200,7 +4975,8 @@ fn lower_font_face_rule(
     if sources.is_empty() {
         warnings.push(DgStyleWarning {
             property: format!("@font-face {family}"),
-            message: "@font-face rule is missing a supported url(...) src descriptor".to_string(),
+            message: "@font-face rule is missing a supported local(...) or url(...) src descriptor"
+                .to_string(),
         });
         return Ok(None);
     }
@@ -4326,7 +5102,7 @@ fn media_query_expression(query: &MediaQuery<'_>) -> Result<DgMediaExpression, S
         MediaType::Print => DgMediaExpression::Never,
         MediaType::Custom(media_type) => {
             return Err(format!(
-                "unsupported @media type {media_type:?}; only screen/all width, height, aspect-ratio, resolution, color-gamut, orientation, pointer, hover, update, scripting, forced-colors, prefers-contrast, inverted-colors, dynamic-range, video-dynamic-range, prefers-reduced-motion, and prefers-color-scheme queries are supported"
+                "unsupported @media type {media_type:?}; only screen/all width, height, aspect-ratio, resolution, color-gamut, orientation, pointer, hover, update, scripting, forced-colors, prefers-contrast, inverted-colors, dynamic-range, video-dynamic-range, prefers-reduced-motion, prefers-reduced-transparency, prefers-reduced-data, and prefers-color-scheme queries are supported"
             ));
         }
     };
@@ -4367,7 +5143,7 @@ fn media_condition_expression(
             })
         }
         LightningMediaCondition::Unknown(_) => Err(
-            "unsupported @media condition; only width, height, aspect-ratio, resolution, color-gamut, orientation, pointer, hover, update, scripting, forced-colors, prefers-contrast, inverted-colors, dynamic-range, video-dynamic-range, prefers-reduced-motion, and prefers-color-scheme queries are supported"
+            "unsupported @media condition; only width, height, aspect-ratio, resolution, color-gamut, orientation, pointer, hover, update, scripting, forced-colors, prefers-contrast, inverted-colors, dynamic-range, video-dynamic-range, prefers-reduced-motion, prefers-reduced-transparency, prefers-reduced-data, and prefers-color-scheme queries are supported"
                 .to_string(),
         ),
     }
@@ -4434,6 +5210,18 @@ fn media_plain_feature_expression(
     }
     if matches!(
         name,
+        MediaFeatureName::Standard(MediaFeatureId::PrefersReducedTransparency)
+    ) {
+        return media_reduced_transparency_expression(name, value);
+    }
+    if matches!(
+        name,
+        MediaFeatureName::Standard(MediaFeatureId::PrefersReducedData)
+    ) {
+        return media_reduced_data_expression(name, value);
+    }
+    if matches!(
+        name,
         MediaFeatureName::Standard(MediaFeatureId::PrefersColorScheme)
     ) {
         return media_color_scheme_expression(name, value);
@@ -4485,6 +5273,18 @@ fn media_boolean_feature_expression(
         MediaFeatureName::Standard(MediaFeatureId::PrefersReducedMotion)
     ) {
         return Ok(DgMediaExpression::PrefersReducedMotion(true));
+    }
+    if matches!(
+        name,
+        MediaFeatureName::Standard(MediaFeatureId::PrefersReducedTransparency)
+    ) {
+        return Ok(DgMediaExpression::PrefersReducedTransparency(true));
+    }
+    if matches!(
+        name,
+        MediaFeatureName::Standard(MediaFeatureId::PrefersReducedData)
+    ) {
+        return Ok(DgMediaExpression::PrefersReducedData(true));
     }
     if matches!(name, MediaFeatureName::Standard(MediaFeatureId::Pointer)) {
         return Ok(DgMediaExpression::Not(Box::new(
@@ -4553,7 +5353,7 @@ fn media_boolean_feature_expression(
         ));
     }
     Err(format!(
-        "unsupported @media feature {feature}; only width, height, aspect-ratio, resolution, color-gamut, orientation, pointer, hover, update, scripting, forced-colors, prefers-contrast, inverted-colors, dynamic-range, video-dynamic-range, prefers-reduced-motion, and prefers-color-scheme queries are supported",
+        "unsupported @media feature {feature}; only width, height, aspect-ratio, resolution, color-gamut, orientation, pointer, hover, update, scripting, forced-colors, prefers-contrast, inverted-colors, dynamic-range, video-dynamic-range, prefers-reduced-motion, prefers-reduced-transparency, prefers-reduced-data, and prefers-color-scheme queries are supported",
         feature = media_feature_name_label(name)
     ))
 }
@@ -4666,6 +5466,33 @@ fn media_reduced_motion_expression(
     name: &MediaFeatureName<'_, MediaFeatureId>,
     value: &MediaFeatureValue<'_>,
 ) -> Result<DgMediaExpression, String> {
+    Ok(DgMediaExpression::PrefersReducedMotion(
+        media_reduced_preference_value(name, value)?,
+    ))
+}
+
+fn media_reduced_transparency_expression(
+    name: &MediaFeatureName<'_, MediaFeatureId>,
+    value: &MediaFeatureValue<'_>,
+) -> Result<DgMediaExpression, String> {
+    Ok(DgMediaExpression::PrefersReducedTransparency(
+        media_reduced_preference_value(name, value)?,
+    ))
+}
+
+fn media_reduced_data_expression(
+    name: &MediaFeatureName<'_, MediaFeatureId>,
+    value: &MediaFeatureValue<'_>,
+) -> Result<DgMediaExpression, String> {
+    Ok(DgMediaExpression::PrefersReducedData(
+        media_reduced_preference_value(name, value)?,
+    ))
+}
+
+fn media_reduced_preference_value(
+    name: &MediaFeatureName<'_, MediaFeatureId>,
+    value: &MediaFeatureValue<'_>,
+) -> Result<bool, String> {
     let MediaFeatureValue::Ident(ident) = value else {
         return Err(format!(
             "unsupported @media value for {feature}; only reduce and no-preference are supported",
@@ -4682,7 +5509,7 @@ fn media_reduced_motion_expression(
             ));
         }
     };
-    Ok(DgMediaExpression::PrefersReducedMotion(reduce))
+    Ok(reduce)
 }
 
 fn media_color_scheme_expression(
@@ -4862,7 +5689,7 @@ fn media_constraint_expression(
 ) -> Result<DgMediaExpression, String> {
     let feature = media_feature_name(name).ok_or_else(|| {
         format!(
-            "unsupported @media feature {feature}; only width, height, aspect-ratio, resolution, color-gamut, orientation, pointer, hover, update, scripting, forced-colors, prefers-contrast, inverted-colors, dynamic-range, video-dynamic-range, prefers-reduced-motion, and prefers-color-scheme queries are supported",
+            "unsupported @media feature {feature}; only width, height, aspect-ratio, resolution, color-gamut, orientation, pointer, hover, update, scripting, forced-colors, prefers-contrast, inverted-colors, dynamic-range, video-dynamic-range, prefers-reduced-motion, prefers-reduced-transparency, prefers-reduced-data, and prefers-color-scheme queries are supported",
             feature = media_feature_name_label(name)
         )
     })?;
@@ -4916,6 +5743,12 @@ fn media_feature_name_label(name: &MediaFeatureName<'_, MediaFeatureId>) -> Stri
         }
         MediaFeatureName::Standard(MediaFeatureId::PrefersReducedMotion) => {
             "prefers-reduced-motion".to_string()
+        }
+        MediaFeatureName::Standard(MediaFeatureId::PrefersReducedTransparency) => {
+            "prefers-reduced-transparency".to_string()
+        }
+        MediaFeatureName::Standard(MediaFeatureId::PrefersReducedData) => {
+            "prefers-reduced-data".to_string()
         }
         MediaFeatureName::Standard(MediaFeatureId::PrefersColorScheme) => {
             "prefers-color-scheme".to_string()
@@ -5211,16 +6044,19 @@ fn lower_layout(
             DgLayoutDeclaration::PaddingBottom(parse_spacing_length_value(name, value, variables)?)
         }
         DgLayoutPropertyName::Margin => {
-            let edges = parse_layout_box_edges(name, value, variables)?;
-            if edges.top != edges.right || edges.right != edges.bottom || edges.bottom != edges.left
-            {
-                return Err(DgStyleWarning {
-                    property: name.to_string(),
-                    message: "only uniform margin values are supported in DragonGUI CSS V1"
-                        .to_string(),
-                });
-            }
-            DgLayoutDeclaration::Margin(edges)
+            DgLayoutDeclaration::Margin(parse_layout_box_edges(name, value, variables)?)
+        }
+        DgLayoutPropertyName::MarginLeft => {
+            DgLayoutDeclaration::MarginLeft(parse_layout_length_value(name, value, variables)?)
+        }
+        DgLayoutPropertyName::MarginRight => {
+            DgLayoutDeclaration::MarginRight(parse_layout_length_value(name, value, variables)?)
+        }
+        DgLayoutPropertyName::MarginTop => {
+            DgLayoutDeclaration::MarginTop(parse_layout_length_value(name, value, variables)?)
+        }
+        DgLayoutPropertyName::MarginBottom => {
+            DgLayoutDeclaration::MarginBottom(parse_layout_length_value(name, value, variables)?)
         }
         DgLayoutPropertyName::Gap => {
             DgLayoutDeclaration::Gap(parse_spacing_length_value(name, value, variables)?)
@@ -5240,6 +6076,9 @@ fn lower_layout(
         DgLayoutPropertyName::GridTemplateAreas => DgLayoutDeclaration::GridTemplateAreas(
             parse_grid_template_areas_value(name, value, variables)?,
         ),
+        DgLayoutPropertyName::GridAutoFlow => {
+            DgLayoutDeclaration::GridAutoFlow(parse_grid_auto_flow_value(name, value, variables)?)
+        }
         DgLayoutPropertyName::GridArea => {
             DgLayoutDeclaration::GridArea(parse_grid_area_value(name, value, variables)?)
         }
@@ -5291,6 +6130,9 @@ fn lower_visual(
             Some(paint) => DgVisualDeclaration::BackgroundPaint(paint),
             None => DgVisualDeclaration::Background(parse_color_value(name, value, variables)?),
         },
+        DgVisualPropertyName::BackgroundImage => DgVisualDeclaration::BackgroundImage(
+            parse_background_image_paint_value(name, value, variables)?,
+        ),
         DgVisualPropertyName::BackdropFilter => DgVisualDeclaration::BackdropFilter(
             parse_backdrop_filter_value(name, value, variables)?,
         ),
@@ -5303,6 +6145,25 @@ fn lower_visual(
         DgVisualPropertyName::BorderWidth => {
             DgVisualDeclaration::BorderWidth(parse_px_length_value(name, value, variables)?)
         }
+        DgVisualPropertyName::BorderStyle => {
+            DgVisualDeclaration::BorderStyle(parse_border_style_value(name, value, variables)?)
+        }
+        DgVisualPropertyName::OutlineColor => {
+            DgVisualDeclaration::OutlineColor(parse_color_value(name, value, variables)?)
+        }
+        DgVisualPropertyName::OutlineWidth => {
+            DgVisualDeclaration::OutlineWidth(parse_px_length_value(name, value, variables)?)
+        }
+        DgVisualPropertyName::OutlineStyle => {
+            DgVisualDeclaration::OutlineStyle(parse_border_style_value(name, value, variables)?)
+        }
+        DgVisualPropertyName::OutlineOffset => {
+            DgVisualDeclaration::OutlineOffset(parse_px_length_value(name, value, variables)?)
+        }
+        DgVisualPropertyName::Outline => DgVisualDeclaration::Outline(
+            parse_border(value, variables)
+                .ok_or_else(|| parse_warning(name, value, "<width> solid <color> or none"))?,
+        ),
         DgVisualPropertyName::BorderRadius => {
             DgVisualDeclaration::BorderRadius(parse_px_length_value(name, value, variables)?)
         }
@@ -5421,11 +6282,23 @@ fn lower_widget(
     variables: &BTreeMap<String, DgCssValue>,
 ) -> Result<Option<DgStyleProperty>, DgStyleWarning> {
     let declaration = match property {
+        DgWidgetPropertyName::TextAreaRows => {
+            DgWidgetDeclaration::TextAreaRows(parse_number_value(name, value, variables)?)
+        }
+        DgWidgetPropertyName::ScatterPointSize => {
+            DgWidgetDeclaration::ScatterPointSize(parse_px_length_value(name, value, variables)?)
+        }
         DgWidgetPropertyName::TableRowHeight => {
             DgWidgetDeclaration::TableRowHeight(parse_px_length_value(name, value, variables)?)
         }
         DgWidgetPropertyName::TableHeaderHeight => {
             DgWidgetDeclaration::TableHeaderHeight(parse_px_length_value(name, value, variables)?)
+        }
+        DgWidgetPropertyName::TableColumnWidth => {
+            DgWidgetDeclaration::TableColumnWidth(parse_px_length_value(name, value, variables)?)
+        }
+        DgWidgetPropertyName::TableIndexWidth => {
+            DgWidgetDeclaration::TableIndexWidth(parse_px_length_value(name, value, variables)?)
         }
     };
     Ok(Some(DgStyleProperty::Widget(declaration)))
@@ -5471,7 +6344,7 @@ fn lower_animation(
             DgAnimationDeclaration::Shorthand(parse_animation_shorthand(name, value, variables)?)
         }
         DgAnimationPropertyName::Name => {
-            let name = resolve_keyword(value, variables);
+            let name = first_animation_list_value(value, variables);
             let name = name.trim();
             if name.eq_ignore_ascii_case("none") {
                 DgAnimationDeclaration::Name(None)
@@ -5482,40 +6355,56 @@ fn lower_animation(
             }
         }
         DgAnimationPropertyName::Duration => {
-            DgAnimationDeclaration::Duration(parse_time_ms_value(name, value, variables)?)
+            let value = first_animation_list_value(value, variables);
+            DgAnimationDeclaration::Duration(parse_time_ms_value(name, &value, variables)?)
         }
         DgAnimationPropertyName::Delay => {
-            DgAnimationDeclaration::Delay(parse_time_ms_value(name, value, variables)?)
+            let value = first_animation_list_value(value, variables);
+            DgAnimationDeclaration::Delay(parse_signed_time_ms_value(name, &value, variables)?)
         }
         DgAnimationPropertyName::TimingFunction => {
-            let keyword = resolve_keyword(value, variables);
+            let keyword = first_animation_list_value(value, variables);
             let timing = transition_timing_from_keyword(&keyword)
                 .ok_or_else(|| parse_warning(name, value, "animation timing function"))?;
             DgAnimationDeclaration::TimingFunction(timing)
         }
-        DgAnimationPropertyName::IterationCount => DgAnimationDeclaration::IterationCount(
-            parse_animation_iteration_count_value(name, value, variables)?,
-        ),
+        DgAnimationPropertyName::IterationCount => {
+            DgAnimationDeclaration::IterationCount(parse_animation_iteration_count_value(
+                name,
+                &first_animation_list_value(value, variables),
+                variables,
+            )?)
+        }
         DgAnimationPropertyName::Direction => {
-            let keyword = resolve_keyword(value, variables);
+            let keyword = first_animation_list_value(value, variables);
             let direction = animation_direction_from_keyword(&keyword)
                 .ok_or_else(|| parse_warning(name, value, "animation direction"))?;
             DgAnimationDeclaration::Direction(direction)
         }
         DgAnimationPropertyName::FillMode => {
-            let keyword = resolve_keyword(value, variables);
+            let keyword = first_animation_list_value(value, variables);
             let fill_mode = animation_fill_mode_from_keyword(&keyword)
                 .ok_or_else(|| parse_warning(name, value, "animation fill mode"))?;
             DgAnimationDeclaration::FillMode(fill_mode)
         }
         DgAnimationPropertyName::PlayState => {
-            let keyword = resolve_keyword(value, variables);
+            let keyword = first_animation_list_value(value, variables);
             let play_state = animation_play_state_from_keyword(&keyword)
                 .ok_or_else(|| parse_warning(name, value, "animation play state"))?;
             DgAnimationDeclaration::PlayState(play_state)
         }
     };
     Ok(Some(DgStyleProperty::Animation(declaration)))
+}
+
+fn first_animation_list_value(value: &str, variables: &BTreeMap<String, DgCssValue>) -> String {
+    let value = resolve_keyword(value, variables);
+    split_selector_list(&value)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| value.clone())
+        .trim()
+        .to_string()
 }
 
 fn parse_animation_shorthand(
@@ -5566,9 +6455,18 @@ fn parse_animation_shorthand(
             if !saw_duration {
                 style.duration_ms = Some(time);
                 saw_duration = true;
-            } else {
-                style.delay_ms = Some(time);
+                continue;
             }
+        }
+        if saw_duration {
+            if let Some(delay) = parse_signed_time_ms(&token) {
+                style.delay_ms = Some(delay);
+                continue;
+            }
+        } else if is_signed_time_token(&token) {
+            return Err(parse_warning(name, value.as_str(), "animation duration"));
+        }
+        if parse_time_ms(&token).is_some() {
             continue;
         }
         if let Ok(count) = parse_animation_iteration_count_value(name, &token, variables) {
@@ -5711,6 +6609,16 @@ fn parse_time_ms_value(
     parse_time_ms(first).ok_or_else(|| parse_warning(name, value.as_str(), "time"))
 }
 
+fn parse_signed_time_ms_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<i64, DgStyleWarning> {
+    let value = resolve_keyword(value, variables);
+    let first = value.split(',').next().unwrap_or(value.as_str()).trim();
+    parse_signed_time_ms(first).ok_or_else(|| parse_warning(name, value.as_str(), "time"))
+}
+
 fn parse_time_ms(value: &str) -> Option<u64> {
     let value = value.trim().to_ascii_lowercase();
     if let Some(ms) = value.strip_suffix("ms") {
@@ -5718,16 +6626,44 @@ fn parse_time_ms(value: &str) -> Option<u64> {
             .trim()
             .parse::<f32>()
             .ok()
-            .map(|v| v.max(0.0).round() as u64);
+            .filter(|value| value.is_finite() && *value >= 0.0)
+            .map(|value| value.round() as u64);
     }
     if let Some(seconds) = value.strip_suffix('s') {
         return seconds
             .trim()
             .parse::<f32>()
             .ok()
-            .map(|v| (v.max(0.0) * 1000.0).round() as u64);
+            .filter(|value| value.is_finite() && *value >= 0.0)
+            .map(|value| (value * 1000.0).round() as u64);
     }
     None
+}
+
+fn parse_signed_time_ms(value: &str) -> Option<i64> {
+    let value = value.trim().to_ascii_lowercase();
+    if let Some(ms) = value.strip_suffix("ms") {
+        return ms
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .filter(|value| value.is_finite())
+            .map(|value| value.round() as i64);
+    }
+    if let Some(seconds) = value.strip_suffix('s') {
+        return seconds
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .filter(|value| value.is_finite())
+            .map(|value| (value * 1000.0).round() as i64);
+    }
+    None
+}
+
+fn is_signed_time_token(value: &str) -> bool {
+    let value = value.trim();
+    value.starts_with('-') && parse_signed_time_ms(value).is_some()
 }
 
 fn transition_timing_from_keyword(value: &str) -> Option<TransitionTimingFunction> {
@@ -5742,6 +6678,10 @@ fn transition_property_from_keyword(value: &str) -> Option<TransitionProperty> {
         "border-color" => Some(TransitionProperty::BorderColor),
         "border-width" => Some(TransitionProperty::BorderWidth),
         "border-radius" => Some(TransitionProperty::BorderRadius),
+        "outline" | "outline-style" => Some(TransitionProperty::Outline),
+        "outline-color" => Some(TransitionProperty::OutlineColor),
+        "outline-width" => Some(TransitionProperty::OutlineWidth),
+        "outline-offset" => Some(TransitionProperty::OutlineOffset),
         "opacity" => Some(TransitionProperty::Opacity),
         "color" => Some(TransitionProperty::Color),
         "accent" => Some(TransitionProperty::Accent),
@@ -5768,7 +6708,7 @@ fn parse_animation_iteration_count_value(
         .ok()
         .filter(|value| value.is_finite() && *value > 0.0)
         .ok_or_else(|| parse_warning(name, value, "animation iteration count"))?;
-    Ok(AnimationIterationCount::Count(count.round() as u32))
+    Ok(AnimationIterationCount::Count(count))
 }
 
 fn animation_direction_from_keyword(value: &str) -> Option<AnimationDirection> {
@@ -5823,16 +6763,76 @@ fn parse_backdrop_filter_value(
     if trimmed.eq_ignore_ascii_case("none") {
         return Ok(None);
     }
-    let lower = trimmed.to_ascii_lowercase();
-    let args = lower
-        .strip_prefix("blur(")
-        .and_then(|value| value.strip_suffix(')'))
-        .map(str::trim)
-        .ok_or_else(|| parse_warning(name, value.as_str(), "blur(<length>)"))?;
-    let blur = length_px(&parse_px_length_value(name, args, variables)?)
-        .unwrap_or(0.0)
-        .max(0.0);
-    Ok(Some(BackdropFilterStyle { blur }))
+    let filter = parse_backdrop_filter_functions(name, trimmed, variables)
+        .ok_or_else(|| parse_warning(name, value.as_str(), "backdrop filter"))?;
+    Ok(Some(filter))
+}
+
+fn parse_backdrop_filter_functions(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Option<BackdropFilterStyle> {
+    let mut rest = value;
+    let mut filter = BackdropFilterStyle::default();
+    let mut parsed_any = false;
+    while !rest.trim().is_empty() {
+        rest = rest.trim_start();
+        let open = rest.find('(')?;
+        let function_name = rest[..open].trim().to_ascii_lowercase();
+        let after_open = &rest[open + 1..];
+        let close = find_closing_paren(after_open)?;
+        let args = after_open[..close].trim();
+        match function_name.as_str() {
+            "blur" => {
+                let blur = length_px(&parse_px_length_value(name, args, variables).ok()?)
+                    .unwrap_or(0.0)
+                    .max(0.0);
+                filter.blur += blur;
+            }
+            "brightness" => {
+                filter.brightness *= parse_filter_factor_value(args)?;
+            }
+            "saturate" => {
+                filter.saturate *= parse_filter_factor_value(args)?;
+            }
+            _ => return None,
+        }
+        parsed_any = true;
+        rest = &after_open[close + 1..];
+    }
+    parsed_any.then_some(filter)
+}
+
+fn find_closing_paren(value: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut quote = None;
+    for (idx, ch) in value.char_indices() {
+        if let Some(active_quote) = quote {
+            if ch == active_quote {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            '(' => depth = depth.saturating_add(1),
+            ')' if depth == 0 => return Some(idx),
+            ')' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn parse_filter_factor_value(value: &str) -> Option<f32> {
+    let value = value.trim().to_ascii_lowercase();
+    let factor = if let Some(percent) = value.strip_suffix('%') {
+        percent.trim().parse::<f32>().ok()? / 100.0
+    } else {
+        value.parse::<f32>().ok()?
+    };
+    factor.is_finite().then_some(factor.max(0.0))
 }
 
 fn parse_translate_value(
@@ -5991,6 +6991,21 @@ fn parse_transform_angle(value: &str) -> Option<f32> {
 }
 
 fn parse_selector(selector: &str, warnings: &mut Vec<DgStyleWarning>) -> Option<DgSelector> {
+    parse_selector_with_options(selector, warnings, false)
+}
+
+fn parse_has_argument_selector(
+    selector: &str,
+    warnings: &mut Vec<DgStyleWarning>,
+) -> Option<DgSelector> {
+    parse_selector_with_options(selector, warnings, true)
+}
+
+fn parse_selector_with_options(
+    selector: &str,
+    warnings: &mut Vec<DgStyleWarning>,
+    allow_has_in_chain_ancestors: bool,
+) -> Option<DgSelector> {
     let selector = selector.trim();
     if selector == ":root" {
         return Some(DgSelector::Root);
@@ -6039,11 +7054,18 @@ fn parse_selector(selector: &str, warnings: &mut Vec<DgStyleWarning>) -> Option<
         if idx + 1 != parts.len()
             && (!compound.pseudo.is_empty()
                 || !compound.structural.is_empty()
-                || compound.contains_state_pseudo())
+                || compound.contains_state_pseudo()
+                || (compound.contains_has_function() && !allow_has_in_chain_ancestors)
+                || (allow_has_in_chain_ancestors && compound.contains_has_sibling_relation()))
         {
             warnings.push(DgStyleWarning {
                 property: selector.to_string(),
-                message: "pseudo selectors are only supported on the target widget".to_string(),
+                message: if allow_has_in_chain_ancestors && compound.contains_has_sibling_relation()
+                {
+                    "sibling-relative :has() is only supported on target selectors".to_string()
+                } else {
+                    "pseudo selectors are only supported on the target widget".to_string()
+                },
             });
             return None;
         }
@@ -6469,17 +7491,71 @@ fn parse_selector_function(value: &str) -> Option<DgSelectorFunction> {
         (DgSelectorFunctionKind::Is, inner.strip_suffix(')')?)
     } else if let Some(inner) = value.strip_prefix("where(") {
         (DgSelectorFunctionKind::Where, inner.strip_suffix(')')?)
+    } else if let Some(inner) = value.strip_prefix("has(") {
+        (DgSelectorFunctionKind::Has, inner.strip_suffix(')')?)
     } else {
         return None;
     };
     let selectors = split_selector_list(inner)
         .into_iter()
-        .map(|selector| parse_compound_selector(&selector))
+        .map(|selector| parse_selector_function_argument(kind, &selector))
         .collect::<Option<Vec<_>>>()?;
-    if selectors.is_empty() || selectors.iter().any(|selector| selector.part.is_some()) {
+    if selectors.is_empty()
+        || selectors.iter().any(|selector| {
+            matches!(selector.selector, DgSelector::Root)
+                || selector.selector.target_part().is_some()
+        })
+    {
+        return None;
+    }
+    if kind == DgSelectorFunctionKind::Has
+        && selectors.iter().any(|selector| {
+            !selector
+                .selector
+                .target_state_pseudos_are_snapshot_matchable()
+        })
+    {
         return None;
     }
     Some(DgSelectorFunction { kind, selectors })
+}
+
+fn parse_selector_function_argument(
+    kind: DgSelectorFunctionKind,
+    selector: &str,
+) -> Option<DgSelectorFunctionArgument> {
+    if kind == DgSelectorFunctionKind::Has {
+        let selector = selector.trim();
+        let (relation, selector) = if let Some(selector) = selector.strip_prefix('>') {
+            (DgSelectorFunctionRelation::Child, selector.trim())
+        } else if let Some(selector) = selector.strip_prefix('+') {
+            (DgSelectorFunctionRelation::NextSibling, selector.trim())
+        } else if let Some(selector) = selector.strip_prefix('~') {
+            (
+                DgSelectorFunctionRelation::SubsequentSibling,
+                selector.trim(),
+            )
+        } else {
+            (DgSelectorFunctionRelation::Descendant, selector)
+        };
+        if selector.is_empty() {
+            return None;
+        }
+        let mut warnings = Vec::new();
+        let selector = parse_has_argument_selector(selector, &mut warnings)?;
+        return Some(match relation {
+            DgSelectorFunctionRelation::Descendant => DgSelectorFunctionArgument::new(selector),
+            DgSelectorFunctionRelation::Child => DgSelectorFunctionArgument::direct_child(selector),
+            DgSelectorFunctionRelation::NextSibling => {
+                DgSelectorFunctionArgument::next_sibling(selector)
+            }
+            DgSelectorFunctionRelation::SubsequentSibling => {
+                DgSelectorFunctionArgument::subsequent_sibling(selector)
+            }
+        });
+    }
+
+    parse_compound_selector(selector).map(DgSelectorFunctionArgument::compound)
 }
 
 fn parse_pseudo(value: &str) -> Option<DgPseudoClass> {
@@ -6501,7 +7577,16 @@ fn parse_structural_pseudo(value: &str) -> Option<DgStructuralPseudo> {
     match value {
         "first-child" => Some(DgStructuralPseudo::FirstChild),
         "last-child" => Some(DgStructuralPseudo::LastChild),
+        "only-child" => Some(DgStructuralPseudo::OnlyChild),
+        "empty" => Some(DgStructuralPseudo::Empty),
         _ => {
+            if let Some(inner) = value
+                .strip_prefix("nth-last-child(")
+                .and_then(|value| value.strip_suffix(')'))
+                .map(str::trim)
+            {
+                return parse_nth_child(inner).map(DgStructuralPseudo::NthLastChild);
+            }
             let inner = value
                 .strip_prefix("nth-child(")
                 .and_then(|value| value.strip_suffix(')'))?
@@ -6631,8 +7716,7 @@ fn split_nth_child_pattern_and_filter(value: &str) -> Option<(&str, Option<&str>
 fn nth_child_filter_selector_is_supported(selector: &DgSelector) -> bool {
     !matches!(selector, DgSelector::Root)
         && selector.target_part().is_none()
-        && !selector.target_contains_state_pseudo()
-        && !selector.target_contains_structural_pseudo()
+        && selector.target_state_pseudos_are_snapshot_matchable()
 }
 
 fn split_selector_list(selector: &str) -> Vec<String> {
@@ -7190,6 +8274,36 @@ fn parse_grid_template_areas_value(
     })
 }
 
+fn parse_grid_auto_flow_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<DgGridAutoFlow, DgStyleWarning> {
+    let resolved = resolve_keyword(value, variables);
+    let mut direction: Option<DgGridAutoFlow> = None;
+    let mut dense = false;
+    let mut saw_token = false;
+    for token in resolved.split_whitespace() {
+        saw_token = true;
+        match token.to_ascii_lowercase().as_str() {
+            "row" if direction.is_none() => direction = Some(DgGridAutoFlow::Row),
+            "column" if direction.is_none() => direction = Some(DgGridAutoFlow::Column),
+            "dense" if !dense => dense = true,
+            _ => return Err(parse_warning(name, &resolved, "grid-auto-flow value")),
+        }
+    }
+    if !saw_token {
+        return Err(parse_warning(name, value, "grid-auto-flow value"));
+    }
+    Ok(match (direction.unwrap_or(DgGridAutoFlow::Row), dense) {
+        (DgGridAutoFlow::Row, false) => DgGridAutoFlow::Row,
+        (DgGridAutoFlow::Row, true) => DgGridAutoFlow::RowDense,
+        (DgGridAutoFlow::Column, false) => DgGridAutoFlow::Column,
+        (DgGridAutoFlow::Column, true) => DgGridAutoFlow::ColumnDense,
+        (flow, _) => flow,
+    })
+}
+
 fn parse_grid_area_rows(value: &str) -> Option<Vec<Vec<String>>> {
     let mut rows = Vec::new();
     let mut rest = value.trim();
@@ -7720,7 +8834,7 @@ fn parse_background_paint_value(
     if layers.len() > 1 {
         let mut paints = Vec::with_capacity(layers.len());
         for layer in layers {
-            let paint = match parse_single_background_paint(layer, variables)? {
+            let paint = match parse_single_background_paint("background", layer, variables)? {
                 Some(paint) => paint,
                 None => {
                     DgBackgroundPaint::Color(parse_color_value("background", layer, variables)?)
@@ -7730,37 +8844,82 @@ fn parse_background_paint_value(
         }
         return Ok(Some(DgBackgroundPaint::Layers(paints)));
     }
-    parse_single_background_paint(&value, variables)
+    parse_single_background_paint("background", &value, variables)
+}
+
+fn parse_background_image_paint_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<Option<DgBackgroundPaint>, DgStyleWarning> {
+    let value = resolve_keyword(value, variables);
+    if value.trim().eq_ignore_ascii_case("none") {
+        return Ok(None);
+    }
+
+    let layers = split_top_level_commas(&value);
+    let mut paints = Vec::with_capacity(layers.len());
+    for layer in layers {
+        let Some(paint) = parse_single_background_paint(name, layer, variables)? else {
+            return Err(parse_warning(
+                name,
+                layer,
+                "linear-gradient, radial-gradient, repeating-gradient, or none",
+            ));
+        };
+        paints.push(paint);
+    }
+
+    match paints.len() {
+        0 => Err(parse_warning(
+            name,
+            &value,
+            "linear-gradient, radial-gradient, repeating-gradient, or none",
+        )),
+        1 => Ok(paints.pop()),
+        _ => Ok(Some(DgBackgroundPaint::Layers(paints))),
+    }
 }
 
 fn parse_single_background_paint(
+    name: &str,
     value: &str,
     variables: &BTreeMap<String, DgCssValue>,
 ) -> Result<Option<DgBackgroundPaint>, DgStyleWarning> {
     if let Some(args) = function_args(&value, "linear-gradient") {
         return Ok(Some(DgBackgroundPaint::LinearGradient(
-            parse_linear_gradient(args, variables, false)?,
+            parse_linear_gradient(name, args, variables, false)?,
         )));
     }
     if let Some(args) = function_args(&value, "repeating-linear-gradient") {
         return Ok(Some(DgBackgroundPaint::LinearGradient(
-            parse_linear_gradient(args, variables, true)?,
+            parse_linear_gradient(name, args, variables, true)?,
         )));
     }
     if let Some(args) = function_args(&value, "radial-gradient") {
         return Ok(Some(DgBackgroundPaint::RadialGradient(
-            parse_radial_gradient(args, variables, false)?,
+            parse_radial_gradient(name, args, variables, false)?,
         )));
     }
     if let Some(args) = function_args(&value, "repeating-radial-gradient") {
         return Ok(Some(DgBackgroundPaint::RadialGradient(
-            parse_radial_gradient(args, variables, true)?,
+            parse_radial_gradient(name, args, variables, true)?,
         )));
     }
     Ok(None)
 }
 
+fn function_args<'a>(value: &'a str, name: &str) -> Option<&'a str> {
+    let value = value.trim();
+    let prefix = format!("{name}(");
+    value
+        .strip_prefix(&prefix)
+        .and_then(|rest| rest.strip_suffix(')'))
+        .map(str::trim)
+}
+
 fn parse_linear_gradient(
+    name: &str,
     args: &str,
     variables: &BTreeMap<String, DgCssValue>,
     repeating: bool,
@@ -7768,7 +8927,7 @@ fn parse_linear_gradient(
     let parts = split_top_level_commas(args);
     if parts.len() < 2 {
         return Err(parse_warning(
-            "background",
+            name,
             args,
             "linear-gradient with at least two color stops",
         ));
@@ -7780,14 +8939,14 @@ fn parse_linear_gradient(
     };
     if stop_parts.len() < 2 {
         return Err(parse_warning(
-            "background",
+            name,
             args,
             "linear-gradient with at least two color stops",
         ));
     }
     let mut stops = Vec::with_capacity(stop_parts.len());
     for part in stop_parts {
-        stops.extend(parse_gradient_stops(part, variables)?);
+        stops.extend(parse_gradient_stops(name, part, variables)?);
     }
     Ok(DgLinearGradient {
         angle_deg,
@@ -7797,6 +8956,7 @@ fn parse_linear_gradient(
 }
 
 fn parse_radial_gradient(
+    name: &str,
     args: &str,
     variables: &BTreeMap<String, DgCssValue>,
     repeating: bool,
@@ -7804,7 +8964,7 @@ fn parse_radial_gradient(
     let parts = split_top_level_commas(args);
     if parts.len() < 2 {
         return Err(parse_warning(
-            "background",
+            name,
             args,
             "radial-gradient with at least two color stops",
         ));
@@ -7816,14 +8976,14 @@ fn parse_radial_gradient(
     };
     if stop_parts.len() < 2 {
         return Err(parse_warning(
-            "background",
+            name,
             args,
             "radial-gradient with at least two color stops",
         ));
     }
     let mut stops = Vec::with_capacity(stop_parts.len());
     for part in stop_parts {
-        stops.extend(parse_gradient_stops(part, variables)?);
+        stops.extend(parse_gradient_stops(name, part, variables)?);
     }
     Ok(DgRadialGradient {
         stops,
@@ -7893,26 +9053,27 @@ fn parse_linear_gradient_direction(value: &str) -> Option<f32> {
 }
 
 fn parse_gradient_stops(
+    name: &str,
     value: &str,
     variables: &BTreeMap<String, DgCssValue>,
 ) -> Result<Vec<DgGradientStop>, DgStyleWarning> {
     let tokens = split_value_tokens(value);
     if tokens.is_empty() || tokens.len() > 3 {
-        return Err(parse_warning("background", value, "gradient color stop"));
+        return Err(parse_warning(name, value, "gradient color stop"));
     }
-    let color = parse_color_value("background", tokens[0], variables)?;
+    let color = parse_color_value(name, tokens[0], variables)?;
     let first_position = tokens
         .get(1)
         .map(|value| parse_gradient_stop_position(value))
         .transpose()
-        .map_err(|_| parse_warning("background", value, "gradient stop position"))?;
+        .map_err(|_| parse_warning(name, value, "gradient stop position"))?;
     let mut stops = vec![DgGradientStop {
         color: color.clone(),
         position: first_position,
     }];
     if let Some(second) = tokens.get(2) {
         let position = parse_gradient_stop_position(second)
-            .map_err(|_| parse_warning("background", value, "gradient stop position"))?;
+            .map_err(|_| parse_warning(name, value, "gradient stop position"))?;
         stops.push(DgGradientStop {
             color,
             position: Some(position),
@@ -7938,202 +9099,13 @@ fn parse_gradient_stop_position(value: &str) -> Result<f32, ()> {
 
 fn parse_color(value: &str) -> Option<DgCssColor> {
     let value = value.trim();
-    if value.starts_with('#') {
-        parse_css_hex_color(value).map(DgCssColor::Rgba)
-    } else if let Some(color) = parse_named_css_color(value) {
-        Some(DgCssColor::Rgba(color))
-    } else if let Some(color) = parse_functional_color(value) {
+    if let Some(color) = parse_web_color(value) {
         Some(DgCssColor::Rgba(color))
     } else if is_identifier_like(value) {
         Some(DgCssColor::Token(value.to_string()))
     } else {
         None
     }
-}
-
-fn parse_named_css_color(value: &str) -> Option<Color> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "transparent" => Some([0.0, 0.0, 0.0, 0.0]),
-        "black" => Some([0.0, 0.0, 0.0, 1.0]),
-        "white" => Some([1.0, 1.0, 1.0, 1.0]),
-        "red" => Some([1.0, 0.0, 0.0, 1.0]),
-        "green" => Some([0.0, 0.5019608, 0.0, 1.0]),
-        "blue" => Some([0.0, 0.0, 1.0, 1.0]),
-        "gray" | "grey" => Some([0.5019608, 0.5019608, 0.5019608, 1.0]),
-        _ => None,
-    }
-}
-
-fn parse_functional_color(value: &str) -> Option<Color> {
-    let value = value.trim();
-    if let Some(args) = function_args(value, "rgb").or_else(|| function_args(value, "rgba")) {
-        return parse_rgb_function(args);
-    }
-    if let Some(args) = function_args(value, "hsl").or_else(|| function_args(value, "hsla")) {
-        return parse_hsl_function(args);
-    }
-    None
-}
-
-fn function_args<'a>(value: &'a str, name: &str) -> Option<&'a str> {
-    let value = value.trim();
-    let prefix = format!("{name}(");
-    value
-        .strip_prefix(&prefix)
-        .and_then(|rest| rest.strip_suffix(')'))
-        .map(str::trim)
-}
-
-fn color_function_tokens(args: &str) -> Vec<&str> {
-    if args.contains(',') {
-        args.split(',')
-            .flat_map(|part| part.split('/'))
-            .map(str::trim)
-            .filter(|part| !part.is_empty())
-            .collect()
-    } else {
-        args.split_whitespace()
-            .filter(|part| *part != "/")
-            .collect()
-    }
-}
-
-fn parse_rgb_function(args: &str) -> Option<Color> {
-    let tokens = color_function_tokens(args);
-    if tokens.len() != 3 && tokens.len() != 4 {
-        return None;
-    }
-    let r = parse_rgb_channel(tokens[0])?;
-    let g = parse_rgb_channel(tokens[1])?;
-    let b = parse_rgb_channel(tokens[2])?;
-    let a = tokens
-        .get(3)
-        .and_then(|value| parse_alpha_channel(value))
-        .unwrap_or(1.0);
-    Some([r, g, b, a])
-}
-
-fn parse_hsl_function(args: &str) -> Option<Color> {
-    let tokens = color_function_tokens(args);
-    if tokens.len() != 3 && tokens.len() != 4 {
-        return None;
-    }
-    let hue = parse_hue_degrees(tokens[0])?;
-    let saturation = parse_percent_channel(tokens[1])?;
-    let lightness = parse_percent_channel(tokens[2])?;
-    let alpha = tokens
-        .get(3)
-        .and_then(|value| parse_alpha_channel(value))
-        .unwrap_or(1.0);
-    let [r, g, b] = hsl_to_rgb(hue, saturation, lightness);
-    Some([r, g, b, alpha])
-}
-
-fn parse_rgb_channel(value: &str) -> Option<f32> {
-    if let Some(percent) = value.trim().strip_suffix('%') {
-        return percent
-            .trim()
-            .parse::<f32>()
-            .ok()
-            .map(|v| (v / 100.0).clamp(0.0, 1.0));
-    }
-    value
-        .trim()
-        .parse::<f32>()
-        .ok()
-        .map(|v| (v / 255.0).clamp(0.0, 1.0))
-}
-
-fn parse_percent_channel(value: &str) -> Option<f32> {
-    value
-        .trim()
-        .strip_suffix('%')?
-        .trim()
-        .parse::<f32>()
-        .ok()
-        .map(|v| (v / 100.0).clamp(0.0, 1.0))
-}
-
-fn parse_alpha_channel(value: &str) -> Option<f32> {
-    if let Some(percent) = value.trim().strip_suffix('%') {
-        return percent
-            .trim()
-            .parse::<f32>()
-            .ok()
-            .map(|v| (v / 100.0).clamp(0.0, 1.0));
-    }
-    value.trim().parse::<f32>().ok().map(|v| v.clamp(0.0, 1.0))
-}
-
-fn parse_hue_degrees(value: &str) -> Option<f32> {
-    let value = value.trim();
-    let number = value
-        .strip_suffix("deg")
-        .unwrap_or(value)
-        .trim()
-        .parse::<f32>()
-        .ok()?;
-    Some(number.rem_euclid(360.0))
-}
-
-fn hsl_to_rgb(hue: f32, saturation: f32, lightness: f32) -> [f32; 3] {
-    let c = (1.0 - (2.0 * lightness - 1.0).abs()) * saturation;
-    let h = hue / 60.0;
-    let x = c * (1.0 - (h.rem_euclid(2.0) - 1.0).abs());
-    let (r1, g1, b1) = if h < 1.0 {
-        (c, x, 0.0)
-    } else if h < 2.0 {
-        (x, c, 0.0)
-    } else if h < 3.0 {
-        (0.0, c, x)
-    } else if h < 4.0 {
-        (0.0, x, c)
-    } else if h < 5.0 {
-        (x, 0.0, c)
-    } else {
-        (c, 0.0, x)
-    };
-    let m = lightness - c * 0.5;
-    [
-        (r1 + m).clamp(0.0, 1.0),
-        (g1 + m).clamp(0.0, 1.0),
-        (b1 + m).clamp(0.0, 1.0),
-    ]
-}
-
-fn parse_css_hex_color(value: &str) -> Option<Color> {
-    let hex = value.trim_start_matches('#');
-    if hex.len() == 3 {
-        let mut expanded = String::with_capacity(7);
-        expanded.push('#');
-        for ch in hex.chars() {
-            expanded.push(ch);
-            expanded.push(ch);
-        }
-        return parse_hex_color(&expanded);
-    }
-    if hex.len() == 4 {
-        let mut expanded = String::with_capacity(9);
-        expanded.push('#');
-        for ch in hex.chars() {
-            expanded.push(ch);
-            expanded.push(ch);
-        }
-        return parse_css_hex_color(&expanded);
-    }
-    if hex.len() == 8 {
-        let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
-        let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
-        let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
-        let a = u8::from_str_radix(&hex[6..8], 16).ok()?;
-        return Some([
-            r as f32 / 255.0,
-            g as f32 / 255.0,
-            b as f32 / 255.0,
-            a as f32 / 255.0,
-        ]);
-    }
-    parse_hex_color(value)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -8431,6 +9403,31 @@ fn parse_border(value: &str, variables: &BTreeMap<String, DgCssValue>) -> Option
     }
 }
 
+fn parse_border_style_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<DgBorderStyle, DgStyleWarning> {
+    let value = resolve_keyword(value, variables);
+    let parts = split_value_tokens(&value);
+    if parts.len() != 1 {
+        return Err(parse_warning(
+            name,
+            value.as_str(),
+            "solid, none, or hidden",
+        ));
+    }
+    match parts[0].trim().to_ascii_lowercase().as_str() {
+        "solid" => Ok(DgBorderStyle::Solid),
+        "none" | "hidden" => Ok(DgBorderStyle::None),
+        _ => Err(parse_warning(
+            name,
+            value.as_str(),
+            "solid, none, or hidden",
+        )),
+    }
+}
+
 fn css_length_is_zero(value: &DgCssLength) -> bool {
     match value {
         DgCssLength::LogicalPx(value) | DgCssLength::Em(value) | DgCssLength::Percent(value) => {
@@ -8633,6 +9630,7 @@ fn unquote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::style::StepPosition;
 
     #[test]
     fn property_matrix_maps_supported_names() {
@@ -8646,12 +9644,36 @@ mod tests {
                 DgStylePropertyName::Visual(DgVisualPropertyName::Background),
             ),
             (
+                "margin-left",
+                DgStylePropertyName::Layout(DgLayoutPropertyName::MarginLeft),
+            ),
+            (
+                "grid-auto-flow",
+                DgStylePropertyName::Layout(DgLayoutPropertyName::GridAutoFlow),
+            ),
+            (
+                "background-image",
+                DgStylePropertyName::Visual(DgVisualPropertyName::BackgroundImage),
+            ),
+            (
                 "backdrop-filter",
                 DgStylePropertyName::Visual(DgVisualPropertyName::BackdropFilter),
             ),
             (
                 "border-top-right-radius",
                 DgStylePropertyName::Visual(DgVisualPropertyName::BorderTopRightRadius),
+            ),
+            (
+                "border-style",
+                DgStylePropertyName::Visual(DgVisualPropertyName::BorderStyle),
+            ),
+            (
+                "outline-color",
+                DgStylePropertyName::Visual(DgVisualPropertyName::OutlineColor),
+            ),
+            (
+                "outline",
+                DgStylePropertyName::Visual(DgVisualPropertyName::Outline),
             ),
             (
                 "box-shadow",
@@ -8763,8 +9785,28 @@ mod tests {
                 DgStylePropertyName::Generated(DgGeneratedPropertyName::Content),
             ),
             (
+                "text-area-rows",
+                DgStylePropertyName::Widget(DgWidgetPropertyName::TextAreaRows),
+            ),
+            (
+                "scatter-point-size",
+                DgStylePropertyName::Widget(DgWidgetPropertyName::ScatterPointSize),
+            ),
+            (
                 "table-row-height",
                 DgStylePropertyName::Widget(DgWidgetPropertyName::TableRowHeight),
+            ),
+            (
+                "table-header-height",
+                DgStylePropertyName::Widget(DgWidgetPropertyName::TableHeaderHeight),
+            ),
+            (
+                "table-column-width",
+                DgStylePropertyName::Widget(DgWidgetPropertyName::TableColumnWidth),
+            ),
+            (
+                "table-index-width",
+                DgStylePropertyName::Widget(DgWidgetPropertyName::TableIndexWidth),
             ),
             (
                 "--accent",
@@ -8912,6 +9954,7 @@ mod tests {
             sibling_index: Some(0),
             sibling_count: Some(2),
             siblings: None,
+            children: None,
         };
         let selector = DgSelector::Compound(
             DgCompoundSelector::new()
@@ -8950,6 +9993,7 @@ mod tests {
             sibling_index: None,
             sibling_count: None,
             siblings: None,
+            children: None,
         };
         let selector = DgSelector::Compound(
             DgCompoundSelector::new()
@@ -9000,6 +10044,7 @@ mod tests {
             sibling_index: None,
             sibling_count: None,
             siblings: None,
+            children: None,
         };
         let selector = DgSelector::Compound(
             DgCompoundSelector::new()
@@ -9077,6 +10122,7 @@ mod tests {
             sibling_index: Some(0),
             sibling_count: Some(1),
             siblings: None,
+            children: None,
         };
         let selector = DgSelector::Child {
             parent: Box::new(DgSelector::Compound(
@@ -9137,6 +10183,7 @@ mod tests {
             sibling_index: Some(1),
             sibling_count: Some(3),
             siblings: None,
+            children: None,
         };
         let descendant = DgSelector::Chain(DgSelectorChain {
             ancestors: vec![(
@@ -9184,6 +10231,7 @@ mod tests {
     #[test]
     fn selector_matching_supports_structural_pseudo_classes() {
         let classes = ["primary"];
+        let empty_children: [StyleSibling; 0] = [];
         let element = StyleElement {
             id: "second",
             key: None,
@@ -9195,6 +10243,7 @@ mod tests {
             sibling_index: Some(1),
             sibling_count: Some(3),
             siblings: None,
+            children: Some(&empty_children),
         };
         let second_child = DgSelector::Compound(
             DgCompoundSelector::new()
@@ -9206,6 +10255,21 @@ mod tests {
                 .with_type(WidgetKind::Button)
                 .with_structural(DgStructuralPseudo::NthChild(DgNthChild::Even)),
         );
+        let second_from_end = DgSelector::Compound(
+            DgCompoundSelector::new()
+                .with_type(WidgetKind::Button)
+                .with_structural(DgStructuralPseudo::NthLastChild(DgNthChild::Exact(2))),
+        );
+        let even_from_end = DgSelector::Compound(
+            DgCompoundSelector::new()
+                .with_type(WidgetKind::Button)
+                .with_structural(DgStructuralPseudo::NthLastChild(DgNthChild::Even)),
+        );
+        let odd_from_end = DgSelector::Compound(
+            DgCompoundSelector::new()
+                .with_type(WidgetKind::Button)
+                .with_structural(DgStructuralPseudo::NthLastChild(DgNthChild::Odd)),
+        );
         let first_child = DgSelector::Compound(
             DgCompoundSelector::new()
                 .with_type(WidgetKind::Button)
@@ -9215,6 +10279,16 @@ mod tests {
             DgCompoundSelector::new()
                 .with_type(WidgetKind::Button)
                 .with_structural(DgStructuralPseudo::LastChild),
+        );
+        let only_child = DgSelector::Compound(
+            DgCompoundSelector::new()
+                .with_type(WidgetKind::Button)
+                .with_structural(DgStructuralPseudo::OnlyChild),
+        );
+        let empty = DgSelector::Compound(
+            DgCompoundSelector::new()
+                .with_type(WidgetKind::Button)
+                .with_structural(DgStructuralPseudo::Empty),
         );
         let every_third_offset = DgSelector::Compound(
             DgCompoundSelector::new()
@@ -9243,11 +10317,42 @@ mod tests {
 
         assert!(second_child.matches(&element));
         assert!(even_child.matches(&element));
+        assert!(second_from_end.matches(&element));
+        assert!(even_from_end.matches(&element));
+        assert!(!odd_from_end.matches(&element));
         assert!(!first_child.matches(&element));
         assert!(!last_child.matches(&element));
+        assert!(!only_child.matches(&element));
+        assert!(empty.matches(&element));
         assert!(every_third_offset.matches(&element));
         assert!(first_three.matches(&element));
         assert!(!after_third.matches(&element));
+
+        let single = StyleElement {
+            id: "only",
+            sibling_index: Some(0),
+            sibling_count: Some(1),
+            ..element
+        };
+        assert!(only_child.matches(&single));
+        assert_eq!(only_child.label(), "Button:only-child");
+
+        let non_empty_children = [StyleSibling {
+            id: "child".to_string(),
+            key: None,
+            attributes: Vec::new(),
+            classes: Vec::new(),
+            pseudo: Vec::new(),
+            kind: WidgetKind::Label,
+            children: Vec::new(),
+        }];
+        let non_empty = StyleElement {
+            children: Some(&non_empty_children),
+            ..element
+        };
+        assert!(!empty.matches(&non_empty));
+        assert_eq!(empty.label(), "Button:empty");
+        assert_eq!(second_from_end.label(), "Button:nth-last-child(2)");
     }
 
     #[test]
@@ -9264,27 +10369,36 @@ mod tests {
             sibling_index: Some(1),
             sibling_count: Some(3),
             siblings: None,
+            children: None,
         };
         let not_ghost = DgSelector::Compound(
             DgCompoundSelector::new()
                 .with_type(WidgetKind::Button)
                 .with_function(DgSelectorFunction {
                     kind: DgSelectorFunctionKind::Not,
-                    selectors: vec![DgCompoundSelector::new().with_class("ghost")],
+                    selectors: vec![DgSelectorFunctionArgument::compound(
+                        DgCompoundSelector::new().with_class("ghost"),
+                    )],
                 }),
         );
         let is_button_or_label =
             DgSelector::Compound(DgCompoundSelector::new().with_function(DgSelectorFunction {
                 kind: DgSelectorFunctionKind::Is,
                 selectors: vec![
-                    DgCompoundSelector::new().with_type(WidgetKind::Button),
-                    DgCompoundSelector::new().with_type(WidgetKind::Label),
+                    DgSelectorFunctionArgument::compound(
+                        DgCompoundSelector::new().with_type(WidgetKind::Button),
+                    ),
+                    DgSelectorFunctionArgument::compound(
+                        DgCompoundSelector::new().with_type(WidgetKind::Label),
+                    ),
                 ],
             }));
         let where_primary =
             DgSelector::Compound(DgCompoundSelector::new().with_function(DgSelectorFunction {
                 kind: DgSelectorFunctionKind::Where,
-                selectors: vec![DgCompoundSelector::new().with_class("primary")],
+                selectors: vec![DgSelectorFunctionArgument::compound(
+                    DgCompoundSelector::new().with_class("primary"),
+                )],
             }));
 
         assert!(not_ghost.matches(&element));
@@ -9293,6 +10407,196 @@ mod tests {
         assert_eq!(not_ghost.specificity(), Specificity::new(0, 1, 1));
         assert_eq!(is_button_or_label.specificity(), Specificity::new(0, 0, 1));
         assert_eq!(where_primary.specificity(), Specificity::ZERO);
+    }
+
+    #[test]
+    fn selector_matching_supports_direct_child_has_function() {
+        let button_classes = vec!["primary".to_string()];
+        let button_attributes = vec![StyleAttribute {
+            name: "text".to_string(),
+            value: "Run".to_string(),
+        }];
+        let badge_attributes = vec![StyleAttribute {
+            name: "level".to_string(),
+            value: "warning".to_string(),
+        }];
+        let success_badge_attributes = vec![StyleAttribute {
+            name: "level".to_string(),
+            value: "success".to_string(),
+        }];
+        let children = [
+            StyleSibling {
+                id: "run".to_string(),
+                key: Some("primary-action".to_string()),
+                attributes: button_attributes,
+                classes: button_classes,
+                pseudo: Vec::new(),
+                kind: WidgetKind::Button,
+                children: Vec::new(),
+            },
+            StyleSibling {
+                id: "flag".to_string(),
+                key: None,
+                attributes: badge_attributes,
+                classes: Vec::new(),
+                pseudo: Vec::new(),
+                kind: WidgetKind::Badge,
+                children: Vec::new(),
+            },
+            StyleSibling {
+                id: "row".to_string(),
+                key: None,
+                attributes: Vec::new(),
+                classes: Vec::new(),
+                pseudo: Vec::new(),
+                kind: WidgetKind::HLayout,
+                children: vec![StyleSibling {
+                    id: "ok".to_string(),
+                    key: None,
+                    attributes: success_badge_attributes,
+                    classes: Vec::new(),
+                    pseudo: Vec::new(),
+                    kind: WidgetKind::Badge,
+                    children: Vec::new(),
+                }],
+            },
+        ];
+        let element = StyleElement {
+            id: "panel",
+            key: None,
+            attributes: &[],
+            classes: &[],
+            kind: WidgetKind::Panel,
+            ancestors: &[],
+            pseudo: &[],
+            sibling_index: None,
+            sibling_count: None,
+            siblings: None,
+            children: Some(&children),
+        };
+        let has_primary_button = DgSelector::Compound(
+            DgCompoundSelector::new()
+                .with_type(WidgetKind::Panel)
+                .with_function(DgSelectorFunction {
+                    kind: DgSelectorFunctionKind::Has,
+                    selectors: vec![DgSelectorFunctionArgument::new(DgSelector::Compound(
+                        DgCompoundSelector::new()
+                            .with_type(WidgetKind::Button)
+                            .with_class("primary"),
+                    ))],
+                }),
+        );
+        let has_warning_badge = DgSelector::Compound(
+            DgCompoundSelector::new()
+                .with_type(WidgetKind::Panel)
+                .with_function(DgSelectorFunction {
+                    kind: DgSelectorFunctionKind::Has,
+                    selectors: vec![DgSelectorFunctionArgument::new(DgSelector::Compound(
+                        DgCompoundSelector::new()
+                            .with_type(WidgetKind::Badge)
+                            .with_attribute("level", "warning"),
+                    ))],
+                }),
+        );
+        let has_first_primary_button = DgSelector::Compound(
+            DgCompoundSelector::new()
+                .with_type(WidgetKind::Panel)
+                .with_function(DgSelectorFunction {
+                    kind: DgSelectorFunctionKind::Has,
+                    selectors: vec![DgSelectorFunctionArgument::direct_child(
+                        DgSelector::Compound(
+                            DgCompoundSelector::new()
+                                .with_type(WidgetKind::Button)
+                                .with_class("primary")
+                                .with_structural(DgStructuralPseudo::FirstChild),
+                        ),
+                    )],
+                }),
+        );
+        let has_second_badge = DgSelector::Compound(
+            DgCompoundSelector::new()
+                .with_type(WidgetKind::Panel)
+                .with_function(DgSelectorFunction {
+                    kind: DgSelectorFunctionKind::Has,
+                    selectors: vec![DgSelectorFunctionArgument::direct_child(
+                        DgSelector::Compound(
+                            DgCompoundSelector::new()
+                                .with_type(WidgetKind::Badge)
+                                .with_structural(DgStructuralPseudo::NthChild(DgNthChild::Exact(
+                                    2,
+                                ))),
+                        ),
+                    )],
+                }),
+        );
+        let has_first_badge = DgSelector::Compound(
+            DgCompoundSelector::new()
+                .with_type(WidgetKind::Panel)
+                .with_function(DgSelectorFunction {
+                    kind: DgSelectorFunctionKind::Has,
+                    selectors: vec![DgSelectorFunctionArgument::direct_child(
+                        DgSelector::Compound(
+                            DgCompoundSelector::new()
+                                .with_type(WidgetKind::Badge)
+                                .with_structural(DgStructuralPseudo::FirstChild),
+                        ),
+                    )],
+                }),
+        );
+        let has_success_badge_descendant = DgSelector::Compound(
+            DgCompoundSelector::new()
+                .with_type(WidgetKind::Panel)
+                .with_function(DgSelectorFunction {
+                    kind: DgSelectorFunctionKind::Has,
+                    selectors: vec![DgSelectorFunctionArgument::new(DgSelector::Compound(
+                        DgCompoundSelector::new()
+                            .with_type(WidgetKind::Badge)
+                            .with_attribute("level", "success"),
+                    ))],
+                }),
+        );
+        let has_hlayout_success_badge_chain = DgSelector::Compound(
+            DgCompoundSelector::new()
+                .with_type(WidgetKind::Panel)
+                .with_function(DgSelectorFunction {
+                    kind: DgSelectorFunctionKind::Has,
+                    selectors: vec![DgSelectorFunctionArgument::new(DgSelector::Chain(
+                        DgSelectorChain {
+                            ancestors: vec![(
+                                DgCombinator::Child,
+                                DgCompoundSelector::new().with_type(WidgetKind::HLayout),
+                            )],
+                            target: DgCompoundSelector::new()
+                                .with_type(WidgetKind::Badge)
+                                .with_attribute("level", "success"),
+                        },
+                    ))],
+                }),
+        );
+        let has_direct_success_badge = DgSelector::Compound(
+            DgCompoundSelector::new()
+                .with_type(WidgetKind::Panel)
+                .with_function(DgSelectorFunction {
+                    kind: DgSelectorFunctionKind::Has,
+                    selectors: vec![DgSelectorFunctionArgument::direct_child(
+                        DgSelector::Compound(
+                            DgCompoundSelector::new()
+                                .with_type(WidgetKind::Badge)
+                                .with_attribute("level", "success"),
+                        ),
+                    )],
+                }),
+        );
+
+        assert!(has_primary_button.matches(&element));
+        assert!(has_warning_badge.matches(&element));
+        assert!(has_first_primary_button.matches(&element));
+        assert!(has_second_badge.matches(&element));
+        assert!(!has_first_badge.matches(&element));
+        assert!(has_success_badge_descendant.matches(&element));
+        assert!(has_hlayout_success_badge_chain.matches(&element));
+        assert!(!has_direct_success_badge.matches(&element));
+        assert_eq!(has_primary_button.specificity(), Specificity::new(0, 1, 2));
     }
 
     #[test]
@@ -9309,6 +10613,7 @@ mod tests {
             sibling_index: None,
             sibling_count: None,
             siblings: None,
+            children: None,
         };
         let hover_pseudos = [DgPseudoClass::Hover];
         let hover = StyleElement {
@@ -9325,15 +10630,21 @@ mod tests {
                 .with_type(WidgetKind::Button)
                 .with_function(DgSelectorFunction {
                     kind: DgSelectorFunctionKind::Not,
-                    selectors: vec![DgCompoundSelector::new().with_pseudo(DgPseudoClass::Disabled)],
+                    selectors: vec![DgSelectorFunctionArgument::compound(
+                        DgCompoundSelector::new().with_pseudo(DgPseudoClass::Disabled),
+                    )],
                 }),
         );
         let is_hover_or_focus =
             DgSelector::Compound(DgCompoundSelector::new().with_function(DgSelectorFunction {
                 kind: DgSelectorFunctionKind::Is,
                 selectors: vec![
-                    DgCompoundSelector::new().with_pseudo(DgPseudoClass::Hover),
-                    DgCompoundSelector::new().with_pseudo(DgPseudoClass::Focus),
+                    DgSelectorFunctionArgument::compound(
+                        DgCompoundSelector::new().with_pseudo(DgPseudoClass::Hover),
+                    ),
+                    DgSelectorFunctionArgument::compound(
+                        DgCompoundSelector::new().with_pseudo(DgPseudoClass::Focus),
+                    ),
                 ],
             }));
 
@@ -9376,6 +10687,7 @@ mod tests {
             sibling_index: Some(1),
             sibling_count: Some(3),
             siblings: None,
+            children: None,
         };
 
         assert!(warnings.is_empty(), "{warnings:?}");
@@ -9469,12 +10781,22 @@ mod tests {
             Panel > Button:nth-child(even) { border-color: accent; }
             Panel > :is(Button, Label).callout:not(.muted) { color: accent; }
             :where(.quiet, [key="secondary-action"]) { opacity: 0.8; }
+            Panel:has(> Button.primary) { border-width: 2px; }
+            Panel:has(Badge[level="warning"]) { border-color: warning; }
+            Panel:has(> Button:first-child) { border-radius: 9px; }
+            Panel:has(> Label:only-child) { border-radius: 10px; }
+            Panel:has(> Badge:empty) { opacity: 0.55; }
+            Panel:has(HLayout > Badge[level="success"]) { opacity: 0.9; }
+            Panel:has(+ Button.primary) { border-width: 3px; }
+            Panel:has(~ Badge[level="success"]) { background: success; }
+            Panel:has(Panel:has(Button.primary)) { opacity: 0.7; }
+            Panel:has(Panel:has(> Badge[level="success"]) > Button.primary) { opacity: 0.6; }
             "#,
             StylesheetOrigin::User,
         )
         .unwrap();
 
-        assert_eq!(parsed.rules.len(), 5);
+        assert_eq!(parsed.rules.len(), 15);
         assert_eq!(
             parsed.rules[0].selector.label(),
             "Panel Button[key=\"primary-action\"]"
@@ -9512,6 +10834,83 @@ mod tests {
             ":where(.quiet, [key=\"secondary-action\"])"
         );
         assert_eq!(parsed.rules[4].selector.specificity(), Specificity::ZERO);
+        assert_eq!(
+            parsed.rules[5].selector.label(),
+            "Panel:has(> Button.primary)"
+        );
+        assert_eq!(
+            parsed.rules[5].selector.specificity(),
+            Specificity::new(0, 1, 2)
+        );
+        assert_eq!(
+            parsed.rules[6].selector.label(),
+            "Panel:has(Badge[level=\"warning\"])"
+        );
+        assert_eq!(
+            parsed.rules[6].selector.specificity(),
+            Specificity::new(0, 1, 2)
+        );
+        assert_eq!(
+            parsed.rules[7].selector.label(),
+            "Panel:has(> Button:first-child)"
+        );
+        assert_eq!(
+            parsed.rules[7].selector.specificity(),
+            Specificity::new(0, 1, 2)
+        );
+        assert_eq!(
+            parsed.rules[8].selector.label(),
+            "Panel:has(> Label:only-child)"
+        );
+        assert_eq!(
+            parsed.rules[8].selector.specificity(),
+            Specificity::new(0, 1, 2)
+        );
+        assert_eq!(parsed.rules[9].selector.label(), "Panel:has(> Badge:empty)");
+        assert_eq!(
+            parsed.rules[9].selector.specificity(),
+            Specificity::new(0, 1, 2)
+        );
+        assert_eq!(
+            parsed.rules[10].selector.label(),
+            "Panel:has(HLayout > Badge[level=\"success\"])"
+        );
+        assert_eq!(
+            parsed.rules[10].selector.specificity(),
+            Specificity::new(0, 1, 3)
+        );
+        assert_eq!(
+            parsed.rules[11].selector.label(),
+            "Panel:has(+ Button.primary)"
+        );
+        assert_eq!(
+            parsed.rules[11].selector.specificity(),
+            Specificity::new(0, 1, 2)
+        );
+        assert_eq!(
+            parsed.rules[12].selector.label(),
+            "Panel:has(~ Badge[level=\"success\"])"
+        );
+        assert_eq!(
+            parsed.rules[12].selector.specificity(),
+            Specificity::new(0, 1, 2)
+        );
+        assert_eq!(
+            parsed.rules[13].selector.label(),
+            "Panel:has(Panel:has(Button.primary))"
+        );
+        assert_eq!(
+            parsed.rules[13].selector.specificity(),
+            Specificity::new(0, 1, 3)
+        );
+        assert_eq!(
+            parsed.rules[14].selector.label(),
+            "Panel:has(Panel:has(> Badge[level=\"success\"]) > Button.primary)"
+        );
+        assert_eq!(
+            parsed.rules[14].selector.specificity(),
+            Specificity::new(0, 2, 4)
+        );
     }
 
     #[test]
@@ -9523,13 +10922,15 @@ mod tests {
             Panel > *:nth-child(n + 2) { opacity: 0.8; }
             Panel > *:nth-child(2 of Button.primary, Badge[level="info"]) { border-color: accent; }
             Panel > Button:nth-child(2 of Window > Panel > Button.metric) { opacity: 0.4; }
+            Panel > *:nth-child(1 of Button:first-child, Badge:last-child) { border-radius: 7px; }
+            Panel > *:nth-child(1 of Window > Panel > Button:nth-child(2)) { border-width: 4px; }
             "#,
             StylesheetOrigin::User,
         )
         .unwrap();
 
         assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
-        assert_eq!(parsed.rules.len(), 5);
+        assert_eq!(parsed.rules.len(), 7);
         assert_eq!(
             parsed.rules[0].selector.label(),
             "Panel > Button:nth-child(3n+1)"
@@ -9559,6 +10960,96 @@ mod tests {
             parsed.rules[4].selector.specificity(),
             Specificity::new(0, 2, 5)
         );
+        assert_eq!(
+            parsed.rules[5].selector.label(),
+            "Panel > :nth-child(1 of Button:first-child, Badge:last-child)"
+        );
+        assert_eq!(
+            parsed.rules[5].selector.specificity(),
+            Specificity::new(0, 2, 2)
+        );
+        assert_eq!(
+            parsed.rules[6].selector.label(),
+            "Panel > :nth-child(1 of Window > Panel > Button:nth-child(2))"
+        );
+        assert_eq!(
+            parsed.rules[6].selector.specificity(),
+            Specificity::new(0, 2, 4)
+        );
+    }
+
+    #[test]
+    fn parses_nth_last_child_selectors() {
+        let parsed = parse_stylesheet(
+            r#"
+            Panel > Button:nth-last-child(2) { border-width: 6px; }
+            Panel > *:nth-last-child(1 of Button.metric, Badge[level="info"]) { opacity: 0.35; }
+            Panel > *:nth-last-child(2n + 1 of Panel > Button.primary) { border-radius: 9px; }
+            "#,
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        assert_eq!(parsed.rules.len(), 3);
+        assert_eq!(
+            parsed.rules[0].selector.label(),
+            "Panel > Button:nth-last-child(2)"
+        );
+        assert_eq!(
+            parsed.rules[0].selector.specificity(),
+            Specificity::new(0, 1, 2)
+        );
+        assert_eq!(
+            parsed.rules[1].selector.label(),
+            "Panel > :nth-last-child(1 of Button.metric, Badge[level=\"info\"])"
+        );
+        assert_eq!(
+            parsed.rules[1].selector.specificity(),
+            Specificity::new(0, 2, 2)
+        );
+        assert_eq!(
+            parsed.rules[2].selector.label(),
+            "Panel > :nth-last-child(odd of Panel > Button.primary)"
+        );
+        assert_eq!(
+            parsed.rules[2].selector.specificity(),
+            Specificity::new(0, 2, 3)
+        );
+    }
+
+    #[test]
+    fn parses_data_backed_stateful_has_and_nth_filters() {
+        let parsed = parse_stylesheet(
+            r#"
+            Panel:has(> Checkbox:checked) { border-width: 2px; }
+            Panel:has(Collapsible:collapsed) { border-color: warning; }
+            Panel > *:nth-child(1 of Checkbox:checked, Collapsible:collapsed) { opacity: 0.8; }
+            Panel:has(Button:hover) { background: danger; }
+            Panel > *:nth-child(1 of Button:hover) { color: danger; }
+            "#,
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert_eq!(parsed.rules.len(), 3);
+        assert_eq!(parsed.warnings.len(), 2);
+        assert_eq!(
+            parsed.rules[0].selector.label(),
+            "Panel:has(> Checkbox:checked)"
+        );
+        assert_eq!(
+            parsed.rules[1].selector.label(),
+            "Panel:has(Collapsible:collapsed)"
+        );
+        assert_eq!(
+            parsed.rules[2].selector.label(),
+            "Panel > :nth-child(1 of Checkbox:checked, Collapsible:collapsed)"
+        );
+        assert!(parsed
+            .warnings
+            .iter()
+            .any(|warning| warning.property.contains("Button:hover")));
     }
 
     #[test]
@@ -9660,6 +11151,27 @@ mod tests {
                     {"id": "second", "type": "button", "class": "metric", "props": {"text": "Two"}},
                     {"id": "third", "type": "button", "props": {"text": "Three"}}
                 ]
+            }, {
+                "id": "single-panel",
+                "type": "panel",
+                "children": [
+                    {"id": "only-label", "type": "label", "props": {"text": "Only"}}
+                ]
+            }, {
+                "id": "empty-container",
+                "type": "panel",
+                "children": [{
+                    "id": "empty-panel",
+                    "type": "panel",
+                    "class": "empty-target"
+                }, {
+                    "id": "non-empty-panel",
+                    "type": "panel",
+                    "class": "empty-target",
+                    "children": [
+                        {"id": "inner-label", "type": "label", "props": {"text": "Inner"}}
+                    ]
+                }]
             }]
         }))
         .unwrap();
@@ -9675,18 +11187,31 @@ mod tests {
                 Panel > Button:last-child { background: danger; }
                 Panel > *:nth-child(2 of Button) { border-color: accent; }
                 Panel > Button:nth-child(3 of .metric) { background: success; }
+                Panel > Button:nth-last-child(2) { thumb-color: success; }
+                Panel > *:nth-last-child(1 of Button.metric) { track-color: warning; }
                 Panel > *:nth-child(odd of .metric) { border-radius: 10px; }
                 Panel > Button:nth-child(2 of Window > Panel > Button.metric) { opacity: 0.4; }
+                Panel > *:nth-child(2 of Button:first-child, Label:nth-child(2)) { border-width: 5px; }
+                Panel > *:nth-child(1 of Window > Panel > Label:nth-child(2)) { background: warning; }
+                Panel > Label:only-child { background: success; }
+                Panel:has(> Label:only-child) { border-color: success; }
+                Panel > Panel.empty-target:empty { background: warning; }
+                Panel:has(> Panel.empty-target:empty) { border-width: 6px; }
                 "#,
             )
             .unwrap();
 
         apply_stylesheets_to_tree(&mut tree, &mut store);
         let panel = &tree.children[0];
+        let single_panel = &tree.children[1];
+        let empty_container = &tree.children[2];
         let first = &panel.children[0];
         let caption = &panel.children[1];
         let second = &panel.children[2];
         let third = &panel.children[3];
+        let only_label = &single_panel.children[0];
+        let empty_panel = &empty_container.children[0];
+        let non_empty_panel = &empty_container.children[1];
 
         assert_eq!(
             first.style.visual.background,
@@ -9697,7 +11222,13 @@ mod tests {
             Some(ColorRef::Rgba([1.0, 1.0, 1.0, 1.0]))
         );
         assert_eq!(first.style.visual.border_radius, Some(10.0));
+        assert_ne!(first.style.visual.border_width, Some(5.0));
         assert_ne!(caption.style.visual.border_radius, Some(10.0));
+        assert_eq!(caption.style.visual.border_width, Some(5.0));
+        assert_eq!(
+            caption.style.visual.background,
+            Some(ColorRef::Token("warning".to_string()))
+        );
         assert_eq!(second.style.visual.opacity, Some(0.4));
         assert_eq!(second.style.visual.border_radius, Some(10.0));
         assert_eq!(
@@ -9705,8 +11236,20 @@ mod tests {
             Some(ColorRef::Token("accent".to_string()))
         );
         assert_eq!(
+            second.style.visual.thumb_color,
+            Some(ColorRef::Token("success".to_string()))
+        );
+        assert_eq!(
+            second.style.visual.track_color,
+            Some(ColorRef::Token("warning".to_string()))
+        );
+        assert_eq!(
             second.style.visual.background,
             Some(ColorRef::Token("success".to_string()))
+        );
+        assert_ne!(
+            first.style.visual.track_color,
+            Some(ColorRef::Token("warning".to_string()))
         );
         assert_ne!(
             third.style.visual.border_color,
@@ -9715,6 +11258,23 @@ mod tests {
         assert_eq!(
             third.style.visual.background,
             Some(ColorRef::Token("danger".to_string()))
+        );
+        assert_eq!(
+            single_panel.style.visual.border_color,
+            Some(ColorRef::Token("success".to_string()))
+        );
+        assert_eq!(
+            only_label.style.visual.background,
+            Some(ColorRef::Token("success".to_string()))
+        );
+        assert_eq!(empty_container.style.visual.border_width, Some(6.0));
+        assert_eq!(
+            empty_panel.style.visual.background,
+            Some(ColorRef::Token("warning".to_string()))
+        );
+        assert_ne!(
+            non_empty_panel.style.visual.background,
+            Some(ColorRef::Token("warning".to_string()))
         );
     }
 
@@ -9783,6 +11343,278 @@ mod tests {
         );
         assert_eq!(run.style.visual.border_width, Some(2.0));
         assert_ne!(run.style.disabled.border_width, Some(2.0));
+    }
+
+    #[test]
+    fn stylesheet_cascade_applies_direct_child_has_selectors() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [
+                {
+                    "id": "actions",
+                    "type": "panel",
+                    "children": [
+                        {"id": "run", "type": "button", "class": "primary", "props": {"text": "Run"}}
+                    ]
+                },
+                {
+                    "id": "alerts",
+                    "type": "panel",
+                    "children": [
+                        {"id": "warning", "type": "badge", "props": {"text": "Warn", "level": "warning"}}
+                    ]
+                },
+                {
+                    "id": "empty",
+                    "type": "panel",
+                    "children": [
+                        {"id": "note", "type": "label", "props": {"text": "Plain"}}
+                    ]
+                },
+                {
+                    "id": "nested",
+                    "type": "panel",
+                    "children": [{
+                        "id": "row",
+                        "type": "h_layout",
+                        "children": [
+                            {"id": "success", "type": "badge", "props": {"text": "OK", "level": "success"}}
+                        ]
+                    }]
+                }
+            ]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Panel:has(> Button.primary) { border-width: 4px; }
+                Panel:has(Badge[level="warning"]) { border-color: warning; }
+                Panel:has(> Button:first-child) { border-radius: 9px; }
+                Panel:has(> Badge:last-child) { opacity: 0.75; }
+                Panel:has(HLayout > Badge[level="success"]) { background: success; }
+                Panel:has(> Badge[level="success"]) { border-width: 8px; }
+                "#,
+            )
+            .unwrap();
+
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+
+        assert_eq!(tree.children[0].style.visual.border_width, Some(4.0));
+        assert_ne!(tree.children[1].style.visual.border_width, Some(4.0));
+        assert_eq!(tree.children[0].style.visual.border_radius, Some(9.0));
+        assert_ne!(tree.children[2].style.visual.border_radius, Some(9.0));
+        assert_eq!(
+            tree.children[1].style.visual.border_color,
+            Some(ColorRef::Token("warning".to_string()))
+        );
+        assert_eq!(tree.children[1].style.visual.opacity, Some(0.75));
+        assert_ne!(
+            tree.children[2].style.visual.border_color,
+            Some(ColorRef::Token("warning".to_string()))
+        );
+        assert_ne!(tree.children[2].style.visual.opacity, Some(0.75));
+        assert_eq!(
+            tree.children[3].style.visual.background,
+            Some(ColorRef::Token("success".to_string()))
+        );
+        assert_ne!(tree.children[3].style.visual.border_width, Some(8.0));
+    }
+
+    #[test]
+    fn stylesheet_cascade_applies_data_backed_stateful_has_and_nth_filters() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "panel",
+                "type": "panel",
+                "children": [
+                    {"id": "enabled-check", "type": "checkbox", "props": {"label": "Enabled", "checked": true}},
+                    {"id": "advanced", "type": "collapsible", "props": {"title": "Advanced", "expanded": false}},
+                    {"id": "plain-check", "type": "checkbox", "props": {"label": "Plain", "checked": false}}
+                ]
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Panel:has(> Checkbox:checked) { border-width: 4px; }
+                Panel:has(> Collapsible:collapsed) { border-color: warning; }
+                Panel > *:nth-child(1 of Checkbox:checked) { background: success; }
+                Panel > *:nth-child(1 of Collapsible:collapsed) { border-radius: 7px; }
+                Panel > *:nth-child(2 of Checkbox:checked, Collapsible:collapsed) { opacity: 0.8; }
+                "#,
+            )
+            .unwrap();
+
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+
+        let panel = &tree.children[0];
+        let checked = &panel.children[0];
+        let collapsed = &panel.children[1];
+        let unchecked = &panel.children[2];
+
+        assert_eq!(panel.style.visual.border_width, Some(4.0));
+        assert_eq!(
+            panel.style.visual.border_color,
+            Some(ColorRef::Token("warning".to_string()))
+        );
+        assert_eq!(
+            checked.style.visual.background,
+            Some(ColorRef::Token("success".to_string()))
+        );
+        assert_eq!(collapsed.style.visual.border_radius, Some(7.0));
+        assert_eq!(collapsed.style.visual.opacity, Some(0.8));
+        assert_ne!(
+            unchecked.style.visual.background,
+            Some(ColorRef::Token("success".to_string()))
+        );
+    }
+
+    #[test]
+    fn stylesheet_cascade_applies_sibling_has_selectors() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [
+                {"id": "before-button", "type": "panel"},
+                {"id": "primary", "type": "button", "class": "primary", "props": {"text": "Run"}},
+                {"id": "before-row", "type": "panel"},
+                {
+                    "id": "row",
+                    "type": "h_layout",
+                    "children": [
+                        {"id": "success-child", "type": "badge", "props": {"text": "OK", "level": "success"}}
+                    ]
+                },
+                {"id": "before-later", "type": "panel"},
+                {"id": "gap", "type": "spacer"},
+                {"id": "success-sibling", "type": "badge", "props": {"text": "Later", "level": "success"}},
+                {"id": "after-success", "type": "panel"}
+            ]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Panel:has(+ Button.primary) { border-width: 4px; }
+                Panel:has(+ HLayout > Badge[level="success"]) { background: success; }
+                Panel:has(~ Badge[level="success"]) { border-color: success; }
+                Panel:has(+ Badge[level="success"]) { opacity: 0.75; }
+                "#,
+            )
+            .unwrap();
+
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+
+        let before_button = &tree.children[0];
+        let before_row = &tree.children[2];
+        let before_later = &tree.children[4];
+        let after_success = &tree.children[7];
+
+        assert_eq!(before_button.style.visual.border_width, Some(4.0));
+        assert_eq!(
+            before_button.style.visual.border_color,
+            Some(ColorRef::Token("success".to_string()))
+        );
+        assert_eq!(
+            before_row.style.visual.background,
+            Some(ColorRef::Token("success".to_string()))
+        );
+        assert_eq!(
+            before_row.style.visual.border_color,
+            Some(ColorRef::Token("success".to_string()))
+        );
+        assert_eq!(
+            before_later.style.visual.border_color,
+            Some(ColorRef::Token("success".to_string()))
+        );
+        assert_ne!(before_later.style.visual.opacity, Some(0.75));
+        assert_ne!(
+            after_success.style.visual.border_color,
+            Some(ColorRef::Token("success".to_string()))
+        );
+    }
+
+    #[test]
+    fn stylesheet_cascade_applies_nested_has_target_selectors() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [
+                {
+                    "id": "outer",
+                    "type": "panel",
+                    "children": [{
+                        "id": "inner-actions",
+                        "type": "panel",
+                        "children": [
+                            {"id": "ready", "type": "badge", "props": {"text": "Ready", "level": "success"}},
+                            {"id": "run", "type": "button", "class": "primary", "props": {"text": "Run"}}
+                        ]
+                    }]
+                },
+                {
+                    "id": "plain",
+                    "type": "panel",
+                    "children": [{
+                        "id": "inner-plain",
+                        "type": "panel",
+                        "children": [
+                            {"id": "note", "type": "label", "props": {"text": "Plain"}}
+                        ]
+                    }]
+                },
+                {"id": "before-status", "type": "panel"},
+                {
+                    "id": "status-card",
+                    "type": "panel",
+                    "children": [{
+                        "id": "status-row",
+                        "type": "panel",
+                        "children": [
+                            {"id": "ok", "type": "badge", "props": {"text": "OK", "level": "success"}}
+                        ]
+                    }]
+                }
+            ]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Panel:has(Panel:has(Button.primary)) { border-width: 6px; }
+                Panel:has(Panel:has(> Badge[level="success"]) > Button.primary) { background: success; }
+                Panel:has(+ Panel:has(Badge[level="success"])) { opacity: 0.65; }
+                "#,
+            )
+            .unwrap();
+
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+
+        assert_eq!(tree.children[0].style.visual.border_width, Some(6.0));
+        assert_eq!(
+            tree.children[0].style.visual.background,
+            Some(ColorRef::Token("success".to_string()))
+        );
+        assert_ne!(tree.children[1].style.visual.border_width, Some(6.0));
+        assert_ne!(
+            tree.children[1].style.visual.background,
+            Some(ColorRef::Token("success".to_string()))
+        );
+        assert_eq!(tree.children[2].style.visual.opacity, Some(0.65));
+        assert_ne!(tree.children[1].style.visual.opacity, Some(0.65));
     }
 
     #[test]
@@ -9939,7 +11771,7 @@ mod tests {
         store
             .set_stylesheet(
                 StylesheetOrigin::User,
-                "DataFrameTable { table-row-height: 22px; table-header-height: 26px; }",
+                "DataFrameTable { table-row-height: 22px; table-header-height: 26px; table-column-width: 180px; table-index-width: 72px; }",
             )
             .unwrap();
 
@@ -9948,6 +11780,62 @@ mod tests {
 
         assert_eq!(table.style.widget.table_row_height, Some(22.0));
         assert_eq!(table.style.widget.table_header_height, Some(26.0));
+        assert_eq!(table.style.widget.table_column_width, Some(180.0));
+        assert_eq!(table.style.widget.table_index_width, Some(72.0));
+    }
+
+    #[test]
+    fn cascade_applies_text_area_widget_declarations() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "notes",
+                "type": "text_area",
+                "props": {"value": "one\ntwo", "rows": 2}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(StylesheetOrigin::User, "TextArea { text-area-rows: 5; }")
+            .unwrap();
+
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+        let notes = &tree.children[0];
+
+        assert_eq!(notes.style.widget.text_area_rows, Some(5.0));
+    }
+
+    #[test]
+    fn cascade_applies_scatter_widget_declarations() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "scatter",
+                "type": "scatter_3d",
+                "props": {
+                    "frame": {"columns": ["x", "y", "z"], "dtypes": ["f32", "f32", "f32"], "rows": 2},
+                    "x": "x",
+                    "y": "y",
+                    "z": "z"
+                }
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                "Scatter3D { scatter-point-size: 7px; }",
+            )
+            .unwrap();
+
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+        let scatter = &tree.children[0];
+
+        assert_eq!(scatter.style.widget.scatter_point_size, Some(7.0));
     }
 
     #[test]
@@ -10156,6 +12044,110 @@ mod tests {
     }
 
     #[test]
+    fn border_style_longhand_accepts_solid() {
+        let parsed =
+            parse_stylesheet("Button { border-style: solid; }", StylesheetOrigin::User).unwrap();
+
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        assert!(matches!(
+            parsed.rules[0].declarations[0].property,
+            DgStyleProperty::Visual(DgVisualDeclaration::BorderStyle(DgBorderStyle::Solid))
+        ));
+
+        let mut style = NodeStyle::default();
+        style.visual.border_width = Some(2.0);
+        style.visual.border_color = Some(ColorRef::Token("accent".to_string()));
+        apply_property_to_style(&mut style, &parsed.rules[0].declarations[0].property);
+
+        assert_eq!(style.visual.border_width, Some(2.0));
+        assert_eq!(
+            style.visual.border_color,
+            Some(ColorRef::Token("accent".to_string()))
+        );
+    }
+
+    #[test]
+    fn border_style_longhand_none_and_hidden_reset_border() {
+        for keyword in ["none", "hidden"] {
+            let parsed = parse_stylesheet(
+                format!("Button {{ border-style: {keyword}; }}").as_str(),
+                StylesheetOrigin::User,
+            )
+            .unwrap();
+
+            assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+            assert!(matches!(
+                parsed.rules[0].declarations[0].property,
+                DgStyleProperty::Visual(DgVisualDeclaration::BorderStyle(DgBorderStyle::None))
+            ));
+
+            let mut style = NodeStyle::default();
+            style.visual.border_width = Some(2.0);
+            style.visual.border_color = Some(ColorRef::Token("accent".to_string()));
+            apply_property_to_style(&mut style, &parsed.rules[0].declarations[0].property);
+
+            assert_eq!(style.visual.border_width, Some(0.0));
+            assert_eq!(
+                style.visual.border_color,
+                Some(ColorRef::Rgba([0.0, 0.0, 0.0, 0.0]))
+            );
+        }
+    }
+
+    #[test]
+    fn border_style_longhand_reports_unsupported_styles() {
+        let parsed =
+            parse_stylesheet("Button { border-style: dashed; }", StylesheetOrigin::User).unwrap();
+
+        assert!(parsed
+            .warnings
+            .iter()
+            .any(|warning| warning.property == "border-style"
+                && warning.message.contains("solid, none, or hidden")));
+        assert!(parsed
+            .rules
+            .first()
+            .is_none_or(|rule| rule.declarations.is_empty()));
+    }
+
+    #[test]
+    fn outline_properties_parse_to_visual_style() {
+        let parsed = parse_stylesheet(
+            "Button { outline: 2px solid accent; outline-offset: 3px; } Button.off { outline-style: none; }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        assert!(matches!(
+            parsed.rules[0].declarations[0].property,
+            DgStyleProperty::Visual(DgVisualDeclaration::Outline(DgBorder {
+                width: DgCssLength::LogicalPx(2.0),
+                style: DgBorderStyle::Solid,
+                color: DgCssColor::Token(ref token),
+            })) if token == "accent"
+        ));
+
+        let mut style = NodeStyle::default();
+        for declaration in &parsed.rules[0].declarations {
+            apply_property_to_style(&mut style, &declaration.property);
+        }
+        assert_eq!(style.visual.outline_width, Some(2.0));
+        assert_eq!(style.visual.outline_offset, Some(3.0));
+        assert_eq!(
+            style.visual.outline_color,
+            Some(ColorRef::Token("accent".to_string()))
+        );
+
+        apply_property_to_style(&mut style, &parsed.rules[1].declarations[0].property);
+        assert_eq!(style.visual.outline_width, Some(0.0));
+        assert_eq!(
+            style.visual.outline_color,
+            Some(ColorRef::Rgba([0.0, 0.0, 0.0, 0.0]))
+        );
+    }
+
+    #[test]
     fn unsupported_properties_are_reported_as_warnings() {
         let parsed = parse_stylesheet(
             "Button { filter: blur(2px); border-radius: 4px; }",
@@ -10173,7 +12165,7 @@ mod tests {
     #[test]
     fn backdrop_filter_blur_parses_to_visual_style() {
         let parsed = parse_stylesheet(
-            "Panel.glass { backdrop-filter: blur(14px); }",
+            "Panel.glass { backdrop-filter: blur(14px) brightness(115%) saturate(0.8); }",
             StylesheetOrigin::User,
         )
         .unwrap();
@@ -10183,11 +12175,16 @@ mod tests {
             parsed.rules[0].declarations[0].property,
             DgStyleProperty::Visual(DgVisualDeclaration::BackdropFilter(Some(filter)))
                 if (filter.blur - 14.0).abs() < 0.001
+                    && (filter.brightness - 1.15).abs() < 0.001
+                    && (filter.saturate - 0.8).abs() < 0.001
         ));
 
         let mut style = NodeStyle::default();
         apply_property_to_style(&mut style, &parsed.rules[0].declarations[0].property);
-        assert_eq!(style.visual.backdrop_filter.unwrap().blur, 14.0);
+        let filter = style.visual.backdrop_filter.unwrap();
+        assert_eq!(filter.blur, 14.0);
+        assert!((filter.brightness - 1.15).abs() < 0.001);
+        assert!((filter.saturate - 0.8).abs() < 0.001);
     }
 
     #[test]
@@ -10626,6 +12623,54 @@ mod tests {
     }
 
     #[test]
+    fn grid_auto_flow_values_parse() {
+        let parsed = parse_stylesheet(
+            "Panel.a { grid-auto-flow: dense; } Panel.b { grid-auto-flow: column dense; } Panel.c { grid-auto-flow: dense row; }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::GridAutoFlow(
+                    DgGridAutoFlow::RowDense
+                ))
+            )
+        }));
+        assert!(parsed.rules[1].declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::GridAutoFlow(
+                    DgGridAutoFlow::ColumnDense
+                ))
+            )
+        }));
+        assert!(parsed.rules[2].declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::GridAutoFlow(
+                    DgGridAutoFlow::RowDense
+                ))
+            )
+        }));
+    }
+
+    #[test]
+    fn grid_auto_flow_invalid_values_warn() {
+        let parsed = parse_stylesheet(
+            "Panel { grid-auto-flow: row column; }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.warnings.iter().any(|warning| {
+            warning.property == "grid-auto-flow" && warning.message.contains("grid-auto-flow value")
+        }));
+    }
+
+    #[test]
     fn grid_template_areas_and_named_grid_area_parse() {
         let parsed = parse_stylesheet(
             r#"Panel.dashboard { display: grid; grid-template-areas: "sidebar main main" "sidebar footer footer"; } Panel.sidebar { grid-area: sidebar; }"#,
@@ -10891,24 +12936,86 @@ mod tests {
     }
 
     #[test]
-    fn asymmetric_margin_is_reported_as_warning() {
+    fn asymmetric_margin_and_margin_longhands_parse() {
         let parsed = parse_stylesheet(
-            "Panel { margin: 10px 20px; padding: 4px 8px; }",
+            "Panel { margin: 10px 20px calc(4px + 1%) auto; margin-left: 12px; padding: 4px 8px; }",
             StylesheetOrigin::User,
         )
         .unwrap();
 
-        assert!(parsed
-            .warnings
-            .iter()
-            .any(|warning| warning.property == "margin"
-                && warning.message.contains("uniform margin")));
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                &declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::Margin(edges))
+                    if edges.top == DgCssLength::LogicalPx(10.0)
+                        && edges.right == DgCssLength::LogicalPx(20.0)
+                        && edges.bottom == DgCssLength::Calc(CalcLength { percent: 1.0, px: 4.0 })
+                        && edges.left == DgCssLength::Auto
+            )
+        }));
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::MarginLeft(DgCssLength::LogicalPx(
+                    12.0
+                )))
+            )
+        }));
         assert!(parsed.rules[0].declarations.iter().any(|declaration| {
             matches!(
                 declaration.property,
                 DgStyleProperty::Layout(DgLayoutDeclaration::Padding(_))
             )
         }));
+    }
+
+    #[test]
+    fn stylesheet_cascade_applies_margin_edges() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "card",
+                "type": "panel",
+                "class": "card"
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Panel.card {
+                    margin: 2px 4px 6px 8px;
+                    margin-left: 12%;
+                    margin-bottom: auto;
+                }
+                "#,
+            )
+            .unwrap();
+
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+        let card = &tree.children[0];
+
+        assert_eq!(
+            card.style.layout.margin_top_value,
+            Some(LayoutLength::LogicalPx(2.0))
+        );
+        assert_eq!(
+            card.style.layout.margin_right_value,
+            Some(LayoutLength::LogicalPx(4.0))
+        );
+        assert_eq!(
+            card.style.layout.margin_bottom_value,
+            Some(LayoutLength::Auto)
+        );
+        assert_eq!(
+            card.style.layout.margin_left_value,
+            Some(LayoutLength::Percent(12.0))
+        );
+        assert!(card.style.layout.margin_value.is_none());
     }
 
     #[test]
@@ -10960,8 +13067,11 @@ mod tests {
             Button {
                 background: transparent;
                 border-color: rgba(255, 128, 0, 0.25);
-                foreground: hsl(120, 100%, 25%);
-                accent: white;
+                foreground: hwb(120 0% 50%);
+                accent: color(srgb 1 1 1);
+                color: oklab(100% 0 0);
+                track-color: oklch(62% 0.18 240deg / 0.5);
+                thumb-color: lch(50% 0 0 / 60%);
             }
             "#,
             StylesheetOrigin::User,
@@ -10997,6 +13107,29 @@ mod tests {
                 declaration.property,
                 DgStyleProperty::Visual(DgVisualDeclaration::Accent(DgCssColor::Rgba(color)))
                     if color == [1.0, 1.0, 1.0, 1.0]
+            )
+        }));
+        assert!(declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Text(DgTextDeclaration::Color(DgCssColor::Rgba(color)))
+                    if color[0] > 0.99 && color[1] > 0.99 && color[2] > 0.99 && color[3] > 0.99
+            )
+        }));
+        assert!(declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Visual(DgVisualDeclaration::TrackColor(DgCssColor::Rgba(color)))
+                    if color[2] > color[0] && color[2] > color[1] && (color[3] - 0.5).abs() < 0.003
+            )
+        }));
+        assert!(declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Visual(DgVisualDeclaration::ThumbColor(DgCssColor::Rgba(color)))
+                    if (color[0] - color[1]).abs() < 0.015
+                        && (color[1] - color[2]).abs() < 0.015
+                        && (color[3] - 0.6).abs() < 0.003
             )
         }));
     }
@@ -11250,6 +13383,7 @@ mod tests {
         .unwrap();
 
         assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        assert_eq!(parsed.rules.len(), 1);
         let layers = parsed.rules[0]
             .declarations
             .iter()
@@ -11269,6 +13403,113 @@ mod tests {
             })
         ));
         assert!(matches!(layers[1], DgBackgroundPaint::LinearGradient(_)));
+    }
+
+    #[test]
+    fn background_image_gradient_layers_over_background_color() {
+        let parsed = parse_stylesheet(
+            r#"
+            :root {
+                --hero-image:
+                    radial-gradient(circle at 25% 20%, rgba(255,255,255,0.16), transparent 58%),
+                    linear-gradient(135deg, #172235, #0f1724);
+            }
+
+            Panel.hero {
+                background-color: #101820;
+                background-image: var(--hero-image);
+            }
+
+            Panel.flat {
+                background-image: none;
+            }
+            "#,
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        assert_eq!(parsed.rules.len(), 2);
+        let image_layers = parsed.rules[0]
+            .declarations
+            .iter()
+            .find_map(|declaration| match &declaration.property {
+                DgStyleProperty::Visual(DgVisualDeclaration::BackgroundImage(Some(
+                    DgBackgroundPaint::Layers(layers),
+                ))) => Some(layers),
+                _ => None,
+            })
+            .expect("background-image layered paint");
+        assert_eq!(image_layers.len(), 2);
+        assert!(matches!(
+            image_layers[0],
+            DgBackgroundPaint::RadialGradient(_)
+        ));
+        assert!(matches!(
+            image_layers[1],
+            DgBackgroundPaint::LinearGradient(_)
+        ));
+        assert!(matches!(
+            parsed.rules[1].declarations[0].property,
+            DgStyleProperty::Visual(DgVisualDeclaration::BackgroundImage(None))
+        ));
+
+        let mut style = NodeStyle::default();
+        for declaration in &parsed.rules[0].declarations {
+            apply_property_to_style(&mut style, &declaration.property);
+        }
+        let Some(BackgroundPaint::Layers(resolved_layers)) = &style.visual.background_paint else {
+            panic!("background-image should compose with background-color");
+        };
+        assert_eq!(resolved_layers.len(), 3);
+        assert!(matches!(
+            resolved_layers[0],
+            BackgroundPaint::RadialGradient(_)
+        ));
+        assert!(matches!(
+            resolved_layers[1],
+            BackgroundPaint::LinearGradient(_)
+        ));
+        assert!(matches!(resolved_layers[2], BackgroundPaint::Color(_)));
+    }
+
+    #[test]
+    fn background_image_none_clears_to_background_color() {
+        let parsed = parse_stylesheet(
+            r#"
+            Panel.hero {
+                background-color: #101820;
+                background-image: linear-gradient(180deg, rgba(255,255,255,0.2), transparent);
+                background-image: none;
+            }
+            "#,
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        let mut style = NodeStyle::default();
+        for declaration in &parsed.rules[0].declarations {
+            apply_property_to_style(&mut style, &declaration.property);
+        }
+
+        assert!(matches!(
+            style.visual.background_paint,
+            Some(BackgroundPaint::Color(_))
+        ));
+    }
+
+    #[test]
+    fn background_image_rejects_url_sources() {
+        let parsed = parse_stylesheet(
+            r#"Panel.hero { background-image: url("hero.png"); }"#,
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert_eq!(parsed.warnings.len(), 1);
+        assert_eq!(parsed.warnings[0].property, "background-image");
+        assert!(parsed.warnings[0].message.contains("linear-gradient"));
     }
 
     #[test]
@@ -11295,7 +13536,7 @@ mod tests {
         let parsed = parse_stylesheet(
             r#"
             Button {
-                transition-property: background, border-color;
+                transition-property: background, border-color, outline, outline-offset;
                 transition-duration: 180ms;
                 transition-timing-function: ease-out;
                 transition-delay: 25ms;
@@ -11314,6 +13555,8 @@ mod tests {
             Some(vec![
                 TransitionProperty::Background,
                 TransitionProperty::BorderColor,
+                TransitionProperty::Outline,
+                TransitionProperty::OutlineOffset,
             ])
         );
         assert_eq!(style.transition.duration_ms, Some(180));
@@ -11364,6 +13607,118 @@ mod tests {
                 x2: 0.3,
                 y2: 1.0
             })
+        );
+    }
+
+    #[test]
+    fn transition_and_animation_timing_parse_steps() {
+        let parsed = parse_stylesheet(
+            r#"
+            Button {
+                transition-timing-function: steps(4, start);
+                animation-timing-function: step-end;
+            }
+            "#,
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+        let mut style = NodeStyle::default();
+        for declaration in &parsed.rules[0].declarations {
+            apply_property_to_style(&mut style, &declaration.property);
+        }
+
+        assert_eq!(
+            style.transition.timing_function,
+            Some(TransitionTimingFunction::Steps {
+                count: 4,
+                position: StepPosition::Start,
+            })
+        );
+        assert_eq!(
+            style.animation.timing_function,
+            Some(TransitionTimingFunction::Steps {
+                count: 1,
+                position: StepPosition::End,
+            })
+        );
+    }
+
+    #[test]
+    fn animation_iteration_count_preserves_fractional_values() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "pulse",
+                "type": "badge",
+                "class": "longhand",
+                "props": {"text": "LIVE"}
+            }, {
+                "id": "pulse-shorthand",
+                "type": "badge",
+                "class": "shorthand",
+                "props": {"text": "LIVE"}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                "Badge { animation-iteration-count: 2.5; }",
+            )
+            .unwrap();
+
+        assert!(store.warnings().is_empty(), "{:?}", store.warnings());
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+        let badge = tree.children.first().unwrap();
+        assert_eq!(
+            badge.style.animation.iteration_count,
+            Some(AnimationIterationCount::Count(2.5))
+        );
+    }
+
+    #[test]
+    fn animation_delay_accepts_negative_values() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "pulse",
+                "type": "badge",
+                "class": "longhand",
+                "props": {"text": "LIVE"}
+            }, {
+                "id": "pulse-shorthand",
+                "type": "badge",
+                "class": "shorthand",
+                "props": {"text": "LIVE"}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Badge.longhand { animation-delay: -250ms; }
+                Badge.shorthand {
+                    animation: 900ms -0.45s ease-out 2.5 alternate both live-pulse;
+                }
+                "#,
+            )
+            .unwrap();
+
+        assert!(store.warnings().is_empty(), "{:?}", store.warnings());
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+        let longhand = &tree.children[0];
+        let shorthand = &tree.children[1];
+        assert_eq!(longhand.style.animation.delay_ms, Some(-250));
+        assert_eq!(shorthand.style.animation.delay_ms, Some(-450));
+        assert_eq!(shorthand.style.animation.duration_ms, Some(900));
+        assert_eq!(
+            shorthand.style.animation.iteration_count,
+            Some(AnimationIterationCount::Count(2.5))
         );
     }
 
@@ -11426,6 +13781,70 @@ mod tests {
         assert_eq!(
             badge.style.animation.fill_mode,
             Some(AnimationFillMode::Both)
+        );
+        assert_eq!(
+            badge.style.animation.play_state,
+            Some(AnimationPlayState::Paused)
+        );
+    }
+
+    #[test]
+    fn animation_longhands_accept_first_comma_list_item() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "pulse",
+                "type": "badge",
+                "props": {"text": "LIVE"}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                @keyframes breathe {
+                    from { opacity: 0.52; }
+                    to { opacity: 1; }
+                }
+
+                Badge {
+                    animation-name: breathe, ignored;
+                    animation-duration: 1200ms, 250ms;
+                    animation-timing-function: ease-in, linear;
+                    animation-delay: 80ms, 0s;
+                    animation-iteration-count: infinite, 1;
+                    animation-direction: alternate-reverse, normal;
+                    animation-fill-mode: backwards, none;
+                    animation-play-state: paused, running;
+                }
+                "#,
+            )
+            .unwrap();
+
+        assert!(store.warnings().is_empty(), "{:?}", store.warnings());
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+        let badge = tree.children.first().unwrap();
+        assert_eq!(badge.style.animation.name.as_deref(), Some("breathe"));
+        assert_eq!(badge.style.animation.duration_ms, Some(1200));
+        assert_eq!(badge.style.animation.delay_ms, Some(80));
+        assert_eq!(
+            badge.style.animation.timing_function,
+            Some(TransitionTimingFunction::EaseIn)
+        );
+        assert_eq!(
+            badge.style.animation.iteration_count,
+            Some(AnimationIterationCount::Infinite)
+        );
+        assert_eq!(
+            badge.style.animation.direction,
+            Some(AnimationDirection::AlternateReverse)
+        );
+        assert_eq!(
+            badge.style.animation.fill_mode,
+            Some(AnimationFillMode::Backwards)
         );
         assert_eq!(
             badge.style.animation.play_state,
@@ -11502,7 +13921,8 @@ mod tests {
             @font-face {
                 font-family: "Dragon Demo UI";
                 src: local("Segoe UI"),
-                     url("C:/Windows/Fonts/segoeui.ttf") format("truetype");
+                     url("C:/Windows/Fonts/segoeui.ttf") format("truetype"),
+                     url("data:font/ttf;base64,AAEAAA==") format("truetype");
             }
             Label.title { font-family: "Dragon Demo UI"; }
             "#,
@@ -11513,13 +13933,34 @@ mod tests {
         assert!(store.warnings.is_empty(), "{:?}", store.warnings);
         assert_eq!(store.font_faces.len(), 1);
         assert_eq!(store.font_faces[0].family, "Dragon Demo UI");
-        assert_eq!(store.font_faces[0].sources.len(), 1);
+        assert_eq!(store.font_faces[0].sources.len(), 3);
         assert_eq!(
-            store.font_faces[0].sources[0].url,
+            store.font_faces[0].sources[0].kind,
+            DgFontFaceSourceKind::Local
+        );
+        assert_eq!(store.font_faces[0].sources[0].url, "Segoe UI");
+        assert_eq!(
+            store.font_faces[0].sources[1].url,
             "C:/Windows/Fonts/segoeui.ttf"
         );
         assert_eq!(
-            store.font_faces[0].sources[0].format.as_deref(),
+            store.font_faces[0].sources[1].kind,
+            DgFontFaceSourceKind::Url
+        );
+        assert_eq!(
+            store.font_faces[0].sources[1].format.as_deref(),
+            Some("truetype")
+        );
+        assert_eq!(
+            store.font_faces[0].sources[2].url,
+            "data:font/ttf;base64,AAEAAA=="
+        );
+        assert_eq!(
+            store.font_faces[0].sources[2].kind,
+            DgFontFaceSourceKind::Url
+        );
+        assert_eq!(
+            store.font_faces[0].sources[2].format.as_deref(),
             Some("truetype")
         );
     }
@@ -12149,6 +14590,71 @@ mod tests {
             Some(AnimationPlayState::Paused)
         );
         assert_ne!(tree.children[0].style.visual.border_width, Some(2.0));
+    }
+
+    #[test]
+    fn media_rules_support_reduced_transparency_and_data_preferences() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "card",
+                "type": "panel",
+                "props": {"title": "Card"}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Panel {
+                    opacity: 0.5;
+                    border-width: 1px;
+                }
+                @media (prefers-reduced-transparency: no-preference) {
+                    Panel { opacity: 0.8; }
+                }
+                @media (prefers-reduced-data: no-preference) {
+                    Panel { border-width: 2px; }
+                }
+                @media (prefers-reduced-transparency) {
+                    Panel { background: danger; }
+                }
+                @media (prefers-reduced-data: reduce) {
+                    Panel { border-radius: 12px; }
+                }
+                "#,
+            )
+            .unwrap();
+
+        assert!(store.warnings().is_empty(), "{:?}", store.warnings());
+
+        apply_stylesheets_to_tree_for_media(
+            &mut tree,
+            &mut store,
+            DgMediaEnvironment::new(900.0, 600.0),
+        );
+        assert_eq!(tree.children[0].style.visual.opacity, Some(0.8));
+        assert_eq!(tree.children[0].style.visual.border_width, Some(2.0));
+        assert_ne!(
+            tree.children[0].style.visual.background,
+            Some(ColorRef::Token("danger".to_string()))
+        );
+        assert_ne!(tree.children[0].style.visual.border_radius, Some(12.0));
+
+        let mut reduced = DgMediaEnvironment::new(900.0, 600.0);
+        reduced.prefers_reduced_transparency = true;
+        reduced.prefers_reduced_data = true;
+        apply_stylesheets_to_tree_for_media(&mut tree, &mut store, reduced);
+        assert_eq!(tree.children[0].style.visual.opacity, Some(0.5));
+        assert_eq!(tree.children[0].style.visual.border_width, Some(1.0));
+        assert_eq!(
+            tree.children[0].style.visual.background,
+            Some(ColorRef::Token("danger".to_string()))
+        );
+        assert_eq!(tree.children[0].style.visual.border_radius, Some(12.0));
     }
 
     #[test]
@@ -13425,13 +15931,32 @@ mod tests {
     }
 
     #[test]
-    fn stylesheet_cascade_applies_panel_scrollbar_part_styles() {
+    fn stylesheet_cascade_applies_scrollbar_part_styles() {
         let mut tree = crate::document::parse_widget_node(&serde_json::json!({
             "id": "root",
             "type": "window",
             "children": [{
                 "id": "panel",
                 "type": "panel"
+            }, {
+                "id": "strip",
+                "type": "h_layout"
+            }, {
+                "id": "sidebar",
+                "type": "sidebar"
+            }, {
+                "id": "modal",
+                "type": "modal"
+            }, {
+                "id": "collapsible",
+                "type": "collapsible"
+            }, {
+                "id": "pages",
+                "type": "pages",
+                "children": [{
+                    "id": "page",
+                    "type": "page"
+                }]
             }]
         }))
         .unwrap();
@@ -13451,6 +15976,47 @@ mod tests {
                     width: 8px;
                     background: accent;
                     border-radius: 999px;
+                }
+
+                HLayout::scrollbar-track {
+                    width: 7px;
+                    padding: 11px;
+                    background: rgba(90, 169, 255, 0.18);
+                }
+
+                HLayout::scrollbar-thumb {
+                    width: 9px;
+                    background: success;
+                }
+
+                Sidebar::scrollbar-track {
+                    width: 10px;
+                    background: danger;
+                }
+
+                Modal::scrollbar-thumb {
+                    width: 11px;
+                    background: warning;
+                }
+
+                Modal::scrim {
+                    background: rgba(10, 20, 30, 0.42);
+                    opacity: 0.8;
+                }
+
+                Collapsible::scrollbar-thumb {
+                    width: 12px;
+                    background: accent;
+                }
+
+                Pages::scrollbar-track {
+                    width: 13px;
+                    background: surface_alt;
+                }
+
+                Page::scrollbar-thumb {
+                    width: 14px;
+                    background: text;
                 }
                 "#,
             )
@@ -13474,6 +16040,72 @@ mod tests {
             Some(ColorRef::Token("accent".to_string()))
         );
         assert_eq!(thumb.visual.border_radius, Some(999.0));
+
+        let strip = &tree.children[1];
+        let strip_track = strip.style.parts.parts.get("scrollbar-track").unwrap();
+        let strip_thumb = strip.style.parts.parts.get("scrollbar-thumb").unwrap();
+        assert_eq!(strip_track.layout.width, Some(7.0));
+        assert_eq!(strip_track.layout.padding, Some(11.0));
+        assert!(matches!(
+            strip_track.visual.background,
+            Some(ColorRef::Rgba([_, _, _, alpha])) if (alpha - 0.18).abs() < 0.003
+        ));
+        assert_eq!(strip_thumb.layout.width, Some(9.0));
+        assert_eq!(
+            strip_thumb.visual.background,
+            Some(ColorRef::Token("success".to_string()))
+        );
+
+        let sidebar = &tree.children[2];
+        let sidebar_track = sidebar.style.parts.parts.get("scrollbar-track").unwrap();
+        assert_eq!(sidebar_track.layout.width, Some(10.0));
+        assert_eq!(
+            sidebar_track.visual.background,
+            Some(ColorRef::Token("danger".to_string()))
+        );
+
+        let modal = &tree.children[3];
+        let modal_thumb = modal.style.parts.parts.get("scrollbar-thumb").unwrap();
+        assert_eq!(modal_thumb.layout.width, Some(11.0));
+        assert_eq!(
+            modal_thumb.visual.background,
+            Some(ColorRef::Token("warning".to_string()))
+        );
+        let modal_scrim = modal.style.parts.parts.get("scrim").unwrap();
+        assert!(matches!(
+            modal_scrim.visual.background,
+            Some(ColorRef::Rgba([_, _, _, alpha])) if (alpha - 0.42).abs() < 0.003
+        ));
+        assert_eq!(modal_scrim.visual.opacity, Some(0.8));
+
+        let collapsible = &tree.children[4];
+        let collapsible_thumb = collapsible
+            .style
+            .parts
+            .parts
+            .get("scrollbar-thumb")
+            .unwrap();
+        assert_eq!(collapsible_thumb.layout.width, Some(12.0));
+        assert_eq!(
+            collapsible_thumb.visual.background,
+            Some(ColorRef::Token("accent".to_string()))
+        );
+
+        let pages = &tree.children[5];
+        let pages_track = pages.style.parts.parts.get("scrollbar-track").unwrap();
+        assert_eq!(pages_track.layout.width, Some(13.0));
+        assert_eq!(
+            pages_track.visual.background,
+            Some(ColorRef::Token("surface_alt".to_string()))
+        );
+
+        let page = &pages.children[0];
+        let page_thumb = page.style.parts.parts.get("scrollbar-thumb").unwrap();
+        assert_eq!(page_thumb.layout.width, Some(14.0));
+        assert_eq!(
+            page_thumb.visual.background,
+            Some(ColorRef::Token("text".to_string()))
+        );
         assert!(store.warnings().is_empty());
     }
 

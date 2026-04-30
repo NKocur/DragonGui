@@ -110,7 +110,7 @@ pub(crate) fn uniform_layout_padding(style: &LayoutStyle) -> Option<f32> {
 use serde_json::Value;
 
 use crate::events::WidgetState;
-use crate::theme::{parse_hex_color, Color, Theme};
+use crate::theme::{parse_hex_color, parse_web_color, Color, Theme};
 
 #[derive(Debug, Clone, Default)]
 pub struct NodeStyle {
@@ -140,12 +140,12 @@ pub struct TransitionStyle {
     pub timing_function: Option<TransitionTimingFunction>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum AnimationIterationCount {
     #[default]
     One,
     Infinite,
-    Count(u32),
+    Count(f32),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -177,7 +177,7 @@ pub enum AnimationPlayState {
 pub struct AnimationStyle {
     pub name: Option<String>,
     pub duration_ms: Option<u64>,
-    pub delay_ms: Option<u64>,
+    pub delay_ms: Option<i64>,
     pub timing_function: Option<TransitionTimingFunction>,
     pub iteration_count: Option<AnimationIterationCount>,
     pub direction: Option<AnimationDirection>,
@@ -193,6 +193,10 @@ pub enum TransitionProperty {
     BorderColor,
     BorderWidth,
     BorderRadius,
+    Outline,
+    OutlineColor,
+    OutlineWidth,
+    OutlineOffset,
     Opacity,
     Color,
     Accent,
@@ -209,7 +213,14 @@ pub enum TransitionTimingFunction {
     EaseIn,
     EaseOut,
     EaseInOut,
+    Steps { count: u32, position: StepPosition },
     CubicBezier { x1: f32, y1: f32, x2: f32, y2: f32 },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepPosition {
+    Start,
+    End,
 }
 
 impl TransitionTimingFunction {
@@ -220,7 +231,15 @@ impl TransitionTimingFunction {
             "ease-in" => Some(Self::EaseIn),
             "ease-out" => Some(Self::EaseOut),
             "ease-in-out" => Some(Self::EaseInOut),
-            _ => Self::parse_cubic_bezier(value),
+            "step-start" => Some(Self::Steps {
+                count: 1,
+                position: StepPosition::Start,
+            }),
+            "step-end" => Some(Self::Steps {
+                count: 1,
+                position: StepPosition::End,
+            }),
+            _ => Self::parse_cubic_bezier(value).or_else(|| Self::parse_steps(value)),
         }
     }
 
@@ -231,6 +250,21 @@ impl TransitionTimingFunction {
             Self::EaseIn => "ease-in".to_string(),
             Self::EaseOut => "ease-out".to_string(),
             Self::EaseInOut => "ease-in-out".to_string(),
+            Self::Steps {
+                count: 1,
+                position: StepPosition::Start,
+            } => "step-start".to_string(),
+            Self::Steps {
+                count: 1,
+                position: StepPosition::End,
+            } => "step-end".to_string(),
+            Self::Steps { count, position } => {
+                let position = match position {
+                    StepPosition::Start => "start",
+                    StepPosition::End => "end",
+                };
+                format!("steps({count}, {position})")
+            }
             Self::CubicBezier { x1, y1, x2, y2 } => format!(
                 "cubic-bezier({}, {}, {}, {})",
                 format_css_float(x1),
@@ -273,6 +307,40 @@ impl TransitionTimingFunction {
             x2: values[2],
             y2: values[3],
         })
+    }
+
+    fn parse_steps(value: &str) -> Option<Self> {
+        let value = value.trim();
+        let (name, args) = value.split_once('(')?;
+        if !name.trim().eq_ignore_ascii_case("steps") {
+            return None;
+        }
+        let args = args.trim().strip_suffix(')')?;
+        let mut parts = args.split(',').map(str::trim);
+        let count = parts
+            .next()?
+            .parse::<u32>()
+            .ok()
+            .filter(|count| *count > 0)?;
+        let position = match parts.next() {
+            None => StepPosition::End,
+            Some(value)
+                if value.eq_ignore_ascii_case("end") || value.eq_ignore_ascii_case("jump-end") =>
+            {
+                StepPosition::End
+            }
+            Some(value)
+                if value.eq_ignore_ascii_case("start")
+                    || value.eq_ignore_ascii_case("jump-start") =>
+            {
+                StepPosition::Start
+            }
+            Some(_) => return None,
+        };
+        if parts.next().is_some() {
+            return None;
+        }
+        Some(Self::Steps { count, position })
     }
 }
 
@@ -318,7 +386,15 @@ pub struct LayoutStyle {
     pub padding_top_value: Option<LayoutLength>,
     pub padding_bottom_value: Option<LayoutLength>,
     pub margin: Option<f32>,
+    pub margin_left: Option<f32>,
+    pub margin_right: Option<f32>,
+    pub margin_top: Option<f32>,
+    pub margin_bottom: Option<f32>,
     pub margin_value: Option<LayoutLength>,
+    pub margin_left_value: Option<LayoutLength>,
+    pub margin_right_value: Option<LayoutLength>,
+    pub margin_top_value: Option<LayoutLength>,
+    pub margin_bottom_value: Option<LayoutLength>,
     pub gap: Option<f32>,
     pub row_gap: Option<f32>,
     pub column_gap: Option<f32>,
@@ -339,6 +415,7 @@ pub struct LayoutStyle {
     pub grid_template_columns: Option<Vec<GridTrackSize>>,
     pub grid_template_rows: Option<Vec<GridTrackSize>>,
     pub grid_template_areas: Option<GridTemplateAreas>,
+    pub grid_auto_flow: Option<GridAutoFlowStyle>,
     pub grid_area: Option<String>,
     pub grid_column: Option<GridPlacementStyle>,
     pub grid_row: Option<GridPlacementStyle>,
@@ -413,6 +490,14 @@ pub enum GridTrackRepeatKind {
     AutoFill,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GridAutoFlowStyle {
+    Row,
+    Column,
+    RowDense,
+    ColumnDense,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum GridTrackMinSize {
     LogicalPx(f32),
@@ -477,6 +562,9 @@ pub struct VisualStyle {
     pub foreground: Option<ColorRef>,
     pub border_color: Option<ColorRef>,
     pub border_width: Option<f32>,
+    pub outline_color: Option<ColorRef>,
+    pub outline_width: Option<f32>,
+    pub outline_offset: Option<f32>,
     pub border_radius: Option<f32>,
     pub corner_radii: CornerRadii,
     pub accent: Option<ColorRef>,
@@ -491,6 +579,26 @@ pub struct VisualStyle {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BackdropFilterStyle {
     pub blur: f32,
+    pub brightness: f32,
+    pub saturate: f32,
+}
+
+impl Default for BackdropFilterStyle {
+    fn default() -> Self {
+        Self {
+            blur: 0.0,
+            brightness: 1.0,
+            saturate: 1.0,
+        }
+    }
+}
+
+impl BackdropFilterStyle {
+    pub fn is_identity(self) -> bool {
+        self.blur <= 0.0
+            && (self.brightness - 1.0).abs() <= f32::EPSILON
+            && (self.saturate - 1.0).abs() <= f32::EPSILON
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -632,8 +740,12 @@ pub struct TextStyle {
 
 #[derive(Debug, Clone, Default)]
 pub struct WidgetStyle {
+    pub text_area_rows: Option<f32>,
+    pub scatter_point_size: Option<f32>,
     pub table_row_height: Option<f32>,
     pub table_header_height: Option<f32>,
+    pub table_column_width: Option<f32>,
+    pub table_index_width: Option<f32>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -875,6 +987,12 @@ impl VisualStyle {
                 .clone()
                 .or_else(|| self.border_color.clone()),
             border_width: other.border_width.or(self.border_width),
+            outline_color: other
+                .outline_color
+                .clone()
+                .or_else(|| self.outline_color.clone()),
+            outline_width: other.outline_width.or(self.outline_width),
+            outline_offset: other.outline_offset.or(self.outline_offset),
             border_radius: other.border_radius.or(self.border_radius),
             corner_radii: self.corner_radii.merged(&other.corner_radii),
             accent: other.accent.clone().or_else(|| self.accent.clone()),
@@ -968,7 +1086,15 @@ fn parse_layout(map: &serde_json::Map<String, Value>, out: &mut LayoutStyle) {
     out.padding_top_value = out.padding_top.map(LayoutLength::LogicalPx);
     out.padding_bottom_value = out.padding_bottom.map(LayoutLength::LogicalPx);
     out.margin = number(map.get("margin"));
+    out.margin_left = number(value_for_keys(map, "margin_left", "margin-left"));
+    out.margin_right = number(value_for_keys(map, "margin_right", "margin-right"));
+    out.margin_top = number(value_for_keys(map, "margin_top", "margin-top"));
+    out.margin_bottom = number(value_for_keys(map, "margin_bottom", "margin-bottom"));
     out.margin_value = out.margin.map(LayoutLength::LogicalPx);
+    out.margin_left_value = out.margin_left.map(LayoutLength::LogicalPx);
+    out.margin_right_value = out.margin_right.map(LayoutLength::LogicalPx);
+    out.margin_top_value = out.margin_top.map(LayoutLength::LogicalPx);
+    out.margin_bottom_value = out.margin_bottom.map(LayoutLength::LogicalPx);
     out.gap = number(map.get("gap"));
     out.row_gap = number(map.get("row_gap")).or_else(|| number(map.get("row-gap")));
     out.column_gap = number(map.get("column_gap")).or_else(|| number(map.get("column-gap")));
@@ -979,6 +1105,8 @@ fn parse_layout(map: &serde_json::Map<String, Value>, out: &mut LayoutStyle) {
     out.overflow_x = text_value(map, "overflow_x", "overflow-x").and_then(parse_overflow);
     out.overflow_y = text_value(map, "overflow_y", "overflow-y").and_then(parse_overflow);
     out.position = text_value(map, "position", "position").and_then(parse_position);
+    out.grid_auto_flow =
+        text_value(map, "grid_auto_flow", "grid-auto-flow").and_then(parse_grid_auto_flow);
     out.grid_area = text_value(map, "grid_area", "grid-area").and_then(|value| {
         let value = value.trim();
         (!value.is_empty()).then(|| value.to_string())
@@ -1002,6 +1130,12 @@ fn parse_visual(map: &serde_json::Map<String, Value>, out: &mut VisualStyle) {
     out.foreground = color_ref(map.get("foreground")).or_else(|| color_ref(map.get("color")));
     out.border_color = color_ref(map.get("border_color"));
     out.border_width = number(map.get("border_width"));
+    out.outline_color =
+        color_ref(map.get("outline_color")).or_else(|| color_ref(map.get("outline-color")));
+    out.outline_width =
+        number(map.get("outline_width")).or_else(|| number(map.get("outline-width")));
+    out.outline_offset =
+        number(map.get("outline_offset")).or_else(|| number(map.get("outline-offset")));
     out.border_radius = number(map.get("border_radius"));
     out.corner_radii.top_left = number(map.get("border_top_left_radius"))
         .or_else(|| number(map.get("border-top-left-radius")));
@@ -1047,10 +1181,18 @@ fn parse_text(map: &serde_json::Map<String, Value>, out: &mut TextStyle) {
 }
 
 fn parse_widget(map: &serde_json::Map<String, Value>, out: &mut WidgetStyle) {
+    out.text_area_rows =
+        number(map.get("text_area_rows")).or_else(|| number(map.get("text-area-rows")));
+    out.scatter_point_size =
+        number(map.get("scatter_point_size")).or_else(|| number(map.get("scatter-point-size")));
     out.table_row_height =
         number(map.get("table_row_height")).or_else(|| number(map.get("table-row-height")));
     out.table_header_height =
         number(map.get("table_header_height")).or_else(|| number(map.get("table-header-height")));
+    out.table_column_width =
+        number(map.get("table_column_width")).or_else(|| number(map.get("table-column-width")));
+    out.table_index_width =
+        number(map.get("table_index_width")).or_else(|| number(map.get("table-index-width")));
 }
 
 fn parse_transition(map: &serde_json::Map<String, Value>, out: &mut TransitionStyle) {
@@ -1094,7 +1236,7 @@ fn parse_animation(map: &serde_json::Map<String, Value>, out: &mut AnimationStyl
         out.duration_ms = Some(duration);
     }
     if let Some(delay) =
-        value_for_keys(map, "animation_delay", "animation-delay").and_then(parse_duration_ms)
+        value_for_keys(map, "animation_delay", "animation-delay").and_then(parse_signed_duration_ms)
     {
         out.delay_ms = Some(delay);
     }
@@ -1212,6 +1354,9 @@ pub(crate) fn visual_style_is_empty(style: &VisualStyle) -> bool {
         && style.foreground.is_none()
         && style.border_color.is_none()
         && style.border_width.is_none()
+        && style.outline_color.is_none()
+        && style.outline_width.is_none()
+        && style.outline_offset.is_none()
         && style.border_radius.is_none()
         && style.corner_radii.is_empty()
         && style.accent.is_none()
@@ -1369,6 +1514,33 @@ fn parse_duration_ms(value: &Value) -> Option<u64> {
     text.parse::<f32>().ok().map(|v| v.max(0.0).round() as u64)
 }
 
+fn parse_signed_duration_ms(value: &Value) -> Option<i64> {
+    if let Some(n) = value.as_f64() {
+        return n.is_finite().then_some(n.round() as i64);
+    }
+    let text = value.as_str()?.trim().to_ascii_lowercase();
+    if let Some(ms) = text.strip_suffix("ms") {
+        return ms
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .filter(|value| value.is_finite())
+            .map(|value| value.round() as i64);
+    }
+    if let Some(seconds) = text.strip_suffix('s') {
+        return seconds
+            .trim()
+            .parse::<f32>()
+            .ok()
+            .filter(|value| value.is_finite())
+            .map(|value| (value * 1000.0).round() as i64);
+    }
+    text.parse::<f32>()
+        .ok()
+        .filter(|value| value.is_finite())
+        .map(|value| value.round() as i64)
+}
+
 fn parse_transition_properties(value: &Value) -> Option<Vec<TransitionProperty>> {
     match value {
         Value::String(text) => {
@@ -1398,6 +1570,10 @@ fn parse_transition_property(value: &str) -> Option<TransitionProperty> {
         "border-color" => Some(TransitionProperty::BorderColor),
         "border-width" => Some(TransitionProperty::BorderWidth),
         "border-radius" => Some(TransitionProperty::BorderRadius),
+        "outline" | "outline-style" => Some(TransitionProperty::Outline),
+        "outline-color" => Some(TransitionProperty::OutlineColor),
+        "outline-width" => Some(TransitionProperty::OutlineWidth),
+        "outline-offset" => Some(TransitionProperty::OutlineOffset),
         "opacity" => Some(TransitionProperty::Opacity),
         "color" => Some(TransitionProperty::Color),
         "accent" => Some(TransitionProperty::Accent),
@@ -1415,8 +1591,7 @@ fn parse_transition_timing_function(value: &str) -> Option<TransitionTimingFunct
 
 fn parse_animation_iteration_count(value: &Value) -> Option<AnimationIterationCount> {
     if let Some(n) = value.as_f64() {
-        return (n.is_finite() && n > 0.0)
-            .then_some(AnimationIterationCount::Count(n.round() as u32));
+        return (n.is_finite() && n > 0.0).then_some(AnimationIterationCount::Count(n as f32));
     }
     let text = value.as_str()?.trim();
     if text.eq_ignore_ascii_case("infinite") {
@@ -1425,7 +1600,7 @@ fn parse_animation_iteration_count(value: &Value) -> Option<AnimationIterationCo
     text.parse::<f32>()
         .ok()
         .filter(|value| value.is_finite() && *value > 0.0)
-        .map(|value| AnimationIterationCount::Count(value.round() as u32))
+        .map(AnimationIterationCount::Count)
 }
 
 fn parse_animation_direction(value: &str) -> Option<AnimationDirection> {
@@ -1496,11 +1671,30 @@ fn parse_backdrop_filter(value: &Value) -> Option<BackdropFilterStyle> {
         Value::Number(number) => number
             .as_f64()
             .filter(|value| value.is_finite() && *value >= 0.0)
-            .map(|value| BackdropFilterStyle { blur: value as f32 }),
+            .map(|value| BackdropFilterStyle {
+                blur: value as f32,
+                ..Default::default()
+            }),
         Value::String(text) => parse_backdrop_filter_text(text),
-        Value::Object(map) => number(map.get("blur")).map(|blur| BackdropFilterStyle {
-            blur: blur.max(0.0),
-        }),
+        Value::Object(map) => {
+            let mut filter = BackdropFilterStyle::default();
+            let mut parsed_any = false;
+            if let Some(blur) = number(map.get("blur")) {
+                filter.blur = blur.max(0.0);
+                parsed_any = true;
+            }
+            if let Some(brightness) = number(map.get("brightness")) {
+                filter.brightness = brightness.max(0.0);
+                parsed_any = true;
+            }
+            if let Some(saturate) =
+                number(map.get("saturate")).or_else(|| number(map.get("saturation")))
+            {
+                filter.saturate = saturate.max(0.0);
+                parsed_any = true;
+            }
+            parsed_any.then_some(filter)
+        }
         _ => None,
     }
 }
@@ -1510,11 +1704,43 @@ fn parse_backdrop_filter_text(value: &str) -> Option<BackdropFilterStyle> {
     if value.eq_ignore_ascii_case("none") {
         return None;
     }
-    let lower = value.to_ascii_lowercase();
-    let args = lower.strip_prefix("blur(")?.strip_suffix(')')?.trim();
-    parse_transform_length(args)
-        .filter(|blur| blur.is_finite() && *blur >= 0.0)
-        .map(|blur| BackdropFilterStyle { blur })
+    let mut rest = value;
+    let mut filter = BackdropFilterStyle::default();
+    let mut parsed_any = false;
+    while !rest.trim().is_empty() {
+        rest = rest.trim_start();
+        let open = rest.find('(')?;
+        let name = rest[..open].trim().to_ascii_lowercase();
+        let after_open = &rest[open + 1..];
+        let close = after_open.find(')')?;
+        let args = after_open[..close].trim();
+        match name.as_str() {
+            "blur" => {
+                filter.blur +=
+                    parse_transform_length(args).filter(|blur| blur.is_finite() && *blur >= 0.0)?;
+            }
+            "brightness" => {
+                filter.brightness *= parse_filter_factor(args)?;
+            }
+            "saturate" => {
+                filter.saturate *= parse_filter_factor(args)?;
+            }
+            _ => return None,
+        }
+        parsed_any = true;
+        rest = &after_open[close + 1..];
+    }
+    parsed_any.then_some(filter)
+}
+
+fn parse_filter_factor(value: &str) -> Option<f32> {
+    let value = value.trim().to_ascii_lowercase();
+    let factor = if let Some(percent) = value.strip_suffix('%') {
+        percent.trim().parse::<f32>().ok()? / 100.0
+    } else {
+        value.parse::<f32>().ok()?
+    };
+    factor.is_finite().then_some(factor.max(0.0))
 }
 
 pub(crate) fn parse_transform_functions(value: &str) -> Option<TransformStyle> {
@@ -1717,6 +1943,31 @@ fn parse_position(value: &str) -> Option<PositionStyle> {
     }
 }
 
+fn parse_grid_auto_flow(value: &str) -> Option<GridAutoFlowStyle> {
+    let mut direction: Option<GridAutoFlowStyle> = None;
+    let mut dense = false;
+    let mut saw_token = false;
+    for token in value.split_whitespace() {
+        saw_token = true;
+        match token.to_ascii_lowercase().as_str() {
+            "row" if direction.is_none() => direction = Some(GridAutoFlowStyle::Row),
+            "column" if direction.is_none() => direction = Some(GridAutoFlowStyle::Column),
+            "dense" if !dense => dense = true,
+            _ => return None,
+        }
+    }
+    if !saw_token {
+        return None;
+    }
+    match (direction.unwrap_or(GridAutoFlowStyle::Row), dense) {
+        (GridAutoFlowStyle::Row, false) => Some(GridAutoFlowStyle::Row),
+        (GridAutoFlowStyle::Row, true) => Some(GridAutoFlowStyle::RowDense),
+        (GridAutoFlowStyle::Column, false) => Some(GridAutoFlowStyle::Column),
+        (GridAutoFlowStyle::Column, true) => Some(GridAutoFlowStyle::ColumnDense),
+        (flow, _) => Some(flow),
+    }
+}
+
 fn parse_font_family(value: &str) -> Option<FontFamily> {
     let value = value.trim();
     if value.is_empty() {
@@ -1757,7 +2008,8 @@ fn number(value: Option<&Value>) -> Option<f32> {
 
 fn color_ref(value: Option<&Value>) -> Option<ColorRef> {
     match value? {
-        Value::String(s) => parse_hex_color(s)
+        Value::String(s) => parse_web_color(s)
+            .or_else(|| parse_hex_color(s))
             .map(ColorRef::Rgba)
             .or_else(|| Some(ColorRef::Token(s.to_string()))),
         Value::Array(items) if items.len() == 3 || items.len() == 4 => {
@@ -1826,9 +2078,13 @@ mod tests {
             "width": 240,
             "display": "flex",
             "flex_direction": "row",
+            "grid-auto-flow": "column dense",
             "padding": 12,
             "background": "surface_alt",
             "border_color": "#33ffaa",
+            "outline-color": "accent",
+            "outline-width": 2,
+            "outline-offset": 4,
             "border_radius": 9,
             "border_top_right_radius": 12,
             "border-bottom-left-radius": 4,
@@ -1839,17 +2095,26 @@ mod tests {
             "font_weight": "bold",
             "color": "accent",
             "text_align": "center",
-            "transition_property": ["background", "border-color"],
+            "transition_property": ["background", "border-color", "outline-offset"],
             "transition_duration": "180ms",
             "transition_delay": "0.05s",
             "transition_timing_function": "ease-out",
+            "table_column_width": 160,
+            "table-index-width": 56,
+            "text-area-rows": 5,
+            "scatter-point-size": 7,
             "transform": "translateY(-2px) scale(1.02) rotate(1deg)",
+            "backdrop-filter": "blur(8px) brightness(120%) saturate(0.75)",
             "hover": {"background": "accent_mix_20", "color": "success"}
         })));
 
         assert_eq!(style.layout.width, Some(240.0));
         assert_eq!(style.layout.display, Some(DisplayStyle::Flex));
         assert_eq!(style.layout.flex_direction, Some(FlexDirectionStyle::Row));
+        assert_eq!(
+            style.layout.grid_auto_flow,
+            Some(GridAutoFlowStyle::ColumnDense)
+        );
         assert_eq!(style.layout.padding, Some(12.0));
         assert_eq!(
             style.visual.border_color,
@@ -1861,6 +2126,12 @@ mod tests {
             ]))
         );
         assert_eq!(style.visual.border_radius, Some(9.0));
+        assert_eq!(
+            style.visual.outline_color,
+            Some(ColorRef::Token("accent".to_string()))
+        );
+        assert_eq!(style.visual.outline_width, Some(2.0));
+        assert_eq!(style.visual.outline_offset, Some(4.0));
         assert_eq!(style.visual.corner_radii.top_left, None);
         assert_eq!(style.visual.corner_radii.top_right, Some(12.0));
         assert_eq!(style.visual.corner_radii.bottom_right, None);
@@ -1900,7 +2171,8 @@ mod tests {
             style.transition.properties,
             Some(vec![
                 TransitionProperty::Background,
-                TransitionProperty::BorderColor
+                TransitionProperty::BorderColor,
+                TransitionProperty::OutlineOffset
             ])
         );
         assert_eq!(style.transition.duration_ms, Some(180));
@@ -1909,11 +2181,58 @@ mod tests {
             style.transition.timing_function,
             Some(TransitionTimingFunction::EaseOut)
         );
+        assert_eq!(style.widget.table_column_width, Some(160.0));
+        assert_eq!(style.widget.table_index_width, Some(56.0));
+        assert_eq!(style.widget.text_area_rows, Some(5.0));
+        assert_eq!(style.widget.scatter_point_size, Some(7.0));
         let transform = style.visual.transform.expect("parsed transform");
         assert_eq!(transform.translate_y, -2.0);
         assert_eq!(transform.scale_x, 1.02);
         assert_eq!(transform.scale_y, 1.02);
         assert_eq!(transform.rotate_deg, 1.0);
+        let filter = style
+            .visual
+            .backdrop_filter
+            .expect("parsed backdrop filter");
+        assert_eq!(filter.blur, 8.0);
+        assert!((filter.brightness - 1.2).abs() < 0.001);
+        assert_eq!(filter.saturate, 0.75);
+    }
+
+    #[test]
+    fn parses_inline_web_color_strings() {
+        let style = NodeStyle::from_json(Some(&json!({
+            "background": "rgba(255, 128, 0, 0.25)",
+            "border_color": "hwb(120 0% 50%)",
+            "color": "transparent",
+            "accent": "lch(50% 0 0 / 60%)",
+            "hover": {
+                "background": "rgb(100% 50% 0% / 40%)",
+                "color": "oklab(100% 0 0)"
+            }
+        })));
+
+        assert_color_close(
+            style.visual.background.as_ref().expect("background color"),
+            [1.0, 128.0 / 255.0, 0.0, 0.25],
+        );
+        assert_color_close(
+            style.visual.border_color.as_ref().expect("border color"),
+            [0.0, 0.5, 0.0, 1.0],
+        );
+        assert_eq!(style.text.color, Some(ColorRef::Rgba([0.0, 0.0, 0.0, 0.0])));
+        assert_color_close(
+            style.visual.accent.as_ref().expect("accent color"),
+            [0.466, 0.466, 0.466, 0.6],
+        );
+        assert_color_close(
+            style.hover.background.as_ref().expect("hover background"),
+            [1.0, 0.5, 0.0, 0.4],
+        );
+        assert_color_close(
+            style.hover.foreground.as_ref().expect("hover foreground"),
+            [1.0, 1.0, 1.0, 1.0],
+        );
     }
 
     #[test]
@@ -1931,6 +2250,43 @@ mod tests {
                 y2: 1.0
             })
         );
+    }
+
+    #[test]
+    fn parses_inline_step_transition_timing_function() {
+        let style = NodeStyle::from_json(Some(&json!({
+            "transition_timing_function": "steps(4, start)",
+            "animation_timing_function": "step-end"
+        })));
+
+        assert_eq!(
+            style.transition.timing_function,
+            Some(TransitionTimingFunction::Steps {
+                count: 4,
+                position: StepPosition::Start
+            })
+        );
+        assert_eq!(
+            style.animation.timing_function,
+            Some(TransitionTimingFunction::Steps {
+                count: 1,
+                position: StepPosition::End
+            })
+        );
+    }
+
+    #[test]
+    fn parses_inline_fractional_animation_iteration_count() {
+        let style = NodeStyle::from_json(Some(&json!({
+            "animation_iteration_count": 2.5,
+            "animation_delay": "-250ms"
+        })));
+
+        assert_eq!(
+            style.animation.iteration_count,
+            Some(AnimationIterationCount::Count(2.5))
+        );
+        assert_eq!(style.animation.delay_ms, Some(-250));
     }
 
     #[test]
@@ -2070,5 +2426,17 @@ mod tests {
             style.visual.background,
             Some(ColorRef::Token("disabled".to_string()))
         );
+    }
+
+    fn assert_color_close(actual: &ColorRef, expected: Color) {
+        let ColorRef::Rgba(actual) = actual else {
+            panic!("expected rgba color, got {actual:?}");
+        };
+        for (actual, expected) in actual.iter().zip(expected) {
+            assert!(
+                (actual - expected).abs() < 0.003,
+                "expected {expected}, got {actual}"
+            );
+        }
     }
 }

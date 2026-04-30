@@ -153,12 +153,42 @@ def test_inline_part_style_catalog_serializes_for_supported_widgets() -> None:
 
     cases = [
         (
+            lambda style: dg.HLayout(style=style, parent=None),
+            ("scrollbar_track", "scrollbar_thumb"),
+        ),
+        (
+            lambda style: dg.VLayout(style=style, parent=None),
+            ("scrollbar_track", "scrollbar_thumb"),
+        ),
+        (
+            lambda style: dg.Pages(style=style, parent=None),
+            ("scrollbar_track", "scrollbar_thumb"),
+        ),
+        (
+            lambda style: dg.Page("overview", style=style, parent=None),
+            ("scrollbar_track", "scrollbar_thumb"),
+        ),
+        (
+            lambda style: dg.Sidebar(style=style, parent=None),
+            ("scrollbar_track", "scrollbar_thumb"),
+        ),
+        (
             lambda style: dg.Panel("Panel", style=style, parent=None),
-            ("accent",),
+            ("accent", "scrollbar_track", "scrollbar_thumb"),
         ),
         (
             lambda style: dg.Collapsible("Advanced", style=style, parent=None),
-            ("header", "indicator", "body"),
+            (
+                "header",
+                "indicator",
+                "body",
+                "scrollbar_track",
+                "scrollbar_thumb",
+            ),
+        ),
+        (
+            lambda style: dg.Modal("Details", style=style, parent=None),
+            ("scrim", "scrollbar_track", "scrollbar_thumb"),
         ),
         (
             lambda style: dg.Button("Filters", style=style, parent=None),

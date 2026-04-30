@@ -43,6 +43,12 @@ pub fn metrics_for_node(node: &WidgetNode, theme: &Theme, sf: f32) -> TableMetri
     if let Some(row_h) = node.style.widget.table_row_height {
         metrics.row_h = (row_h * sf).max(1.0);
     }
+    if let Some(index_w) = node.style.widget.table_index_width {
+        metrics.index_w = (index_w * sf).max(1.0);
+    }
+    if let Some(col_w) = node.style.widget.table_column_width {
+        metrics.col_w = (col_w * sf).max(1.0);
+    }
     metrics
 }
 
@@ -189,6 +195,26 @@ mod tests {
         assert_eq!(column_bounds(&rect, metrics, 0), Some((74.0, 194.0)));
         assert_eq!(column_bounds(&rect, metrics, 1), Some((194.0, 260.0)));
         assert_eq!(column_bounds(&rect, metrics, 2), None);
+    }
+
+    #[test]
+    fn metrics_for_node_uses_css_table_widths() {
+        let mut node = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "table",
+            "type": "dataframe_table"
+        }))
+        .unwrap();
+        node.style.widget.table_header_height = Some(32.0);
+        node.style.widget.table_row_height = Some(28.0);
+        node.style.widget.table_index_width = Some(72.0);
+        node.style.widget.table_column_width = Some(180.0);
+
+        let metrics = metrics_for_node(&node, &Theme::dark(), 1.5);
+
+        assert_eq!(metrics.header_h, 48.0);
+        assert_eq!(metrics.row_h, 42.0);
+        assert_eq!(metrics.index_w, 108.0);
+        assert_eq!(metrics.col_w, 270.0);
     }
 
     #[test]
