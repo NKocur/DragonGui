@@ -3579,12 +3579,23 @@ impl WgpuState {
                     .map(|node| scatter_clip_radii(node, theme.radius, *scale_factor))
                     .unwrap_or([0.0; 4]);
                 s.set_point_size_override(point_size, queue);
-                if let Some(r) = layout.visible_rect(scatter_id) {
-                    s.set_layout_rect(r.x, r.y, r.w, r.h, clip_radii, queue);
+                if let (Some(r), Some(visible)) = (
+                    layout.rects.get(scatter_id).copied(),
+                    layout.visible_rect(scatter_id),
+                ) {
+                    s.set_layout_rect(
+                        r.x,
+                        r.y,
+                        r.w,
+                        r.h,
+                        Some([visible.x, visible.y, visible.w, visible.h]),
+                        clip_radii,
+                        queue,
+                    );
                 }
             } else {
                 s.set_point_size_override(None, queue);
-                s.set_layout_rect(0.0, 0.0, 0.0, 0.0, [0.0; 4], queue);
+                s.set_layout_rect(0.0, 0.0, 0.0, 0.0, None, [0.0; 4], queue);
             }
         }
 

@@ -68,6 +68,45 @@ fn point_size_override_value(point_size: Option<f32>) -> f32 {
     point_size.map(|size| size.max(0.0)).unwrap_or(-1.0)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct ScatterLayoutRect {
+    offset: [f32; 2],
+    width: u32,
+    height: u32,
+    scissor_offset: [u32; 2],
+    scissor_size: [u32; 2],
+}
+
+fn scatter_layout_rect(
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    visible_clip: Option<[f32; 4]>,
+) -> ScatterLayoutRect {
+    let width = w.max(0.0) as u32;
+    let height = h.max(0.0) as u32;
+    let [clip_x, clip_y, clip_w, clip_h] = visible_clip.unwrap_or([x, y, w, h]);
+    let left = clip_x.max(x);
+    let top = clip_y.max(y);
+    let right = (clip_x + clip_w).min(x + w).max(left);
+    let bottom = (clip_y + clip_h).min(y + h).max(top);
+    let scissor_x = left.floor().max(0.0) as u32;
+    let scissor_y = top.floor().max(0.0) as u32;
+    let scissor_right = right.ceil().max(scissor_x as f32) as u32;
+    let scissor_bottom = bottom.ceil().max(scissor_y as f32) as u32;
+    ScatterLayoutRect {
+        offset: [x, y],
+        width,
+        height,
+        scissor_offset: [scissor_x, scissor_y],
+        scissor_size: [
+            scissor_right.saturating_sub(scissor_x),
+            scissor_bottom.saturating_sub(scissor_y),
+        ],
+    }
+}
+
 // ---------------------------------------------------------------------------
 // ScatterWidget
 // ---------------------------------------------------------------------------
@@ -84,6 +123,8 @@ pub struct ScatterWidget {
     pub offset: [f32; 2],
     pub width: u32,
     pub height: u32,
+    scissor_offset: [u32; 2],
+    scissor_size: [u32; 2],
     /// Saved for camera reset (R / Home).
     fit_center: glam::Vec3,
     fit_radius: f32,
@@ -190,6 +231,8 @@ impl ScatterWidget {
             offset: [0.0, 0.0],
             width,
             height,
+            scissor_offset: [0, 0],
+            scissor_size: [width, height],
             fit_center,
             fit_radius,
             point_size_override: -1.0,
@@ -264,12 +307,16 @@ impl ScatterWidget {
         y: f32,
         w: f32,
         h: f32,
+        visible_clip: Option<[f32; 4]>,
         clip_radii: [f32; 4],
         queue: &wgpu::Queue,
     ) {
-        self.offset = [x, y];
-        self.width = w as u32;
-        self.height = h as u32;
+        let rect = scatter_layout_rect(x, y, w, h, visible_clip);
+        self.offset = rect.offset;
+        self.width = rect.width;
+        self.height = rect.height;
+        self.scissor_offset = rect.scissor_offset;
+        self.scissor_size = rect.scissor_size;
         self.clip_radii = clamp_clip_radii(clip_radii, w, h);
         self.camera.aspect = w / h.max(1.0);
         self.update_camera(queue);
@@ -287,6 +334,13 @@ impl ScatterWidget {
         let top = self.offset[1];
         let right = left + self.width as f32;
         let bottom = top + self.height as f32;
+        let scissor_left = self.scissor_offset[0] as f32;
+        let scissor_top = self.scissor_offset[1] as f32;
+        let scissor_right = scissor_left + self.scissor_size[0] as f32;
+        let scissor_bottom = scissor_top + self.scissor_size[1] as f32;
+        if x < scissor_left || x >= scissor_right || y < scissor_top || y >= scissor_bottom {
+            return false;
+        }
         if x < left || x >= right || y < top || y >= bottom {
             return false;
         }
@@ -347,7 +401,12 @@ impl ScatterWidget {
     /// Applies a viewport and scissor rect so the scatter only draws within
     /// its assigned region.
     pub fn render(&self, pass: &mut wgpu::RenderPass<'_>) {
-        if self.point_count == 0 || self.width == 0 || self.height == 0 {
+        if self.point_count == 0
+            || self.width == 0
+            || self.height == 0
+            || self.scissor_size[0] == 0
+            || self.scissor_size[1] == 0
+        {
             return;
         }
         if let Some(vb) = &self.vertex_buffer {
@@ -355,10 +414,10 @@ impl ScatterWidget {
             let h = self.height as f32;
             pass.set_viewport(self.offset[0], self.offset[1], w, h, 0.0, 1.0);
             pass.set_scissor_rect(
-                self.offset[0] as u32,
-                self.offset[1] as u32,
-                self.width,
-                self.height,
+                self.scissor_offset[0],
+                self.scissor_offset[1],
+                self.scissor_size[0],
+                self.scissor_size[1],
             );
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
@@ -377,6 +436,17 @@ mod tests {
         assert_eq!(point_size_override_value(None), -1.0);
         assert_eq!(point_size_override_value(Some(6.0)), 6.0);
         assert_eq!(point_size_override_value(Some(-2.0)), 0.0);
+    }
+
+    #[test]
+    fn clipped_scatter_keeps_full_viewport_and_visible_scissor() {
+        let rect = scatter_layout_rect(20.0, 40.0, 300.0, 180.0, Some([20.0, 96.0, 300.0, 72.0]));
+
+        assert_eq!(rect.offset, [20.0, 40.0]);
+        assert_eq!(rect.width, 300);
+        assert_eq!(rect.height, 180);
+        assert_eq!(rect.scissor_offset, [20, 96]);
+        assert_eq!(rect.scissor_size, [300, 72]);
     }
 
     #[test]

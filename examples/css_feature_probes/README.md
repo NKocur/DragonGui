@@ -22,3 +22,4 @@ Suggested order:
 12. `generated_content_probe.py` - `::before`, `::after`, quoted content, `attr(...)`, clipping, and reserved inline space.
 13. `responsive_layout_probe.py` - percent and `calc()` sizing, auto sizing, grid tracks, named areas, and dense auto-placement.
 14. `typography_probe.py` - text transform, letter spacing, line height, italic style, tabular numbers, ellipsis, and wrapping.
+15. `widget_metrics_probe.py` - DragonGUI-specific TextArea rows, table metrics, and Scatter3D point sizing.

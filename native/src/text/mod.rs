@@ -2753,9 +2753,19 @@ fn collect_table_text(
     caret_positions: &mut HashMap<String, [f32; 2]>,
     out: &mut Vec<TextEntry>,
 ) {
+    if node.kind == WidgetKind::Tooltip {
+        return;
+    }
+    if node.kind == WidgetKind::Modal && !node.props.open.unwrap_or(false) {
+        return;
+    }
+    let subtree_text_start = out.len();
     if node.kind == WidgetKind::DataFrameTable {
-        if let (Some(r), Some(table_state)) = (layout.visible_rect(&node.id), state.table(&node.id))
-        {
+        if let (Some(r), Some(_visible), Some(table_state)) = (
+            layout.rects.get(&node.id).copied(),
+            layout.visible_rect(&node.id),
+            state.table(&node.id),
+        ) {
             if r.w > 0.0 && r.h > 0.0 {
                 let font_size = text_font_size(node, theme, sf);
                 let font_family = node.style.text.font_family.as_ref();
@@ -3018,6 +3028,18 @@ fn collect_table_text(
             out,
         );
     }
+    if let Some(r) = layout.rects.get(&node.id) {
+        apply_transform_to_text_entries(
+            &mut out[subtree_text_start..],
+            visual_transform_for_text(node, state),
+            sf,
+            [r.x + r.w * 0.5, r.y + r.h * 0.5],
+        );
+    }
+    apply_paint_clip_to_text_entries(
+        &mut out[subtree_text_start..],
+        layout.paint_clip_rect(&node.id),
+    );
 }
 
 fn table_text_radii(node: &WidgetNode, theme: &Theme, sf: f32) -> [f32; 4] {
@@ -4348,6 +4370,93 @@ mod tests {
 
         assert!(unobscured.len() > partially_obscured.len());
         assert!(!partially_obscured.is_empty());
+    }
+
+    #[test]
+    fn table_text_anchors_to_full_rect_when_parent_clip_scrolls() {
+        let table = node("table", WidgetKind::DataFrameTable);
+        let theme = Theme::dark();
+        let full_rect = Rect {
+            x: 0.0,
+            y: 20.0,
+            w: 420.0,
+            h: 160.0,
+        };
+        let visible_clip = Rect {
+            x: 0.0,
+            y: 42.0,
+            w: 420.0,
+            h: 138.0,
+        };
+        let mut layout = LayoutResult::default();
+        layout.rects.insert("table".to_string(), full_rect);
+        layout.clips.insert("table".to_string(), visible_clip);
+        layout.paint_clips.insert("table".to_string(), visible_clip);
+
+        let mut state = WidgetState::default();
+        state.tables.insert(
+            "table".to_string(),
+            TableState {
+                columns: vec!["a".to_string(), "b".to_string()],
+                dtypes: vec!["f32".to_string(), "f32".to_string()],
+                rows: 3,
+                resource_id: None,
+                page_size: 10,
+                scroll_row: 0,
+                scroll_col: 0,
+                selected: None,
+                sort: None,
+                row_order: None,
+            },
+        );
+
+        let mut font_system = FontSystem::new();
+        let resources = ResourceRegistry::default();
+        let mut cache = TextBufferCache::default();
+        let font_aliases = FontFamilyAliases::default();
+        let mut caret_positions = HashMap::new();
+        let mut entries = Vec::new();
+        collect_table_text(
+            &table,
+            &layout,
+            &state,
+            &resources,
+            &theme,
+            None,
+            None,
+            [None, None],
+            None,
+            &mut font_system,
+            &font_aliases,
+            1.0,
+            6.0,
+            &mut cache,
+            &mut caret_positions,
+            &mut entries,
+        );
+
+        let metrics = table::metrics_for_node(&table, &theme, 1.0);
+        let row_font_size = text_font_size(&table, &theme, 1.0);
+        let row_line_height =
+            text_line_height_for_parts(&table, &["row"], row_font_size, &theme, 1.0);
+        let expected_top =
+            full_rect.y + metrics.header_h + ((metrics.row_h - row_line_height) * 0.5).max(0.0);
+        let clipped_top =
+            visible_clip.y + metrics.header_h + ((metrics.row_h - row_line_height) * 0.5).max(0.0);
+        let row_index = entries
+            .iter()
+            .find(|entry| entry.key.text == "0")
+            .expect("first row index text");
+
+        assert!(
+            (row_index.top - expected_top).abs() < 0.01,
+            "row text should stay anchored to full table rect after parent clipping: top={} expected={expected_top}",
+            row_index.top
+        );
+        assert!(
+            (row_index.top - clipped_top).abs() > 1.0,
+            "test should distinguish full rect from visible clip anchoring"
+        );
     }
 
     #[test]
