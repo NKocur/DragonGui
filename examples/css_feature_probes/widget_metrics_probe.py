@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import sys
 from pathlib import Path
 
@@ -9,36 +8,19 @@ if __name__ == "__main__" and __package__ is None:
 
 import dragongui as dg
 
-try:
-    import numpy as np
-except ImportError:  # pragma: no cover - manual visual probe fallback
-    np = None
 
+class MetricsFrame:
+    columns = ("id", "region", "owner", "score", "delta", "status")
+    dtypes = ("int64", "str", "str", "float64", "float64", "str")
 
-class ProbeFrame:
-    columns = ("x", "y", "z", "score", "phase", "segment")
-    dtypes = ("float32", "float32", "float32", "float32", "float32", "str")
-
-    def __init__(self, rows: int = 900) -> None:
+    def __init__(self, rows: int = 80) -> None:
         self.shape = (rows, len(self.columns))
-        if np is not None:
-            t = np.linspace(0.0, 1.0, rows, dtype=np.float32)
-            theta = t * np.float32(math.tau * 4.5)
-            radius = np.float32(0.45) + t * np.float32(2.4)
-            self.x = np.cos(theta) * radius
-            self.y = np.sin(theta) * radius
-            self.z = (t - np.float32(0.5)) * np.float32(2.4)
-            self.score = np.sin(theta * np.float32(0.72)).astype(np.float32)
-            self.phase = t.astype(np.float32)
-            self.segment = np.where(t > 0.66, "outer", np.where(t > 0.33, "middle", "inner"))
-        else:
-            t_values = [i / max(1, rows - 1) for i in range(rows)]
-            self.x = [math.cos(t * math.tau * 4.5) * (0.45 + t * 2.4) for t in t_values]
-            self.y = [math.sin(t * math.tau * 4.5) * (0.45 + t * 2.4) for t in t_values]
-            self.z = [(t - 0.5) * 2.4 for t in t_values]
-            self.score = [math.sin(t * math.tau * 4.5 * 0.72) for t in t_values]
-            self.phase = t_values
-            self.segment = ["outer" if t > 0.66 else "middle" if t > 0.33 else "inner" for t in t_values]
+        self.id = list(range(1000, 1000 + rows))
+        self.region = [("North", "West", "South", "East")[i % 4] for i in range(rows)]
+        self.owner = [("Avery", "Morgan", "Riley", "Quinn", "Taylor")[i % 5] for i in range(rows)]
+        self.score = [round(72.0 + (i % 18) * 1.37, 2) for i in range(rows)]
+        self.delta = [round(((i % 9) - 4) * 0.18, 2) for i in range(rows)]
+        self.status = [("queued", "active", "review", "done")[i % 4] for i in range(rows)]
 
     def __getitem__(self, column: str) -> object:
         return getattr(self, column)
@@ -59,10 +41,33 @@ app.stylesheet(
         width: 100%;
         height: 100%;
         gap: 12px;
+        overflow-y: auto;
+        padding-right: 20px;
+        padding-bottom: 48px;
+    }
+
+    VLayout.root::scrollbar-track {
+        width: 8px;
+        padding: 1px;
+        background: rgba(255, 255, 255, 0.08);
+        border-radius: 999px;
+    }
+
+    VLayout.root::scrollbar-thumb {
+        width: 6px;
+        background: rgba(90, 169, 255, 0.72);
+        border-radius: 999px;
+    }
+
+    HLayout.grid {
+        gap: 12px;
+        height: auto;
     }
 
     Panel {
-        background: rgba(18, 25, 39, 0.94);
+        background:
+            radial-gradient(circle at 18% 20%, rgba(90, 169, 255, 0.13), transparent 58%),
+            rgba(18, 25, 39, 0.94);
         border: 1px solid rgba(255, 255, 255, 0.14);
         border-radius: 14px;
         padding: 14px;
@@ -71,10 +76,8 @@ app.stylesheet(
     }
 
     Panel.case {
-        box-shadow: none;
-        background:
-            radial-gradient(circle at 18% 20%, rgba(90, 169, 255, 0.14), transparent 58%),
-            rgba(255, 255, 255, 0.045);
+        width: calc(50% - 6px);
+        min-width: 390px;
     }
 
     Label.title {
@@ -104,7 +107,8 @@ app.stylesheet(
         border: 1px solid rgba(255, 255, 255, 0.16);
         border-radius: 10px;
         color: rgba(245, 248, 255, 0.88);
-        line-height: 1.22;
+        line-height: 1.18;
+        padding: 10px;
     }
 
     TextArea.rows-two {
@@ -115,20 +119,26 @@ app.stylesheet(
         text-area-rows: 5;
     }
 
-    DataFrameTable.metrics-table {
-        height: 226px;
+    TextArea.tight {
+        text-area-rows: 4;
+        line-height: 1.05;
+        padding: 7px;
+    }
+
+    TextArea.comfortable {
+        text-area-rows: 4;
+        line-height: 1.32;
+        padding: 12px;
+    }
+
+    DataFrameTable {
         background: rgba(3, 8, 18, 0.36);
         border: 1px solid rgba(90, 169, 255, 0.28);
         border-radius: 12px;
         color: rgba(232, 240, 255, 0.84);
-        font-size: 12px;
-        table-row-height: 26px;
-        table-header-height: 34px;
-        table-column-width: 132px;
-        table-index-width: 68px;
     }
 
-    DataFrameTable.metrics-table::header {
+    DataFrameTable::header {
         background: rgba(90, 169, 255, 0.20);
         color: white;
         font-weight: 850;
@@ -136,46 +146,53 @@ app.stylesheet(
         letter-spacing: 0.08em;
     }
 
-    DataFrameTable.metrics-table::grid-line {
+    DataFrameTable::row {
+        background: rgba(255, 255, 255, 0.025);
+    }
+
+    DataFrameTable::row-selected {
+        background: rgba(116, 221, 176, 0.20);
+    }
+
+    DataFrameTable::grid-line {
         background: rgba(255, 255, 255, 0.10);
     }
 
-    Panel.scatter-case {
-        width: 430px;
-        height: 210px;
-        padding: 10px;
-        gap: 8px;
-        box-shadow: none;
+    DataFrameTable.compact-table {
+        height: 214px;
+        font-size: 11px;
+        table-row-height: 22px;
+        table-header-height: 28px;
+        table-column-width: 112px;
+        table-index-width: 48px;
     }
 
-    Scatter3D {
-        height: 150px;
-        background: rgba(3, 8, 18, 0.48);
-        border: 1px solid rgba(116, 221, 176, 0.28);
-        border-radius: 14px;
-    }
-
-    Scatter3D.large-points {
-        scatter-point-size: 8px;
+    DataFrameTable.roomy-table {
+        height: 274px;
+        font-size: 13px;
+        table-row-height: 32px;
+        table-header-height: 42px;
+        table-column-width: 150px;
+        table-index-width: 76px;
     }
     """
 )
 
 
-frame = ProbeFrame()
-win = dg.Window("CSS Widget Metrics Probe", width=920, height=700)
+frame = MetricsFrame()
+win = dg.Window("CSS Widget Metrics Probe", width=940, height=720)
 
 with dg.VLayout(class_="root"):
     dg.Label("Widget metrics", class_="title")
     dg.Label(
-        "This probe isolates DragonGUI-specific CSS that feeds widget measurement "
-        "or renderer metrics: TextArea rows, DataFrameTable sizes, and Scatter3D point size.",
+        "This probe isolates DragonGUI-specific measurement CSS for TextArea rows "
+        "and DataFrameTable header, row, column, and index sizing.",
         class_="caption",
     )
 
-    with dg.HLayout(style={"gap": 12, "height": 235}):
-        with dg.Panel("TextArea rows", class_="case", width=310):
-            dg.Label("CSS overrides constructor rows", class_="case-title")
+    with dg.HLayout(class_="grid"):
+        with dg.Panel("TextArea rows", class_="case"):
+            dg.Label("CSS text-area-rows overrides constructor rows.", class_="case-title")
             dg.TextArea(
                 "Constructor rows=1, CSS text-area-rows: 2.\nSecond visible row should fit.",
                 rows=1,
@@ -188,16 +205,30 @@ with dg.VLayout(class_="root"):
             )
             dg.Label("PASS: lower field is much taller than the upper field.", class_="pass")
 
-        with dg.Panel("Table metrics", class_="case"):
-            dg.Label("Header, row, column, and index sizing come from CSS.", class_="case-title")
-            dg.DataFrameTable(frame, page_size=32, sample_rows=18, class_="metrics-table")
-            dg.Label("PASS: index is wide, header is tall, and columns are uniform.", class_="pass")
+        with dg.Panel("TextArea typography metrics", class_="case"):
+            dg.Label("Same row count, different padding and line-height.", class_="case-title")
+            dg.TextArea(
+                "tight line-height\nkeeps four rows compact\nwithout clipping\nor caret drift",
+                rows=2,
+                class_="tight",
+            )
+            dg.TextArea(
+                "comfortable line-height\nuses the same row count\nbut takes more space\nand reads airier",
+                rows=2,
+                class_="comfortable",
+            )
+            dg.Label("PASS: both have four rows, but different physical heights.", class_="pass")
 
-    with dg.Panel("Scatter3D point metrics", class_="case"):
-        with dg.Panel("8px points", class_="scatter-case"):
-            dg.Scatter3D(frame, x="x", y="y", z="z", colormap="magma", class_="large-points")
-            dg.Label("PASS: spiral uses visibly large point sprites.", class_="pass")
-            dg.Label("PASS: plot keeps its scale while this panel scrolls.", class_="pass")
+    with dg.HLayout(class_="grid"):
+        with dg.Panel("Compact table metrics", class_="case"):
+            dg.Label("Small rows, narrow columns, and a narrow index gutter.", class_="case-title")
+            dg.DataFrameTable(frame, page_size=48, sample_rows=24, class_="compact-table")
+            dg.Label("PASS: many rows are visible and header height is compact.", class_="pass")
+
+        with dg.Panel("Roomy table metrics", class_="case"):
+            dg.Label("Larger rows, taller header, wider columns, and wider index.", class_="case-title")
+            dg.DataFrameTable(frame, page_size=48, sample_rows=24, class_="roomy-table")
+            dg.Label("PASS: fewer rows are visible and columns/index are wider.", class_="pass")
 
 
 if __name__ == "__main__":

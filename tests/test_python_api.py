@@ -523,6 +523,12 @@ def test_color_picker_serializes_and_updates_from_channel_callback() -> None:
     assert picker.value == (40, 50, 60)
     assert calls == [(255, 64, 0), (40, 50, 60)]
 
+    alpha_picker = dg.ColorPicker((90, 169, 255, 128), alpha=True, parent=None)
+    assert alpha_picker.to_dict()["children"][0]["style"]["background"] == "#5aa9ff80"
+    alpha_picker.set_value((90, 169, 255, 64))
+    assert alpha_picker._swatch.style is not None
+    assert alpha_picker._swatch.style["background"] == "#5aa9ff40"
+
     assert dg.ColorPicker((1, 1, 1), alpha=False, parent=None).value == (1, 1, 1)
     assert dg.ColorPicker((1.0, 1.0, 1.0), alpha=False, parent=None).value == (255, 255, 255)
     assert dg.ColorPicker((0.0, 0.5, 1.0), alpha=True, parent=None).value == (0, 128, 255, 255)

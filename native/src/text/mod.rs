@@ -33,7 +33,7 @@ use crate::style::{
     FontFamily, FontStyle, FontVariantNumeric, GeneratedContent, LineHeight, NodeStyle,
     PartLayoutStyle, PartStyle, PositionStyle, TextAlign, TextOverflow, TextSpacing, TextStyle,
     TextTransform, TransformStyle, VisualStyle, BADGE_GAP_LP, BORDER_WIDTH_LP, CHECKBOX_BOX_LP,
-    CHECKBOX_LEFT_PAD_LP, DROPDOWN_CHEVRON_WIDTH_LP, PANEL_ACCENT_WIDTH_LP, TAB_GAP_LP,
+    CHECKBOX_LEFT_PAD_LP, DROPDOWN_CHEVRON_WIDTH_LP, TAB_GAP_LP,
 };
 use crate::table;
 use crate::theme::Theme;
@@ -139,8 +139,10 @@ pub struct TextRendererDg {
     swash_cache: SwashCache,
     atlas: TextAtlas,
     renderer: TextRenderer,
+    overlay_renderer: TextRenderer,
     viewport: Viewport,
     entries: Vec<TextEntry>,
+    overlay_entry_start: usize,
 }
 
 impl TextRendererDg {
@@ -169,6 +171,18 @@ impl TextRendererDg {
                 bias: wgpu::DepthBiasState::default(),
             }),
         );
+        let overlay_renderer = TextRenderer::new(
+            &mut atlas,
+            device,
+            wgpu::MultisampleState::default(),
+            Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth32Float,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+        );
         Self {
             font_system,
             attempted_font_sources: HashSet::new(),
@@ -177,8 +191,10 @@ impl TextRendererDg {
             swash_cache,
             atlas,
             renderer,
+            overlay_renderer,
             viewport,
             entries: Vec::new(),
+            overlay_entry_start: 0,
         }
     }
 
@@ -208,6 +224,7 @@ impl TextRendererDg {
         let window_w = media.width * sf;
         let window_h = media.height * sf;
         self.sync_stylesheet_fonts(stylesheets);
+        let active_modal = active_open_modal(tree);
 
         let mut entries = std::mem::take(&mut self.entries);
         let font_aliases = &self.font_aliases;
@@ -225,6 +242,8 @@ impl TextRendererDg {
             dropdown_overlay,
             menu_overlays,
             tooltip_overlay,
+            &[],
+            true,
             &mut self.font_system,
             font_aliases,
             sf,
@@ -243,6 +262,8 @@ impl TextRendererDg {
             dropdown_overlay,
             menu_overlays,
             tooltip_overlay,
+            &[],
+            true,
             &mut self.font_system,
             font_aliases,
             sf,
@@ -251,62 +272,105 @@ impl TextRendererDg {
             &mut caret_positions,
             &mut entries,
         );
-        collect_dropdown_overlay_text(
-            tree,
-            layout,
-            state,
-            theme,
-            &mut self.font_system,
-            font_aliases,
-            sf,
-            pad,
-            &mut cache,
-            &mut caret_positions,
-            &mut entries,
-        );
-        collect_menu_overlay_text(
-            tree,
-            layout,
-            state,
-            theme,
-            &mut self.font_system,
-            font_aliases,
-            sf,
-            pad,
-            &mut cache,
-            &mut caret_positions,
-            &mut entries,
-        );
-        collect_tooltip_text(
-            tree,
-            layout,
-            state,
-            theme,
-            &mut self.font_system,
-            font_aliases,
-            sf,
-            stylesheets,
-            media,
-            &mut cache,
-            &mut caret_positions,
-            &mut entries,
-        );
-        collect_rich_tooltip_text(
-            tree,
-            layout,
-            state,
-            theme,
-            open_dropdown,
-            dropdown_overlay,
-            menu_overlays,
-            &mut self.font_system,
-            font_aliases,
-            sf,
-            pad,
-            &mut cache,
-            &mut caret_positions,
-            &mut entries,
-        );
+        self.overlay_entry_start = entries.len();
+        if let Some(modal) = active_modal {
+            collect_text(
+                modal,
+                layout,
+                state,
+                theme,
+                open_dropdown,
+                dropdown_overlay,
+                menu_overlays,
+                tooltip_overlay,
+                &[],
+                false,
+                &mut self.font_system,
+                font_aliases,
+                sf,
+                pad,
+                &mut cache,
+                &mut caret_positions,
+                &mut entries,
+            );
+            collect_table_text(
+                modal,
+                layout,
+                state,
+                resources,
+                theme,
+                open_dropdown,
+                dropdown_overlay,
+                menu_overlays,
+                tooltip_overlay,
+                &[],
+                false,
+                &mut self.font_system,
+                font_aliases,
+                sf,
+                pad,
+                &mut cache,
+                &mut caret_positions,
+                &mut entries,
+            );
+        } else {
+            collect_dropdown_overlay_text(
+                tree,
+                layout,
+                state,
+                theme,
+                &mut self.font_system,
+                font_aliases,
+                sf,
+                pad,
+                &mut cache,
+                &mut caret_positions,
+                &mut entries,
+            );
+            collect_menu_overlay_text(
+                tree,
+                layout,
+                state,
+                theme,
+                &mut self.font_system,
+                font_aliases,
+                sf,
+                pad,
+                &mut cache,
+                &mut caret_positions,
+                &mut entries,
+            );
+            collect_tooltip_text(
+                tree,
+                layout,
+                state,
+                theme,
+                &mut self.font_system,
+                font_aliases,
+                sf,
+                stylesheets,
+                media,
+                &mut cache,
+                &mut caret_positions,
+                &mut entries,
+            );
+            collect_rich_tooltip_text(
+                tree,
+                layout,
+                state,
+                theme,
+                open_dropdown,
+                dropdown_overlay,
+                menu_overlays,
+                &mut self.font_system,
+                font_aliases,
+                sf,
+                pad,
+                &mut cache,
+                &mut caret_positions,
+                &mut entries,
+            );
+        }
         collect_toast_text(
             toasts,
             theme,
@@ -419,15 +483,18 @@ impl TextRendererDg {
         // Destructure to obtain separate mutable/shared borrows of each field.
         let TextRendererDg {
             renderer,
+            overlay_renderer,
             font_system,
             atlas,
             viewport,
             swash_cache,
             entries,
+            overlay_entry_start,
             ..
         } = self;
 
-        let areas: Vec<TextArea<'_>> = entries
+        let overlay_entry_start = (*overlay_entry_start).min(entries.len());
+        let areas: Vec<TextArea<'_>> = entries[..overlay_entry_start]
             .iter()
             .map(|e| TextArea {
                 buffer: &e.buffer,
@@ -440,28 +507,69 @@ impl TextRendererDg {
             })
             .collect();
 
-        if let Err(e) = renderer.prepare(
-            device,
-            queue,
-            font_system,
-            atlas,
-            viewport,
-            areas,
-            swash_cache,
-        ) {
-            eprintln!("glyphon prepare error: {e}");
+        if !areas.is_empty() {
+            if let Err(e) = renderer.prepare(
+                device,
+                queue,
+                font_system,
+                atlas,
+                viewport,
+                areas,
+                swash_cache,
+            ) {
+                eprintln!("glyphon prepare error: {e}");
+            }
+        }
+
+        let overlay_areas: Vec<TextArea<'_>> = entries[overlay_entry_start..]
+            .iter()
+            .map(|e| TextArea {
+                buffer: &e.buffer,
+                left: e.left,
+                top: e.top,
+                scale: e.scale,
+                bounds: e.clip,
+                default_color: e.color,
+                custom_glyphs: &[],
+            })
+            .collect();
+
+        if !overlay_areas.is_empty() {
+            if let Err(e) = overlay_renderer.prepare(
+                device,
+                queue,
+                font_system,
+                atlas,
+                viewport,
+                overlay_areas,
+                swash_cache,
+            ) {
+                eprintln!("glyphon overlay prepare error: {e}");
+            }
         }
     }
 
-    /// Record text draw calls into an active render pass.
-    ///
-    /// Takes `&self` because `TextRenderer::render` only reads state.
-    pub fn render<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>) {
+    pub fn render_base<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>) {
         if self.entries.is_empty() {
+            return;
+        }
+        if self.overlay_entry_start.min(self.entries.len()) == 0 {
             return;
         }
         if let Err(e) = self.renderer.render(&self.atlas, &self.viewport, pass) {
             eprintln!("glyphon render error: {e}");
+        }
+    }
+
+    pub fn render_overlays<'pass>(&'pass self, pass: &mut wgpu::RenderPass<'pass>) {
+        if self.overlay_entry_start >= self.entries.len() {
+            return;
+        }
+        if let Err(e) = self
+            .overlay_renderer
+            .render(&self.atlas, &self.viewport, pass)
+        {
+            eprintln!("glyphon overlay render error: {e}");
         }
     }
 }
@@ -805,6 +913,8 @@ fn collect_text(
     dropdown_overlay: Option<Rect>,
     menu_overlays: [Option<Rect>; 2],
     tooltip_overlay: Option<Rect>,
+    extra_overlays: &[Rect],
+    skip_open_modals: bool,
     font_system: &mut FontSystem,
     font_aliases: &FontFamilyAliases,
     sf: f32,
@@ -817,6 +927,9 @@ fn collect_text(
         return;
     }
     if node.kind == WidgetKind::Modal && !node.props.open.unwrap_or(false) {
+        return;
+    }
+    if skip_open_modals && node.kind == WidgetKind::Modal {
         return;
     }
     let subtree_text_start = out.len();
@@ -900,9 +1013,16 @@ fn collect_text(
                         let title_pad = panel_title_padding(node, theme, sf);
                         let mut text_top = r.y + title_pad.top;
                         if node.kind == WidgetKind::Modal {
-                            let min_top =
-                                r.y + (BORDER_WIDTH_LP + PANEL_ACCENT_WIDTH_LP + 2.0) * sf;
-                            text_top = text_top.max(min_top);
+                            let border_w = node
+                                .style
+                                .visual
+                                .border_width
+                                .unwrap_or(BORDER_WIDTH_LP)
+                                .max(0.0)
+                                * sf;
+                            let title_band_h = (title_pad.top + line_height).min(r.h);
+                            text_top =
+                                r.y + border_w + ((title_band_h - line_height) * 0.5).max(0.0);
                         }
                         (
                             r.x + title_pad.left,
@@ -1149,6 +1269,7 @@ fn collect_text(
                         dropdown_overlay,
                         menu_overlays,
                         tooltip_overlay,
+                        extra_overlays,
                     ) {
                         let text_bounds = TextBounds {
                             left: clip_rect.x as i32,
@@ -1254,6 +1375,7 @@ fn collect_text(
                 dropdown_overlay,
                 menu_overlays,
                 tooltip_overlay,
+                extra_overlays,
             );
         }
         emit_generated_content_text(
@@ -1273,6 +1395,7 @@ fn collect_text(
             dropdown_overlay,
             menu_overlays,
             tooltip_overlay,
+            extra_overlays,
         );
         emit_generated_content_text(
             node,
@@ -1291,6 +1414,7 @@ fn collect_text(
             dropdown_overlay,
             menu_overlays,
             tooltip_overlay,
+            extra_overlays,
         );
     }
 
@@ -1304,6 +1428,8 @@ fn collect_text(
             dropdown_overlay,
             menu_overlays,
             tooltip_overlay,
+            extra_overlays,
+            skip_open_modals,
             font_system,
             font_aliases,
             sf,
@@ -1345,6 +1471,7 @@ fn emit_generated_content_text(
     dropdown_overlay: Option<Rect>,
     menu_overlays: [Option<Rect>; 2],
     tooltip_overlay: Option<Rect>,
+    extra_overlays: &[Rect],
 ) {
     let Some(style) = generated_part_style_for_state(node, state, part) else {
         return;
@@ -1418,6 +1545,7 @@ fn emit_generated_content_text(
         dropdown_overlay,
         menu_overlays,
         tooltip_overlay,
+        extra_overlays,
     ) {
         return;
     }
@@ -1691,6 +1819,7 @@ fn is_obscured_by_overlay(
     dropdown_overlay: Option<Rect>,
     menu_overlays: [Option<Rect>; 2],
     tooltip_overlay: Option<Rect>,
+    extra_overlays: &[Rect],
 ) -> bool {
     if open_dropdown == Some(node.id.as_str()) {
         return false;
@@ -1701,6 +1830,9 @@ fn is_obscured_by_overlay(
             .flatten()
             .any(|overlay| rects_intersect(*r, *overlay))
         || tooltip_overlay.is_some_and(|overlay| rects_intersect(*r, overlay))
+        || extra_overlays
+            .iter()
+            .any(|overlay| rects_intersect(*r, *overlay))
 }
 
 fn text_bounds_obscured_by_overlay(
@@ -1710,6 +1842,7 @@ fn text_bounds_obscured_by_overlay(
     dropdown_overlay: Option<Rect>,
     menu_overlays: [Option<Rect>; 2],
     tooltip_overlay: Option<Rect>,
+    extra_overlays: &[Rect],
 ) -> bool {
     let rect = Rect {
         x: bounds.left as f32,
@@ -1726,11 +1859,21 @@ fn text_bounds_obscured_by_overlay(
             dropdown_overlay,
             menu_overlays,
             tooltip_overlay,
+            extra_overlays,
         )
 }
 
 fn rects_intersect(a: Rect, b: Rect) -> bool {
     a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y
+}
+
+fn active_open_modal(node: &WidgetNode) -> Option<&WidgetNode> {
+    for child in &node.children {
+        if let Some(modal) = active_open_modal(child) {
+            return Some(modal);
+        }
+    }
+    (node.kind == WidgetKind::Modal && node.props.open.unwrap_or(false)).then_some(node)
 }
 
 pub(crate) fn text_font_size(node: &WidgetNode, theme: &Theme, sf: f32) -> f32 {
@@ -2226,6 +2369,7 @@ fn emit_badge_text(
     dropdown_overlay: Option<Rect>,
     menu_overlays: [Option<Rect>; 2],
     tooltip_overlay: Option<Rect>,
+    extra_overlays: &[Rect],
 ) {
     let Some(badge) = node
         .props
@@ -2259,6 +2403,7 @@ fn emit_badge_text(
         dropdown_overlay,
         menu_overlays,
         tooltip_overlay,
+        extra_overlays,
     ) {
         return;
     }
@@ -2649,6 +2794,8 @@ fn collect_rich_tooltip_text(
             dropdown_overlay,
             menu_overlays,
             None,
+            &[],
+            false,
             font_system,
             font_aliases,
             sf,
@@ -2745,6 +2892,8 @@ fn collect_table_text(
     dropdown_overlay: Option<Rect>,
     menu_overlays: [Option<Rect>; 2],
     tooltip_overlay: Option<Rect>,
+    extra_overlays: &[Rect],
+    skip_open_modals: bool,
     font_system: &mut FontSystem,
     font_aliases: &FontFamilyAliases,
     sf: f32,
@@ -2757,6 +2906,9 @@ fn collect_table_text(
         return;
     }
     if node.kind == WidgetKind::Modal && !node.props.open.unwrap_or(false) {
+        return;
+    }
+    if skip_open_modals && node.kind == WidgetKind::Modal {
         return;
     }
     let subtree_text_start = out.len();
@@ -2808,6 +2960,7 @@ fn collect_table_text(
                     dropdown_overlay,
                     menu_overlays,
                     tooltip_overlay,
+                    extra_overlays,
                 ) {
                     push_text_entry(
                         font_system,
@@ -2867,6 +3020,7 @@ fn collect_table_text(
                         dropdown_overlay,
                         menu_overlays,
                         tooltip_overlay,
+                        extra_overlays,
                     ) {
                         push_text_entry(
                             font_system,
@@ -2933,6 +3087,7 @@ fn collect_table_text(
                         dropdown_overlay,
                         menu_overlays,
                         tooltip_overlay,
+                        extra_overlays,
                     ) {
                         push_text_entry(
                             font_system,
@@ -2981,6 +3136,7 @@ fn collect_table_text(
                             dropdown_overlay,
                             menu_overlays,
                             tooltip_overlay,
+                            extra_overlays,
                         ) {
                             push_text_entry(
                                 font_system,
@@ -3019,6 +3175,8 @@ fn collect_table_text(
             dropdown_overlay,
             menu_overlays,
             tooltip_overlay,
+            extra_overlays,
+            skip_open_modals,
             font_system,
             font_aliases,
             sf,
@@ -3982,6 +4140,8 @@ mod tests {
             None,
             [None, None],
             None,
+            &[],
+            false,
             &mut font_system,
             &font_aliases,
             1.0,
@@ -4031,6 +4191,8 @@ mod tests {
             None,
             [None, None],
             None,
+            &[],
+            false,
             &mut font_system,
             &font_aliases,
             1.0,
@@ -4078,6 +4240,8 @@ mod tests {
             None,
             [None, None],
             None,
+            &[],
+            false,
             &mut font_system,
             &font_aliases,
             1.0,
@@ -4091,6 +4255,189 @@ mod tests {
         assert!(
             !entry.key.wrap,
             "label wrap=false should keep single-line path"
+        );
+    }
+
+    #[test]
+    fn active_modal_text_collection_splits_base_and_overlay_text() {
+        let mut background = node("background", WidgetKind::Label);
+        background.props.text = Some("Background copy".to_string());
+        let mut modal_label = node("modal-label", WidgetKind::Label);
+        modal_label.props.text = Some("Modal copy".to_string());
+        let mut modal = node("modal", WidgetKind::Modal);
+        modal.props.open = Some(true);
+        modal.children = vec![modal_label];
+        let mut root = node("window", WidgetKind::Window);
+        root.children = vec![background, modal];
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "window".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 400.0,
+                h: 240.0,
+            },
+        );
+        layout.rects.insert(
+            "background".to_string(),
+            Rect {
+                x: 12.0,
+                y: 12.0,
+                w: 180.0,
+                h: 32.0,
+            },
+        );
+        layout.rects.insert(
+            "modal".to_string(),
+            Rect {
+                x: 100.0,
+                y: 70.0,
+                w: 200.0,
+                h: 120.0,
+            },
+        );
+        layout.rects.insert(
+            "modal-label".to_string(),
+            Rect {
+                x: 116.0,
+                y: 92.0,
+                w: 160.0,
+                h: 32.0,
+            },
+        );
+
+        let theme = Theme::dark();
+        let state = WidgetState::default();
+        let mut font_system = FontSystem::new();
+        let font_aliases = FontFamilyAliases::default();
+        let mut cache = TextBufferCache::default();
+        let mut caret_positions = HashMap::new();
+        let mut base_entries = Vec::new();
+
+        collect_text(
+            &root,
+            &layout,
+            &state,
+            &theme,
+            None,
+            None,
+            [None, None],
+            None,
+            &[],
+            true,
+            &mut font_system,
+            &font_aliases,
+            1.0,
+            0.0,
+            &mut cache,
+            &mut caret_positions,
+            &mut base_entries,
+        );
+
+        assert!(
+            base_entries
+                .iter()
+                .any(|entry| entry.key.text == "Background copy"),
+            "background text should remain in the base pass while a modal is active"
+        );
+        assert!(
+            base_entries
+                .iter()
+                .all(|entry| entry.key.text != "Modal copy"),
+            "open modal text should be withheld from the base pass"
+        );
+
+        let mut overlay_entries = Vec::new();
+        let modal = active_open_modal(&root).expect("active modal");
+
+        collect_text(
+            modal,
+            &layout,
+            &state,
+            &theme,
+            None,
+            None,
+            [None, None],
+            None,
+            &[],
+            false,
+            &mut font_system,
+            &font_aliases,
+            1.0,
+            0.0,
+            &mut cache,
+            &mut caret_positions,
+            &mut overlay_entries,
+        );
+
+        assert!(
+            overlay_entries
+                .iter()
+                .any(|entry| entry.key.text == "Modal copy"),
+            "modal text should be collected into the overlay pass"
+        );
+    }
+
+    #[test]
+    fn modal_title_text_centers_in_header_band() {
+        let mut modal = node("modal", WidgetKind::Modal);
+        modal.props.open = Some(true);
+        modal.props.text = Some("Modal probe".to_string());
+        modal.style.layout.padding = Some(16.0);
+        modal.style.visual.border_width = Some(2.0);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "modal".to_string(),
+            Rect {
+                x: 50.0,
+                y: 40.0,
+                w: 220.0,
+                h: 140.0,
+            },
+        );
+
+        let theme = Theme::dark();
+        let state = WidgetState::default();
+        let mut font_system = FontSystem::new();
+        let font_aliases = FontFamilyAliases::default();
+        let mut cache = TextBufferCache::default();
+        let mut caret_positions = HashMap::new();
+        let mut entries = Vec::new();
+        collect_text(
+            &modal,
+            &layout,
+            &state,
+            &theme,
+            None,
+            None,
+            [None, None],
+            None,
+            &[],
+            false,
+            &mut font_system,
+            &font_aliases,
+            1.0,
+            0.0,
+            &mut cache,
+            &mut caret_positions,
+            &mut entries,
+        );
+
+        let title = entries
+            .iter()
+            .find(|entry| entry.key.text == "Modal probe")
+            .expect("modal title text");
+        let line_height = text_line_height(text_font_size(&modal, &theme, 1.0), &theme, 1.0);
+        let title_band_h = panel_title_padding(&modal, &theme, 1.0).top + line_height;
+        let expected_top = 40.0 + 2.0 + ((title_band_h - line_height) * 0.5).max(0.0);
+
+        assert!(
+            (title.top - expected_top).abs() < 0.01,
+            "modal title should center in the header band: top={} expected={expected_top}",
+            title.top
         );
     }
 
@@ -4138,6 +4485,8 @@ mod tests {
             None,
             [None, None],
             None,
+            &[],
+            false,
             &mut font_system,
             &font_aliases,
             1.0,
@@ -4198,6 +4547,8 @@ mod tests {
             None,
             [None, None],
             None,
+            &[],
+            false,
             &mut font_system,
             &font_aliases,
             1.0,
@@ -4259,6 +4610,8 @@ mod tests {
             None,
             [None, None],
             None,
+            &[],
+            false,
             &mut font_system,
             &font_aliases,
             1.0,
@@ -4333,6 +4686,8 @@ mod tests {
             None,
             [None, None],
             None,
+            &[],
+            false,
             &mut font_system,
             &font_aliases,
             1.0,
@@ -4359,6 +4714,8 @@ mod tests {
                 w: metrics.index_w * 0.5,
                 h: metrics.row_h,
             }),
+            &[],
+            false,
             &mut font_system,
             &font_aliases,
             1.0,
@@ -4426,6 +4783,8 @@ mod tests {
             None,
             [None, None],
             None,
+            &[],
+            false,
             &mut font_system,
             &font_aliases,
             1.0,

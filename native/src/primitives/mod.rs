@@ -8,7 +8,7 @@ use crate::css_style::{
 use crate::document::{WidgetKind, WidgetNode};
 use crate::events::{NavigationItem, SortDirection, WidgetState};
 use crate::layout::{
-    is_scroll_container_node, panel_title_gap_lp, panel_title_line_height_lp,
+    is_scroll_container_node, panel_title_body_gap_lp, panel_title_line_height_lp,
     panel_title_top_padding_lp, scroll_container_max_x, scroll_container_max_y, LayoutResult, Rect,
 };
 use crate::overlays::{menu_popup_rect, rich_tooltip_target, tooltip_target};
@@ -31,6 +31,10 @@ use crate::style::{
 use crate::table;
 use crate::theme::{Color, Theme};
 use crate::toast::{toast_colors, toast_rect, toast_stack_index, ToastOverlay};
+
+const SCROLLBAR_VISIBILITY_EPSILON_PX: f32 = 2.0;
+const SCROLLBAR_MIN_TRACK_LEN_PX: f32 = 44.0;
+const IMPLICIT_PANEL_SCROLLBAR_MIN_SIZE_PX: f32 = 64.0;
 
 // ---------------------------------------------------------------------------
 // Per-instance GPU data
@@ -181,6 +185,7 @@ pub struct PrimitivesRenderer {
     bind_group: wgpu::BindGroup,
     instances: Vec<RectInstance>,
     pub rect_count: u32,
+    overlay_start: u32,
 }
 
 impl PrimitivesRenderer {
@@ -283,6 +288,7 @@ impl PrimitivesRenderer {
             bind_group,
             instances: Vec::with_capacity(64),
             rect_count: 0,
+            overlay_start: 0,
         };
         renderer.update_screen_size(queue, width, height);
         renderer
@@ -315,15 +321,17 @@ impl PrimitivesRenderer {
         let window_w = media.width * scale_factor;
         let window_h = media.height * scale_factor;
         self.instances.clear();
-        emit_rects(
+        emit_rects_inner(
             tree,
             layout,
             theme,
             scale_factor,
             state,
             caret_positions,
+            true,
             &mut self.instances,
         );
+        self.overlay_start = self.instances.len() as u32;
         emit_dropdown_overlays(
             tree,
             layout,
@@ -338,6 +346,15 @@ impl PrimitivesRenderer {
             theme,
             scale_factor,
             state,
+            &mut self.instances,
+        );
+        emit_modal_overlays(
+            tree,
+            layout,
+            theme,
+            scale_factor,
+            state,
+            caret_positions,
             &mut self.instances,
         );
         emit_tooltip_overlay(
@@ -385,15 +402,28 @@ impl PrimitivesRenderer {
         );
     }
 
-    /// Record draw calls into an active render pass.
-    pub fn render(&self, pass: &mut wgpu::RenderPass<'_>) {
+    pub fn render_base(&self, pass: &mut wgpu::RenderPass<'_>) {
         if self.rect_count == 0 {
+            return;
+        }
+        let count = self.overlay_start.min(self.rect_count);
+        if count == 0 {
             return;
         }
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        pass.draw(0..6, 0..self.rect_count);
+        pass.draw(0..6, 0..count);
+    }
+
+    pub fn render_overlays(&self, pass: &mut wgpu::RenderPass<'_>) {
+        if self.rect_count == 0 || self.overlay_start >= self.rect_count {
+            return;
+        }
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        pass.draw(0..6, self.overlay_start..self.rect_count);
     }
 }
 
@@ -1667,12 +1697,20 @@ pub(crate) fn panel_scrollbar_geometry(
         .get(&node.id)
         .copied()
         .unwrap_or_else(|| scroll_container_max_y(node, layout));
-    let has_horizontal = max_scroll_x > 0.0;
-    let has_vertical = max_scroll_y > 0.0;
+    let min_scroll = (SCROLLBAR_VISIBILITY_EPSILON_PX * sf).max(1.0);
+    let has_horizontal = max_scroll_x > min_scroll;
+    let has_vertical = max_scroll_y > min_scroll;
     if !has_horizontal && !has_vertical {
         return None;
     }
     if rect.w <= 0.0 || rect.h <= 0.0 {
+        return None;
+    }
+    let implicit_panel_scrollbar = node.kind == WidgetKind::Panel
+        && node.style.layout.overflow.is_none()
+        && node.style.layout.overflow_x.is_none()
+        && node.style.layout.overflow_y.is_none();
+    if implicit_panel_scrollbar && rect.h < IMPLICIT_PANEL_SCROLLBAR_MIN_SIZE_PX * sf {
         return None;
     }
 
@@ -1712,8 +1750,13 @@ pub(crate) fn panel_scrollbar_geometry(
         let content_h = viewport_h + max_scroll_y;
         let right_radius = panel_radii[1].max(panel_radii[2]);
         let default_vertical_pad = (border_w + gap * 1.5).max(right_radius * 0.6);
-        let vertical_pad = part_padding.unwrap_or(default_vertical_pad);
-        let right_pad = (border_w + gap).max(right_radius * 0.45);
+        let vertical_pad = part_padding
+            .map(|padding| padding.max(default_vertical_pad))
+            .unwrap_or(default_vertical_pad);
+        let default_right_pad = default_vertical_pad;
+        let right_pad = part_padding
+            .map(|padding| padding.max(default_right_pad))
+            .unwrap_or(default_right_pad);
         let horizontal_reserve = if has_horizontal {
             gutter_thickness + gap
         } else {
@@ -1721,10 +1764,10 @@ pub(crate) fn panel_scrollbar_geometry(
         };
         let gutter_x = rect.x + rect.w - right_pad - gutter_thickness;
         let track_x = gutter_x + (gutter_thickness - track_thickness) * 0.5;
-        let track_y = rect.y + vertical_pad;
+        let track_y = rect.y + title_inset + vertical_pad;
         let track_bottom = rect.y + rect.h - vertical_pad - horizontal_reserve;
         let track_h = (track_bottom - track_y).max(1.0);
-        if gutter_x >= rect.x && track_h > 1.0 {
+        if gutter_x >= rect.x && track_h >= SCROLLBAR_MIN_TRACK_LEN_PX * sf {
             let thumb_h = (track_h * (viewport_h / content_h).clamp(0.0, 1.0))
                 .max(18.0 * sf)
                 .min(track_h);
@@ -1752,8 +1795,13 @@ pub(crate) fn panel_scrollbar_geometry(
         let content_w = viewport_w + max_scroll_x;
         let bottom_radius = panel_radii[2].max(panel_radii[3]);
         let default_horizontal_pad = (border_w + gap * 1.5).max(bottom_radius * 0.6);
-        let horizontal_pad = part_padding.unwrap_or(default_horizontal_pad);
-        let bottom_pad = (border_w + gap).max(bottom_radius * 0.45);
+        let horizontal_pad = part_padding
+            .map(|padding| padding.max(default_horizontal_pad))
+            .unwrap_or(default_horizontal_pad);
+        let default_bottom_pad = default_horizontal_pad;
+        let bottom_pad = part_padding
+            .map(|padding| padding.max(default_bottom_pad))
+            .unwrap_or(default_bottom_pad);
         let vertical_reserve = if has_vertical {
             gutter_thickness + gap
         } else {
@@ -1764,7 +1812,7 @@ pub(crate) fn panel_scrollbar_geometry(
         let track_right = rect.x + rect.w - horizontal_pad - vertical_reserve;
         let track_y = gutter_y + (gutter_thickness - track_thickness) * 0.5;
         let track_w = (track_right - track_x).max(1.0);
-        if gutter_y >= rect.y && track_w > 1.0 {
+        if gutter_y >= rect.y && track_w >= SCROLLBAR_MIN_TRACK_LEN_PX * sf {
             let thumb_w = (track_w * (viewport_w / content_w).clamp(0.0, 1.0))
                 .max(18.0 * sf)
                 .min(track_w);
@@ -1876,7 +1924,7 @@ fn panel_scrollbar_title_inset(node: &WidgetNode, theme: &Theme, sf: f32) -> f32
     }
     (panel_title_top_padding_lp(node, theme)
         + panel_title_line_height_lp(node, theme)
-        + panel_title_gap_lp(node, theme))
+        + panel_title_body_gap_lp(node, theme))
         * sf
 }
 
@@ -2385,6 +2433,28 @@ fn emit_bordered_paint_rect_radii(
     ));
 }
 
+fn emit_underpainted_bordered_paint_rect_radii(
+    out: &mut Vec<RectInstance>,
+    rect: [f32; 4],
+    border: [f32; 4],
+    fill: FillPaint,
+    radii: [f32; 4],
+    border_w: f32,
+) {
+    let width = border_w.max(0.0);
+    if width <= 0.0 {
+        emit_paint_rect_radii(out, rect, fill, radii);
+        return;
+    }
+    out.push(inst_radii(rect, border, radii));
+    emit_paint_rect_radii(
+        out,
+        inset_rect(rect, width),
+        fill,
+        inset_radii(radii, width),
+    );
+}
+
 fn emit_box_shadows(
     out: &mut Vec<RectInstance>,
     rect: [f32; 4],
@@ -2568,10 +2638,26 @@ fn emit_rects(
     caret_positions: &HashMap<String, [f32; 2]>,
     out: &mut Vec<RectInstance>,
 ) {
+    emit_rects_inner(node, layout, theme, sf, state, caret_positions, false, out);
+}
+
+fn emit_rects_inner(
+    node: &WidgetNode,
+    layout: &LayoutResult,
+    theme: &Theme,
+    sf: f32,
+    state: &WidgetState,
+    caret_positions: &HashMap<String, [f32; 2]>,
+    skip_open_modals: bool,
+    out: &mut Vec<RectInstance>,
+) {
     if node.kind == WidgetKind::Tooltip {
         return;
     }
     if node.kind == WidgetKind::Modal && !node.props.open.unwrap_or(false) {
+        return;
+    }
+    if skip_open_modals && node.kind == WidgetKind::Modal {
         return;
     }
     let subtree_primitive_start = out.len();
@@ -2799,26 +2885,64 @@ fn emit_rects(
                         radii,
                     ));
                 }
-                let fill = resolve_background_paint(&visual, theme, theme.surface);
-                emit_bordered_paint_rect_radii(
-                    out,
-                    [x, y, w, h],
-                    styled_border.unwrap_or(theme.border),
-                    fill,
-                    radii,
-                    border_w,
-                );
-                let accent_h = (PANEL_ACCENT_WIDTH_LP * sf).max(border_w);
-                out.push(inst(
-                    [
-                        x + border_w,
-                        y + border_w,
-                        (w - border_w * 2.0).max(1.0),
-                        accent_h,
-                    ],
-                    styled_accent.unwrap_or(theme.accent),
-                    0.0,
-                ));
+                if node
+                    .props
+                    .text
+                    .as_deref()
+                    .is_some_and(|text| !text.is_empty())
+                {
+                    let inner_x = x + border_w;
+                    let inner_y = y + border_w;
+                    let inner_w = (w - border_w * 2.0).max(1.0);
+                    let inner_h = (h - border_w * 2.0).max(1.0);
+                    let title_band_h = ((panel_title_top_padding_lp(node, theme)
+                        + panel_title_line_height_lp(node, theme))
+                        * sf)
+                        .min(inner_h);
+                    let border_color = styled_border.unwrap_or(theme.border);
+                    if title_band_h > 0.0 {
+                        if border_w > 0.0 {
+                            out.push(inst_radii([x, y, w, h], border_color, radii));
+                        }
+                        let base_fill =
+                            resolve_color(&visual.background, theme).unwrap_or(theme.surface);
+                        let accent = resolve_color(&visual.accent, theme).unwrap_or(theme.accent);
+                        let header_fill =
+                            apply_opacity(mix(base_fill, accent, 0.16), visual.opacity);
+                        let inner_radii = inset_radii(radii, border_w);
+                        push_masked_rect(
+                            out,
+                            [inner_x, inner_y, inner_w, inner_h],
+                            header_fill,
+                            inner_radii,
+                            [inner_x, inner_y, inner_w, title_band_h],
+                        );
+                        let body_h = (inner_h - title_band_h).max(0.0);
+                        if body_h > 0.0 {
+                            emit_paint_rect_radii(
+                                out,
+                                [inner_x, inner_y + title_band_h, inner_w, body_h],
+                                resolve_background_paint(&visual, theme, theme.surface),
+                                [0.0, 0.0, inner_radii[2], inner_radii[3]],
+                            );
+                        }
+                        out.push(inst(
+                            [inner_x, inner_y + title_band_h, inner_w, border_w.max(1.0)],
+                            apply_opacity(mix(border_color, accent, 0.28), visual.opacity),
+                            0.0,
+                        ));
+                    }
+                } else {
+                    let fill = resolve_background_paint(&visual, theme, theme.surface);
+                    emit_underpainted_bordered_paint_rect_radii(
+                        out,
+                        [x, y, w, h],
+                        styled_border.unwrap_or(theme.border),
+                        fill,
+                        radii,
+                        border_w,
+                    );
+                }
             }
 
             WidgetKind::Sidebar => {
@@ -4037,34 +4161,15 @@ fn emit_rects(
                     }
                 }
                 let border_color = styled_border.unwrap_or(grid_color);
-                push_masked_rect(
-                    out,
-                    table_rect,
-                    border_color,
-                    table_radii,
-                    [x, y, w, border_w],
-                );
-                push_masked_rect(
-                    out,
-                    table_rect,
-                    border_color,
-                    table_radii,
-                    [x, y + h - border_w, w, border_w],
-                );
-                push_masked_rect(
-                    out,
-                    table_rect,
-                    border_color,
-                    table_radii,
-                    [x, y, border_w, h],
-                );
-                push_masked_rect(
-                    out,
-                    table_rect,
-                    border_color,
-                    table_radii,
-                    [x + w - border_w, y, border_w, h],
-                );
+                if border_w > 0.0 {
+                    out.push(inst_outline_ring_clipped(
+                        table_rect,
+                        border_color,
+                        table_radii,
+                        border_w,
+                        default_local_clip(table_rect),
+                    ));
+                }
             }
 
             WidgetKind::Window
@@ -4109,10 +4214,19 @@ fn emit_rects(
     }
 
     for (_, child) in stacking_children(node) {
-        emit_rects(child, layout, theme, sf, state, caret_positions, out);
+        emit_rects_inner(
+            child,
+            layout,
+            theme,
+            sf,
+            state,
+            caret_positions,
+            skip_open_modals,
+            out,
+        );
     }
     if is_scroll_container_node(node) {
-        if let Some(r) = layout.visible_rect(&node.id) {
+        if let Some(r) = layout.rects.get(&node.id).copied() {
             emit_panel_scrollbar(node, layout, state, theme, sf, [r.x, r.y, r.w, r.h], out);
         }
     }
@@ -4235,6 +4349,24 @@ fn emit_menu_overlays(
                 emit_menu_popup(rect, items, theme, sf, state, out);
             }
         }
+    }
+}
+
+fn emit_modal_overlays(
+    node: &WidgetNode,
+    layout: &LayoutResult,
+    theme: &Theme,
+    sf: f32,
+    state: &WidgetState,
+    caret_positions: &HashMap<String, [f32; 2]>,
+    out: &mut Vec<RectInstance>,
+) {
+    if node.kind == WidgetKind::Modal && node.props.open.unwrap_or(false) {
+        emit_rects_inner(node, layout, theme, sf, state, caret_positions, false, out);
+        return;
+    }
+    for child in &node.children {
+        emit_modal_overlays(child, layout, theme, sf, state, caret_positions, out);
     }
 }
 
@@ -5782,17 +5914,309 @@ mod tests {
         );
         let top_gap = track.rect[1];
         let bottom_gap = 120.0 - (track.rect[1] + track.rect[3]);
+        let title_inset = panel_scrollbar_title_inset(&panel, &theme, 1.0);
         assert!(
-            top_gap >= 11.0,
-            "scrollbar track should leave enough vertical breathing room: {:?}",
+            top_gap >= title_inset,
+            "titled panel scrollbar should start in the body area: {:?}",
             track.rect
         );
         assert!(
-            (top_gap - bottom_gap).abs() < 0.01,
-            "scrollbar track should be vertically centered on the panel surface: top_gap={top_gap} bottom_gap={bottom_gap}"
+            bottom_gap >= 11.0,
+            "scrollbar track should leave enough bottom breathing room: {:?}",
+            track.rect
         );
         assert!(thumb.rect[1] >= track.rect[1]);
         assert!(thumb.rect[1] + thumb.rect[3] <= track.rect[1] + track.rect[3]);
+    }
+
+    #[test]
+    fn titled_panel_scrollbar_track_stays_inside_body_with_styled_padding() {
+        let mut panel = node("panel", WidgetKind::Panel);
+        panel.props.text = Some("Spacer behavior".to_string());
+        panel.style.visual.border_radius = Some(14.0);
+        panel.style.visual.border_width = Some(1.0);
+        panel.style.layout.padding = Some(14.0);
+        panel.style.parts.parts.insert(
+            "scrollbar-track".to_string(),
+            PartStyle {
+                layout: PartLayoutStyle {
+                    width: Some(8.0),
+                    padding: Some(1.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        panel.style.parts.parts.insert(
+            "scrollbar-thumb".to_string(),
+            PartStyle {
+                layout: PartLayoutStyle {
+                    width: Some(6.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 240.0,
+                h: 180.0,
+            },
+        );
+        layout.scroll_max_y.insert("panel".to_string(), 80.0);
+        layout.scroll_y.insert("panel".to_string(), 0.0);
+
+        let geometry = panel_scrollbar_geometry(
+            &panel,
+            &layout,
+            &WidgetState::default(),
+            &Theme::dark(),
+            1.0,
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 240.0,
+                h: 180.0,
+            },
+        )
+        .expect("scrollbar geometry");
+        let vertical = geometry.vertical.expect("vertical scrollbar");
+        let title_inset = panel_scrollbar_title_inset(&panel, &Theme::dark(), 1.0);
+
+        assert!(
+            vertical.track.y >= title_inset,
+            "track should not overlap title: track={:?} title_inset={title_inset}",
+            vertical.track
+        );
+        assert!(
+            vertical.track.y + vertical.track.h <= 180.0,
+            "track should not overhang panel bottom: {:?}",
+            vertical.track
+        );
+        assert!(
+            180.0 - (vertical.track.y + vertical.track.h) >= 5.0,
+            "track should keep bottom breathing room: {:?}",
+            vertical.track
+        );
+        let bottom_gap = 180.0 - (vertical.track.y + vertical.track.h);
+        let right_gap = 240.0 - (vertical.track.x + vertical.track.w);
+        assert!(
+            right_gap >= 5.0,
+            "track should keep right breathing room: {:?}",
+            vertical.track
+        );
+        assert!(
+            (bottom_gap - right_gap).abs() <= 1.0,
+            "right and bottom breathing room should match: track={:?} right_gap={right_gap} bottom_gap={bottom_gap}",
+            vertical.track
+        );
+    }
+
+    #[test]
+    fn panel_scrollbar_geometry_stays_anchored_when_parent_clips_panel() {
+        let mut panel = node("panel", WidgetKind::Panel);
+        panel.props.text = Some("Controls".to_string());
+        panel.style.visual.border_radius = Some(20.0);
+        panel.style.visual.border_width = Some(1.0);
+        panel.style.layout.padding = Some(18.0);
+
+        let mut full_layout = LayoutResult::default();
+        full_layout.rects.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 120.0,
+            },
+        );
+        full_layout.clips.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 120.0,
+            },
+        );
+        full_layout.paint_clips.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 120.0,
+            },
+        );
+        full_layout.scroll_max_y.insert("panel".to_string(), 120.0);
+        full_layout.scroll_y.insert("panel".to_string(), 0.0);
+
+        let mut clipped_layout = LayoutResult::default();
+        clipped_layout.rects.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 120.0,
+            },
+        );
+        clipped_layout.clips.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 70.0,
+                w: 100.0,
+                h: 50.0,
+            },
+        );
+        clipped_layout
+            .scroll_max_y
+            .insert("panel".to_string(), 120.0);
+        clipped_layout.scroll_y.insert("panel".to_string(), 0.0);
+        clipped_layout.paint_clips.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 70.0,
+                w: 100.0,
+                h: 50.0,
+            },
+        );
+
+        let state = WidgetState::default();
+        let theme = Theme::dark();
+        let mut full_out = Vec::new();
+        let mut clipped_out = Vec::new();
+        emit_rects(
+            &panel,
+            &full_layout,
+            &theme,
+            1.0,
+            &state,
+            &HashMap::new(),
+            &mut full_out,
+        );
+        emit_rects(
+            &panel,
+            &clipped_layout,
+            &theme,
+            1.0,
+            &state,
+            &HashMap::new(),
+            &mut clipped_out,
+        );
+
+        let full_track = full_out
+            .iter()
+            .find(|inst| (inst.rect[2] - 4.0).abs() < 0.01)
+            .expect("full scrollbar track");
+        let clipped_track = clipped_out
+            .iter()
+            .find(|inst| (inst.rect[2] - 4.0).abs() < 0.01)
+            .expect("clipped scrollbar track");
+
+        assert_eq!(clipped_track.rect, full_track.rect);
+        assert!(
+            clipped_track.clip[1] > full_track.clip[1],
+            "paint clip should hide offscreen scrollbar instead of changing geometry"
+        );
+    }
+
+    #[test]
+    fn panel_scrollbar_suppresses_tiny_rounding_overflow() {
+        let panel = node("panel", WidgetKind::Panel);
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 120.0,
+            },
+        );
+        layout.scroll_max_y.insert("panel".to_string(), 1.5);
+
+        let geometry = panel_scrollbar_geometry(
+            &panel,
+            &layout,
+            &WidgetState::default(),
+            &Theme::dark(),
+            1.0,
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 100.0,
+                h: 120.0,
+            },
+        );
+
+        assert!(
+            geometry.is_none(),
+            "tiny rounding overflow should not flash a visible scrollbar"
+        );
+    }
+
+    #[test]
+    fn panel_scrollbar_suppresses_unusable_small_tracks() {
+        let mut panel = node("panel", WidgetKind::Panel);
+        panel.style.parts.parts.insert(
+            "scrollbar-track".to_string(),
+            PartStyle {
+                layout: PartLayoutStyle {
+                    width: Some(8.0),
+                    padding: Some(1.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        panel.style.parts.parts.insert(
+            "scrollbar-thumb".to_string(),
+            PartStyle {
+                layout: PartLayoutStyle {
+                    width: Some(6.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 140.0,
+                h: 50.0,
+            },
+        );
+        layout.scroll_max_y.insert("panel".to_string(), 32.0);
+
+        let geometry = panel_scrollbar_geometry(
+            &panel,
+            &layout,
+            &WidgetState::default(),
+            &Theme::dark(),
+            1.0,
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 140.0,
+                h: 50.0,
+            },
+        );
+
+        assert!(
+            geometry.is_none(),
+            "small panels should not draw oversized scrollbar tracks"
+        );
     }
 
     #[test]
@@ -5984,8 +6408,8 @@ mod tests {
             .find(|inst| inst.color == [0.50, 0.60, 0.70, 0.80])
             .expect("styled scrollbar thumb");
 
-        assert_eq!(track.rect, [84.0, 14.0, 6.0, 92.0]);
-        assert_eq!(thumb.rect, [83.0, 14.0, 8.0, 46.0]);
+        assert_eq!(track.rect, [79.0, 14.0, 6.0, 92.0]);
+        assert_eq!(thumb.rect, [78.0, 14.0, 8.0, 46.0]);
         assert_eq!(track.radii, [99.0; 4]);
         assert_eq!(thumb.radii, [99.0; 4]);
     }
@@ -6040,6 +6464,179 @@ mod tests {
         assert!(
             has_rect(&out, [0.10, 0.20, 0.30, 0.20], [0.0, 0.0, 300.0, 200.0]),
             "modal scrim should use styled scrim background and opacity"
+        );
+    }
+
+    #[test]
+    fn titled_modal_header_band_uses_surface_radii() {
+        let mut modal = node("modal", WidgetKind::Modal);
+        modal.props.open = Some(true);
+        modal.props.text = Some("Modal title".to_string());
+        modal.style.visual.background = Some(ColorRef::Rgba([0.10, 0.12, 0.16, 1.0]));
+        modal.style.visual.accent = Some(ColorRef::Rgba([0.90, 0.20, 0.10, 1.0]));
+        modal.style.visual.border_color = Some(ColorRef::Rgba([0.20, 0.22, 0.28, 1.0]));
+        modal.style.visual.border_width = Some(2.0);
+        modal.style.visual.border_radius = Some(14.0);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "window".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 320.0,
+                h: 220.0,
+            },
+        );
+        layout.rects.insert(
+            "modal".to_string(),
+            Rect {
+                x: 50.0,
+                y: 40.0,
+                w: 180.0,
+                h: 110.0,
+            },
+        );
+
+        let theme = Theme::dark();
+        let mut out = Vec::new();
+        emit_rects(
+            &modal,
+            &layout,
+            &theme,
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let header_color = mix([0.10, 0.12, 0.16, 1.0], [0.90, 0.20, 0.10, 1.0], 0.16);
+        let header = out
+            .iter()
+            .find(|inst| inst.color == header_color)
+            .expect("modal header band");
+        let border = out
+            .iter()
+            .find(|inst| {
+                inst.color == [0.20, 0.22, 0.28, 1.0] && inst.rect == [50.0, 40.0, 180.0, 110.0]
+            })
+            .expect("modal underpainted border shape");
+        let title_band_h =
+            panel_title_top_padding_lp(&modal, &theme) + panel_title_line_height_lp(&modal, &theme);
+        let fill = out
+            .iter()
+            .find(|inst| {
+                inst.color == [0.10, 0.12, 0.16, 1.0]
+                    && inst.rect == [52.0, 42.0 + title_band_h, 176.0, 106.0 - title_band_h]
+            })
+            .expect("modal body fill");
+
+        assert_eq!(border.radii, [14.0; 4]);
+        assert_eq!(fill.radii, [0.0, 0.0, 12.0, 12.0]);
+        assert_eq!(header.rect, [52.0, 42.0, 176.0, 106.0]);
+        assert_eq!(header.radii, [12.0; 4]);
+        assert_eq!(header.clip, [0.0, 0.0, 176.0, title_band_h]);
+    }
+
+    #[test]
+    fn dataframe_table_border_uses_rounded_ring() {
+        let mut table = node("table", WidgetKind::DataFrameTable);
+        table.style.visual.background = Some(ColorRef::Rgba([0.02, 0.03, 0.04, 1.0]));
+        table.style.visual.border_color = Some(ColorRef::Rgba([0.10, 0.20, 0.80, 1.0]));
+        table.style.visual.border_width = Some(2.0);
+        table.style.visual.border_radius = Some(12.0);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "table".to_string(),
+            Rect {
+                x: 20.0,
+                y: 30.0,
+                w: 240.0,
+                h: 160.0,
+            },
+        );
+
+        let mut out = Vec::new();
+        emit_rects(
+            &table,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let border = out
+            .iter()
+            .find(|inst| inst.color == [0.10, 0.20, 0.80, 1.0])
+            .expect("table border ring");
+
+        assert_eq!(border.rect, [20.0, 30.0, 240.0, 160.0]);
+        assert_eq!(border.radii, [12.0; 4]);
+        assert_eq!(border.params[2], 3.0);
+        assert_eq!(border.paint[3], 2.0);
+    }
+
+    #[test]
+    fn open_modal_overlay_paints_after_document_content() {
+        let mut modal = node("modal", WidgetKind::Modal);
+        modal.props.open = Some(true);
+        modal.style.visual.background = Some(ColorRef::Rgba([0.0, 0.8, 0.2, 1.0]));
+        let mut panel = node("panel", WidgetKind::Panel);
+        panel.style.visual.background = Some(ColorRef::Rgba([0.8, 0.0, 0.0, 1.0]));
+        let mut root = node("window", WidgetKind::Window);
+        root.children = vec![modal, panel];
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "window".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 300.0,
+                h: 220.0,
+            },
+        );
+        layout.rects.insert(
+            "modal".to_string(),
+            Rect {
+                x: 75.0,
+                y: 60.0,
+                w: 150.0,
+                h: 100.0,
+            },
+        );
+        layout.rects.insert(
+            "panel".to_string(),
+            Rect {
+                x: 40.0,
+                y: 40.0,
+                w: 220.0,
+                h: 140.0,
+            },
+        );
+
+        let mut out = Vec::new();
+        let theme = Theme::dark();
+        let state = WidgetState::default();
+        let carets = HashMap::new();
+        emit_rects_inner(&root, &layout, &theme, 1.0, &state, &carets, true, &mut out);
+        emit_modal_overlays(&root, &layout, &theme, 1.0, &state, &carets, &mut out);
+
+        let panel_index = out
+            .iter()
+            .position(|inst| inst.color == [0.8, 0.0, 0.0, 1.0])
+            .expect("panel surface");
+        let modal_index = out
+            .iter()
+            .rposition(|inst| inst.color == [0.0, 0.8, 0.2, 1.0])
+            .expect("modal surface");
+
+        assert!(
+            modal_index > panel_index,
+            "open modal should paint after normal content: panel={panel_index} modal={modal_index}"
         );
     }
 

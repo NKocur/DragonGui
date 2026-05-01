@@ -126,6 +126,7 @@ pub fn compute_layout(
         ..LayoutResult::default()
     };
     collect(&tree, root_id, root, 0.0, 0.0, &mut result);
+    apply_titled_container_absolute_offsets(root, &mut result, scale_factor, theme);
     apply_navigation_layout(root, &mut result, scale_factor, theme, state);
     apply_modal_layout(root, &mut result, scale_factor, theme);
     apply_tooltip_layout(root, &mut result, scale_factor, theme, state);
@@ -658,7 +659,7 @@ fn reserve_panel_title_space(style: &mut Style, node: &WidgetNode, sf: f32, them
         return;
     }
     let title_inset =
-        (panel_title_line_height_lp(node, theme) + panel_title_gap_lp(node, theme)) * sf;
+        (panel_title_line_height_lp(node, theme) + panel_title_body_gap_lp(node, theme)) * sf;
     style.padding.top = match style.padding.top {
         LengthPercentage::Length(top) => LengthPercentage::Length(top + title_inset),
         _ => LengthPercentage::Length(title_inset),
@@ -680,6 +681,15 @@ pub(crate) fn panel_title_gap_lp(node: &WidgetNode, theme: &Theme) -> f32 {
         .gap
         .unwrap_or(theme.spacing * 0.75)
         .max(0.0)
+}
+
+pub(crate) fn panel_title_body_gap_lp(node: &WidgetNode, theme: &Theme) -> f32 {
+    let gap = panel_title_gap_lp(node, theme);
+    if node.kind == WidgetKind::Modal {
+        gap * 2.0
+    } else {
+        gap
+    }
 }
 
 pub(crate) fn panel_title_top_padding_lp(node: &WidgetNode, theme: &Theme) -> f32 {
@@ -1156,6 +1166,7 @@ fn apply_node_style(
             .unwrap_or(current.bottom),
         };
     }
+    reserve_scrollbar_gutter_padding(style, node, sf);
 }
 
 fn taffy_overflow(value: OverflowStyle) -> Overflow {
@@ -1164,6 +1175,78 @@ fn taffy_overflow(value: OverflowStyle) -> Overflow {
         OverflowStyle::Hidden => Overflow::Hidden,
         OverflowStyle::Scroll | OverflowStyle::Auto => Overflow::Scroll,
     }
+}
+
+fn reserve_scrollbar_gutter_padding(style: &mut Style, node: &WidgetNode, sf: f32) {
+    if reserves_vertical_scrollbar_gutter(node) {
+        let reserve = scrollbar_gutter_reserve_px(node, sf);
+        style.padding.right = max_length_padding(style.padding.right, reserve);
+    }
+    if explicitly_scrolls_x(node) {
+        let reserve = scrollbar_gutter_reserve_px(node, sf);
+        style.padding.bottom = max_length_padding(style.padding.bottom, reserve);
+    }
+}
+
+fn explicitly_scrolls_x(node: &WidgetNode) -> bool {
+    matches!(
+        node_overflow_x(node),
+        Some(OverflowStyle::Scroll | OverflowStyle::Auto)
+    )
+}
+
+fn explicitly_scrolls_y(node: &WidgetNode) -> bool {
+    matches!(
+        node_overflow_y(node),
+        Some(OverflowStyle::Scroll | OverflowStyle::Auto)
+    )
+}
+
+fn reserves_vertical_scrollbar_gutter(node: &WidgetNode) -> bool {
+    explicitly_scrolls_y(node) || (implicit_panel_may_need_vertical_scrollbar_gutter(node))
+}
+
+fn implicit_panel_may_need_vertical_scrollbar_gutter(node: &WidgetNode) -> bool {
+    is_scroll_container_kind(&node.kind)
+        && node.style.layout.display != Some(DisplayStyle::Grid)
+        && node_overflow_x(node).is_none()
+        && node_overflow_y(node).is_none()
+        && (node.style.layout.height.is_some()
+            || node.style.layout.height_value.is_some()
+            || node.props.fixed_height.is_some())
+}
+
+fn max_length_padding(value: LengthPercentage, min_px: f32) -> LengthPercentage {
+    match value {
+        LengthPercentage::Length(current) => LengthPercentage::Length(current.max(min_px)),
+        LengthPercentage::Percent(_) => value,
+    }
+}
+
+fn scrollbar_gutter_reserve_px(node: &WidgetNode, sf: f32) -> f32 {
+    let track = scrollbar_part_width_lp(node, "scrollbar-track", 4.0);
+    let thumb = scrollbar_part_width_lp(node, "scrollbar-thumb", track);
+    let track_padding = node
+        .style
+        .parts
+        .parts
+        .get("scrollbar-track")
+        .and_then(|part| part.layout.padding)
+        .unwrap_or(0.0)
+        .max(0.0);
+    let edge_pad = track_padding.max(8.0);
+    let content_gap = 8.0;
+    (track.max(thumb).max(2.0) + edge_pad + content_gap) * sf
+}
+
+fn scrollbar_part_width_lp(node: &WidgetNode, part: &str, fallback: f32) -> f32 {
+    node.style
+        .parts
+        .parts
+        .get(part)
+        .and_then(|part| part.layout.width)
+        .unwrap_or(fallback)
+        .max(0.0)
 }
 
 fn grid_track_size(value: GridTrackSize, sf: f32) -> TrackSizingFunction {
@@ -1482,13 +1565,25 @@ fn scroll_container_scrolls_y(node: &WidgetNode) -> bool {
 }
 
 pub(crate) fn scroll_container_max_x(node: &WidgetNode, result: &LayoutResult) -> f32 {
+    scroll_container_max_x_with_viewport(node, result, false)
+}
+
+fn scroll_container_max_x_with_viewport(
+    node: &WidgetNode,
+    result: &LayoutResult,
+    use_own_viewport: bool,
+) -> f32 {
     if !scroll_container_scrolls_x(node) {
         return 0.0;
     }
     let Some(rect) = result.rects.get(&node.id).copied() else {
         return 0.0;
     };
-    let viewport = result.clips.get(&node.id).copied().unwrap_or(rect);
+    let viewport = if use_own_viewport {
+        rect
+    } else {
+        result.clips.get(&node.id).copied().unwrap_or(rect)
+    };
     let Some(content) = scroll_content_bounds(node, result) else {
         return 0.0;
     };
@@ -1496,13 +1591,25 @@ pub(crate) fn scroll_container_max_x(node: &WidgetNode, result: &LayoutResult) -
 }
 
 pub(crate) fn scroll_container_max_y(node: &WidgetNode, result: &LayoutResult) -> f32 {
+    scroll_container_max_y_with_viewport(node, result, false)
+}
+
+fn scroll_container_max_y_with_viewport(
+    node: &WidgetNode,
+    result: &LayoutResult,
+    use_own_viewport: bool,
+) -> f32 {
     if !scroll_container_scrolls_y(node) {
         return 0.0;
     }
     let Some(rect) = result.rects.get(&node.id).copied() else {
         return 0.0;
     };
-    let viewport = result.clips.get(&node.id).copied().unwrap_or(rect);
+    let viewport = if use_own_viewport {
+        rect
+    } else {
+        result.clips.get(&node.id).copied().unwrap_or(rect)
+    };
     let Some(content) = scroll_content_bounds(node, result) else {
         return 0.0;
     };
@@ -1528,7 +1635,7 @@ fn scroll_container_child_clip(
     let rect = result.rects.get(&node.id).copied()?;
     let title_inset = (panel_title_top_padding_lp(node, theme)
         + panel_title_line_height_lp(node, theme)
-        + panel_title_gap_lp(node, theme))
+        + panel_title_body_gap_lp(node, theme))
         * sf;
     let content_top = rect.y + title_inset;
     let content = Rect {
@@ -1618,13 +1725,19 @@ fn apply_scroll_offsets(root: &WidgetNode, result: &mut LayoutResult, state: Opt
     let Some(state) = state else {
         return;
     };
-    apply_node_scroll_offsets(root, result, state);
+    apply_node_scroll_offsets(root, result, state, false);
 }
 
-fn apply_node_scroll_offsets(node: &WidgetNode, result: &mut LayoutResult, state: &WidgetState) {
+fn apply_node_scroll_offsets(
+    node: &WidgetNode,
+    result: &mut LayoutResult,
+    state: &WidgetState,
+    inside_scrolled_ancestor: bool,
+) {
     if is_scroll_container_node(node) {
-        let max_scroll_x = scroll_container_max_x(node, result);
-        let max_scroll_y = scroll_container_max_y(node, result);
+        let use_own_viewport = inside_scrolled_ancestor;
+        let max_scroll_x = scroll_container_max_x_with_viewport(node, result, use_own_viewport);
+        let max_scroll_y = scroll_container_max_y_with_viewport(node, result, use_own_viewport);
         let scroll_x = state.container_scroll_x(&node.id, max_scroll_x);
         let scroll_y = state.container_scroll_y(&node.id, max_scroll_y);
         result.scroll_max_x.insert(node.id.clone(), max_scroll_x);
@@ -1639,9 +1752,15 @@ fn apply_node_scroll_offsets(node: &WidgetNode, result: &mut LayoutResult, state
                 translate_subtree(child, result, -scroll_x, -scroll_y);
             }
         }
+        let inside_scrolled_ancestor =
+            inside_scrolled_ancestor || max_scroll_x > 0.0 || max_scroll_y > 0.0;
+        for child in &node.children {
+            apply_node_scroll_offsets(child, result, state, inside_scrolled_ancestor);
+        }
+        return;
     }
     for child in &node.children {
-        apply_node_scroll_offsets(child, result, state);
+        apply_node_scroll_offsets(child, result, state, inside_scrolled_ancestor);
     }
 }
 
@@ -1724,6 +1843,47 @@ fn rebase_fixed_node(node: &WidgetNode, result: &mut LayoutResult, root_rect: Re
 
 fn is_fixed_positioned_node(node: &WidgetNode) -> bool {
     node.style.layout.position == Some(PositionStyle::Fixed)
+}
+
+fn apply_titled_container_absolute_offsets(
+    node: &WidgetNode,
+    result: &mut LayoutResult,
+    sf: f32,
+    theme: &Theme,
+) {
+    if titled_container_has_body_offset(node) {
+        let body_offset = titled_container_body_offset_px(node, sf, theme);
+        if body_offset > 0.0 {
+            for child in &node.children {
+                if child.style.layout.position == Some(PositionStyle::Absolute)
+                    && child.style.layout.top.is_some()
+                {
+                    translate_subtree(child, result, 0.0, body_offset);
+                }
+            }
+        }
+    }
+    for child in &node.children {
+        apply_titled_container_absolute_offsets(child, result, sf, theme);
+    }
+}
+
+fn titled_container_has_body_offset(node: &WidgetNode) -> bool {
+    matches!(
+        node.kind,
+        WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal
+    ) && node
+        .props
+        .text
+        .as_deref()
+        .is_some_and(|text| !text.is_empty())
+}
+
+fn titled_container_body_offset_px(node: &WidgetNode, sf: f32, theme: &Theme) -> f32 {
+    (panel_title_top_padding_lp(node, theme)
+        + panel_title_line_height_lp(node, theme)
+        + panel_title_body_gap_lp(node, theme))
+        * sf
 }
 
 fn apply_navigation_layout(
@@ -3028,6 +3188,45 @@ mod tests {
     }
 
     #[test]
+    fn explicit_auto_width_can_still_flex_grow_when_requested() {
+        let mut fixed = node("fixed", WidgetKind::Panel, NodeProps::default(), vec![]);
+        fixed.style.layout.width = Some(210.0);
+        fixed.style.layout.height = Some(120.0);
+        fixed.style.layout.flex_shrink = Some(0.0);
+
+        let mut flexible = node("flexible", WidgetKind::Panel, NodeProps::default(), vec![]);
+        flexible.style.layout.width_value = Some(LayoutLength::Auto);
+        flexible.style.layout.height = Some(120.0);
+        flexible.style.layout.flex_grow = Some(1.0);
+        flexible.style.layout.flex_shrink = Some(1.0);
+
+        let mut row = node(
+            "row",
+            WidgetKind::HLayout,
+            NodeProps::default(),
+            vec![fixed, flexible],
+        );
+        row.style.layout.width = Some(600.0);
+        row.style.layout.gap = Some(12.0);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![row],
+        );
+
+        let layout = compute_layout(&root, 700.0, 300.0, 1.0, &Theme::dark(), None);
+        let fixed = layout.rects.get("fixed").unwrap();
+        let flexible = layout.rects.get("flexible").unwrap();
+
+        assert_eq!(fixed.w, 210.0);
+        assert!(
+            flexible.w > 340.0,
+            "explicit width:auto with flex-grow should fill the remaining row: {flexible:?}"
+        );
+    }
+
+    #[test]
     fn absolute_position_child_uses_insets_without_consuming_flow() {
         let flow = node("flow", WidgetKind::Label, NodeProps::default(), vec![]);
         let mut pin = node("pin", WidgetKind::Badge, NodeProps::default(), vec![]);
@@ -3069,6 +3268,46 @@ mod tests {
             flow.y < pin.y,
             "absolute child should not push the flow child down: flow={flow:?} pin={pin:?}"
         );
+    }
+
+    #[test]
+    fn absolute_child_in_titled_panel_uses_panel_body_top() {
+        let flow = node("flow", WidgetKind::Label, NodeProps::default(), vec![]);
+        let mut pin = node("pin", WidgetKind::Badge, NodeProps::default(), vec![]);
+        pin.style.layout.position = Some(PositionStyle::Absolute);
+        pin.style.layout.top = Some(18.0);
+        pin.style.layout.left = Some(16.0);
+        pin.style.layout.width = Some(120.0);
+        pin.style.layout.height = Some(24.0);
+
+        let mut panel = node(
+            "panel",
+            WidgetKind::Panel,
+            NodeProps {
+                text: Some("Titled panel".to_string()),
+                ..NodeProps::default()
+            },
+            vec![flow, pin],
+        );
+        panel.style.layout.width = Some(320.0);
+        panel.style.layout.height = Some(180.0);
+        panel.style.layout.flex_grow = Some(0.0);
+        panel.style.layout.flex_shrink = Some(0.0);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![panel.clone()],
+        );
+
+        let theme = Theme::dark();
+        let layout = compute_layout(&root, 640.0, 360.0, 1.0, &theme, None);
+        let panel_rect = layout.rects.get("panel").unwrap();
+        let pin = layout.rects.get("pin").unwrap();
+        let expected_body_top = panel_rect.y + titled_container_body_offset_px(&panel, 1.0, &theme);
+
+        assert_eq!(pin.x, panel_rect.x + 16.0);
+        assert_eq!(pin.y, expected_body_top + 18.0);
     }
 
     #[test]
@@ -3876,6 +4115,556 @@ mod tests {
     }
 
     #[test]
+    fn nested_vlayout_scroll_body_inside_titled_panel_gets_scroll_range() {
+        let mut body_children = vec![node(
+            "intro",
+            WidgetKind::Label,
+            NodeProps {
+                text: Some("The title should stay above the scrollable body.".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        )];
+        for index in 1..=10 {
+            let mut button = node(
+                &format!("row-{index}"),
+                WidgetKind::Button,
+                NodeProps::default(),
+                vec![],
+            );
+            button.style.layout.height = Some(30.0);
+            button.style.layout.flex_shrink = Some(0.0);
+            body_children.push(button);
+        }
+        body_children.push(node(
+            "pass",
+            WidgetKind::Label,
+            NodeProps {
+                text: Some("PASS: final row can scroll fully into view.".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        ));
+
+        let mut body = node(
+            "scroll-body",
+            WidgetKind::VLayout,
+            NodeProps::default(),
+            body_children,
+        );
+        body.style.layout.width_value = Some(LayoutLength::Percent(100.0));
+        body.style.layout.height = Some(210.0);
+        body.style.layout.overflow_y = Some(OverflowStyle::Auto);
+        body.style.layout.overflow_x = Some(OverflowStyle::Hidden);
+        body.style.layout.padding_right = Some(26.0);
+        body.style.layout.padding_bottom = Some(22.0);
+        body.style.layout.gap = Some(10.0);
+
+        let mut shell = node(
+            "shell",
+            WidgetKind::Panel,
+            NodeProps {
+                text: Some("Scrollable titled panel".to_string()),
+                ..NodeProps::default()
+            },
+            vec![body],
+        );
+        shell.style.layout.width_value = Some(LayoutLength::Percent(100.0));
+        shell.style.layout.height = Some(318.0);
+        shell.style.layout.overflow = Some(OverflowStyle::Hidden);
+        shell.style.layout.padding = Some(14.0);
+
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![shell],
+        );
+        let mut state = WidgetState::default();
+
+        let layout = compute_layout(&root, 700.0, 430.0, 1.0, &Theme::dark(), Some(&state));
+        let max_scroll = layout
+            .scroll_max_y
+            .get("scroll-body")
+            .copied()
+            .unwrap_or(0.0);
+        assert!(
+            max_scroll > 0.0,
+            "nested fixed-height VLayout clips children and should be scrollable"
+        );
+        let pass_rect = layout.rects.get("pass").unwrap();
+        let pass_clip = layout.clips.get("pass").unwrap();
+        assert!(
+            pass_clip.h < pass_rect.h,
+            "final label should start clipped before scrolling"
+        );
+
+        state
+            .container_scroll_y
+            .insert("scroll-body".to_string(), 999.0);
+        let scrolled = compute_layout(&root, 700.0, 430.0, 1.0, &Theme::dark(), Some(&state));
+        let pass_clip = scrolled.clips.get("pass").unwrap();
+        assert!(
+            pass_clip.h > 0.0,
+            "final label should become visible after scrolling the nested body"
+        );
+    }
+
+    #[test]
+    fn parsed_probe_style_nested_scroll_body_gets_scroll_range() {
+        let mut body_children = vec![serde_json::json!({
+            "id": "intro",
+            "type": "label",
+            "class": "caption",
+            "props": {"text": "The title should stay above the scrollable body."},
+            "style": {"flex_shrink": 0}
+        })];
+        for index in 1..=10 {
+            body_children.push(serde_json::json!({
+                "id": format!("row-{index}"),
+                "type": "button",
+                "class": "scroll-row",
+                "props": {"text": format!("Scrollable row {index}")},
+                "style": {"height": 30, "flex_shrink": 0}
+            }));
+        }
+        body_children.push(serde_json::json!({
+            "id": "pass",
+            "type": "label",
+            "class": "pass",
+            "props": {"text": "PASS: final row can scroll fully into view."},
+            "style": {"flex_shrink": 0}
+        }));
+        let scroll_body = serde_json::json!({
+            "id": "layout-scroll-body",
+            "type": "v_layout",
+            "class": "scroll-case",
+            "props": {},
+            "style": {
+                "width": "100%",
+                "height": 210,
+                "overflow_y": "auto",
+                "overflow_x": "hidden",
+                "padding_right": 26,
+                "padding_bottom": 22,
+                "gap": 10
+            },
+            "children": body_children
+        });
+        let shell = serde_json::json!({
+            "id": "shell",
+            "type": "panel",
+            "class": "scroll-shell",
+            "props": {"text": "Scrollable titled panel"},
+            "children": [scroll_body]
+        });
+        let root = serde_json::json!({
+            "id": "root",
+            "type": "v_layout",
+            "class": "root",
+            "props": {},
+            "children": [shell]
+        });
+        let doc = serde_json::json!({
+            "schema": 1,
+            "type": "app",
+            "window": {
+                "id": "window",
+                "type": "window",
+                "props": {"title": "probe", "width": 900, "height": 720},
+                "children": [root]
+            },
+            "stylesheets": [{
+                "origin": "user",
+                "source": r#"
+                    VLayout.root {
+                        width: 100%;
+                        height: 100%;
+                        overflow-y: auto;
+                        padding-right: 22px;
+                        padding-bottom: 76px;
+                        gap: 12px;
+                    }
+                    Panel {
+                        padding: 14px;
+                        gap: 10px;
+                    }
+                    Panel.scroll-shell {
+                        width: 100%;
+                        height: 318px;
+                        overflow: hidden;
+                    }
+                    Button.scroll-row {
+                        height: 30px;
+                        flex-shrink: 0;
+                    }
+                "#
+            }]
+        });
+        let mut stylesheets = crate::document::parse_stylesheets_from_doc(&doc);
+        let theme = Theme::dark();
+        stylesheets.install_framework_defaults(&theme);
+        let mut tree = crate::document::parse_widget_tree(&doc).expect("tree");
+        crate::css_style::apply_stylesheets_to_tree(&mut tree, &mut stylesheets);
+        let state = WidgetState::default();
+
+        let layout = compute_layout(&tree, 900.0, 720.0, 1.0, &theme, Some(&state));
+        let body = layout.rects.get("layout-scroll-body").expect("body rect");
+        let pass = layout.rects.get("pass").expect("pass rect");
+        let max_scroll = layout
+            .scroll_max_y
+            .get("layout-scroll-body")
+            .copied()
+            .unwrap_or(0.0);
+
+        assert_eq!(body.h, 210.0);
+        assert!(
+            pass.y + pass.h > body.y + body.h,
+            "test fixture should overflow: body={body:?} pass={pass:?}"
+        );
+        assert!(
+            max_scroll > 0.0,
+            "parsed probe document should produce scroll range for layout-scroll-body"
+        );
+    }
+
+    #[test]
+    fn nested_scroll_body_keeps_scroll_range_when_parent_is_scrolled() {
+        let mut body_children = vec![node(
+            "intro",
+            WidgetKind::Label,
+            NodeProps {
+                text: Some("The title should stay above the scrollable body.".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        )];
+        body_children[0].style.layout.flex_shrink = Some(0.0);
+        for index in 1..=10 {
+            let mut button = node(
+                &format!("row-{index}"),
+                WidgetKind::Button,
+                NodeProps::default(),
+                vec![],
+            );
+            button.style.layout.height = Some(30.0);
+            button.style.layout.flex_shrink = Some(0.0);
+            body_children.push(button);
+        }
+        let mut pass = node(
+            "pass",
+            WidgetKind::Label,
+            NodeProps {
+                text: Some("PASS: final row can scroll fully into view.".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        pass.style.layout.flex_shrink = Some(0.0);
+        body_children.push(pass);
+
+        let mut body = node(
+            "layout-scroll-body",
+            WidgetKind::VLayout,
+            NodeProps::default(),
+            body_children,
+        );
+        body.style.layout.width_value = Some(LayoutLength::Percent(100.0));
+        body.style.layout.height = Some(210.0);
+        body.style.layout.overflow_y = Some(OverflowStyle::Auto);
+        body.style.layout.overflow_x = Some(OverflowStyle::Hidden);
+        body.style.layout.padding_right = Some(26.0);
+        body.style.layout.padding_bottom = Some(22.0);
+        body.style.layout.gap = Some(10.0);
+
+        let mut shell = node(
+            "shell",
+            WidgetKind::Panel,
+            NodeProps {
+                text: Some("Scrollable titled panel".to_string()),
+                ..NodeProps::default()
+            },
+            vec![body],
+        );
+        shell.style.layout.width_value = Some(LayoutLength::Percent(100.0));
+        shell.style.layout.height = Some(318.0);
+        shell.style.layout.overflow = Some(OverflowStyle::Hidden);
+        shell.style.layout.padding = Some(14.0);
+
+        let mut before = node("before", WidgetKind::Panel, NodeProps::default(), vec![]);
+        before.style.layout.height = Some(1250.0);
+        before.style.layout.flex_shrink = Some(0.0);
+        let mut after = node("after", WidgetKind::Panel, NodeProps::default(), vec![]);
+        after.style.layout.height = Some(260.0);
+        after.style.layout.flex_shrink = Some(0.0);
+
+        let mut root_scroller = node(
+            "root",
+            WidgetKind::VLayout,
+            NodeProps::default(),
+            vec![before, shell, after],
+        );
+        root_scroller.style.layout.width_value = Some(LayoutLength::Percent(100.0));
+        root_scroller.style.layout.height_value = Some(LayoutLength::Percent(100.0));
+        root_scroller.style.layout.overflow_y = Some(OverflowStyle::Auto);
+        root_scroller.style.layout.padding_right = Some(22.0);
+        root_scroller.style.layout.padding_bottom = Some(76.0);
+        root_scroller.style.layout.gap = Some(12.0);
+
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![root_scroller],
+        );
+        let mut state = WidgetState::default();
+        state.container_scroll_y.insert("root".to_string(), 1200.0);
+
+        let layout = compute_layout(&root, 900.0, 720.0, 1.0, &Theme::dark(), Some(&state));
+        let body_rect = layout.rects.get("layout-scroll-body").unwrap();
+        let body_clip = layout.clips.get("layout-scroll-body").unwrap();
+        let max_scroll = layout
+            .scroll_max_y
+            .get("layout-scroll-body")
+            .copied()
+            .unwrap_or(0.0);
+
+        assert!(
+            body_clip.h > 0.0,
+            "body should be visible: {body_rect:?} {body_clip:?}"
+        );
+        assert!(
+            max_scroll > 0.0,
+            "nested scroll range should not collapse when parent is scrolled: body={body_rect:?} clip={body_clip:?}"
+        );
+    }
+
+    #[test]
+    fn scrollable_panel_reserves_padding_for_styled_vertical_scrollbar() {
+        let mut panel = node(
+            "panel",
+            WidgetKind::Panel,
+            NodeProps::default(),
+            vec![
+                node("first", WidgetKind::Button, NodeProps::default(), vec![]),
+                node("second", WidgetKind::Button, NodeProps::default(), vec![]),
+                node("third", WidgetKind::Button, NodeProps::default(), vec![]),
+                node("fourth", WidgetKind::Button, NodeProps::default(), vec![]),
+            ],
+        );
+        panel.style.layout.width = Some(180.0);
+        panel.style.layout.height = Some(80.0);
+        panel.style.layout.padding = Some(4.0);
+        panel.style.layout.gap = Some(4.0);
+        panel.style.layout.overflow_y = Some(OverflowStyle::Auto);
+        panel.style.parts.parts.insert(
+            "scrollbar-track".to_string(),
+            crate::style::PartStyle {
+                layout: crate::style::PartLayoutStyle {
+                    width: Some(8.0),
+                    padding: Some(8.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        panel.style.parts.parts.insert(
+            "scrollbar-thumb".to_string(),
+            crate::style::PartStyle {
+                layout: crate::style::PartLayoutStyle {
+                    width: Some(6.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![panel],
+        );
+        let mut state = WidgetState::default();
+        state.container_scroll_y.insert("panel".to_string(), 10.0);
+
+        let layout = compute_layout(&root, 240.0, 120.0, 1.0, &Theme::dark(), Some(&state));
+        let panel_rect = layout.rects.get("panel").unwrap();
+        let first_rect = layout.rects.get("first").unwrap();
+
+        assert!(layout.scroll_max_y.get("panel").copied().unwrap_or(0.0) > 0.0);
+        assert!(
+            first_rect.x + first_rect.w <= panel_rect.x + panel_rect.w - 24.0 + 0.5,
+            "stretched child should leave room for styled scrollbar gutter: panel={panel_rect:?} first={first_rect:?}"
+        );
+    }
+
+    #[test]
+    fn implicit_scrollable_panel_reserves_padding_for_styled_vertical_scrollbar() {
+        let mut left = node("left", WidgetKind::Panel, NodeProps::default(), vec![]);
+        left.style.layout.width = Some(140.0);
+        left.style.layout.height = Some(50.0);
+        left.style.layout.flex_shrink = Some(0.0);
+        let mut spacer = node("spacer", WidgetKind::Spacer, NodeProps::default(), vec![]);
+        spacer.style.layout.flex_grow = Some(1.0);
+        let mut right = node("right", WidgetKind::Panel, NodeProps::default(), vec![]);
+        right.style.layout.width = Some(140.0);
+        right.style.layout.height = Some(50.0);
+        right.style.layout.flex_shrink = Some(0.0);
+
+        let mut row = node(
+            "row",
+            WidgetKind::HLayout,
+            NodeProps::default(),
+            vec![left, spacer, right],
+        );
+        row.style.layout.width_value = Some(LayoutLength::Percent(100.0));
+        row.style.layout.height = Some(48.0);
+        row.style.layout.gap = Some(12.0);
+
+        let mut panel = node(
+            "panel",
+            WidgetKind::Panel,
+            NodeProps {
+                text: Some("Spacer behavior".to_string()),
+                ..NodeProps::default()
+            },
+            vec![row],
+        );
+        panel.style.layout.width = Some(420.0);
+        panel.style.layout.height = Some(180.0);
+        panel.style.layout.padding = Some(14.0);
+        panel.style.layout.gap = Some(10.0);
+        panel.style.parts.parts.insert(
+            "scrollbar-track".to_string(),
+            crate::style::PartStyle {
+                layout: crate::style::PartLayoutStyle {
+                    width: Some(8.0),
+                    padding: Some(1.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        panel.style.parts.parts.insert(
+            "scrollbar-thumb".to_string(),
+            crate::style::PartStyle {
+                layout: crate::style::PartLayoutStyle {
+                    width: Some(6.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![panel],
+        );
+
+        let layout = compute_layout(
+            &root,
+            480.0,
+            220.0,
+            1.0,
+            &Theme::dark(),
+            Some(&WidgetState::default()),
+        );
+        let panel_rect = layout.rects.get("panel").unwrap();
+        let right_rect = layout.rects.get("right").unwrap();
+        let reserve = scrollbar_gutter_reserve_px(root.children.first().expect("panel"), 1.0);
+
+        assert!(
+            right_rect.x + right_rect.w <= panel_rect.x + panel_rect.w - reserve + 0.5,
+            "right tile should leave implicit scrollbar gutter: panel={panel_rect:?} right={right_rect:?} reserve={reserve}"
+        );
+        assert!(
+            reserve >= 24.0,
+            "implicit scrollbar gutter should include edge inset and content gap: {reserve}"
+        );
+    }
+
+    #[test]
+    fn titled_scroll_panel_with_clipped_buttons_gets_scroll_range() {
+        let mut children = vec![node(
+            "intro",
+            WidgetKind::Label,
+            NodeProps {
+                text: Some("The title should stay above the scrollable body.".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        )];
+        for index in 1..=10 {
+            let mut button = node(
+                &format!("button-{index}"),
+                WidgetKind::Button,
+                NodeProps::default(),
+                vec![],
+            );
+            button.style.layout.height = Some(30.0);
+            children.push(button);
+        }
+        children.push(node(
+            "pass",
+            WidgetKind::Label,
+            NodeProps {
+                text: Some("PASS: final row can scroll fully into view.".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        ));
+
+        let mut panel = node(
+            "panel",
+            WidgetKind::Panel,
+            NodeProps {
+                text: Some("Scrollable titled panel".to_string()),
+                ..NodeProps::default()
+            },
+            children,
+        );
+        panel.style.layout.width_value = Some(LayoutLength::Percent(100.0));
+        panel.style.layout.height = Some(250.0);
+        panel.style.layout.overflow_y = Some(OverflowStyle::Auto);
+        panel.style.layout.overflow_x = Some(OverflowStyle::Hidden);
+        panel.style.layout.padding = Some(14.0);
+        panel.style.layout.padding_right = Some(26.0);
+        panel.style.layout.padding_bottom = Some(22.0);
+        panel.style.layout.gap = Some(10.0);
+
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![panel],
+        );
+        let mut state = WidgetState::default();
+        let layout = compute_layout(&root, 700.0, 400.0, 1.0, &Theme::dark(), Some(&state));
+
+        let max_scroll = layout.scroll_max_y.get("panel").copied().unwrap_or(0.0);
+        assert!(
+            max_scroll > 0.0,
+            "titled panel has clipped children and should be scrollable"
+        );
+        let pass_rect = layout.rects.get("pass").unwrap();
+        let pass_clip = layout.clips.get("pass").unwrap();
+        assert!(
+            pass_clip.h < pass_rect.h,
+            "test should start with the final label clipped before scrolling"
+        );
+
+        state.container_scroll_y.insert("panel".to_string(), 999.0);
+        let scrolled = compute_layout(&root, 700.0, 400.0, 1.0, &Theme::dark(), Some(&state));
+        let pass_clip = scrolled.clips.get("pass").unwrap();
+        assert!(
+            pass_clip.h > 0.0,
+            "final label should become visible after scrolling the titled panel"
+        );
+    }
+
+    #[test]
     fn titled_scroll_panel_clips_children_below_title() {
         let mut panel = node(
             "panel",
@@ -4225,6 +5014,190 @@ mod tests {
             layout.scroll_max_y.get("scroller").copied().unwrap_or(0.0) > 0.0,
             "content rows should overflow the root scroller instead of shrinking"
         );
+    }
+
+    #[test]
+    fn parent_scroll_clipping_does_not_create_child_panel_scroll_range() {
+        let mut panel = node(
+            "panel",
+            WidgetKind::Panel,
+            NodeProps {
+                text: Some("Table panel".to_string()),
+                ..NodeProps::default()
+            },
+            vec![
+                node("first", WidgetKind::Button, NodeProps::default(), vec![]),
+                node("second", WidgetKind::Button, NodeProps::default(), vec![]),
+            ],
+        );
+        panel.style.layout.height = Some(140.0);
+        panel.style.layout.padding = Some(10.0);
+        panel.style.layout.gap = Some(8.0);
+
+        let mut before = node("before", WidgetKind::Spacer, NodeProps::default(), vec![]);
+        before.style.layout.height = Some(170.0);
+        let mut after = node("after", WidgetKind::Spacer, NodeProps::default(), vec![]);
+        after.style.layout.height = Some(200.0);
+
+        let mut scroller = node(
+            "scroller",
+            WidgetKind::VLayout,
+            NodeProps::default(),
+            vec![before, panel, after],
+        );
+        scroller.style.layout.height = Some(220.0);
+        scroller.style.layout.overflow_y = Some(OverflowStyle::Auto);
+        scroller.style.layout.gap = Some(10.0);
+
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![scroller],
+        );
+        let mut state = WidgetState::default();
+        for scroll_y in [0.0, 190.0] {
+            state
+                .container_scroll_y
+                .insert("scroller".to_string(), scroll_y);
+
+            let layout = compute_layout(&root, 320.0, 220.0, 1.0, &Theme::dark(), Some(&state));
+            let panel_rect = layout.rects.get("panel").expect("panel rect");
+            let panel_clip = layout.clips.get("panel").expect("panel clip");
+
+            assert!(
+                panel_clip.h < panel_rect.h,
+                "test should leave panel partially clipped by parent scroll: scroll_y={scroll_y} panel={panel_rect:?} clip={panel_clip:?}"
+            );
+            assert_eq!(
+                layout.scroll_max_y.get("panel").copied(),
+                Some(0.0),
+                "parent clipping should not make a fitting panel grow an internal scroll range at scroll_y={scroll_y}"
+            );
+        }
+    }
+
+    #[test]
+    fn parent_scroll_does_not_flash_implicit_panel_scrollbars_across_offsets() {
+        fn make_metric_panel(id: &str, table_h: f32) -> WidgetNode {
+            let mut table = node(
+                &format!("{id}-table"),
+                WidgetKind::DataFrameTable,
+                NodeProps::default(),
+                vec![],
+            );
+            table.style.layout.height = Some(table_h);
+
+            let mut panel = node(
+                id,
+                WidgetKind::Panel,
+                NodeProps {
+                    text: Some(format!("{id} metrics")),
+                    ..NodeProps::default()
+                },
+                vec![
+                    node(
+                        &format!("{id}-title"),
+                        WidgetKind::Label,
+                        NodeProps {
+                            text: Some("Metric sizing case".to_string()),
+                            ..NodeProps::default()
+                        },
+                        vec![],
+                    ),
+                    table,
+                    node(
+                        &format!("{id}-pass"),
+                        WidgetKind::Label,
+                        NodeProps {
+                            text: Some("PASS: panel should not get its own scrollbar".to_string()),
+                            ..NodeProps::default()
+                        },
+                        vec![],
+                    ),
+                ],
+            );
+            panel.style.layout.min_width = Some(390.0);
+            panel.style.layout.padding = Some(14.0);
+            panel.style.layout.gap = Some(10.0);
+            panel
+        }
+
+        let mut first_row = node(
+            "first-row",
+            WidgetKind::HLayout,
+            NodeProps::default(),
+            vec![
+                make_metric_panel("text-rows", 180.0),
+                make_metric_panel("text-type", 210.0),
+            ],
+        );
+        first_row.style.layout.gap = Some(12.0);
+
+        let mut second_row = node(
+            "second-row",
+            WidgetKind::HLayout,
+            NodeProps::default(),
+            vec![
+                make_metric_panel("compact-table", 214.0),
+                make_metric_panel("roomy-table", 274.0),
+            ],
+        );
+        second_row.style.layout.gap = Some(12.0);
+
+        let mut root_scroller = node(
+            "root-scroller",
+            WidgetKind::VLayout,
+            NodeProps::default(),
+            vec![
+                node(
+                    "heading",
+                    WidgetKind::Label,
+                    NodeProps {
+                        text: Some("Widget metrics".to_string()),
+                        ..NodeProps::default()
+                    },
+                    vec![],
+                ),
+                node(
+                    "caption",
+                    WidgetKind::Label,
+                    NodeProps {
+                        text: Some("Probe caption".to_string()),
+                        ..NodeProps::default()
+                    },
+                    vec![],
+                ),
+                first_row,
+                second_row,
+            ],
+        );
+        root_scroller.style.layout.height = Some(640.0);
+        root_scroller.style.layout.padding_right = Some(20.0);
+        root_scroller.style.layout.padding_bottom = Some(48.0);
+        root_scroller.style.layout.gap = Some(12.0);
+        root_scroller.style.layout.overflow_y = Some(OverflowStyle::Auto);
+
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![root_scroller],
+        );
+        let mut state = WidgetState::default();
+        for scroll_y in (0..=260).step_by(5) {
+            state
+                .container_scroll_y
+                .insert("root-scroller".to_string(), scroll_y as f32);
+            let layout = compute_layout(&root, 940.0, 720.0, 1.0, &Theme::dark(), Some(&state));
+            for panel_id in ["text-rows", "text-type", "compact-table", "roomy-table"] {
+                assert_eq!(
+                    layout.scroll_max_y.get(panel_id).copied(),
+                    Some(0.0),
+                    "implicit panel {panel_id} should not gain an internal vertical scrollbar at root scroll_y={scroll_y}"
+                );
+            }
+        }
     }
 
     #[test]

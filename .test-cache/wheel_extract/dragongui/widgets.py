@@ -102,6 +102,9 @@ def _normalize_color_tuple(value: Sequence[object], *, alpha: bool) -> tuple[int
 
 def _color_hex(value: Sequence[int]) -> str:
     r, g, b = (max(0, min(255, int(channel))) for channel in value[:3])
+    if len(value) >= 4:
+        a = max(0, min(255, int(value[3])))
+        return f"#{r:02x}{g:02x}{b:02x}{a:02x}"
     return f"#{r:02x}{g:02x}{b:02x}"
 
 

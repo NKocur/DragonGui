@@ -1509,7 +1509,18 @@ fn layout_snapshot(layout: Option<&crate::layout::LayoutResult>) -> Value {
     for (id, rect) in &layout.rects {
         rects.insert(id.clone(), rect_json(*rect));
     }
-    Value::Object(rects)
+    let mut clips = Map::new();
+    for (id, rect) in &layout.clips {
+        clips.insert(id.clone(), rect_json(*rect));
+    }
+    json!({
+        "rects": Value::Object(rects),
+        "clips": Value::Object(clips),
+        "scroll_x": &layout.scroll_x,
+        "scroll_y": &layout.scroll_y,
+        "scroll_max_x": &layout.scroll_max_x,
+        "scroll_max_y": &layout.scroll_max_y,
+    })
 }
 
 fn widget_state_snapshot(state: Option<&WidgetState>) -> Value {
@@ -2419,6 +2430,108 @@ mod style_patch_tests {
             scroll_keyboard_destination(&target, ScrollKeyboardCommand::End, false),
             Some((PanelScrollbarAxis::Horizontal, 250.0))
         );
+    }
+
+    #[test]
+    fn wheel_target_prefers_nested_scroll_panel_over_root_scroller() {
+        let buttons: Vec<_> = (1..=10)
+            .map(|index| {
+                json!({
+                    "id": format!("button-{index}"),
+                    "type": "button",
+                    "props": {"text": format!("Scrollable row {index}")},
+                    "style": {"height": 30}
+                })
+            })
+            .collect();
+        let mut children = vec![json!({
+            "id": "intro",
+            "type": "label",
+            "props": {"text": "The title should stay above the scrollable body."}
+        })];
+        children.extend(buttons);
+        children.push(json!({
+            "id": "pass",
+            "type": "label",
+            "props": {"text": "PASS: final row can scroll fully into view."}
+        }));
+
+        let tree = crate::document::parse_widget_node(&json!({
+            "id": "window",
+            "type": "window",
+            "children": [{
+                "id": "root",
+                "type": "v_layout",
+                "style": {
+                    "height": 400,
+                    "overflow_y": "auto",
+                    "gap": 12
+                },
+                "children": [
+                    {
+                        "id": "before",
+                        "type": "spacer",
+                        "props": {"height": 260}
+                    },
+                    {
+                        "id": "scroll-panel",
+                        "type": "panel",
+                        "props": {"title": "Scrollable titled panel"},
+                        "style": {
+                            "height": 250,
+                            "overflow_y": "auto",
+                            "overflow_x": "hidden",
+                            "padding": 14,
+                            "padding_right": 26,
+                            "padding_bottom": 22,
+                            "gap": 10
+                        },
+                        "children": children
+                    },
+                    {
+                        "id": "after",
+                        "type": "spacer",
+                        "props": {"height": 260}
+                    }
+                ]
+            }]
+        }))
+        .unwrap();
+        for root_scroll in [0.0, 140.0, 250.0] {
+            let mut state = WidgetState::from_tree(&tree);
+            state
+                .container_scroll_y
+                .insert("root".to_string(), root_scroll);
+            let layout = crate::layout::compute_layout(
+                &tree,
+                700.0,
+                500.0,
+                1.0,
+                &Theme::dark(),
+                Some(&state),
+            );
+            let panel = layout.rects.get("scroll-panel").unwrap();
+            let panel_clip = layout.clips.get("scroll-panel").unwrap();
+            let pos = [
+                panel_clip.x + 40.0,
+                (panel_clip.y + 100.0).min(panel_clip.y + panel_clip.h - 4.0),
+            ];
+
+            assert!(layout.scroll_max_y.get("root").copied().unwrap_or(0.0) > 0.0);
+            assert!(
+                layout
+                    .scroll_max_y
+                    .get("scroll-panel")
+                    .copied()
+                    .unwrap_or(0.0)
+                    > 0.0
+            );
+            assert_eq!(
+                scroll_container_at_pos(&tree, &layout, &state, pos),
+                Some("scroll-panel".to_string()),
+                "root_scroll={root_scroll} panel={panel:?} clip={panel_clip:?} pos={pos:?}"
+            );
+        }
     }
 
     #[test]
@@ -5540,7 +5653,10 @@ impl WgpuState {
         slop: f32,
     ) -> Option<PanelScrollbarHit> {
         if is_scroll_container_node(node) && !state.is_disabled(&node.id) {
-            if let Some(rect) = layout.visible_rect(&node.id) {
+            if let (Some(visible), Some(rect)) = (
+                layout.visible_rect(&node.id),
+                layout.rects.get(&node.id).copied(),
+            ) {
                 if let Some(geometry) = panel_scrollbar_geometry(
                     node,
                     layout,
@@ -5549,6 +5665,13 @@ impl WgpuState {
                     self.scale_factor,
                     rect,
                 ) {
+                    let pos_inside_visible = pos[0] >= visible.x
+                        && pos[0] < visible.x + visible.w
+                        && pos[1] >= visible.y
+                        && pos[1] < visible.y + visible.h;
+                    if !pos_inside_visible {
+                        return None;
+                    }
                     if let Some(hit) = panel_scrollbar_axis_hit(
                         &node.id,
                         PanelScrollbarAxis::Horizontal,
@@ -5848,7 +5971,7 @@ impl WgpuState {
 
             // 1. Primitive rects (panels, control shells) — no depth write.
             if let Some(prims) = &self.primitives {
-                prims.render(&mut pass);
+                prims.render_base(&mut pass);
             }
             if let Some(images) = &self.images {
                 images.render(&mut pass);
@@ -5871,7 +5994,14 @@ impl WgpuState {
             pass.set_scissor_rect(0, 0, self.config.width, self.config.height);
             // TextRenderer::render is &self so no borrow conflict with depth_view.
             if let Some(t) = &self.text {
-                t.render(&mut pass);
+                t.render_base(&mut pass);
+            }
+
+            if let Some(prims) = &self.primitives {
+                prims.render_overlays(&mut pass);
+            }
+            if let Some(t) = &self.text {
+                t.render_overlays(&mut pass);
             }
         }
 
