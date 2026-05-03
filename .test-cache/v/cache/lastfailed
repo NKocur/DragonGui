@@ -1,1 +1,4 @@
-{}
+{
+  "tests/test_python_api.py::test_scatter_add_points_enqueues_actor": true,
+  "tests/test_python_api.py::test_scatter_save_png_raises_when_screenshot_is_none": true
+}

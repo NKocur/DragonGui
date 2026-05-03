@@ -6,6 +6,27 @@ Each file in this folder should isolate one behavior so visual regressions are
 easy to spot. Prefer tiny windows, a few widgets, and obvious labels over large
 showcase layouts.
 
+## Layout Pattern
+
+Use `probe_helpers.probe_grid()` for card grids instead of `HLayout` plus
+per-card `width: calc(50% - gap)` rules. The helper builds a responsive
+`GridLayout(columns=2, min_column_width=390)` so cards use two columns when
+there is room and collapse to one column when the window is narrow.
+
+```python
+from probe_helpers import probe_grid
+
+with probe_grid(gap=12):
+    with dg.Panel("Case A", class_="case"):
+        ...
+    with dg.Panel("Case B", class_="case"):
+        ...
+```
+
+Keep `Panel.case` rules focused on visual styling and minimum height. Avoid
+fixed card widths and `min-width` values unless a probe is specifically testing
+overflow behavior.
+
 Suggested order:
 
 1. `custom_properties_probe.py` - custom properties and `var()` resolution.
@@ -26,9 +47,11 @@ Suggested order:
 16. `color_syntax_probe.py` - named colors, transparent, hex alpha, rgb/hsl/hwb, Lab/LCH/Oklab/Oklch, and `color(...)`.
 17. `border_outline_shadow_probe.py` - border styles, rounded outlines, outline offset, inset/outset shadows, and scroll clipping.
 18. `data_widgets_probe.py` - DataFrameTable parts, table selection, Scatter3D picking, colormap differences, and point sizing.
-19. `core_widgets_probe.py` - buttons, badges, text inputs, checkbox, dropdown, numeric controls, ColorPicker, Collapsible, Tooltip, Modal, and Toast.
-20. `navigation_widgets_probe.py` - MenuBar/Menu/MenuItem, Sidebar/NavItem, Tabs/Tab, Pages/Page, badges, disabled states, selected states, and ContextMenu.
-21. `menu_overlays_probe.py` - MenuBar open states, menu item states, context menu edge placement, overlay z-order, and scroll-container clipping.
-22. `layout_containers_probe.py` - HLayout/VLayout sizing, titled Panel spacing, absolute children, nested panels, scrollable panels, Spacer, and Separator.
-23. `form_controls_probe.py` - TextInput, TextArea, Checkbox, Dropdown, Button badges, Slider, NumberInput, ProgressBar, disabled states, and form-control parts.
-24. `overlay_stack_probe.py` - modal, toast, tooltip, dropdown, context menu, MenuBar, scrim styling, edge clamping, and overlay theme stress.
+19. `scatter3d_probe.py` - dedicated Scatter3D packet formats, point styles, live updates, picking, z-order, clipping, and camera controls.
+20. `scatter3d_frame_benchmark_probe.py` - repeated 125k+ point Scatter3D frame replacement and per-frame timing.
+21. `core_widgets_probe.py` - buttons, badges, text inputs, checkbox, dropdown, numeric controls, ColorPicker, Collapsible, Tooltip, Modal, and Toast.
+22. `navigation_widgets_probe.py` - MenuBar/Menu/MenuItem, Sidebar/NavItem, Tabs/Tab, Pages/Page, badges, disabled states, selected states, and ContextMenu.
+23. `menu_overlays_probe.py` - MenuBar open states, menu item states, context menu edge placement, overlay z-order, and scroll-container clipping.
+24. `layout_containers_probe.py` - HLayout/VLayout sizing, titled Panel spacing, absolute children, nested panels, scrollable panels, Spacer, and Separator.
+25. `form_controls_probe.py` - TextInput, TextArea, Checkbox, Dropdown, Button badges, Slider, NumberInput, ProgressBar, disabled states, and form-control parts.
+26. `overlay_stack_probe.py` - modal, toast, tooltip, dropdown, context menu, MenuBar, scrim styling, edge clamping, and overlay theme stress.

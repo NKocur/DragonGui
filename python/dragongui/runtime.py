@@ -108,6 +108,8 @@ class LiveWidgetHandle:
         pack_ms: float | None = None,
         enqueue_epoch_ms: float | None = None,
         colormap: str = "viridis",
+        payload_format: str = "xyz_f32_v0",
+        coalesce: bool = True,
     ) -> None:
         self.ensure_open()
         self.app.enqueue_set_scatter_points_packed(
@@ -116,6 +118,338 @@ class LiveWidgetHandle:
             pack_ms=pack_ms,
             enqueue_epoch_ms=enqueue_epoch_ms,
             colormap=colormap,
+            payload_format=payload_format,
+            coalesce=coalesce,
+        )
+
+    def enqueue_reset_scatter_camera(self) -> None:
+        self.ensure_open()
+        self.app.enqueue_reset_scatter_camera(self.id)
+
+    def enqueue_set_scatter_view_direction(self, direction: str) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_view_direction(self.id, direction)
+
+    def enqueue_set_scatter_point_style(self, style: str) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_point_style(self.id, style)
+
+    def enqueue_set_scatter_point_size(self, size: float) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_point_size(self.id, size)
+
+    def enqueue_set_scatter_grid_visible(self, visible: bool) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_grid_visible(self.id, visible)
+
+    def enqueue_set_scatter_grid_planes(self, major: bool, minor: bool) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_grid_planes(self.id, major, minor)
+
+    def enqueue_set_scatter_grid_options(self, sticky: bool, all_edges: bool) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_grid_options(self.id, sticky, all_edges)
+
+    def enqueue_set_scatter_ticks(
+        self,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_ticks(self.id, x, y, z)
+
+    def enqueue_set_scatter_axes(self, x: str, y: str, z: str) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_axes(self.id, x, y, z)
+
+    def enqueue_set_scatter_axis_visibility(self, x: bool, y: bool, z: bool) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_axis_visibility(self.id, x, y, z)
+
+    def enqueue_set_scatter_background(self, r: float, g: float, b: float) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_background(self.id, r, g, b)
+
+    def enqueue_set_scatter_legend(
+        self,
+        visible: bool,
+        position: str,
+        entries: list[tuple[str, float, float, float]],
+        title: "str | None" = None,
+    ) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_legend(self.id, visible, position, entries, title)
+
+    def enqueue_set_scatter_scalar_bar(
+        self,
+        visible: bool,
+        vmin: float,
+        vmax: float,
+        log_scale: bool,
+        colormap: str,
+        title: str | None,
+    ) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_scalar_bar(
+            self.id, visible, vmin, vmax, log_scale, colormap, title
+        )
+
+    def enqueue_set_scatter_orientation_axes(self, visible: bool) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_orientation_axes(self.id, visible)
+
+    def enqueue_add_scatter_label(
+        self,
+        label_id: int,
+        x: float,
+        y: float,
+        z: float,
+        text: str,
+        r: float,
+        g: float,
+        b: float,
+        size: float,
+        anchor: str,
+    ) -> None:
+        self.ensure_open()
+        self.app.enqueue_add_scatter_label(self.id, label_id, x, y, z, text, r, g, b, size, anchor)
+
+    def enqueue_update_scatter_label(
+        self,
+        label_id: int,
+        x: float | None,
+        y: float | None,
+        z: float | None,
+        text: str | None,
+        r: float | None,
+        g: float | None,
+        b: float | None,
+        size: float | None,
+        anchor: str | None,
+    ) -> None:
+        self.ensure_open()
+        self.app.enqueue_update_scatter_label(
+            self.id, label_id, x, y, z, text, r, g, b, size, anchor
+        )
+
+    def enqueue_remove_scatter_label(self, label_id: int) -> None:
+        self.ensure_open()
+        self.app.enqueue_remove_scatter_label(self.id, label_id)
+
+    def enqueue_set_scatter_label_visible(self, label_id: int, visible: bool) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_label_visible(self.id, label_id, visible)
+
+    def enqueue_clear_scatter_labels(self) -> None:
+        self.ensure_open()
+        self.app.enqueue_clear_scatter_labels(self.id)
+
+    def enqueue_add_scatter_lines(
+        self,
+        overlay_id: int,
+        segments: list[list[float]],
+        r: float,
+        g: float,
+        b: float,
+    ) -> None:
+        self.ensure_open()
+        self.app.enqueue_add_scatter_lines(self.id, overlay_id, segments, r, g, b)
+
+    def enqueue_update_scatter_lines(
+        self,
+        overlay_id: int,
+        segments: list[list[float]],
+        r: float,
+        g: float,
+        b: float,
+    ) -> None:
+        self.ensure_open()
+        self.app.enqueue_update_scatter_lines(self.id, overlay_id, segments, r, g, b)
+
+    def enqueue_add_scatter_box(
+        self,
+        overlay_id: int,
+        xmin: float,
+        xmax: float,
+        ymin: float,
+        ymax: float,
+        zmin: float,
+        zmax: float,
+        r: float,
+        g: float,
+        b: float,
+    ) -> None:
+        self.ensure_open()
+        self.app.enqueue_add_scatter_box(
+            self.id, overlay_id, xmin, xmax, ymin, ymax, zmin, zmax, r, g, b
+        )
+
+    def enqueue_remove_scatter_overlay(self, overlay_id: int) -> None:
+        self.ensure_open()
+        self.app.enqueue_remove_scatter_overlay(self.id, overlay_id)
+
+    def enqueue_set_scatter_overlay_visible(self, overlay_id: int, visible: bool) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_overlay_visible(self.id, overlay_id, visible)
+
+    def enqueue_clear_scatter_overlays(self) -> None:
+        self.ensure_open()
+        self.app.enqueue_clear_scatter_overlays(self.id)
+
+    def enqueue_add_scatter_actor(
+        self, actor_id: int, payload_b64: str, colormap: str, payload_format: str,
+        hover_meta: str | None = None,
+        tooltip_x: str | None = None, tooltip_y: str | None = None, tooltip_z: str | None = None,
+    ) -> None:
+        self.ensure_open()
+        self.app.enqueue_add_scatter_actor(
+            self.id, actor_id, payload_b64, colormap, payload_format,
+            hover_meta, tooltip_x, tooltip_y, tooltip_z,
+        )
+
+    def enqueue_add_scatter_actor_packed(
+        self, actor_id: int, payload: bytes, colormap: str, payload_format: str,
+        hover_meta: str | None = None,
+        tooltip_x: str | None = None, tooltip_y: str | None = None, tooltip_z: str | None = None,
+    ) -> None:
+        self.ensure_open()
+        self.app.enqueue_add_scatter_actor_packed(
+            self.id, actor_id, payload, colormap, payload_format,
+            hover_meta, tooltip_x, tooltip_y, tooltip_z,
+        )
+
+    def enqueue_update_scatter_actor(
+        self, actor_id: int, payload_b64: str, colormap: str, payload_format: str,
+        tooltip_x: str | None = None, tooltip_y: str | None = None, tooltip_z: str | None = None,
+    ) -> None:
+        self.ensure_open()
+        self.app.enqueue_update_scatter_actor(
+            self.id, actor_id, payload_b64, colormap, payload_format,
+            tooltip_x, tooltip_y, tooltip_z,
+        )
+
+    def enqueue_update_scatter_actor_packed(
+        self, actor_id: int, payload: bytes, colormap: str, payload_format: str,
+        tooltip_x: str | None = None, tooltip_y: str | None = None, tooltip_z: str | None = None,
+    ) -> None:
+        self.ensure_open()
+        self.app.enqueue_update_scatter_actor_packed(
+            self.id, actor_id, payload, colormap, payload_format,
+            tooltip_x, tooltip_y, tooltip_z,
+        )
+
+    def enqueue_remove_scatter_actor(self, actor_id: int) -> None:
+        self.ensure_open()
+        self.app.enqueue_remove_scatter_actor(self.id, actor_id)
+
+    def enqueue_set_scatter_actor_visible(self, actor_id: int, visible: bool) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_actor_visible(self.id, actor_id, visible)
+
+    def enqueue_clear_scatter_actors(self) -> None:
+        self.ensure_open()
+        self.app.enqueue_clear_scatter_actors(self.id)
+
+    def enqueue_clear_scatter_scene(self) -> None:
+        self.ensure_open()
+        self.app.enqueue_clear_scatter_scene(self.id)
+
+    def enqueue_add_scatter_stream(self, actor_id: int, max_points: int, mode: str) -> None:
+        self.ensure_open()
+        self.app.enqueue_add_scatter_stream(self.id, actor_id, max_points, mode)
+
+    def enqueue_stream_scatter_actor(
+        self, actor_id: int, payload_b64: str, colormap: str, payload_format: str
+    ) -> None:
+        self.ensure_open()
+        self.app.enqueue_stream_scatter_actor(self.id, actor_id, payload_b64, colormap, payload_format)
+
+    def enqueue_stream_scatter_actor_packed(
+        self, actor_id: int, payload: bytes, colormap: str, payload_format: str
+    ) -> None:
+        self.ensure_open()
+        self.app.enqueue_stream_scatter_actor_packed(self.id, actor_id, payload, colormap, payload_format)
+
+    def enqueue_clear_scatter_stream(self, actor_id: int) -> None:
+        self.ensure_open()
+        self.app.enqueue_clear_scatter_stream(self.id, actor_id)
+
+    def enqueue_set_scatter_lod(self, enabled: bool, threshold: int, factor: int) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_lod(self.id, enabled, threshold, factor)
+
+    def enqueue_set_scatter_picking_mode(self, mode: str) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_picking_mode(self.id, mode)
+
+    def enqueue_set_scatter_hover_tooltip(self, enabled: bool) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_hover_tooltip(self.id, enabled)
+
+    def enqueue_set_scatter_primary_hover_meta(self, meta: str) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_primary_hover_meta(self.id, meta)
+
+    def enqueue_set_scatter_tooltip_axis_labels(self, x: str, y: str, z: str) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_tooltip_axis_labels(self.id, x, y, z)
+
+    def enqueue_add_scatter_mesh(
+        self, mesh_id: int, positions_b64: str, indices_b64: str,
+        r: float, g: float, b: float, a: float, wireframe: bool,
+    ) -> None:
+        self.ensure_open()
+        self.app.enqueue_add_scatter_mesh(
+            self.id, mesh_id, positions_b64, indices_b64, r, g, b, a, wireframe
+        )
+
+    def enqueue_update_scatter_mesh(
+        self, mesh_id: int, positions_b64: str | None = None,
+        indices_b64: str | None = None, r: float | None = None,
+        g: float | None = None, b: float | None = None,
+        a: float | None = None, wireframe: bool | None = None,
+    ) -> None:
+        self.ensure_open()
+        self.app.enqueue_update_scatter_mesh(
+            self.id, mesh_id, positions_b64, indices_b64, r, g, b, a, wireframe
+        )
+
+    def enqueue_remove_scatter_mesh(self, mesh_id: int) -> None:
+        self.ensure_open()
+        self.app.enqueue_remove_scatter_mesh(self.id, mesh_id)
+
+    def enqueue_set_scatter_mesh_visible(self, mesh_id: int, visible: bool) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_mesh_visible(self.id, mesh_id, visible)
+
+    def enqueue_clear_scatter_meshes(self) -> None:
+        self.ensure_open()
+        self.app.enqueue_clear_scatter_meshes(self.id)
+
+    def enqueue_fit_scatter_camera(self, bounds: list[float] | None = None) -> None:
+        self.ensure_open()
+        self.app.enqueue_fit_scatter_camera(self.id, bounds)
+
+    def enqueue_set_scatter_parallel_projection(self, parallel: bool) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_parallel_projection(self.id, parallel)
+
+    def enqueue_set_scatter_parallel_scale(self, half_w: float, half_h: float) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_parallel_scale(self.id, half_w, half_h)
+
+    def enqueue_set_scatter_camera_state(
+        self,
+        target: list[float],
+        distance: float,
+        yaw: float,
+        pitch: float,
+        parallel: bool = False,
+    ) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_camera_state(
+            self.id, target, distance, yaw, pitch, parallel
         )
 
     def enqueue_set_table_data(self, table: object) -> None:
@@ -208,6 +542,8 @@ class AppHandle:
         pack_ms: float | None = None,
         enqueue_epoch_ms: float | None = None,
         colormap: str = "viridis",
+        payload_format: str = "xyz_f32_v0",
+        coalesce: bool = True,
     ) -> None:
         self._send_or_queue_native(
             "enqueue_set_scatter_points_packed",
@@ -216,6 +552,377 @@ class AppHandle:
             pack_ms,
             enqueue_epoch_ms,
             _scatter_colormap(colormap),
+            payload_format,
+            bool(coalesce),
+        )
+
+    def enqueue_reset_scatter_camera(self, widget_id: str) -> None:
+        self._send_or_queue_native("enqueue_reset_scatter_camera", widget_id)
+
+    def enqueue_set_scatter_view_direction(self, widget_id: str, direction: str) -> None:
+        self._send_or_queue_native("enqueue_set_scatter_view_direction", widget_id, direction)
+
+    def enqueue_set_scatter_point_style(self, widget_id: str, style: str) -> None:
+        self._send_or_queue_native("enqueue_set_scatter_point_style", widget_id, style)
+
+    def enqueue_set_scatter_point_size(self, widget_id: str, size: float) -> None:
+        if not self._native_method_available("enqueue_set_scatter_point_size"):
+            self.enqueue_set_style(widget_id, {"scatter_point_size": float(size)})
+            return
+        self._send_or_queue_native("enqueue_set_scatter_point_size", widget_id, float(size))
+
+    def enqueue_set_scatter_grid_visible(self, widget_id: str, visible: bool) -> None:
+        self._send_or_queue_native("enqueue_set_scatter_grid_visible", widget_id, visible)
+
+    def enqueue_set_scatter_grid_planes(self, widget_id: str, major: bool, minor: bool) -> None:
+        self._send_or_queue_native("enqueue_set_scatter_grid_planes", widget_id, major, minor)
+
+    def enqueue_set_scatter_grid_options(
+        self, widget_id: str, sticky: bool = True, all_edges: bool = False
+    ) -> None:
+        self._send_or_queue_native(
+            "enqueue_set_scatter_grid_options", widget_id, sticky, all_edges
+        )
+
+    def enqueue_set_scatter_ticks(
+        self,
+        widget_id: str,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> None:
+        self._send_or_queue_native("enqueue_set_scatter_ticks", widget_id, x, y, z)
+
+    def enqueue_set_scatter_axes(self, widget_id: str, x: str, y: str, z: str) -> None:
+        self._send_or_queue_native("enqueue_set_scatter_axes", widget_id, x, y, z)
+
+    def enqueue_set_scatter_axis_visibility(
+        self, widget_id: str, x: bool, y: bool, z: bool
+    ) -> None:
+        self._send_or_queue_native("enqueue_set_scatter_axis_visibility", widget_id, x, y, z)
+
+    def enqueue_set_scatter_background(
+        self, widget_id: str, r: float, g: float, b: float
+    ) -> None:
+        self._send_or_queue_native("enqueue_set_scatter_background", widget_id, r, g, b)
+
+    def enqueue_set_scatter_legend(
+        self,
+        widget_id: str,
+        visible: bool,
+        position: str,
+        entries: list[tuple[str, float, float, float]],
+        title: "str | None" = None,
+    ) -> None:
+        self._send_or_queue_native(
+            "enqueue_set_scatter_legend", widget_id, visible, position, entries, title
+        )
+
+    def enqueue_set_scatter_scalar_bar(
+        self,
+        widget_id: str,
+        visible: bool,
+        vmin: float,
+        vmax: float,
+        log_scale: bool,
+        colormap: str,
+        title: str | None,
+    ) -> None:
+        self._send_or_queue_native(
+            "enqueue_set_scatter_scalar_bar",
+            widget_id, visible, vmin, vmax, log_scale, colormap, title,
+        )
+
+    def enqueue_set_scatter_orientation_axes(self, widget_id: str, visible: bool) -> None:
+        self._send_or_queue_native("enqueue_set_scatter_orientation_axes", widget_id, visible)
+
+    def enqueue_add_scatter_label(
+        self,
+        widget_id: str,
+        label_id: int,
+        x: float,
+        y: float,
+        z: float,
+        text: str,
+        r: float,
+        g: float,
+        b: float,
+        size: float,
+        anchor: str,
+    ) -> None:
+        self._send_or_queue_native(
+            "enqueue_add_scatter_label", widget_id, label_id, x, y, z, text, r, g, b, size, anchor
+        )
+
+    def enqueue_update_scatter_label(
+        self,
+        widget_id: str,
+        label_id: int,
+        x: float | None,
+        y: float | None,
+        z: float | None,
+        text: str | None,
+        r: float | None,
+        g: float | None,
+        b: float | None,
+        size: float | None,
+        anchor: str | None,
+    ) -> None:
+        self._send_or_queue_native(
+            "enqueue_update_scatter_label",
+            widget_id, label_id, x, y, z, text, r, g, b, size, anchor,
+        )
+
+    def enqueue_remove_scatter_label(self, widget_id: str, label_id: int) -> None:
+        self._send_or_queue_native("enqueue_remove_scatter_label", widget_id, label_id)
+
+    def enqueue_set_scatter_label_visible(
+        self, widget_id: str, label_id: int, visible: bool
+    ) -> None:
+        self._send_or_queue_native(
+            "enqueue_set_scatter_label_visible", widget_id, label_id, visible
+        )
+
+    def enqueue_clear_scatter_labels(self, widget_id: str) -> None:
+        self._send_or_queue_native("enqueue_clear_scatter_labels", widget_id)
+
+    def enqueue_add_scatter_lines(
+        self,
+        widget_id: str,
+        overlay_id: int,
+        segments: list[list[float]],
+        r: float,
+        g: float,
+        b: float,
+    ) -> None:
+        self._send_or_queue_native(
+            "enqueue_add_scatter_lines", widget_id, overlay_id, segments, r, g, b
+        )
+
+    def enqueue_update_scatter_lines(
+        self,
+        widget_id: str,
+        overlay_id: int,
+        segments: list[list[float]],
+        r: float,
+        g: float,
+        b: float,
+    ) -> None:
+        self._send_or_queue_native(
+            "enqueue_update_scatter_lines", widget_id, overlay_id, segments, r, g, b
+        )
+
+    def enqueue_add_scatter_box(
+        self,
+        widget_id: str,
+        overlay_id: int,
+        xmin: float,
+        xmax: float,
+        ymin: float,
+        ymax: float,
+        zmin: float,
+        zmax: float,
+        r: float,
+        g: float,
+        b: float,
+    ) -> None:
+        self._send_or_queue_native(
+            "enqueue_add_scatter_box",
+            widget_id, overlay_id, xmin, xmax, ymin, ymax, zmin, zmax, r, g, b,
+        )
+
+    def enqueue_remove_scatter_overlay(self, widget_id: str, overlay_id: int) -> None:
+        self._send_or_queue_native("enqueue_remove_scatter_overlay", widget_id, overlay_id)
+
+    def enqueue_set_scatter_overlay_visible(
+        self, widget_id: str, overlay_id: int, visible: bool
+    ) -> None:
+        self._send_or_queue_native(
+            "enqueue_set_scatter_overlay_visible", widget_id, overlay_id, visible
+        )
+
+    def enqueue_clear_scatter_overlays(self, widget_id: str) -> None:
+        self._send_or_queue_native("enqueue_clear_scatter_overlays", widget_id)
+
+    def enqueue_add_scatter_actor(
+        self, widget_id: str, actor_id: int, payload_b64: str, colormap: str, payload_format: str,
+        hover_meta: str | None = None,
+        tooltip_x: str | None = None, tooltip_y: str | None = None, tooltip_z: str | None = None,
+    ) -> None:
+        self._send_or_queue_native(
+            "enqueue_add_scatter_actor", widget_id, actor_id, payload_b64, colormap, payload_format,
+            hover_meta, tooltip_x, tooltip_y, tooltip_z,
+        )
+
+    def enqueue_add_scatter_actor_packed(
+        self, widget_id: str, actor_id: int, payload: bytes, colormap: str, payload_format: str,
+        hover_meta: str | None = None,
+        tooltip_x: str | None = None, tooltip_y: str | None = None, tooltip_z: str | None = None,
+    ) -> None:
+        if not self._native_method_available("enqueue_add_scatter_actor_packed"):
+            import base64 as _base64
+            self.enqueue_add_scatter_actor(
+                widget_id, actor_id, _base64.b64encode(payload).decode("ascii"),
+                colormap, payload_format, hover_meta, tooltip_x, tooltip_y, tooltip_z,
+            )
+            return
+        self._send_or_queue_native(
+            "enqueue_add_scatter_actor_packed", widget_id, actor_id, payload, colormap, payload_format,
+            hover_meta, tooltip_x, tooltip_y, tooltip_z,
+        )
+
+    def enqueue_update_scatter_actor(
+        self, widget_id: str, actor_id: int, payload_b64: str, colormap: str, payload_format: str,
+        tooltip_x: str | None = None, tooltip_y: str | None = None, tooltip_z: str | None = None,
+    ) -> None:
+        self._send_or_queue_native(
+            "enqueue_update_scatter_actor", widget_id, actor_id, payload_b64, colormap, payload_format,
+            tooltip_x, tooltip_y, tooltip_z,
+        )
+
+    def enqueue_update_scatter_actor_packed(
+        self, widget_id: str, actor_id: int, payload: bytes, colormap: str, payload_format: str,
+        tooltip_x: str | None = None, tooltip_y: str | None = None, tooltip_z: str | None = None,
+    ) -> None:
+        if not self._native_method_available("enqueue_update_scatter_actor_packed"):
+            import base64 as _base64
+            self.enqueue_update_scatter_actor(
+                widget_id, actor_id, _base64.b64encode(payload).decode("ascii"),
+                colormap, payload_format, tooltip_x, tooltip_y, tooltip_z,
+            )
+            return
+        self._send_or_queue_native(
+            "enqueue_update_scatter_actor_packed", widget_id, actor_id, payload, colormap, payload_format,
+            tooltip_x, tooltip_y, tooltip_z,
+        )
+
+    def enqueue_remove_scatter_actor(self, widget_id: str, actor_id: int) -> None:
+        self._send_or_queue_native("enqueue_remove_scatter_actor", widget_id, actor_id)
+
+    def enqueue_set_scatter_actor_visible(
+        self, widget_id: str, actor_id: int, visible: bool
+    ) -> None:
+        self._send_or_queue_native(
+            "enqueue_set_scatter_actor_visible", widget_id, actor_id, visible
+        )
+
+    def enqueue_clear_scatter_actors(self, widget_id: str) -> None:
+        self._send_or_queue_native("enqueue_clear_scatter_actors", widget_id)
+
+    def enqueue_clear_scatter_scene(self, widget_id: str) -> None:
+        self._send_or_queue_native("enqueue_clear_scatter_scene", widget_id)
+
+    def enqueue_add_scatter_stream(
+        self, widget_id: str, actor_id: int, max_points: int, mode: str
+    ) -> None:
+        self._send_or_queue_native(
+            "enqueue_add_scatter_stream", widget_id, actor_id, max_points, mode
+        )
+
+    def enqueue_stream_scatter_actor(
+        self, widget_id: str, actor_id: int, payload_b64: str, colormap: str, payload_format: str
+    ) -> None:
+        self._send_or_queue_native(
+            "enqueue_stream_scatter_actor", widget_id, actor_id, payload_b64, colormap, payload_format
+        )
+
+    def enqueue_stream_scatter_actor_packed(
+        self, widget_id: str, actor_id: int, payload: bytes, colormap: str, payload_format: str
+    ) -> None:
+        if not self._native_method_available("enqueue_stream_scatter_actor_packed"):
+            import base64 as _base64
+            self.enqueue_stream_scatter_actor(
+                widget_id, actor_id, _base64.b64encode(payload).decode("ascii"),
+                colormap, payload_format,
+            )
+            return
+        self._send_or_queue_native(
+            "enqueue_stream_scatter_actor_packed", widget_id, actor_id, payload, colormap, payload_format
+        )
+
+    def enqueue_clear_scatter_stream(self, widget_id: str, actor_id: int) -> None:
+        self._send_or_queue_native("enqueue_clear_scatter_stream", widget_id, actor_id)
+
+    def enqueue_set_scatter_lod(
+        self, widget_id: str, enabled: bool, threshold: int, factor: int
+    ) -> None:
+        self._send_or_queue_native("enqueue_set_scatter_lod", widget_id, enabled, threshold, factor)
+
+    def enqueue_set_scatter_picking_mode(self, widget_id: str, mode: str) -> None:
+        self._send_or_queue_native("enqueue_set_scatter_picking_mode", widget_id, mode)
+
+    def enqueue_set_scatter_hover_tooltip(self, widget_id: str, enabled: bool) -> None:
+        self._send_or_queue_native("enqueue_set_scatter_hover_tooltip", widget_id, enabled)
+
+    def enqueue_set_scatter_primary_hover_meta(self, widget_id: str, meta: str) -> None:
+        self._send_or_queue_native("enqueue_set_scatter_primary_hover_meta", widget_id, meta)
+
+    def enqueue_set_scatter_tooltip_axis_labels(self, widget_id: str, x: str, y: str, z: str) -> None:
+        self._send_or_queue_native("enqueue_set_scatter_tooltip_axis_labels", widget_id, x, y, z)
+
+    def enqueue_add_scatter_mesh(
+        self, widget_id: str, mesh_id: int, positions_b64: str, indices_b64: str,
+        r: float, g: float, b: float, a: float, wireframe: bool,
+    ) -> None:
+        self._send_or_queue_native(
+            "enqueue_add_scatter_mesh", widget_id, mesh_id, positions_b64, indices_b64,
+            r, g, b, a, wireframe,
+        )
+
+    def enqueue_update_scatter_mesh(
+        self, widget_id: str, mesh_id: int, positions_b64=None, indices_b64=None,
+        r=None, g=None, b=None, a=None, wireframe=None,
+    ) -> None:
+        self._send_or_queue_native(
+            "enqueue_update_scatter_mesh", widget_id, mesh_id, positions_b64,
+            indices_b64, r, g, b, a, wireframe,
+        )
+
+    def enqueue_remove_scatter_mesh(self, widget_id: str, mesh_id: int) -> None:
+        self._send_or_queue_native("enqueue_remove_scatter_mesh", widget_id, mesh_id)
+
+    def enqueue_set_scatter_mesh_visible(
+        self, widget_id: str, mesh_id: int, visible: bool
+    ) -> None:
+        self._send_or_queue_native("enqueue_set_scatter_mesh_visible", widget_id, mesh_id, visible)
+
+    def enqueue_clear_scatter_meshes(self, widget_id: str) -> None:
+        self._send_or_queue_native("enqueue_clear_scatter_meshes", widget_id)
+
+    def enqueue_fit_scatter_camera(self, widget_id: str, bounds: list[float] | None = None) -> None:
+        self._send_or_queue_native("enqueue_fit_scatter_camera", widget_id, bounds)
+
+    def enqueue_set_scatter_parallel_projection(self, widget_id: str, parallel: bool) -> None:
+        self._send_or_queue_native("enqueue_set_scatter_parallel_projection", widget_id, parallel)
+
+    def enqueue_set_scatter_parallel_scale(
+        self, widget_id: str, half_w: float, half_h: float
+    ) -> None:
+        self._send_or_queue_native(
+            "enqueue_set_scatter_parallel_scale", widget_id, half_w, half_h
+        )
+
+    def scatter_screenshot(
+        self, widget_id: str, timeout_ms: int = 10000
+    ) -> "tuple[int, int, bytes] | None":
+        with self._lock:
+            sender = self._native_sender
+        if sender is None:
+            return None
+        return sender.scatter_screenshot(widget_id, timeout_ms)
+
+    def enqueue_set_scatter_camera_state(
+        self,
+        widget_id: str,
+        target: list[float],
+        distance: float,
+        yaw: float,
+        pitch: float,
+        parallel: bool = False,
+    ) -> None:
+        self._send_or_queue_native(
+            "enqueue_set_scatter_camera_state",
+            widget_id, target, distance, yaw, pitch, parallel,
         )
 
     def enqueue_set_table_data(self, widget_id: str, table: object) -> None:
@@ -346,6 +1053,100 @@ class AppHandle:
             if patch.prop == "table" and isinstance(patch.value, Mapping):
                 self.enqueue_set_table_data(patch.node_id, patch.value)
                 return
+            if patch.prop == "scatter" and isinstance(patch.value, Mapping):
+                data_b64 = patch.value.get("data_b64")
+                colormap = patch.value.get("colormap", "viridis")
+                data_format = patch.value.get("data_format", "xyz_f32_v0")
+                if isinstance(data_b64, str):
+                    import base64
+                    import time as _time
+                    # data_b64 == "" means zero points — send an empty payload to clear native state.
+                    payload = base64.b64decode(data_b64) if data_b64 else b""
+                    self.enqueue_set_scatter_points_packed(
+                        patch.node_id,
+                        payload,
+                        pack_ms=0.0,
+                        enqueue_epoch_ms=_time.time() * 1000.0,
+                        colormap=colormap if isinstance(colormap, str) else "viridis",
+                        payload_format=data_format if isinstance(data_format, str) else "xyz_f32_v0",
+                    )
+                # Sync grid chrome if included in the props diff.
+                nid = patch.node_id
+                v = patch.value
+                if "grid_visible" in v:
+                    self.enqueue_set_scatter_grid_visible(nid, bool(v["grid_visible"]))
+                if "major_planes" in v or "minor_planes" in v:
+                    self.enqueue_set_scatter_grid_planes(
+                        nid,
+                        bool(v.get("major_planes", False)),
+                        bool(v.get("minor_planes", False)),
+                    )
+                if "grid_sticky" in v or "grid_all_edges" in v:
+                    self.enqueue_set_scatter_grid_options(
+                        nid,
+                        bool(v.get("grid_sticky", True)),
+                        bool(v.get("grid_all_edges", False)),
+                    )
+                if any(k in v for k in ("tick_x", "tick_y", "tick_z")):
+                    self.enqueue_set_scatter_ticks(
+                        nid,
+                        v.get("tick_x"),
+                        v.get("tick_y"),
+                        v.get("tick_z"),
+                    )
+                if any(k in v for k in ("axis_x", "axis_y", "axis_z")):
+                    self.enqueue_set_scatter_axes(
+                        nid,
+                        str(v.get("axis_x", "X")),
+                        str(v.get("axis_y", "Y")),
+                        str(v.get("axis_z", "Z")),
+                    )
+                if any(k in v for k in ("axis_vis_x", "axis_vis_y", "axis_vis_z")):
+                    self.enqueue_set_scatter_axis_visibility(
+                        nid,
+                        bool(v.get("axis_vis_x", True)),
+                        bool(v.get("axis_vis_y", True)),
+                        bool(v.get("axis_vis_z", True)),
+                    )
+                if "background" in v:
+                    bg = v["background"]
+                    if isinstance(bg, (list, tuple)) and len(bg) >= 3:
+                        self.enqueue_set_scatter_background(nid, float(bg[0]), float(bg[1]), float(bg[2]))
+                if any(k in v for k in ("legend_visible", "legend_position", "legend_entries", "legend_title")):
+                    entries_raw = v.get("legend_entries", [])
+                    entries = [
+                        (e["label"], float(e["color"][0]), float(e["color"][1]), float(e["color"][2]))
+                        for e in entries_raw
+                        if isinstance(e, dict)
+                    ]
+                    self.enqueue_set_scatter_legend(
+                        nid,
+                        bool(v.get("legend_visible", False)),
+                        str(v.get("legend_position", "top-right")),
+                        entries,
+                        v.get("legend_title"),
+                    )
+                if any(
+                    k in v
+                    for k in (
+                        "scalar_bar_visible", "scalar_bar_vmin", "scalar_bar_vmax",
+                        "scalar_bar_log_scale", "scalar_bar_colormap", "scalar_bar_title",
+                    )
+                ):
+                    self.enqueue_set_scatter_scalar_bar(
+                        nid,
+                        bool(v.get("scalar_bar_visible", False)),
+                        float(v.get("scalar_bar_vmin", 0.0)),
+                        float(v.get("scalar_bar_vmax", 1.0)),
+                        bool(v.get("scalar_bar_log_scale", False)),
+                        str(v.get("scalar_bar_colormap", "viridis")),
+                        v.get("scalar_bar_title"),
+                    )
+                if "orientation_axes_visible" in v:
+                    self.enqueue_set_scatter_orientation_axes(
+                        nid, bool(v["orientation_axes_visible"])
+                    )
+                return
             self.enqueue_set_prop(patch.node_id, patch.prop, patch.value)
             return
         if patch.kind == Patch.SET_STYLE:
@@ -390,6 +1191,13 @@ class AppHandle:
             if closed or sender_closed:
                 raise RuntimeError("DragonGUI app handle is closed") from exc
             raise
+
+    def _native_method_available(self, method: str) -> bool:
+        with self._lock:
+            sender = self._native_sender
+            if sender is None:
+                return True
+            return hasattr(sender, method)
 
     def _bind_native_sender(self, sender: Any) -> None:
         with self._lock:
@@ -642,7 +1450,7 @@ def _table_column_payload(columns: object) -> tuple[list[dict[str, object]], lis
 def _collect_runtime_callbacks(
     widget: object,
 ) -> tuple[dict[str, Callable[[], None]], dict[str, Callable[[object], None]]]:
-    from .widgets import Button, Checkbox, Collapsible, Container, DataFrameTable, Dropdown, MenuItem, NumberInput, Pages, Scatter3D, ScatterPick, Slider, TableSelection, Tabs, TextArea, TextInput, Widget
+    from .widgets import Button, Checkbox, Collapsible, Container, DataFrameTable, Dropdown, MenuItem, NumberInput, Pages, Scatter3D, ScatterHit, ScatterPick, Slider, TableSelection, Tabs, TextArea, TextInput, Widget
 
     click_callbacks: dict[str, Callable[[], None]] = {}
     change_callbacks: dict[str, Callable[[object], None]] = {}
@@ -739,28 +1547,109 @@ def _collect_runtime_callbacks(
                     widget.on_select(selection)
 
             change_callbacks[node.id] = table_selected
-        if isinstance(node, Scatter3D) and node.on_pick is not None:
-            callback_arity = _scatter_pick_callback_arity(node.on_pick)
-
+        if isinstance(node, Scatter3D):
             def scatter_picked(
                 value: object,
                 widget: Scatter3D = node,
-                arity: int = callback_arity,
             ) -> None:
                 payload = json.loads(value) if isinstance(value, str) else value
                 if not isinstance(payload, Mapping):
-                    raise TypeError("Scatter3D pick payload must be a mapping")
-                pick = ScatterPick(
-                    index=int(payload["index"]),
-                    x=float(payload["x"]),
-                    y=float(payload["y"]),
-                    z=float(payload["z"]),
-                )
-                widget.pick = pick
-                if arity >= 4:
-                    widget.on_pick(pick.index, pick.x, pick.y, pick.z)
+                    return
+                # Dispatch on explicit event tag first; fall through to legacy point-pick.
+                if payload.get("event") == "hover_changed":
+                    if "x" in payload:
+                        widget.hover_point = (float(payload["x"]), float(payload["y"]), float(payload["z"]))
+                        widget.hover_index = int(payload.get("index", 0))
+                        widget.hover_actor = int(payload.get("actor", 0))
+                        widget.hover_text = payload.get("hover_text")
+                        on_hover = widget.on_hover
+                        if on_hover is not None:
+                            pick = ScatterPick(
+                                index=widget.hover_index,
+                                x=widget.hover_point[0],
+                                y=widget.hover_point[1],
+                                z=widget.hover_point[2],
+                                actor=widget.hover_actor,
+                            )
+                            if _scatter_pick_callback_arity(on_hover) >= 4:
+                                on_hover(pick.index, pick.x, pick.y, pick.z)
+                            else:
+                                on_hover(pick)
+                    else:
+                        widget.hover_point = None
+                        widget.hover_index = None
+                        widget.hover_actor = None
+                        widget.hover_text = None
+                        on_hover = widget.on_hover
+                        if on_hover is not None:
+                            if _scatter_pick_callback_arity(on_hover) >= 4:
+                                on_hover(None, None, None, None)
+                            else:
+                                on_hover(None)
+                    return
+                # Point-pick payload: has index/x/y/z keys (no event tag).
+                if "index" in payload and "x" in payload and "y" in payload and "z" in payload:
+                    actor_id = int(payload.get("actor", 0))
+                    pick = ScatterPick(
+                        index=int(payload["index"]),
+                        x=float(payload["x"]),
+                        y=float(payload["y"]),
+                        z=float(payload["z"]),
+                        actor=actor_id,
+                    )
+                    widget.pick = pick
+                    widget.picked_point = (pick.x, pick.y, pick.z)
+                    widget.picked_index = pick.index
+                    widget.picked_actor = pick.actor
+                    on_pick = widget.on_pick
+                    if on_pick is not None:
+                        if _scatter_pick_callback_arity(on_pick) >= 4:
+                            on_pick(pick.index, pick.x, pick.y, pick.z)
+                        else:
+                            on_pick(pick)
+                elif payload.get("event") == "camera_changed":
+                    # Native orbit/pan/zoom emits camera state so linked cameras can follow.
+                    cam = payload.get("camera", {})
+                    if cam:
+                        for other in list(getattr(widget, "_camera_links", set())):
+                            try:
+                                other._receive_camera(cam)
+                            except Exception:
+                                pass
                 else:
-                    widget.on_pick(pick)
+                    # Selection payload (rectangle/lasso) — route to _on_select.
+                    actors: dict = payload.get("actors", {})
+                    raw_index_values = {int(k): list(v) for k, v in actors.items()}
+                    primary_labels = getattr(widget, "_primary_row_labels", None)
+                    actor_labels_map = getattr(widget, "_actor_row_labels", {})
+
+                    def _translate(actor_id: int, indices: list) -> list:
+                        labels = primary_labels if actor_id == 0 else actor_labels_map.get(actor_id)
+                        if labels is None:
+                            return indices
+                        return [labels[i] if i < len(labels) else i for i in indices]
+
+                    # Build flat hit list, flat positional indices, and flat label values.
+                    hits: list[ScatterHit] = []
+                    all_positional: list[int] = []
+                    all_label_values: list = []
+                    has_labels = False
+                    for actor_id, indices in sorted(raw_index_values.items()):
+                        labels = primary_labels if actor_id == 0 else actor_labels_map.get(actor_id)
+                        for idx in indices:
+                            hits.append(ScatterHit(actor=actor_id, index=idx))
+                            all_positional.append(idx)
+                            if labels is not None and idx < len(labels):
+                                has_labels = True
+                                all_label_values.append(labels[idx])
+                            else:
+                                all_label_values.append(None)
+                    widget.selected = hits
+                    widget.selected_indices = all_positional
+                    widget.selected_index_values = all_label_values if has_labels else None
+                    on_sel = getattr(widget, "_on_select", None)
+                    if on_sel is not None:
+                        on_sel(payload)
 
             change_callbacks[node.id] = scatter_picked
         if isinstance(node, Container):

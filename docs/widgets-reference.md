@@ -459,6 +459,35 @@ CSS:
 - Parts: `scrollbar-track`, `scrollbar-thumb`.
 - Typically styled with `gap`, `padding`, `width`, `flex`, and background.
 
+### `ScrollArea`
+
+Constructor:
+
+```python
+dg.ScrollArea(axis="y", gap=None, width=None, height=None, id=None, key=None, class_=None, style=None, tooltip=None, parent=...)
+```
+
+Options:
+
+| Option | Notes |
+| --- | --- |
+| `axis` | `"y"` for vertical scrolling, `"x"` for horizontal scrolling, `"both"` for both axes, or `"none"` for clipped viewport behavior. |
+| `gap` | Vertical child gap in logical pixels. |
+| `width` / `height` | Optional preferred viewport size in logical pixels. |
+
+`ScrollArea` is the explicit viewport container for content that can exceed a
+bounded parent, similar to Qt's `QScrollArea`. It lays out children vertically
+by default, clips to its own rectangle, and exposes draggable overlay
+scrollbars when content overflows. It does not draw a panel frame by default;
+wrap it in `Panel` when you want a titled or bordered surface.
+
+CSS:
+
+- Type selector: `ScrollArea`.
+- Parts: `scrollbar-track`, `scrollbar-thumb`.
+- Typically styled with `height`, `min-height`, `flex`, `gap`, `padding`, and
+  `overflow-x` / `overflow-y`.
+
 ### `Panel`
 
 Constructor:
@@ -1302,40 +1331,90 @@ CSS:
 Constructor:
 
 ```python
-dg.Scatter3D(frame, x=..., y=..., z=..., colormap="viridis", on_pick=None, id=None, key=None, class_=None, style=None, tooltip=None, parent=...)
+dg.Scatter3D(
+    frame,
+    x=...,
+    y=...,
+    z=...,
+    colormap="viridis",
+    color=None,
+    colors=None,
+    scalars=None,
+    point_size=4.0,
+    point_sizes=None,
+    opacity=1.0,
+    clim=None,
+    log_scale=False,
+    on_pick=None,
+    grid=False,
+    major_planes=False,
+    minor_planes=False,
+    grid_sticky=True,
+    grid_all_edges=False,
+    id=None, key=None, class_=None, style=None, tooltip=None, parent=...
+)
 ```
 
 Options and callbacks:
 
 | Option | Notes |
 | --- | --- |
-| `frame` | Data object with addressable numeric columns. |
+| `frame` | Data object with addressable numeric columns. Supports `frame[col]` subscript and `getattr(frame, col)` attribute access. |
 | `x` | X column name. |
 | `y` | Y column name. |
 | `z` | Z column name. |
-| `colormap` | `viridis`, `plasma`, `inferno`, `magma`, `coolwarm`, `hot`, `gray`, `grey`, `turbo`, `cividis`, `blues`, `greens`, or `reds`. |
-| `on_pick` | Called with `ScatterPick` or positional pick fields after point pick. |
+| `colormap` | `viridis`, `plasma`, `inferno`, `magma`, `coolwarm`, `hot`, `gray`, `grey`, `turbo`, `cividis`, `blues`, `greens`, or `reds`. Default `"viridis"`. |
+| `color` | Column name or `(N, 3)`/`(N, 4)` array of per-point RGB/RGBA colors. Takes priority over `scalars`. |
+| `colors` | `(N, 3)` or `(N, 4)` float/uint8 RGB/RGBA array. Takes highest priority for per-point color. |
+| `scalars` | Column name or 1-D array of per-point scalar values mapped through `colormap`. Used when `color` and `colors` are both absent. |
+| `point_size` | Default uniform point size in logical pixels. Default `4.0`. |
+| `point_sizes` | Column name or 1-D array of per-point sizes. Overrides `point_size` when provided. |
+| `opacity` | Uniform alpha applied to all points. `1.0` = fully opaque. |
+| `clim` | `(lo, hi)` scalar data range for colormap normalization. Derived from data when `None`. |
+| `log_scale` | If `True`, apply log10 to scalar values before colormap mapping. |
+| `nan_color` | `(r, g, b)` color in [0, 1] applied to NaN scalar positions instead of the colormap. |
+| `size_range` | `(min_px, max_px)` pixel range for normalizing a `point_sizes` column from data units to logical pixels. |
+| `grid` | Show axis grid, ticks, and labels. |
+| `major_planes` / `minor_planes` | Draw major grid planes and minor subdivision lines. |
+| `grid_sticky` | Keep automatically generated nice bounds and tick steps stable while new data remains inside the current grid range. Default `True`. |
+| `grid_all_edges` | Draw an unlabeled boundary box around all grid edges as a stable reference frame. Default `False`. |
+| `on_pick` | Called with `ScatterPick` or `(index, x, y, z)` after a point pick. |
+
+When any of `color`, `colors`, `scalars`, `point_sizes`, `opacity != 1.0`, `nan_color`, `clim`, or `log_scale=True` are used, the widget
+automatically emits a `point_instance_v1` packet (per-point RGBA). Otherwise it emits the compact `xyz_f32_v0` format (XYZ only, colored by z-range at render time).
 
 Live methods:
 
-- `set_points(frame, x, y=None, z=None)`
-- `set_colormap(colormap)`
+- `set_points(frame, x, y=None, z=None, *, color=None, colors=None, scalars=None, point_size=None, point_sizes=None, opacity=None, clim=None, log_scale=None, nan_color=None, size_range=None)` — replace point data.
+- `set_colormap(colormap)` — change colormap; repacks data if per-point colors are baked.
+- `reset_camera()` — reset camera to last fitted position.
+- `view_xy()`, `view_xz()`, `view_yz()`, `view_isometric()` — snap to a preset view direction.
+- `fit(bounds=None)` — fit camera to data bounds; optional explicit `(x_min, y_min, z_min, x_max, y_max, z_max)`.
+- `set_camera(state)` — apply a camera state dict with keys `target`, `distance`, `yaw`, `pitch`, `parallel`.
+- `get_camera()` — return current camera state dict via debug snapshot, or `None` if not live.
+- `set_point_style(style)` — set point shape: `"circle"`, `"square"`, or `"gaussian"`.
+- `show_grid(visible=True)` — show or hide grid/ticks/labels.
+- `show_grid_planes(major=True, minor=False)` — show or hide major and minor grid planes.
+- `set_grid_options(sticky=True, all_edges=False)` — update sticky auto bounds and all-edges boundary behavior.
+- `set_ticks(x=None, y=None, z=None)` — override per-axis tick counts; `None` uses auto ticks.
+- `parallel_projection` — read/write property; `True` for orthographic, `False` for perspective (default).
+- `colormap_names()` — class method returning sorted list of valid colormap names.
 
 Callback data:
 
 | Type | Fields |
 | --- | --- |
-| `ScatterPick` | `index`, `x`, `y`, `z` |
+| `ScatterPick` | `index`, `x`, `y`, `z`, `widget_id` |
 
 CSS:
 
 - Type selector: `Scatter3D`.
 - No widget parts.
-- Widget-specific property: `scatter-point-size`.
-- CSS can style the container/surface. `border-radius` and per-corner radii
-  clip the 3D viewport and the picking region.
-- `Scatter3D` does not currently accept a `disabled` option; `on_pick` remains
-  active whenever picking is enabled.
+- Widget-specific properties: `scatter-point-size` (logical pixels), `scatter-point-style` (`circle` | `square` | `gaussian`).
+- CSS `scatter-point-size` overrides the packed per-point sizes.
+- CSS can style the container surface. `border-radius` and per-corner radii clip the 3D viewport and the picking region.
+- `opacity`, `transform`, `translate`, `scale`, and `rotate` affect the border/background primitive only; the actual 3D viewport is layout-rect anchored and is not transformed or faded in this release.
+- `Scatter3D` does not currently accept a `disabled` option; `on_pick` remains active whenever picking is enabled.
 
 ### `DataFrameTable`
 
@@ -1420,6 +1499,7 @@ Current CSS type selectors:
 - `Window`
 - `HLayout`
 - `VLayout`
+- `ScrollArea`
 - `Panel`
 - `Collapsible`
 - `Modal`
@@ -1465,6 +1545,7 @@ Notable non-selectors:
 | --- | --- |
 | `HLayout` | `scrollbar-track`, `scrollbar-thumb` |
 | `VLayout` | `scrollbar-track`, `scrollbar-thumb` |
+| `ScrollArea` | `scrollbar-track`, `scrollbar-thumb` |
 | `Pages` | `scrollbar-track`, `scrollbar-thumb` |
 | `Page` | `scrollbar-track`, `scrollbar-thumb` |
 | `Sidebar` | `scrollbar-track`, `scrollbar-thumb` |

@@ -806,6 +806,7 @@ pub enum DgTextDeclaration {
 pub enum DgWidgetDeclaration {
     TextAreaRows(DgCssNumber),
     ScatterPointSize(DgCssLength),
+    ScatterPointStyle(DgCssKeyword),
     TableRowHeight(DgCssLength),
     TableHeaderHeight(DgCssLength),
     TableColumnWidth(DgCssLength),
@@ -2576,6 +2577,7 @@ pub enum DgTextPropertyName {
 pub enum DgWidgetPropertyName {
     TextAreaRows,
     ScatterPointSize,
+    ScatterPointStyle,
     TableRowHeight,
     TableHeaderHeight,
     TableColumnWidth,
@@ -2765,6 +2767,7 @@ impl DgStylePropertyName {
             "content" => Ok(Self::Generated(DgGeneratedPropertyName::Content)),
             "text-area-rows" => Ok(Self::Widget(DgWidgetPropertyName::TextAreaRows)),
             "scatter-point-size" => Ok(Self::Widget(DgWidgetPropertyName::ScatterPointSize)),
+            "scatter-point-style" => Ok(Self::Widget(DgWidgetPropertyName::ScatterPointStyle)),
             "table-row-height" => Ok(Self::Widget(DgWidgetPropertyName::TableRowHeight)),
             "table-header-height" => Ok(Self::Widget(DgWidgetPropertyName::TableHeaderHeight)),
             "table-column-width" => Ok(Self::Widget(DgWidgetPropertyName::TableColumnWidth)),
@@ -2779,6 +2782,9 @@ pub fn widget_kind_from_css_type(name: &str) -> Option<WidgetKind> {
         "Window" => Some(WidgetKind::Window),
         "HLayout" => Some(WidgetKind::HLayout),
         "VLayout" => Some(WidgetKind::VLayout),
+        "ScrollArea" => Some(WidgetKind::ScrollArea),
+        "GridLayout" => Some(WidgetKind::GridLayout),
+        "FlowLayout" => Some(WidgetKind::FlowLayout),
         "Panel" => Some(WidgetKind::Panel),
         "Collapsible" => Some(WidgetKind::Collapsible),
         "Modal" => Some(WidgetKind::Modal),
@@ -2820,6 +2826,9 @@ pub fn css_type_name(kind: WidgetKind) -> Option<&'static str> {
         WidgetKind::Window => Some("Window"),
         WidgetKind::HLayout => Some("HLayout"),
         WidgetKind::VLayout => Some("VLayout"),
+        WidgetKind::ScrollArea => Some("ScrollArea"),
+        WidgetKind::GridLayout => Some("GridLayout"),
+        WidgetKind::FlowLayout => Some("FlowLayout"),
         WidgetKind::Panel => Some("Panel"),
         WidgetKind::Collapsible => Some("Collapsible"),
         WidgetKind::Modal => Some("Modal"),
@@ -3854,6 +3863,10 @@ fn merge_text_style(base: &mut TextStyle, overlay: &TextStyle) {
 fn merge_widget_style(base: &mut crate::style::WidgetStyle, overlay: &crate::style::WidgetStyle) {
     base.text_area_rows = overlay.text_area_rows.or(base.text_area_rows);
     base.scatter_point_size = overlay.scatter_point_size.or(base.scatter_point_size);
+    base.scatter_point_style = overlay
+        .scatter_point_style
+        .clone()
+        .or_else(|| base.scatter_point_style.clone());
     base.table_row_height = overlay.table_row_height.or(base.table_row_height);
     base.table_header_height = overlay.table_header_height.or(base.table_header_height);
     base.table_column_width = overlay.table_column_width.or(base.table_column_width);
@@ -4446,6 +4459,11 @@ fn apply_widget_declaration(
         }
         DgWidgetDeclaration::ScatterPointSize(value) => {
             style.scatter_point_size = length_px(value).map(|size| size.max(0.0))
+        }
+        DgWidgetDeclaration::ScatterPointStyle(kw) => {
+            if matches!(kw.0.as_str(), "circle" | "square" | "gaussian") {
+                style.scatter_point_style = Some(kw.0.clone());
+            }
         }
         DgWidgetDeclaration::TableRowHeight(value) => style.table_row_height = length_px(value),
         DgWidgetDeclaration::TableHeaderHeight(value) => {
@@ -6889,6 +6907,9 @@ fn lower_widget(
         DgWidgetPropertyName::ScatterPointSize => {
             DgWidgetDeclaration::ScatterPointSize(parse_px_length_value(name, value, variables)?)
         }
+        DgWidgetPropertyName::ScatterPointStyle => DgWidgetDeclaration::ScatterPointStyle(
+            parse_scatter_point_style_value(name, value, variables)?,
+        ),
         DgWidgetPropertyName::TableRowHeight => {
             DgWidgetDeclaration::TableRowHeight(parse_px_length_value(name, value, variables)?)
         }
@@ -8781,6 +8802,23 @@ fn parse_px_length_value(
     require_logical_px(name, value, length)
 }
 
+fn parse_scatter_point_style_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<DgCssKeyword, DgStyleWarning> {
+    let kw = DgCssKeyword(resolve_keyword(value, variables));
+    if matches!(kw.0.as_str(), "circle" | "square" | "gaussian") {
+        Ok(kw)
+    } else {
+        Err(parse_warning(
+            name,
+            value,
+            "scatter-point-style (circle | square | gaussian)",
+        ))
+    }
+}
+
 fn parse_grid_template_value(
     name: &str,
     value: &str,
@@ -10475,6 +10513,10 @@ mod tests {
             (
                 "scatter-point-size",
                 DgStylePropertyName::Widget(DgWidgetPropertyName::ScatterPointSize),
+            ),
+            (
+                "scatter-point-style",
+                DgStylePropertyName::Widget(DgWidgetPropertyName::ScatterPointStyle),
             ),
             (
                 "table-row-height",

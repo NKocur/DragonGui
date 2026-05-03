@@ -7,15 +7,16 @@ use crate::document::{WidgetKind, WidgetNode};
 use crate::events::WidgetState;
 use crate::style::{
     badge_width_for_text, collapsible_header_height_for_style, standalone_badge_width_for_text,
-    tabs_header_height_for_style, DisplayStyle, FlexDirectionStyle, GridAutoFlowStyle,
-    GridLineStyle, GridPlacementStyle, GridTemplateAreas, GridTrackFitContentSize,
-    GridTrackMaxSize, GridTrackMinSize, GridTrackRepeatKind, GridTrackSize, LayoutLength,
-    LineHeight, OverflowStyle, PositionStyle, TextOverflow, BADGE_GAP_LP, CHECKBOX_BOX_LP,
-    CHECKBOX_LEFT_PAD_LP,
+    tabs_header_height_for_style, AlignItemsStyle, DisplayStyle, FlexDirectionStyle,
+    GridAutoFlowStyle, GridLineStyle, GridPlacementStyle, GridTemplateAreas,
+    GridTrackFitContentSize, GridTrackMaxSize, GridTrackMinSize, GridTrackRepeatKind,
+    GridTrackSize, LayoutLength, LineHeight, OverflowStyle, PositionStyle, TextOverflow,
+    BADGE_GAP_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP,
 };
 use crate::theme::Theme;
 
 const MENU_LABEL_WIDTH_SAFETY_LP: f32 = 6.0;
+const PANEL_BODY_VISUAL_INSET_LP: f32 = 1.0;
 
 // ---------------------------------------------------------------------------
 // Public result type
@@ -295,6 +296,61 @@ fn style_for(
             flex_shrink: 0.0,
             size: Size {
                 width: Dimension::Auto,
+                height: Dimension::Auto,
+            },
+            min_size: Size {
+                width: Dimension::Length(0.0),
+                height: Dimension::Length(0.0),
+            },
+            ..Default::default()
+        },
+
+        WidgetKind::ScrollArea => Style {
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            align_items: Some(AlignItems::Stretch),
+            flex_grow: 1.0,
+            flex_shrink: 1.0,
+            size: Size {
+                width: Dimension::Percent(1.0),
+                height: Dimension::Percent(1.0),
+            },
+            min_size: Size {
+                width: Dimension::Length(0.0),
+                height: Dimension::Length(0.0),
+            },
+            overflow: taffy::geometry::Point {
+                x: Overflow::Hidden,
+                y: Overflow::Scroll,
+            },
+            ..Default::default()
+        },
+
+        WidgetKind::GridLayout => Style {
+            display: Display::Grid,
+            flex_grow: 1.0,
+            flex_shrink: 0.0,
+            size: Size {
+                width: Dimension::Percent(1.0),
+                height: Dimension::Auto,
+            },
+            min_size: Size {
+                width: Dimension::Length(0.0),
+                height: Dimension::Length(0.0),
+            },
+            ..Default::default()
+        },
+
+        WidgetKind::FlowLayout => Style {
+            display: Display::Flex,
+            flex_direction: FlexDirection::Row,
+            flex_wrap: FlexWrap::Wrap,
+            align_items: Some(AlignItems::FlexStart),
+            justify_content: Some(JustifyContent::FlexStart),
+            flex_grow: 0.0,
+            flex_shrink: 1.0,
+            size: Size {
+                width: Dimension::Percent(1.0),
                 height: Dimension::Auto,
             },
             min_size: Size {
@@ -635,12 +691,121 @@ fn style_for(
     if !matches!(node.kind, WidgetKind::Tooltip | WidgetKind::Toast) {
         apply_node_style(&mut style, node, sf, parent_size);
     }
+    apply_grid_layout_default_tracks(&mut style, node, sf, parent_size);
+    apply_flow_layout_alignment(&mut style, node);
     if (node.kind != WidgetKind::Modal || layout_modal_children)
         && node.kind != WidgetKind::Collapsible
     {
         reserve_panel_title_space(&mut style, node, sf, theme);
     }
     style
+}
+
+fn apply_grid_layout_default_tracks(
+    style: &mut Style,
+    node: &WidgetNode,
+    sf: f32,
+    parent_size: Option<(f32, f32)>,
+) {
+    if node.kind != WidgetKind::GridLayout || node.style.layout.grid_template_columns.is_some() {
+        return;
+    }
+    let min_fn = node
+        .props
+        .grid_min_column_width
+        .map(|w| MinTrackSizingFunction::Fixed(LengthPercentage::Length((w * sf).max(1.0))));
+    style.grid_template_columns = match (node.props.grid_columns, min_fn) {
+        (Some(max_columns), Some(min)) => repeat_grid_track(
+            responsive_grid_column_count(
+                max_columns.max(1),
+                grid_min_track_width_px(&min),
+                grid_available_width_px(style, parent_size),
+                grid_column_gap_px(style),
+            ) as usize,
+            min,
+        ),
+        (Some(columns), None) => {
+            repeat_grid_track(columns.max(1) as usize, MinTrackSizingFunction::Auto)
+        }
+        (None, Some(min)) => vec![TrackSizingFunction::Repeat(
+            GridTrackRepetition::AutoFill,
+            vec![NonRepeatedTrackSizingFunction {
+                min,
+                max: MaxTrackSizingFunction::Fraction(1.0),
+            }],
+        )],
+        (None, None) => repeat_grid_track(2, MinTrackSizingFunction::Auto),
+    };
+}
+
+fn repeat_grid_track(count: usize, min: MinTrackSizingFunction) -> Vec<TrackSizingFunction> {
+    (0..count.max(1))
+        .map(|_| {
+            TrackSizingFunction::Single(NonRepeatedTrackSizingFunction {
+                min: min.clone(),
+                max: MaxTrackSizingFunction::Fraction(1.0),
+            })
+        })
+        .collect()
+}
+
+fn responsive_grid_column_count(
+    max_columns: u16,
+    min_track_width: f32,
+    available_width: Option<f32>,
+    column_gap: f32,
+) -> u16 {
+    let Some(width) = available_width.filter(|w| *w > 0.0) else {
+        return max_columns.max(1);
+    };
+    let min_track_width = min_track_width.max(1.0);
+    let column_gap = column_gap.max(0.0);
+    let fit = ((width + column_gap) / (min_track_width + column_gap))
+        .floor()
+        .max(1.0) as u16;
+    fit.min(max_columns.max(1)).max(1)
+}
+
+fn grid_min_track_width_px(min: &MinTrackSizingFunction) -> f32 {
+    match min {
+        MinTrackSizingFunction::Fixed(LengthPercentage::Length(value)) => *value,
+        _ => 1.0,
+    }
+}
+
+fn grid_available_width_px(style: &Style, parent_size: Option<(f32, f32)>) -> Option<f32> {
+    let parent_width = parent_size.map(|size| size.0);
+    let width = resolve_dimension_px(style.size.width, parent_width).or(parent_width)?;
+    Some((width - lp_value(style.padding.left) - lp_value(style.padding.right)).max(0.0))
+}
+
+fn resolve_dimension_px(value: Dimension, parent_axis: Option<f32>) -> Option<f32> {
+    match value {
+        Dimension::Length(value) => Some(value),
+        Dimension::Percent(value) => parent_axis.map(|parent| parent * value),
+        Dimension::Auto => parent_axis,
+    }
+}
+
+fn grid_column_gap_px(style: &Style) -> f32 {
+    lp_value(style.gap.width)
+}
+
+fn apply_flow_layout_alignment(style: &mut Style, node: &WidgetNode) {
+    if node.kind != WidgetKind::FlowLayout {
+        return;
+    }
+    style.justify_content = match node.props.flow_align.as_deref().unwrap_or("start") {
+        "center" => Some(JustifyContent::Center),
+        "end" => Some(JustifyContent::FlexEnd),
+        _ => Some(JustifyContent::FlexStart),
+    };
+    style.align_items = match node.props.flow_cross_align.as_deref().unwrap_or("start") {
+        "center" => Some(AlignItems::Center),
+        "end" => Some(AlignItems::FlexEnd),
+        "stretch" => Some(AlignItems::Stretch),
+        _ => Some(AlignItems::FlexStart),
+    };
 }
 
 fn collapsible_expanded(node: &WidgetNode, state: Option<&WidgetState>) -> bool {
@@ -658,8 +823,10 @@ fn reserve_panel_title_space(style: &mut Style, node: &WidgetNode, sf: f32, them
     {
         return;
     }
-    let title_inset =
-        (panel_title_line_height_lp(node, theme) + panel_title_body_gap_lp(node, theme)) * sf;
+    let title_inset = (panel_title_line_height_lp(node, theme)
+        + panel_title_body_gap_lp(node, theme)
+        + PANEL_BODY_VISUAL_INSET_LP)
+        * sf;
     style.padding.top = match style.padding.top {
         LengthPercentage::Length(top) => LengthPercentage::Length(top + title_inset),
         _ => LengthPercentage::Length(title_inset),
@@ -920,6 +1087,22 @@ fn apply_node_style(
             FlexDirectionStyle::RowReverse => FlexDirection::RowReverse,
             FlexDirectionStyle::ColumnReverse => FlexDirection::ColumnReverse,
         };
+    }
+    if let Some(align_items) = layout.align_items {
+        style.align_items = Some(match align_items {
+            AlignItemsStyle::Start => AlignItems::FlexStart,
+            AlignItemsStyle::Center => AlignItems::Center,
+            AlignItemsStyle::End => AlignItems::FlexEnd,
+            AlignItemsStyle::Stretch => AlignItems::Stretch,
+        });
+    }
+    if let Some(align_self) = layout.align_self {
+        style.align_self = Some(match align_self {
+            AlignItemsStyle::Start => AlignItems::FlexStart,
+            AlignItemsStyle::Center => AlignItems::Center,
+            AlignItemsStyle::End => AlignItems::FlexEnd,
+            AlignItemsStyle::Stretch => AlignItems::Stretch,
+        });
     }
     if let Some(width) = layout_dimension(
         layout.width_value,
@@ -1656,17 +1839,35 @@ fn child_clip_for_overflow(node: &WidgetNode, parent_clip: Rect, node_clip: Rect
     match node_overflow_y(node).or_else(|| node_overflow_x(node)) {
         Some(OverflowStyle::Hidden | OverflowStyle::Scroll | OverflowStyle::Auto) => node_clip,
         Some(OverflowStyle::Visible) => parent_clip,
-        None if node.kind == WidgetKind::HLayout || node.kind == WidgetKind::VLayout => parent_clip,
+        None if matches!(
+            node.kind,
+            WidgetKind::HLayout
+                | WidgetKind::VLayout
+                | WidgetKind::ScrollArea
+                | WidgetKind::GridLayout
+                | WidgetKind::FlowLayout
+        ) =>
+        {
+            parent_clip
+        }
         None => node_clip,
     }
 }
 
 fn node_overflow_x(node: &WidgetNode) -> Option<OverflowStyle> {
-    node.style.layout.overflow_x.or(node.style.layout.overflow)
+    node.style
+        .layout
+        .overflow_x
+        .or(node.style.layout.overflow)
+        .or_else(|| (node.kind == WidgetKind::ScrollArea).then_some(OverflowStyle::Hidden))
 }
 
 fn node_overflow_y(node: &WidgetNode) -> Option<OverflowStyle> {
-    node.style.layout.overflow_y.or(node.style.layout.overflow)
+    node.style
+        .layout
+        .overflow_y
+        .or(node.style.layout.overflow)
+        .or_else(|| (node.kind == WidgetKind::ScrollArea).then_some(OverflowStyle::Auto))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2179,7 +2380,36 @@ fn layout_pages(
         .or_else(|| pages.first().copied());
     if let Some(active_page) = active_page {
         result.rects.insert(active_page.id.clone(), r);
-        layout_region(&active_page.children, r, result, sf, theme, state);
+        layout_page_region(active_page, r, result, sf, theme, state);
+    }
+}
+
+fn layout_page_region(
+    page: &WidgetNode,
+    rect: Rect,
+    result: &mut LayoutResult,
+    sf: f32,
+    theme: &Theme,
+    state: Option<&WidgetState>,
+) {
+    if rect.w <= 0.0 || rect.h <= 0.0 || page.children.is_empty() {
+        return;
+    }
+    let mut sub = compute_layout(page, rect.w, rect.h, sf, theme, state);
+    undo_scroll_offsets(page, &mut sub);
+    for (id, child_rect) in sub.rects {
+        if id == page.id {
+            continue;
+        }
+        result.rects.insert(
+            id,
+            Rect {
+                x: child_rect.x + rect.x,
+                y: child_rect.y + rect.y,
+                w: child_rect.w,
+                h: child_rect.h,
+            },
+        );
     }
 }
 
@@ -2913,6 +3143,66 @@ mod tests {
     }
 
     #[test]
+    fn titled_panel_offsets_first_child_from_content_clip_for_control_antialiasing() {
+        let mut button = node(
+            "button",
+            WidgetKind::Button,
+            NodeProps {
+                text: Some("Run".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        button.style.layout.width = Some(96.0);
+
+        let mut controls = node(
+            "controls",
+            WidgetKind::FlowLayout,
+            NodeProps::default(),
+            vec![button],
+        );
+        controls.style.layout.gap = Some(10.0);
+
+        let mut panel = node(
+            "panel",
+            WidgetKind::Panel,
+            NodeProps {
+                text: Some("Controls".to_string()),
+                ..NodeProps::default()
+            },
+            vec![controls],
+        );
+        panel.style.layout.padding = Some(14.0);
+        panel.style.layout.gap = Some(10.0);
+        panel.style.layout.width = Some(260.0);
+
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![panel],
+        );
+        let theme = Theme::dark();
+        let layout = compute_layout(&root, 420.0, 240.0, 1.0, &theme, None);
+        let button = layout.rects.get("button").unwrap();
+        let button_paint_clip = layout.paint_clip_rect("button").unwrap();
+        let panel_node = root.children.first().unwrap();
+        let content_clip_top = layout.rects.get("panel").unwrap().y
+            + panel_title_top_padding_lp(panel_node, &theme)
+            + panel_title_line_height_lp(panel_node, &theme)
+            + panel_title_body_gap_lp(panel_node, &theme);
+
+        assert!(
+            (button.y - content_clip_top) >= PANEL_BODY_VISUAL_INSET_LP - 0.1,
+            "first child should have a small paint inset below titled content clip: button={button:?} content_clip_top={content_clip_top}"
+        );
+        assert!(
+            button.y > button_paint_clip.y,
+            "button should not be flush against its inherited paint clip: button={button:?} paint_clip={button_paint_clip:?}"
+        );
+    }
+
+    #[test]
     fn titled_panel_reservation_uses_title_font_size_and_gap() {
         let mut panel = node(
             "panel",
@@ -3599,6 +3889,122 @@ mod tests {
         assert_eq!(main.x, 180.0);
         assert_eq!(main.w, 420.0);
         assert_eq!(main.h, 80.0);
+    }
+
+    #[test]
+    fn grid_layout_uses_max_columns_when_min_tracks_fit() {
+        let props = NodeProps {
+            grid_columns: Some(2),
+            grid_min_column_width: Some(240.0),
+            ..NodeProps::default()
+        };
+        let mut grid = node(
+            "grid",
+            WidgetKind::GridLayout,
+            props,
+            vec![
+                node("first", WidgetKind::Panel, NodeProps::default(), vec![]),
+                node("second", WidgetKind::Panel, NodeProps::default(), vec![]),
+            ],
+        );
+        grid.style.layout.gap = Some(20.0);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![grid],
+        );
+
+        let layout = compute_layout(&root, 520.0, 220.0, 1.0, &Theme::dark(), None);
+        let first = layout.rects.get("first").unwrap();
+        let second = layout.rects.get("second").unwrap();
+        let grid = layout.rects.get("grid").unwrap();
+
+        assert!(
+            second.x > first.x,
+            "second panel should be in the next column"
+        );
+        assert_eq!(second.y, first.y);
+        assert!(first.w <= grid.w);
+        assert!(second.w <= grid.w);
+    }
+
+    #[test]
+    fn grid_layout_collapses_to_one_column_when_min_tracks_do_not_fit() {
+        let props = NodeProps {
+            grid_columns: Some(2),
+            grid_min_column_width: Some(240.0),
+            ..NodeProps::default()
+        };
+        let mut grid = node(
+            "grid",
+            WidgetKind::GridLayout,
+            props,
+            vec![
+                node("first", WidgetKind::Panel, NodeProps::default(), vec![]),
+                node("second", WidgetKind::Panel, NodeProps::default(), vec![]),
+            ],
+        );
+        grid.style.layout.gap = Some(20.0);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![grid],
+        );
+
+        let layout = compute_layout(&root, 470.0, 260.0, 1.0, &Theme::dark(), None);
+        let first = layout.rects.get("first").unwrap();
+        let second = layout.rects.get("second").unwrap();
+        let grid = layout.rects.get("grid").unwrap();
+
+        assert_eq!(second.x, first.x);
+        assert!(
+            second.y > first.y,
+            "second panel should wrap below the first"
+        );
+        assert!(first.w <= grid.w);
+        assert!(second.w <= grid.w);
+    }
+
+    #[test]
+    fn flow_layout_wraps_fixed_width_children_and_keeps_row_gap() {
+        let mut first = node("first", WidgetKind::Panel, NodeProps::default(), vec![]);
+        first.style.layout.width_value = Some(LayoutLength::LogicalPx(120.0));
+        first.style.layout.height_value = Some(LayoutLength::LogicalPx(30.0));
+        let mut second = node("second", WidgetKind::Panel, NodeProps::default(), vec![]);
+        second.style.layout.width_value = Some(LayoutLength::LogicalPx(120.0));
+        second.style.layout.height_value = Some(LayoutLength::LogicalPx(30.0));
+        let mut third = node("third", WidgetKind::Panel, NodeProps::default(), vec![]);
+        third.style.layout.width_value = Some(LayoutLength::LogicalPx(120.0));
+        third.style.layout.height_value = Some(LayoutLength::LogicalPx(30.0));
+        let mut flow = node(
+            "flow",
+            WidgetKind::FlowLayout,
+            NodeProps::default(),
+            vec![first, second, third],
+        );
+        flow.style.layout.gap = Some(10.0);
+        flow.style.layout.row_gap = Some(12.0);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![flow],
+        );
+
+        let layout = compute_layout(&root, 260.0, 180.0, 1.0, &Theme::dark(), None);
+        let first = layout.rects.get("first").unwrap();
+        let second = layout.rects.get("second").unwrap();
+        let third = layout.rects.get("third").unwrap();
+
+        assert!(second.x > first.x);
+        assert_eq!(second.y, first.y);
+        assert_eq!(third.x, first.x);
+        assert!(
+            third.y >= first.y + first.h + 12.0,
+            "third child should wrap with at least row_gap spacing"
+        );
     }
 
     #[test]
@@ -5332,6 +5738,70 @@ mod tests {
         assert!(
             tags_before.y >= title_bottom,
             "tag row should start below fixed title: tags={tags_before:?} title_bottom={title_bottom}"
+        );
+    }
+
+    #[test]
+    fn active_page_style_bounds_scroll_area_child() {
+        let mut buttons = Vec::new();
+        for index in 0..10 {
+            buttons.push(node(
+                &format!("button-{index}"),
+                WidgetKind::Button,
+                NodeProps {
+                    text: Some(format!("Action {index}")),
+                    ..NodeProps::default()
+                },
+                vec![],
+            ));
+        }
+        let mut scroller = node(
+            "scroller",
+            WidgetKind::ScrollArea,
+            NodeProps::default(),
+            buttons,
+        );
+        scroller.style.layout.gap = Some(8.0);
+
+        let mut page = node(
+            "active-page",
+            WidgetKind::Page,
+            NodeProps {
+                route_value: Some("active".to_string()),
+                ..NodeProps::default()
+            },
+            vec![scroller],
+        );
+        page.style.layout.padding = Some(20.0);
+
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "pages",
+                WidgetKind::Pages,
+                NodeProps {
+                    route_value: Some("active".to_string()),
+                    ..NodeProps::default()
+                },
+                vec![page],
+            )],
+        );
+        let state = WidgetState::default();
+        let layout = compute_layout(&root, 320.0, 180.0, 1.0, &Theme::dark(), Some(&state));
+        let page_rect = layout.rects.get("active-page").expect("page rect");
+        let scroller_rect = layout.rects.get("scroller").expect("scroll rect");
+        assert!(
+            scroller_rect.x >= page_rect.x + 19.5 && scroller_rect.y >= page_rect.y + 19.5,
+            "active Page padding should be honored for children: page={page_rect:?} scroller={scroller_rect:?}"
+        );
+        let last_button_rect = layout.rects.get("button-9").expect("last button rect");
+        let max_scroll_y = layout.scroll_max_y.get("scroller").copied().unwrap_or(0.0);
+        assert!(
+            max_scroll_y > 0.0,
+            "ScrollArea should be a bounded vertical scroll container inside the active page: scroller={scroller_rect:?} last={last_button_rect:?} max_scroll_y={max_scroll_y} scroll_maps={:?}",
+            layout.scroll_max_y
         );
     }
 

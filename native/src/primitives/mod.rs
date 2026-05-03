@@ -548,6 +548,12 @@ fn local_clip_for_translated_rect(
         return Some(default_local_clip(rect));
     };
     let aa_pad = 1.0;
+    let clip = Rect {
+        x: clip.x - aa_pad,
+        y: clip.y - aa_pad,
+        w: clip.w + aa_pad * 2.0,
+        h: clip.h + aa_pad * 2.0,
+    };
     let visible = Rect {
         x: rect[0] + translate[0] - aa_pad,
         y: rect[1] + translate[1] - aa_pad,
@@ -4175,6 +4181,9 @@ fn emit_rects_inner(
             WidgetKind::Window
             | WidgetKind::HLayout
             | WidgetKind::VLayout
+            | WidgetKind::ScrollArea
+            | WidgetKind::GridLayout
+            | WidgetKind::FlowLayout
             | WidgetKind::Pages
             | WidgetKind::Page
             | WidgetKind::Spacer
@@ -5033,14 +5042,14 @@ mod tests {
             .find(|inst| inst.color == [0.4, 0.5, 0.6, 1.0])
             .expect("panel fill should be emitted");
         assert_eq!(fill.rect, [12.0, 22.0, 116.0, 76.0]);
-        assert_eq!(fill.clip, [-1.0, 20.0, 117.0, 77.0]);
+        assert_eq!(fill.clip, [-1.0, 19.0, 117.0, 77.0]);
 
         let border = out
             .iter()
             .find(|inst| inst.color == [0.1, 0.2, 0.3, 1.0])
             .expect("panel border should be emitted");
         assert_eq!(border.rect, [10.0, 20.0, 120.0, 80.0]);
-        assert_eq!(border.clip, [0.0, 22.0, 120.0, 80.0]);
+        assert_eq!(border.clip, [-1.0, 21.0, 121.0, 81.0]);
     }
 
     #[test]
@@ -5100,6 +5109,62 @@ mod tests {
     }
 
     #[test]
+    fn child_flush_with_paint_clip_keeps_left_antialias_pad() {
+        let mut button = node("run", WidgetKind::Button);
+        button.style.visual.background = Some(ColorRef::Rgba([0.4, 0.5, 0.6, 1.0]));
+        button.style.visual.border_color = Some(ColorRef::Rgba([0.1, 0.2, 0.3, 1.0]));
+        button.style.visual.border_width = Some(1.0);
+        button.style.visual.border_radius = Some(7.0);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "run".to_string(),
+            Rect {
+                x: 30.0,
+                y: 40.0,
+                w: 110.0,
+                h: 34.0,
+            },
+        );
+        layout.clips.insert(
+            "run".to_string(),
+            Rect {
+                x: 30.0,
+                y: 40.0,
+                w: 110.0,
+                h: 34.0,
+            },
+        );
+        layout.paint_clips.insert(
+            "run".to_string(),
+            Rect {
+                x: 30.0,
+                y: 40.0,
+                w: 110.0,
+                h: 34.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &button,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let border = out
+            .iter()
+            .find(|inst| inst.color == [0.1, 0.2, 0.3, 1.0])
+            .expect("button border should be emitted");
+        assert_eq!(border.clip[0], -1.0);
+        assert_eq!(border.clip[2], 111.0);
+    }
+
+    #[test]
     fn relative_positioned_widget_clips_against_painted_offset() {
         let mut badge = node("badge", WidgetKind::Badge);
         badge.style.layout.position = Some(PositionStyle::Relative);
@@ -5153,7 +5218,7 @@ mod tests {
             .find(|inst| inst.color == [0.1, 0.2, 0.3, 1.0])
             .expect("badge border should be emitted");
         assert_eq!(border.transform[1], 18.0);
-        assert_eq!(border.clip[1], 2.0);
+        assert_eq!(border.clip[1], 1.0);
     }
 
     #[test]
@@ -5257,7 +5322,7 @@ mod tests {
 
         let shadow = out.first().expect("shadow instance");
         assert_eq!(shadow.rect, [5.0, 87.0, 114.0, 54.0]);
-        assert_eq!(shadow.clip, [-1.0, -1.0, 115.0, 23.0]);
+        assert_eq!(shadow.clip, [-1.0, -1.0, 115.0, 24.0]);
     }
 
     #[test]

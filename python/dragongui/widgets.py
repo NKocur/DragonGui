@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Callable, Iterable, Mapping, Sequence
+import zlib
 from contextlib import AbstractContextManager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from itertools import count
 import math
 import numbers
 import re
+import threading
 import time
 from typing import Any, ClassVar, Self
 
@@ -18,8 +21,45 @@ from .dataframe import (
     summarize_frame,
 )
 
+_INCLUDE_STARTUP_RESOURCE_PAYLOADS: ContextVar[bool] = ContextVar(
+    "dragongui_include_startup_resource_payloads",
+    default=True,
+)
 
-def _pack_xyz_bytes(frame: Any, x_col: str, y_col: str, z_col: str) -> bytes | None:
+
+class _StartupResourcePayloadScope(AbstractContextManager[None]):
+    def __init__(self, include: bool) -> None:
+        self._include = bool(include)
+        self._token: object | None = None
+
+    def __enter__(self) -> None:
+        self._token = _INCLUDE_STARTUP_RESOURCE_PAYLOADS.set(self._include)
+        return None
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        if self._token is not None:
+            _INCLUDE_STARTUP_RESOURCE_PAYLOADS.reset(self._token)  # type: ignore[arg-type]
+            self._token = None
+
+
+def _startup_resource_payload_scope(include: bool) -> AbstractContextManager[None]:
+    return _StartupResourcePayloadScope(include)
+
+
+def _include_startup_resource_payloads() -> bool:
+    return bool(_INCLUDE_STARTUP_RESOURCE_PAYLOADS.get())
+
+
+def _get_frame_col(frame: Any, col: str) -> Any:
+    """Extract a column from a frame, trying subscript access before attribute access."""
+    try:
+        return frame[col]
+    except (KeyError, TypeError, IndexError):
+        pass
+    return getattr(frame, col)
+
+
+def _pack_xyz_bytes(frame: Any, x_col: str, y_col: str, z_col: str) -> object | None:
     """Serialize xyz columns as packed float32 little-endian xyz triples.
 
     Returns raw bytes on success, or None if the frame has no accessible array
@@ -29,10 +69,16 @@ def _pack_xyz_bytes(frame: Any, x_col: str, y_col: str, z_col: str) -> bytes | N
     try:
         import numpy as np
 
-        xs = np.asarray(getattr(frame, x_col), dtype=np.float32)
-        ys = np.asarray(getattr(frame, y_col), dtype=np.float32)
-        zs = np.asarray(getattr(frame, z_col), dtype=np.float32)
-        return np.column_stack([xs, ys, zs]).astype(np.float32, copy=False).tobytes()
+        xs = np.asarray(_get_frame_col(frame, x_col), dtype=np.float32)
+        ys = np.asarray(_get_frame_col(frame, y_col), dtype=np.float32)
+        zs = np.asarray(_get_frame_col(frame, z_col), dtype=np.float32)
+        if len(xs) == 0:
+            return b""
+        out = np.empty((len(xs), 3), dtype="<f4")
+        out[:, 0] = xs
+        out[:, 1] = ys
+        out[:, 2] = zs
+        return out.view(np.uint8).reshape(-1)
     except (ImportError, AttributeError, TypeError, ValueError):
         return None
 
@@ -43,6 +89,226 @@ def _try_pack_xyz(frame: Any, x_col: str, y_col: str, z_col: str) -> str | None:
     if buf is None:
         return None
     return base64.b64encode(buf).decode("ascii")
+
+
+# Qualitative palette for categorical colors (tab10-style, [0,1] RGB).
+_CATEGORICAL_PALETTE: list[tuple[float, float, float]] = [
+    (0.122, 0.467, 0.706),  # blue
+    (1.000, 0.498, 0.055),  # orange
+    (0.173, 0.627, 0.173),  # green
+    (0.839, 0.153, 0.157),  # red
+    (0.580, 0.404, 0.741),  # purple
+    (0.549, 0.337, 0.294),  # brown
+    (0.890, 0.467, 0.761),  # pink
+    (0.498, 0.498, 0.498),  # gray
+    (0.737, 0.741, 0.133),  # olive
+    (0.090, 0.745, 0.812),  # teal
+]
+_CATEGORICAL_MAX_UNIQUE = 20
+
+
+def _is_categorical(arr: Any) -> bool:
+    """Return True if the array looks like a categorical (string or low-cardinality int)."""
+    import numpy as np
+    a = np.asarray(arr)
+    if a.dtype.kind in ("U", "S", "O"):
+        return True
+    if a.dtype.kind in ("i", "u") and len(np.unique(a)) <= _CATEGORICAL_MAX_UNIQUE:
+        return True
+    return False
+
+
+def _categorical_to_rgb(arr: Any) -> Any:
+    """Assign palette colors by stable category order; returns (N, 3) float32 RGB."""
+    import numpy as np
+    a = np.asarray(arr)
+    unique_vals = list(dict.fromkeys(a.tolist()))  # stable insertion order
+    cat_map = {v: i for i, v in enumerate(unique_vals)}
+    n_colors = len(_CATEGORICAL_PALETTE)
+    indices = np.array([cat_map[v] % n_colors for v in a.tolist()], dtype=np.intp)
+    palette = np.array(_CATEGORICAL_PALETTE, dtype=np.float32)
+    return palette[indices]
+
+
+def _categorical_legend_entries(arr: Any) -> "list[tuple[str, float, float, float]]":
+    """Return (label, r, g, b) legend entries for each unique category value, in insertion order."""
+    a: Any
+    try:
+        import numpy as _np
+        a = _np.asarray(arr)
+    except Exception:
+        return []
+    unique_vals = list(dict.fromkeys(a.tolist()))
+    n_colors = len(_CATEGORICAL_PALETTE)
+    return [(str(v), float(_CATEGORICAL_PALETTE[i % n_colors][0]),
+             float(_CATEGORICAL_PALETTE[i % n_colors][1]),
+             float(_CATEGORICAL_PALETTE[i % n_colors][2])) for i, v in enumerate(unique_vals)]
+
+
+def _resolve_nan_color(nan_color: Any) -> Any:
+    """Normalise nan_color to a (3,) float32 RGB array in [0, 1], or None."""
+    if nan_color is None:
+        return None
+    import numpy as np
+    arr = np.asarray(nan_color, dtype=np.float32).ravel()[:3]
+    if len(arr) < 3:
+        return None
+    return arr / 255.0 if arr.max() > 1.0 else arr
+
+
+def _scalars_to_rgb(
+    scalars: Any,
+    colormap: str,
+    clim: tuple[float, float] | None,
+    log_scale: bool,
+    nan_color: Any = None,
+) -> Any:
+    """Map a 1-D numeric array through a colormap; returns (N, 3) float32 RGB."""
+    import numpy as np
+    from .colormap import sample_colormap_numpy
+
+    raw = np.asarray(scalars, dtype=np.float32)
+    # NaN mask is based on the original raw values (matching DragonSci): only non-finite
+    # values get nan_color; finite non-positive values are clamped, not treated as NaN.
+    nan_mask = ~np.isfinite(raw)
+
+    tiny = np.finfo(np.float32).tiny
+
+    # Range is always computed from raw values (matching DragonSci public API).
+    if clim is not None:
+        raw_lo, raw_hi = float(clim[0]), float(clim[1])
+    else:
+        finite_raw = raw[~nan_mask]
+        raw_lo = float(finite_raw.min()) if len(finite_raw) > 0 else 0.0
+        raw_hi = float(finite_raw.max()) if len(finite_raw) > 0 else 1.0
+
+    if log_scale:
+        # Normalize in log-space; clip non-positive finite values to tiny (not NaN).
+        lv = np.log10(np.maximum(raw, tiny))
+        lv[nan_mask] = np.nan
+        lo = float(np.log10(max(raw_lo, tiny)))
+        hi = float(np.log10(max(raw_hi, tiny)))
+        lspan = hi - lo
+        if abs(lspan) < 1e-7:
+            t = np.full(len(raw), 0.5, dtype=np.float32)
+        else:
+            t = np.clip((lv - lo) / lspan, 0.0, 1.0).astype(np.float32)
+    else:
+        span = raw_hi - raw_lo
+        if span == 0.0:
+            t = np.zeros(len(raw), dtype=np.float32)  # DragonSci parity: collapsed linear → t=0
+        else:
+            t = np.clip((raw - raw_lo) / span, 0.0, 1.0).astype(np.float32)
+    t[nan_mask] = 0.0
+
+    rgb = sample_colormap_numpy(colormap, t)
+
+    nc = _resolve_nan_color(nan_color)
+    if nc is not None and nan_mask.any():
+        rgb[nan_mask] = nc
+
+    return rgb
+
+
+def _normalize_sizes(arr: Any, size_range: tuple[float, float]) -> Any:
+    """Linearly map arr values into [size_range[0], size_range[1]]."""
+    import numpy as np
+    a = np.asarray(arr, dtype=np.float32)
+    finite = a[np.isfinite(a)]
+    lo_val = float(finite.min()) if len(finite) > 0 else 0.0
+    hi_val = float(finite.max()) if len(finite) > 0 else 1.0
+    lo_px, hi_px = float(size_range[0]), float(size_range[1])
+    span = hi_val - lo_val
+    if span == 0.0:
+        return np.full(len(a), (lo_px + hi_px) * 0.5, dtype=np.float32)
+    t = np.clip((a - lo_val) / span, 0.0, 1.0)
+    return (lo_px + t * (hi_px - lo_px)).astype(np.float32)
+
+
+def _pack_point_instances(
+    frame: Any,
+    x_col: str,
+    y_col: str,
+    z_col: str,
+    *,
+    color: str | Any | None = None,
+    colors: Any | None = None,
+    scalars: str | Any | None = None,
+    point_size: float = 4.0,
+    point_sizes: str | Any | None = None,
+    size_range: tuple[float, float] | None = None,
+    opacity: float = 1.0,
+    colormap: str = "viridis",
+    clim: tuple[float, float] | None = None,
+    log_scale: bool = False,
+    nan_color: Any = None,
+) -> bytes | None:
+    """Build a point_instance_v1 packet: N × [x, y, z, size, r, g, b, alpha] as little-endian f32.
+
+    Color priority: explicit colors/color array > categorical/scalar color column > z-derived colormap.
+    Returns None when NumPy is unavailable or columns are inaccessible.
+    """
+    try:
+        import numpy as np
+
+        xs = np.asarray(_get_frame_col(frame, x_col), dtype=np.float32)
+        ys = np.asarray(_get_frame_col(frame, y_col), dtype=np.float32)
+        zs = np.asarray(_get_frame_col(frame, z_col), dtype=np.float32)
+        n = len(xs)
+
+        # --- colors ---
+        rgb: Any = None
+        if colors is not None:
+            arr = np.asarray(colors, dtype=np.float32)
+            if arr.ndim == 2 and arr.shape == (n, 3):
+                rgb = arr if arr.max() <= 1.0 else arr / 255.0
+            elif arr.ndim == 2 and arr.shape == (n, 4):
+                arr = arr if arr.max() <= 1.0 else arr / 255.0
+                rgb = arr[:, :3]
+        elif color is not None:
+            if isinstance(color, str):
+                col_data = _get_frame_col(frame, color)
+                if _is_categorical(col_data):
+                    rgb = _categorical_to_rgb(col_data)
+                else:
+                    rgb = _scalars_to_rgb(col_data, colormap, clim, log_scale, nan_color)
+            else:
+                arr = np.asarray(color, dtype=np.float32)
+                if arr.ndim == 2 and arr.shape[0] == n and arr.shape[1] in (3, 4):
+                    arr = arr if arr.max() <= 1.0 else arr / 255.0
+                    rgb = arr[:, :3]
+        elif scalars is not None:
+            col_data = _get_frame_col(frame, scalars) if isinstance(scalars, str) else scalars
+            rgb = _scalars_to_rgb(col_data, colormap, clim, log_scale, nan_color)
+
+        if rgb is None or len(rgb) != n:
+            rgb = _scalars_to_rgb(zs, colormap, clim, log_scale, nan_color)
+
+        # --- sizes: normalize through size_range if given, then clamp ---
+        if point_sizes is not None:
+            raw_sizes = _get_frame_col(frame, point_sizes) if isinstance(point_sizes, str) else point_sizes
+            raw = np.asarray(raw_sizes, dtype=np.float32)
+            if len(raw) != n:
+                raise ValueError(f"point_sizes length {len(raw)} != point count {n}")
+            if size_range is not None:
+                sizes = _normalize_sizes(raw, size_range)
+            else:
+                sizes = np.where(np.isfinite(raw), np.clip(raw, 0.0, None), float(point_size))
+        else:
+            sizes = np.full(n, float(point_size), dtype=np.float32)
+
+        alpha_val = float(max(0.0, min(1.0, opacity)))
+
+        out = np.empty((n, 8), dtype="<f4")
+        out[:, 0] = xs
+        out[:, 1] = ys
+        out[:, 2] = zs
+        out[:, 3] = sizes
+        out[:, 4:7] = rgb
+        out[:, 7] = alpha_val
+        return out.tobytes()
+    except (ImportError, AttributeError, TypeError, ValueError, KeyError):
+        return None
 
 
 _SCATTER_COLORMAPS = {
@@ -235,12 +501,149 @@ class ScatterPick:
     x: float
     y: float
     z: float
+    actor: int = 0
+
+
+@dataclass(frozen=True)
+class ScatterHit:
+    """One record in a lasso/rectangle selection result.
+
+    Mirrors DragonSci's per-point hit record: which actor the point belongs to
+    and its positional index within that actor's buffer.
+    """
+    actor: int
+    index: int
+
+
+@dataclass(frozen=True)
+class ScatterPayload:
+    """Immutable packed Scatter3D payload safe to prepare off the UI thread."""
+
+    data: bytes
+    payload_format: str
+    colormap: str
+    point_count: int
+    pack_ms: float = 0.0
+    axis_labels: tuple[str, str, str] = ("x", "y", "z")
+    hover_meta: str | None = None
+    frame_summary: Any | None = None
+
+
+@dataclass
+class ScatterStreamMetrics:
+    produced: int = 0
+    submitted: int = 0
+    ui_callbacks: int = 0
+    errors: int = 0
+    last_error: str | None = None
+
+
+class ScatterFrameStream:
+    """Background latest-frame sender for prepared Scatter3D payloads."""
+
+    def __init__(
+        self,
+        scatter: "Scatter3D",
+        frames: Iterable[ScatterPayload],
+        *,
+        interval_ms: float | Callable[[], float] = 16.0,
+        loop: bool = True,
+        on_frame: Callable[[ScatterPayload, int, ScatterStreamMetrics], None] | None = None,
+        ui_interval_ms: float = 250.0,
+    ) -> None:
+        self.scatter = scatter
+        self.frames = tuple(frames)
+        if not self.frames:
+            raise ValueError("ScatterFrameStream requires at least one prepared frame")
+        self.interval_ms = interval_ms
+        self.loop = bool(loop)
+        self.on_frame = on_frame
+        self.ui_interval_ms = max(0.0, float(ui_interval_ms))
+        self.metrics = ScatterStreamMetrics()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._metrics_lock = threading.Lock()
+
+    @property
+    def running(self) -> bool:
+        thread = self._thread
+        return thread is not None and thread.is_alive()
+
+    def start(self) -> None:
+        if self.running:
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f"DragonGUI-ScatterFrameStream-{self.scatter.id}",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self, timeout: float | None = None) -> None:
+        self._stop.set()
+        thread = self._thread
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(timeout=timeout)
+
+    def _current_interval_ms(self) -> float:
+        value = self.interval_ms() if callable(self.interval_ms) else self.interval_ms
+        try:
+            return max(0.0, float(value))
+        except (TypeError, ValueError):
+            return 16.0
+
+    def _run(self) -> None:
+        index = 0
+        last_ui_ms = 0.0
+        while not self._stop.is_set():
+            if index >= len(self.frames) and not self.loop:
+                break
+            frame_index = index % len(self.frames)
+            payload = self.frames[frame_index]
+            with self._metrics_lock:
+                self.metrics.produced += 1
+            try:
+                self.scatter.enqueue_prepared_points(
+                    payload,
+                    coalesce=True,
+                    include_metadata=index == 0,
+                )
+                with self._metrics_lock:
+                    self.metrics.submitted += 1
+                now_ms = time.perf_counter() * 1000.0
+                if (
+                    self.on_frame is not None
+                    and now_ms - last_ui_ms >= self.ui_interval_ms
+                ):
+                    last_ui_ms = now_ms
+                    handle = self.scatter._live()
+                    if handle is not None:
+                        with self._metrics_lock:
+                            self.metrics.ui_callbacks += 1
+                            snapshot = ScatterStreamMetrics(**self.metrics.__dict__)
+                        handle.app.call_soon_threadsafe(
+                            lambda p=payload, i=index, m=snapshot: self.on_frame(p, i, m)
+                        )
+                index += 1
+            except RuntimeError:
+                break
+            except Exception as exc:  # pragma: no cover - defensive stream diagnostics
+                with self._metrics_lock:
+                    self.metrics.errors += 1
+                    self.metrics.last_error = str(exc)
+                break
+
+            interval_ms = self._current_interval_ms()
+            if self._stop.wait(interval_ms / 1000.0):
+                break
 
 
 ScatterPickCallback = Callable[[ScatterPick], None]
 
 _ids = count(1)
 _AUTO_PARENT = object()
+_UNSET = object()
 
 
 def _route_value(label: str) -> str:
@@ -490,6 +893,177 @@ class HLayout(Container):
 
 class VLayout(Container):
     kind = "v_layout"
+
+
+class ScrollArea(Container):
+    """Bounded scroll viewport for content that may exceed available space.
+
+    ``axis`` controls which overflow direction scrolls: ``"y"`` (default),
+    ``"x"``, ``"both"``, or ``"none"``.  The widget behaves like a vertical
+    layout by default and is intended for cases where the parent provides a
+    bounded rectangle, such as a page, panel body, or grid cell.
+    """
+
+    kind = "scroll_area"
+    _AXES = {"x", "y", "both", "none"}
+
+    def __init__(
+        self,
+        *,
+        axis: str = "y",
+        gap: "int | None" = None,
+        width: "int | float | None" = None,
+        height: "int | float | None" = None,
+        id: "str | None" = None,
+        key: "str | None" = None,
+        class_: "str | None" = None,
+        style: "Mapping[str, object] | None" = None,
+        tooltip: "str | None" = None,
+        parent: "Container | None | object" = _AUTO_PARENT,
+    ) -> None:
+        axis_value = axis.strip().lower()
+        if axis_value not in self._AXES:
+            raise ValueError("ScrollArea axis must be 'x', 'y', 'both', or 'none'")
+        if gap is not None and int(gap) < 0:
+            raise ValueError("ScrollArea gap must be non-negative")
+        if width is not None and float(width) < 0:
+            raise ValueError("ScrollArea width cannot be negative")
+        if height is not None and float(height) < 0:
+            raise ValueError("ScrollArea height cannot be negative")
+
+        extra: "dict[str, object]" = {
+            "display": "flex",
+            "flex_direction": "column",
+            "flex_grow": 1,
+            "flex_shrink": 1,
+            "min_height": 0,
+        }
+        extra["overflow_x"] = "auto" if axis_value in {"x", "both"} else "hidden"
+        extra["overflow_y"] = "auto" if axis_value in {"y", "both"} else "hidden"
+        if gap is not None:
+            extra["gap"] = int(gap)
+        if width is not None:
+            extra["width"] = float(width)
+        if height is not None:
+            extra["height"] = float(height)
+        merged: "Mapping[str, object]" = {**extra, **(style or {})}
+        super().__init__(id=id, key=key, class_=class_, style=merged, tooltip=tooltip, parent=parent)
+
+
+class GridLayout(Container):
+    """Responsive CSS-grid container.
+
+    ``columns`` may be a positive integer (maximum column count) or the string
+    ``"auto"`` (auto-fill based on ``min_column_width``).  When both an integer
+    column count and ``min_column_width`` are given, the layout uses up to that
+    many columns and collapses to fewer columns when there is not enough space.
+
+    ``gap`` sets both row and column gap; ``row_gap`` overrides the row gap
+    independently.  Both are in logical pixels.  All arguments may be
+    overridden by CSS class rules applied to the widget.
+    """
+
+    kind = "grid_layout"
+
+    def __init__(
+        self,
+        *,
+        columns: "int | str" = 2,
+        min_column_width: "int | None" = 320,
+        gap: "int | None" = None,
+        row_gap: "int | None" = None,
+        id: "str | None" = None,
+        key: "str | None" = None,
+        class_: "str | None" = None,
+        style: "Mapping[str, object] | None" = None,
+        tooltip: "str | None" = None,
+        parent: "Container | None | object" = _AUTO_PARENT,
+    ) -> None:
+        if isinstance(columns, str):
+            if columns != "auto":
+                raise ValueError("GridLayout columns must be a positive integer or 'auto'")
+        elif isinstance(columns, int):
+            if columns < 1:
+                raise ValueError("GridLayout columns must be a positive integer or 'auto'")
+        else:
+            raise ValueError("GridLayout columns must be a positive integer or 'auto'")
+        if min_column_width is not None and int(min_column_width) <= 0:
+            raise ValueError("GridLayout min_column_width must be positive")
+        if gap is not None and int(gap) < 0:
+            raise ValueError("GridLayout gap must be non-negative")
+        if row_gap is not None and int(row_gap) < 0:
+            raise ValueError("GridLayout row_gap must be non-negative")
+        self._grid_columns = columns
+        self._grid_min_column_width = min_column_width
+        extra: "dict[str, object]" = {}
+        if gap is not None:
+            extra["gap"] = int(gap)
+        if row_gap is not None:
+            extra["row_gap"] = int(row_gap)
+        merged: "Mapping[str, object] | None" = ({**extra, **(style or {})} if extra else style)
+        super().__init__(id=id, key=key, class_=class_, style=merged, tooltip=tooltip, parent=parent)
+
+    def props(self) -> "dict[str, Any]":
+        p: "dict[str, Any]" = {}
+        if self._grid_columns != "auto" and isinstance(self._grid_columns, int):
+            p["columns"] = self._grid_columns
+        if self._grid_min_column_width is not None:
+            p["min_column_width"] = int(self._grid_min_column_width)
+        return p
+
+
+class FlowLayout(Container):
+    """Wrapping flex-row container.
+
+    Children keep their intrinsic widths and wrap onto new rows when they
+    exceed the available width.  ``gap`` sets both row and column gap;
+    ``row_gap`` overrides the row gap independently.  Both are in logical
+    pixels and may be overridden by CSS class rules. ``align`` controls
+    horizontal distribution across each row and accepts ``"start"``,
+    ``"center"``, or ``"end"``.
+    """
+
+    kind = "flow_layout"
+
+    def __init__(
+        self,
+        *,
+        gap: "int | None" = None,
+        row_gap: "int | None" = None,
+        align: "str" = "start",
+        cross_align: "str" = "start",
+        id: "str | None" = None,
+        key: "str | None" = None,
+        class_: "str | None" = None,
+        style: "Mapping[str, object] | None" = None,
+        tooltip: "str | None" = None,
+        parent: "Container | None | object" = _AUTO_PARENT,
+    ) -> None:
+        if align not in {"start", "center", "end"}:
+            raise ValueError("FlowLayout align must be 'start', 'center', or 'end'")
+        if cross_align not in {"start", "center", "end", "stretch"}:
+            raise ValueError("FlowLayout cross_align must be 'start', 'center', 'end', or 'stretch'")
+        if gap is not None and int(gap) < 0:
+            raise ValueError("FlowLayout gap must be non-negative")
+        if row_gap is not None and int(row_gap) < 0:
+            raise ValueError("FlowLayout row_gap must be non-negative")
+        self._flow_align = align
+        self._flow_cross_align = cross_align
+        extra: "dict[str, object]" = {}
+        if gap is not None:
+            extra["gap"] = int(gap)
+        if row_gap is not None:
+            extra["row_gap"] = int(row_gap)
+        merged: "Mapping[str, object] | None" = ({**extra, **(style or {})} if extra else style)
+        super().__init__(id=id, key=key, class_=class_, style=merged, tooltip=tooltip, parent=parent)
+
+    def props(self) -> "dict[str, Any]":
+        p: "dict[str, Any]" = {}
+        if self._flow_align != "start":
+            p["align"] = self._flow_align
+        if self._flow_cross_align != "start":
+            p["cross_align"] = self._flow_cross_align
+        return p
 
 
 class Separator(Widget):
@@ -1791,6 +2365,29 @@ class Image(Widget):
         }
 
 
+def _scatter_needs_v1(
+    color: Any,
+    colors: Any,
+    scalars: Any,
+    point_sizes: Any,
+    opacity: float,
+    nan_color: Any = None,
+    clim: Any = None,
+    log_scale: bool = False,
+) -> bool:
+    """Return True when the options require v1 point-instance packing."""
+    return (
+        color is not None
+        or colors is not None
+        or scalars is not None
+        or point_sizes is not None
+        or opacity != 1.0
+        or nan_color is not None
+        or clim is not None
+        or log_scale
+    )
+
+
 class Scatter3D(Widget):
     kind = "scatter_3d"
 
@@ -1802,7 +2399,38 @@ class Scatter3D(Widget):
         y: str,
         z: str,
         colormap: str = "viridis",
+        color: str | Any | None = None,
+        colors: Any | None = None,
+        scalars: str | Any | None = None,
+        point_size: float = 4.0,
+        point_sizes: str | Any | None = None,
+        opacity: float = 1.0,
+        clim: tuple[float, float] | None = None,
+        log_scale: bool = False,
+        nan_color: tuple[float, float, float] | None = None,
+        size_range: tuple[float, float] | None = None,
         on_pick: ScatterPickCallback | None = None,
+        grid: bool = False,
+        major_planes: bool = False,
+        minor_planes: bool = False,
+        grid_sticky: bool = True,
+        grid_all_edges: bool = False,
+        axis_x: str = "X",
+        axis_y: str = "Y",
+        axis_z: str = "Z",
+        background: tuple[float, float, float] | None = None,
+        legend: bool = False,
+        legend_position: str = "top-right",
+        legend_entries: list[tuple[str, float, float, float]] | None = None,
+        scalar_bar: bool = False,
+        scalar_bar_vmin: "float | None" = None,
+        scalar_bar_vmax: "float | None" = None,
+        scalar_bar_log_scale: bool = False,
+        scalar_bar_colormap: str = "viridis",
+        scalar_bar_title: str | None = None,
+        orientation_axes: bool = False,
+        hover: "str | list[str] | None" = None,
+        on_hover: "ScatterPickCallback | None" = None,
         id: str | None = None,
         key: str | None = None,
         class_: str | None = None,
@@ -1815,62 +2443,2214 @@ class Scatter3D(Widget):
         self.y = y
         self.z = z
         self.colormap = _scatter_colormap(colormap)
+        self.color = color
+        self.colors = colors
+        self.scalars = scalars
+        self.point_size = float(point_size)
+        self.point_sizes = point_sizes
+        self.opacity = float(max(0.0, min(1.0, opacity)))
+        self.clim = clim
+        self.log_scale = bool(log_scale)
+        self.nan_color = nan_color
+        self.size_range = size_range
         self.frame_summary = summarize_frame(frame)
         self.on_pick = on_pick
+        self.on_hover = on_hover
         self.pick: ScatterPick | None = None
+        self.picked_point: tuple[float, float, float] | None = None
+        self.picked_index: int | None = None
+        self.picked_actor: int | None = None
+        self.hover_point: tuple[float, float, float] | None = None
+        self.hover_index: int | None = None
+        self.hover_actor: int | None = None
+        self.hover_text: str | None = None
+        # selected: flat ordered ScatterHit list across all actors.
+        # selected_indices: flat ordered positional indices across all actors.
+        # selected_index_values: flat list of dataframe index labels when any actor has non-trivial
+        # index; otherwise None. Matches DragonSci's contract.
+        self.selected: list[ScatterHit] = []
+        self.selected_indices: list[int] = []
+        self.selected_index_values: list | None = None
+        self._cached_payload: bytes | None = None
+        self._cached_payload_b64: str | None = None
+        self._parallel_projection: bool = False
+        self._grid_visible: bool = bool(grid)
+        self._major_planes: bool = bool(major_planes)
+        self._minor_planes: bool = bool(minor_planes)
+        self._grid_sticky: bool = bool(grid_sticky)
+        self._grid_all_edges: bool = bool(grid_all_edges)
+        self._tick_override: tuple[int | None, int | None, int | None] = (None, None, None)
+        self._axis_labels: tuple[str, str, str] = (str(axis_x), str(axis_y), str(axis_z))
+        self._axis_visible: tuple[bool, bool, bool] = (True, True, True)
+        self._background: tuple[float, float, float] | None = background
+        self._legend_visible: bool = bool(legend)
+        self._legend_position: str = str(legend_position)
+        self._legend_entries: list[tuple[str, float, float, float]] = list(legend_entries or [])
+        self._scalar_bar_visible: bool = bool(scalar_bar)
+        self._scalar_bar_vmin: float = float(scalar_bar_vmin) if scalar_bar_vmin is not None else 0.0
+        self._scalar_bar_vmax: float = float(scalar_bar_vmax) if scalar_bar_vmax is not None else 1.0
+        self._scalar_bar_log_scale: bool = bool(scalar_bar_log_scale)
+        self._scalar_bar_colormap: str = str(scalar_bar_colormap)
+        self._scalar_bar_title: str | None = scalar_bar_title
+        self._orientation_axes_visible: bool = bool(orientation_axes)
+        # Phase 5 — LOD and picking mode (not startup props; always set live)
+        self._lod_enabled: bool = False
+        self._lod_threshold: int = 200_000
+        self._lod_factor: int = 8
+        self._picking_mode: str = "point"
+        self._on_select: Any | None = None
+        self._camera_links: set["Scatter3D"] = set()
+        self._propagating: bool = False
+        self._hover_tooltip: bool = True
+        self._hover: str | list[str] | None = hover
+        self._primary_row_labels: list | None = self._extract_row_labels(frame)
+        self._actor_row_labels: dict[int, list | None] = {}
+        # Stores per-handle ellipsoid params for partial updates (center, covariance).
+        self._ellipsoid_params: dict[int, dict] = {}
+        # Pre-live pending scene operations replayed in _queue_startup_resources.
+        self._pending_scene_ops: list[tuple[str, tuple]] = []
+        self._primary_cleared: bool = False
+        # Auto-derived color metadata recomputed in _refresh_cached_payload_b64.
+        self._auto_legend_entries: "list[tuple[str, float, float, float]] | None" = None
+        self._auto_legend_title: "str | None" = None
+        self._auto_scalar_vmin: float | None = None
+        self._auto_scalar_vmax: float | None = None
+        self._auto_scalar_colormap: "str | None" = None
+        self._auto_scalar_log_scale: "bool | None" = None
+        # Per-field explicit-override flags; each set only when user passes that arg.
+        self._scalar_range_explicit: bool = False
+        self._scalar_log_explicit: bool = False
+        self._scalar_colormap_explicit: bool = False
+        self._scalar_title_explicit: bool = False
+        # Determine format upfront so props() and live setters are consistent.
+        self.data_format = (
+            "point_instance_v1"
+            if _scatter_needs_v1(color, colors, scalars, point_sizes, opacity, nan_color, clim, log_scale)
+            else "xyz_f32_v0"
+        )
+        self._refresh_cached_payload_b64()
+        if scalar_bar_vmin is not None or scalar_bar_vmax is not None:
+            self._scalar_range_explicit = True
+        if scalar_bar_log_scale:
+            self._scalar_log_explicit = True
+        if scalar_bar_colormap != "viridis":
+            self._scalar_colormap_explicit = True
+        if scalar_bar_title is not None:
+            self._scalar_title_explicit = True
         super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
 
-    def set_points(self, frame: Any, *, x: str, y: str | None = None, z: str | None = None) -> None:
+    def _build_payload(self) -> bytes | None:
+        if self._primary_cleared:
+            return b""
+        if self.data_format == "point_instance_v1":
+            return _pack_point_instances(
+                self.frame, self.x, self.y, self.z,
+                color=self.color,
+                colors=self.colors,
+                scalars=self.scalars,
+                point_size=self.point_size,
+                point_sizes=self.point_sizes,
+                size_range=self.size_range,
+                opacity=self.opacity,
+                colormap=self.colormap,
+                clim=self.clim,
+                log_scale=self.log_scale,
+                nan_color=self.nan_color,
+            )
+        return _pack_xyz_bytes(self.frame, self.x, self.y, self.z)
+
+    def _refresh_cached_payload_b64(self) -> None:
+        buf = self._build_payload()
+        self._cached_payload = buf
+        self._cached_payload_b64 = base64.b64encode(buf).decode("ascii") if buf is not None else None
+        # Full-payload CRC used by _scatter_props_equal to detect any data change.
+        self._payload_token: int = (
+            zlib.crc32(buf) if buf is not None and len(buf) > 0 else 0
+        )
+        self._compute_auto_color_meta()
+
+    def _compute_auto_color_meta(self) -> None:
+        """Derive legend entries and scalar range from the current color/scalars settings."""
+        self._auto_legend_entries = None
+        self._auto_legend_title = None
+        self._auto_scalar_vmin = None
+        self._auto_scalar_vmax = None
+        self._auto_scalar_colormap = None
+        self._auto_scalar_log_scale = None
+        try:
+            import numpy as np
+
+            def _scalar_range(arr: Any) -> "tuple[float, float] | None":
+                # Scalar bar vmin/vmax are raw domain (matching DragonSci public API).
+                # Log-space conversion happens only inside _scalars_to_rgb for color normalization.
+                if self.clim is not None:
+                    return float(self.clim[0]), float(self.clim[1])
+                a = np.asarray(arr, dtype=np.float32)
+                finite = a[np.isfinite(a)]
+                if len(finite) == 0:
+                    return None
+                return float(finite.min()), float(finite.max())
+
+            if isinstance(self.color, str):
+                col_data = _get_frame_col(self.frame, self.color)
+                if col_data is not None:
+                    if _is_categorical(col_data):
+                        self._auto_legend_entries = _categorical_legend_entries(col_data)
+                        self._auto_legend_title = self.color
+                    else:
+                        rng = _scalar_range(col_data)
+                        if rng is not None:
+                            self._auto_scalar_vmin, self._auto_scalar_vmax = rng
+                            self._auto_scalar_colormap = self.colormap
+                            self._auto_scalar_log_scale = self.log_scale
+                            self._auto_legend_title = self.color
+            elif self.scalars is not None:
+                col_data = (
+                    _get_frame_col(self.frame, self.scalars)
+                    if isinstance(self.scalars, str)
+                    else self.scalars
+                )
+                rng = _scalar_range(col_data)
+                if rng is not None:
+                    self._auto_scalar_vmin, self._auto_scalar_vmax = rng
+                    self._auto_scalar_colormap = self.colormap
+                    self._auto_scalar_log_scale = self.log_scale
+                    if isinstance(self.scalars, str):
+                        self._auto_legend_title = self.scalars
+            elif self.colors is None:
+                # Default z-colormap path. When clim or log_scale is set, v1 packing is
+                # forced and _scalars_to_rgb applies them; use _scalar_range to match.
+                # When neither is set, native xyz_f32_v0 colors linearly from finite z range.
+                z_data = _get_frame_col(self.frame, self.z) if isinstance(self.z, str) else self.z
+                if z_data is not None:
+                    rng = _scalar_range(z_data)
+                    if rng is not None:
+                        self._auto_scalar_vmin, self._auto_scalar_vmax = rng
+                        self._auto_scalar_colormap = self.colormap
+                        self._auto_scalar_log_scale = self.log_scale
+                        self._auto_legend_title = self.z if isinstance(self.z, str) else None
+        except Exception:
+            pass
+
+    def _effective_legend_entries(self) -> "list[tuple[str, float, float, float]]":
+        """Return user-set entries if any, else auto-derived categorical entries."""
+        if self._legend_entries:
+            return list(self._legend_entries)
+        if self._auto_legend_entries:
+            return list(self._auto_legend_entries)
+        return []
+
+    def _effective_scalar_range(self) -> "tuple[float, float]":
+        """Return scalar bar vmin/vmax: auto-derived unless user has explicitly set them."""
+        if (
+            not self._scalar_range_explicit
+            and self._auto_scalar_vmin is not None
+            and self._auto_scalar_vmax is not None
+        ):
+            return (self._auto_scalar_vmin, self._auto_scalar_vmax)
+        return (self._scalar_bar_vmin, self._scalar_bar_vmax)
+
+    def _effective_scalar_bar_state(self) -> "tuple[float, float, bool, str, str | None]":
+        """Return (vmin, vmax, log_scale, colormap, title) for the scalar bar.
+
+        Each field prefers the auto-derived value unless the user has explicitly overridden
+        that specific field via show_scalar_bar() or the constructor.
+        """
+        vmin, vmax = self._effective_scalar_range()
+        log_scale = (
+            self._scalar_bar_log_scale
+            if self._scalar_log_explicit or self._auto_scalar_log_scale is None
+            else self._auto_scalar_log_scale
+        )
+        colormap = (
+            self._scalar_bar_colormap
+            if self._scalar_colormap_explicit or self._auto_scalar_colormap is None
+            else self._auto_scalar_colormap
+        )
+        title = (
+            self._scalar_bar_title
+            if self._scalar_title_explicit
+            else (self._scalar_bar_title or self._auto_legend_title)
+        )
+        return vmin, vmax, log_scale, colormap, title
+
+    @classmethod
+    def colormap_names(cls) -> list[str]:
+        return sorted(_SCATTER_COLORMAPS)
+
+    @staticmethod
+    def _immutable_payload_bytes(payload: object) -> bytes:
+        if isinstance(payload, bytes):
+            return payload
+        return memoryview(payload).tobytes()
+
+    @staticmethod
+    def _payload_point_count(payload: bytes, payload_format: str) -> int:
+        bytes_per_point = 32 if payload_format == "point_instance_v1" else 12
+        return len(payload) // bytes_per_point if bytes_per_point else 0
+
+    @classmethod
+    def prepare_points(
+        cls,
+        frame: Any,
+        *,
+        x: str,
+        y: str,
+        z: str,
+        colormap: str = "viridis",
+        color: str | Any | None = None,
+        colors: Any | None = None,
+        scalars: str | Any | None = None,
+        point_size: float = 4.0,
+        point_sizes: str | Any | None = None,
+        opacity: float = 1.0,
+        clim: tuple[float, float] | None = None,
+        log_scale: bool = False,
+        nan_color: tuple[float, float, float] | None = None,
+        size_range: tuple[float, float] | None = None,
+        hover: str | list[str] | None = None,
+    ) -> ScatterPayload:
+        """Pack Scatter3D points without mutating a live widget.
+
+        This method is intended for background workers and high-rate streams.
+        The returned payload can be delivered with ``set_prepared_points`` or
+        ``enqueue_prepared_points`` without repacking the frame.
+        """
+        cmap = _scatter_colormap(colormap)
+        payload_format = (
+            "point_instance_v1"
+            if _scatter_needs_v1(color, colors, scalars, point_sizes, opacity, nan_color, clim, log_scale)
+            else "xyz_f32_v0"
+        )
+        t0 = time.perf_counter()
+        if payload_format == "point_instance_v1":
+            raw = _pack_point_instances(
+                frame,
+                x,
+                y,
+                z,
+                color=color,
+                colors=colors,
+                scalars=scalars,
+                point_size=point_size,
+                point_sizes=point_sizes,
+                size_range=size_range,
+                opacity=opacity,
+                colormap=cmap,
+                clim=clim,
+                log_scale=log_scale,
+                nan_color=nan_color,
+            )
+        else:
+            raw = _pack_xyz_bytes(frame, x, y, z)
+        pack_ms = (time.perf_counter() - t0) * 1000.0
+        if raw is None:
+            raise RuntimeError(
+                "Scatter3D.prepare_points requires NumPy and addressable numeric x/y/z columns"
+            )
+        data = cls._immutable_payload_bytes(raw)
+        return ScatterPayload(
+            data=data,
+            payload_format=payload_format,
+            colormap=cmap,
+            point_count=cls._payload_point_count(data, payload_format),
+            pack_ms=pack_ms,
+            axis_labels=(str(x), str(y), str(z)),
+            hover_meta=cls._extract_hover_meta(frame, hover),
+            frame_summary=summarize_frame(frame),
+        )
+
+    def set_prepared_points(
+        self,
+        payload: ScatterPayload,
+        *,
+        coalesce: bool = True,
+        update_metadata: bool = True,
+    ) -> None:
+        """Apply a prepared payload on the UI thread without repacking data."""
+        if update_metadata:
+            self.colormap = payload.colormap
+            self.data_format = payload.payload_format
+            self.x, self.y, self.z = payload.axis_labels
+            if payload.frame_summary is not None:
+                self.frame_summary = payload.frame_summary
+            self._cached_payload = payload.data
+            self._cached_payload_b64 = None
+            self._payload_token = zlib.crc32(payload.data) if payload.data else 0
+        self.enqueue_prepared_points(payload, coalesce=coalesce)
+
+    def enqueue_prepared_points(
+        self,
+        payload: ScatterPayload,
+        *,
+        coalesce: bool = True,
+        include_metadata: bool = True,
+    ) -> None:
+        """Thread-safe native enqueue for an already-packed primary scatter frame."""
+        handle = self._live()
+        if handle is None:
+            return
+        handle.enqueue_set_scatter_points_packed(
+            payload.data,
+            pack_ms=payload.pack_ms,
+            enqueue_epoch_ms=time.time() * 1000.0,
+            colormap=payload.colormap,
+            payload_format=payload.payload_format,
+            coalesce=coalesce,
+        )
+        if include_metadata:
+            handle.enqueue_set_scatter_tooltip_axis_labels(*payload.axis_labels)
+            if payload.hover_meta is not None:
+                handle.enqueue_set_scatter_primary_hover_meta(payload.hover_meta)
+
+    def stream_prepared_frames(
+        self,
+        frames: Iterable[ScatterPayload],
+        *,
+        interval_ms: float | Callable[[], float] = 16.0,
+        loop: bool = True,
+        on_frame: Callable[[ScatterPayload, int, ScatterStreamMetrics], None] | None = None,
+        ui_interval_ms: float = 250.0,
+    ) -> ScatterFrameStream:
+        """Create a latest-frame stream for already-prepared scatter payloads."""
+        return ScatterFrameStream(
+            self,
+            frames,
+            interval_ms=interval_ms,
+            loop=loop,
+            on_frame=on_frame,
+            ui_interval_ms=ui_interval_ms,
+        )
+
+    def set_points(
+        self,
+        frame: Any,
+        *,
+        x: str,
+        y: str | None = None,
+        z: str | None = None,
+        color: str | Any | None = _UNSET,
+        colors: Any | None = _UNSET,
+        scalars: str | Any | None = _UNSET,
+        point_sizes: str | Any | None = _UNSET,
+        point_size: float | None = None,
+        opacity: float | None = None,
+        clim: tuple[float, float] | None = _UNSET,
+        log_scale: bool | None = None,
+        nan_color: tuple[float, float, float] | None = _UNSET,
+        size_range: tuple[float, float] | None = _UNSET,
+        hover: "str | list[str] | None" = _UNSET,
+    ) -> None:
         self.frame = frame
         self.x = x
         self.y = y if y is not None else self.y
         self.z = z if z is not None else self.z
+        if color is not _UNSET:
+            self.color = color
+        if colors is not _UNSET:
+            self.colors = colors
+        if scalars is not _UNSET:
+            self.scalars = scalars
+        if point_sizes is not _UNSET:
+            self.point_sizes = point_sizes
+        if point_size is not None:
+            self.point_size = float(point_size)
+        if opacity is not None:
+            self.opacity = float(max(0.0, min(1.0, opacity)))
+        if clim is not _UNSET:
+            self.clim = clim
+        if log_scale is not None:
+            self.log_scale = bool(log_scale)
+        if nan_color is not _UNSET:
+            self.nan_color = nan_color
+        if size_range is not _UNSET:
+            self.size_range = size_range
+        if hover is not _UNSET:
+            self._hover = hover
+        self._primary_row_labels = self._extract_row_labels(frame)
+        self._primary_cleared = False
+        self.data_format = (
+            "point_instance_v1"
+            if _scatter_needs_v1(self.color, self.colors, self.scalars, self.point_sizes, self.opacity, self.nan_color, self.clim, self.log_scale)
+            else "xyz_f32_v0"
+        )
         self.frame_summary = summarize_frame(frame)
+        # Clear point-layer metadata (DragonSci parity: set_points replaces the point scene).
+        self._actor_row_labels.clear()
+        self._pending_scene_ops = [
+            (op, args) for op, args in self._pending_scene_ops
+            if op not in ("add_points", "add_stream", "set_actor_visibility")
+        ]
+        if hasattr(self, "_next_actor_id"):
+            self._next_actor_id = 1
+        self._cached_payload = None
+        self._cached_payload_b64 = None
         if (handle := self._live()) is not None:
+            # Clear extra actors before replacing primary data (DragonSci parity).
+            handle.enqueue_clear_scatter_actors()
             t0 = time.perf_counter()
-            payload = _pack_xyz_bytes(self.frame, self.x, self.y, self.z)
+            payload = self._build_payload()
             pack_ms = (time.perf_counter() - t0) * 1000.0
             if payload is None:
                 raise RuntimeError(
                     "live Scatter3D.set_points requires NumPy and addressable numeric x/y/z columns"
                 )
+            self._cached_payload = payload
+            self._compute_auto_color_meta()
             handle.enqueue_set_scatter_points_packed(
                 payload,
                 pack_ms=pack_ms,
                 enqueue_epoch_ms=time.time() * 1000.0,
                 colormap=self.colormap,
+                payload_format=self.data_format,
             )
+            handle.enqueue_set_scatter_tooltip_axis_labels(self.x, self.y, self.z)
+            meta = self._extract_hover_meta(self.frame, self._hover)
+            if meta is not None:
+                handle.enqueue_set_scatter_primary_hover_meta(meta)
+            if self._legend_visible:
+                handle.enqueue_set_scatter_legend(
+                    True, self._legend_position,
+                    list(self._effective_legend_entries()),
+                    self._auto_legend_title,
+                )
+            if self._scalar_bar_visible:
+                eff_vmin, eff_vmax, eff_log, eff_cm, eff_title = self._effective_scalar_bar_state()
+                handle.enqueue_set_scatter_scalar_bar(
+                    True, eff_vmin, eff_vmax, eff_log, eff_cm, eff_title
+                )
 
     def set_colormap(self, colormap: str) -> None:
         self.colormap = _scatter_colormap(colormap)
+        # v1 packets bake colors, so a colormap change requires a repack.
+        if self.data_format == "point_instance_v1":
+            self._cached_payload = None
+            self._cached_payload_b64 = None
         if (handle := self._live()) is not None:
-            t0 = time.perf_counter()
-            payload = _pack_xyz_bytes(self.frame, self.x, self.y, self.z)
-            pack_ms = (time.perf_counter() - t0) * 1000.0
+            if self._cached_payload is not None:
+                payload = self._cached_payload
+                pack_ms = 0.0
+            else:
+                t0 = time.perf_counter()
+                payload = self._build_payload()
+                pack_ms = (time.perf_counter() - t0) * 1000.0
             if payload is None:
                 raise RuntimeError(
                     "live Scatter3D.set_colormap requires NumPy and addressable numeric x/y/z columns"
                 )
+            self._cached_payload = payload
+            self._payload_token = zlib.crc32(payload)
+            self._compute_auto_color_meta()
             handle.enqueue_set_scatter_points_packed(
                 payload,
                 pack_ms=pack_ms,
                 enqueue_epoch_ms=time.time() * 1000.0,
                 colormap=self.colormap,
+                payload_format=self.data_format,
             )
+            # Native clears primary_hover_meta on SetScatterPointsPacked; re-send it.
+            meta = self._extract_hover_meta(self.frame, self._hover)
+            if meta is not None:
+                handle.enqueue_set_scatter_primary_hover_meta(meta)
+            if self._scalar_bar_visible:
+                eff_vmin, eff_vmax, eff_log, eff_cm, eff_title = self._effective_scalar_bar_state()
+                handle.enqueue_set_scatter_scalar_bar(
+                    True, eff_vmin, eff_vmax, eff_log, eff_cm, eff_title
+                )
 
     def props(self) -> dict[str, Any]:
-        return {
+        include_payload = _include_startup_resource_payloads()
+        if include_payload:
+            if self._cached_payload_b64 is None:
+                self._refresh_cached_payload_b64()
+            data_b64 = self._cached_payload_b64
+        else:
+            if self._cached_payload is None:
+                payload = self._build_payload()
+                self._cached_payload = payload
+                self._payload_token = (
+                    zlib.crc32(payload) if payload is not None and len(payload) > 0 else 0
+                )
+                self._compute_auto_color_meta()
+            data_b64 = None
+        p: dict[str, Any] = {
             "frame": self.frame_summary.to_dict(),
             "x": self.x,
             "y": self.y,
             "z": self.z,
             "colormap": self.colormap,
+            "data_format": self.data_format,
             "events": ["change"] if self.on_pick is not None else [],
-            # Packed float32 xyz triples (little-endian), base64-encoded.
-            # None when frame has no addressable array attributes (mock frames,
-            # dev-fallback mode, or numpy unavailable).
-            "data_b64": _try_pack_xyz(self.frame, self.x, self.y, self.z),
+            # Compact identity for diff — never sent to native directly.
+            "_payload_token": self._payload_token,
+            "grid_visible": self._grid_visible,
+            "major_planes": self._major_planes,
+            "minor_planes": self._minor_planes,
+            "grid_sticky": self._grid_sticky,
+            "grid_all_edges": self._grid_all_edges,
+            "axis_x": self._axis_labels[0],
+            "axis_y": self._axis_labels[1],
+            "axis_z": self._axis_labels[2],
+            "axis_vis_x": self._axis_visible[0],
+            "axis_vis_y": self._axis_visible[1],
+            "axis_vis_z": self._axis_visible[2],
         }
+        if include_payload:
+            p["data_b64"] = data_b64 or ""
+        tx, ty, tz = self._tick_override
+        if tx is not None:
+            p["tick_x"] = tx
+        if ty is not None:
+            p["tick_y"] = ty
+        if tz is not None:
+            p["tick_z"] = tz
+        if self._background is not None:
+            r, g, b = self._background
+            p["background"] = [float(r), float(g), float(b), 1.0]
+        p["legend_visible"] = self._legend_visible
+        p["legend_position"] = self._legend_position
+        p["legend_entries"] = [
+            {"label": lbl, "color": [r, g, b]}
+            for lbl, r, g, b in self._effective_legend_entries()
+        ]
+        if self._auto_legend_title is not None:
+            p["legend_title"] = self._auto_legend_title
+        eff_vmin, eff_vmax, eff_log, eff_cm, eff_title = self._effective_scalar_bar_state()
+        p["scalar_bar_visible"] = self._scalar_bar_visible
+        p["scalar_bar_vmin"] = eff_vmin
+        p["scalar_bar_vmax"] = eff_vmax
+        p["scalar_bar_log_scale"] = eff_log
+        p["scalar_bar_colormap"] = eff_cm
+        if eff_title is not None:
+            p["scalar_bar_title"] = eff_title
+        p["orientation_axes_visible"] = self._orientation_axes_visible
+        return p
+
+    def show_grid(self, visible: bool = True) -> None:
+        """Show or hide the axis grid and tick marks."""
+        self._grid_visible = bool(visible)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_scatter_grid_visible(self._grid_visible)
+
+    def show_grid_planes(self, major: bool = True, minor: bool = False) -> None:
+        """Enable or disable filled grid planes behind the scatter.
+
+        major: draw the three major (back-facing) grid planes.
+        minor: draw minor subdivision lines on each plane.
+        """
+        self._major_planes = bool(major)
+        self._minor_planes = bool(minor)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_scatter_grid_planes(self._major_planes, self._minor_planes)
+
+    def set_grid_options(
+        self,
+        *,
+        sticky: bool = True,
+        all_edges: bool = False,
+    ) -> None:
+        """Set grid stability options.
+
+        ``sticky`` keeps automatically generated nice bounds and tick steps
+        stable while new data remains inside the current grid range. ``all_edges``
+        draws an unlabeled boundary box so rotations keep a consistent frame of
+        reference even when the active tick/label face changes.
+        """
+        self._grid_sticky = bool(sticky)
+        self._grid_all_edges = bool(all_edges)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_scatter_grid_options(self._grid_sticky, self._grid_all_edges)
+
+    def set_ticks(
+        self,
+        x: int | None = None,
+        y: int | None = None,
+        z: int | None = None,
+    ) -> None:
+        """Override the number of tick marks on each axis (None = auto)."""
+        self._tick_override = (x, y, z)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_scatter_ticks(x, y, z)
+
+    def set_axes(self, x: str, y: str, z: str) -> None:
+        """Set the axis label text shown at the ends of each axis."""
+        self._axis_labels = (str(x), str(y), str(z))
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_scatter_axes(str(x), str(y), str(z))
+
+    def set_axis_visibility(
+        self,
+        x: bool = True,
+        y: bool = True,
+        z: bool = True,
+    ) -> None:
+        """Show or hide individual axes and their tick labels."""
+        self._axis_visible = (bool(x), bool(y), bool(z))
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_scatter_axis_visibility(bool(x), bool(y), bool(z))
+
+    def set_background(self, color, g: float | None = None, b: float | None = None) -> None:
+        """Set the scatter background fill color.
+
+        Accepts either three separate floats ``(r, g, b)``, a 3-tuple/list, or a
+        ``"#rrggbb"`` hex string. Values are in the 0.0–1.0 range.
+        """
+        if g is not None and b is not None:
+            r_f, g_f, b_f = float(color), float(g), float(b)
+        elif isinstance(color, str):
+            h = color.lstrip("#")
+            if len(h) != 6:
+                raise ValueError(f"hex color must be '#rrggbb', got {color!r}")
+            r_f = int(h[0:2], 16) / 255.0
+            g_f = int(h[2:4], 16) / 255.0
+            b_f = int(h[4:6], 16) / 255.0
+        else:
+            r_f, g_f, b_f = float(color[0]), float(color[1]), float(color[2])
+        self._background = (r_f, g_f, b_f)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_scatter_background(r_f, g_f, b_f)
+
+    _LEGEND_POSITIONS = frozenset({"top-right", "top-left", "bottom-right", "bottom-left"})
+
+    @property
+    def legend_position(self) -> str:
+        return self._legend_position
+
+    @legend_position.setter
+    def legend_position(self, value: str) -> None:
+        if value not in self._LEGEND_POSITIONS:
+            raise ValueError(f"legend_position must be one of {sorted(self._LEGEND_POSITIONS)}, got {value!r}")
+        self._legend_position = value
+        if self._legend_visible and (handle := self._live()) is not None:
+            handle.enqueue_set_scatter_legend(
+                True, value, list(self._effective_legend_entries()), self._auto_legend_title
+            )
+
+    def show_legend(
+        self,
+        visible: bool = True,
+        position: "str | None" = None,
+        entries: list[tuple[str, float, float, float]] | None = None,
+    ) -> None:
+        """Show or hide the color legend overlay.
+
+        entries: list of (label, r, g, b) tuples (0.0–1.0 per channel).
+        position: 'top-right', 'top-left', 'bottom-right', 'bottom-left'. When None,
+                  the current legend_position is kept.
+        """
+        self._legend_visible = bool(visible)
+        if entries is not None:
+            self._legend_entries = list(entries)
+        if position is not None:
+            if position not in self._LEGEND_POSITIONS:
+                raise ValueError(
+                    f"legend_position must be one of {sorted(self._LEGEND_POSITIONS)}, got {position!r}"
+                )
+            self._legend_position = position
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_scatter_legend(
+                bool(visible), self._legend_position,
+                list(self._effective_legend_entries()),
+                self._auto_legend_title,
+            )
+
+    def show_scalar_bar(
+        self,
+        visible: bool = True,
+        vmin: float | None = None,
+        vmax: float | None = None,
+        log_scale: bool | None = None,
+        colormap: str | None = None,
+        title: str | None = None,
+    ) -> None:
+        """Show or hide the scalar color bar overlay.
+
+        When vmin/vmax are omitted the bar defaults to the range of the current
+        color/scalars data.  Passing explicit values fixes the range and disables
+        automatic scaling on subsequent data updates.
+        """
+        self._scalar_bar_visible = bool(visible)
+        if vmin is not None:
+            self._scalar_bar_vmin = float(vmin)
+            self._scalar_range_explicit = True
+        if vmax is not None:
+            self._scalar_bar_vmax = float(vmax)
+            self._scalar_range_explicit = True
+        if log_scale is not None:
+            self._scalar_bar_log_scale = bool(log_scale)
+            self._scalar_log_explicit = True
+        if colormap is not None:
+            self._scalar_bar_colormap = str(colormap)
+            self._scalar_colormap_explicit = True
+        if title is not None:
+            self._scalar_bar_title = title
+            self._scalar_title_explicit = True
+        eff_vmin, eff_vmax, eff_log, eff_cm, eff_title = self._effective_scalar_bar_state()
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_scatter_scalar_bar(
+                bool(visible), eff_vmin, eff_vmax, eff_log, eff_cm, eff_title
+            )
+
+    def scalar_bar(
+        self,
+        visible: bool = True,
+        vmin: float | None = None,
+        vmax: float | None = None,
+        log_scale: bool | None = None,
+        colormap: str | None = None,
+        title: str | None = None,
+    ) -> None:
+        """Alias for show_scalar_bar() — DragonSci-compatible name."""
+        self.show_scalar_bar(visible=visible, vmin=vmin, vmax=vmax,
+                             log_scale=log_scale, colormap=colormap, title=title)
+
+    def show_orientation_axes(self, visible: bool = True) -> None:
+        """Show or hide the orientation axes indicator in the bottom-left corner."""
+        self._orientation_axes_visible = bool(visible)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_scatter_orientation_axes(bool(visible))
+
+    # ── User labels ──────────────────────────────────────────────────────────
+
+    def add_label(
+        self,
+        position: tuple[float, float, float],
+        text: str,
+        color: tuple[float, float, float] = (1.0, 1.0, 1.0),
+        size: float = 14.0,
+        anchor: str = "center",
+    ) -> int:
+        """Add a world-space text label at ``position``.
+
+        Returns a handle that can be passed to ``update_label``, ``remove_label``,
+        or ``set_label_visibility``.
+        """
+        _VALID_ANCHORS = frozenset({"left", "center", "right", "top", "bottom"})
+        if anchor not in _VALID_ANCHORS:
+            raise ValueError(f"anchor must be one of {sorted(_VALID_ANCHORS)}, got {anchor!r}")
+        if not hasattr(self, "_next_label_id"):
+            self._next_label_id: int = 0
+        lid = self._next_label_id
+        self._next_label_id += 1
+        r, g, b = color
+        if (handle := self._live()) is not None:
+            handle.enqueue_add_scatter_label(lid, *position, text, float(r), float(g), float(b), float(size), anchor)
+        else:
+            px, py, pz = position
+            self._pending_scene_ops.append(("add_label", (lid, float(px), float(py), float(pz), text, float(r), float(g), float(b), float(size), anchor)))
+        return lid
+
+    def update_label(
+        self,
+        handle: int,
+        position: tuple[float, float, float] | None = None,
+        text: str | None = None,
+        color: tuple[float, float, float] | None = None,
+        size: float | None = None,
+        anchor: str | None = None,
+    ) -> None:
+        """Update a world-space label by its handle."""
+        if (wh := self._live()) is not None:
+            x, y, z = position if position is not None else (None, None, None)
+            r, g, b = color if color is not None else (None, None, None)
+            wh.enqueue_update_scatter_label(handle, x, y, z, text, r, g, b, size, anchor)
+        else:
+            px = position[0] if position is not None else None
+            py = position[1] if position is not None else None
+            pz = position[2] if position is not None else None
+            r = color[0] if color is not None else None
+            g = color[1] if color is not None else None
+            b = color[2] if color is not None else None
+            self._pending_scene_ops.append(("update_label", (handle, px, py, pz, text, r, g, b, size, anchor)))
+
+    def remove_label(self, handle: int) -> None:
+        """Remove a world-space label by its handle."""
+        if (wh := self._live()) is not None:
+            wh.enqueue_remove_scatter_label(handle)
+        else:
+            self._pending_scene_ops.append(("remove_label", (handle,)))
+
+    def set_label_visibility(self, handle: int, visible: bool) -> None:
+        """Show or hide a world-space label."""
+        if (wh := self._live()) is not None:
+            wh.enqueue_set_scatter_label_visible(handle, bool(visible))
+        else:
+            self._pending_scene_ops.append(("set_label_visibility", (handle, bool(visible))))
+
+    def clear_labels(self) -> None:
+        """Remove all user-added world-space labels."""
+        if (wh := self._live()) is not None:
+            wh.enqueue_clear_scatter_labels()
+        else:
+            self._pending_scene_ops.append(("clear_labels", ()))
+
+    # ── Line and box overlays ─────────────────────────────────────────────────
+
+    @staticmethod
+    def _coerce_line_segments(segments: Any) -> "list[list[float]]":
+        """Normalize DragonSci ``(N, 6)`` line segments.
+
+        For compatibility with earlier DragonGUI builds, ``(N, 3)`` point lists
+        are still accepted and converted into adjacent polyline segments.
+        """
+        import numpy as np
+
+        arr = np.asarray(segments, dtype=np.float32)
+        if arr.ndim != 2 or arr.shape[1] not in (3, 6):
+            raise ValueError(f"line segments must be shape (N, 6) or polyline shape (N, 3), got {arr.shape}")
+        if arr.shape[1] == 3:
+            if arr.shape[0] < 2:
+                return []
+            out = np.empty((arr.shape[0] - 1, 6), dtype=np.float32)
+            out[:, 0:3] = arr[:-1]
+            out[:, 3:6] = arr[1:]
+            arr = out
+        return [[float(v) for v in row] for row in np.ascontiguousarray(arr).reshape((-1, 6))]
+
+    def add_lines(
+        self,
+        segments: Any,
+        color: tuple[float, float, float] = (1.0, 1.0, 1.0),
+    ) -> int:
+        """Add world-space line segment overlays.
+
+        ``segments`` follows DragonSci's ``(N, 6)`` shape, where each row is
+        ``[x0, y0, z0, x1, y1, z1]``. Existing ``(N, 3)`` point lists are treated
+        as a polyline compatibility path.
+        """
+        if not hasattr(self, "_next_overlay_id"):
+            self._next_overlay_id: int = 0
+        oid = self._next_overlay_id
+        self._next_overlay_id += 1
+        r, g, b = color
+        segs = self._coerce_line_segments(segments)
+        if (wh := self._live()) is not None:
+            wh.enqueue_add_scatter_lines(oid, segs, float(r), float(g), float(b))
+        else:
+            self._pending_scene_ops.append(("add_lines", (oid, segs, float(r), float(g), float(b))))
+        return oid
+
+    def update_lines(
+        self,
+        handle: int,
+        segments: Any,
+        color: tuple[float, float, float] = (1.0, 1.0, 1.0),
+    ) -> None:
+        """Replace the geometry and color of an existing line overlay."""
+        r, g, b = color
+        segs = self._coerce_line_segments(segments)
+        payload = (handle, segs, float(r), float(g), float(b))
+        if (wh := self._live()) is not None:
+            wh.enqueue_update_scatter_lines(handle, segs, float(r), float(g), float(b))
+            return
+
+        for i, (op, args) in enumerate(self._pending_scene_ops):
+            if op in ("add_lines", "update_lines") and args[0] == handle:
+                self._pending_scene_ops[i] = (op, payload)
+                return
+        self._pending_scene_ops.append(("update_lines", payload))
+
+    def add_box(
+        self,
+        bounds: tuple[float, float, float, float, float, float],
+        color: tuple[float, float, float] = (1.0, 1.0, 1.0),
+    ) -> int:
+        """Add a world-space axis-aligned bounding box.
+
+        ``bounds`` is ``(xmin, ymin, zmin, xmax, ymax, zmax)`` (DragonSci order).
+        Returns an overlay handle.
+        """
+        if not hasattr(self, "_next_overlay_id"):
+            self._next_overlay_id = 0
+        oid = self._next_overlay_id
+        self._next_overlay_id += 1
+        r, g, b = color
+        xmin, ymin, zmin, xmax, ymax, zmax = bounds
+        # Native command order is (xmin, xmax, ymin, ymax, zmin, zmax).
+        if (wh := self._live()) is not None:
+            wh.enqueue_add_scatter_box(
+                oid,
+                float(xmin), float(xmax),
+                float(ymin), float(ymax),
+                float(zmin), float(zmax),
+                float(r), float(g), float(b),
+            )
+        else:
+            self._pending_scene_ops.append(("add_box", (oid, (float(xmin), float(xmax), float(ymin), float(ymax), float(zmin), float(zmax)), float(r), float(g), float(b))))
+        return oid
+
+    def remove_overlay(self, handle: int) -> None:
+        """Remove a line or box overlay by its handle."""
+        if (wh := self._live()) is not None:
+            wh.enqueue_remove_scatter_overlay(handle)
+        else:
+            self._pending_scene_ops.append(("remove_overlay", (handle,)))
+
+    def set_overlay_visibility(self, handle: int, visible: bool) -> None:
+        """Show or hide a line or box overlay."""
+        if (wh := self._live()) is not None:
+            wh.enqueue_set_scatter_overlay_visible(handle, bool(visible))
+        else:
+            self._pending_scene_ops.append(("set_overlay_visibility", (handle, bool(visible))))
+
+    def clear_overlays(self) -> None:
+        """Remove all user-added line and box overlays."""
+        if (wh := self._live()) is not None:
+            wh.enqueue_clear_scatter_overlays()
+        else:
+            self._pending_scene_ops.append(("clear_overlays", ()))
+
+    # ── Multi-actor API ──────────────────────────────────────────────────────
+
+    @staticmethod
+    def _coerce_point_input(
+        frame_or_positions: Any,
+        x: "str | None",
+        y: "str | None",
+        z: "str | None",
+    ) -> "tuple[Any, str, str, str]":
+        """Normalize point input to (frame, x_col, y_col, z_col).
+
+        Accepts:
+          - (N, 3) or (N, 2) array-like (numpy array or list-of-lists) → dict frame
+          - named frame with explicit x/y/z column names → passed through unchanged
+        """
+        import numpy as np
+        if isinstance(frame_or_positions, np.ndarray):
+            arr = frame_or_positions
+        elif isinstance(frame_or_positions, (list, tuple)) and frame_or_positions:
+            first = frame_or_positions[0]
+            if isinstance(first, (list, tuple, np.ndarray)):
+                arr = np.asarray(frame_or_positions, dtype=np.float32)
+            else:
+                arr = None
+        else:
+            arr = None
+
+        if arr is not None:
+            if arr.ndim != 2 or arr.shape[1] not in (2, 3):
+                raise ValueError(
+                    f"Array-like point input must be shape (N, 2) or (N, 3), got {arr.shape}"
+                )
+            frame = {"x": arr[:, 0], "y": arr[:, 1], "z": arr[:, 2] if arr.shape[1] == 3 else np.zeros(len(arr), dtype=np.float32)}
+            return frame, "x", "y", "z"
+
+        if x is None or y is None or z is None:
+            raise ValueError(
+                "x, y, and z column names are required for frame inputs; "
+                "pass an (N, 2) or (N, 3) array to omit them"
+            )
+        return frame_or_positions, x, y, z
+
+    def _pack_actor_payload(
+        self,
+        frame: Any,
+        x: str,
+        y: str,
+        z: str,
+        color: Any | None = None,
+        colors: Any | None = None,
+        scalars: str | Any | None = None,
+        point_size: float = 4.0,
+        point_sizes: str | Any | None = None,
+        opacity: float = 1.0,
+        colormap: str | None = None,
+        clim: tuple[float, float] | None = None,
+        log_scale: bool = False,
+        nan_color: tuple[float, float, float] | None = None,
+        size_range: tuple[float, float] | None = None,
+    ) -> tuple[bytes | None, str, str]:
+        cmap = _scatter_colormap(colormap or self.colormap)
+        if _scatter_needs_v1(color, colors, scalars, point_sizes, opacity, nan_color, clim, log_scale):
+            fmt = "point_instance_v1"
+            buf = _pack_point_instances(
+                frame, x, y, z,
+                color=color,
+                colors=colors,
+                scalars=scalars,
+                point_size=point_size,
+                point_sizes=point_sizes,
+                size_range=size_range,
+                opacity=opacity,
+                colormap=cmap,
+                clim=clim,
+                log_scale=log_scale,
+                nan_color=nan_color,
+            )
+        else:
+            fmt = "xyz_f32_v0"
+            buf = _pack_xyz_bytes(frame, x, y, z)
+        return buf, cmap, fmt
+
+    def add_points(
+        self,
+        frame: Any,
+        *,
+        x: "str | None" = None,
+        y: "str | None" = None,
+        z: "str | None" = None,
+        color: Any | None = None,
+        colors: Any | None = None,
+        scalars: str | Any | None = None,
+        point_size: float = 4.0,
+        point_sizes: str | Any | None = None,
+        opacity: float = 1.0,
+        colormap: str | None = None,
+        clim: tuple[float, float] | None = None,
+        log_scale: bool = False,
+        nan_color: tuple[float, float, float] | None = None,
+        size_range: tuple[float, float] | None = None,
+        hover: "str | list[str] | None" = None,
+    ) -> int:
+        """Add an independent point actor layer. Returns an actor handle."""
+        frame, x, y, z = self._coerce_point_input(frame, x, y, z)
+        if not hasattr(self, "_next_actor_id"):
+            self._next_actor_id: int = 1
+        aid = self._next_actor_id
+        self._next_actor_id += 1
+        buf, cmap, fmt = self._pack_actor_payload(
+            frame, x, y, z, color, colors, scalars, point_size, point_sizes,
+            opacity, colormap, clim, log_scale, nan_color, size_range,
+        )
+        hover_meta = self._extract_hover_meta(frame, hover)
+        self._actor_row_labels[aid] = self._extract_row_labels(frame)
+        if buf is not None:
+            if (wh := self._live()) is not None:
+                wh.enqueue_add_scatter_actor_packed(aid, buf, cmap, fmt, hover_meta, x, y, z)
+            else:
+                import base64 as _base64
+                b64 = _base64.b64encode(buf).decode("ascii")
+                self._pending_scene_ops.append(("add_points", (aid, b64, cmap, fmt, hover_meta, x, y, z)))
+        return aid
+
+    def update_actor(
+        self,
+        handle: int,
+        frame: Any,
+        *,
+        x: "str | None" = None,
+        y: "str | None" = None,
+        z: "str | None" = None,
+        color: Any | None = None,
+        colors: Any | None = None,
+        scalars: str | Any | None = None,
+        point_size: float = 4.0,
+        point_sizes: str | Any | None = None,
+        opacity: float = 1.0,
+        colormap: str | None = None,
+        clim: tuple[float, float] | None = None,
+        log_scale: bool = False,
+        nan_color: tuple[float, float, float] | None = None,
+        size_range: tuple[float, float] | None = None,
+    ) -> None:
+        """Replace all points in an existing actor."""
+        frame, x, y, z = self._coerce_point_input(frame, x, y, z)
+        buf, cmap, fmt = self._pack_actor_payload(
+            frame, x, y, z, color, colors, scalars, point_size, point_sizes,
+            opacity, colormap, clim, log_scale, nan_color, size_range,
+        )
+        self._actor_row_labels[handle] = self._extract_row_labels(frame)
+        if (wh := self._live()) is not None and buf is not None:
+            wh.enqueue_update_scatter_actor_packed(handle, buf, cmap, fmt, x, y, z)
+        elif buf is not None:
+            import base64 as _base64
+            b64 = _base64.b64encode(buf).decode("ascii")
+            for i, (op, args) in enumerate(self._pending_scene_ops):
+                if op == "add_points" and args[0] == handle:
+                    # Clear stale hover metadata (native does the same on update).
+                    self._pending_scene_ops[i] = ("add_points", (handle, b64, cmap, fmt, None, x, y, z))
+                    return
+
+    def remove_actor(self, handle: int) -> None:
+        """Remove a point actor by its handle."""
+        self._actor_row_labels.pop(handle, None)
+        if (wh := self._live()) is not None:
+            wh.enqueue_remove_scatter_actor(handle)
+        else:
+            self._pending_scene_ops = [
+                (op, args) for op, args in self._pending_scene_ops
+                if not (op in ("add_points", "add_stream") and args[0] == handle)
+            ]
+
+    def set_actor_visibility(self, handle: int, visible: bool) -> None:
+        """Show or hide a point actor."""
+        if (wh := self._live()) is not None:
+            wh.enqueue_set_scatter_actor_visible(handle, bool(visible))
+        else:
+            for i, (op, args) in enumerate(self._pending_scene_ops):
+                if op == "set_actor_visibility" and args[0] == handle:
+                    self._pending_scene_ops[i] = ("set_actor_visibility", (handle, bool(visible)))
+                    return
+            self._pending_scene_ops.append(("set_actor_visibility", (handle, bool(visible))))
+
+    def clear(self) -> None:
+        """Remove all actors, labels, overlays, meshes, streams, and hover/selection state."""
+        self._actor_row_labels.clear()
+        self._pending_scene_ops.clear()
+        self._ellipsoid_params.clear()
+        self._primary_row_labels = None
+        self._primary_cleared = True
+        self._cached_payload = b""
+        self._cached_payload_b64 = ""
+        self._payload_token = 0
+        if hasattr(self, "_next_actor_id"):
+            self._next_actor_id = 1
+        if hasattr(self, "_next_label_id"):
+            self._next_label_id = 0
+        if hasattr(self, "_next_overlay_id"):
+            self._next_overlay_id = 0
+        if hasattr(self, "_next_mesh_id"):
+            self._next_mesh_id = 0
+        self.hover_point = None
+        self.hover_index = None
+        self.hover_actor = None
+        self.hover_text = None
+        self.selected = []
+        self.selected_indices = []
+        self.selected_index_values = None
+        if (wh := self._live()) is not None:
+            wh.enqueue_clear_scatter_scene()
+
+    def add_stream(
+        self,
+        frame_or_max_points: Any = None,
+        mode: str = "ring",
+        *,
+        max_points: int | None = None,
+        x: str | None = None,
+        y: str | None = None,
+        z: str | None = None,
+        color: Any | None = None,
+        colors: Any | None = None,
+        scalars: str | Any | None = None,
+        point_size: float = 4.0,
+        point_sizes: str | Any | None = None,
+        opacity: float = 1.0,
+        colormap: str | None = None,
+        clim: tuple[float, float] | None = None,
+        log_scale: bool = False,
+        nan_color: tuple[float, float, float] | None = None,
+        size_range: tuple[float, float] | None = None,
+    ) -> int:
+        """Pre-allocate a fixed-capacity streaming actor. Returns a stream handle.
+
+        Call forms:
+          add_stream(500)                          # legacy: max_points as int
+          add_stream(max_points=500)               # keyword
+          add_stream(positions_array, max_points=500)   # (N,3) or (N,2) numpy array
+          add_stream(frame, max_points=500, x=, y=, z=) # DataFrame/frame with column names
+
+        mode: 'ring' (overwrite oldest) or 'append' (stop at capacity).
+        """
+        # Resolve actual_max and initial_frame from the overloaded first argument.
+        if isinstance(frame_or_max_points, int):
+            if max_points is not None:
+                raise ValueError("add_stream: cannot pass both a positional int and max_points=")
+            actual_max = frame_or_max_points
+            initial_frame: Any = None
+        elif frame_or_max_points is None:
+            if max_points is None:
+                raise ValueError("add_stream: max_points is required")
+            actual_max = int(max_points)
+            initial_frame = None
+        else:
+            # First arg is initial data (frame, numpy array, or list-of-lists).
+            if max_points is None:
+                raise ValueError("add_stream: max_points= is required when providing initial data")
+            actual_max = int(max_points)
+            initial_frame, x, y, z = self._coerce_point_input(frame_or_max_points, x, y, z)
+        if mode not in ("ring", "append"):
+            raise ValueError(f"Scatter3D.add_stream: mode must be 'ring' or 'append', got {mode!r}")
+        if not hasattr(self, "_next_actor_id"):
+            self._next_actor_id = 1
+        aid = self._next_actor_id
+        self._next_actor_id += 1
+        # Pack initial data if provided.
+        init_b64: str | None = None
+        init_buf: bytes | None = None
+        init_cmap: str | None = None
+        init_fmt: str | None = None
+        if initial_frame is not None:
+            buf, init_cmap, init_fmt = self._pack_actor_payload(
+                initial_frame, x, y, z, color, colors, scalars, point_size, point_sizes,
+                opacity, colormap, clim, log_scale, nan_color, size_range,
+            )
+            if buf is not None:
+                init_buf = buf
+        if (wh := self._live()) is not None:
+            wh.enqueue_add_scatter_stream(aid, actual_max, str(mode))
+            if init_buf is not None:
+                wh.enqueue_stream_scatter_actor_packed(aid, init_buf, init_cmap, init_fmt)
+        else:
+            if init_buf is not None:
+                import base64 as _base64
+                init_b64 = _base64.b64encode(init_buf).decode("ascii")
+                self._pending_scene_ops.append(("add_stream", (aid, actual_max, str(mode), init_b64, init_cmap, init_fmt)))
+            else:
+                self._pending_scene_ops.append(("add_stream", (aid, actual_max, str(mode))))
+        return aid
+
+    def stream(
+        self,
+        handle: int,
+        frame: Any,
+        *,
+        x: "str | None" = None,
+        y: "str | None" = None,
+        z: "str | None" = None,
+        color: Any | None = None,
+        colors: Any | None = None,
+        scalars: str | Any | None = None,
+        point_size: float = 4.0,
+        point_sizes: str | Any | None = None,
+        opacity: float = 1.0,
+        colormap: str | None = None,
+        clim: tuple[float, float] | None = None,
+        log_scale: bool = False,
+        nan_color: tuple[float, float, float] | None = None,
+        size_range: tuple[float, float] | None = None,
+    ) -> None:
+        """Push new points into a stream actor.
+
+        ``frame`` may be a named frame (with explicit ``x``/``y``/``z`` column
+        names), an ``(N, 3)`` or ``(N, 2)`` numpy array, or a list-of-lists of
+        the same shape.  For array inputs ``x``/``y``/``z`` are ignored.
+        """
+        frame, x, y, z = self._coerce_point_input(frame, x, y, z)
+        buf, cmap, fmt = self._pack_actor_payload(
+            frame, x, y, z, color, colors, scalars, point_size, point_sizes,
+            opacity, colormap, clim, log_scale, nan_color, size_range,
+        )
+        if (wh := self._live()) is not None and buf is not None:
+            wh.enqueue_stream_scatter_actor_packed(handle, buf, cmap, fmt)
+
+    def clear_stream(self, handle: int) -> None:
+        """Reset a stream actor to empty without deallocating its buffer."""
+        if (wh := self._live()) is not None:
+            wh.enqueue_clear_scatter_stream(handle)
+
+    # ── Phase 5: LOD and Picking ──────────────────────────────────────────────
+
+    def set_lod(
+        self,
+        enabled: bool = True,
+        threshold: int = 200_000,
+        factor: int = 8,
+    ) -> None:
+        """Configure Level-of-Detail during camera interaction.
+
+        When enabled and point_count > threshold, only point_count/factor
+        points are drawn while orbiting/panning. Full density is restored on
+        release. LOD never changes colors or point sizes.
+        """
+        self._lod_enabled = bool(enabled)
+        self._lod_threshold = int(threshold)
+        self._lod_factor = int(factor)
+        if (wh := self._live()) is not None:
+            wh.enqueue_set_scatter_lod(self._lod_enabled, self._lod_threshold, self._lod_factor)
+
+    def enable_point_picking(self, on_pick=None) -> None:
+        """Switch to point-picking mode (default). Left click picks the nearest point."""
+        self._picking_mode = "point"
+        if on_pick is not None:
+            self.on_pick = on_pick
+        if (wh := self._live()) is not None:
+            wh.enqueue_set_scatter_picking_mode("point")
+
+    def enable_rectangle_picking(self, on_select=None) -> None:
+        """Switch to rectangle-selection mode. Left drag draws a selection rect;
+        release emits a JSON payload to the on_select callback."""
+        self._picking_mode = "rectangle"
+        if on_select is not None:
+            self._on_select = on_select
+        if (wh := self._live()) is not None:
+            wh.enqueue_set_scatter_picking_mode("rectangle")
+
+    def enable_lasso_picking(self, on_select=None) -> None:
+        """Switch to freehand lasso-selection mode. Left drag draws a polygon path;
+        release performs point-in-polygon selection and emits a JSON payload to on_select."""
+        self._picking_mode = "lasso"
+        if on_select is not None:
+            self._on_select = on_select
+        if (wh := self._live()) is not None:
+            wh.enqueue_set_scatter_picking_mode("lasso")
+
+    def disable_picking(self) -> None:
+        """Disable all picking and selection interaction."""
+        self._picking_mode = "none"
+        if (wh := self._live()) is not None:
+            wh.enqueue_set_scatter_picking_mode("none")
+
+    # ── Phase 6: Mesh and Statistical Overlays ────────────────────────────────
+
+    @staticmethod
+    def _pack_mesh_payload(positions, triangle_indices):
+        """Encode positions (N×3 float32) and triangle_indices (M×3 uint32) to base64."""
+        import struct
+        import base64
+        pos_flat = [float(v) for p in positions for v in p]
+        pos_bytes = struct.pack(f"<{len(pos_flat)}f", *pos_flat)
+        idx_flat = [int(v) for t in triangle_indices for v in t]
+        idx_bytes = struct.pack(f"<{len(idx_flat)}I", *idx_flat)
+        return (
+            base64.b64encode(pos_bytes).decode(),
+            base64.b64encode(idx_bytes).decode(),
+        )
+
+    def add_convex_hull(
+        self,
+        points,
+        color=(1.0, 1.0, 1.0),
+        opacity: float = 0.3,
+        wireframe: bool = False,
+    ) -> int:
+        """Compute a convex hull of `points` (array-like N×3) and add it as a mesh overlay.
+
+        Requires scipy (`pip install scipy`). Returns a handle for removal/update.
+        """
+        try:
+            import numpy as np
+            from scipy.spatial import ConvexHull
+        except ImportError as e:
+            raise ImportError("add_convex_hull requires scipy: pip install scipy") from e
+
+        pts = np.asarray(points, dtype=np.float32)
+        if pts.ndim != 2 or pts.shape[1] != 3:
+            raise ValueError("points must be N×3")
+        hull = ConvexHull(pts)
+        verts = pts[hull.vertices]
+        old_to_new = {old: new for new, old in enumerate(hull.vertices)}
+        tris = [[old_to_new[i] for i in simplex] for simplex in hull.simplices]
+
+        if not hasattr(self, "_next_mesh_id"):
+            self._next_mesh_id: int = 0
+        mid = self._next_mesh_id
+        self._next_mesh_id += 1
+
+        r, g, b = self._normalize_color(color)
+        a = float(opacity)
+        pos_b64, idx_b64 = self._pack_mesh_payload(verts.tolist(), tris)
+        if (wh := self._live()) is not None:
+            wh.enqueue_add_scatter_mesh(mid, pos_b64, idx_b64, r, g, b, a, wireframe)
+        else:
+            self._pending_scene_ops.append(("add_mesh", (mid, pos_b64, idx_b64, r, g, b, a, wireframe)))
+        return mid
+
+    def update_convex_hull(
+        self,
+        handle: int,
+        points=None,
+        color=None,
+        opacity: float | None = None,
+        wireframe: bool | None = None,
+    ) -> None:
+        """Update an existing convex hull mesh overlay by handle.
+
+        Supply new `points` to recompute the hull geometry; omit to leave geometry unchanged.
+        Only provided keyword arguments are updated.
+        """
+        pos_b64: str | None = None
+        idx_b64: str | None = None
+        if points is not None:
+            try:
+                import numpy as np
+                from scipy.spatial import ConvexHull
+            except ImportError as e:
+                raise ImportError("update_convex_hull requires scipy: pip install scipy") from e
+            pts = np.asarray(points, dtype=np.float32)
+            if pts.ndim != 2 or pts.shape[1] != 3:
+                raise ValueError("points must be N×3")
+            hull = ConvexHull(pts)
+            verts = pts[hull.vertices]
+            old_to_new = {old: new for new, old in enumerate(hull.vertices)}
+            tris = [[old_to_new[i] for i in simplex] for simplex in hull.simplices]
+            pos_b64, idx_b64 = self._pack_mesh_payload(verts.tolist(), tris)
+        if color is not None:
+            r, g, b = self._normalize_color(color)
+        else:
+            r = g = b = None
+        a = float(opacity) if opacity is not None else None
+        if (wh := self._live()) is not None:
+            wh.enqueue_update_scatter_mesh(handle, pos_b64, idx_b64, r, g, b, a, wireframe)
+
+    def add_ellipsoid(
+        self,
+        center,
+        covariance,
+        color=(1.0, 1.0, 1.0),
+        opacity: float = 0.3,
+        n_std: float = 2.0,
+        wireframe: bool = False,
+        u_res: int = 20,
+        v_res: int = 20,
+    ) -> int:
+        """Add an ellipsoid mesh overlay defined by `center` (3,) and `covariance` (3×3).
+
+        Requires numpy. Returns a handle for removal/update.
+        """
+        import numpy as np
+
+        ctr = np.asarray(center, dtype=np.float64)
+        cov = np.asarray(covariance, dtype=np.float64)
+        eigvals, eigvecs = np.linalg.eigh(cov)
+        eigvals = np.maximum(eigvals, 0.0)
+        radii = n_std * np.sqrt(eigvals)
+
+        u = np.linspace(0, 2 * np.pi, u_res, endpoint=False)
+        v = np.linspace(0, np.pi, v_res)
+        uu, vv = np.meshgrid(u, v)
+        xs = np.cos(uu) * np.sin(vv)
+        ys = np.sin(uu) * np.sin(vv)
+        zs = np.cos(vv)
+        sphere = np.stack([xs.ravel(), ys.ravel(), zs.ravel()], axis=1)
+        verts = (sphere * radii) @ eigvecs.T + ctr
+        verts = verts.astype(np.float32)
+
+        rows, cols = v_res, u_res
+        tris = []
+        for i in range(rows - 1):
+            for j in range(cols):
+                a = i * cols + j
+                b = i * cols + (j + 1) % cols
+                c = (i + 1) * cols + j
+                d = (i + 1) * cols + (j + 1) % cols
+                tris.append([a, b, c])
+                tris.append([b, d, c])
+
+        if not hasattr(self, "_next_mesh_id"):
+            self._next_mesh_id = 0
+        mid = self._next_mesh_id
+        self._next_mesh_id += 1
+
+        r, g, b_c = self._normalize_color(color)
+        a = float(opacity)
+        pos_b64, idx_b64 = self._pack_mesh_payload(verts.tolist(), tris)
+        self._ellipsoid_params[mid] = {
+            "center": ctr.tolist(), "covariance": cov.tolist(),
+            "n_std": n_std, "u_res": u_res, "v_res": v_res,
+        }
+        if (wh := self._live()) is not None:
+            wh.enqueue_add_scatter_mesh(mid, pos_b64, idx_b64, r, g, b_c, a, wireframe)
+        else:
+            self._pending_scene_ops.append(("add_mesh", (mid, pos_b64, idx_b64, r, g, b_c, a, wireframe)))
+        return mid
+
+    def update_ellipsoid(
+        self,
+        handle: int,
+        center=None,
+        covariance=None,
+        color=None,
+        opacity: float | None = None,
+        n_std: float | None = None,
+        wireframe: bool | None = None,
+        u_res: int | None = None,
+        v_res: int | None = None,
+    ) -> None:
+        """Update an existing ellipsoid mesh overlay by handle.
+
+        Any subset of parameters may be changed. Geometry is recomputed when at least one
+        of center, covariance, or n_std changes; stored params from add_ellipsoid are used
+        for any omitted geometric parameters.
+        """
+        import numpy as np
+        pos_b64: str | None = None
+        idx_b64: str | None = None
+        needs_geo = center is not None or covariance is not None or n_std is not None
+        if needs_geo:
+            stored = self._ellipsoid_params.get(handle, {})
+            ctr = np.asarray(center if center is not None else stored.get("center", [0, 0, 0]), dtype=np.float64)
+            cov = np.asarray(covariance if covariance is not None else stored.get("covariance", [[1,0,0],[0,1,0],[0,0,1]]), dtype=np.float64)
+            _n_std = n_std if n_std is not None else stored.get("n_std", 2.0)
+            _u_res = u_res if u_res is not None else stored.get("u_res", 20)
+            _v_res = v_res if v_res is not None else stored.get("v_res", 20)
+            eigvals, eigvecs = np.linalg.eigh(cov)
+            eigvals = np.maximum(eigvals, 0.0)
+            radii = _n_std * np.sqrt(eigvals)
+            u = np.linspace(0, 2 * np.pi, _u_res, endpoint=False)
+            v = np.linspace(0, np.pi, _v_res)
+            uu, vv = np.meshgrid(u, v)
+            xs = np.cos(uu) * np.sin(vv)
+            ys = np.sin(uu) * np.sin(vv)
+            zs = np.cos(vv)
+            sphere = np.stack([xs.ravel(), ys.ravel(), zs.ravel()], axis=1)
+            verts = ((sphere * radii) @ eigvecs.T + ctr).astype(np.float32)
+            rows, cols = _v_res, _u_res
+            tris = []
+            for i in range(rows - 1):
+                for j in range(cols):
+                    a_i = i * cols + j
+                    b_i = i * cols + (j + 1) % cols
+                    c_i = (i + 1) * cols + j
+                    d_i = (i + 1) * cols + (j + 1) % cols
+                    tris.append([a_i, b_i, c_i])
+                    tris.append([b_i, d_i, c_i])
+            pos_b64, idx_b64 = self._pack_mesh_payload(verts.tolist(), tris)
+            self._ellipsoid_params[handle] = {
+                "center": ctr.tolist(), "covariance": cov.tolist(),
+                "n_std": _n_std, "u_res": _u_res, "v_res": _v_res,
+            }
+        if color is not None:
+            r, g, b = self._normalize_color(color)
+        else:
+            r = g = b = None
+        a = float(opacity) if opacity is not None else None
+        if (wh := self._live()) is not None:
+            wh.enqueue_update_scatter_mesh(handle, pos_b64, idx_b64, r, g, b, a, wireframe)
+
+    @staticmethod
+    def _extract_row_labels(frame: Any) -> "list | None":
+        """Return non-trivial dataframe index labels, or None for positional/unknown frames."""
+        try:
+            index = list(frame.index)
+            if index == list(range(len(index))):
+                return None  # trivial 0-based integer index
+            return [str(i) for i in index]
+        except AttributeError:
+            return None
+
+    @staticmethod
+    def _extract_hover_meta(frame: Any, hover: "str | list[str] | None") -> "str | None":
+        """Extract per-point hover lines from frame column(s). Returns JSON string or None.
+
+        Each element of the returned JSON array is one multi-line tooltip suffix string
+        for the corresponding point, formatted as "col: value" (one line per column).
+        Native prepends the coordinates line, so the final tooltip reads:
+            (x.xxx, y.yyy, z.zzz)
+            col: value
+        Raises ValueError if a requested column cannot be found in frame.
+        """
+        import json as _json
+        if hover is None or frame is None:
+            return None
+        def _fmt(v: object) -> str:
+            try:
+                return f"{float(v):.4g}"  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return str(v)
+
+        cols = [hover] if isinstance(hover, str) else list(hover)
+        extracted: list[tuple[str, list[str]]] = []
+        for col in cols:
+            try:
+                if hasattr(frame, "__getitem__"):
+                    vals = frame[col]
+                else:
+                    vals = getattr(frame, col)
+                extracted.append((col, [_fmt(v) for v in vals]))
+            except (KeyError, AttributeError) as exc:
+                raise ValueError(
+                    f"Scatter3D: hover column {col!r} not found in frame"
+                ) from exc
+        if not extracted:
+            return None
+        n = len(extracted[0][1])
+        rows = [
+            "\n".join(f"{col}: {col_vals[i]}" for col, col_vals in extracted)
+            for i in range(n)
+        ]
+        return _json.dumps(rows)
+
+    @staticmethod
+    def _normalize_color(color) -> tuple[float, float, float]:
+        """Convert color to (r, g, b) floats in [0, 1].
+
+        Accepts: CSS hex string (#rrggbb / #rgb), named CSS colors, or a sequence of 3 floats.
+        """
+        if isinstance(color, str):
+            c = color.strip()
+            if c.startswith("#"):
+                c = c.lstrip("#")
+                if len(c) == 3:
+                    c = "".join(ch * 2 for ch in c)
+                if len(c) == 6:
+                    r = int(c[0:2], 16) / 255.0
+                    g = int(c[2:4], 16) / 255.0
+                    b = int(c[4:6], 16) / 255.0
+                    return (r, g, b)
+            _CSS: dict[str, tuple[float, float, float]] = {
+                "red": (1, 0, 0), "green": (0, 0.502, 0), "blue": (0, 0, 1),
+                "white": (1, 1, 1), "black": (0, 0, 0), "yellow": (1, 1, 0),
+                "cyan": (0, 1, 1), "magenta": (1, 0, 1), "orange": (1, 0.647, 0),
+                "purple": (0.502, 0, 0.502), "gray": (0.502, 0.502, 0.502),
+                "grey": (0.502, 0.502, 0.502),
+            }
+            if c.lower() in _CSS:
+                return _CSS[c.lower()]
+            raise ValueError(f"Unrecognized color string: {color!r}")
+        return (float(color[0]), float(color[1]), float(color[2]))
+
+    @staticmethod
+    def _sample_colormap(colormap: str, t: float) -> tuple[float, float, float]:
+        """Sample a named colormap at t in [0, 1], returning (r, g, b)."""
+        from .colormap import _TABLES  # type: ignore
+        table = _TABLES.get(colormap, _TABLES.get("viridis"))
+        if table is None:
+            return (1.0, 1.0, 1.0)
+        n = len(table)
+        if n == 1:
+            return (table[0][0], table[0][1], table[0][2])
+        idx = t * (n - 1)
+        lo = int(idx)
+        hi = min(lo + 1, n - 1)
+        frac = idx - lo
+        r = table[lo][0] + frac * (table[hi][0] - table[lo][0])
+        g = table[lo][1] + frac * (table[hi][1] - table[lo][1])
+        b = table[lo][2] + frac * (table[hi][2] - table[lo][2])
+        return (r, g, b)
+
+    def add_cluster_hulls(
+        self,
+        positions,
+        labels,
+        colormap: str = "viridis",
+        opacity: float = 0.25,
+    ) -> list[int]:
+        """Add a convex hull per unique label. Returns list of handles."""
+        try:
+            import numpy as np
+            from scipy.spatial import ConvexHull  # noqa: F401
+        except ImportError as e:
+            raise ImportError("add_cluster_hulls requires scipy") from e
+
+        pts = np.asarray(positions, dtype=np.float32)
+        lbls = np.asarray(labels)
+        unique = np.unique(lbls)
+        handles = []
+        for i, lbl in enumerate(unique):
+            mask = lbls == lbl
+            subset = pts[mask]
+            if len(subset) < 4:
+                continue
+            t = float(i) / max(len(unique) - 1, 1)
+            color = self._sample_colormap(colormap, t)
+            h = self.add_convex_hull(subset, color=color, opacity=opacity)
+            handles.append(h)
+        return handles
+
+    def add_cluster_ellipsoids(
+        self,
+        positions,
+        labels,
+        colormap: str = "viridis",
+        opacity: float = 0.25,
+        n_std: float = 2.0,
+    ) -> list[int]:
+        """Add an ellipsoid per unique label. Returns list of handles."""
+        import numpy as np
+
+        pts = np.asarray(positions, dtype=np.float64)
+        lbls = np.asarray(labels)
+        unique = np.unique(lbls)
+        handles = []
+        for i, lbl in enumerate(unique):
+            mask = lbls == lbl
+            subset = pts[mask]
+            if len(subset) < 4:
+                continue
+            ctr = subset.mean(axis=0)
+            cov = np.cov(subset.T)
+            t = float(i) / max(len(unique) - 1, 1)
+            color = self._sample_colormap(colormap, t)
+            h = self.add_ellipsoid(ctr, cov, color=color, opacity=opacity, n_std=n_std)
+            handles.append(h)
+        return handles
+
+    def remove_mesh(self, handle: int) -> None:
+        """Remove a mesh overlay by handle."""
+        if (wh := self._live()) is not None:
+            wh.enqueue_remove_scatter_mesh(handle)
+        else:
+            self._pending_scene_ops.append(("remove_mesh", (handle,)))
+
+    def set_mesh_visibility(self, handle: int, visible: bool) -> None:
+        if (wh := self._live()) is not None:
+            wh.enqueue_set_scatter_mesh_visible(handle, bool(visible))
+        else:
+            self._pending_scene_ops.append(("set_mesh_visibility", (handle, bool(visible))))
+
+    def clear_meshes(self) -> None:
+        """Remove all mesh overlays."""
+        if not hasattr(self, "_next_mesh_id"):
+            self._next_mesh_id = 0
+            return
+        if (wh := self._live()) is not None:
+            wh.enqueue_clear_scatter_meshes()
+        else:
+            # Drop any pending mesh ops and reset state so startup starts clean.
+            self._pending_scene_ops = [
+                op for op in self._pending_scene_ops
+                if op[0] not in ("add_mesh", "remove_mesh", "set_mesh_visibility")
+            ]
+            self._ellipsoid_params.clear()
+            self._next_mesh_id = 0
+            self._pending_scene_ops.append(("clear_meshes", ()))
+
+    def reset_camera(self) -> None:
+        if (handle := self._live()) is not None:
+            handle.enqueue_reset_scatter_camera()
+
+    def view_xy(self) -> None:
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_scatter_view_direction("xy")
+
+    def view_xz(self) -> None:
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_scatter_view_direction("xz")
+
+    def view_yz(self) -> None:
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_scatter_view_direction("yz")
+
+    def view_isometric(self) -> None:
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_scatter_view_direction("isometric")
+
+    def fit(self, bounds: tuple[float, float, float, float, float, float] | None = None) -> None:
+        """Fit the camera to data bounds.
+
+        bounds: optional (x_min, y_min, z_min, x_max, y_max, z_max). When None
+        the camera refits to the current uploaded point cloud bounds.
+        """
+        if (handle := self._live()) is not None:
+            b = list(bounds) if bounds is not None else None
+            handle.enqueue_fit_scatter_camera(b)
+
+    def set_point_style(self, style: str) -> None:
+        """Set point rendering style: 'circle', 'square', or 'gaussian'."""
+        valid = {"circle", "square", "gaussian"}
+        s = style.strip().lower()
+        if s not in valid:
+            raise ValueError(f"unknown point style {style!r}; expected one of: {', '.join(sorted(valid))}")
+        self._point_style = s
+        current = dict(self.style or {})
+        current["scatter_point_style"] = s
+        self.style = _copy_style(current, widget_kind=self.kind)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_scatter_point_style(s)
+
+    def set_point_size(self, size: float) -> None:
+        """Set the renderer point-size override without repacking point data."""
+        value = max(0.0, float(size))
+        self.point_size = value
+        current = dict(self.style or {})
+        current["scatter_point_size"] = value
+        self.style = _copy_style(current, widget_kind=self.kind)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_scatter_point_size(value)
+
+    @property
+    def point_size_override(self) -> float:
+        """Renderer point-size override in pixels."""
+        return float(self.point_size)
+
+    @point_size_override.setter
+    def point_size_override(self, size: float) -> None:
+        self.set_point_size(size)
+
+    @property
+    def point_style(self) -> str:
+        """Point rendering style: 'circle', 'square', or 'gaussian'."""
+        return getattr(self, "_point_style", "circle")
+
+    @point_style.setter
+    def point_style(self, style: str) -> None:
+        self.set_point_style(style)
+
+    def set_camera(self, state: dict) -> None:
+        """Apply a camera state dict (as returned by get_camera())."""
+        if (handle := self._live()) is not None:
+            target = list(state.get("target", [0.0, 0.0, 0.0]))
+            handle.enqueue_set_scatter_camera_state(
+                target=target,
+                distance=float(state.get("distance", 5.0)),
+                yaw=float(state.get("yaw", 0.4)),
+                pitch=float(state.get("pitch", 0.4)),
+                parallel=bool(state.get("parallel", False)),
+            )
+            self._propagate_camera()
+
+    def get_camera(self) -> dict | None:
+        """Return the current camera state dict, or None if not live.
+
+        Reads from the synchronous debug snapshot. Keys: target, distance,
+        yaw, pitch, parallel.
+        """
+        if (handle := self._live()) is not None:
+            try:
+                snapshot = handle.app.debug_snapshot()
+                scatters = snapshot.get("gpu", {}).get("resources", {}).get("scatters", {})
+                cam = scatters.get(self.id, {}).get("camera")
+                if cam is not None:
+                    return dict(cam)
+            except Exception:
+                pass
+        return None
+
+    @property
+    def parallel_projection(self) -> bool:
+        return self._parallel_projection
+
+    @parallel_projection.setter
+    def parallel_projection(self, value: bool) -> None:
+        self._parallel_projection = bool(value)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_scatter_parallel_projection(self._parallel_projection)
+
+    # ── Phase 7: Camera helpers, export, and camera linking ───────────────────
+
+    # Plane → (yaw, pitch) in radians
+    _FLATTEN_PLANES: dict[str, tuple[float, float]] = {
+        "xy":  (3.14159265, 1.5707963),
+        "xy-": (0.0,       -1.5707963),
+        "xz":  (0.0,        0.0),
+        "xz-": (3.14159265, 0.0),
+        "yz":  (-1.5707963, 0.0),
+        "yz-": ( 1.5707963, 0.0),
+    }
+
+    def flatten_view(self, plane: str = "xy") -> None:
+        """Snap to an axis-aligned orthographic view.
+
+        plane: "xy" | "xy-" | "xz" | "xz-" | "yz" | "yz-"
+        """
+        if plane not in self._FLATTEN_PLANES:
+            raise ValueError(f"unknown plane {plane!r}; expected one of: {', '.join(self._FLATTEN_PLANES)}")
+        yaw, pitch = self._FLATTEN_PLANES[plane]
+        state = self.get_camera() or {}
+        state["yaw"] = yaw
+        state["pitch"] = pitch
+        state["parallel"] = True
+        self._parallel_projection = True
+        self.set_camera(state)
+
+    def get_view_bounds_2d(self) -> list[float] | None:
+        """Return [x_min, y_min, x_max, y_max] for the current orthographic view.
+
+        Computed from the camera state snapshot. Only meaningful when
+        parallel_projection is True. Returns None when not live.
+        """
+        import math
+        cam = self.get_camera()
+        if cam is None:
+            return None
+        dist = float(cam.get("distance", 5.0))
+        fov_y = math.radians(45.0)
+        # aspect derived from widget dimensions (fall back to 1.0)
+        aspect = 1.0
+        if (handle := self._live()) is not None:
+            try:
+                snap = handle.app.debug_snapshot()
+                sc = snap.get("gpu", {}).get("resources", {}).get("scatters", {})
+                dims = sc.get(self.id, {}).get("dimensions")
+                if dims and dims.get("width") and dims.get("height"):
+                    aspect = dims["width"] / max(dims["height"], 1)
+            except Exception:
+                pass
+        half_h = dist * math.tan(fov_y / 2.0)
+        half_w = half_h * aspect
+        tx, ty = float(cam.get("target", [0, 0, 0])[0]), float(cam.get("target", [0, 0, 0])[1])
+        return [tx - half_w, ty - half_h, tx + half_w, ty + half_h]
+
+    def set_parallel_scale(self, half_w: float, half_h: float) -> None:
+        """Set explicit orthographic half-extents (overrides distance/fov calculation)."""
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_scatter_parallel_scale(float(half_w), float(half_h))
+
+    def link_cameras(self, *others: "Scatter3D") -> None:
+        """Propagate camera changes from this widget to `others` (and vice versa)."""
+        for other in others:
+            if not hasattr(other, "_camera_links"):
+                other._camera_links = set()
+                other._propagating = False
+            self._camera_links.add(other)
+            other._camera_links.add(self)
+
+    def unlink_cameras(self, *others: "Scatter3D") -> None:
+        """Remove camera links between this widget and `others`."""
+        other_set = set(others)
+        if hasattr(self, "_camera_links"):
+            self._camera_links -= other_set
+        for other in others:
+            if hasattr(other, "_camera_links"):
+                other._camera_links.discard(self)
+
+    def _propagate_camera(self) -> None:
+        """Broadcast current camera state to all linked widgets."""
+        if getattr(self, "_propagating", False):
+            return
+        links = getattr(self, "_camera_links", set())
+        if not links:
+            return
+        state = self.get_camera()
+        if state is None:
+            return
+        dead = set()
+        for other in links:
+            try:
+                other._receive_camera(state)
+            except Exception:
+                dead.add(other)
+        links -= dead
+
+    def _receive_camera(self, state: dict) -> None:
+        """Apply a camera state dict from a linked widget without re-broadcasting."""
+        self._propagating = True
+        try:
+            self.set_camera(state)
+        finally:
+            self._propagating = False
+
+    def _queue_startup_resources(self) -> None:
+        """Replay scene operations that were queued before the widget went live."""
+        import base64 as _base64
+        handle = self._live()
+        if handle is None:
+            return
+        can_send_primary = handle.app._native_method_available("enqueue_set_scatter_points_packed")
+        if not self._primary_cleared and can_send_primary:
+            payload = self._cached_payload
+            pack_ms = 0.0
+            if payload is None:
+                t0 = time.perf_counter()
+                payload = self._build_payload()
+                pack_ms = (time.perf_counter() - t0) * 1000.0
+                self._cached_payload = payload
+                self._cached_payload_b64 = None
+                self._payload_token = (
+                    zlib.crc32(payload) if payload is not None and len(payload) > 0 else 0
+                )
+                self._compute_auto_color_meta()
+            if payload is not None:
+                handle.enqueue_set_scatter_points_packed(
+                    payload,
+                    pack_ms=pack_ms,
+                    enqueue_epoch_ms=time.time() * 1000.0,
+                    colormap=self.colormap,
+                    payload_format=self.data_format,
+                    coalesce=False,
+                )
+        # Always sync hover_tooltip to native on startup (default is True on both sides,
+        # but a user may have set it to False before the widget went live).
+        handle.enqueue_set_scatter_hover_tooltip(self._hover_tooltip)
+        if not self._primary_cleared:
+            # Sync column names so native tooltip shows the right axis labels.
+            handle.enqueue_set_scatter_tooltip_axis_labels(self.x, self.y, self.z)
+            # Sync primary hover metadata (column names → per-point strings).
+            meta = self._extract_hover_meta(self.frame, self._hover)
+            if meta is not None:
+                handle.enqueue_set_scatter_primary_hover_meta(meta)
+        # Sync LOD config (may have been changed before going live).
+        handle.enqueue_set_scatter_lod(self._lod_enabled, self._lod_threshold, self._lod_factor)
+        # Sync picking mode.
+        handle.enqueue_set_scatter_picking_mode(self._picking_mode)
+        # Sync point style override if set before going live.
+        if hasattr(self, "_point_style"):
+            handle.enqueue_set_scatter_point_style(self._point_style)
+        if not self._pending_scene_ops:
+            return
+        for op, args in self._pending_scene_ops:
+            if op == "add_label":
+                lid, px, py, pz, text, r, g, b, size, anchor = args
+                handle.enqueue_add_scatter_label(lid, px, py, pz, text, r, g, b, size, anchor)
+            elif op == "update_label":
+                lid, px, py, pz, text, r, g, b, size, anchor = args
+                handle.enqueue_update_scatter_label(lid, px, py, pz, text, r, g, b, size, anchor)
+            elif op == "remove_label":
+                (lid,) = args
+                handle.enqueue_remove_scatter_label(lid)
+            elif op == "set_label_visibility":
+                lid, visible = args
+                handle.enqueue_set_scatter_label_visible(lid, visible)
+            elif op == "clear_labels":
+                handle.enqueue_clear_scatter_labels()
+            elif op == "add_lines":
+                oid, pts, r, g, b = args
+                handle.enqueue_add_scatter_lines(oid, pts, r, g, b)
+            elif op == "update_lines":
+                oid, pts, r, g, b = args
+                handle.enqueue_update_scatter_lines(oid, pts, r, g, b)
+            elif op == "add_box":
+                oid, bounds, r, g, b = args
+                xmin, xmax, ymin, ymax, zmin, zmax = bounds
+                handle.enqueue_add_scatter_box(oid, xmin, xmax, ymin, ymax, zmin, zmax, r, g, b)
+            elif op == "remove_overlay":
+                (oid,) = args
+                handle.enqueue_remove_scatter_overlay(oid)
+            elif op == "set_overlay_visibility":
+                oid, visible = args
+                handle.enqueue_set_scatter_overlay_visible(oid, visible)
+            elif op == "clear_overlays":
+                handle.enqueue_clear_scatter_overlays()
+            elif op == "add_points":
+                aid, b64, cmap, fmt, *rest = args
+                hover_meta = rest[0] if len(rest) > 0 else None
+                tx = rest[1] if len(rest) > 1 else None
+                ty = rest[2] if len(rest) > 2 else None
+                tz = rest[3] if len(rest) > 3 else None
+                handle.enqueue_add_scatter_actor(aid, b64, cmap, fmt, hover_meta, tx, ty, tz)
+            elif op == "add_stream":
+                aid, max_pts, mode_s = args[0], args[1], args[2]
+                handle.enqueue_add_scatter_stream(aid, max_pts, mode_s)
+                if len(args) == 6:
+                    init_b64, init_cmap, init_fmt = args[3], args[4], args[5]
+                    handle.enqueue_stream_scatter_actor(aid, init_b64, init_cmap, init_fmt)
+            elif op == "add_mesh":
+                mid, pos_b64, idx_b64, r, g, b, a, wireframe = args
+                handle.enqueue_add_scatter_mesh(mid, pos_b64, idx_b64, r, g, b, a, wireframe)
+            elif op == "remove_mesh":
+                (mid,) = args
+                handle.enqueue_remove_scatter_mesh(mid)
+            elif op == "set_mesh_visibility":
+                mid, visible = args
+                handle.enqueue_set_scatter_mesh_visible(mid, visible)
+            elif op == "clear_meshes":
+                handle.enqueue_clear_scatter_meshes()
+            elif op == "set_actor_visibility":
+                aid, visible = args
+                handle.enqueue_set_scatter_actor_visible(aid, visible)
+        self._pending_scene_ops.clear()
+
+    def screenshot(self) -> "Any":
+        """Capture the scatter viewport as an (H, W, 4) uint8 NumPy array, or None."""
+        if (handle := self._live()) is not None:
+            raw = handle.app.scatter_screenshot(self.id)
+            if raw is not None:
+                import numpy as np
+                w, h, data = raw
+                return np.frombuffer(data, dtype=np.uint8).reshape(h, w, 4).copy()
+        return None
+
+    def save_png(self, path: str) -> None:
+        """Capture the scatter viewport and write it to a PNG file."""
+        img_arr = self.screenshot()
+        if img_arr is None:
+            raise RuntimeError("screenshot() returned None — widget may not be live")
+        try:
+            from PIL import Image
+            Image.fromarray(img_arr, "RGBA").save(path)
+        except ImportError:
+            _write_png_stdlib(img_arr, path)
+
+    # ── GIF export ────────────────────────────────────────────────────────────
+
+    def open_gif(self, path: str, fps: int = 20, loop: int = 0) -> None:
+        """Begin a GIF recording session. Call write_frame() to append frames, close_gif() to finish.
+
+        Requires Pillow (`pip install Pillow`). `loop=0` means infinite loop.
+        """
+        from PIL import Image  # noqa: F401 — validate early
+        self._gif_path = str(path)
+        self._gif_fps = int(fps)
+        self._gif_loop = int(loop)
+        self._gif_frames: list = []
+
+    def write_frame(self) -> None:
+        """Capture the current scatter viewport and append it as a GIF frame."""
+        if not hasattr(self, "_gif_frames"):
+            raise RuntimeError("call open_gif() before write_frame()")
+        arr = self.screenshot()
+        if arr is None:
+            raise RuntimeError("screenshot() returned None — widget may not be live")
+        from PIL import Image
+        self._gif_frames.append(Image.fromarray(arr, "RGBA").convert("RGBA"))
+
+    def close_gif(self) -> None:
+        """Finalise the GIF and write it to the path given to open_gif()."""
+        if not hasattr(self, "_gif_frames") or not self._gif_frames:
+            raise RuntimeError("no frames captured — call open_gif() and write_frame() first")
+        from PIL import Image
+        frames = self._gif_frames
+        duration_ms = max(1, int(1000 / self._gif_fps))
+        frames[0].save(
+            self._gif_path,
+            format="GIF",
+            save_all=True,
+            append_images=frames[1:],
+            duration=duration_ms,
+            loop=self._gif_loop,
+            disposal=2,
+        )
+        del self._gif_frames, self._gif_path, self._gif_fps, self._gif_loop
+
+    def orbit_gif(
+        self,
+        path: str,
+        n_frames: int = 60,
+        fps: int = 20,
+        loop: int = 0,
+        elevation: float | None = None,
+        on_progress: "Any" = None,
+    ) -> None:
+        """Render a full-rotation orbit GIF.
+
+        Rotates the camera yaw by 2π across `n_frames` screenshots and saves as
+        an animated GIF. Requires Pillow. `elevation` overrides pitch if given.
+        """
+        import math
+        cam = self.get_camera()
+        if cam is None:
+            raise RuntimeError("orbit_gif() requires the widget to be live")
+        orig_yaw = cam.get("yaw", 0.4)
+        orig_pitch = cam.get("pitch", 0.4)
+        pitch = float(elevation) if elevation is not None else orig_pitch
+        self.open_gif(path, fps=fps, loop=loop)
+        try:
+            for i in range(n_frames):
+                yaw = orig_yaw + 2 * math.pi * i / n_frames
+                self.set_camera({**cam, "yaw": yaw, "pitch": pitch})
+                self.write_frame()
+                if on_progress is not None:
+                    on_progress(i + 1, n_frames)
+        finally:
+            # Restore original camera state.
+            self.set_camera(cam)
+            self.close_gif()
+
+    # ── Hover tooltip ─────────────────────────────────────────────────────────
+
+    @property
+    def hover_tooltip(self) -> bool:
+        """Whether to show a coordinate tooltip when hovering over a point.
+
+        When enabled, native hover picking displays the nearest point's
+        coordinate tooltip using the widget's current tooltip axis labels.
+        """
+        return self._hover_tooltip
+
+    @hover_tooltip.setter
+    def hover_tooltip(self, value: bool) -> None:
+        self._hover_tooltip = bool(value)
+        if (wh := self._live()) is not None:
+            wh.enqueue_set_scatter_hover_tooltip(bool(value))
+
+
+def _write_png_stdlib(rgba: "Any", path: str) -> None:
+    """Minimal pure-stdlib PNG encoder (no PIL required)."""
+    import struct, zlib
+    import numpy as np
+
+    arr = np.asarray(rgba, dtype=np.uint8)
+    h, w = arr.shape[:2]
+
+    def png_chunk(name: bytes, data: bytes) -> bytes:
+        crc = zlib.crc32(name + data) & 0xFFFFFFFF
+        return struct.pack(">I", len(data)) + name + data + struct.pack(">I", crc)
+
+    raw_rows = b"".join(b"\x00" + bytes(arr[r].ravel()) for r in range(h))
+    compressed = zlib.compress(raw_rows, 9)
+    ihdr = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)  # 8-bit RGB (drop alpha for simplicity)
+    # Re-pack as RGB
+    arr_rgb = arr[:, :, :3]
+    raw_rows_rgb = b"".join(b"\x00" + bytes(arr_rgb[r].ravel()) for r in range(h))
+    compressed_rgb = zlib.compress(raw_rows_rgb, 9)
+    ihdr_rgb = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
+
+    with open(path, "wb") as f:
+        f.write(b"\x89PNG\r\n\x1a\n")
+        f.write(png_chunk(b"IHDR", ihdr_rgb))
+        f.write(png_chunk(b"IDAT", compressed_rgb))
+        f.write(png_chunk(b"IEND", b""))
 
 
 class DataFrameTable(Widget):
@@ -1928,7 +4708,7 @@ class DataFrameTable(Widget):
     def _queue_startup_resources(self) -> None:
         if (handle := self._live()) is not None and self.column_buffers:
             handle.enqueue_set_table_data_columns(
-                self._table_payload(),
+                self._table_payload(include_cells=False),
                 self.column_buffers,
             )
 
@@ -1936,7 +4716,7 @@ class DataFrameTable(Widget):
         if self.resource_id == f"{old_id}:table":
             self.resource_id = f"{self.id}:table"
 
-    def _table_payload(self) -> dict[str, Any]:
+    def _table_payload(self, *, include_cells: bool = True) -> dict[str, Any]:
         return {
             "frame": self.frame_summary.to_dict(),
             "resource_id": self.resource_id,
@@ -1945,11 +4725,12 @@ class DataFrameTable(Widget):
             "virtualized": True,
             "sample_rows": self.sample_rows,
             "buffer_columns": len(self.column_buffers),
-            "cells": self.cells,
+            "cells": self.cells if include_cells else [],
         }
 
     def props(self) -> dict[str, Any]:
-        props = self._table_payload()
+        include_cells = _include_startup_resource_payloads() or not self.column_buffers
+        props = self._table_payload(include_cells=include_cells)
         props["events"] = ["change"] if self.on_select is not None else []
         return props
 

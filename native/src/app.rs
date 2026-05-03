@@ -26,7 +26,6 @@ pub fn run_app_impl(
     let raw: serde_json::Value =
         serde_json::from_str(&json_str).map_err(|e| DragonError::ParseError(e.to_string()))?;
 
-    let scatter_spec = document::find_scatter_in_doc(&raw);
     let python_theme: Option<Theme> = document::parse_theme_from_doc(&raw);
     let effective_theme = python_theme.clone().unwrap_or_else(Theme::dark);
     let mut stylesheets = document::parse_stylesheets_from_doc(&raw);
@@ -92,7 +91,6 @@ pub fn run_app_impl(
         title: doc.window.props.title,
         width: doc.window.props.width,
         height: doc.window.props.height,
-        scatter: scatter_spec,
         widget_tree,
         theme: python_theme,
         stylesheets,

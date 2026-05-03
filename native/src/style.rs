@@ -394,6 +394,8 @@ fn format_css_float(value: f32) -> String {
 pub struct LayoutStyle {
     pub display: Option<DisplayStyle>,
     pub flex_direction: Option<FlexDirectionStyle>,
+    pub align_items: Option<AlignItemsStyle>,
+    pub align_self: Option<AlignItemsStyle>,
     pub width: Option<f32>,
     pub height: Option<f32>,
     pub min_width: Option<f32>,
@@ -480,6 +482,14 @@ pub enum FlexDirectionStyle {
     Column,
     RowReverse,
     ColumnReverse,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlignItemsStyle {
+    Start,
+    Center,
+    End,
+    Stretch,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -803,6 +813,7 @@ pub struct TextStyle {
 pub struct WidgetStyle {
     pub text_area_rows: Option<f32>,
     pub scatter_point_size: Option<f32>,
+    pub scatter_point_style: Option<String>,
     pub table_row_height: Option<f32>,
     pub table_header_height: Option<f32>,
     pub table_column_width: Option<f32>,
@@ -1125,6 +1136,8 @@ fn parse_layout(map: &serde_json::Map<String, Value>, out: &mut LayoutStyle) {
         .get("flex_direction")
         .and_then(Value::as_str)
         .and_then(parse_flex_direction);
+    out.align_items = text_value(map, "align_items", "align-items").and_then(parse_align_items);
+    out.align_self = text_value(map, "align_self", "align-self").and_then(parse_align_items);
     out.width = number(map.get("width"));
     out.height = number(map.get("height"));
     out.min_width = number(map.get("min_width"));
@@ -1250,6 +1263,9 @@ fn parse_widget(map: &serde_json::Map<String, Value>, out: &mut WidgetStyle) {
         number(map.get("text_area_rows")).or_else(|| number(map.get("text-area-rows")));
     out.scatter_point_size =
         number(map.get("scatter_point_size")).or_else(|| number(map.get("scatter-point-size")));
+    out.scatter_point_style = keyword(map.get("scatter_point_style"))
+        .or_else(|| keyword(map.get("scatter-point-style")))
+        .and_then(|s| parse_scatter_point_style(&s));
     out.table_row_height =
         number(map.get("table_row_height")).or_else(|| number(map.get("table-row-height")));
     out.table_header_height =
@@ -1462,6 +1478,16 @@ fn parse_text_align(value: &str) -> Option<TextAlign> {
         "left" | "start" => Some(TextAlign::Left),
         "center" | "middle" => Some(TextAlign::Center),
         "right" | "end" => Some(TextAlign::Right),
+        _ => None,
+    }
+}
+
+fn parse_align_items(value: &str) -> Option<AlignItemsStyle> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "start" | "flex-start" => Some(AlignItemsStyle::Start),
+        "center" => Some(AlignItemsStyle::Center),
+        "end" | "flex-end" => Some(AlignItemsStyle::End),
+        "stretch" => Some(AlignItemsStyle::Stretch),
         _ => None,
     }
 }
@@ -2085,6 +2111,17 @@ fn parse_font_weight(value: &Value) -> Option<u16> {
 
 fn number(value: Option<&Value>) -> Option<f32> {
     value.and_then(Value::as_f64).map(|v| v as f32)
+}
+
+fn keyword(value: Option<&Value>) -> Option<String> {
+    value?.as_str().map(|s| s.trim().to_lowercase())
+}
+
+fn parse_scatter_point_style(s: &str) -> Option<String> {
+    match s {
+        "circle" | "square" | "gaussian" => Some(s.to_string()),
+        _ => None,
+    }
 }
 
 fn color_ref(value: Option<&Value>) -> Option<ColorRef> {

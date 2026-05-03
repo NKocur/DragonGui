@@ -668,6 +668,7 @@ Supported widget-specific properties:
 | --- | --- |
 | `text-area-rows` | `TextArea` |
 | `scatter-point-size` | `Scatter3D` |
+| `scatter-point-style` | `Scatter3D` |
 | `table-row-height` | `DataFrameTable` |
 | `table-header-height` | `DataFrameTable` |
 | `table-column-width` | `DataFrameTable` |
@@ -890,6 +891,9 @@ transition shorthands.
 Unsupported CSS does not crash the app. The parser records warnings, skips the
 unsupported declaration or selector, and continues applying the rest of the
 stylesheet.
+
+For layout primitive selection, responsive card grids, scrollable titled panels,
+and clipping diagnostics, see `docs/layout.md`.
 
 ## Examples
 

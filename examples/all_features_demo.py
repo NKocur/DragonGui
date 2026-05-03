@@ -21,6 +21,26 @@ except ImportError as exc:  # pragma: no cover - manual demo guard
 
 
 ROWS = 80_000
+GRID_GAP = 10
+GRID_STYLE = {"padding": 6}
+COMPACT_GRID_STYLE = {"padding": 6, "align_items": "start", "flex_grow": 0, "flex_shrink": 1}
+CARD_STYLE = {
+    "padding": 6,
+    "gap": 2,
+    "font_size": 14,
+    "line_height": "18px",
+    "flex_grow": 0,
+    "flex_shrink": 1,
+    "align_self": "start",
+}
+SIDEBAR_TITLE_STYLE = {
+    "font_size": 20,
+    "font_weight": "bold",
+    "color": "accent",
+    "height": 24,
+    "line_height": "24px",
+}
+SIDEBAR_SUBTITLE_STYLE = {"color": "muted_text", "font_size": 12, "height": 16, "line_height": "16px"}
 
 
 def make_demo_image() -> str:
@@ -298,7 +318,7 @@ styles = [
 def cycle_style() -> None:
     demo_state["style"] = 1 - int(demo_state["style"])
     current = styles[int(demo_state["style"])]
-    style_panel.set_style({"padding": 16, "gap": 12, **current["panel"]})
+    style_panel.set_style({**CARD_STYLE, **current["panel"]})
     style_label.set_style({"font_size": 16, **current["label"]})
     style_button.set_style({"height": 46, "width": 190, **current["button"]})
     set_status("Applied live style patch")
@@ -318,10 +338,10 @@ with dg.MenuBar(height=34, tooltip="MenuBar opens native overlay menus."):
 
 
 with dg.HLayout(style={"gap": 0}):
-    with dg.Sidebar(width=230, style={"padding": 14, "gap": 10, "background": "surface"}):
-        dg.Label("DragonGUI", style={"font_size": 20, "font_weight": "bold", "color": "accent"})
-        dg.Label("All features", style={"color": "muted_text"})
-        with dg.HLayout(style={"gap": 6, "height": 24}):
+    with dg.Sidebar(width=230, style={"padding": 8, "gap": 4, "background": "surface"}):
+        dg.Label("DragonGUI", style=SIDEBAR_TITLE_STYLE)
+        dg.Label("All features", style=SIDEBAR_SUBTITLE_STYLE)
+        with dg.FlowLayout(gap=5, row_gap=3):
             dg.Badge("V2", level="success")
             dg.Tag("native", level="info")
         dg.Separator()
@@ -337,8 +357,8 @@ with dg.HLayout(style={"gap": 0}):
 
     with dg.Pages(value="overview", on_change=lambda value: set_status(f"Page: {value}")):
         with dg.Page("overview", title="Overview"):
-            with dg.HLayout(style={"gap": 16, "padding": 14}):
-                with dg.Panel("Scatter controls", width=310, style={"padding": 14, "gap": 10}):
+            with dg.GridLayout(columns=2, min_column_width=360, gap=GRID_GAP, style=GRID_STYLE):
+                with dg.Panel("Scatter controls", style=CARD_STYLE):
                     mode = dg.Dropdown(
                         ("helix", "wave", "cloud"),
                         value="helix",
@@ -370,16 +390,20 @@ with dg.HLayout(style={"gap": 0}):
                     x="x",
                     y="y",
                     z="z",
+                    scalars="z",
                     colormap="viridis",
+                    point_size=3.4,
+                    opacity=1.0,
+                    background=(0.02, 0.02, 0.03),
                     on_pick=pick_scatter_point,
                     key="main-scatter",
                     tooltip="Native GPU scatter widget with live buffer updates.",
                 )
 
         with dg.Page("controls", title="Controls"):
-            with dg.HLayout(style={"gap": 16, "padding": 14}):
-                with dg.Panel("Form controls", width=330, style={"padding": 14, "gap": 10}):
-                    with dg.HLayout(style={"gap": 8, "height": 28}):
+            with dg.GridLayout(columns=2, min_column_width=360, gap=GRID_GAP, style=COMPACT_GRID_STYLE):
+                with dg.Panel("Form controls", style=CARD_STYLE):
+                    with dg.FlowLayout(gap=8, row_gap=6):
                         dg.Badge("live", level="success")
                         dg.Badge("queued", level="warning")
                         dg.Tag("review", level="neutral")
@@ -442,7 +466,7 @@ with dg.HLayout(style={"gap": 0}):
                             wrap=True,
                             on_change=lambda v: set_status(f"Notes length: {len(v)}"),
                         )
-                with dg.Panel("Tabs", style={"padding": 14, "gap": 10}):
+                with dg.Panel("Tabs", style=CARD_STYLE):
                     with dg.Tabs(value="one", on_change=lambda v: set_status(f"Tab: {v}")):
                         with dg.Tab("One", value="one"):
                             dg.Label("Tab content one")
@@ -461,8 +485,8 @@ with dg.HLayout(style={"gap": 0}):
                             dg.Slider(0.7, min=0, max=1, step=0.05)
 
         with dg.Page("data", title="Data"):
-            with dg.HLayout(style={"gap": 16, "padding": 14}):
-                with dg.Panel("Data controls", width=310, style={"padding": 14, "gap": 10}):
+            with dg.GridLayout(columns=2, min_column_width=380, gap=GRID_GAP, style=GRID_STYLE):
+                with dg.Panel("Data controls", style=CARD_STYLE):
                     dg.Button("Load Helix Table", on_click=lambda: update_table("helix"))
                     dg.Button("Load Wave Table", on_click=lambda: update_table("wave"))
                     dg.Button("Load Cloud Table", on_click=lambda: update_table("cloud"))
@@ -481,24 +505,22 @@ with dg.HLayout(style={"gap": 0}):
                 )
 
         with dg.Page("live", title="Live Runtime"):
-            with dg.HLayout(style={"gap": 16, "padding": 14}):
-                with dg.Panel("Live commands", width=310, style={"padding": 14, "gap": 10}):
+            with dg.GridLayout(columns=2, min_column_width=360, gap=GRID_GAP, style=COMPACT_GRID_STYLE):
+                with dg.Panel("Live commands", style=CARD_STYLE):
                     dg.Button("Replace Children", on_click=swap_children, tooltip="Send ReplaceChildren to the native retained tree.")
                     dg.Button("Cycle Style", on_click=cycle_style, tooltip="Send live style patches to existing widgets.")
                     dg.Button("Print Snapshot", on_click=print_snapshot, tooltip="Inspect current retained runtime state.")
                     dg.Label("Commands wake the event loop.")
                     dg.Separator()
                     dg.Label("Includes ReplaceChildren.")
-                with dg.Panel(
-                    "ReplaceChildren target",
-                    style={"padding": 18, "gap": 10, "border_color": "accent", "border_radius": 12},
-                ) as dynamic_panel:
-                    for child in make_summary_children():
-                        dynamic_panel.add(child)
+                with dg.Panel("ReplaceChildren target", style={**CARD_STYLE, "border_color": "accent", "border_radius": 12}):
+                    with dg.VLayout(style={"gap": 4}) as dynamic_panel:
+                        for child in make_summary_children():
+                            dynamic_panel.add(child)
 
         with dg.Page("styling", title="Styling"):
-            with dg.HLayout(style={"gap": 16, "padding": 14}):
-                with dg.Panel("Token styles", width=330, class_="token-panel", style={"padding": 14, "gap": 10}):
+            with dg.GridLayout(columns=2, min_column_width=360, gap=GRID_GAP, style=COMPACT_GRID_STYLE):
+                with dg.Panel("Token styles", class_="token-panel", style=CARD_STYLE):
                     dg.Button("Danger token", style={"background": "danger", "border_color": "danger"})
                     dg.Button("Warning token", style={"background": "warning", "border_color": "warning"})
                     dg.Button("Success token", style={"background": "success", "border_color": "success"})
@@ -513,7 +535,7 @@ with dg.HLayout(style={"gap": 0}):
                         },
                     )
                     dg.Label("class_ is retained for snapshots.", class_="snapshot-label")
-                with dg.Panel("Live style preview", style={"padding": 16, "gap": 12, **styles[0]["panel"]}) as style_panel:
+                with dg.Panel("Live style preview", style={**CARD_STYLE, **styles[0]["panel"]}) as style_panel:
                     style_label = dg.Label("Styled label", style={"font_size": 16, **styles[0]["label"]})
                     style_button = dg.Button("Styled button", on_click=cycle_style, style={"height": 46, "width": 190, **styles[0]["button"]})
                     dg.Image(

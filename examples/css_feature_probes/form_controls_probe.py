@@ -8,6 +8,8 @@ if __name__ == "__main__" and __package__ is None:
 
 import dragongui as dg
 
+from probe_helpers import probe_grid
+
 
 app = dg.App(theme=dg.Theme.dark(accent="#5aa9ff", radius=8, focus="#ffd36a"))
 
@@ -70,7 +72,7 @@ BASE_FORM_CSS = """
         font-weight: 850;
     }
 
-    HLayout.grid {
+    GridLayout.grid {
         width: 100%;
         height: auto;
         gap: 12px;
@@ -94,8 +96,6 @@ BASE_FORM_CSS = """
     }
 
     Panel.case {
-        width: calc(50% - 6px);
-        min-width: 390px;
         min-height: 312px;
     }
 
@@ -634,7 +634,7 @@ with dg.VLayout(class_="root"):
                     on_click=lambda name=theme_name: apply_form_theme(name),
                 )
 
-    with dg.HLayout(class_="grid"):
+    with probe_grid(gap=12):
         with dg.Panel("Text entry", class_="case"):
             dg.Label("Inputs should keep padding, focus rings, wrapping, and caret placement.", class_="case-title")
             dg.TextInput(
@@ -692,7 +692,7 @@ with dg.VLayout(class_="root"):
                 dg.Button("Disabled", disabled=True)
                 dg.Button("Apply", class_="primary", on_click=lambda: set_status("Apply clicked"))
 
-    with dg.HLayout(class_="grid"):
+    with probe_grid(gap=12):
         with dg.Panel("Numeric controls", class_="case"):
             dg.Label("Slider, NumberInput, and ProgressBar should align their internal parts.", class_="case-title")
             dg.Slider(

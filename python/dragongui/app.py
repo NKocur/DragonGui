@@ -10,6 +10,7 @@ from .runtime import AppHandle, ToastHandle, _collect_runtime_callbacks, _set_ac
 from .theme import Theme
 from .widgets import (
     Window,
+    _startup_resource_payload_scope,
     _walk_widget_tree,
 )
 
@@ -24,13 +25,20 @@ class App:
     _handle: AppHandle | None = field(default=None, init=False, repr=False)
     _stylesheets: list[str] = field(default_factory=list, init=False, repr=False)
 
-    def document(self, window: Window) -> dict[str, Any]:
+    def document(
+        self,
+        window: Window,
+        *,
+        include_startup_resource_payloads: bool = True,
+    ) -> dict[str, Any]:
+        with _startup_resource_payload_scope(include_startup_resource_payloads):
+            window_doc = window.to_dict()
         doc: dict[str, Any] = {
             "schema": 1,
             "type": "app",
             "title": self.title,
             "metadata": self.metadata,
-            "window": window.to_dict(),
+            "window": window_doc,
         }
         if self.theme is not None:
             doc["theme"] = self.theme.to_dict()
@@ -85,7 +93,7 @@ class App:
             native_click_cbs = {} if component_runtime is not None and bind_live else click_cbs
             native_change_cbs = {} if component_runtime is not None and bind_live else change_cbs
             return run_document(
-                self.document(window),
+                self.document(window, include_startup_resource_payloads=not bind_live),
                 native_click_cbs,
                 native_change_cbs,
                 app_handle=handle if bind_live else None,

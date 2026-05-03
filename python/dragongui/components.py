@@ -120,8 +120,8 @@ class ComponentRuntime:
         try:
             new_widget = self._render_widget()
             new_vnode = retain_old_ids(self.current_vnode, widget_to_vnode(new_widget))
-            _sync_widget_tree_from_vnode(new_widget, new_vnode)
-            new_vnode = widget_to_vnode(new_widget)
+            if _sync_widget_tree_from_vnode(new_widget, new_vnode):
+                new_vnode = widget_to_vnode(new_widget)
             patches = diff(self.current_vnode, new_vnode)
             self.app_handle.apply_patches(patches)
         except Exception:
@@ -176,8 +176,8 @@ class ComponentRuntime:
         vnode = widget_to_vnode(widget)
         if self.current_vnode is not None:
             vnode = retain_old_ids(self.current_vnode, vnode)
-            _sync_widget_tree_from_vnode(widget, vnode)
-            vnode = widget_to_vnode(widget)
+            if _sync_widget_tree_from_vnode(widget, vnode):
+                vnode = widget_to_vnode(widget)
         self.current_widget = widget
         self.current_vnode = vnode
         return widget
@@ -223,19 +223,21 @@ def render_component_window(root: ComponentInstance) -> Window:
     return widget
 
 
-def _sync_widget_tree_from_vnode(widget: Widget, vnode: VNode) -> None:
+def _sync_widget_tree_from_vnode(widget: Widget, vnode: VNode) -> bool:
     """Copy retained VNode ids back onto freshly rendered widget objects."""
 
     old_id = widget.id
     widget.id = vnode.id or widget.id
+    changed = widget.id != old_id
     if widget.id != old_id:
         widget._sync_after_id_change(old_id)
     if not isinstance(widget, Container):
-        return
+        return changed
     if len(widget.children) != len(vnode.children):
         raise RuntimeError("component widget tree and VNode tree diverged")
     for child, child_vnode in zip(widget.children, vnode.children, strict=True):
-        _sync_widget_tree_from_vnode(child, child_vnode)
+        changed = _sync_widget_tree_from_vnode(child, child_vnode) or changed
+    return changed
 
 
 def _bind_widget_tree(widget: Widget, app_handle: AppHandle) -> None:

@@ -12,6 +12,7 @@ use pyo3::types::PyAny;
 use winit::event_loop::EventLoopProxy;
 
 use crate::css_style::{parse_stylesheet, StylesheetOrigin};
+use crate::document::ScatterPayloadFormat;
 
 /// User event sent into the winit loop when the Python/Rust runtime bridge has
 /// work waiting.  Keep this small and cloneable; all payloads stay in the
@@ -78,6 +79,20 @@ pub enum Command {
         xyz: Vec<u8>,
         telemetry: Option<ScatterTelemetry>,
         colormap: String,
+        /// Wire format; defaults to xyz_f32_v0 when absent.
+        payload_format: ScatterPayloadFormat,
+        /// When true, older pending point updates for this scatter are dropped.
+        coalesce: bool,
+    },
+    SetScatterPrimaryHoverMeta {
+        id: String,
+        /// JSON array of per-point tooltip strings for the primary buffer.
+        meta: String,
+    },
+    SetScatterTooltipAxisLabels {
+        id: String,
+        /// Column names used as coordinate labels in the hover tooltip (x, y, z order).
+        labels: [String; 3],
     },
     SetTableData {
         id: String,
@@ -120,6 +135,322 @@ pub enum Command {
     Invalidate {
         id: String,
         dirty: Dirty,
+    },
+    ResetScatterCamera {
+        id: String,
+    },
+    SetScatterViewDirection {
+        id: String,
+        /// One of "xy", "xz", "yz", "isometric".
+        direction: String,
+    },
+    SetScatterPointStyle {
+        id: String,
+        /// One of "circle", "square", "gaussian".
+        style: String,
+    },
+    SetScatterPointSize {
+        id: String,
+        /// Logical pixels. Native scales this to the current monitor scale factor.
+        size: f32,
+    },
+    FitScatterCamera {
+        id: String,
+        /// Optional explicit bounds: [x_min, y_min, z_min, x_max, y_max, z_max].
+        /// When None the scatter refits to its current data bounds.
+        bounds: Option<[f32; 6]>,
+    },
+    SetScatterParallelProjection {
+        id: String,
+        parallel: bool,
+    },
+    SetScatterCameraState {
+        id: String,
+        target: [f32; 3],
+        distance: f32,
+        yaw: f32,
+        pitch: f32,
+        parallel: bool,
+    },
+    SetScatterGridVisible {
+        id: String,
+        visible: bool,
+    },
+    SetScatterGridPlanes {
+        id: String,
+        major: bool,
+        minor: bool,
+    },
+    SetScatterGridOptions {
+        id: String,
+        sticky: bool,
+        all_edges: bool,
+    },
+    SetScatterTicks {
+        id: String,
+        x: Option<usize>,
+        y: Option<usize>,
+        z: Option<usize>,
+    },
+    SetScatterAxes {
+        id: String,
+        x: String,
+        y: String,
+        z: String,
+    },
+    SetScatterAxisVisibility {
+        id: String,
+        x: bool,
+        y: bool,
+        z: bool,
+    },
+    SetScatterBackground {
+        id: String,
+        r: f32,
+        g: f32,
+        b: f32,
+    },
+    SetScatterLegend {
+        id: String,
+        visible: bool,
+        position: String,
+        /// Flat list of (label, r, g, b) entries.
+        entries: Vec<(String, f32, f32, f32)>,
+        title: Option<String>,
+    },
+    SetScatterScalarBar {
+        id: String,
+        visible: bool,
+        vmin: f32,
+        vmax: f32,
+        log_scale: bool,
+        colormap: String,
+        title: Option<String>,
+    },
+    SetScatterOrientationAxes {
+        id: String,
+        visible: bool,
+    },
+    AddScatterLabel {
+        id: String,
+        label_id: u32,
+        x: f32,
+        y: f32,
+        z: f32,
+        text: String,
+        r: f32,
+        g: f32,
+        b: f32,
+        size: f32,
+        anchor: String,
+    },
+    UpdateScatterLabel {
+        id: String,
+        label_id: u32,
+        x: Option<f32>,
+        y: Option<f32>,
+        z: Option<f32>,
+        text: Option<String>,
+        r: Option<f32>,
+        g: Option<f32>,
+        b: Option<f32>,
+        size: Option<f32>,
+        anchor: Option<String>,
+    },
+    RemoveScatterLabel {
+        id: String,
+        label_id: u32,
+    },
+    SetScatterLabelVisible {
+        id: String,
+        label_id: u32,
+        visible: bool,
+    },
+    ClearScatterLabels {
+        id: String,
+    },
+    AddScatterLines {
+        id: String,
+        overlay_id: u32,
+        segments: Vec<[f32; 6]>,
+        r: f32,
+        g: f32,
+        b: f32,
+    },
+    UpdateScatterLines {
+        id: String,
+        overlay_id: u32,
+        segments: Vec<[f32; 6]>,
+        r: f32,
+        g: f32,
+        b: f32,
+    },
+    AddScatterBox {
+        id: String,
+        overlay_id: u32,
+        xmin: f32,
+        xmax: f32,
+        ymin: f32,
+        ymax: f32,
+        zmin: f32,
+        zmax: f32,
+        r: f32,
+        g: f32,
+        b: f32,
+    },
+    RemoveScatterOverlay {
+        id: String,
+        overlay_id: u32,
+    },
+    SetScatterOverlayVisible {
+        id: String,
+        overlay_id: u32,
+        visible: bool,
+    },
+    ClearScatterOverlays {
+        id: String,
+    },
+    AddScatterActor {
+        id: String,
+        actor_id: u32,
+        payload_b64: String,
+        colormap: String,
+        payload_format: ScatterPayloadFormat,
+        /// JSON array of per-point tooltip strings; None or empty = coordinate fallback.
+        hover_meta: Option<String>,
+        /// Source column names for coordinate rows in the hover tooltip.
+        tooltip_axis_labels: [String; 3],
+    },
+    AddScatterActorPacked {
+        id: String,
+        actor_id: u32,
+        payload: Vec<u8>,
+        colormap: String,
+        payload_format: ScatterPayloadFormat,
+        /// JSON array of per-point tooltip strings; None or empty = coordinate fallback.
+        hover_meta: Option<String>,
+        /// Source column names for coordinate rows in the hover tooltip.
+        tooltip_axis_labels: [String; 3],
+    },
+    UpdateScatterActor {
+        id: String,
+        actor_id: u32,
+        payload_b64: String,
+        colormap: String,
+        payload_format: ScatterPayloadFormat,
+        /// Source column names for coordinate rows in the hover tooltip.
+        tooltip_axis_labels: [String; 3],
+    },
+    UpdateScatterActorPacked {
+        id: String,
+        actor_id: u32,
+        payload: Vec<u8>,
+        colormap: String,
+        payload_format: ScatterPayloadFormat,
+        /// Source column names for coordinate rows in the hover tooltip.
+        tooltip_axis_labels: [String; 3],
+    },
+    RemoveScatterActor {
+        id: String,
+        actor_id: u32,
+    },
+    SetScatterActorVisible {
+        id: String,
+        actor_id: u32,
+        visible: bool,
+    },
+    ClearScatterActors {
+        id: String,
+    },
+    ClearScatterScene {
+        id: String,
+    },
+    AddScatterStream {
+        id: String,
+        actor_id: u32,
+        max_points: u32,
+        mode: String,
+    },
+    StreamScatterActor {
+        id: String,
+        actor_id: u32,
+        payload_b64: String,
+        colormap: String,
+        payload_format: ScatterPayloadFormat,
+    },
+    StreamScatterActorPacked {
+        id: String,
+        actor_id: u32,
+        payload: Vec<u8>,
+        colormap: String,
+        payload_format: ScatterPayloadFormat,
+    },
+    ClearScatterStream {
+        id: String,
+        actor_id: u32,
+    },
+    // ── Phase 5: Selection, Hover, LOD ───────────────────────────────────────
+    SetScatterLod {
+        id: String,
+        enabled: bool,
+        threshold: u32,
+        factor: u32,
+    },
+    SetScatterPickingMode {
+        id: String,
+        /// "point" | "rectangle" | "lasso" | "none"
+        mode: String,
+    },
+    SetScatterHoverTooltip {
+        id: String,
+        enabled: bool,
+    },
+    // ── Phase 6: Mesh and Statistical Overlays ────────────────────────────────
+    AddScatterMesh {
+        id: String,
+        mesh_id: u32,
+        /// Base64-encoded little-endian float32 (N × 3) vertex positions.
+        positions_b64: String,
+        /// Base64-encoded little-endian uint32 (M × 3) triangle indices.
+        indices_b64: String,
+        r: f32,
+        g: f32,
+        b: f32,
+        a: f32,
+        wireframe: bool,
+    },
+    UpdateScatterMesh {
+        id: String,
+        mesh_id: u32,
+        positions_b64: Option<String>,
+        indices_b64: Option<String>,
+        r: Option<f32>,
+        g: Option<f32>,
+        b: Option<f32>,
+        a: Option<f32>,
+        wireframe: Option<bool>,
+    },
+    RemoveScatterMesh {
+        id: String,
+        mesh_id: u32,
+    },
+    SetScatterMeshVisible {
+        id: String,
+        mesh_id: u32,
+        visible: bool,
+    },
+    ClearScatterMeshes {
+        id: String,
+    },
+    // ── Phase 7: Export / Camera ──────────────────────────────────────────────
+    SetScatterParallelScale {
+        id: String,
+        half_w: f32,
+        half_h: f32,
+    },
+    ScatterScreenshot {
+        id: String,
+        request_id: u64,
     },
     DebugSnapshot {
         request_id: u64,
@@ -165,11 +496,33 @@ impl CommandQueue {
         if self.is_closed() {
             return Err(CommandQueueError::Closed);
         }
-        self.inner
-            .lock()
-            .expect("command queue mutex poisoned")
-            .items
-            .push_back(command);
+        let mut inner = self.inner.lock().expect("command queue mutex poisoned");
+        if let Command::SetScatterPointsPacked {
+            id, coalesce: true, ..
+        } = &command
+        {
+            let mut filtered = VecDeque::with_capacity(inner.items.len());
+            let mut crossed_snapshot_barrier = false;
+            while let Some(queued) = inner.items.pop_back() {
+                let drop = !crossed_snapshot_barrier
+                    && matches!(
+                        &queued,
+                        Command::SetScatterPointsPacked {
+                            id: queued_id,
+                            coalesce: true,
+                            ..
+                        } if queued_id == id
+                    );
+                if matches!(queued, Command::DebugSnapshot { .. }) {
+                    crossed_snapshot_barrier = true;
+                }
+                if !drop {
+                    filtered.push_front(queued);
+                }
+            }
+            inner.items = filtered;
+        }
+        inner.items.push_back(command);
         Ok(())
     }
 
@@ -181,6 +534,19 @@ impl CommandQueue {
     pub fn drain_into(&self, out: &mut Vec<Command>) {
         let mut inner = self.inner.lock().expect("command queue mutex poisoned");
         out.extend(inner.items.drain(..));
+    }
+
+    pub fn drain_limited_into(&self, out: &mut Vec<Command>, limit: usize) {
+        if limit == 0 {
+            return;
+        }
+        let mut inner = self.inner.lock().expect("command queue mutex poisoned");
+        for _ in 0..limit {
+            let Some(command) = inner.items.pop_front() else {
+                break;
+            };
+            out.push(command);
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -209,6 +575,7 @@ impl CommandQueue {
 pub struct CommandBridge {
     queue: Arc<CommandQueue>,
     proxy: Mutex<Option<EventLoopProxy<RuntimeEvent>>>,
+    wake_pending: AtomicBool,
     snapshot_seq: AtomicU64,
     snapshots: Mutex<HashMap<u64, Option<String>>>,
     snapshot_cv: Condvar,
@@ -231,6 +598,10 @@ impl CommandBridge {
 
     pub fn drain_into(&self, out: &mut Vec<Command>) {
         self.queue.drain_into(out);
+    }
+
+    pub fn drain_limited_into(&self, out: &mut Vec<Command>, limit: usize) {
+        self.queue.drain_limited_into(out, limit);
     }
 
     pub fn len(&self) -> usize {
@@ -268,14 +639,25 @@ impl CommandBridge {
         if self.is_closed() {
             return;
         }
+        if self.wake_pending.swap(true, Ordering::AcqRel) {
+            return;
+        }
         let proxy = self
             .proxy
             .lock()
             .expect("command bridge proxy mutex poisoned")
             .clone();
         if let Some(proxy) = proxy {
-            let _ = proxy.send_event(RuntimeEvent::Wake);
+            if proxy.send_event(RuntimeEvent::Wake).is_err() {
+                self.wake_pending.store(false, Ordering::Release);
+            }
+        } else {
+            self.wake_pending.store(false, Ordering::Release);
         }
+    }
+
+    pub fn clear_wake_pending(&self) {
+        self.wake_pending.store(false, Ordering::Release);
     }
 
     pub fn request_debug_snapshot(&self, timeout: Duration) -> Result<String, SnapshotError> {
@@ -348,6 +730,70 @@ impl CommandBridge {
         if let Some(slot) = snapshots.get_mut(&request_id) {
             *slot = Some(snapshot_json);
             self.snapshot_cv.notify_all();
+        }
+    }
+
+    pub fn request_scatter_screenshot(
+        &self,
+        id: String,
+        timeout: Duration,
+    ) -> Result<String, SnapshotError> {
+        if self.is_closed() {
+            return Err(SnapshotError::Closed);
+        }
+        let request_id = self.snapshot_seq.fetch_add(1, Ordering::Relaxed);
+        {
+            let mut snapshots = self
+                .snapshots
+                .lock()
+                .expect("command bridge snapshot mutex poisoned");
+            snapshots.insert(request_id, None);
+        }
+        if self
+            .push(Command::ScatterScreenshot { id, request_id })
+            .is_err()
+        {
+            self.snapshots
+                .lock()
+                .expect("command bridge snapshot mutex poisoned")
+                .remove(&request_id);
+            return Err(SnapshotError::Closed);
+        }
+        let deadline = Instant::now() + timeout;
+        let mut snapshots = self
+            .snapshots
+            .lock()
+            .expect("command bridge snapshot mutex poisoned");
+        loop {
+            if snapshots
+                .get(&request_id)
+                .and_then(|slot| slot.as_ref())
+                .is_some()
+            {
+                return Ok(snapshots
+                    .remove(&request_id)
+                    .and_then(|slot| slot)
+                    .expect("screenshot response disappeared"));
+            }
+            if self.is_closed() {
+                snapshots.remove(&request_id);
+                return Err(SnapshotError::Closed);
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                snapshots.remove(&request_id);
+                return Err(SnapshotError::Timeout);
+            }
+            let wait = deadline.saturating_duration_since(now);
+            let (next, timeout_result) = self
+                .snapshot_cv
+                .wait_timeout(snapshots, wait)
+                .expect("command bridge screenshot condvar poisoned");
+            snapshots = next;
+            if timeout_result.timed_out() {
+                snapshots.remove(&request_id);
+                return Err(SnapshotError::Timeout);
+            }
         }
     }
 }
@@ -436,7 +882,7 @@ impl NativeCommandSender {
         self.enqueue(Command::Invalidate { id, dirty })
     }
 
-    #[pyo3(signature = (id, xyz, pack_ms=None, enqueue_epoch_ms=None, colormap=None))]
+    #[pyo3(signature = (id, xyz, pack_ms=None, enqueue_epoch_ms=None, colormap=None, payload_format=None, coalesce=None))]
     fn enqueue_set_scatter_points_packed(
         &self,
         id: String,
@@ -444,9 +890,22 @@ impl NativeCommandSender {
         pack_ms: Option<f64>,
         enqueue_epoch_ms: Option<f64>,
         colormap: Option<String>,
+        payload_format: Option<String>,
+        coalesce: Option<bool>,
     ) -> PyResult<()> {
         let xyz = byte_buffer_from_py(xyz, "scatter point payload")?;
-        let point_count = xyz.len() / 12;
+        let fmt = ScatterPayloadFormat::from_str(
+            payload_format.as_deref().unwrap_or("xyz_f32_v0"),
+        );
+        let bytes_per_point = match fmt {
+            ScatterPayloadFormat::PointInstanceV1 => 32,
+            ScatterPayloadFormat::XyzF32V0 => 12,
+        };
+        let point_count = if bytes_per_point > 0 {
+            xyz.len() / bytes_per_point
+        } else {
+            0
+        };
         let payload_bytes = xyz.len();
         let telemetry = Some(ScatterTelemetry {
             pack_ms: pack_ms.unwrap_or(0.0).max(0.0),
@@ -459,7 +918,714 @@ impl NativeCommandSender {
             xyz,
             telemetry,
             colormap: normalize_colormap(colormap),
+            payload_format: fmt,
+            coalesce: coalesce.unwrap_or(true),
         })
+    }
+
+    fn enqueue_reset_scatter_camera(&self, id: String) -> PyResult<()> {
+        self.enqueue(Command::ResetScatterCamera { id })
+    }
+
+    #[pyo3(signature = (id, direction))]
+    fn enqueue_set_scatter_view_direction(&self, id: String, direction: String) -> PyResult<()> {
+        let dir = direction.trim().to_lowercase();
+        if !matches!(dir.as_str(), "xy" | "xz" | "yz" | "isometric") {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "unknown scatter view direction {:?}; expected one of: xy, xz, yz, isometric",
+                direction
+            )));
+        }
+        self.enqueue(Command::SetScatterViewDirection { id, direction: dir })
+    }
+
+    #[pyo3(signature = (id, style))]
+    fn enqueue_set_scatter_point_style(&self, id: String, style: String) -> PyResult<()> {
+        let s = style.trim().to_lowercase();
+        if !matches!(s.as_str(), "circle" | "square" | "gaussian") {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "unknown scatter point style {:?}; expected one of: circle, square, gaussian",
+                style
+            )));
+        }
+        self.enqueue(Command::SetScatterPointStyle { id, style: s })
+    }
+
+    #[pyo3(signature = (id, size))]
+    fn enqueue_set_scatter_point_size(&self, id: String, size: f32) -> PyResult<()> {
+        self.enqueue(Command::SetScatterPointSize {
+            id,
+            size: size.max(0.0),
+        })
+    }
+
+    #[pyo3(signature = (id, bounds=None))]
+    fn enqueue_fit_scatter_camera(&self, id: String, bounds: Option<[f32; 6]>) -> PyResult<()> {
+        self.enqueue(Command::FitScatterCamera { id, bounds })
+    }
+
+    #[pyo3(signature = (id, parallel))]
+    fn enqueue_set_scatter_parallel_projection(&self, id: String, parallel: bool) -> PyResult<()> {
+        self.enqueue(Command::SetScatterParallelProjection { id, parallel })
+    }
+
+    #[pyo3(signature = (id, target, distance, yaw, pitch, parallel=false))]
+    fn enqueue_set_scatter_camera_state(
+        &self,
+        id: String,
+        target: [f32; 3],
+        distance: f32,
+        yaw: f32,
+        pitch: f32,
+        parallel: bool,
+    ) -> PyResult<()> {
+        self.enqueue(Command::SetScatterCameraState {
+            id,
+            target,
+            distance,
+            yaw,
+            pitch,
+            parallel,
+        })
+    }
+
+    #[pyo3(signature = (id, visible))]
+    fn enqueue_set_scatter_grid_visible(&self, id: String, visible: bool) -> PyResult<()> {
+        self.enqueue(Command::SetScatterGridVisible { id, visible })
+    }
+
+    #[pyo3(signature = (id, major, minor=false))]
+    fn enqueue_set_scatter_grid_planes(
+        &self,
+        id: String,
+        major: bool,
+        minor: bool,
+    ) -> PyResult<()> {
+        self.enqueue(Command::SetScatterGridPlanes { id, major, minor })
+    }
+
+    #[pyo3(signature = (id, sticky=true, all_edges=false))]
+    fn enqueue_set_scatter_grid_options(
+        &self,
+        id: String,
+        sticky: bool,
+        all_edges: bool,
+    ) -> PyResult<()> {
+        self.enqueue(Command::SetScatterGridOptions {
+            id,
+            sticky,
+            all_edges,
+        })
+    }
+
+    #[pyo3(signature = (id, x=None, y=None, z=None))]
+    fn enqueue_set_scatter_ticks(
+        &self,
+        id: String,
+        x: Option<usize>,
+        y: Option<usize>,
+        z: Option<usize>,
+    ) -> PyResult<()> {
+        self.enqueue(Command::SetScatterTicks { id, x, y, z })
+    }
+
+    #[pyo3(signature = (id, x, y, z))]
+    fn enqueue_set_scatter_axes(
+        &self,
+        id: String,
+        x: String,
+        y: String,
+        z: String,
+    ) -> PyResult<()> {
+        self.enqueue(Command::SetScatterAxes { id, x, y, z })
+    }
+
+    #[pyo3(signature = (id, x, y, z))]
+    fn enqueue_set_scatter_axis_visibility(
+        &self,
+        id: String,
+        x: bool,
+        y: bool,
+        z: bool,
+    ) -> PyResult<()> {
+        self.enqueue(Command::SetScatterAxisVisibility { id, x, y, z })
+    }
+
+    #[pyo3(signature = (id, r, g, b))]
+    fn enqueue_set_scatter_background(&self, id: String, r: f32, g: f32, b: f32) -> PyResult<()> {
+        self.enqueue(Command::SetScatterBackground { id, r, g, b })
+    }
+
+    #[pyo3(signature = (id, visible, position, entries, title=None))]
+    fn enqueue_set_scatter_legend(
+        &self,
+        id: String,
+        visible: bool,
+        position: String,
+        entries: Vec<(String, f32, f32, f32)>,
+        title: Option<String>,
+    ) -> PyResult<()> {
+        self.enqueue(Command::SetScatterLegend {
+            id,
+            visible,
+            position,
+            entries,
+            title,
+        })
+    }
+
+    #[pyo3(signature = (id, visible, vmin, vmax, log_scale, colormap, title))]
+    fn enqueue_set_scatter_scalar_bar(
+        &self,
+        id: String,
+        visible: bool,
+        vmin: f32,
+        vmax: f32,
+        log_scale: bool,
+        colormap: String,
+        title: Option<String>,
+    ) -> PyResult<()> {
+        self.enqueue(Command::SetScatterScalarBar {
+            id,
+            visible,
+            vmin,
+            vmax,
+            log_scale,
+            colormap,
+            title,
+        })
+    }
+
+    #[pyo3(signature = (id, visible))]
+    fn enqueue_set_scatter_orientation_axes(&self, id: String, visible: bool) -> PyResult<()> {
+        self.enqueue(Command::SetScatterOrientationAxes { id, visible })
+    }
+
+    #[pyo3(signature = (id, label_id, x, y, z, text, r, g, b, size, anchor))]
+    fn enqueue_add_scatter_label(
+        &self,
+        id: String,
+        label_id: u32,
+        x: f32,
+        y: f32,
+        z: f32,
+        text: String,
+        r: f32,
+        g: f32,
+        b: f32,
+        size: f32,
+        anchor: String,
+    ) -> PyResult<()> {
+        self.enqueue(Command::AddScatterLabel {
+            id,
+            label_id,
+            x,
+            y,
+            z,
+            text,
+            r,
+            g,
+            b,
+            size,
+            anchor,
+        })
+    }
+
+    #[pyo3(signature = (id, label_id, x, y, z, text, r, g, b, size, anchor))]
+    fn enqueue_update_scatter_label(
+        &self,
+        id: String,
+        label_id: u32,
+        x: Option<f32>,
+        y: Option<f32>,
+        z: Option<f32>,
+        text: Option<String>,
+        r: Option<f32>,
+        g: Option<f32>,
+        b: Option<f32>,
+        size: Option<f32>,
+        anchor: Option<String>,
+    ) -> PyResult<()> {
+        self.enqueue(Command::UpdateScatterLabel {
+            id,
+            label_id,
+            x,
+            y,
+            z,
+            text,
+            r,
+            g,
+            b,
+            size,
+            anchor,
+        })
+    }
+
+    #[pyo3(signature = (id, label_id))]
+    fn enqueue_remove_scatter_label(&self, id: String, label_id: u32) -> PyResult<()> {
+        self.enqueue(Command::RemoveScatterLabel { id, label_id })
+    }
+
+    #[pyo3(signature = (id, label_id, visible))]
+    fn enqueue_set_scatter_label_visible(
+        &self,
+        id: String,
+        label_id: u32,
+        visible: bool,
+    ) -> PyResult<()> {
+        self.enqueue(Command::SetScatterLabelVisible {
+            id,
+            label_id,
+            visible,
+        })
+    }
+
+    #[pyo3(signature = (id,))]
+    fn enqueue_clear_scatter_labels(&self, id: String) -> PyResult<()> {
+        self.enqueue(Command::ClearScatterLabels { id })
+    }
+
+    #[pyo3(signature = (id, overlay_id, segments, r, g, b))]
+    fn enqueue_add_scatter_lines(
+        &self,
+        id: String,
+        overlay_id: u32,
+        segments: Vec<[f32; 6]>,
+        r: f32,
+        g: f32,
+        b: f32,
+    ) -> PyResult<()> {
+        self.enqueue(Command::AddScatterLines {
+            id,
+            overlay_id,
+            segments,
+            r,
+            g,
+            b,
+        })
+    }
+
+    #[pyo3(signature = (id, overlay_id, segments, r, g, b))]
+    fn enqueue_update_scatter_lines(
+        &self,
+        id: String,
+        overlay_id: u32,
+        segments: Vec<[f32; 6]>,
+        r: f32,
+        g: f32,
+        b: f32,
+    ) -> PyResult<()> {
+        self.enqueue(Command::UpdateScatterLines {
+            id,
+            overlay_id,
+            segments,
+            r,
+            g,
+            b,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (id, overlay_id, xmin, xmax, ymin, ymax, zmin, zmax, r, g, b))]
+    fn enqueue_add_scatter_box(
+        &self,
+        id: String,
+        overlay_id: u32,
+        xmin: f32,
+        xmax: f32,
+        ymin: f32,
+        ymax: f32,
+        zmin: f32,
+        zmax: f32,
+        r: f32,
+        g: f32,
+        b: f32,
+    ) -> PyResult<()> {
+        self.enqueue(Command::AddScatterBox {
+            id,
+            overlay_id,
+            xmin,
+            xmax,
+            ymin,
+            ymax,
+            zmin,
+            zmax,
+            r,
+            g,
+            b,
+        })
+    }
+
+    #[pyo3(signature = (id, overlay_id))]
+    fn enqueue_remove_scatter_overlay(&self, id: String, overlay_id: u32) -> PyResult<()> {
+        self.enqueue(Command::RemoveScatterOverlay { id, overlay_id })
+    }
+
+    #[pyo3(signature = (id, overlay_id, visible))]
+    fn enqueue_set_scatter_overlay_visible(
+        &self,
+        id: String,
+        overlay_id: u32,
+        visible: bool,
+    ) -> PyResult<()> {
+        self.enqueue(Command::SetScatterOverlayVisible {
+            id,
+            overlay_id,
+            visible,
+        })
+    }
+
+    #[pyo3(signature = (id,))]
+    fn enqueue_clear_scatter_overlays(&self, id: String) -> PyResult<()> {
+        self.enqueue(Command::ClearScatterOverlays { id })
+    }
+
+    #[pyo3(signature = (id, actor_id, payload_b64, colormap, payload_format, hover_meta=None, tooltip_x=None, tooltip_y=None, tooltip_z=None))]
+    fn enqueue_add_scatter_actor(
+        &self,
+        id: String,
+        actor_id: u32,
+        payload_b64: String,
+        colormap: String,
+        payload_format: String,
+        hover_meta: Option<String>,
+        tooltip_x: Option<String>,
+        tooltip_y: Option<String>,
+        tooltip_z: Option<String>,
+    ) -> PyResult<()> {
+        self.enqueue(Command::AddScatterActor {
+            id,
+            actor_id,
+            payload_b64,
+            colormap,
+            payload_format: ScatterPayloadFormat::from_str(&payload_format),
+            hover_meta,
+            tooltip_axis_labels: [
+                tooltip_x.unwrap_or_else(|| "x".to_string()),
+                tooltip_y.unwrap_or_else(|| "y".to_string()),
+                tooltip_z.unwrap_or_else(|| "z".to_string()),
+            ],
+        })
+    }
+
+    #[pyo3(signature = (id, actor_id, payload, colormap, payload_format, hover_meta=None, tooltip_x=None, tooltip_y=None, tooltip_z=None))]
+    fn enqueue_add_scatter_actor_packed(
+        &self,
+        id: String,
+        actor_id: u32,
+        payload: &Bound<'_, PyAny>,
+        colormap: String,
+        payload_format: String,
+        hover_meta: Option<String>,
+        tooltip_x: Option<String>,
+        tooltip_y: Option<String>,
+        tooltip_z: Option<String>,
+    ) -> PyResult<()> {
+        self.enqueue(Command::AddScatterActorPacked {
+            id,
+            actor_id,
+            payload: byte_buffer_from_py(payload, "scatter actor payload")?,
+            colormap,
+            payload_format: ScatterPayloadFormat::from_str(&payload_format),
+            hover_meta,
+            tooltip_axis_labels: [
+                tooltip_x.unwrap_or_else(|| "x".to_string()),
+                tooltip_y.unwrap_or_else(|| "y".to_string()),
+                tooltip_z.unwrap_or_else(|| "z".to_string()),
+            ],
+        })
+    }
+
+    #[pyo3(signature = (id, actor_id, payload_b64, colormap, payload_format, tooltip_x=None, tooltip_y=None, tooltip_z=None))]
+    fn enqueue_update_scatter_actor(
+        &self,
+        id: String,
+        actor_id: u32,
+        payload_b64: String,
+        colormap: String,
+        payload_format: String,
+        tooltip_x: Option<String>,
+        tooltip_y: Option<String>,
+        tooltip_z: Option<String>,
+    ) -> PyResult<()> {
+        self.enqueue(Command::UpdateScatterActor {
+            id,
+            actor_id,
+            payload_b64,
+            colormap,
+            payload_format: ScatterPayloadFormat::from_str(&payload_format),
+            tooltip_axis_labels: [
+                tooltip_x.unwrap_or_else(|| "x".to_string()),
+                tooltip_y.unwrap_or_else(|| "y".to_string()),
+                tooltip_z.unwrap_or_else(|| "z".to_string()),
+            ],
+        })
+    }
+
+    #[pyo3(signature = (id, actor_id, payload, colormap, payload_format, tooltip_x=None, tooltip_y=None, tooltip_z=None))]
+    fn enqueue_update_scatter_actor_packed(
+        &self,
+        id: String,
+        actor_id: u32,
+        payload: &Bound<'_, PyAny>,
+        colormap: String,
+        payload_format: String,
+        tooltip_x: Option<String>,
+        tooltip_y: Option<String>,
+        tooltip_z: Option<String>,
+    ) -> PyResult<()> {
+        self.enqueue(Command::UpdateScatterActorPacked {
+            id,
+            actor_id,
+            payload: byte_buffer_from_py(payload, "scatter actor payload")?,
+            colormap,
+            payload_format: ScatterPayloadFormat::from_str(&payload_format),
+            tooltip_axis_labels: [
+                tooltip_x.unwrap_or_else(|| "x".to_string()),
+                tooltip_y.unwrap_or_else(|| "y".to_string()),
+                tooltip_z.unwrap_or_else(|| "z".to_string()),
+            ],
+        })
+    }
+
+    #[pyo3(signature = (id, actor_id))]
+    fn enqueue_remove_scatter_actor(&self, id: String, actor_id: u32) -> PyResult<()> {
+        self.enqueue(Command::RemoveScatterActor { id, actor_id })
+    }
+
+    #[pyo3(signature = (id, actor_id, visible))]
+    fn enqueue_set_scatter_actor_visible(
+        &self,
+        id: String,
+        actor_id: u32,
+        visible: bool,
+    ) -> PyResult<()> {
+        self.enqueue(Command::SetScatterActorVisible {
+            id,
+            actor_id,
+            visible,
+        })
+    }
+
+    #[pyo3(signature = (id,))]
+    fn enqueue_clear_scatter_actors(&self, id: String) -> PyResult<()> {
+        self.enqueue(Command::ClearScatterActors { id })
+    }
+
+    #[pyo3(signature = (id,))]
+    fn enqueue_clear_scatter_scene(&self, id: String) -> PyResult<()> {
+        self.enqueue(Command::ClearScatterScene { id })
+    }
+
+    #[pyo3(signature = (id, actor_id, max_points, mode))]
+    fn enqueue_add_scatter_stream(
+        &self,
+        id: String,
+        actor_id: u32,
+        max_points: u32,
+        mode: String,
+    ) -> PyResult<()> {
+        self.enqueue(Command::AddScatterStream {
+            id,
+            actor_id,
+            max_points,
+            mode,
+        })
+    }
+
+    #[pyo3(signature = (id, actor_id, payload_b64, colormap, payload_format))]
+    fn enqueue_stream_scatter_actor(
+        &self,
+        id: String,
+        actor_id: u32,
+        payload_b64: String,
+        colormap: String,
+        payload_format: String,
+    ) -> PyResult<()> {
+        self.enqueue(Command::StreamScatterActor {
+            id,
+            actor_id,
+            payload_b64,
+            colormap,
+            payload_format: ScatterPayloadFormat::from_str(&payload_format),
+        })
+    }
+
+    #[pyo3(signature = (id, actor_id, payload, colormap, payload_format))]
+    fn enqueue_stream_scatter_actor_packed(
+        &self,
+        id: String,
+        actor_id: u32,
+        payload: &Bound<'_, PyAny>,
+        colormap: String,
+        payload_format: String,
+    ) -> PyResult<()> {
+        self.enqueue(Command::StreamScatterActorPacked {
+            id,
+            actor_id,
+            payload: byte_buffer_from_py(payload, "scatter stream payload")?,
+            colormap,
+            payload_format: ScatterPayloadFormat::from_str(&payload_format),
+        })
+    }
+
+    #[pyo3(signature = (id, actor_id))]
+    fn enqueue_clear_scatter_stream(&self, id: String, actor_id: u32) -> PyResult<()> {
+        self.enqueue(Command::ClearScatterStream { id, actor_id })
+    }
+
+    #[pyo3(signature = (id, enabled, threshold, factor))]
+    fn enqueue_set_scatter_lod(
+        &self,
+        id: String,
+        enabled: bool,
+        threshold: u32,
+        factor: u32,
+    ) -> PyResult<()> {
+        self.enqueue(Command::SetScatterLod {
+            id,
+            enabled,
+            threshold,
+            factor,
+        })
+    }
+
+    #[pyo3(signature = (id, mode))]
+    fn enqueue_set_scatter_picking_mode(&self, id: String, mode: String) -> PyResult<()> {
+        self.enqueue(Command::SetScatterPickingMode { id, mode })
+    }
+
+    #[pyo3(signature = (id, enabled))]
+    fn enqueue_set_scatter_hover_tooltip(&self, id: String, enabled: bool) -> PyResult<()> {
+        self.enqueue(Command::SetScatterHoverTooltip { id, enabled })
+    }
+
+    #[pyo3(signature = (id, meta))]
+    fn enqueue_set_scatter_primary_hover_meta(&self, id: String, meta: String) -> PyResult<()> {
+        self.enqueue(Command::SetScatterPrimaryHoverMeta { id, meta })
+    }
+
+    #[pyo3(signature = (id, x, y, z))]
+    fn enqueue_set_scatter_tooltip_axis_labels(
+        &self,
+        id: String,
+        x: String,
+        y: String,
+        z: String,
+    ) -> PyResult<()> {
+        self.enqueue(Command::SetScatterTooltipAxisLabels {
+            id,
+            labels: [x, y, z],
+        })
+    }
+
+    #[pyo3(signature = (id, mesh_id, positions_b64, indices_b64, r, g, b, a, wireframe))]
+    fn enqueue_add_scatter_mesh(
+        &self,
+        id: String,
+        mesh_id: u32,
+        positions_b64: String,
+        indices_b64: String,
+        r: f32,
+        g: f32,
+        b: f32,
+        a: f32,
+        wireframe: bool,
+    ) -> PyResult<()> {
+        self.enqueue(Command::AddScatterMesh {
+            id,
+            mesh_id,
+            positions_b64,
+            indices_b64,
+            r,
+            g,
+            b,
+            a,
+            wireframe,
+        })
+    }
+
+    #[pyo3(signature = (id, mesh_id, positions_b64=None, indices_b64=None, r=None, g=None, b=None, a=None, wireframe=None))]
+    fn enqueue_update_scatter_mesh(
+        &self,
+        id: String,
+        mesh_id: u32,
+        positions_b64: Option<String>,
+        indices_b64: Option<String>,
+        r: Option<f32>,
+        g: Option<f32>,
+        b: Option<f32>,
+        a: Option<f32>,
+        wireframe: Option<bool>,
+    ) -> PyResult<()> {
+        self.enqueue(Command::UpdateScatterMesh {
+            id,
+            mesh_id,
+            positions_b64,
+            indices_b64,
+            r,
+            g,
+            b,
+            a,
+            wireframe,
+        })
+    }
+
+    #[pyo3(signature = (id, mesh_id))]
+    fn enqueue_remove_scatter_mesh(&self, id: String, mesh_id: u32) -> PyResult<()> {
+        self.enqueue(Command::RemoveScatterMesh { id, mesh_id })
+    }
+
+    #[pyo3(signature = (id, mesh_id, visible))]
+    fn enqueue_set_scatter_mesh_visible(
+        &self,
+        id: String,
+        mesh_id: u32,
+        visible: bool,
+    ) -> PyResult<()> {
+        self.enqueue(Command::SetScatterMeshVisible {
+            id,
+            mesh_id,
+            visible,
+        })
+    }
+
+    #[pyo3(signature = (id))]
+    fn enqueue_clear_scatter_meshes(&self, id: String) -> PyResult<()> {
+        self.enqueue(Command::ClearScatterMeshes { id })
+    }
+
+    #[pyo3(signature = (id, half_w, half_h))]
+    fn enqueue_set_scatter_parallel_scale(
+        &self,
+        id: String,
+        half_w: f32,
+        half_h: f32,
+    ) -> PyResult<()> {
+        self.enqueue(Command::SetScatterParallelScale { id, half_w, half_h })
+    }
+
+    #[pyo3(signature = (id, timeout_ms=10000))]
+    fn scatter_screenshot(
+        &self,
+        id: String,
+        timeout_ms: u64,
+    ) -> PyResult<Option<(u32, u32, Vec<u8>)>> {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        let timeout = Duration::from_millis(timeout_ms);
+        let json_str = self
+            .bridge
+            .request_scatter_screenshot(id, timeout)
+            .map_err(|e| PyRuntimeError::new_err(format!("screenshot failed: {e:?}")))?;
+        let v: serde_json::Value = serde_json::from_str(&json_str)
+            .map_err(|e| PyRuntimeError::new_err(format!("screenshot JSON invalid: {e}")))?;
+        let w = v["w"].as_u64().unwrap_or(0) as u32;
+        let h = v["h"].as_u64().unwrap_or(0) as u32;
+        let b64 = v["rgba_b64"].as_str().unwrap_or("");
+        let bytes = STANDARD
+            .decode(b64)
+            .map_err(|e| PyRuntimeError::new_err(format!("screenshot base64 decode: {e}")))?;
+        Ok(Some((w, h, bytes)))
     }
 
     fn enqueue_set_table_data(&self, id: String, table_json: String) -> PyResult<()> {
@@ -670,9 +1836,11 @@ impl NativeCommandSender {
     }
 
     #[pyo3(signature = (timeout_ms=1000))]
-    fn debug_snapshot(&self, timeout_ms: u64) -> PyResult<String> {
-        self.bridge
-            .request_debug_snapshot(Duration::from_millis(timeout_ms))
+    fn debug_snapshot(&self, py: Python<'_>, timeout_ms: u64) -> PyResult<String> {
+        py.allow_threads(|| {
+            self.bridge
+                .request_debug_snapshot(Duration::from_millis(timeout_ms))
+        })
             .map_err(|err| match err {
                 SnapshotError::Closed => {
                     PyRuntimeError::new_err("DragonGUI command sender is closed")
@@ -808,6 +1976,8 @@ mod tests {
                 xyz: vec![0; 12],
                 telemetry: None,
                 colormap: "viridis".to_string(),
+                payload_format: ScatterPayloadFormat::XyzF32V0,
+                coalesce: true,
             })
             .unwrap();
         queue
@@ -876,6 +2046,8 @@ mod tests {
                     xyz: vec![0; 12],
                     telemetry: None,
                     colormap: "viridis".to_string(),
+                    payload_format: ScatterPayloadFormat::XyzF32V0,
+                    coalesce: true,
                 },
                 Command::SetTableData {
                     id: "table".to_string(),
@@ -964,6 +2136,117 @@ mod tests {
         queue.drain_into(&mut out);
         assert!(out.is_empty());
         assert!(out.capacity() >= 4);
+    }
+
+    #[test]
+    fn queue_coalesces_pending_scatter_updates_by_widget() {
+        let queue = CommandQueue::default();
+
+        queue
+            .push(Command::SetScatterPointsPacked {
+                id: "scatter".to_string(),
+                xyz: vec![1; 12],
+                telemetry: None,
+                colormap: "viridis".to_string(),
+                payload_format: ScatterPayloadFormat::XyzF32V0,
+                coalesce: true,
+            })
+            .unwrap();
+        queue.push(Command::DrainPythonTasks).unwrap();
+        queue
+            .push(Command::SetScatterPointsPacked {
+                id: "other".to_string(),
+                xyz: vec![2; 12],
+                telemetry: None,
+                colormap: "viridis".to_string(),
+                payload_format: ScatterPayloadFormat::XyzF32V0,
+                coalesce: true,
+            })
+            .unwrap();
+        queue
+            .push(Command::SetScatterPointsPacked {
+                id: "scatter".to_string(),
+                xyz: vec![3; 12],
+                telemetry: None,
+                colormap: "turbo".to_string(),
+                payload_format: ScatterPayloadFormat::XyzF32V0,
+                coalesce: true,
+            })
+            .unwrap();
+
+        assert_eq!(
+            queue.drain(),
+            vec![
+                Command::DrainPythonTasks,
+                Command::SetScatterPointsPacked {
+                    id: "other".to_string(),
+                    xyz: vec![2; 12],
+                    telemetry: None,
+                    colormap: "viridis".to_string(),
+                    payload_format: ScatterPayloadFormat::XyzF32V0,
+                    coalesce: true,
+                },
+                Command::SetScatterPointsPacked {
+                    id: "scatter".to_string(),
+                    xyz: vec![3; 12],
+                    telemetry: None,
+                    colormap: "turbo".to_string(),
+                    payload_format: ScatterPayloadFormat::XyzF32V0,
+                    coalesce: true,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn queue_preserves_noncoalesced_scatter_updates() {
+        let queue = CommandQueue::default();
+
+        for value in [1_u8, 2, 3] {
+            queue
+                .push(Command::SetScatterPointsPacked {
+                    id: "scatter".to_string(),
+                    xyz: vec![value; 12],
+                    telemetry: None,
+                    colormap: "viridis".to_string(),
+                    payload_format: ScatterPayloadFormat::XyzF32V0,
+                    coalesce: false,
+                })
+                .unwrap();
+        }
+
+        assert_eq!(queue.drain().len(), 3);
+    }
+
+    #[test]
+    fn queue_does_not_coalesce_across_debug_snapshot_barrier() {
+        let queue = CommandQueue::default();
+
+        queue
+            .push(Command::SetScatterPointsPacked {
+                id: "scatter".to_string(),
+                xyz: vec![1; 12],
+                telemetry: None,
+                colormap: "viridis".to_string(),
+                payload_format: ScatterPayloadFormat::XyzF32V0,
+                coalesce: true,
+            })
+            .unwrap();
+        queue
+            .push(Command::DebugSnapshot { request_id: 9 })
+            .unwrap();
+        queue
+            .push(Command::SetScatterPointsPacked {
+                id: "scatter".to_string(),
+                xyz: vec![2; 12],
+                telemetry: None,
+                colormap: "turbo".to_string(),
+                payload_format: ScatterPayloadFormat::XyzF32V0,
+                coalesce: true,
+            })
+            .unwrap();
+
+        assert_eq!(queue.drain().len(), 3);
     }
 
     #[test]

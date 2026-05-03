@@ -143,6 +143,8 @@ pub struct TextRendererDg {
     viewport: Viewport,
     entries: Vec<TextEntry>,
     overlay_entry_start: usize,
+    /// Ephemeral entries for scatter grid labels, cleared each frame.
+    scatter_label_start: usize,
 }
 
 impl TextRendererDg {
@@ -195,6 +197,7 @@ impl TextRendererDg {
             viewport,
             entries: Vec::new(),
             overlay_entry_start: 0,
+            scatter_label_start: 0,
         }
     }
 
@@ -386,7 +389,96 @@ impl TextRendererDg {
             &mut entries,
         );
         self.entries = entries;
+        self.scatter_label_start = self.entries.len();
         caret_positions
+    }
+
+    /// Remove scatter grid labels added since the last `rebuild()` call.
+    /// Call this each frame before `push_scatter_label`, just before `prepare()`.
+    pub fn clear_scatter_labels(&mut self) {
+        self.entries.truncate(self.scatter_label_start);
+    }
+
+    /// Append a scatter grid tick or axis-title label at a projected screen position.
+    /// Labels are rendered in the overlay text layer (on top of scatter points).
+    pub fn push_scatter_label(
+        &mut self,
+        text: &str,
+        screen_x: f32,
+        screen_y: f32,
+        is_title: bool,
+        clip: TextBounds,
+        scale: f32,
+        color_override: Option<[f32; 3]>,
+        font_size_override: Option<f32>,
+        anchor: &str,
+    ) {
+        let font_size = font_size_override.map(|s| s * scale).unwrap_or_else(|| {
+            if is_title {
+                13.0 * scale
+            } else {
+                11.0 * scale
+            }
+        });
+        let line_height = font_size * 1.3;
+        let avail_w = 160.0_f32 * scale;
+        // Vertical anchors ("top"/"bottom") adjust the y offset; horizontal anchors
+        // ("left"/"center"/"right") adjust the x offset and text alignment.
+        // "top-left" is used by scatter overlays whose source renderer provides
+        // final text-area origins instead of center anchors.
+        let (text_align, left, top) = match anchor {
+            "top-left" => (TextAlign::Left, screen_x, screen_y),
+            "top" => (TextAlign::Center, screen_x - avail_w * 0.5, screen_y),
+            "bottom" => (
+                TextAlign::Center,
+                screen_x - avail_w * 0.5,
+                screen_y - font_size,
+            ),
+            "left" => (TextAlign::Left, screen_x, screen_y - font_size * 0.5),
+            "right" => (
+                TextAlign::Right,
+                screen_x - avail_w,
+                screen_y - font_size * 0.5,
+            ),
+            _ => (
+                TextAlign::Center,
+                screen_x - avail_w * 0.5,
+                screen_y - font_size * 0.5,
+            ),
+        };
+        let color = match color_override {
+            Some([r, g, b]) => {
+                let to_u8 = |v: f32| (v.clamp(0.0, 1.0) * 255.0) as u8;
+                Color::rgb(to_u8(r), to_u8(g), to_u8(b))
+            }
+            None => Color::rgb(0xbb, 0xbb, 0xbb),
+        };
+        let weight = if is_title || font_size_override.is_some() {
+            600
+        } else {
+            400
+        };
+        let mut cache: TextBufferCache = HashMap::new();
+        let mut caret_positions = HashMap::new();
+        push_text_entry(
+            &mut self.font_system,
+            &self.font_aliases,
+            &mut self.entries,
+            text,
+            font_size,
+            line_height,
+            None,
+            weight,
+            left,
+            top,
+            clip,
+            color,
+            text_align,
+            &mut cache,
+            None,
+            &mut caret_positions,
+            TextRenderOptions::default(),
+        );
     }
 
     fn sync_stylesheet_fonts(&mut self, stylesheets: &StylesheetStore) {
@@ -1162,7 +1254,14 @@ fn collect_text(
                         )
                     }
                     _ => {
-                        let top = if node.kind == WidgetKind::Label && r.h > line_height * 1.4 {
+                        let top = if label_text_should_top_align(
+                            node,
+                            text,
+                            *r,
+                            font_size,
+                            line_height,
+                            pad,
+                        ) {
                             r.y
                         } else {
                             r.y + ((r.h - line_height) * 0.5).max(0.0)
@@ -1674,6 +1773,9 @@ fn widget_kind_name(kind: WidgetKind) -> &'static str {
         WidgetKind::Window => "window",
         WidgetKind::HLayout => "h_layout",
         WidgetKind::VLayout => "v_layout",
+        WidgetKind::ScrollArea => "scroll_area",
+        WidgetKind::GridLayout => "grid_layout",
+        WidgetKind::FlowLayout => "flow_layout",
         WidgetKind::Panel => "panel",
         WidgetKind::Collapsible => "collapsible",
         WidgetKind::Modal => "modal",
@@ -1810,6 +1912,28 @@ fn panel_title_padding(node: &WidgetNode, theme: &Theme, sf: f32) -> PanelTitleP
         right: layout.padding_right.or(all).unwrap_or(default) * sf,
         top: layout.padding_top.or(all).unwrap_or(default) * sf,
     }
+}
+
+fn label_text_should_top_align(
+    node: &WidgetNode,
+    text: &str,
+    rect: Rect,
+    font_size: f32,
+    line_height: f32,
+    pad: f32,
+) -> bool {
+    if node.kind != WidgetKind::Label
+        || rect.h <= line_height * 1.4
+        || !node.props.wrap.unwrap_or(true)
+    {
+        return false;
+    }
+    if text.lines().count() > 1 {
+        return true;
+    }
+    let available_width = (rect.w - pad * 2.0).max(font_size);
+    let approx_char_width = (font_size * 0.56).max(1.0);
+    text.chars().count() as f32 * approx_char_width > available_width + 1.0
 }
 
 fn is_obscured_by_overlay(
@@ -4205,6 +4329,57 @@ mod tests {
         let entry = entries.first().expect("label text entry");
         assert!(entry.key.wrap, "label text should use the wrapping path");
         assert_eq!(entry.top, 10.0);
+    }
+
+    #[test]
+    fn single_line_label_text_centers_vertically_in_tall_rect() {
+        let mut label = node("label", WidgetKind::Label);
+        label.props.text = Some("80,000 rows".to_string());
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "label".to_string(),
+            Rect {
+                x: 8.0,
+                y: 10.0,
+                w: 102.0,
+                h: 34.0,
+            },
+        );
+
+        let theme = Theme::dark();
+        let state = WidgetState::default();
+        let mut font_system = FontSystem::new();
+        let font_aliases = FontFamilyAliases::default();
+        let mut cache = TextBufferCache::default();
+        let mut caret_positions = HashMap::new();
+        let mut entries = Vec::new();
+        collect_text(
+            &label,
+            &layout,
+            &state,
+            &theme,
+            None,
+            None,
+            [None, None],
+            None,
+            &[],
+            false,
+            &mut font_system,
+            &font_aliases,
+            1.0,
+            0.0,
+            &mut cache,
+            &mut caret_positions,
+            &mut entries,
+        );
+
+        let entry = entries.first().expect("label text entry");
+        assert!(
+            (entry.top - 17.5).abs() < 0.01,
+            "single-line label should center vertically: top={}",
+            entry.top
+        );
     }
 
     #[test]

@@ -22,14 +22,12 @@ struct VertexOutput {
     @location(3) local_position: vec2<f32>,
 }
 
-// Two triangles forming a unit quad centered at origin
-var<private> QUAD: array<vec2<f32>, 6> = array<vec2<f32>, 6>(
+// Triangle strip forming a unit quad centered at origin.
+var<private> QUAD: array<vec2<f32>, 4> = array<vec2<f32>, 4>(
     vec2<f32>(-0.5, -0.5),
     vec2<f32>( 0.5, -0.5),
-    vec2<f32>( 0.5,  0.5),
-    vec2<f32>(-0.5, -0.5),
-    vec2<f32>( 0.5,  0.5),
     vec2<f32>(-0.5,  0.5),
+    vec2<f32>( 0.5,  0.5),
 );
 
 @vertex
@@ -40,7 +38,7 @@ fn vs_main(
     @location(2) color: vec3<f32>,
     @location(3) alpha: f32,
 ) -> VertexOutput {
-    let quad = QUAD[vid % 6u];
+    let quad = QUAD[vid % 4u];
     let clip_center = uniforms.view_proj * vec4<f32>(position, 1.0);
 
     // Billboard offset in clip space: keeps size constant in pixels

@@ -27,57 +27,34 @@ pub struct WindowProps {
 }
 
 // ---------------------------------------------------------------------------
-// Scatter spec — kept for the base64 data path.
+// Scatter payload format
 // ---------------------------------------------------------------------------
 
-/// Column hints and optional pre-packed point data from a Python
-/// `Scatter3D(df, x=..., y=..., z=...)` node.
-#[derive(Debug)]
-pub struct ScatterSpec {
-    pub colormap: String,
-    /// Base64-encoded packed float32 xyz triples supplied by Python.
-    pub data_b64: Option<String>,
+/// Wire format for scatter point data embedded in `NodeProps` or sent live.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScatterPayloadFormat {
+    /// Packed little-endian float32 xyz triples, 12 bytes per point.
+    #[default]
+    XyzF32V0,
+    /// Packed little-endian PointInstance records, 32 bytes per point:
+    /// x, y, z, size, r, g, b, alpha (all f32).
+    PointInstanceV1,
 }
 
-/// Return the first `scatter_3d` widget found anywhere in the document tree.
-pub fn find_scatter_in_doc(v: &serde_json::Value) -> Option<ScatterSpec> {
-    find_scatter_value(v)
-}
-
-fn find_scatter_value(v: &serde_json::Value) -> Option<ScatterSpec> {
-    if v.get("type").and_then(|t| t.as_str()) == Some("scatter_3d") {
-        let props = v.get("props")?;
-        return Some(ScatterSpec {
-            colormap: props
-                .get("colormap")
-                .and_then(|v| v.as_str())
-                .unwrap_or("viridis")
-                .trim()
-                .to_ascii_lowercase(),
-            data_b64: props
-                .get("data_b64")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string()),
-        });
-    }
-    for key in &["children", "window"] {
-        match v.get(key) {
-            Some(serde_json::Value::Array(arr)) => {
-                for item in arr {
-                    if let Some(s) = find_scatter_value(item) {
-                        return Some(s);
-                    }
-                }
-            }
-            Some(obj @ serde_json::Value::Object(_)) => {
-                if let Some(s) = find_scatter_value(obj) {
-                    return Some(s);
-                }
-            }
-            _ => {}
+impl ScatterPayloadFormat {
+    pub fn from_str(s: &str) -> Self {
+        match s.trim() {
+            "point_instance_v1" => Self::PointInstanceV1,
+            _ => Self::XyzF32V0,
         }
     }
-    None
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::XyzF32V0 => "xyz_f32_v0",
+            Self::PointInstanceV1 => "point_instance_v1",
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -171,6 +148,9 @@ pub enum WidgetKind {
     Window,
     HLayout,
     VLayout,
+    ScrollArea,
+    GridLayout,
+    FlowLayout,
     Panel,
     Collapsible,
     Modal,
@@ -212,6 +192,9 @@ impl WidgetKind {
             "window" => WidgetKind::Window,
             "h_layout" => WidgetKind::HLayout,
             "v_layout" => WidgetKind::VLayout,
+            "scroll_area" => WidgetKind::ScrollArea,
+            "grid_layout" => WidgetKind::GridLayout,
+            "flow_layout" => WidgetKind::FlowLayout,
             "panel" => WidgetKind::Panel,
             "collapsible" => WidgetKind::Collapsible,
             "modal" => WidgetKind::Modal,
@@ -258,6 +241,14 @@ pub struct NodeProps {
     pub fixed_width: Option<f32>,
     /// Fixed pixel height.
     pub fixed_height: Option<f32>,
+    /// GridLayout: fixed column count (None → auto-fill).
+    pub grid_columns: Option<u16>,
+    /// GridLayout: minimum column width in logical pixels for minmax tracks.
+    pub grid_min_column_width: Option<f32>,
+    /// FlowLayout main-axis alignment: start, center, or end.
+    pub flow_align: Option<String>,
+    /// FlowLayout cross-axis alignment: start, center, end, or stretch.
+    pub flow_cross_align: Option<String>,
     /// Explicit or auto layout orientation for separators.
     pub orientation: Option<String>,
     /// Checkbox initial checked state.
@@ -316,6 +307,36 @@ pub struct NodeProps {
     pub image_path: Option<String>,
     /// Image fit mode: contain, cover, or stretch.
     pub image_fit: Option<String>,
+    /// Scatter3D colormap name.
+    pub scatter_colormap: Option<String>,
+    /// Scatter3D base64-encoded startup payload.
+    pub scatter_data_b64: Option<String>,
+    /// Scatter3D payload wire format.
+    pub scatter_data_format: ScatterPayloadFormat,
+    /// Scatter3D grid/chrome startup props.
+    pub scatter_grid_visible: bool,
+    pub scatter_major_planes: bool,
+    pub scatter_minor_planes: bool,
+    pub scatter_grid_sticky: bool,
+    pub scatter_grid_all_edges: bool,
+    pub scatter_tick_override: [Option<usize>; 3],
+    pub scatter_axis_labels: [String; 3],
+    pub scatter_axis_visible: [bool; 3],
+    pub scatter_background: Option<[f32; 4]>,
+    /// Scatter3D legend startup props.
+    pub scatter_legend_visible: bool,
+    pub scatter_legend_position: String,
+    pub scatter_legend_entries: Vec<(String, f32, f32, f32)>,
+    pub scatter_legend_title: Option<String>,
+    /// Scatter3D scalar bar startup props.
+    pub scatter_scalar_bar_visible: bool,
+    pub scatter_scalar_bar_vmin: f32,
+    pub scatter_scalar_bar_vmax: f32,
+    pub scatter_scalar_bar_log_scale: bool,
+    pub scatter_scalar_bar_colormap: String,
+    pub scatter_scalar_bar_title: Option<String>,
+    /// Scatter3D orientation axes startup prop.
+    pub scatter_orientation_axes_visible: bool,
 }
 
 /// One node in the widget tree.
@@ -398,6 +419,24 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         .get("height")
         .and_then(|v| v.as_f64())
         .map(|v| v as f32);
+    let grid_columns = props
+        .get("columns")
+        .and_then(|v| v.as_u64())
+        .map(|v| v.min(256) as u16);
+    let grid_min_column_width = props
+        .get("min_column_width")
+        .and_then(|v| v.as_f64())
+        .map(|v| v as f32);
+    let flow_align = props
+        .get("align")
+        .and_then(|v| v.as_str())
+        .filter(|v| matches!(*v, "start" | "center" | "end"))
+        .map(|v| v.to_string());
+    let flow_cross_align = props
+        .get("cross_align")
+        .and_then(|v| v.as_str())
+        .filter(|v| matches!(*v, "start" | "center" | "end" | "stretch"))
+        .map(|v| v.to_string());
     let orientation = props
         .get("orientation")
         .and_then(|v| v.as_str())
@@ -514,6 +553,241 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         .and_then(|v| v.as_str())
         .filter(|v| !v.is_empty())
         .map(|v| v.to_ascii_lowercase());
+    let (scatter_colormap, scatter_data_b64, scatter_data_format) =
+        if matches!(kind, WidgetKind::Scatter3D) {
+            let cmap = props
+                .get("colormap")
+                .and_then(|v| v.as_str())
+                .map(|s| s.trim().to_ascii_lowercase())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "viridis".to_string());
+            let b64 = props
+                .get("data_b64")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+            let fmt = props
+                .get("data_format")
+                .and_then(|v| v.as_str())
+                .map(ScatterPayloadFormat::from_str)
+                .unwrap_or_default();
+            (Some(cmap), b64, fmt)
+        } else {
+            (None, None, ScatterPayloadFormat::default())
+        };
+    let (
+        scatter_grid_visible,
+        scatter_major_planes,
+        scatter_minor_planes,
+        scatter_grid_sticky,
+        scatter_grid_all_edges,
+        scatter_tick_override,
+        scatter_axis_labels,
+        scatter_axis_visible,
+        scatter_background,
+        scatter_legend_visible,
+        scatter_legend_position,
+        scatter_legend_entries,
+        scatter_legend_title,
+        scatter_scalar_bar_visible,
+        scatter_scalar_bar_vmin,
+        scatter_scalar_bar_vmax,
+        scatter_scalar_bar_log_scale,
+        scatter_scalar_bar_colormap,
+        scatter_scalar_bar_title,
+        scatter_orientation_axes_visible,
+    ) = if matches!(kind, WidgetKind::Scatter3D) {
+        let grid_visible = props
+            .get("grid_visible")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let major_planes = props
+            .get("major_planes")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let minor_planes = props
+            .get("minor_planes")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let grid_sticky = props
+            .get("grid_sticky")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let grid_all_edges = props
+            .get("grid_all_edges")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let tick_override = {
+            let x = props
+                .get("tick_x")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize);
+            let y = props
+                .get("tick_y")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize);
+            let z = props
+                .get("tick_z")
+                .and_then(|v| v.as_u64())
+                .map(|v| v as usize);
+            [x, y, z]
+        };
+        let axis_labels = {
+            let x = props
+                .get("axis_x")
+                .and_then(|v| v.as_str())
+                .unwrap_or("X")
+                .to_string();
+            let y = props
+                .get("axis_y")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Y")
+                .to_string();
+            let z = props
+                .get("axis_z")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Z")
+                .to_string();
+            [x, y, z]
+        };
+        let axis_visible = {
+            let x = props
+                .get("axis_vis_x")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            let y = props
+                .get("axis_vis_y")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            let z = props
+                .get("axis_vis_z")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            [x, y, z]
+        };
+        let background = props
+            .get("background")
+            .and_then(|v| v.as_array())
+            .filter(|a| a.len() == 4)
+            .map(|a| {
+                [
+                    a[0].as_f64().unwrap_or(0.0) as f32,
+                    a[1].as_f64().unwrap_or(0.0) as f32,
+                    a[2].as_f64().unwrap_or(0.0) as f32,
+                    a[3].as_f64().unwrap_or(1.0) as f32,
+                ]
+            });
+        let legend_visible = props
+            .get("legend_visible")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let legend_position = props
+            .get("legend_position")
+            .and_then(|v| v.as_str())
+            .unwrap_or("top_right")
+            .to_string();
+        let legend_entries: Vec<(String, f32, f32, f32)> = props
+            .get("legend_entries")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|e| {
+                        let label = e.get("label")?.as_str()?.to_string();
+                        let color = e.get("color")?.as_array()?;
+                        if color.len() < 3 {
+                            return None;
+                        }
+                        Some((
+                            label,
+                            color[0].as_f64().unwrap_or(1.0) as f32,
+                            color[1].as_f64().unwrap_or(1.0) as f32,
+                            color[2].as_f64().unwrap_or(1.0) as f32,
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let legend_title = props
+            .get("legend_title")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        let scalar_bar_visible = props
+            .get("scalar_bar_visible")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let scalar_bar_vmin = props
+            .get("scalar_bar_vmin")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) as f32;
+        let scalar_bar_vmax = props
+            .get("scalar_bar_vmax")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(1.0) as f32;
+        let scalar_bar_log_scale = props
+            .get("scalar_bar_log_scale")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let scalar_bar_colormap = props
+            .get("scalar_bar_colormap")
+            .and_then(|v| v.as_str())
+            .unwrap_or("viridis")
+            .to_string();
+        let scalar_bar_title = props
+            .get("scalar_bar_title")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        let orientation_axes_visible = props
+            .get("orientation_axes_visible")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        (
+            grid_visible,
+            major_planes,
+            minor_planes,
+            grid_sticky,
+            grid_all_edges,
+            tick_override,
+            axis_labels,
+            axis_visible,
+            background,
+            legend_visible,
+            legend_position,
+            legend_entries,
+            legend_title,
+            scalar_bar_visible,
+            scalar_bar_vmin,
+            scalar_bar_vmax,
+            scalar_bar_log_scale,
+            scalar_bar_colormap,
+            scalar_bar_title,
+            orientation_axes_visible,
+        )
+    } else {
+        (
+            false,
+            false,
+            false,
+            true,
+            false,
+            [None; 3],
+            ["X".to_string(), "Y".to_string(), "Z".to_string()],
+            [true; 3],
+            None,
+            false,
+            "top_right".to_string(),
+            Vec::new(),
+            None,
+            false,
+            0.0_f32,
+            1.0_f32,
+            false,
+            "viridis".to_string(),
+            None,
+            false,
+        )
+    };
     let text_key = match kind {
         WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal | WidgetKind::Collapsible => {
             "title"
@@ -540,6 +814,10 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         raw_props,
         fixed_width,
         fixed_height,
+        grid_columns,
+        grid_min_column_width,
+        flow_align,
+        flow_cross_align,
         orientation,
         checked,
         value,
@@ -569,6 +847,29 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         tooltip,
         image_path,
         image_fit,
+        scatter_colormap,
+        scatter_data_b64,
+        scatter_data_format,
+        scatter_grid_visible,
+        scatter_major_planes,
+        scatter_minor_planes,
+        scatter_grid_sticky,
+        scatter_grid_all_edges,
+        scatter_tick_override,
+        scatter_axis_labels,
+        scatter_axis_visible,
+        scatter_background,
+        scatter_legend_visible,
+        scatter_legend_position,
+        scatter_legend_entries,
+        scatter_legend_title,
+        scatter_scalar_bar_visible,
+        scatter_scalar_bar_vmin,
+        scatter_scalar_bar_vmax,
+        scatter_scalar_bar_log_scale,
+        scatter_scalar_bar_colormap,
+        scatter_scalar_bar_title,
+        scatter_orientation_axes_visible,
     }
 }
 

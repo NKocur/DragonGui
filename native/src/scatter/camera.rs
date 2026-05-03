@@ -1,6 +1,5 @@
-// Copied verbatim from j:/Projects/DragonSci/src/camera.rs.
-// DragonSci uses wgpu 24; DragonGUI uses wgpu 29.  The camera is pure glam
-// math with no wgpu dependency, so it can be shared by value-copy.
+// Based on j:/Projects/DragonSci/src/camera.rs. DragonGUI keeps the same camera
+// model but adjusts the initial fit distance for narrow embedded viewports.
 //
 // CameraState / state() / apply_state() are retained for future Python
 // bindings even though they are unused in the M2 demo.
@@ -41,15 +40,21 @@ pub struct CameraState {
 
 impl Camera {
     pub fn fit(center: Vec3, radius: f32, aspect: f32) -> Self {
+        let fov_y = 45_f32.to_radians();
+        let safe_aspect = aspect.max(0.001);
+        let vertical_fit = radius / (fov_y * 0.5).tan();
+        let horizontal_fit = vertical_fit / safe_aspect;
+        let distance = vertical_fit.max(horizontal_fit) * 1.035;
+        let far = (distance + radius * 4.0).max(radius * 100.0);
         Self {
             target: center,
-            distance: radius * 2.5,
+            distance,
             yaw: 0.4,
             pitch: 0.4,
-            fov_y: 45_f32.to_radians(),
+            fov_y,
             aspect,
             near: radius * 0.001,
-            far: radius * 100.0,
+            far,
             parallel: false,
             ortho_half_w: 0.0,
             ortho_half_h: 0.0,
@@ -128,5 +133,22 @@ impl Camera {
         self.parallel = s.parallel;
         self.ortho_half_w = 0.0;
         self.ortho_half_h = 0.0;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fit_increases_distance_for_portrait_viewports() {
+        let square = Camera::fit(Vec3::ZERO, 10.0, 1.0);
+        let portrait = Camera::fit(Vec3::ZERO, 10.0, 0.5);
+        let landscape = Camera::fit(Vec3::ZERO, 10.0, 2.0);
+        let very_narrow = Camera::fit(Vec3::ZERO, 10.0, 0.01);
+
+        assert!(portrait.distance > square.distance * 1.9);
+        assert!((landscape.distance - square.distance).abs() < 0.001);
+        assert!(very_narrow.far > very_narrow.distance);
     }
 }

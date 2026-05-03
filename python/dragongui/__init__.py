@@ -22,6 +22,8 @@ from .widgets import (
     ColorPicker,
     DataFrameTable,
     Dropdown,
+    FlowLayout,
+    GridLayout,
     HLayout,
     Image,
     Label,
@@ -37,7 +39,12 @@ from .widgets import (
     Panel,
     ProgressBar,
     Scatter3D,
+    ScatterFrameStream,
+    ScatterHit,
     ScatterPick,
+    ScatterPayload,
+    ScatterStreamMetrics,
+    ScrollArea,
     Separator,
     Sidebar,
     Slider,
@@ -55,6 +62,19 @@ from .widgets import (
     alert,
     confirm,
 )
+
+
+def link_cameras(*scatters: "Scatter3D") -> None:
+    """Link two or more Scatter3D widgets so programmatic camera changes propagate between them."""
+    for s in scatters:
+        s.link_cameras(*(o for o in scatters if o is not s))
+
+
+def unlink_cameras(*scatters: "Scatter3D") -> None:
+    """Remove camera links between Scatter3D widgets."""
+    for s in scatters:
+        s.unlink_cameras(*(o for o in scatters if o is not s))
+
 
 __all__ = [
     "App",
@@ -75,6 +95,8 @@ __all__ = [
     "ColorPicker",
     "DataFrameTable",
     "Dropdown",
+    "FlowLayout",
+    "GridLayout",
     "HLayout",
     "Image",
     "Label",
@@ -90,7 +112,12 @@ __all__ = [
     "Panel",
     "ProgressBar",
     "Scatter3D",
+    "ScatterFrameStream",
+    "ScatterHit",
     "ScatterPick",
+    "ScatterPayload",
+    "ScatterStreamMetrics",
+    "ScrollArea",
     "Separator",
     "Sidebar",
     "Slider",
@@ -115,6 +142,8 @@ __all__ = [
     "save_file_dialog",
     "native_backend_available",
     "toast",
+    "link_cameras",
+    "unlink_cameras",
 ]
 
 __version__ = "0.1.0"

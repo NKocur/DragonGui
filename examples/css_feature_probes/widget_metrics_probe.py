@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import sys
 from pathlib import Path
 
@@ -7,6 +8,35 @@ if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "python"))
 
 import dragongui as dg
+
+from probe_helpers import probe_grid
+
+try:
+    import numpy as np
+except ImportError:  # pragma: no cover
+    np = None
+
+
+class ScatterFrame:
+    """Small helical point cloud for scatter metric cases."""
+
+    def __init__(self, rows: int = 600) -> None:
+        self.shape = (rows, 4)
+        if np is not None:
+            t = np.linspace(0.0, 1.0, rows, dtype=np.float32)
+            theta = t * np.float32(math.tau * 4.0)
+            r = np.float32(0.4) + t * np.float32(2.0)
+            self.x = np.cos(theta) * r
+            self.y = np.sin(theta) * r
+            self.z = (t - np.float32(0.5)) * np.float32(2.0)
+        else:
+            t_vals = [i / max(1, rows - 1) for i in range(rows)]
+            self.x = [math.cos(t * math.tau * 4.0) * (0.4 + t * 2.0) for t in t_vals]
+            self.y = [math.sin(t * math.tau * 4.0) * (0.4 + t * 2.0) for t in t_vals]
+            self.z = [(t - 0.5) * 2.0 for t in t_vals]
+
+    def __getitem__(self, column: str) -> object:
+        return getattr(self, column)
 
 
 class MetricsFrame:
@@ -59,7 +89,8 @@ app.stylesheet(
         border-radius: 999px;
     }
 
-    HLayout.grid {
+    GridLayout.grid {
+        width: 100%;
         gap: 12px;
         height: auto;
     }
@@ -76,8 +107,7 @@ app.stylesheet(
     }
 
     Panel.case {
-        width: calc(50% - 6px);
-        min-width: 390px;
+        min-width: 0;
     }
 
     Label.title {
@@ -175,11 +205,53 @@ app.stylesheet(
         table-column-width: 150px;
         table-index-width: 76px;
     }
+
+    Panel.scatter-case {
+        height: 340px;
+    }
+
+    Scatter3D {
+        width: 100%;
+        flex-grow: 1;
+        border-radius: 10px;
+    }
+
+    Scatter3D.tiny-points {
+        scatter-point-size: 2px;
+    }
+
+    Scatter3D.large-points {
+        scatter-point-size: 10px;
+    }
+
+    Panel.scroll-scatter-case {
+        height: 500px;
+        overflow-y: auto;
+    }
+
+    Panel.scroll-scatter-case::scrollbar-track {
+        width: 8px;
+        padding: 1px;
+        background: rgba(255, 255, 255, 0.08);
+        border-radius: 999px;
+    }
+
+    Panel.scroll-scatter-case::scrollbar-thumb {
+        width: 6px;
+        background: rgba(90, 169, 255, 0.72);
+        border-radius: 999px;
+    }
+
+    Scatter3D.scroll-plot {
+        scatter-point-size: 6px;
+        height: 320px;
+    }
     """
 )
 
 
 frame = MetricsFrame()
+scatter_frame = ScatterFrame()
 win = dg.Window("CSS Widget Metrics Probe", width=940, height=720)
 
 with dg.VLayout(class_="root"):
@@ -190,7 +262,7 @@ with dg.VLayout(class_="root"):
         class_="caption",
     )
 
-    with dg.HLayout(class_="grid"):
+    with probe_grid(gap=12):
         with dg.Panel("TextArea rows", class_="case"):
             dg.Label("CSS text-area-rows overrides constructor rows.", class_="case-title")
             dg.TextArea(
@@ -219,7 +291,25 @@ with dg.VLayout(class_="root"):
             )
             dg.Label("PASS: both have four rows, but different physical heights.", class_="pass")
 
-    with dg.HLayout(class_="grid"):
+    with probe_grid(gap=12):
+        with dg.Panel("Scatter3D tiny points", class_="case scatter-case"):
+            dg.Label("CSS scatter-point-size: 2px — viridis colormap.", class_="case-title")
+            dg.Scatter3D(scatter_frame, x="x", y="y", z="z", colormap="viridis", class_="tiny-points")
+            dg.Label("PASS: points are visibly small and z-colored.", class_="pass")
+
+        with dg.Panel("Scatter3D large points", class_="case scatter-case"):
+            dg.Label("CSS scatter-point-size: 10px — plasma colormap.", class_="case-title")
+            dg.Scatter3D(scatter_frame, x="x", y="y", z="z", colormap="plasma", class_="large-points")
+            dg.Label("PASS: points are visibly larger and use a different colormap.", class_="pass")
+
+    with probe_grid(gap=12):
+        with dg.Panel("Scatter3D inside scrollable panel", class_="case scroll-scatter-case"):
+            dg.Label("Scroll this panel — the plot viewport should not shrink.", class_="case-title")
+            dg.Scatter3D(scatter_frame, x="x", y="y", z="z", colormap="turbo", class_="scroll-plot")
+            dg.Label("Scrolled content below the scatter plot.", class_="caption")
+            dg.Label("More content to force scroll overflow.", class_="caption")
+            dg.Label("PASS: scrolling clips the scatter but does not change its viewport size.", class_="pass")
+
         with dg.Panel("Compact table metrics", class_="case"):
             dg.Label("Small rows, narrow columns, and a narrow index gutter.", class_="case-title")
             dg.DataFrameTable(frame, page_size=48, sample_rows=24, class_="compact-table")

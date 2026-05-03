@@ -8,6 +8,8 @@ if __name__ == "__main__" and __package__ is None:
 
 import dragongui as dg
 
+from probe_helpers import probe_grid
+
 
 def log(message: str) -> None:
     print(message, flush=True)
@@ -105,7 +107,7 @@ Label.case-title {
     font-weight: 850;
 }
 
-HLayout.grid {
+GridLayout.grid {
     width: 100%;
     height: auto;
     gap: 14px;
@@ -129,8 +131,6 @@ Panel {
 }
 
 Panel.case {
-    width: calc(50% - 7px);
-    min-width: 390px;
     min-height: 300px;
 }
 
@@ -441,7 +441,7 @@ with dg.VLayout(class_="root"):
             dg.Button("Success toast", on_click=lambda: show_toast("success"))
             dg.Button("Error toast", on_click=lambda: show_toast("error"))
 
-    with dg.HLayout(class_="grid"):
+    with probe_grid(gap=14):
         with dg.Panel("Modal, toast, and tooltip", class_="case"):
             dg.Label("Modal scrim should separate underlying text. Toasts should sit above page content.", class_="case-title")
             with dg.HLayout(class_="button-row"):
@@ -477,7 +477,7 @@ with dg.VLayout(class_="root"):
                 for index in range(5, 13):
                     dg.Label(f"Filler row {index}: scroll behind overlay.", class_="filler")
 
-    with dg.HLayout(class_="grid"):
+    with probe_grid(gap=14):
         with dg.Panel("Context menu edge clamp", class_="case edge-zone"):
             dg.Label("Right-click each edge target. Menus should clamp inside the window.", class_="caption")
             top_left = dg.Button("Top left", class_="anchor top-left", on_click=lambda: set_status("Top left clicked"))

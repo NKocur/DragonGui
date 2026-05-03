@@ -37,6 +37,9 @@ Common live methods:
 | `Window(title, width=1024, height=768)` | Root container and native window metadata. Must be created outside any active layout context. |
 | `HLayout` | Horizontal flex container. Useful for rows, split panes, and button groups. |
 | `VLayout` | Vertical flex container. Useful for forms, panels, and stacked sections. |
+| `ScrollArea(axis="y", gap=None, width=None, height=None)` | Bounded scroll viewport for content that may exceed its parent. Defaults to vertical scrolling and uses a vertical layout for children. |
+| `GridLayout(columns=2, min_column_width=320, gap=None, row_gap=None)` | Responsive grid container for cards and dashboards. Integer `columns` values are maximum columns when `min_column_width` is set; the grid collapses to fewer columns when narrow. |
+| `FlowLayout(gap=None, row_gap=None, align="start", cross_align="start")` | Wrapping row container for intrinsic-width buttons, tags, and badges. |
 | `Panel(title=None, width=None)` | Titled or untitled container with optional preferred width. Vertically scrolls overflowing child content with the mouse wheel. Supports `Panel::accent`. |
 | `Collapsible(title, expanded=True, on_change=None, disabled=False)` | Header/body container for optional sections. Header toggles expanded state; children lay out only when expanded. Supports `set_expanded()`, `expand()`, `collapse()`, `toggle()`, and `Collapsible::header`, `indicator`, `body`. |
 | `Sidebar(title=None, width=220)` | Fixed-width navigation/rail container. |
@@ -112,7 +115,7 @@ Helper builders:
 | Widget | Features |
 | --- | --- |
 | `Image(path, fit="contain", width=None, height=None)` | Image widget. `fit` may be `contain`, `cover`, or `stretch`; width/height must be positive when supplied. Supports `set_path()`, `reload()`, and `set_fit()`. |
-| `Scatter3D(frame, x, y, z, colormap="viridis", on_pick=None)` | GPU 3D scatter plot. Uses frame metadata and packed float32 xyz data when NumPy/addressable columns are available. Emits `ScatterPick` callbacks for point clicks. Supports `set_points()` and `set_colormap()` for live updates. |
+| `Scatter3D(frame, x, y, z, colormap="viridis", on_pick=None)` | GPU 3D scatter plot. Uses frame metadata and packed float32 xyz data when NumPy/addressable columns are available. Emits `ScatterPick` callbacks for point clicks. Supports `set_points()`, `set_colormap()`, `show_grid()`, and `set_grid_options(sticky=True, all_edges=False)` for live updates. |
 | `DataFrameTable(frame, page_size=100, sample_rows=DEFAULT_TABLE_SAMPLE_ROWS, on_select=None)` | Virtualized table for dataframe-like objects. Extracts metadata, cell samples, and optional column buffers. Emits selection callbacks with `TableSelection` from mouse or keyboard selection. Supports `set_frame()`. Supports `DataFrameTable::header`, `row`, `row-selected`, and `grid-line`. |
 
 Supported `Scatter3D` colormaps:

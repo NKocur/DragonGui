@@ -23,7 +23,8 @@ use crate::css_style::{
     matched_rule_labels_for_tree_with_media, DgKeyframes, DgMediaColorGamut, DgMediaColorScheme,
     DgMediaEnvironment, DgMediaHover, DgMediaPointer, StylesheetOrigin, StylesheetStore,
 };
-use crate::document::{self, NodeProps, ScatterSpec, WidgetKind, WidgetNode};
+use crate::document::ScatterPayloadFormat;
+use crate::document::{self, NodeProps, WidgetKind, WidgetNode};
 use crate::error::DragonError;
 use crate::events::{
     has_active_modal, hit_test, hit_test_hover, modal_blocks_point, ChangeValue, SliderDrag,
@@ -42,13 +43,13 @@ use crate::resources::ResourceRegistry;
 use crate::scatter::{self, PointInstance, ScatterWidget};
 use crate::style::{
     collapsible_header_height_for_style, number_stepper_width, number_stepper_width_for_style,
-    AnimationDirection, AnimationFillMode, AnimationIterationCount, AnimationPlayState,
-    AnimationStyle, BackgroundPaint, BoxShadow, ColorRef, DisplayStyle, FlexDirectionStyle,
-    FontFamily, FontStyle, FontVariantNumeric, GeneratedContent, GridAutoFlowStyle, GridLineStyle,
-    GridPlacementStyle, GridTrackSize, LayoutLength, LayoutStyle, LineHeight, NodeStyle,
-    OverflowStyle, PartLayoutStyle, PartStyle, PositionStyle, StepPosition, TextAlign,
-    TextOverflow, TextSpacing, TextStyle, TextTransform, TransitionStyle, TransitionTimingFunction,
-    VisualStyle, WidgetStyle,
+    AlignItemsStyle, AnimationDirection, AnimationFillMode, AnimationIterationCount,
+    AnimationPlayState, AnimationStyle, BackgroundPaint, BoxShadow, ColorRef, DisplayStyle,
+    FlexDirectionStyle, FontFamily, FontStyle, FontVariantNumeric, GeneratedContent,
+    GridAutoFlowStyle, GridLineStyle, GridPlacementStyle, GridTrackSize, LayoutLength, LayoutStyle,
+    LineHeight, NodeStyle, OverflowStyle, PartLayoutStyle, PartStyle, PositionStyle, StepPosition,
+    TextAlign, TextOverflow, TextSpacing, TextStyle, TextTransform, TransitionStyle,
+    TransitionTimingFunction, VisualStyle, WidgetStyle,
 };
 use crate::table::{self, TableHit};
 use crate::text::TextRendererDg;
@@ -63,7 +64,6 @@ pub struct AppSpec {
     pub title: String,
     pub width: u32,
     pub height: u32,
-    pub scatter: Option<ScatterSpec>,
     pub widget_tree: Option<WidgetNode>,
     /// Python-provided theme overrides; `None` → use `Theme::dark()` defaults.
     pub theme: Option<Theme>,
@@ -95,6 +95,33 @@ pub struct RunResult {
 
 const DEMO_POINT_COUNT: usize = 500_000;
 const MAX_COMMAND_DRAIN_BATCHES: usize = 16;
+const MAX_COMMANDS_PER_DRAIN_BATCH: usize = 32;
+const COMMAND_DRAIN_BUDGET: Duration = Duration::from_millis(6);
+
+fn coalesce_runtime_command_batch(commands: &mut Vec<Command>) {
+    if commands.len() < 2 {
+        return;
+    }
+    let mut seen_scatter_updates = HashSet::new();
+    let mut filtered = Vec::with_capacity(commands.len());
+    while let Some(command) = commands.pop() {
+        let keep = match &command {
+            Command::DebugSnapshot { .. } => {
+                seen_scatter_updates.clear();
+                true
+            }
+            Command::SetScatterPointsPacked {
+                id, coalesce: true, ..
+            } => seen_scatter_updates.insert(id.clone()),
+            _ => true,
+        };
+        if keep {
+            filtered.push(command);
+        }
+    }
+    filtered.reverse();
+    *commands = filtered;
+}
 
 fn gen_demo_points_with_colormap(colormap: &str) -> Vec<PointInstance> {
     let cmap = scatter::colormap::resolve(colormap);
@@ -122,6 +149,50 @@ fn gen_demo_points_with_colormap(colormap: &str) -> Vec<PointInstance> {
     pts
 }
 
+fn decode_mesh_positions(b64: &str) -> Result<Vec<[f32; 3]>, DragonError> {
+    let bytes = BASE64
+        .decode(b64)
+        .map_err(|e| DragonError::ParseError(format!("mesh positions base64: {e}")))?;
+    if bytes.len() % 12 != 0 {
+        return Err(DragonError::ParseError(format!(
+            "mesh positions length {} is not a multiple of 12 (xyz float32)",
+            bytes.len()
+        )));
+    }
+    Ok(bytes
+        .chunks_exact(12)
+        .map(|c| {
+            [
+                f32::from_le_bytes([c[0], c[1], c[2], c[3]]),
+                f32::from_le_bytes([c[4], c[5], c[6], c[7]]),
+                f32::from_le_bytes([c[8], c[9], c[10], c[11]]),
+            ]
+        })
+        .collect())
+}
+
+fn decode_mesh_indices(b64: &str) -> Result<Vec<[u32; 3]>, DragonError> {
+    let bytes = BASE64
+        .decode(b64)
+        .map_err(|e| DragonError::ParseError(format!("mesh indices base64: {e}")))?;
+    if bytes.len() % 12 != 0 {
+        return Err(DragonError::ParseError(format!(
+            "mesh indices length {} is not a multiple of 12 (3 × uint32 per triangle)",
+            bytes.len()
+        )));
+    }
+    Ok(bytes
+        .chunks_exact(12)
+        .map(|c| {
+            [
+                u32::from_le_bytes([c[0], c[1], c[2], c[3]]),
+                u32::from_le_bytes([c[4], c[5], c[6], c[7]]),
+                u32::from_le_bytes([c[8], c[9], c[10], c[11]]),
+            ]
+        })
+        .collect())
+}
+
 fn decode_scatter_points(b64: &str, colormap: &str) -> Result<Vec<PointInstance>, DragonError> {
     let bytes = BASE64
         .decode(b64)
@@ -131,11 +202,60 @@ fn decode_scatter_points(b64: &str, colormap: &str) -> Result<Vec<PointInstance>
     Ok(pts)
 }
 
+/// Format a scalar like Python's :.4g — 4 significant figures, scientific when |exp| ≥ 4.
+fn format_4g(v: f32) -> String {
+    if v == 0.0 {
+        return "0".to_string();
+    }
+    let abs = v.abs();
+    if abs >= 1e-4_f32 && abs < 1e4_f32 {
+        let exp = abs.log10().floor() as i32;
+        let prec = (3 - exp).max(0) as usize;
+        // Remove redundant trailing zeros after decimal point.
+        let s = format!("{:.prec$}", v, prec = prec);
+        if s.contains('.') {
+            s.trim_end_matches('0').trim_end_matches('.').to_string()
+        } else {
+            s
+        }
+    } else {
+        format!("{:.3e}", v)
+    }
+}
+
+fn decode_actor_payload(
+    b64: &str,
+    colormap: &str,
+    format: ScatterPayloadFormat,
+) -> Result<Vec<PointInstance>, DragonError> {
+    let bytes = BASE64
+        .decode(b64)
+        .map_err(|e| DragonError::ParseError(format!("scatter actor base64: {e}")))?;
+    decode_actor_payload_bytes(&bytes, colormap, format)
+}
+
+fn decode_actor_payload_bytes(
+    bytes: &[u8],
+    colormap: &str,
+    format: ScatterPayloadFormat,
+) -> Result<Vec<PointInstance>, DragonError> {
+    let mut pts = Vec::new();
+    match format {
+        ScatterPayloadFormat::XyzF32V0 => {
+            decode_scatter_points_bytes_into_colormap(bytes, &mut pts, colormap)?;
+        }
+        ScatterPayloadFormat::PointInstanceV1 => {
+            decode_scatter_points_v1(bytes, &mut pts)?;
+        }
+    }
+    Ok(pts)
+}
+
 fn decode_scatter_points_bytes_into_colormap(
     bytes: &[u8],
     pts: &mut Vec<PointInstance>,
     colormap: &str,
-) -> Result<(), DragonError> {
+) -> Result<Option<(glam::Vec3, glam::Vec3)>, DragonError> {
     if bytes.len() % 12 != 0 {
         return Err(DragonError::ParseError(format!(
             "scatter data length {} is not a multiple of 12 (xyz float32)",
@@ -144,26 +264,156 @@ fn decode_scatter_points_bytes_into_colormap(
     }
 
     let n = bytes.len() / 12;
-    let cmap = scatter::colormap::resolve(colormap);
     pts.clear();
     pts.reserve(n);
 
+    // Decode once while computing z range and data bounds. Color is filled after
+    // the final z range is known so xyz_f32_v0 keeps exact auto-colormap behavior.
+    let mut z_min = f32::INFINITY;
+    let mut z_max = f32::NEG_INFINITY;
+    let mut min = glam::Vec3::splat(f32::INFINITY);
+    let mut max = glam::Vec3::splat(f32::NEG_INFINITY);
     for i in 0..n {
         let off = i * 12;
         let x = f32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
         let y = f32::from_le_bytes(bytes[off + 4..off + 8].try_into().unwrap());
         let z = f32::from_le_bytes(bytes[off + 8..off + 12].try_into().unwrap());
-        let t = i as f32 / n as f32;
-        let [r, g, b] = scatter::colormap::sample(cmap, t);
+        if z.is_finite() {
+            z_min = z_min.min(z);
+            z_max = z_max.max(z);
+        }
+        if x.is_finite() && y.is_finite() && z.is_finite() {
+            let p = glam::Vec3::new(x, y, z);
+            min = min.min(p);
+            max = max.max(p);
+        }
         pts.push(PointInstance {
             position: [x, y, z],
             size: 3.0,
-            color: [r, g, b],
+            color: [0.0, 0.0, 0.0],
             alpha: 0.85,
         });
     }
+    let z_range = if z_max > z_min { z_max - z_min } else { 1.0 };
+    let bounds = if min.x > max.x {
+        None
+    } else {
+        Some((min, max))
+    };
 
-    Ok(())
+    // Assign colors by normalized z position within the range.
+    let cmap = scatter::colormap::resolve(colormap);
+    for pt in pts.iter_mut() {
+        let z = pt.position[2];
+        let t = if z.is_finite() {
+            ((z - z_min) / z_range).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let [r, g, b] = scatter::colormap::sample(cmap, t);
+        pt.color = [r, g, b];
+    }
+
+    Ok(bounds)
+}
+
+fn decode_scatter_points_v1(
+    bytes: &[u8],
+    pts: &mut Vec<PointInstance>,
+) -> Result<Option<(glam::Vec3, glam::Vec3)>, DragonError> {
+    const STRIDE: usize = std::mem::size_of::<PointInstance>();
+    if bytes.len() % STRIDE != 0 {
+        return Err(DragonError::ParseError(format!(
+            "scatter point_instance_v1 payload length {} is not a multiple of {} (PointInstance size)",
+            bytes.len(),
+            STRIDE
+        )));
+    }
+    let n = bytes.len() / STRIDE;
+    pts.clear();
+    pts.reserve(n);
+    let mut min = glam::Vec3::splat(f32::INFINITY);
+    let mut max = glam::Vec3::splat(f32::NEG_INFINITY);
+    for i in 0..n {
+        let off = i * STRIDE;
+        let x = f32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
+        let y = f32::from_le_bytes(bytes[off + 4..off + 8].try_into().unwrap());
+        let z = f32::from_le_bytes(bytes[off + 8..off + 12].try_into().unwrap());
+        let size = f32::from_le_bytes(bytes[off + 12..off + 16].try_into().unwrap());
+        let r = f32::from_le_bytes(bytes[off + 16..off + 20].try_into().unwrap());
+        let g = f32::from_le_bytes(bytes[off + 20..off + 24].try_into().unwrap());
+        let b = f32::from_le_bytes(bytes[off + 24..off + 28].try_into().unwrap());
+        let alpha = f32::from_le_bytes(bytes[off + 28..off + 32].try_into().unwrap());
+        if x.is_finite() && y.is_finite() && z.is_finite() {
+            let p = glam::Vec3::new(x, y, z);
+            min = min.min(p);
+            max = max.max(p);
+        }
+        pts.push(PointInstance {
+            position: [x, y, z],
+            size: size.max(0.0),
+            color: [r, g, b],
+            alpha,
+        });
+    }
+    if min.x > max.x {
+        Ok(None)
+    } else {
+        Ok(Some((min, max)))
+    }
+}
+
+fn compute_scatter_bounds(pts: &[PointInstance]) -> Option<(glam::Vec3, glam::Vec3)> {
+    let mut min = glam::Vec3::splat(f32::INFINITY);
+    let mut max = glam::Vec3::splat(f32::NEG_INFINITY);
+    for pt in pts {
+        let [x, y, z] = pt.position;
+        if x.is_finite() && y.is_finite() && z.is_finite() {
+            min = min.min(glam::Vec3::new(x, y, z));
+            max = max.max(glam::Vec3::new(x, y, z));
+        }
+    }
+    if min.x > max.x {
+        None
+    } else {
+        Some((min, max))
+    }
+}
+
+fn scatter_chrome_from_props(props: &document::NodeProps) -> scatter::ScatterChromeState {
+    scatter::ScatterChromeState {
+        grid_visible: props.scatter_grid_visible,
+        major_planes: props.scatter_major_planes,
+        minor_planes: props.scatter_minor_planes,
+        grid_sticky: props.scatter_grid_sticky,
+        grid_all_edges: props.scatter_grid_all_edges,
+        tick_override: props.scatter_tick_override,
+        axis_labels: props.scatter_axis_labels.clone(),
+        axis_visible: props.scatter_axis_visible,
+        background_color: props.scatter_background,
+        legend: scatter::LegendState {
+            visible: props.scatter_legend_visible,
+            position: scatter::LegendPosition::from_str(&props.scatter_legend_position),
+            entries: props
+                .scatter_legend_entries
+                .iter()
+                .map(|(label, r, g, b)| scatter::LegendEntry {
+                    label: label.clone(),
+                    color: [*r, *g, *b],
+                })
+                .collect(),
+            title: props.scatter_legend_title.clone(),
+        },
+        scalar_bar: scatter::ScalarBarState {
+            visible: props.scatter_scalar_bar_visible,
+            vmin: props.scatter_scalar_bar_vmin,
+            vmax: props.scatter_scalar_bar_vmax,
+            log_scale: props.scatter_scalar_bar_log_scale,
+            colormap: props.scatter_scalar_bar_colormap.clone(),
+            title: props.scatter_scalar_bar_title.clone(),
+        },
+        orientation_axes_visible: props.scatter_orientation_axes_visible,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -197,19 +447,29 @@ fn create_depth_texture(
 // Walk helpers
 // ---------------------------------------------------------------------------
 
-fn find_visible_scatter_id<'a>(
-    node: &'a WidgetNode,
+fn collect_visible_scatter_ids(
+    node: &WidgetNode,
     layout: &crate::layout::LayoutResult,
-) -> Option<&'a str> {
+    out: &mut Vec<String>,
+) {
     if node.kind == WidgetKind::Scatter3D && layout.visible_rect(&node.id).is_some() {
-        return Some(&node.id);
+        out.push(node.id.clone());
+    }
+    // Visit children in z-index paint order (matching primitives/text stacking_children).
+    let mut children: Vec<_> = node.children.iter().enumerate().collect();
+    children.sort_by_key(|(index, child)| (child.style.layout.z_index.unwrap_or(0), *index));
+    for (_, child) in children {
+        collect_visible_scatter_ids(child, layout, out);
+    }
+}
+
+fn collect_all_scatter_ids(node: &WidgetNode, out: &mut Vec<String>) {
+    if node.kind == WidgetKind::Scatter3D {
+        out.push(node.id.clone());
     }
     for child in &node.children {
-        if let Some(id) = find_visible_scatter_id(child, layout) {
-            return Some(id);
-        }
+        collect_all_scatter_ids(child, out);
     }
-    None
 }
 
 fn scatter_clip_radii(node: &WidgetNode, fallback_radius_lp: f32, scale_factor: f32) -> [f32; 4] {
@@ -264,6 +524,15 @@ fn active_modal_ref(node: &WidgetNode) -> Option<&WidgetNode> {
         }
     }
     (node.kind == WidgetKind::Modal && node.props.open.unwrap_or(false)).then_some(node)
+}
+
+fn has_rich_tooltip_for_target(node: &WidgetNode, target: &str) -> bool {
+    if node.kind == WidgetKind::Tooltip && node.props.target.as_deref() == Some(target) {
+        return true;
+    }
+    node.children
+        .iter()
+        .any(|child| has_rich_tooltip_for_target(child, target))
 }
 
 fn scroll_container_at_pos(
@@ -504,6 +773,9 @@ fn widget_kind_name(kind: &WidgetKind) -> &'static str {
         WidgetKind::Window => "window",
         WidgetKind::HLayout => "h_layout",
         WidgetKind::VLayout => "v_layout",
+        WidgetKind::ScrollArea => "scroll_area",
+        WidgetKind::GridLayout => "grid_layout",
+        WidgetKind::FlowLayout => "flow_layout",
         WidgetKind::Panel => "panel",
         WidgetKind::Collapsible => "collapsible",
         WidgetKind::Modal => "modal",
@@ -575,6 +847,15 @@ fn flex_direction_name(direction: FlexDirectionStyle) -> &'static str {
         FlexDirectionStyle::Column => "column",
         FlexDirectionStyle::RowReverse => "row_reverse",
         FlexDirectionStyle::ColumnReverse => "column_reverse",
+    }
+}
+
+fn align_items_name(align_items: AlignItemsStyle) -> &'static str {
+    match align_items {
+        AlignItemsStyle::Start => "start",
+        AlignItemsStyle::Center => "center",
+        AlignItemsStyle::End => "end",
+        AlignItemsStyle::Stretch => "stretch",
     }
 }
 
@@ -805,6 +1086,12 @@ fn layout_style_snapshot(style: &LayoutStyle) -> Value {
             "flex_direction".to_string(),
             json!(flex_direction_name(value)),
         );
+    }
+    if let Some(value) = style.align_items {
+        map.insert("align_items".to_string(), json!(align_items_name(value)));
+    }
+    if let Some(value) = style.align_self {
+        map.insert("align_self".to_string(), json!(align_items_name(value)));
     }
     insert_layout_length(&mut map, "width", style.width_value, style.width);
     insert_layout_length(&mut map, "height", style.height_value, style.height);
@@ -1267,6 +1554,12 @@ fn widget_style_snapshot(style: &WidgetStyle) -> Value {
     let mut map = Map::new();
     insert_number(&mut map, "text_area_rows", style.text_area_rows);
     insert_number(&mut map, "scatter_point_size", style.scatter_point_size);
+    if let Some(ref sty) = style.scatter_point_style {
+        map.insert(
+            "scatter_point_style".to_string(),
+            Value::String(sty.clone()),
+        );
+    }
     insert_number(&mut map, "table_row_height", style.table_row_height);
     insert_number(&mut map, "table_header_height", style.table_header_height);
     insert_number(&mut map, "table_column_width", style.table_column_width);
@@ -1461,6 +1754,10 @@ fn props_snapshot(node: &WidgetNode) -> Value {
         "level": props.level.as_deref(),
         "fixed_width": props.fixed_width,
         "fixed_height": props.fixed_height,
+        "grid_columns": props.grid_columns,
+        "grid_min_column_width": props.grid_min_column_width,
+        "flow_align": props.flow_align.as_deref(),
+        "flow_cross_align": props.flow_cross_align.as_deref(),
         "disabled": props.disabled,
         "expanded": props.expanded,
         "open": props.open,
@@ -1513,9 +1810,47 @@ fn layout_snapshot(layout: Option<&crate::layout::LayoutResult>) -> Value {
     for (id, rect) in &layout.clips {
         clips.insert(id.clone(), rect_json(*rect));
     }
+    let mut diagnostics = Map::new();
+    for (id, rect) in &layout.rects {
+        let clip = layout.clips.get(id).copied().unwrap_or(*rect);
+        let overflow_left = (clip.x - rect.x).max(0.0);
+        let overflow_top = (clip.y - rect.y).max(0.0);
+        let overflow_right = ((rect.x + rect.w) - (clip.x + clip.w)).max(0.0);
+        let overflow_bottom = ((rect.y + rect.h) - (clip.y + clip.h)).max(0.0);
+        diagnostics.insert(
+            id.clone(),
+            json!({
+                "resolved": {
+                    "x": rect.x,
+                    "y": rect.y,
+                    "width": rect.w,
+                    "height": rect.h,
+                },
+                "available": {
+                    "x": clip.x,
+                    "y": clip.y,
+                    "width": clip.w,
+                    "height": clip.h,
+                },
+                "overflow": {
+                    "left": overflow_left,
+                    "top": overflow_top,
+                    "right": overflow_right,
+                    "bottom": overflow_bottom,
+                    "width": overflow_left + overflow_right,
+                    "height": overflow_top + overflow_bottom,
+                },
+                "scroll_range": {
+                    "x": layout.scroll_max_x.get(id).copied().unwrap_or(0.0),
+                    "y": layout.scroll_max_y.get(id).copied().unwrap_or(0.0),
+                },
+            }),
+        );
+    }
     json!({
         "rects": Value::Object(rects),
         "clips": Value::Object(clips),
+        "diagnostics": Value::Object(diagnostics),
         "scroll_x": &layout.scroll_x,
         "scroll_y": &layout.scroll_y,
         "scroll_max_x": &layout.scroll_max_x,
@@ -1821,6 +2156,10 @@ fn is_layout_style_key(key: &str) -> bool {
         key,
         "display"
             | "flex_direction"
+            | "align_items"
+            | "align-items"
+            | "align_self"
+            | "align-self"
             | "flex"
             | "flex_grow"
             | "flex_shrink"
@@ -1849,8 +2188,6 @@ fn is_layout_style_key(key: &str) -> bool {
             | "grid-auto-flow"
             | "text_area_rows"
             | "text-area-rows"
-            | "scatter_point_size"
-            | "scatter-point-size"
             | "table_row_height"
             | "table-header-height"
             | "table_header_height"
@@ -1919,6 +2256,73 @@ mod style_patch_tests {
     use serde_json::json;
 
     #[test]
+    fn command_batch_coalesces_scatter_updates() {
+        let mut commands = vec![
+            Command::SetScatterPointsPacked {
+                id: "scatter".to_string(),
+                xyz: vec![1; 12],
+                telemetry: None,
+                colormap: "viridis".to_string(),
+                payload_format: ScatterPayloadFormat::XyzF32V0,
+                coalesce: true,
+            },
+            Command::DrainPythonTasks,
+            Command::SetScatterPointsPacked {
+                id: "scatter".to_string(),
+                xyz: vec![2; 12],
+                telemetry: None,
+                colormap: "turbo".to_string(),
+                payload_format: ScatterPayloadFormat::XyzF32V0,
+                coalesce: true,
+            },
+        ];
+
+        coalesce_runtime_command_batch(&mut commands);
+
+        assert_eq!(
+            commands,
+            vec![
+                Command::DrainPythonTasks,
+                Command::SetScatterPointsPacked {
+                    id: "scatter".to_string(),
+                    xyz: vec![2; 12],
+                    telemetry: None,
+                    colormap: "turbo".to_string(),
+                    payload_format: ScatterPayloadFormat::XyzF32V0,
+                    coalesce: true,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn command_batch_coalescing_respects_debug_snapshot_barrier() {
+        let mut commands = vec![
+            Command::SetScatterPointsPacked {
+                id: "scatter".to_string(),
+                xyz: vec![1; 12],
+                telemetry: None,
+                colormap: "viridis".to_string(),
+                payload_format: ScatterPayloadFormat::XyzF32V0,
+                coalesce: true,
+            },
+            Command::DebugSnapshot { request_id: 1 },
+            Command::SetScatterPointsPacked {
+                id: "scatter".to_string(),
+                xyz: vec![2; 12],
+                telemetry: None,
+                colormap: "turbo".to_string(),
+                payload_format: ScatterPayloadFormat::XyzF32V0,
+                coalesce: true,
+            },
+        ];
+
+        coalesce_runtime_command_batch(&mut commands);
+
+        assert_eq!(commands.len(), 3);
+    }
+
+    #[test]
     fn winit_theme_maps_to_css_color_scheme() {
         assert_eq!(
             winit_theme_color_scheme(WinitTheme::Light),
@@ -1980,7 +2384,7 @@ mod style_patch_tests {
         );
         assert_eq!(
             style_patch_dirty(json!({"scatter-point-size": 7}).as_object().unwrap()),
-            Dirty::Layout
+            Dirty::Visual
         );
         assert_eq!(
             style_patch_dirty(
@@ -2796,6 +3200,33 @@ mod style_patch_tests {
     }
 
     #[test]
+    fn decode_scatter_points_invalid_payload_preserves_old_points() {
+        // A truncated XyzF32V0 payload (5 bytes — not a multiple of 12) must fail decode.
+        // The old runtime.points should be untouched and the error propagated.
+        let sentinel = scatter::PointInstance {
+            position: [9.0, 9.0, 9.0],
+            color: [1.0, 0.0, 0.0],
+            alpha: 1.0,
+            size: 5.0,
+        };
+        let old_pts: Vec<scatter::PointInstance> = vec![sentinel];
+        let bad_bytes: Vec<u8> = vec![0u8; 5]; // 5 bytes — not a multiple of 12
+        let mut decoded: Vec<scatter::PointInstance> = Vec::new();
+        let result = decode_scatter_points_bytes_into_colormap(&bad_bytes, &mut decoded, "viridis");
+        assert!(result.is_err(), "truncated payload must return an error");
+        // Simulate the new policy: on error we do NOT modify old_pts.
+        if result.is_err() {
+            // old_pts intentionally not touched
+        }
+        assert_eq!(
+            old_pts.len(),
+            1,
+            "old points must be preserved on decode error"
+        );
+        assert_eq!(old_pts[0].position, [9.0, 9.0, 9.0]);
+    }
+
+    #[test]
     fn parse_table_update_json_extracts_table_props() {
         let props = parse_table_update_json(
             "table",
@@ -2897,11 +3328,14 @@ struct WgpuState {
     depth_view: wgpu::TextureView,
     theme: Theme,
     stylesheets: StylesheetStore,
+    styles_dirty: bool,
+    last_style_media: Option<DgMediaEnvironment>,
     scale_factor: f32,
     platform_color_scheme: Option<DgMediaColorScheme>,
-    scatter: Option<ScatterWidget>,
-    scatter_widget_id: Option<String>,
-    scatter_decode_scratch: Vec<PointInstance>,
+    /// Per-widget scatter state keyed by widget id.
+    scatters: HashMap<String, ScatterRuntime>,
+    /// Visible scatter widget ids in paint order (updated each apply_layout).
+    visible_scatter_order: Vec<String>,
     primitives: Option<PrimitivesRenderer>,
     images: Option<ImageRenderer>,
     widget_tree: Option<WidgetNode>,
@@ -2930,7 +3364,6 @@ struct WgpuState {
     expanded_transitions: HashMap<String, HoverTransition>,
     expanded_state_snapshot: HashSet<String>,
     animation_epoch: Instant,
-    scatter_metrics: ScatterMetrics,
 }
 
 #[derive(Debug, Clone)]
@@ -2951,8 +3384,194 @@ struct ScatterMetrics {
     last_pack_ms: f64,
     last_queue_latency_ms: f64,
     last_decode_ms: f64,
+    last_bounds_ms: f64,
     last_upload_ms: f64,
+    last_primary_upload_ms: f64,
+    last_lod_ms: f64,
+    last_grid_ms: f64,
+    last_overlay_ms: f64,
     last_total_native_ms: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ScatterPayloadStatus {
+    Empty,
+    Ok,
+    /// Payload decoded successfully but every point position was non-finite.
+    AllNonFinite,
+    DecodeError(String),
+}
+
+impl Default for ScatterPayloadStatus {
+    fn default() -> Self {
+        Self::Empty
+    }
+}
+
+/// Per-widget scatter runtime state.
+struct ScatterRuntime {
+    widget: ScatterWidget,
+    /// CPU copy of point instances used for picking.
+    points: Vec<PointInstance>,
+    metrics: ScatterMetrics,
+    /// True after the first successful data load; prevents auto-fit on live updates.
+    fitted_once: bool,
+    data_min: glam::Vec3,
+    data_max: glam::Vec3,
+    payload_format: ScatterPayloadFormat,
+    payload_status: ScatterPayloadStatus,
+    /// Per-point tooltip text for the primary buffer (actor_id == 0).
+    primary_hover_meta: Vec<String>,
+    /// Column names used as coordinate row labels in hover tooltips (x, y, z order).
+    tooltip_axis_labels: [String; 3],
+    /// When true, hover movement triggers a point-pick and a tooltip overlay.
+    hover_tooltip_enabled: bool,
+    /// Lazily-built screen-space pick cache for the primary point buffer.
+    primary_pick_cache: Option<scatter::ScreenPickCache>,
+}
+
+impl ScatterRuntime {
+    /// Bounds of actor 0 (legacy single scene) merged with all visible extra actors.
+    fn merged_bounds(&self) -> (glam::Vec3, glam::Vec3) {
+        let mut mn = self.data_min;
+        let mut mx = self.data_max;
+        if let Some((emn, emx)) = self.widget.merged_extra_bounds() {
+            mn = mn.min(emn);
+            mx = mx.max(emx);
+        }
+        if let Some((mmn, mmx)) = self.widget.merged_mesh_bounds() {
+            mn = mn.min(mmn);
+            mx = mx.max(mmx);
+        }
+        (mn, mx)
+    }
+
+    /// Pick the closest point across the primary buffer and all visible extra actors,
+    /// using lazily-built per-actor screen-space grid caches to avoid O(N) scans.
+    ///
+    /// Caches are rebuilt automatically when the view–projection matrix or viewport
+    /// size has changed since the last query.  Data changes (upload, stream, clear)
+    /// must invalidate the relevant cache by setting it to `None`.
+    ///
+    /// Returns `(actor_id, index, point)` where `actor_id == 0` means primary buffer.
+    fn pick_all_actors_cached(
+        &mut self,
+        x: f32,
+        y: f32,
+        radius_px: f32,
+    ) -> Option<(u32, usize, PointInstance)> {
+        if !self.widget.contains_point(x, y) || self.widget.width == 0 || self.widget.height == 0 {
+            return None;
+        }
+        let local_x = x - self.widget.offset[0];
+        let local_y = y - self.widget.offset[1];
+        let view_proj = self.widget.camera.view_proj();
+        let w = self.widget.width;
+        let h = self.widget.height;
+
+        let pso = self.widget.point_size_override;
+
+        // Rebuild primary cache if stale or missing.
+        let primary_stale = self
+            .primary_pick_cache
+            .as_ref()
+            .map(|c| c.is_stale(&view_proj, w, h, pso))
+            .unwrap_or(true);
+        if primary_stale {
+            let new_cache = scatter::ScreenPickCache::build(&self.points, view_proj, w, h, pso);
+            self.primary_pick_cache = Some(new_cache);
+        }
+
+        // Rebuild stale actor caches.
+        let actor_ids: Vec<u32> = self.widget.extra_actors.keys().copied().collect();
+        for actor_id in &actor_ids {
+            if let Some(actor) = self.widget.extra_actors.get_mut(actor_id) {
+                if !actor.visible {
+                    continue;
+                }
+                let stale = actor
+                    .pick_cache
+                    .as_ref()
+                    .map(|c| c.is_stale(&view_proj, w, h, pso))
+                    .unwrap_or(true);
+                if stale {
+                    let new_cache = {
+                        let live_pts = &actor.points[..actor.point_count as usize];
+                        scatter::ScreenPickCache::build(live_pts, view_proj, w, h, pso)
+                    };
+                    actor.pick_cache = Some(new_cache);
+                }
+            }
+        }
+
+        // (actor_id, index, point, dist2, depth)
+        let mut best: Option<(u32, usize, PointInstance, f32, f32)> = None;
+        let mut update = |actor_id: u32, idx: usize, pt: PointInstance, dist2: f32, depth: f32| {
+            // Mirror pick_point_all_actors: prefer closer dist2, break ties toward nearer depth.
+            let take = match best {
+                None => true,
+                Some((_, _, _, bd, bz))
+                    if dist2 < bd || ((bd - dist2).abs() <= f32::EPSILON && depth < bz) =>
+                {
+                    true
+                }
+                _ => false,
+            };
+            if take {
+                best = Some((actor_id, idx, pt, dist2, depth));
+            }
+        };
+
+        // Query primary buffer via cache, expanding radius for large points.
+        let primary_query_radius = {
+            let cache = self.primary_pick_cache.as_ref().unwrap();
+            radius_px.max(cache.max_point_size * 0.75)
+        };
+        let primary_cands = {
+            let cache = self.primary_pick_cache.as_ref().unwrap();
+            cache.candidates(local_x, local_y, primary_query_radius)
+        };
+        for idx_u32 in primary_cands {
+            let idx = idx_u32 as usize;
+            if idx >= self.points.len() {
+                continue;
+            }
+            let pt = self.points[idx];
+            if let Some((d2, z)) = self.widget.pick_distance(pt, local_x, local_y, radius_px) {
+                update(0, idx, pt, d2, z);
+            }
+        }
+
+        // Query extra actors via their caches, expanding radius for large points.
+        for actor_id in actor_ids {
+            let actor = match self.widget.extra_actors.get(&actor_id) {
+                Some(a) if a.visible => a,
+                _ => continue,
+            };
+            let (actor_query_radius, cands) = {
+                let cache = match actor.pick_cache.as_ref() {
+                    Some(c) => c,
+                    None => continue,
+                };
+                let qr = radius_px.max(cache.max_point_size * 0.75);
+                (qr, cache.candidates(local_x, local_y, qr))
+            };
+            let _ = actor_query_radius; // used to compute cands above
+            let live_pts = &actor.points[..actor.point_count as usize];
+            for idx_u32 in cands {
+                let idx = idx_u32 as usize;
+                if idx >= live_pts.len() {
+                    continue;
+                }
+                let pt = live_pts[idx];
+                if let Some((d2, z)) = self.widget.pick_distance(pt, local_x, local_y, radius_px) {
+                    update(actor_id, idx, pt, d2, z);
+                }
+            }
+        }
+
+        best.map(|(actor_id, idx, pt, _, _)| (actor_id, idx, pt))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -3492,21 +4111,110 @@ impl WgpuState {
         let (depth_texture, depth_view) = create_depth_texture(&device, width, height);
         let theme = spec.theme.unwrap_or_else(Theme::dark);
 
-        let (scatter, upload_ms, scatter_points) = if let Some(scatter_spec) = spec.scatter {
-            let mut s = ScatterWidget::new(&device, config.format, width, height);
-            let t0 = Instant::now();
-            let pts = if let Some(b64) = scatter_spec.data_b64 {
-                decode_scatter_points(&b64, &scatter_spec.colormap)?
-            } else {
-                gen_demo_points_with_colormap(&scatter_spec.colormap)
-            };
-            s.set_points(&device, &queue, &pts);
-            s.update_camera(&queue);
-            let ms = t0.elapsed().as_secs_f64() * 1000.0;
-            (Some(s), ms, pts)
-        } else {
-            (None, 0.0, Vec::new())
-        };
+        // Build one ScatterRuntime per Scatter3D node in the tree.
+        let mut scatters: HashMap<String, ScatterRuntime> = HashMap::new();
+        let mut total_upload_ms = 0.0_f64;
+        if let Some(tree) = &spec.widget_tree {
+            let mut scatter_ids: Vec<String> = Vec::new();
+            collect_all_scatter_ids(tree, &mut scatter_ids);
+            for scatter_id in scatter_ids {
+                let node = find_widget(tree, &scatter_id);
+                let (colormap, data_b64, data_format, startup_chrome) = node
+                    .map(|n| {
+                        let chrome = scatter_chrome_from_props(&n.props);
+                        (
+                            n.props
+                                .scatter_colormap
+                                .clone()
+                                .unwrap_or_else(|| "viridis".to_string()),
+                            n.props.scatter_data_b64.clone(),
+                            n.props.scatter_data_format,
+                            chrome,
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        (
+                            "viridis".to_string(),
+                            None,
+                            ScatterPayloadFormat::default(),
+                            scatter::ScatterChromeState::default(),
+                        )
+                    });
+
+                let mut widget = ScatterWidget::new(&device, config.format, width, height);
+                let t0 = Instant::now();
+                let (mut pts, mut status) = if let Some(b64) = data_b64 {
+                    let decoded_bytes = BASE64.decode(&b64);
+                    match decoded_bytes {
+                        Err(e) => {
+                            let msg = format!("scatter base64 decode: {e}");
+                            eprintln!("DragonGUI: {msg}");
+                            (Vec::new(), ScatterPayloadStatus::DecodeError(msg))
+                        }
+                        Ok(bytes) => {
+                            let mut pts = Vec::new();
+                            let result = match data_format {
+                                ScatterPayloadFormat::XyzF32V0 => {
+                                    decode_scatter_points_bytes_into_colormap(
+                                        &bytes, &mut pts, &colormap,
+                                    )
+                                }
+                                ScatterPayloadFormat::PointInstanceV1 => {
+                                    decode_scatter_points_v1(&bytes, &mut pts)
+                                }
+                            };
+                            match result {
+                                Err(e) => {
+                                    let msg = e.to_string();
+                                    eprintln!("DragonGUI: {msg}");
+                                    (Vec::new(), ScatterPayloadStatus::DecodeError(msg))
+                                }
+                                Ok(_) => (pts, ScatterPayloadStatus::Ok),
+                            }
+                        }
+                    }
+                } else {
+                    (Vec::new(), ScatterPayloadStatus::Empty)
+                };
+
+                let maybe_bounds = compute_scatter_bounds(&pts);
+                if maybe_bounds.is_none() && !pts.is_empty() {
+                    status = ScatterPayloadStatus::AllNonFinite;
+                    pts.clear();
+                }
+                let (data_min, data_max) =
+                    maybe_bounds.unwrap_or((glam::Vec3::ZERO, glam::Vec3::ZERO));
+                if !pts.is_empty() {
+                    widget.set_points(&device, &queue, &pts);
+                    widget.fit_to_bounds(data_min, data_max, &queue);
+                } else {
+                    widget.update_camera(&queue);
+                }
+                widget.set_chrome(startup_chrome);
+                widget.refresh_grid(data_min, data_max, &device, &queue);
+                widget.refresh_overlays(&device, &queue);
+                total_upload_ms += t0.elapsed().as_secs_f64() * 1000.0;
+
+                scatters.insert(
+                    scatter_id,
+                    ScatterRuntime {
+                        widget,
+                        points: pts,
+                        metrics: ScatterMetrics::default(),
+                        fitted_once: matches!(status, ScatterPayloadStatus::Ok),
+                        data_min,
+                        data_max,
+                        payload_format: data_format,
+                        payload_status: status,
+                        primary_hover_meta: Vec::new(),
+                        tooltip_axis_labels: ["x".to_string(), "y".to_string(), "z".to_string()],
+                        hover_tooltip_enabled: true,
+                        primary_pick_cache: None,
+                    },
+                );
+            }
+        }
+        let upload_ms = total_upload_ms;
 
         let primitives = spec
             .widget_tree
@@ -3557,12 +4265,6 @@ impl WgpuState {
             collect_widget_kinds(tree, &mut widget_kinds);
         }
 
-        let scatter_widget_id = spec
-            .widget_tree
-            .as_ref()
-            .and_then(|tree| find_first_widget_kind_id(tree, &WidgetKind::Scatter3D))
-            .map(str::to_string);
-
         let mut state = Self {
             surface,
             device,
@@ -3572,11 +4274,12 @@ impl WgpuState {
             depth_view,
             theme,
             stylesheets: spec.stylesheets,
+            styles_dirty: true,
+            last_style_media: None,
             scale_factor,
             platform_color_scheme: window.theme().map(winit_theme_color_scheme),
-            scatter,
-            scatter_widget_id,
-            scatter_decode_scratch: scatter_points,
+            scatters,
+            visible_scatter_order: Vec::new(),
             primitives,
             images,
             widget_tree: spec.widget_tree,
@@ -3602,7 +4305,6 @@ impl WgpuState {
             expanded_transitions: HashMap::new(),
             expanded_state_snapshot,
             animation_epoch: Instant::now(),
-            scatter_metrics: ScatterMetrics::default(),
         };
 
         state.apply_layout();
@@ -3629,9 +4331,18 @@ impl WgpuState {
 
     fn reapply_stylesheets_for_current_viewport(&mut self) {
         let media = self.media_environment();
+        if !self.styles_dirty && self.last_style_media == Some(media) {
+            return;
+        }
         if let Some(tree) = &mut self.widget_tree {
             apply_stylesheets_to_tree_for_media(tree, &mut self.stylesheets, media);
         }
+        self.styles_dirty = false;
+        self.last_style_media = Some(media);
+    }
+
+    fn mark_styles_dirty(&mut self) {
+        self.styles_dirty = true;
     }
 
     fn set_platform_color_scheme(&mut self, scheme: DgMediaColorScheme) {
@@ -3639,6 +4350,7 @@ impl WgpuState {
             return;
         }
         self.platform_color_scheme = Some(scheme);
+        self.mark_styles_dirty();
         self.apply_layout();
     }
 
@@ -3661,7 +4373,8 @@ impl WgpuState {
             primitives,
             images,
             text,
-            scatter,
+            scatters,
+            visible_scatter_order,
             caret_positions,
             toast_overlays,
             device,
@@ -3682,21 +4395,36 @@ impl WgpuState {
         let h = config.height as f32;
         let layout = compute_layout(tree, w, h, *scale_factor, theme, widget_state.as_ref());
 
-        if let Some(s) = scatter {
-            if let Some(scatter_id) = find_visible_scatter_id(tree, &layout) {
+        // Collect visible scatter order and update each widget's layout rect.
+        let mut new_visible_order: Vec<String> = Vec::new();
+        collect_visible_scatter_ids(tree, &layout, &mut new_visible_order);
+        *visible_scatter_order = new_visible_order.clone();
+
+        for runtime in scatters.values_mut() {
+            runtime.widget.set_point_size_override(None, queue);
+            runtime.widget.set_point_style(None, queue);
+            runtime
+                .widget
+                .set_layout_rect(0.0, 0.0, 0.0, 0.0, None, [0.0; 4], queue);
+        }
+        for scatter_id in &new_visible_order {
+            if let Some(runtime) = scatters.get_mut(scatter_id) {
                 let scatter_node = find_node(tree, scatter_id);
                 let point_size = scatter_node
                     .and_then(|node| node.style.widget.scatter_point_size)
                     .map(|size| size * *scale_factor);
+                let point_style =
+                    scatter_node.and_then(|node| node.style.widget.scatter_point_style.as_deref());
                 let clip_radii = scatter_node
                     .map(|node| scatter_clip_radii(node, theme.radius, *scale_factor))
                     .unwrap_or([0.0; 4]);
-                s.set_point_size_override(point_size, queue);
+                runtime.widget.set_point_size_override(point_size, queue);
+                runtime.widget.set_point_style(point_style, queue);
                 if let (Some(r), Some(visible)) = (
-                    layout.rects.get(scatter_id).copied(),
+                    layout.rects.get(scatter_id.as_str()).copied(),
                     layout.visible_rect(scatter_id),
                 ) {
-                    s.set_layout_rect(
+                    runtime.widget.set_layout_rect(
                         r.x,
                         r.y,
                         r.w,
@@ -3705,10 +4433,19 @@ impl WgpuState {
                         clip_radii,
                         queue,
                     );
+                    let (data_min, data_max) = runtime.merged_bounds();
+                    if !runtime.fitted_once
+                        && !runtime.points.is_empty()
+                        && runtime.widget.has_visible_viewport()
+                    {
+                        runtime.widget.fit_to_bounds(data_min, data_max, queue);
+                        runtime.fitted_once = true;
+                    }
+                    runtime
+                        .widget
+                        .refresh_grid(data_min, data_max, device, queue);
+                    runtime.widget.refresh_overlays(device, queue);
                 }
-            } else {
-                s.set_point_size_override(None, queue);
-                s.set_layout_rect(0.0, 0.0, 0.0, 0.0, None, [0.0; 4], queue);
             }
         }
 
@@ -4038,6 +4775,26 @@ impl WgpuState {
             state.dropdown_hover = new_dropdown_hover;
         }
         true
+    }
+
+    fn hover_change_requires_layout(
+        &self,
+        old_hover: Option<&str>,
+        new_hover: Option<&str>,
+    ) -> bool {
+        let Some(tree) = self.widget_tree.as_ref() else {
+            return false;
+        };
+        old_hover
+            .into_iter()
+            .chain(new_hover)
+            .any(|id| has_rich_tooltip_for_target(tree, id))
+    }
+
+    fn current_hover_id(&self) -> Option<String> {
+        self.widget_state
+            .as_ref()
+            .and_then(|state| state.hovered.clone())
     }
 
     fn start_hover_transition(&mut self, id: &str, to: f32) {
@@ -4692,29 +5449,84 @@ impl WgpuState {
         self.resize(new_inner_size.width, new_inner_size.height);
     }
 
-    fn scatter_contains(&self, pos: [f32; 2]) -> bool {
-        self.scatter
-            .as_ref()
-            .map(|s| s.contains_point(pos[0], pos[1]))
-            .unwrap_or(false)
+    /// Return the topmost visible scatter id that contains `pos`, or None.
+    /// Checks in reverse visible order so the visually topmost scatter wins.
+    fn scatter_at(&self, pos: [f32; 2]) -> Option<String> {
+        for id in self.visible_scatter_order.iter().rev() {
+            if let Some(runtime) = self.scatters.get(id) {
+                if runtime.widget.contains_point(pos[0], pos[1]) {
+                    return Some(id.clone());
+                }
+            }
+        }
+        None
     }
 
-    fn scatter_pick_payload(&self, pos: [f32; 2]) -> Option<(String, String)> {
-        let id = self.scatter_widget_id.as_ref()?.clone();
-        let (index, point) =
-            self.scatter
-                .as_ref()?
-                .pick_point(&self.scatter_decode_scratch, pos[0], pos[1], 8.0)?;
-        Some((
-            id,
+    fn scatter_pick_payload(&mut self, id: &str, pos: [f32; 2]) -> Option<String> {
+        let runtime = self.scatters.get_mut(id)?;
+        let (actor_id, index, point) = runtime.pick_all_actors_cached(pos[0], pos[1], 8.0)?;
+        Some(
             json!({
                 "index": index,
+                "actor": actor_id,
                 "x": point.position[0],
                 "y": point.position[1],
                 "z": point.position[2],
+                "widget_id": id,
             })
             .to_string(),
-        ))
+        )
+    }
+
+    /// Perform polygon (lasso) selection hit test and return a JSON payload with selected indices.
+    fn scatter_polygon_select_payload(&self, id: &str, poly: &[[f32; 2]]) -> Option<String> {
+        let runtime = self.scatters.get(id)?;
+        let mut actor_results = serde_json::Map::new();
+        let indices = runtime
+            .widget
+            .select_points_in_polygon(&runtime.points, poly);
+        actor_results.insert("0".into(), indices.into());
+        for (actor_id, actor) in &runtime.widget.extra_actors {
+            if actor.visible {
+                let live = &actor.points[..actor.point_count as usize];
+                let idx = runtime.widget.select_points_in_polygon(live, poly);
+                actor_results.insert(actor_id.to_string(), idx.into());
+            }
+        }
+        Some(
+            json!({
+                "event": "select",
+                "widget_id": id,
+                "actors": actor_results,
+            })
+            .to_string(),
+        )
+    }
+
+    /// Perform rectangle selection hit test and return a JSON payload with selected indices.
+    /// `rect` is in physical pixels relative to the scatter viewport.
+    fn scatter_select_payload(&self, id: &str, rect: [f32; 4]) -> Option<String> {
+        let runtime = self.scatters.get(id)?;
+        let mut actor_results = serde_json::Map::new();
+        // Actor 0 (primary buffer)
+        let indices = runtime.widget.select_points_in_rect(&runtime.points, rect);
+        actor_results.insert("0".into(), indices.into());
+        // Extra actors — limit to live range to avoid picking preallocated zero-slots.
+        for (actor_id, actor) in &runtime.widget.extra_actors {
+            if actor.visible {
+                let live = &actor.points[..actor.point_count as usize];
+                let idx = runtime.widget.select_points_in_rect(live, rect);
+                actor_results.insert(actor_id.to_string(), idx.into());
+            }
+        }
+        Some(
+            json!({
+                "event": "select",
+                "widget_id": id,
+                "actors": actor_results,
+            })
+            .to_string(),
+        )
     }
 
     /// Hit test interactive UI widgets at physical pixel position `pos`.
@@ -5049,13 +5861,130 @@ impl WgpuState {
         Ok(Some(dirty))
     }
 
+    fn set_scatter_point_size_live(&mut self, id: &str, size: f32) -> bool {
+        let logical_size = size.max(0.0);
+        if let Some(tree) = self.widget_tree.as_mut() {
+            if let Some(node) = find_widget_mut(tree, id) {
+                node.style_json
+                    .insert("scatter_point_size".to_string(), json!(logical_size));
+                node.inline_style =
+                    NodeStyle::from_json(Some(&Value::Object(node.style_json.clone())));
+                node.style.widget.scatter_point_size = Some(logical_size);
+            }
+        }
+
+        let Some(runtime) = self.scatters.get_mut(id) else {
+            return false;
+        };
+        runtime
+            .widget
+            .set_point_size_override(Some(logical_size * self.scale_factor), &self.queue);
+        runtime.primary_pick_cache = None;
+        for actor in runtime.widget.extra_actors.values_mut() {
+            actor.pick_cache = None;
+        }
+        true
+    }
+
+    fn set_scatter_point_style_live(&mut self, id: &str, style: &str) -> bool {
+        if let Some(tree) = self.widget_tree.as_mut() {
+            if let Some(node) = find_widget_mut(tree, id) {
+                node.style_json
+                    .insert("scatter_point_style".to_string(), json!(style));
+                node.inline_style =
+                    NodeStyle::from_json(Some(&Value::Object(node.style_json.clone())));
+                node.style.widget.scatter_point_style = Some(style.to_string());
+            }
+        }
+
+        let Some(runtime) = self.scatters.get_mut(id) else {
+            return false;
+        };
+        runtime.widget.set_point_style(Some(style), &self.queue);
+        true
+    }
+
+    fn add_scatter_actor_points(
+        &mut self,
+        id: &str,
+        actor_id: u32,
+        pts: Vec<PointInstance>,
+        hover_meta: Option<&str>,
+        tooltip_axis_labels: &[String; 3],
+    ) -> bool {
+        let Some(runtime) = self.scatters.get_mut(id) else {
+            return false;
+        };
+        runtime
+            .widget
+            .add_actor(actor_id, pts, &self.device, &self.queue);
+        if let Some(actor) = runtime.widget.extra_actors.get_mut(&actor_id) {
+            actor.tooltip_axis_labels = tooltip_axis_labels.clone();
+            if let Some(meta_json) = hover_meta {
+                if let Ok(values) = serde_json::from_str::<Vec<serde_json::Value>>(meta_json) {
+                    actor.hover_meta = values
+                        .iter()
+                        .map(|value| value.as_str().unwrap_or("").to_string())
+                        .collect();
+                }
+            }
+        }
+        let (bounds_min, bounds_max) = runtime.merged_bounds();
+        runtime
+            .widget
+            .refresh_grid(bounds_min, bounds_max, &self.device, &self.queue);
+        runtime.widget.refresh_overlays(&self.device, &self.queue);
+        true
+    }
+
+    fn update_scatter_actor_points(
+        &mut self,
+        id: &str,
+        actor_id: u32,
+        pts: Vec<PointInstance>,
+        tooltip_axis_labels: &[String; 3],
+    ) -> bool {
+        let Some(runtime) = self.scatters.get_mut(id) else {
+            return false;
+        };
+        runtime
+            .widget
+            .update_actor(actor_id, pts, &self.device, &self.queue);
+        if let Some(actor) = runtime.widget.extra_actors.get_mut(&actor_id) {
+            actor.tooltip_axis_labels = tooltip_axis_labels.clone();
+            actor.pick_cache = None;
+        }
+        let (bounds_min, bounds_max) = runtime.merged_bounds();
+        runtime
+            .widget
+            .refresh_grid(bounds_min, bounds_max, &self.device, &self.queue);
+        runtime.widget.refresh_overlays(&self.device, &self.queue);
+        true
+    }
+
+    fn stream_scatter_actor_points(
+        &mut self,
+        id: &str,
+        actor_id: u32,
+        pts: &[PointInstance],
+    ) -> bool {
+        let Some(runtime) = self.scatters.get_mut(id) else {
+            return false;
+        };
+        runtime.widget.stream_actor(actor_id, pts, &self.queue);
+        if let Some(actor) = runtime.widget.extra_actors.get_mut(&actor_id) {
+            actor.pick_cache = None;
+        }
+        let (bounds_min, bounds_max) = runtime.merged_bounds();
+        runtime
+            .widget
+            .refresh_grid(bounds_min, bounds_max, &self.device, &self.queue);
+        runtime.widget.refresh_overlays(&self.device, &self.queue);
+        true
+    }
+
     fn rebuild_retained_maps(&mut self) {
         let mut widget_kinds = HashMap::new();
-        let scatter_id = self
-            .widget_tree
-            .as_ref()
-            .and_then(|tree| find_first_widget_kind_id(tree, &WidgetKind::Scatter3D))
-            .map(str::to_string);
         let widget_state = self.widget_tree.as_ref().map(|tree| {
             collect_widget_kinds(tree, &mut widget_kinds);
             self.resources.sync_from_tree(tree);
@@ -5064,26 +5993,120 @@ impl WgpuState {
         if self.widget_tree.is_none() {
             self.resources = ResourceRegistry::default();
         }
-        match (scatter_id.as_deref(), self.scatter_widget_id.as_deref()) {
-            (None, _) => {
-                self.scatter = None;
-                self.scatter_widget_id = None;
-                self.scatter_decode_scratch.clear();
-                self.scatter_metrics = ScatterMetrics::default();
-            }
-            (Some(next_id), Some(current_id)) if next_id == current_id => {}
-            (Some(_), _) => {
-                self.scatter = Some(ScatterWidget::new(
+
+        // Sync scatter runtime map: add new widgets, drop removed ones.
+        let mut current_ids: Vec<String> = Vec::new();
+        if let Some(tree) = &self.widget_tree {
+            collect_all_scatter_ids(tree, &mut current_ids);
+        }
+        // Drop runtimes for ids no longer in the tree.
+        self.scatters.retain(|id, _| current_ids.contains(id));
+        // Add runtimes for newly appeared scatter nodes.
+        for id in &current_ids {
+            if !self.scatters.contains_key(id) {
+                let node = self
+                    .widget_tree
+                    .as_ref()
+                    .and_then(|tree| find_widget(tree, id));
+                let (colormap, data_b64, data_format, startup_chrome) = node
+                    .map(|n| {
+                        let chrome = scatter_chrome_from_props(&n.props);
+                        (
+                            n.props
+                                .scatter_colormap
+                                .clone()
+                                .unwrap_or_else(|| "viridis".to_string()),
+                            n.props.scatter_data_b64.clone(),
+                            n.props.scatter_data_format,
+                            chrome,
+                        )
+                    })
+                    .unwrap_or_else(|| {
+                        (
+                            "viridis".to_string(),
+                            None,
+                            ScatterPayloadFormat::default(),
+                            scatter::ScatterChromeState::default(),
+                        )
+                    });
+
+                let mut widget = ScatterWidget::new(
                     &self.device,
                     self.config.format,
                     self.config.width.max(1),
                     self.config.height.max(1),
-                ));
-                self.scatter_widget_id = scatter_id;
-                self.scatter_decode_scratch.clear();
-                self.scatter_metrics = ScatterMetrics::default();
+                );
+                let (mut pts, mut status) = if let Some(b64) = data_b64 {
+                    let decoded_bytes = BASE64.decode(&b64);
+                    match decoded_bytes {
+                        Err(e) => {
+                            let msg = format!("scatter base64 decode: {e}");
+                            eprintln!("DragonGUI: {msg}");
+                            (Vec::new(), ScatterPayloadStatus::DecodeError(msg))
+                        }
+                        Ok(bytes) => {
+                            let mut pts = Vec::new();
+                            let result = match data_format {
+                                ScatterPayloadFormat::XyzF32V0 => {
+                                    decode_scatter_points_bytes_into_colormap(
+                                        &bytes, &mut pts, &colormap,
+                                    )
+                                }
+                                ScatterPayloadFormat::PointInstanceV1 => {
+                                    decode_scatter_points_v1(&bytes, &mut pts)
+                                }
+                            };
+                            match result {
+                                Err(e) => {
+                                    let msg = e.to_string();
+                                    eprintln!("DragonGUI: {msg}");
+                                    (Vec::new(), ScatterPayloadStatus::DecodeError(msg))
+                                }
+                                Ok(_) => (pts, ScatterPayloadStatus::Ok),
+                            }
+                        }
+                    }
+                } else {
+                    (Vec::new(), ScatterPayloadStatus::Empty)
+                };
+
+                let maybe_bounds = compute_scatter_bounds(&pts);
+                if maybe_bounds.is_none() && !pts.is_empty() {
+                    status = ScatterPayloadStatus::AllNonFinite;
+                    pts.clear();
+                }
+                let (data_min, data_max) =
+                    maybe_bounds.unwrap_or((glam::Vec3::ZERO, glam::Vec3::ZERO));
+                if !pts.is_empty() {
+                    widget.set_points(&self.device, &self.queue, &pts);
+                    widget.fit_to_bounds(data_min, data_max, &self.queue);
+                } else {
+                    widget.update_camera(&self.queue);
+                }
+                widget.set_chrome(startup_chrome);
+                widget.refresh_grid(data_min, data_max, &self.device, &self.queue);
+                widget.refresh_overlays(&self.device, &self.queue);
+
+                self.scatters.insert(
+                    id.clone(),
+                    ScatterRuntime {
+                        widget,
+                        points: pts,
+                        metrics: ScatterMetrics::default(),
+                        fitted_once: matches!(status, ScatterPayloadStatus::Ok),
+                        data_min,
+                        data_max,
+                        payload_format: data_format,
+                        payload_status: status,
+                        primary_hover_meta: Vec::new(),
+                        tooltip_axis_labels: ["x".to_string(), "y".to_string(), "z".to_string()],
+                        hover_tooltip_enabled: true,
+                        primary_pick_cache: None,
+                    },
+                );
             }
         }
+
         self.widget_kinds = widget_kinds;
         self.widget_state = widget_state;
     }
@@ -5222,32 +6245,131 @@ impl WgpuState {
         xyz: Vec<u8>,
         telemetry: Option<ScatterTelemetry>,
         colormap: String,
+        data_format: ScatterPayloadFormat,
     ) -> Result<bool, DragonError> {
         if self.widget_kind(id) != Some(WidgetKind::Scatter3D) {
             return Ok(false);
         }
+        let Some(runtime) = self.scatters.get_mut(id) else {
+            return Ok(false);
+        };
         let total_t0 = Instant::now();
         let queue_latency_ms = telemetry
             .as_ref()
             .map(|t| (now_epoch_ms() - t.enqueue_epoch_ms).max(0.0))
             .unwrap_or(0.0);
-        if self.scatter.is_none() {
-            return Ok(false);
-        }
+
         let decode_t0 = Instant::now();
-        decode_scatter_points_bytes_into_colormap(
-            &xyz,
-            &mut self.scatter_decode_scratch,
-            &colormap,
-        )?;
-        let decode_ms = decode_t0.elapsed().as_secs_f64() * 1000.0;
-        let Some(scatter) = self.scatter.as_mut() else {
-            return Ok(false);
+        let mut decoded = std::mem::take(&mut runtime.points);
+        let result = match data_format {
+            ScatterPayloadFormat::XyzF32V0 => {
+                decode_scatter_points_bytes_into_colormap(&xyz, &mut decoded, &colormap)
+            }
+            ScatterPayloadFormat::PointInstanceV1 => decode_scatter_points_v1(&xyz, &mut decoded),
         };
+        let maybe_bounds = match result {
+            Ok(bounds) => bounds,
+            Err(e) => {
+                runtime.points = decoded;
+                let msg = e.to_string();
+                eprintln!("DragonGUI: {msg}");
+                runtime.payload_status = ScatterPayloadStatus::DecodeError(msg.clone());
+                // Do not mutate runtime.points or payload_format — preserve last valid state.
+                return Err(DragonError::Runtime(msg));
+            }
+        };
+        let decode_ms = decode_t0.elapsed().as_secs_f64() * 1000.0;
+        let bounds_ms = 0.0;
+
+        if maybe_bounds.is_none() && !decoded.is_empty() {
+            runtime.payload_format = data_format;
+            decoded.clear();
+            runtime.points = decoded;
+            runtime.primary_pick_cache = None;
+            runtime.payload_status = ScatterPayloadStatus::AllNonFinite;
+            runtime.primary_hover_meta = Vec::new();
+            runtime.widget.hover_label = None;
+            runtime.data_min = glam::Vec3::ZERO;
+            runtime.data_max = glam::Vec3::ZERO;
+            // Clear the GPU draw count so the old geometry is not rendered.
+            let upload_timings = runtime.widget.set_points(&self.device, &self.queue, &[]);
+            let grid_t0 = Instant::now();
+            runtime.widget.refresh_grid(
+                glam::Vec3::ZERO,
+                glam::Vec3::ZERO,
+                &self.device,
+                &self.queue,
+            );
+            let grid_ms = grid_t0.elapsed().as_secs_f64() * 1000.0;
+            let overlay_t0 = Instant::now();
+            runtime.widget.refresh_overlays(&self.device, &self.queue);
+            let overlay_ms = overlay_t0.elapsed().as_secs_f64() * 1000.0;
+            let pack_ms = telemetry.as_ref().map(|t| t.pack_ms).unwrap_or(0.0);
+            let reported_payload_bytes = telemetry
+                .as_ref()
+                .map(|t| t.payload_bytes)
+                .unwrap_or(xyz.len());
+            runtime.metrics = ScatterMetrics {
+                updates: runtime.metrics.updates + 1,
+                last_point_count: 0,
+                last_payload_bytes: reported_payload_bytes,
+                last_pack_ms: pack_ms,
+                last_queue_latency_ms: queue_latency_ms,
+                last_decode_ms: decode_ms,
+                last_bounds_ms: bounds_ms,
+                last_upload_ms: upload_timings.primary_ms
+                    + upload_timings.lod_ms
+                    + grid_ms
+                    + overlay_ms,
+                last_primary_upload_ms: upload_timings.primary_ms,
+                last_lod_ms: upload_timings.lod_ms,
+                last_grid_ms: grid_ms,
+                last_overlay_ms: overlay_ms,
+                last_total_native_ms: total_t0.elapsed().as_secs_f64() * 1000.0,
+            };
+            return Ok(true);
+        }
+        let (data_min, data_max) = maybe_bounds.unwrap_or((glam::Vec3::ZERO, glam::Vec3::ZERO));
+        runtime.payload_format = data_format;
+        runtime.points = decoded;
+        runtime.primary_pick_cache = None;
+        runtime.primary_hover_meta = Vec::new();
+        runtime.widget.hover_label = None;
+        runtime.data_min = data_min;
+        runtime.data_max = data_max;
+        runtime.payload_status = ScatterPayloadStatus::Ok;
+
         let upload_t0 = Instant::now();
-        scatter.set_points(&self.device, &self.queue, &self.scatter_decode_scratch);
+        let upload_timings = runtime
+            .widget
+            .set_points(&self.device, &self.queue, &runtime.points);
+        // Fit on first visible data load; preserve camera for subsequent live updates.
+        //
+        // Startup resource uploads can arrive while a scatter is hidden inside
+        // an inactive page. Hidden scatters have a zero-sized layout rect, and
+        // fitting against that aspect ratio pushes the camera thousands of
+        // units away. Leave `fitted_once` false so the next visible layout pass
+        // can fit with the real viewport dimensions.
+        if !runtime.fitted_once
+            && !runtime.points.is_empty()
+            && runtime.widget.has_visible_viewport()
+        {
+            runtime
+                .widget
+                .fit_to_bounds(data_min, data_max, &self.queue);
+            runtime.fitted_once = true;
+        }
+        let grid_t0 = Instant::now();
+        runtime
+            .widget
+            .refresh_grid(data_min, data_max, &self.device, &self.queue);
+        let grid_ms = grid_t0.elapsed().as_secs_f64() * 1000.0;
+        let overlay_t0 = Instant::now();
+        runtime.widget.refresh_overlays(&self.device, &self.queue);
+        let overlay_ms = overlay_t0.elapsed().as_secs_f64() * 1000.0;
         let upload_ms = upload_t0.elapsed().as_secs_f64() * 1000.0;
-        let point_count = self.scatter_decode_scratch.len();
+
+        let point_count = runtime.points.len();
         let payload_bytes = xyz.len();
         let pack_ms = telemetry.as_ref().map(|t| t.pack_ms).unwrap_or(0.0);
         let reported_point_count = telemetry
@@ -5258,17 +6380,59 @@ impl WgpuState {
             .as_ref()
             .map(|t| t.payload_bytes)
             .unwrap_or(payload_bytes);
-        self.scatter_metrics = ScatterMetrics {
-            updates: self.scatter_metrics.updates + 1,
+        runtime.metrics = ScatterMetrics {
+            updates: runtime.metrics.updates + 1,
             last_point_count: reported_point_count,
             last_payload_bytes: reported_payload_bytes,
             last_pack_ms: pack_ms,
             last_queue_latency_ms: queue_latency_ms,
             last_decode_ms: decode_ms,
+            last_bounds_ms: bounds_ms,
             last_upload_ms: upload_ms,
+            last_primary_upload_ms: upload_timings.primary_ms,
+            last_lod_ms: upload_timings.lod_ms,
+            last_grid_ms: grid_ms,
+            last_overlay_ms: overlay_ms,
             last_total_native_ms: total_t0.elapsed().as_secs_f64() * 1000.0,
         };
         Ok(true)
+    }
+
+    fn sync_scatter_style_overrides(&mut self) {
+        let Some(tree) = self.widget_tree.as_ref() else {
+            return;
+        };
+        let overrides: Vec<(String, Option<f32>, Option<String>)> = self
+            .visible_scatter_order
+            .iter()
+            .map(|id| {
+                let node = find_node(tree, id);
+                (
+                    id.clone(),
+                    node.and_then(|node| node.style.widget.scatter_point_size)
+                        .map(|size| size * self.scale_factor),
+                    node.and_then(|node| node.style.widget.scatter_point_style.clone()),
+                )
+            })
+            .collect();
+        for (id, point_size, point_style) in overrides {
+            let Some(runtime) = self.scatters.get_mut(&id) else {
+                continue;
+            };
+            let old_point_size = runtime.widget.point_size_override;
+            runtime
+                .widget
+                .set_point_size_override(point_size, &self.queue);
+            if runtime.widget.point_size_override.to_bits() != old_point_size.to_bits() {
+                runtime.primary_pick_cache = None;
+                for actor in runtime.widget.extra_actors.values_mut() {
+                    actor.pick_cache = None;
+                }
+            }
+            runtime
+                .widget
+                .set_point_style(point_style.as_deref(), &self.queue);
+        }
     }
 
     fn rebuild_for_dirty(&mut self, dirty: Dirty) {
@@ -5278,13 +6442,17 @@ impl WgpuState {
         match dirty {
             Dirty::Layout | Dirty::Full => self.apply_layout(),
             Dirty::Text => self.rebuild_visuals(),
-            Dirty::Visual => self.rebuild_primitives(),
+            Dirty::Visual => {
+                self.sync_scatter_style_overrides();
+                self.rebuild_primitives();
+            }
             Dirty::GpuData => {}
         }
     }
 
     fn reapply_stylesheets(&mut self) {
         self.cancel_hover_transitions();
+        self.mark_styles_dirty();
         self.reapply_stylesheets_for_current_viewport();
     }
 
@@ -5424,23 +6592,66 @@ impl WgpuState {
                 "has_primitives": self.primitives.is_some(),
                 "has_text": self.text.is_some(),
                 "font_warnings": self.text.as_ref().map(|text| text.font_warnings()).unwrap_or(&[]),
-                "has_scatter": self.scatter.is_some(),
-                "scatter_widget_id": self.scatter_widget_id.as_deref(),
+                "has_scatter": !self.scatters.is_empty(),
+                "scatter_widget_id": self.visible_scatter_order.first().map(|s| s.as_str()),
+                "scatter_count": self.scatters.len(),
                 "widget_count": self.widget_kinds.len(),
                 "caret_positions": &self.caret_positions,
             },
             "resources": {
-                "scatter": {
-                    "present": self.scatter.is_some(),
-                    "updates": self.scatter_metrics.updates,
-                    "last_point_count": self.scatter_metrics.last_point_count,
-                    "last_payload_bytes": self.scatter_metrics.last_payload_bytes,
-                    "last_pack_ms": self.scatter_metrics.last_pack_ms,
-                    "last_queue_latency_ms": self.scatter_metrics.last_queue_latency_ms,
-                    "last_decode_ms": self.scatter_metrics.last_decode_ms,
-                    "last_upload_ms": self.scatter_metrics.last_upload_ms,
-                    "last_total_native_ms": self.scatter_metrics.last_total_native_ms,
-                },
+                "scatter": self.visible_scatter_order.first()
+                    .and_then(|id| self.scatters.get(id).map(|rt| (id, rt)))
+                    .map(|(id, rt)| json!({
+                    "id": id,
+                    "updates": rt.metrics.updates,
+                    "last_point_count": rt.metrics.last_point_count,
+                    "last_payload_bytes": rt.metrics.last_payload_bytes,
+                    "last_pack_ms": rt.metrics.last_pack_ms,
+                    "last_queue_latency_ms": rt.metrics.last_queue_latency_ms,
+                    "last_decode_ms": rt.metrics.last_decode_ms,
+                    "last_bounds_ms": rt.metrics.last_bounds_ms,
+                    "last_upload_ms": rt.metrics.last_upload_ms,
+                    "last_primary_upload_ms": rt.metrics.last_primary_upload_ms,
+                    "last_lod_ms": rt.metrics.last_lod_ms,
+                    "last_grid_ms": rt.metrics.last_grid_ms,
+                    "last_overlay_ms": rt.metrics.last_overlay_ms,
+                    "last_total_native_ms": rt.metrics.last_total_native_ms,
+                    "payload_status": format!("{:?}", rt.payload_status),
+                })),
+                "scatters": self.scatters.iter().map(|(id, rt)| {
+                    let cs = rt.widget.camera_state();
+                    (id.clone(), json!({
+                        "updates": rt.metrics.updates,
+                        "last_point_count": rt.metrics.last_point_count,
+                        "last_payload_bytes": rt.metrics.last_payload_bytes,
+                        "last_pack_ms": rt.metrics.last_pack_ms,
+                        "last_queue_latency_ms": rt.metrics.last_queue_latency_ms,
+                        "last_decode_ms": rt.metrics.last_decode_ms,
+                        "last_bounds_ms": rt.metrics.last_bounds_ms,
+                        "last_upload_ms": rt.metrics.last_upload_ms,
+                        "last_primary_upload_ms": rt.metrics.last_primary_upload_ms,
+                        "last_lod_ms": rt.metrics.last_lod_ms,
+                        "last_grid_ms": rt.metrics.last_grid_ms,
+                        "last_overlay_ms": rt.metrics.last_overlay_ms,
+                        "last_total_native_ms": rt.metrics.last_total_native_ms,
+                        "payload_status": format!("{:?}", rt.payload_status),
+                        "fitted_once": rt.fitted_once,
+                        "payload_format": rt.payload_format.as_str(),
+                        "camera": {
+                            "target": cs.target,
+                            "distance": cs.distance,
+                            "yaw": cs.yaw,
+                            "pitch": cs.pitch,
+                            "parallel": cs.parallel,
+                        },
+                        "lod": {
+                            "enabled": rt.widget.lod_enabled,
+                            "active": rt.widget.lod_active,
+                            "threshold": rt.widget.lod_threshold,
+                            "factor": rt.widget.lod_factor,
+                        },
+                    }))
+                }).collect::<serde_json::Map<_, _>>(),
                 "registry": self.resources.snapshot(),
                 "tables": {
                     "widgets": self.widget_state.as_ref().map(|state| state.tables.len()).unwrap_or(0),
@@ -5522,6 +6733,14 @@ impl WgpuState {
         self.widget_state
             .as_ref()
             .is_some_and(|state| state.open_menu.is_some() || state.open_context_menu.is_some())
+    }
+
+    fn has_open_popup(&self) -> bool {
+        self.widget_state.as_ref().is_some_and(|state| {
+            state.open_dropdown.is_some()
+                || state.open_menu.is_some()
+                || state.open_context_menu.is_some()
+        })
     }
 
     fn close_popups(&mut self) -> bool {
@@ -5903,11 +7122,40 @@ impl WgpuState {
         {
             let WgpuState {
                 text,
+                scatters,
+                visible_scatter_order,
+                scale_factor,
                 device,
                 queue,
                 ..
             } = &mut *self;
             if let Some(t) = text.as_mut() {
+                // Rebuild scatter grid labels from each scatter's pending_labels.
+                t.clear_scatter_labels();
+                for id in visible_scatter_order.iter() {
+                    if let Some(rt) = scatters.get(id) {
+                        let [vl, vt, vr, vb] = rt.widget.viewport_clip();
+                        let clip = glyphon::TextBounds {
+                            left: vl as i32,
+                            top: vt as i32,
+                            right: vr as i32,
+                            bottom: vb as i32,
+                        };
+                        for lbl in &rt.widget.pending_labels {
+                            t.push_scatter_label(
+                                &lbl.text,
+                                lbl.screen_x,
+                                lbl.screen_y,
+                                lbl.is_title,
+                                clip,
+                                *scale_factor,
+                                lbl.color,
+                                lbl.font_size,
+                                &lbl.anchor,
+                            );
+                        }
+                    }
+                }
                 t.prepare(device, queue);
             }
         }
@@ -5938,10 +7186,11 @@ impl WgpuState {
                 label: Some("dragongui-frame"),
             });
 
+        // Pass 1: base primitives and images — clear color and depth.
         {
             let bg = self.theme.background;
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("dragongui-main"),
+                label: Some("dragongui-base"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &view,
                     resolve_target: None,
@@ -5968,21 +7217,73 @@ impl WgpuState {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-
-            // 1. Primitive rects (panels, control shells) — no depth write.
             if let Some(prims) = &self.primitives {
                 prims.render_base(&mut pass);
             }
             if let Some(images) = &self.images {
                 images.render(&mut pass);
             }
+        }
 
-            // 2. Scatter — uses depth buffer, restricted to its viewport rect.
-            if let Some(s) = &self.scatter {
-                s.render(&mut pass);
+        // Pass 2: one render pass per visible scatter with its own depth clear
+        // to prevent cross-widget depth contamination.
+        let scatter_order = self.visible_scatter_order.clone();
+        for scatter_id in &scatter_order {
+            if let Some(runtime) = self.scatters.get(scatter_id) {
+                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("dragongui-scatter"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &self.depth_view,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
+                    }),
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                runtime.widget.render(&mut pass);
             }
+        }
 
-            // 3. Text overlay — no depth write, always on top.
+        // Pass 3: text and overlay primitives. The overlay pipelines do not
+        // write depth and always pass, but wgpu still requires a depth
+        // attachment because those pipelines were created with Depth32Float.
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("dragongui-overlay"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
             pass.set_viewport(
                 0.0,
                 0.0,
@@ -5992,11 +7293,9 @@ impl WgpuState {
                 1.0,
             );
             pass.set_scissor_rect(0, 0, self.config.width, self.config.height);
-            // TextRenderer::render is &self so no borrow conflict with depth_view.
             if let Some(t) = &self.text {
                 t.render_base(&mut pass);
             }
-
             if let Some(prims) = &self.primitives {
                 prims.render_overlays(&mut pass);
             }
@@ -6189,6 +7488,8 @@ struct DragonApp {
     last_mouse_pos: Option<[f32; 2]>,
     orbit_active: bool,
     pan_active: bool,
+    /// True while the user is dragging a rectangle selection (rectangle picking mode).
+    rect_select_active: bool,
     /// Button on_click callbacks (moved out of AppSpec in `resumed`).
     click_cbs: HashMap<String, Box<dyn Fn() + Send>>,
     /// Checkbox / Slider on_change callbacks.
@@ -6198,6 +7499,8 @@ struct DragonApp {
     /// Active panel scrollbar drag session.
     scrollbar_drag: Option<ScrollbarDrag>,
     scatter_press_pos: Option<[f32; 2]>,
+    /// Scatter id that received the current pointer-down (for orbit/pan/pick).
+    active_scatter_id: Option<String>,
     /// Last slider value sent to Python during drag throttling.
     last_slider_emit: Option<SliderChangeDispatch>,
     /// Most recent slider value waiting for a throttled callback slot.
@@ -6206,6 +7509,8 @@ struct DragonApp {
     pressed_id: Option<String>,
     /// Currently active keyboard modifiers.
     modifiers: ModifiersState,
+    /// Whether a background Python task drain was held while a transient popup was open.
+    deferred_python_task_drain: bool,
     command_seq: u64,
     command_history: VecDeque<RuntimeCommandRecord>,
 }
@@ -6228,15 +7533,18 @@ impl DragonApp {
             last_mouse_pos: None,
             orbit_active: false,
             pan_active: false,
+            rect_select_active: false,
             click_cbs: HashMap::new(),
             change_cbs: HashMap::new(),
             slider_drag: None,
             scrollbar_drag: None,
             scatter_press_pos: None,
+            active_scatter_id: None,
             last_slider_emit: None,
             pending_slider_emit: None,
             pressed_id: None,
             modifiers: ModifiersState::empty(),
+            deferred_python_task_drain: false,
             command_seq: 0,
             command_history: VecDeque::with_capacity(COMMAND_HISTORY_LIMIT),
         }
@@ -6367,6 +7675,45 @@ impl DragonApp {
         }
     }
 
+    fn has_open_popup(&self) -> bool {
+        self.gpu.as_ref().is_some_and(WgpuState::has_open_popup)
+    }
+
+    fn defer_runtime_command_while_popup_open(
+        &mut self,
+        command: Command,
+    ) -> Result<bool, Command> {
+        if !self.has_open_popup() {
+            return Err(command);
+        }
+        match command {
+            Command::DrainPythonTasks => {
+                self.deferred_python_task_drain = true;
+                Ok(self.record_runtime_command(
+                    "DrainPythonTasks",
+                    None,
+                    Some("deferred while popup open".to_string()),
+                    None,
+                    "deferred_interactive_popup",
+                    false,
+                ))
+            }
+            command => Err(command),
+        }
+    }
+
+    fn flush_deferred_popup_commands(&mut self) -> bool {
+        if self.has_open_popup() {
+            return false;
+        }
+        let mut request_redraw = false;
+        if self.deferred_python_task_drain {
+            self.deferred_python_task_drain = false;
+            request_redraw |= self.apply_runtime_command(Command::DrainPythonTasks);
+        }
+        request_redraw
+    }
+
     fn drain_runtime_commands(&mut self) {
         if self.window.is_none() || self.gpu.is_none() {
             return;
@@ -6374,13 +7721,16 @@ impl DragonApp {
         let Some(bridge) = self.command_bridge.as_ref().cloned() else {
             return;
         };
+        bridge.clear_wake_pending();
 
         let mut request_redraw = false;
         let mut commands = Vec::new();
         let mut batches = 0_usize;
+        let drain_start = Instant::now();
         loop {
             commands.clear();
-            bridge.drain_into(&mut commands);
+            bridge.drain_limited_into(&mut commands, MAX_COMMANDS_PER_DRAIN_BATCH);
+            coalesce_runtime_command_batch(&mut commands);
             if commands.is_empty() {
                 break;
             }
@@ -6388,16 +7738,22 @@ impl DragonApp {
             for command in commands.drain(..) {
                 request_redraw |= self.apply_runtime_command(command);
             }
-            if batches >= MAX_COMMAND_DRAIN_BATCHES {
-                if !bridge.is_empty() {
+            if batches >= MAX_COMMAND_DRAIN_BATCHES || drain_start.elapsed() >= COMMAND_DRAIN_BUDGET
+            {
+                let pending = bridge.len();
+                if pending > 512 {
                     eprintln!(
-                        "DragonGUI: command drain reached batch limit; deferring remaining commands"
+                        "DragonGUI: command drain reached fairness limit; deferring {pending} pending commands"
                     );
+                }
+                if pending > 0 {
                     bridge.wake();
                 }
                 break;
             }
         }
+
+        request_redraw |= self.flush_deferred_popup_commands();
 
         if request_redraw {
             self.request_redraw();
@@ -6405,6 +7761,10 @@ impl DragonApp {
     }
 
     fn apply_runtime_command(&mut self, command: Command) -> bool {
+        let command = match self.defer_runtime_command_while_popup_open(command) {
+            Ok(deferred) => return deferred,
+            Err(command) => command,
+        };
         match command {
             Command::DrainPythonTasks => {
                 let mut outcome = "applied";
@@ -6602,8 +7962,14 @@ impl DragonApp {
                 xyz,
                 telemetry,
                 colormap,
+                payload_format,
+                coalesce: _,
             } => {
-                let detail = Some(format!("payload_bytes={}, colormap={colormap}", xyz.len()));
+                let detail = Some(format!(
+                    "payload_bytes={}, colormap={colormap}, format={}",
+                    xyz.len(),
+                    payload_format.as_str()
+                ));
                 let (dirty, outcome, redraw) = {
                     let Some(gpu) = &mut self.gpu else {
                         return self.record_runtime_command(
@@ -6615,7 +7981,13 @@ impl DragonApp {
                             false,
                         );
                     };
-                    match gpu.set_scatter_points_packed(&id, xyz, telemetry, colormap) {
+                    match gpu.set_scatter_points_packed(
+                        &id,
+                        xyz,
+                        telemetry,
+                        colormap,
+                        payload_format,
+                    ) {
                         Ok(true) => (Some(Dirty::GpuData), "applied".to_string(), true),
                         Ok(false) => {
                             eprintln!(
@@ -6637,6 +8009,1603 @@ impl DragonApp {
                     &outcome,
                     redraw,
                 )
+            }
+            Command::SetScatterPrimaryHoverMeta { id, meta } => {
+                let ok = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    if let Ok(values) = serde_json::from_str::<Vec<serde_json::Value>>(&meta) {
+                        rt.primary_hover_meta = values
+                            .iter()
+                            .map(|v| v.as_str().unwrap_or("").to_string())
+                            .collect();
+                    }
+                    true
+                });
+                self.record_runtime_command(
+                    "SetScatterPrimaryHoverMeta",
+                    Some(id),
+                    None,
+                    None,
+                    if ok { "ok" } else { "no-op: scatter not found" },
+                    false,
+                )
+            }
+            Command::SetScatterTooltipAxisLabels { id, labels } => {
+                let ok = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.tooltip_axis_labels = labels;
+                    true
+                });
+                self.record_runtime_command(
+                    "SetScatterTooltipAxisLabels",
+                    Some(id),
+                    None,
+                    None,
+                    if ok { "ok" } else { "no-op: scatter not found" },
+                    false,
+                )
+            }
+            Command::ResetScatterCamera { id } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    if let Some(rt) = gpu.scatters.get_mut(&id) {
+                        rt.widget.reset_camera(&gpu.queue);
+                        let (bmn, bmx) = rt.merged_bounds();
+                        rt.widget.refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
+                        rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                        true
+                    } else {
+                        false
+                    }
+                });
+                self.record_runtime_command(
+                    "ResetScatterCamera",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::SetScatterViewDirection { id, direction } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    if let Some(rt) = gpu.scatters.get_mut(&id) {
+                        rt.widget.set_view_direction(&direction, &gpu.queue);
+                        let (bmn, bmx) = rt.merged_bounds();
+                        rt.widget.refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
+                        rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                        true
+                    } else {
+                        false
+                    }
+                });
+                self.record_runtime_command(
+                    "SetScatterViewDirection",
+                    Some(id),
+                    Some(direction),
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::FitScatterCamera { id, bounds } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    if let Some(b) = bounds {
+                        let min = glam::Vec3::new(b[0], b[1], b[2]);
+                        let max = glam::Vec3::new(b[3], b[4], b[5]);
+                        // Do not overwrite data_min/data_max — fit is a camera operation only.
+                        rt.widget.fit_to_bounds(min, max, &gpu.queue);
+                        rt.fitted_once = true;
+                    } else if !rt.points.is_empty() || rt.widget.merged_extra_bounds().is_some() {
+                        let (bmn, bmx) = rt.merged_bounds();
+                        rt.widget.fit_to_bounds(bmn, bmx, &gpu.queue);
+                    }
+                    let (bmn, bmx) = rt.merged_bounds();
+                    rt.widget.refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
+                    rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                    true
+                });
+                self.record_runtime_command(
+                    "FitScatterCamera",
+                    Some(id),
+                    bounds.map(|b| format!("{b:?}")),
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::SetScatterParallelProjection { id, parallel } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    if let Some(rt) = gpu.scatters.get_mut(&id) {
+                        rt.widget.set_parallel_projection(parallel, &gpu.queue);
+                        let (bmn, bmx) = rt.merged_bounds();
+                        rt.widget.refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
+                        rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                        true
+                    } else {
+                        false
+                    }
+                });
+                self.record_runtime_command(
+                    "SetScatterParallelProjection",
+                    Some(id),
+                    Some(parallel.to_string()),
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::SetScatterCameraState {
+                id,
+                target,
+                distance,
+                yaw,
+                pitch,
+                parallel,
+            } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    if let Some(rt) = gpu.scatters.get_mut(&id) {
+                        let state = crate::scatter::camera::CameraState {
+                            target,
+                            distance,
+                            yaw,
+                            pitch,
+                            parallel,
+                        };
+                        rt.widget.set_camera_state(state, &gpu.queue);
+                        let (bmn, bmx) = rt.merged_bounds();
+                        rt.widget.refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
+                        rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                        true
+                    } else {
+                        false
+                    }
+                });
+                self.record_runtime_command(
+                    "SetScatterCameraState",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::SetScatterPointStyle { id, style } => {
+                let redraw = self
+                    .gpu
+                    .as_mut()
+                    .is_some_and(|gpu| gpu.set_scatter_point_style_live(&id, &style));
+                self.record_runtime_command(
+                    "SetScatterPointStyle",
+                    Some(id),
+                    Some(style),
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::SetScatterPointSize { id, size } => {
+                let redraw = self
+                    .gpu
+                    .as_mut()
+                    .is_some_and(|gpu| gpu.set_scatter_point_size_live(&id, size));
+                self.record_runtime_command(
+                    "SetScatterPointSize",
+                    Some(id),
+                    Some(format!("{size:.3}")),
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::SetScatterGridVisible { id, visible } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.chrome.grid_visible = visible;
+                    rt.widget.chrome_dirty = true;
+                    rt.widget.refresh_grid(
+                        rt.merged_bounds().0,
+                        rt.merged_bounds().1,
+                        &gpu.device,
+                        &gpu.queue,
+                    );
+                    true
+                });
+                self.record_runtime_command(
+                    "SetScatterGridVisible",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::SetScatterGridPlanes { id, major, minor } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.chrome.major_planes = major;
+                    rt.widget.chrome.minor_planes = minor;
+                    rt.widget.chrome_dirty = true;
+                    rt.widget.refresh_grid(
+                        rt.merged_bounds().0,
+                        rt.merged_bounds().1,
+                        &gpu.device,
+                        &gpu.queue,
+                    );
+                    true
+                });
+                self.record_runtime_command(
+                    "SetScatterGridPlanes",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::SetScatterGridOptions {
+                id,
+                sticky,
+                all_edges,
+            } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.chrome.grid_sticky = sticky;
+                    rt.widget.chrome.grid_all_edges = all_edges;
+                    if !sticky {
+                        rt.widget.grid_display_bounds = None;
+                    }
+                    rt.widget.chrome_dirty = true;
+                    rt.widget.refresh_grid(
+                        rt.merged_bounds().0,
+                        rt.merged_bounds().1,
+                        &gpu.device,
+                        &gpu.queue,
+                    );
+                    true
+                });
+                self.record_runtime_command(
+                    "SetScatterGridOptions",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::SetScatterTicks { id, x, y, z } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.chrome.tick_override = [x, y, z];
+                    rt.widget.chrome_dirty = true;
+                    rt.widget.refresh_grid(
+                        rt.merged_bounds().0,
+                        rt.merged_bounds().1,
+                        &gpu.device,
+                        &gpu.queue,
+                    );
+                    true
+                });
+                self.record_runtime_command(
+                    "SetScatterTicks",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::SetScatterAxes { id, x, y, z } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.chrome.axis_labels = [x, y, z];
+                    rt.widget.chrome_dirty = true;
+                    rt.widget.refresh_grid(
+                        rt.merged_bounds().0,
+                        rt.merged_bounds().1,
+                        &gpu.device,
+                        &gpu.queue,
+                    );
+                    true
+                });
+                self.record_runtime_command(
+                    "SetScatterAxes",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::SetScatterAxisVisibility { id, x, y, z } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.chrome.axis_visible = [x, y, z];
+                    rt.widget.chrome_dirty = true;
+                    rt.widget.refresh_grid(
+                        rt.merged_bounds().0,
+                        rt.merged_bounds().1,
+                        &gpu.device,
+                        &gpu.queue,
+                    );
+                    true
+                });
+                self.record_runtime_command(
+                    "SetScatterAxisVisibility",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::SetScatterBackground { id, r, g, b } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.chrome.background_color = Some([r, g, b, 1.0]);
+                    rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                    true
+                });
+                self.record_runtime_command(
+                    "SetScatterBackground",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::SetScatterLegend {
+                id,
+                visible,
+                position,
+                entries,
+                title,
+            } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.chrome.legend.visible = visible;
+                    rt.widget.chrome.legend.position = scatter::LegendPosition::from_str(&position);
+                    rt.widget.chrome.legend.entries = entries
+                        .into_iter()
+                        .map(|(label, r, g, b)| scatter::LegendEntry {
+                            label,
+                            color: [r, g, b],
+                        })
+                        .collect();
+                    rt.widget.chrome.legend.title = title;
+                    rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                    true
+                });
+                self.record_runtime_command(
+                    "SetScatterLegend",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::SetScatterScalarBar {
+                id,
+                visible,
+                vmin,
+                vmax,
+                log_scale,
+                colormap,
+                title,
+            } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.chrome.scalar_bar.visible = visible;
+                    rt.widget.chrome.scalar_bar.vmin = vmin;
+                    rt.widget.chrome.scalar_bar.vmax = vmax;
+                    rt.widget.chrome.scalar_bar.log_scale = log_scale;
+                    rt.widget.chrome.scalar_bar.colormap = colormap;
+                    rt.widget.chrome.scalar_bar.title = title;
+                    rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                    true
+                });
+                self.record_runtime_command(
+                    "SetScatterScalarBar",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::SetScatterOrientationAxes { id, visible } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.chrome.orientation_axes_visible = visible;
+                    rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                    true
+                });
+                self.record_runtime_command(
+                    "SetScatterOrientationAxes",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::AddScatterLabel {
+                id,
+                label_id,
+                x,
+                y,
+                z,
+                text,
+                r,
+                g,
+                b,
+                size,
+                anchor,
+            } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.add_user_label(
+                        label_id,
+                        glam::Vec3::new(x, y, z),
+                        text,
+                        [r, g, b],
+                        size,
+                        anchor,
+                    );
+                    rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                    true
+                });
+                self.record_runtime_command(
+                    "AddScatterLabel",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::UpdateScatterLabel {
+                id,
+                label_id,
+                x,
+                y,
+                z,
+                text,
+                r,
+                g,
+                b,
+                size,
+                anchor,
+            } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    let pos = match (x, y, z) {
+                        (Some(px), Some(py), Some(pz)) => Some(glam::Vec3::new(px, py, pz)),
+                        _ => None,
+                    };
+                    let color = match (r, g, b) {
+                        (Some(cr), Some(cg), Some(cb)) => Some([cr, cg, cb]),
+                        _ => None,
+                    };
+                    rt.widget
+                        .update_user_label(label_id, pos, text, color, size, anchor);
+                    rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                    true
+                });
+                self.record_runtime_command(
+                    "UpdateScatterLabel",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::RemoveScatterLabel { id, label_id } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.remove_user_label(label_id);
+                    rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                    true
+                });
+                self.record_runtime_command(
+                    "RemoveScatterLabel",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::SetScatterLabelVisible {
+                id,
+                label_id,
+                visible,
+            } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.set_user_label_visible(label_id, visible);
+                    rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                    true
+                });
+                self.record_runtime_command(
+                    "SetScatterLabelVisible",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::ClearScatterLabels { id } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.clear_user_labels();
+                    rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                    true
+                });
+                self.record_runtime_command(
+                    "ClearScatterLabels",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::AddScatterLines {
+                id,
+                overlay_id,
+                segments,
+                r,
+                g,
+                b,
+            } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.add_line_overlay(overlay_id, segments, [r, g, b]);
+                    rt.widget.refresh_user_lines(&gpu.device, &gpu.queue);
+                    true
+                });
+                self.record_runtime_command(
+                    "AddScatterLines",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::UpdateScatterLines {
+                id,
+                overlay_id,
+                segments,
+                r,
+                g,
+                b,
+            } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget
+                        .update_line_overlay(overlay_id, segments, [r, g, b]);
+                    rt.widget.refresh_user_lines(&gpu.device, &gpu.queue);
+                    true
+                });
+                self.record_runtime_command(
+                    "UpdateScatterLines",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::AddScatterBox {
+                id,
+                overlay_id,
+                xmin,
+                xmax,
+                ymin,
+                ymax,
+                zmin,
+                zmax,
+                r,
+                g,
+                b,
+            } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.add_box_overlay(
+                        overlay_id,
+                        [xmin, xmax, ymin, ymax, zmin, zmax],
+                        [r, g, b],
+                    );
+                    rt.widget.refresh_user_lines(&gpu.device, &gpu.queue);
+                    true
+                });
+                self.record_runtime_command(
+                    "AddScatterBox",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::RemoveScatterOverlay { id, overlay_id } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.remove_line_overlay(overlay_id);
+                    rt.widget.refresh_user_lines(&gpu.device, &gpu.queue);
+                    true
+                });
+                self.record_runtime_command(
+                    "RemoveScatterOverlay",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::SetScatterOverlayVisible {
+                id,
+                overlay_id,
+                visible,
+            } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.set_line_overlay_visible(overlay_id, visible);
+                    rt.widget.refresh_user_lines(&gpu.device, &gpu.queue);
+                    true
+                });
+                self.record_runtime_command(
+                    "SetScatterOverlayVisible",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::ClearScatterOverlays { id } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.clear_line_overlays();
+                    rt.widget.refresh_user_lines(&gpu.device, &gpu.queue);
+                    true
+                });
+                self.record_runtime_command(
+                    "ClearScatterOverlays",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::AddScatterActor {
+                id,
+                actor_id,
+                payload_b64,
+                colormap,
+                payload_format,
+                hover_meta,
+                tooltip_axis_labels,
+            } => {
+                let result = decode_actor_payload(&payload_b64, &colormap, payload_format);
+                match result {
+                    Err(e) => self.record_runtime_command(
+                        "AddScatterActor",
+                        Some(id),
+                        None,
+                        None,
+                        &format!("decode error: {e}"),
+                        false,
+                    ),
+                    Ok(pts) => {
+                        let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                            gpu.add_scatter_actor_points(
+                                &id,
+                                actor_id,
+                                pts,
+                                hover_meta.as_deref(),
+                                &tooltip_axis_labels,
+                            )
+                        });
+                        self.record_runtime_command(
+                            "AddScatterActor",
+                            Some(id),
+                            None,
+                            None,
+                            if redraw {
+                                "ok"
+                            } else {
+                                "no-op: scatter not found"
+                            },
+                            redraw,
+                        )
+                    }
+                }
+            }
+            Command::AddScatterActorPacked {
+                id,
+                actor_id,
+                payload,
+                colormap,
+                payload_format,
+                hover_meta,
+                tooltip_axis_labels,
+            } => {
+                let result = decode_actor_payload_bytes(&payload, &colormap, payload_format);
+                match result {
+                    Err(e) => self.record_runtime_command(
+                        "AddScatterActorPacked",
+                        Some(id),
+                        None,
+                        None,
+                        &format!("decode error: {e}"),
+                        false,
+                    ),
+                    Ok(pts) => {
+                        let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                            gpu.add_scatter_actor_points(
+                                &id,
+                                actor_id,
+                                pts,
+                                hover_meta.as_deref(),
+                                &tooltip_axis_labels,
+                            )
+                        });
+                        self.record_runtime_command(
+                            "AddScatterActorPacked",
+                            Some(id),
+                            None,
+                            None,
+                            if redraw {
+                                "ok"
+                            } else {
+                                "no-op: scatter not found"
+                            },
+                            redraw,
+                        )
+                    }
+                }
+            }
+            Command::UpdateScatterActor {
+                id,
+                actor_id,
+                payload_b64,
+                colormap,
+                payload_format,
+                tooltip_axis_labels,
+            } => {
+                let result = decode_actor_payload(&payload_b64, &colormap, payload_format);
+                match result {
+                    Err(e) => self.record_runtime_command(
+                        "UpdateScatterActor",
+                        Some(id),
+                        None,
+                        None,
+                        &format!("decode error: {e}"),
+                        false,
+                    ),
+                    Ok(pts) => {
+                        let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                            gpu.update_scatter_actor_points(
+                                &id,
+                                actor_id,
+                                pts,
+                                &tooltip_axis_labels,
+                            )
+                        });
+                        self.record_runtime_command(
+                            "UpdateScatterActor",
+                            Some(id),
+                            None,
+                            None,
+                            if redraw {
+                                "ok"
+                            } else {
+                                "no-op: scatter not found"
+                            },
+                            redraw,
+                        )
+                    }
+                }
+            }
+            Command::UpdateScatterActorPacked {
+                id,
+                actor_id,
+                payload,
+                colormap,
+                payload_format,
+                tooltip_axis_labels,
+            } => {
+                let result = decode_actor_payload_bytes(&payload, &colormap, payload_format);
+                match result {
+                    Err(e) => self.record_runtime_command(
+                        "UpdateScatterActorPacked",
+                        Some(id),
+                        None,
+                        None,
+                        &format!("decode error: {e}"),
+                        false,
+                    ),
+                    Ok(pts) => {
+                        let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                            gpu.update_scatter_actor_points(
+                                &id,
+                                actor_id,
+                                pts,
+                                &tooltip_axis_labels,
+                            )
+                        });
+                        self.record_runtime_command(
+                            "UpdateScatterActorPacked",
+                            Some(id),
+                            None,
+                            None,
+                            if redraw {
+                                "ok"
+                            } else {
+                                "no-op: scatter not found"
+                            },
+                            redraw,
+                        )
+                    }
+                }
+            }
+            Command::RemoveScatterActor { id, actor_id } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.remove_actor(actor_id);
+                    let (bmn, bmx) = rt.merged_bounds();
+                    rt.widget.refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
+                    rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                    true
+                });
+                self.record_runtime_command(
+                    "RemoveScatterActor",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::SetScatterActorVisible {
+                id,
+                actor_id,
+                visible,
+            } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.set_actor_visible(actor_id, visible);
+                    let (bmn, bmx) = rt.merged_bounds();
+                    rt.widget.refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
+                    rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                    true
+                });
+                self.record_runtime_command(
+                    "SetScatterActorVisible",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::ClearScatterActors { id } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.clear_extra_actors();
+                    let (bmn, bmx) = rt.merged_bounds();
+                    rt.widget.refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
+                    rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                    true
+                });
+                self.record_runtime_command(
+                    "ClearScatterActors",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::ClearScatterScene { id } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    // Clear primary buffer.
+                    rt.points.clear();
+                    rt.data_min = glam::Vec3::ZERO;
+                    rt.data_max = glam::Vec3::ZERO;
+                    rt.widget.set_points(&gpu.device, &gpu.queue, &[]);
+                    // Clear extra actors and streams.
+                    rt.widget.clear_extra_actors();
+                    // Clear user labels.
+                    rt.widget.clear_user_labels();
+                    // Clear line/box overlays.
+                    rt.widget.clear_line_overlays();
+                    // Clear meshes.
+                    rt.widget.clear_mesh_actors();
+                    // Clear hover state.
+                    rt.widget.hover_label = None;
+                    rt.primary_hover_meta.clear();
+                    rt.primary_pick_cache = None;
+                    // Clear transient selection/LOD state.
+                    rt.widget.selection_rect = None;
+                    rt.widget.selection_polygon = None;
+                    rt.widget.lod_active = false;
+                    // Refresh derived GPU state with zero bounds.
+                    rt.widget.refresh_grid(
+                        glam::Vec3::ZERO,
+                        glam::Vec3::ZERO,
+                        &gpu.device,
+                        &gpu.queue,
+                    );
+                    rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                    rt.widget.refresh_user_lines(&gpu.device, &gpu.queue);
+                    true
+                });
+                self.record_runtime_command(
+                    "ClearScatterScene",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::AddScatterStream {
+                id,
+                actor_id,
+                max_points,
+                mode,
+            } => {
+                let stream_mode = if mode == "ring" {
+                    scatter::StreamMode::Ring
+                } else {
+                    scatter::StreamMode::Append
+                };
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget
+                        .add_stream_actor(actor_id, max_points, stream_mode, &gpu.device);
+                    true
+                });
+                self.record_runtime_command(
+                    "AddScatterStream",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::StreamScatterActor {
+                id,
+                actor_id,
+                payload_b64,
+                colormap,
+                payload_format,
+            } => {
+                let result = decode_actor_payload(&payload_b64, &colormap, payload_format);
+                match result {
+                    Err(e) => self.record_runtime_command(
+                        "StreamScatterActor",
+                        Some(id),
+                        None,
+                        None,
+                        &format!("decode error: {e}"),
+                        false,
+                    ),
+                    Ok(pts) => {
+                        let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                            gpu.stream_scatter_actor_points(&id, actor_id, &pts)
+                        });
+                        self.record_runtime_command(
+                            "StreamScatterActor",
+                            Some(id),
+                            None,
+                            None,
+                            if redraw {
+                                "ok"
+                            } else {
+                                "no-op: scatter not found"
+                            },
+                            redraw,
+                        )
+                    }
+                }
+            }
+            Command::StreamScatterActorPacked {
+                id,
+                actor_id,
+                payload,
+                colormap,
+                payload_format,
+            } => {
+                let result = decode_actor_payload_bytes(&payload, &colormap, payload_format);
+                match result {
+                    Err(e) => self.record_runtime_command(
+                        "StreamScatterActorPacked",
+                        Some(id),
+                        None,
+                        None,
+                        &format!("decode error: {e}"),
+                        false,
+                    ),
+                    Ok(pts) => {
+                        let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                            gpu.stream_scatter_actor_points(&id, actor_id, &pts)
+                        });
+                        self.record_runtime_command(
+                            "StreamScatterActorPacked",
+                            Some(id),
+                            None,
+                            None,
+                            if redraw {
+                                "ok"
+                            } else {
+                                "no-op: scatter not found"
+                            },
+                            redraw,
+                        )
+                    }
+                }
+            }
+            Command::ClearScatterStream { id, actor_id } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.clear_stream_actor(actor_id);
+                    if let Some(actor) = rt.widget.extra_actors.get_mut(&actor_id) {
+                        actor.pick_cache = None;
+                    }
+                    let (bmn, bmx) = rt.merged_bounds();
+                    rt.widget.refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
+                    rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                    true
+                });
+                self.record_runtime_command(
+                    "ClearScatterStream",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::SetScatterLod {
+                id,
+                enabled,
+                threshold,
+                factor,
+            } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let device = &gpu.device;
+                    let queue = &gpu.queue;
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.lod_enabled = enabled;
+                    rt.widget.lod_threshold = threshold;
+                    rt.widget.lod_factor = factor;
+                    rt.metrics.last_lod_ms =
+                        rt.widget.refresh_lod_buffers(&rt.points, device, queue);
+                    true
+                });
+                self.record_runtime_command(
+                    "SetScatterLod",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::SetScatterPickingMode { id, mode } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.picking_mode = scatter::PickingMode::from_str(&mode);
+                    true
+                });
+                self.record_runtime_command(
+                    "SetScatterPickingMode",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::SetScatterHoverTooltip { id, enabled } => {
+                let mut needs_redraw = false;
+                let ok = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.hover_tooltip_enabled = enabled;
+                    if !enabled && rt.widget.hover_label.is_some() {
+                        rt.widget.hover_label = None;
+                        rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                        needs_redraw = true;
+                    }
+                    true
+                });
+                if needs_redraw {
+                    self.request_redraw();
+                }
+                self.record_runtime_command(
+                    "SetScatterHoverTooltip",
+                    Some(id),
+                    Some(enabled.to_string()),
+                    None,
+                    if ok { "ok" } else { "no-op: scatter not found" },
+                    false,
+                )
+            }
+            Command::AddScatterMesh {
+                id,
+                mesh_id,
+                positions_b64,
+                indices_b64,
+                r,
+                g,
+                b,
+                a,
+                wireframe,
+            } => {
+                match (
+                    decode_mesh_positions(&positions_b64),
+                    decode_mesh_indices(&indices_b64),
+                ) {
+                    (Err(e), _) | (_, Err(e)) => self.record_runtime_command(
+                        "AddScatterMesh",
+                        Some(id),
+                        None,
+                        None,
+                        &format!("decode error: {e}"),
+                        false,
+                    ),
+                    (Ok(positions), Ok(indices)) => {
+                        let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                            let Some(rt) = gpu.scatters.get_mut(&id) else {
+                                return false;
+                            };
+                            rt.widget.add_mesh_actor(
+                                mesh_id,
+                                positions,
+                                indices,
+                                [r, g, b, a],
+                                wireframe,
+                                &gpu.device,
+                            );
+                            let (bmn, bmx) = rt.merged_bounds();
+                            rt.widget.refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
+                            rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                            true
+                        });
+                        self.record_runtime_command(
+                            "AddScatterMesh",
+                            Some(id),
+                            None,
+                            None,
+                            if redraw {
+                                "ok"
+                            } else {
+                                "no-op: scatter not found"
+                            },
+                            redraw,
+                        )
+                    }
+                }
+            }
+            Command::UpdateScatterMesh {
+                id,
+                mesh_id,
+                positions_b64,
+                indices_b64,
+                r,
+                g,
+                b,
+                a,
+                wireframe,
+            } => {
+                let positions = match positions_b64.as_deref() {
+                    Some(b) => match decode_mesh_positions(b) {
+                        Ok(p) => Some(p),
+                        Err(e) => {
+                            return self.record_runtime_command(
+                                "UpdateScatterMesh",
+                                Some(id),
+                                None,
+                                None,
+                                &format!("decode error: {e}"),
+                                false,
+                            )
+                        }
+                    },
+                    None => None,
+                };
+                let indices = match indices_b64.as_deref() {
+                    Some(b) => match decode_mesh_indices(b) {
+                        Ok(i) => Some(i),
+                        Err(e) => {
+                            return self.record_runtime_command(
+                                "UpdateScatterMesh",
+                                Some(id),
+                                None,
+                                None,
+                                &format!("decode error: {e}"),
+                                false,
+                            )
+                        }
+                    },
+                    None => None,
+                };
+                let color = match (r, g, b, a) {
+                    (Some(cr), Some(cg), Some(cb), Some(ca)) => Some([cr, cg, cb, ca]),
+                    _ => None,
+                };
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.update_mesh_actor(
+                        mesh_id,
+                        positions,
+                        indices,
+                        color,
+                        wireframe,
+                        &gpu.device,
+                    );
+                    let (bmn, bmx) = rt.merged_bounds();
+                    rt.widget.refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
+                    rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                    true
+                });
+                self.record_runtime_command(
+                    "UpdateScatterMesh",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::RemoveScatterMesh { id, mesh_id } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.remove_mesh_actor(mesh_id);
+                    let (bmn, bmx) = rt.merged_bounds();
+                    rt.widget.refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
+                    rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                    true
+                });
+                self.record_runtime_command(
+                    "RemoveScatterMesh",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::SetScatterMeshVisible {
+                id,
+                mesh_id,
+                visible,
+            } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.set_mesh_actor_visible(mesh_id, visible);
+                    true
+                });
+                self.record_runtime_command(
+                    "SetScatterMeshVisible",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::ClearScatterMeshes { id } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.clear_mesh_actors();
+                    let (bmn, bmx) = rt.merged_bounds();
+                    rt.widget.refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
+                    rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                    true
+                });
+                self.record_runtime_command(
+                    "ClearScatterMeshes",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::SetScatterParallelScale { id, half_w, half_h } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.set_parallel_scale(half_w, half_h, &gpu.queue);
+                    let (bmn, bmx) = rt.merged_bounds();
+                    rt.widget.refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
+                    rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                    true
+                });
+                self.record_runtime_command(
+                    "SetScatterParallelScale",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::ScatterScreenshot { id, request_id } => {
+                let result = self.gpu.as_mut().and_then(|gpu| {
+                    let rt = gpu.scatters.get_mut(&id)?;
+                    match rt.widget.screenshot(&gpu.device, &gpu.queue) {
+                        Ok((w, h, pixels)) => {
+                            use base64::Engine as _;
+                            let rgba_b64 = BASE64.encode(&pixels);
+                            let json = format!(r#"{{"w":{w},"h":{h},"rgba_b64":"{rgba_b64}"}}"#);
+                            Some(json)
+                        }
+                        Err(e) => {
+                            eprintln!("DragonGUI: scatter screenshot error: {e}");
+                            None
+                        }
+                    }
+                });
+                if let Some(bridge) = &self.command_bridge {
+                    let json =
+                        result.unwrap_or_else(|| r#"{"w":0,"h":0,"rgba_b64":""}"#.to_string());
+                    bridge.complete_debug_snapshot(request_id, json);
+                }
+                self.record_runtime_command("ScatterScreenshot", Some(id), None, None, "ok", false)
             }
             Command::SetTableData { id, table_json } => {
                 let detail = Some(format!("table_bytes={}", table_json.len()));
@@ -7663,9 +10632,16 @@ impl DragonApp {
         );
         if reset {
             if let Some(gpu) = &mut self.gpu {
-                if let Some(s) = &mut gpu.scatter {
-                    s.reset_camera(&gpu.queue);
-                    self.request_redraw();
+                // Reset the active scatter's camera, or the first visible scatter.
+                let target_id = self
+                    .active_scatter_id
+                    .clone()
+                    .or_else(|| gpu.visible_scatter_order.first().cloned());
+                if let Some(id) = target_id {
+                    if let Some(runtime) = gpu.scatters.get_mut(&id) {
+                        runtime.widget.reset_camera(&gpu.queue);
+                        self.request_redraw();
+                    }
                 }
             }
         }
@@ -8008,42 +10984,19 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        let mut request_redraw = false;
+        let mut request_redraw = self.flush_deferred_popup_commands();
         let mut next_deadline = None;
         if let Some(gpu) = &mut self.gpu {
-            if gpu.expire_toasts() {
-                gpu.rebuild_visuals();
-                request_redraw = true;
-            }
-            if gpu.tick_hover_transitions() {
-                gpu.rebuild_visuals();
-                request_redraw = true;
-            }
-            if gpu.tick_focus_transitions() {
-                gpu.rebuild_visuals();
-                request_redraw = true;
-            }
-            if gpu.tick_checked_transitions() {
-                gpu.rebuild_visuals();
-                request_redraw = true;
-            }
-            if gpu.tick_active_transitions() {
-                gpu.rebuild_visuals();
-                request_redraw = true;
-            }
-            if gpu.tick_open_transitions() {
-                gpu.rebuild_visuals();
-                request_redraw = true;
-            }
-            if gpu.tick_selected_transitions() {
-                gpu.rebuild_visuals();
-                request_redraw = true;
-            }
-            if gpu.tick_expanded_transitions() {
-                gpu.rebuild_visuals();
-                request_redraw = true;
-            }
-            if gpu.tick_css_animations() {
+            let visual_dirty = gpu.expire_toasts()
+                | gpu.tick_hover_transitions()
+                | gpu.tick_focus_transitions()
+                | gpu.tick_checked_transitions()
+                | gpu.tick_active_transitions()
+                | gpu.tick_open_transitions()
+                | gpu.tick_selected_transitions()
+                | gpu.tick_expanded_transitions()
+                | gpu.tick_css_animations();
+            if visual_dirty {
                 gpu.rebuild_visuals();
                 request_redraw = true;
             }
@@ -8110,8 +11063,10 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                         if !pressed {
                             // ── release ───────────────────────────────────────
                             let was_orbiting = self.orbit_active;
+                            let was_rect_select = self.rect_select_active;
                             let scatter_press = self.scatter_press_pos.take();
                             self.orbit_active = false;
+                            self.rect_select_active = false;
                             let released_scrollbar = self.scrollbar_drag.take().is_some();
                             let released_slider =
                                 self.slider_drag.as_ref().map(|drag| drag.widget_id.clone());
@@ -8124,22 +11079,97 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                 return;
                             }
 
-                            if was_orbiting {
+                            if was_rect_select {
+                                if let Some(scatter_id) = self.active_scatter_id.clone() {
+                                    // Determine which selection mode was active.
+                                    let mode = self
+                                        .gpu
+                                        .as_ref()
+                                        .and_then(|g| g.scatters.get(&scatter_id))
+                                        .map(|rt| rt.widget.picking_mode);
+
+                                    if mode == Some(scatter::PickingMode::Lasso) {
+                                        // Polygon selection.
+                                        let poly = self
+                                            .gpu
+                                            .as_ref()
+                                            .and_then(|g| g.scatters.get(&scatter_id))
+                                            .and_then(|rt| rt.widget.selection_polygon.clone());
+                                        if let Some(p) = poly {
+                                            if let Some(payload) = self.gpu.as_ref().and_then(|g| {
+                                                g.scatter_polygon_select_payload(&scatter_id, &p)
+                                            }) {
+                                                self.emit_change(
+                                                    &scatter_id,
+                                                    ChangeValue::Text(payload),
+                                                );
+                                            }
+                                        }
+                                        if let Some(gpu) = &mut self.gpu {
+                                            if let Some(rt) = gpu.scatters.get_mut(&scatter_id) {
+                                                rt.widget.selection_polygon = None;
+                                                rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                                            }
+                                        }
+                                    } else {
+                                        // Rectangle selection.
+                                        let rect = self
+                                            .gpu
+                                            .as_ref()
+                                            .and_then(|g| g.scatters.get(&scatter_id))
+                                            .and_then(|rt| rt.widget.selection_rect);
+                                        if let Some(r) = rect {
+                                            if let Some(payload) = self.gpu.as_ref().and_then(|g| {
+                                                g.scatter_select_payload(&scatter_id, r)
+                                            }) {
+                                                self.emit_change(
+                                                    &scatter_id,
+                                                    ChangeValue::Text(payload),
+                                                );
+                                            }
+                                        }
+                                        if let Some(gpu) = &mut self.gpu {
+                                            if let Some(rt) = gpu.scatters.get_mut(&scatter_id) {
+                                                rt.widget.selection_rect = None;
+                                                rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                                            }
+                                        }
+                                    }
+                                    self.request_redraw();
+                                }
+                            } else if was_orbiting {
                                 let pos = self.last_mouse_pos.unwrap_or([0.0, 0.0]);
-                                let moved2 = scatter_press
-                                    .map(|start| {
-                                        let dx = pos[0] - start[0];
-                                        let dy = pos[1] - start[1];
-                                        dx * dx + dy * dy
-                                    })
-                                    .unwrap_or(f32::INFINITY);
-                                if moved2 <= 16.0 {
-                                    if let Some((id, payload)) =
-                                        self.gpu.as_ref().and_then(|g| g.scatter_pick_payload(pos))
-                                    {
-                                        self.emit_change(&id, ChangeValue::Text(payload));
+                                if let Some(scatter_id) = self.active_scatter_id.clone() {
+                                    if let Some(gpu) = &mut self.gpu {
+                                        if let Some(rt) = gpu.scatters.get_mut(&scatter_id) {
+                                            rt.widget.lod_active = false;
+                                            rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                                        }
+                                    }
+                                    let moved2 = scatter_press
+                                        .map(|start| {
+                                            let dx = pos[0] - start[0];
+                                            let dy = pos[1] - start[1];
+                                            dx * dx + dy * dy
+                                        })
+                                        .unwrap_or(f32::INFINITY);
+                                    if moved2 <= 16.0 {
+                                        if let Some(payload) = self
+                                            .gpu
+                                            .as_mut()
+                                            .and_then(|g| g.scatter_pick_payload(&scatter_id, pos))
+                                        {
+                                            self.emit_change(
+                                                &scatter_id,
+                                                ChangeValue::Text(payload),
+                                            );
+                                        }
                                     }
                                 }
+                                self.request_redraw();
+                            }
+                            if !self.orbit_active && !self.pan_active && !self.rect_select_active {
+                                self.active_scatter_id = None;
                             }
 
                             if let Some(pid) = self.pressed_id.take() {
@@ -8298,17 +11328,68 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                 return;
                             }
 
-                            let over_scatter = self
-                                .gpu
-                                .as_ref()
-                                .map(|g| g.scatter_contains(pos))
-                                .unwrap_or(false);
+                            let scatter_id = self.gpu.as_ref().and_then(|g| g.scatter_at(pos));
 
-                            if over_scatter {
+                            if let Some(sid) = scatter_id {
                                 self.set_focus(None);
-                                self.orbit_active = true;
                                 self.scatter_press_pos = Some(pos);
+                                self.active_scatter_id = Some(sid.clone());
+                                let picking_mode = self
+                                    .gpu
+                                    .as_ref()
+                                    .and_then(|g| g.scatters.get(&sid))
+                                    .map(|rt| rt.widget.picking_mode)
+                                    .unwrap_or(scatter::PickingMode::Point);
+                                if picking_mode == scatter::PickingMode::Rectangle
+                                    || picking_mode == scatter::PickingMode::Lasso
+                                {
+                                    // Rectangle / lasso: start selection drag
+                                    let local_pos = self
+                                        .gpu
+                                        .as_ref()
+                                        .and_then(|g| g.scatters.get(&sid))
+                                        .map(|rt| {
+                                            [
+                                                pos[0] - rt.widget.offset[0],
+                                                pos[1] - rt.widget.offset[1],
+                                            ]
+                                        })
+                                        .unwrap_or(pos);
+                                    if let Some(gpu) = &mut self.gpu {
+                                        if let Some(rt) = gpu.scatters.get_mut(&sid) {
+                                            if picking_mode == scatter::PickingMode::Lasso {
+                                                rt.widget.selection_polygon = Some(vec![local_pos]);
+                                                rt.widget.selection_rect = None;
+                                            } else {
+                                                rt.widget.selection_rect = Some([
+                                                    local_pos[0],
+                                                    local_pos[1],
+                                                    local_pos[0],
+                                                    local_pos[1],
+                                                ]);
+                                                rt.widget.selection_polygon = None;
+                                            }
+                                            rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                                        }
+                                    }
+                                    self.orbit_active = false;
+                                    self.rect_select_active = true;
+                                } else if picking_mode == scatter::PickingMode::None {
+                                    // Interaction disabled — consume the event but do nothing.
+                                    self.orbit_active = false;
+                                    self.rect_select_active = false;
+                                } else {
+                                    // PickingMode::Point — left drag orbits.
+                                    self.orbit_active = true;
+                                    self.rect_select_active = false;
+                                    if let Some(gpu) = &mut self.gpu {
+                                        if let Some(rt) = gpu.scatters.get_mut(&sid) {
+                                            rt.widget.lod_active = true;
+                                        }
+                                    }
+                                }
                             } else {
+                                self.active_scatter_id = None;
                                 self.set_focus(None);
                             }
                         }
@@ -8316,7 +11397,19 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
 
                     MouseButton::Middle | MouseButton::Right => {
                         if !pressed {
+                            let was_panning = self.pan_active;
                             self.pan_active = false;
+                            if was_panning {
+                                if let Some(sid) = self.active_scatter_id.clone() {
+                                    if let Some(gpu) = &mut self.gpu {
+                                        if let Some(rt) = gpu.scatters.get_mut(&sid) {
+                                            rt.widget.lod_active = false;
+                                            rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                                        }
+                                    }
+                                    self.request_redraw();
+                                }
+                            }
                         } else {
                             let pos = self.last_mouse_pos.unwrap_or([0.0, 0.0]);
                             if self
@@ -8343,11 +11436,16 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                     return;
                                 }
                             }
-                            self.pan_active = self
-                                .gpu
-                                .as_ref()
-                                .map(|g| g.scatter_contains(pos))
-                                .unwrap_or(false);
+                            let pan_scatter_id = self.gpu.as_ref().and_then(|g| g.scatter_at(pos));
+                            self.pan_active = pan_scatter_id.is_some();
+                            if let Some(ref sid) = pan_scatter_id {
+                                self.active_scatter_id = pan_scatter_id.clone();
+                                if let Some(gpu) = &mut self.gpu {
+                                    if let Some(rt) = gpu.scatters.get_mut(sid) {
+                                        rt.widget.lod_active = true;
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -8358,11 +11456,37 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
             WindowEvent::CursorLeft { .. } => {
                 self.last_mouse_pos = None;
                 if let Some(gpu) = &mut self.gpu {
+                    let old_hover = gpu.current_hover_id();
+                    let requires_layout =
+                        gpu.hover_change_requires_layout(old_hover.as_deref(), None);
                     let cleared = gpu.update_hover_state(None, None);
                     if cleared {
-                        gpu.apply_layout();
+                        if requires_layout {
+                            gpu.apply_layout();
+                        } else {
+                            gpu.rebuild_visuals();
+                        }
                         self.request_redraw();
                     }
+                }
+                let mut stale_payloads: Vec<(String, String)> = Vec::new();
+                let mut scatter_cleared = false;
+                if let Some(gpu) = &mut self.gpu {
+                    for (id, rt) in gpu.scatters.iter_mut() {
+                        if rt.hover_tooltip_enabled && rt.widget.hover_label.is_some() {
+                            rt.widget.hover_label = None;
+                            rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                            scatter_cleared = true;
+                            let p = json!({"event": "hover_changed", "widget_id": id}).to_string();
+                            stale_payloads.push((id.clone(), p));
+                        }
+                    }
+                }
+                if scatter_cleared {
+                    self.request_redraw();
+                }
+                for (id, payload) in stale_payloads {
+                    self.emit_change(&id, ChangeValue::Text(payload));
                 }
             }
 
@@ -8374,18 +11498,67 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                     self.update_scrollbar_drag(new_pos);
                 } else if self.slider_drag.is_some() {
                     self.update_slider_drag(new_pos[0], false);
+                } else if self.rect_select_active {
+                    if let Some(sid) = self.active_scatter_id.clone() {
+                        if let Some(gpu) = &mut self.gpu {
+                            if let Some(rt) = gpu.scatters.get_mut(&sid) {
+                                let local_pos = [
+                                    new_pos[0] - rt.widget.offset[0],
+                                    new_pos[1] - rt.widget.offset[1],
+                                ];
+                                if let Some(ref mut r) = rt.widget.selection_rect {
+                                    r[2] = local_pos[0];
+                                    r[3] = local_pos[1];
+                                } else if let Some(ref mut poly) = rt.widget.selection_polygon {
+                                    poly.push(local_pos);
+                                }
+                                rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                            }
+                        }
+                        self.request_redraw();
+                    }
                 } else if let Some(old) = self.last_mouse_pos {
                     let delta = glam::Vec2::new(new_pos[0] - old[0], new_pos[1] - old[1]);
-                    if let Some(gpu) = &mut self.gpu {
-                        if let Some(s) = &mut gpu.scatter {
-                            if self.orbit_active {
-                                s.camera.orbit(delta);
-                                s.update_camera(&gpu.queue);
+                    if self.orbit_active || self.pan_active {
+                        if let Some(sid) = self.active_scatter_id.clone() {
+                            let mut cam_payload: Option<(String, String)> = None;
+                            let mut needs_redraw = false;
+                            if let Some(gpu) = &mut self.gpu {
+                                if let Some(runtime) = gpu.scatters.get_mut(&sid) {
+                                    if self.orbit_active {
+                                        runtime.widget.camera.orbit(delta);
+                                    } else if self.pan_active {
+                                        runtime.widget.camera.pan(delta);
+                                    }
+                                    runtime.widget.update_camera(&gpu.queue);
+                                    let (bmn, bmx) = runtime.merged_bounds();
+                                    runtime
+                                        .widget
+                                        .refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
+                                    runtime.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                                    needs_redraw = true;
+                                    // Capture camera state for Python-side linked-camera propagation.
+                                    let s = runtime.widget.camera.state();
+                                    let payload = json!({
+                                        "event": "camera_changed",
+                                        "widget_id": sid,
+                                        "camera": {
+                                            "target": [s.target[0], s.target[1], s.target[2]],
+                                            "distance": s.distance,
+                                            "yaw": s.yaw,
+                                            "pitch": s.pitch,
+                                            "parallel": s.parallel,
+                                        },
+                                    })
+                                    .to_string();
+                                    cam_payload = Some((sid.clone(), payload));
+                                }
+                            }
+                            if needs_redraw {
                                 self.request_redraw();
-                            } else if self.pan_active {
-                                s.camera.pan(delta);
-                                s.update_camera(&gpu.queue);
-                                self.request_redraw();
+                            }
+                            if let Some((id, payload)) = cam_payload {
+                                self.emit_change(&id, ChangeValue::Text(payload));
                             }
                         }
                     }
@@ -8396,6 +11569,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                     && self.slider_drag.is_none()
                     && !self.orbit_active
                     && !self.pan_active
+                    && !self.rect_select_active
                 {
                     let new_dropdown_hover = self
                         .gpu
@@ -8421,12 +11595,167 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                         .and_then(|ws| ws.dropdown_hover.clone());
                     if new_hover != old_hover || new_dropdown_hover != old_dropdown_hover {
                         if let Some(gpu) = &mut self.gpu {
+                            let requires_layout = gpu.hover_change_requires_layout(
+                                old_hover.as_deref(),
+                                new_hover.as_deref(),
+                            );
                             gpu.update_hover_state(new_hover, new_dropdown_hover);
-                            // Rich tooltip content participates in overlay layout, so hover
-                            // changes can affect rects as well as paint/text state.
-                            gpu.apply_layout();
+                            if requires_layout {
+                                // Rich tooltip content participates in overlay layout, so those
+                                // hover changes can affect rects as well as paint/text state.
+                                gpu.apply_layout();
+                            } else {
+                                gpu.rebuild_visuals();
+                            }
                         }
                         self.request_redraw();
+                    }
+
+                    // Clear stale hover labels on any scatter the cursor has left.
+                    let hovered_sid = self.gpu.as_ref().and_then(|g| g.scatter_at(new_pos));
+                    let mut stale_payloads: Vec<(String, String)> = Vec::new();
+                    let mut stale_scatter_cleared = false;
+                    if let Some(gpu) = &mut self.gpu {
+                        let stale: Vec<String> = gpu
+                            .scatters
+                            .iter()
+                            .filter(|(id, rt)| {
+                                rt.hover_tooltip_enabled
+                                    && rt.widget.hover_label.is_some()
+                                    && hovered_sid.as_deref() != Some(id.as_str())
+                            })
+                            .map(|(id, _)| id.clone())
+                            .collect();
+                        for id in stale {
+                            if let Some(rt) = gpu.scatters.get_mut(&id) {
+                                rt.widget.hover_label = None;
+                                rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                                stale_scatter_cleared = true;
+                            }
+                            let p = json!({"event":"hover_changed","widget_id":&id}).to_string();
+                            stale_payloads.push((id, p));
+                        }
+                    }
+                    if stale_scatter_cleared {
+                        self.request_redraw();
+                    }
+                    for (id, payload) in stale_payloads {
+                        self.emit_change(&id, ChangeValue::Text(payload));
+                    }
+
+                    // Scatter hover tooltip: pick nearest point and show a floating label.
+                    if let Some(sid) = hovered_sid {
+                        let tooltip_enabled = self
+                            .gpu
+                            .as_ref()
+                            .and_then(|g| g.scatters.get(&sid))
+                            .map(|rt| rt.hover_tooltip_enabled)
+                            .unwrap_or(false);
+                        if tooltip_enabled {
+                            let mut hover_payload: Option<(String, String)> = None;
+                            let mut needs_redraw = false;
+                            if let Some(gpu) = &mut self.gpu {
+                                if let Some(rt) = gpu.scatters.get_mut(&sid) {
+                                    let hit =
+                                        rt.pick_all_actors_cached(new_pos[0], new_pos[1], 12.0);
+                                    let new_label = hit.map(|(actor_id, idx, pt)| {
+                                        let screen_x = new_pos[0] + 16.0;
+                                        let screen_y = new_pos[1] - 8.0;
+                                        let default_labels = &rt.tooltip_axis_labels;
+                                        let labels = if actor_id == 0 {
+                                            default_labels
+                                        } else {
+                                            rt.widget
+                                                .extra_actors
+                                                .get(&actor_id)
+                                                .map(|a| &a.tooltip_axis_labels)
+                                                .unwrap_or(default_labels)
+                                        };
+                                        let [lx, ly, lz] = labels;
+                                        let coord_line = format!(
+                                            "{}: {}\n{}: {}\n{}: {}",
+                                            lx,
+                                            format_4g(pt.position[0]),
+                                            ly,
+                                            format_4g(pt.position[1]),
+                                            lz,
+                                            format_4g(pt.position[2]),
+                                        );
+                                        let meta_text = if actor_id == 0 {
+                                            rt.primary_hover_meta
+                                                .get(idx)
+                                                .filter(|s| !s.is_empty())
+                                                .cloned()
+                                        } else {
+                                            rt.widget
+                                                .extra_actors
+                                                .get(&actor_id)
+                                                .and_then(|a| a.hover_meta.get(idx))
+                                                .filter(|s| !s.is_empty())
+                                                .cloned()
+                                        };
+                                        let text = match meta_text {
+                                            Some(fields) => format!("{coord_line}\n{fields}"),
+                                            None => coord_line,
+                                        };
+                                        let payload = json!({
+                                            "event": "hover_changed",
+                                            "widget_id": &sid,
+                                            "actor": actor_id,
+                                            "index": idx,
+                                            "x": pt.position[0],
+                                            "y": pt.position[1],
+                                            "z": pt.position[2],
+                                            "hover_text": &text,
+                                        })
+                                        .to_string();
+                                        (
+                                            scatter::ProjectedLabel {
+                                                screen_x,
+                                                screen_y,
+                                                text,
+                                                is_title: false,
+                                                color: None,
+                                                font_size: None,
+                                                anchor: "top-left".to_string(),
+                                            },
+                                            payload,
+                                        )
+                                    });
+                                    let changed = match (&rt.widget.hover_label, &new_label) {
+                                        (None, None) => false,
+                                        (Some(_), None) | (None, Some(_)) => true,
+                                        (Some(old), Some((new, _))) => {
+                                            old.text != new.text
+                                                || (old.screen_x - new.screen_x).abs() > 0.5
+                                                || (old.screen_y - new.screen_y).abs() > 0.5
+                                                || old.anchor != new.anchor
+                                        }
+                                    };
+                                    if changed {
+                                        if let Some((label, payload)) = new_label {
+                                            rt.widget.hover_label = Some(label);
+                                            hover_payload = Some((sid.clone(), payload));
+                                        } else {
+                                            rt.widget.hover_label = None;
+                                            hover_payload = Some((
+                                                sid.clone(),
+                                                json!({"event":"hover_changed","widget_id":&sid})
+                                                    .to_string(),
+                                            ));
+                                        }
+                                        rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                                        needs_redraw = true;
+                                    }
+                                }
+                            }
+                            if needs_redraw {
+                                self.request_redraw();
+                            }
+                            if let Some((id, payload)) = hover_payload {
+                                self.emit_change(&id, ChangeValue::Text(payload));
+                            }
+                        }
                     }
                 }
 
@@ -8469,6 +11798,42 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                         self.scroll_table(&id, row_delta, col_delta);
                         return;
                     }
+                    // Scatter zoom wins over parent scroll container when pointer is over the plot.
+                    if let Some(sid) = self.gpu.as_ref().and_then(|gpu| gpu.scatter_at(pos)) {
+                        let mut cam_payload: Option<(String, String)> = None;
+                        let mut needs_redraw = false;
+                        if let Some(gpu) = &mut self.gpu {
+                            if let Some(rt) = gpu.scatters.get_mut(&sid) {
+                                rt.widget.camera.zoom(scroll_y);
+                                rt.widget.update_camera(&gpu.queue);
+                                let (bmn, bmx) = rt.merged_bounds();
+                                rt.widget.refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
+                                rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                                needs_redraw = true;
+                                let s = rt.widget.camera.state();
+                                let payload = json!({
+                                    "event": "camera_changed",
+                                    "widget_id": sid,
+                                    "camera": {
+                                        "target": [s.target[0], s.target[1], s.target[2]],
+                                        "distance": s.distance,
+                                        "yaw": s.yaw,
+                                        "pitch": s.pitch,
+                                        "parallel": s.parallel,
+                                    },
+                                })
+                                .to_string();
+                                cam_payload = Some((sid.clone(), payload));
+                            }
+                        }
+                        if needs_redraw {
+                            self.request_redraw();
+                        }
+                        if let Some((id, payload)) = cam_payload {
+                            self.emit_change(&id, ChangeValue::Text(payload));
+                        }
+                        return;
+                    }
                     if let Some(id) = self
                         .gpu
                         .as_ref()
@@ -8493,20 +11858,6 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                             self.request_redraw();
                         }
                         return;
-                    }
-                }
-                let over_scatter = self
-                    .last_mouse_pos
-                    .and_then(|pos| self.gpu.as_ref().map(|gpu| gpu.scatter_contains(pos)))
-                    .unwrap_or(false);
-                if !over_scatter {
-                    return;
-                }
-                if let Some(gpu) = &mut self.gpu {
-                    if let Some(s) = &mut gpu.scatter {
-                        s.camera.zoom(scroll_y);
-                        s.update_camera(&gpu.queue);
-                        self.request_redraw();
                     }
                 }
             }

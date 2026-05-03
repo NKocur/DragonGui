@@ -788,6 +788,7 @@ Supported widget-specific CSS:
 | --- | --- | --- |
 | `text-area-rows` | `TextArea` | Preferred visible row count. Rounded to an integer and clamped to at least 1. |
 | `scatter-point-size` | `Scatter3D` | Uniform screen-space point size in logical pixels. |
+| `scatter-point-style` | `Scatter3D` | Point shape: `circle` (default), `square`, or `gaussian`. |
 | `table-row-height` | `DataFrameTable` | Row height in logical pixels. |
 | `table-header-height` | `DataFrameTable` | Header height in logical pixels. |
 | `table-column-width` | `DataFrameTable` | Uniform body/header column width in logical pixels. |
@@ -1396,7 +1397,7 @@ Property limitations:
 - No per-side border shorthand.
 - No per-column table width controls; `DataFrameTable` supports uniform
   `table-column-width` and `table-index-width`.
-- Scatter-specific CSS is limited to uniform `scatter-point-size`.
+- Scatter-specific CSS is limited to `scatter-point-size` and `scatter-point-style`.
 
 Variable limitations:
 

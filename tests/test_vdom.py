@@ -202,7 +202,58 @@ def test_vdom_diff_treats_resource_like_props_as_handles() -> None:
     patches = diff(old, updated)
     assert len(patches) == 1
     assert patches[0].kind == Patch.SET_PROP
-    assert patches[0].prop == "frame"
+    assert patches[0].prop == "scatter"
+    assert patches[0].value == updated.props
+
+
+def test_vdom_scatter_detects_data_only_change_via_payload_token() -> None:
+    """Same frame shape but different data must produce a scatter patch."""
+    import dragongui as dg
+    import numpy as np
+    from dragongui.vdom import diff, widget_to_vnode
+
+    class F:
+        shape = (3, 3)
+        columns = ("x", "y", "z")
+        dtypes = ("float32", "float32", "float32")
+        def __init__(self, vals):
+            self.x = np.array(vals, dtype=np.float32)
+            self.y = np.array(vals, dtype=np.float32)
+            self.z = np.array(vals, dtype=np.float32)
+        def __getitem__(self, c): return getattr(self, c)
+
+    s1 = dg.Scatter3D(F([1.0, 2.0, 3.0]), x="x", y="y", z="z", parent=None)
+    s2 = dg.Scatter3D(F([4.0, 5.0, 6.0]), x="x", y="y", z="z", parent=None)
+    # Give them the same widget id so the diff treats them as same-key
+    s2.id = s1.id
+
+    old = widget_to_vnode(s1)
+    updated = widget_to_vnode(s2)
+
+    patches = diff(old, updated)
+    assert len(patches) == 1
+    assert patches[0].prop == "scatter"
+
+
+def test_vdom_scatter_unchanged_data_produces_no_patch() -> None:
+    """Same data must produce no patch on re-render."""
+    import dragongui as dg
+    import numpy as np
+    from dragongui.vdom import diff, widget_to_vnode
+
+    class F:
+        shape = (2, 3)
+        columns = ("x", "y", "z")
+        dtypes = ("float32", "float32", "float32")
+        x = np.array([1.0, 2.0], dtype=np.float32)
+        y = np.array([3.0, 4.0], dtype=np.float32)
+        z = np.array([5.0, 6.0], dtype=np.float32)
+        def __getitem__(self, c): return getattr(self, c)
+
+    s = dg.Scatter3D(F(), x="x", y="y", z="z", parent=None)
+    old = widget_to_vnode(s)
+    same = widget_to_vnode(s)
+    assert diff(old, same) == []
 
 
 def test_widget_to_vnode_rejects_non_widgets() -> None:
