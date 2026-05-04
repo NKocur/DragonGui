@@ -363,7 +363,7 @@ Selector behavior:
   Boolean attributes are present only when true.
   Supported names include `id`, `type`, `class`, `key`, `text`, `badge`,
   `level`, `placeholder`, `value`, `page`, `orientation`, `target`, `tooltip`,
-  `path`, `fit`, `width`, `height`, `min`, `max`, `step`, `disabled`,
+  `path`, `fit`, `state`, `width`, `height`, `size`, `min`, `max`, `step`, `disabled`,
   `checked`, `expanded`, `open`, `wrap`, `rows`, `page-size`, `table-rows`, and
   `items-count`.
 - Descendant selectors match any ancestor in the widget tree.
@@ -499,6 +499,7 @@ Supported native type selectors:
 - `Modal`
 - `Badge`
 - `Tag`
+- `LED`
 - `MenuBar`
 - `Menu`
 - `MenuItem`
@@ -1025,6 +1026,7 @@ Supported parts:
 | `NumberInput` | `field`, `stepper`, `stepper-up`, `stepper-down`, `stepper-divider`, `divider`, `caret` |
 | `Dropdown` | `field`, `chevron`, `menu`, `item`, `item-selected`, `item-hover` |
 | `Checkbox` | `row`, `box`, `indicator`, `label` |
+| `LED` | `dot`, `glow`, `highlight` |
 | `Slider` | `track`, `fill`, `thumb` |
 | `ProgressBar` | `track`, `fill`, `label` |
 | `Tabs` | `header` |
@@ -1280,6 +1282,9 @@ effects include:
   `Slider::fill`, `Slider::thumb`.
 - ProgressBar uses `ProgressBar::track`, `ProgressBar::fill`, and
   `ProgressBar::label`.
+- LED exposes `LED::dot`, `LED::glow`, and `LED::highlight` for independent
+  body, halo, and shine styling. The widget state is also available as
+  selectors such as `LED.on`, `LED.busy`, and `LED[state="off"]`.
 - NumberInput stepper geometry can be styled with `NumberInput::stepper`,
   `::stepper-up`, `::stepper-down`, `::divider`, `::stepper-divider`, and
   `::caret`. `::stepper-down` is the left/decrement side and `::stepper-up`

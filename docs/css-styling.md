@@ -431,7 +431,7 @@ Then either `.primary`, `.danger`, or `Button.primary.danger` can match.
 
 Attribute selectors can target stable widget metadata and parsed scalar props,
 including `key`, `id`, `type`, `class`, `text`, `level`, `value`, `page`,
-`disabled`, `checked`, `expanded`, and `open`. Supported operators are
+`state`, `size`, `disabled`, `checked`, `expanded`, and `open`. Supported operators are
 presence, exact (`=`), word (`~=`), prefix (`^=`), suffix (`$=`), substring
 (`*=`), and dash-match (`|=`). Value selectors support ASCII case flags:
 `i` for case-insensitive matching and `s` for case-sensitive matching.
@@ -486,6 +486,7 @@ Type selectors use DragonGUI widget names:
 - `Label`
 - `Badge`
 - `Tag`
+- `LED`
 - `Button`
 - `TextInput`
 - `TextArea`
@@ -722,6 +723,7 @@ Supported parts:
 | `NumberInput` | `field`, `stepper`, `stepper-up`, `stepper-down`, `stepper-divider`, `divider`, `caret` |
 | `Dropdown` | `field`, `chevron`, `menu`, `item`, `item-selected`, `item-hover` |
 | `Checkbox` | `row`, `box`, `indicator`, `label` |
+| `LED` | `dot`, `glow`, `highlight` |
 | `Slider` | `track`, `fill`, `thumb` |
 | `ProgressBar` | `track`, `fill`, `label` |
 | `Tabs` | `header` |
@@ -734,11 +736,38 @@ Part styles support the same visual and text properties as widgets.
 `Panel::accent` is rendered as a left-side fill slice clipped to the panel's
 inner rounded shape, so its `width` can change without manually matching the
 panel corner radius. `Modal::scrim` styles the full-screen overlay behind the
-modal surface. A `DataFrameTable` with `border-radius` clips its header, rows,
+modal surface. `LED::dot` styles the visible light body, `LED::glow` styles the
+halo behind on states, and `LED::highlight` styles the small specular mark; set
+`LED::glow { opacity: 0; }` to hide the halo, or `box-shadow: none` to suppress
+the built-in soft shadow. A `DataFrameTable` with `border-radius` clips its header, rows,
 selection, grid lines, and border to the table's rounded shape, which keeps
 tables clean inside rounded panels. `Image` textures are clipped to the image
 widget's rounded content box inside the border. Dropdown and menu item fills
 are clipped to their rounded popup bounds.
+
+```css
+LED.busy::dot {
+    width: 15px;
+    height: 15px;
+    background: warning;
+    border: 1px solid rgba(94, 58, 0, 0.82);
+    border-radius: 5px;
+}
+
+LED.busy::glow {
+    width: 27px;
+    height: 27px;
+    background: warning;
+    opacity: 0.18;
+    box-shadow: none;
+}
+
+LED.busy::highlight {
+    width: 5px;
+    height: 3px;
+    background: rgba(255, 255, 255, 0.72);
+}
+```
 
 `::before` and `::after` are generated-content hooks, not real widget parts.
 They support `content: "..."`, `content: attr(name)`, plus visual/text styling

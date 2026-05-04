@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::fmt::Write as _;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -49,11 +50,11 @@ use crate::style::{
     GridAutoFlowStyle, GridLineStyle, GridPlacementStyle, GridTrackSize, LayoutLength, LayoutStyle,
     LineHeight, NodeStyle, OverflowStyle, PartLayoutStyle, PartStyle, PositionStyle, StepPosition,
     TextAlign, TextOverflow, TextSpacing, TextStyle, TextTransform, TransitionStyle,
-    TransitionTimingFunction, VisualStyle, WidgetStyle,
+    TransitionTimingFunction, VisualStyle, WidgetStyle, BORDER_WIDTH_LP,
 };
 use crate::table::{self, TableHit};
 use crate::text::TextRendererDg;
-use crate::theme::Theme;
+use crate::theme::{parse_web_color, Theme};
 use crate::toast::{ToastLevel, ToastOverlay, ToastPosition};
 
 // ---------------------------------------------------------------------------
@@ -106,10 +107,7 @@ fn coalesce_runtime_command_batch(commands: &mut Vec<Command>) {
     let mut filtered = Vec::with_capacity(commands.len());
     while let Some(command) = commands.pop() {
         let keep = match &command {
-            Command::DebugSnapshot { .. } => {
-                seen_scatter_updates.clear();
-                true
-            }
+            Command::DebugSnapshot { .. } => true,
             Command::SetScatterPointsPacked {
                 id, coalesce: true, ..
             } => seen_scatter_updates.insert(id.clone()),
@@ -121,6 +119,13 @@ fn coalesce_runtime_command_batch(commands: &mut Vec<Command>) {
     }
     filtered.reverse();
     *commands = filtered;
+}
+
+fn command_is_coalesced_scatter_points(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::SetScatterPointsPacked { coalesce: true, .. }
+    )
 }
 
 fn gen_demo_points_with_colormap(colormap: &str) -> Vec<PointInstance> {
@@ -212,12 +217,17 @@ fn format_4g(v: f32) -> String {
         let exp = abs.log10().floor() as i32;
         let prec = (3 - exp).max(0) as usize;
         // Remove redundant trailing zeros after decimal point.
-        let s = format!("{:.prec$}", v, prec = prec);
-        if s.contains('.') {
-            s.trim_end_matches('0').trim_end_matches('.').to_string()
-        } else {
-            s
+        let mut s = String::with_capacity(16);
+        let _ = write!(&mut s, "{:.prec$}", v, prec = prec);
+        if let Some(dot) = s.find('.') {
+            while s.ends_with('0') {
+                s.pop();
+            }
+            if s.len() == dot + 1 {
+                s.truncate(dot);
+            }
         }
+        s
     } else {
         format!("{:.3e}", v)
     }
@@ -334,27 +344,16 @@ fn decode_scatter_points_v1(
     pts.reserve(n);
     let mut min = glam::Vec3::splat(f32::INFINITY);
     let mut max = glam::Vec3::splat(f32::NEG_INFINITY);
-    for i in 0..n {
-        let off = i * STRIDE;
-        let x = f32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
-        let y = f32::from_le_bytes(bytes[off + 4..off + 8].try_into().unwrap());
-        let z = f32::from_le_bytes(bytes[off + 8..off + 12].try_into().unwrap());
-        let size = f32::from_le_bytes(bytes[off + 12..off + 16].try_into().unwrap());
-        let r = f32::from_le_bytes(bytes[off + 16..off + 20].try_into().unwrap());
-        let g = f32::from_le_bytes(bytes[off + 20..off + 24].try_into().unwrap());
-        let b = f32::from_le_bytes(bytes[off + 24..off + 28].try_into().unwrap());
-        let alpha = f32::from_le_bytes(bytes[off + 28..off + 32].try_into().unwrap());
+    for chunk in bytes.chunks_exact(STRIDE) {
+        let mut point = bytemuck::pod_read_unaligned::<PointInstance>(chunk);
+        let [x, y, z] = point.position;
         if x.is_finite() && y.is_finite() && z.is_finite() {
             let p = glam::Vec3::new(x, y, z);
             min = min.min(p);
             max = max.max(p);
         }
-        pts.push(PointInstance {
-            position: [x, y, z],
-            size: size.max(0.0),
-            color: [r, g, b],
-            alpha,
-        });
+        point.size = point.size.max(0.0);
+        pts.push(point);
     }
     if min.x > max.x {
         Ok(None)
@@ -435,7 +434,7 @@ fn create_depth_texture(
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Depth32Float,
+        format: crate::DEPTH_STENCIL_FORMAT,
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         view_formats: &[],
     });
@@ -456,6 +455,16 @@ fn collect_visible_scatter_ids(
         out.push(node.id.clone());
     }
     // Visit children in z-index paint order (matching primitives/text stacking_children).
+    if node
+        .children
+        .iter()
+        .all(|child| child.style.layout.z_index.is_none())
+    {
+        for child in &node.children {
+            collect_visible_scatter_ids(child, layout, out);
+        }
+        return;
+    }
     let mut children: Vec<_> = node.children.iter().enumerate().collect();
     children.sort_by_key(|(index, child)| (child.style.layout.z_index.unwrap_or(0), *index));
     for (_, child) in children {
@@ -484,6 +493,19 @@ fn scatter_clip_radii(node: &WidgetNode, fallback_radius_lp: f32, scale_factor: 
         .corner_radii
         .resolve(radius_lp)
         .map(|radius| radius.max(0.0) * scale_factor)
+}
+
+fn scatter_border_inset(node: &WidgetNode, scale_factor: f32) -> f32 {
+    node.style
+        .visual
+        .border_width
+        .unwrap_or(BORDER_WIDTH_LP)
+        .max(0.0)
+        * scale_factor
+}
+
+fn inset_scatter_clip_radii(radii: [f32; 4], inset: f32) -> [f32; 4] {
+    radii.map(|radius| (radius - inset).max(0.0))
 }
 
 fn find_first_widget_kind_id<'a>(node: &'a WidgetNode, kind: &WidgetKind) -> Option<&'a str> {
@@ -717,12 +739,16 @@ fn replace_widget_children(node: &mut WidgetNode, id: &str, children: Vec<Widget
 }
 
 fn replace_widget_node(node: &mut WidgetNode, id: &str, replacement: WidgetNode) -> bool {
+    replace_widget_node_ref(node, id, &replacement)
+}
+
+fn replace_widget_node_ref(node: &mut WidgetNode, id: &str, replacement: &WidgetNode) -> bool {
     if node.id == id {
-        *node = replacement;
+        *node = replacement.clone();
         return true;
     }
     for child in &mut node.children {
-        if replace_widget_node(child, id, replacement.clone()) {
+        if replace_widget_node_ref(child, id, replacement) {
             return true;
         }
     }
@@ -781,6 +807,7 @@ fn widget_kind_name(kind: &WidgetKind) -> &'static str {
         WidgetKind::Modal => "modal",
         WidgetKind::Badge => "badge",
         WidgetKind::Tag => "tag",
+        WidgetKind::Led => "led",
         WidgetKind::Button => "button",
         WidgetKind::Checkbox => "checkbox",
         WidgetKind::Dropdown => "dropdown",
@@ -1765,6 +1792,8 @@ fn props_snapshot(node: &WidgetNode) -> Value {
         "tooltip": props.tooltip.as_deref(),
         "image_path": props.image_path.as_deref(),
         "image_fit": props.image_fit.as_deref(),
+        "led_state": props.led_state.as_deref(),
+        "led_size": props.led_size,
         "checked": props.checked,
         "value": props.value,
         "min": props.min,
@@ -2036,6 +2065,46 @@ fn set_widget_level_prop(node: &mut WidgetNode, id: &str, level: String) -> bool
     true
 }
 
+fn set_widget_led_state_prop(node: &mut WidgetNode, id: &str, state: String) -> bool {
+    let Some(target) = find_widget_mut(node, id) else {
+        return false;
+    };
+    if target.kind != WidgetKind::Led {
+        return false;
+    }
+    target.props.led_state = (!state.is_empty()).then_some(state);
+    true
+}
+
+fn set_widget_led_color_prop(node: &mut WidgetNode, id: &str, color: String) -> bool {
+    let Some(target) = find_widget_mut(node, id) else {
+        return false;
+    };
+    if target.kind != WidgetKind::Led {
+        return false;
+    }
+    let color = color.trim();
+    if color.is_empty() {
+        target.props.led_color = None;
+    } else {
+        target.props.led_color = parse_web_color(color)
+            .map(ColorRef::Rgba)
+            .or_else(|| Some(ColorRef::Token(color.to_string())));
+    }
+    true
+}
+
+fn set_widget_led_size_prop(node: &mut WidgetNode, id: &str, size: f32) -> bool {
+    let Some(target) = find_widget_mut(node, id) else {
+        return false;
+    };
+    if target.kind != WidgetKind::Led || !size.is_finite() || size <= 0.0 {
+        return false;
+    }
+    target.props.led_size = Some(size);
+    true
+}
+
 fn set_widget_open_prop(node: &mut WidgetNode, id: &str, open: bool) -> bool {
     let Some(target) = find_widget_mut(node, id) else {
         return false;
@@ -2256,6 +2325,16 @@ mod style_patch_tests {
     use serde_json::json;
 
     #[test]
+    fn format_4g_trims_decimal_labels_without_changing_shape() {
+        assert_eq!(format_4g(0.0), "0");
+        assert_eq!(format_4g(1.2300), "1.23");
+        assert_eq!(format_4g(12.0), "12");
+        assert_eq!(format_4g(1234.0), "1234");
+        assert_eq!(format_4g(12_345.0), "1.234e4");
+        assert_eq!(format_4g(0.0000123), "1.230e-5");
+    }
+
+    #[test]
     fn command_batch_coalesces_scatter_updates() {
         let mut commands = vec![
             Command::SetScatterPointsPacked {
@@ -2296,7 +2375,7 @@ mod style_patch_tests {
     }
 
     #[test]
-    fn command_batch_coalescing_respects_debug_snapshot_barrier() {
+    fn command_batch_coalesces_scatter_updates_across_debug_snapshot() {
         let mut commands = vec![
             Command::SetScatterPointsPacked {
                 id: "scatter".to_string(),
@@ -2319,7 +2398,18 @@ mod style_patch_tests {
 
         coalesce_runtime_command_batch(&mut commands);
 
-        assert_eq!(commands.len(), 3);
+        assert_eq!(commands.len(), 2);
+        assert!(matches!(
+            commands[0],
+            Command::DebugSnapshot { request_id: 1 }
+        ));
+        match &commands[1] {
+            Command::SetScatterPointsPacked { xyz, colormap, .. } => {
+                assert_eq!(xyz, &vec![2; 12]);
+                assert_eq!(colormap, "turbo");
+            }
+            other => panic!("expected latest scatter update, got {other:?}"),
+        }
     }
 
     #[test]
@@ -3391,6 +3481,7 @@ struct ScatterMetrics {
     last_grid_ms: f64,
     last_overlay_ms: f64,
     last_total_native_ms: f64,
+    last_render_encode_ms: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3428,6 +3519,8 @@ struct ScatterRuntime {
     hover_tooltip_enabled: bool,
     /// Lazily-built screen-space pick cache for the primary point buffer.
     primary_pick_cache: Option<scatter::ScreenPickCache>,
+    /// Reused candidate list for screen-space pick cache queries.
+    pick_candidates_scratch: Vec<u32>,
 }
 
 impl ScatterRuntime {
@@ -3527,11 +3620,16 @@ impl ScatterRuntime {
             let cache = self.primary_pick_cache.as_ref().unwrap();
             radius_px.max(cache.max_point_size * 0.75)
         };
-        let primary_cands = {
+        {
             let cache = self.primary_pick_cache.as_ref().unwrap();
-            cache.candidates(local_x, local_y, primary_query_radius)
-        };
-        for idx_u32 in primary_cands {
+            cache.candidates_into(
+                local_x,
+                local_y,
+                primary_query_radius,
+                &mut self.pick_candidates_scratch,
+            );
+        }
+        for idx_u32 in self.pick_candidates_scratch.iter().copied() {
             let idx = idx_u32 as usize;
             if idx >= self.points.len() {
                 continue;
@@ -3548,17 +3646,16 @@ impl ScatterRuntime {
                 Some(a) if a.visible => a,
                 _ => continue,
             };
-            let (actor_query_radius, cands) = {
+            {
                 let cache = match actor.pick_cache.as_ref() {
                     Some(c) => c,
                     None => continue,
                 };
                 let qr = radius_px.max(cache.max_point_size * 0.75);
-                (qr, cache.candidates(local_x, local_y, qr))
-            };
-            let _ = actor_query_radius; // used to compute cands above
+                cache.candidates_into(local_x, local_y, qr, &mut self.pick_candidates_scratch);
+            }
             let live_pts = &actor.points[..actor.point_count as usize];
-            for idx_u32 in cands {
+            for idx_u32 in self.pick_candidates_scratch.iter().copied() {
                 let idx = idx_u32 as usize;
                 if idx >= live_pts.len() {
                     continue;
@@ -4210,6 +4307,7 @@ impl WgpuState {
                         tooltip_axis_labels: ["x".to_string(), "y".to_string(), "z".to_string()],
                         hover_tooltip_enabled: true,
                         primary_pick_cache: None,
+                        pick_candidates_scratch: Vec::new(),
                     },
                 );
             }
@@ -4418,19 +4516,25 @@ impl WgpuState {
                 let clip_radii = scatter_node
                     .map(|node| scatter_clip_radii(node, theme.radius, *scale_factor))
                     .unwrap_or([0.0; 4]);
+                let border_inset = scatter_node
+                    .map(|node| scatter_border_inset(node, *scale_factor))
+                    .unwrap_or(0.0);
                 runtime.widget.set_point_size_override(point_size, queue);
                 runtime.widget.set_point_style(point_style, queue);
                 if let (Some(r), Some(visible)) = (
                     layout.rects.get(scatter_id.as_str()).copied(),
                     layout.visible_rect(scatter_id),
                 ) {
+                    let content_inset = border_inset.min(r.w * 0.5).min(r.h * 0.5);
+                    let content_w = (r.w - content_inset * 2.0).max(0.0);
+                    let content_h = (r.h - content_inset * 2.0).max(0.0);
                     runtime.widget.set_layout_rect(
-                        r.x,
-                        r.y,
-                        r.w,
-                        r.h,
+                        r.x + content_inset,
+                        r.y + content_inset,
+                        content_w,
+                        content_h,
                         Some([visible.x, visible.y, visible.w, visible.h]),
-                        clip_radii,
+                        inset_scatter_clip_radii(clip_radii, content_inset),
                         queue,
                     );
                     let (data_min, data_max) = runtime.merged_bounds();
@@ -5696,6 +5800,41 @@ impl WgpuState {
             }
             return None;
         }
+        if kind == WidgetKind::Led {
+            match (prop, value) {
+                ("state", CommandValue::Text(state_name)) => {
+                    if let Some(tree) = self.widget_tree.as_mut() {
+                        if set_widget_led_state_prop(tree, id, state_name) {
+                            self.reapply_stylesheets();
+                            return Some(Dirty::Full);
+                        }
+                    }
+                    return None;
+                }
+                ("color", CommandValue::Text(color)) => {
+                    if let Some(tree) = self.widget_tree.as_mut() {
+                        if set_widget_led_color_prop(tree, id, color) {
+                            return Some(Dirty::Visual);
+                        }
+                    }
+                    return None;
+                }
+                ("size", CommandValue::Float(size)) => {
+                    if let Some(tree) = self.widget_tree.as_mut() {
+                        if set_widget_led_size_prop(tree, id, size) {
+                            return Some(Dirty::Layout);
+                        }
+                    }
+                    return None;
+                }
+                (_, _) => {
+                    eprintln!(
+                        "DragonGUI: ignoring unsupported live SetProp for widget {id:?} ({kind:?}).{prop}"
+                    );
+                    return None;
+                }
+            }
+        }
         if kind == WidgetKind::Modal && prop == "open" {
             let CommandValue::Bool(open) = value else {
                 eprintln!(
@@ -6102,6 +6241,7 @@ impl WgpuState {
                         tooltip_axis_labels: ["x".to_string(), "y".to_string(), "z".to_string()],
                         hover_tooltip_enabled: true,
                         primary_pick_cache: None,
+                        pick_candidates_scratch: Vec::new(),
                     },
                 );
             }
@@ -6288,7 +6428,7 @@ impl WgpuState {
             runtime.primary_pick_cache = None;
             runtime.payload_status = ScatterPayloadStatus::AllNonFinite;
             runtime.primary_hover_meta = Vec::new();
-            runtime.widget.hover_label = None;
+            let cleared_hover_label = runtime.widget.hover_label.take().is_some();
             runtime.data_min = glam::Vec3::ZERO;
             runtime.data_max = glam::Vec3::ZERO;
             // Clear the GPU draw count so the old geometry is not rendered.
@@ -6302,8 +6442,12 @@ impl WgpuState {
             );
             let grid_ms = grid_t0.elapsed().as_secs_f64() * 1000.0;
             let overlay_t0 = Instant::now();
-            runtime.widget.refresh_overlays(&self.device, &self.queue);
-            let overlay_ms = overlay_t0.elapsed().as_secs_f64() * 1000.0;
+            let overlay_ms = if cleared_hover_label {
+                runtime.widget.refresh_overlays(&self.device, &self.queue);
+                overlay_t0.elapsed().as_secs_f64() * 1000.0
+            } else {
+                0.0
+            };
             let pack_ms = telemetry.as_ref().map(|t| t.pack_ms).unwrap_or(0.0);
             let reported_payload_bytes = telemetry
                 .as_ref()
@@ -6326,6 +6470,7 @@ impl WgpuState {
                 last_grid_ms: grid_ms,
                 last_overlay_ms: overlay_ms,
                 last_total_native_ms: total_t0.elapsed().as_secs_f64() * 1000.0,
+                last_render_encode_ms: runtime.metrics.last_render_encode_ms,
             };
             return Ok(true);
         }
@@ -6334,7 +6479,7 @@ impl WgpuState {
         runtime.points = decoded;
         runtime.primary_pick_cache = None;
         runtime.primary_hover_meta = Vec::new();
-        runtime.widget.hover_label = None;
+        let cleared_hover_label = runtime.widget.hover_label.take().is_some();
         runtime.data_min = data_min;
         runtime.data_max = data_max;
         runtime.payload_status = ScatterPayloadStatus::Ok;
@@ -6350,6 +6495,7 @@ impl WgpuState {
         // fitting against that aspect ratio pushes the camera thousands of
         // units away. Leave `fitted_once` false so the next visible layout pass
         // can fit with the real viewport dimensions.
+        let mut camera_fitted = false;
         if !runtime.fitted_once
             && !runtime.points.is_empty()
             && runtime.widget.has_visible_viewport()
@@ -6358,6 +6504,7 @@ impl WgpuState {
                 .widget
                 .fit_to_bounds(data_min, data_max, &self.queue);
             runtime.fitted_once = true;
+            camera_fitted = true;
         }
         let grid_t0 = Instant::now();
         runtime
@@ -6365,8 +6512,12 @@ impl WgpuState {
             .refresh_grid(data_min, data_max, &self.device, &self.queue);
         let grid_ms = grid_t0.elapsed().as_secs_f64() * 1000.0;
         let overlay_t0 = Instant::now();
-        runtime.widget.refresh_overlays(&self.device, &self.queue);
-        let overlay_ms = overlay_t0.elapsed().as_secs_f64() * 1000.0;
+        let overlay_ms = if camera_fitted || cleared_hover_label {
+            runtime.widget.refresh_overlays(&self.device, &self.queue);
+            overlay_t0.elapsed().as_secs_f64() * 1000.0
+        } else {
+            0.0
+        };
         let upload_ms = upload_t0.elapsed().as_secs_f64() * 1000.0;
 
         let point_count = runtime.points.len();
@@ -6394,6 +6545,7 @@ impl WgpuState {
             last_grid_ms: grid_ms,
             last_overlay_ms: overlay_ms,
             last_total_native_ms: total_t0.elapsed().as_secs_f64() * 1000.0,
+            last_render_encode_ms: runtime.metrics.last_render_encode_ms,
         };
         Ok(true)
     }
@@ -6616,6 +6768,7 @@ impl WgpuState {
                     "last_grid_ms": rt.metrics.last_grid_ms,
                     "last_overlay_ms": rt.metrics.last_overlay_ms,
                     "last_total_native_ms": rt.metrics.last_total_native_ms,
+                    "last_render_encode_ms": rt.metrics.last_render_encode_ms,
                     "payload_status": format!("{:?}", rt.payload_status),
                 })),
                 "scatters": self.scatters.iter().map(|(id, rt)| {
@@ -6634,6 +6787,7 @@ impl WgpuState {
                         "last_grid_ms": rt.metrics.last_grid_ms,
                         "last_overlay_ms": rt.metrics.last_overlay_ms,
                         "last_total_native_ms": rt.metrics.last_total_native_ms,
+                        "last_render_encode_ms": rt.metrics.last_render_encode_ms,
                         "payload_status": format!("{:?}", rt.payload_status),
                         "fitted_once": rt.fitted_once,
                         "payload_format": rt.payload_format.as_str(),
@@ -7151,7 +7305,7 @@ impl WgpuState {
                                 *scale_factor,
                                 lbl.color,
                                 lbl.font_size,
-                                &lbl.anchor,
+                                lbl.anchor.as_ref(),
                             );
                         }
                     }
@@ -7211,7 +7365,10 @@ impl WgpuState {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
                     }),
-                    stencil_ops: None,
+                    stencil_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0),
+                        store: wgpu::StoreOp::Store,
+                    }),
                 }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
@@ -7229,37 +7386,44 @@ impl WgpuState {
         // to prevent cross-widget depth contamination.
         let scatter_order = self.visible_scatter_order.clone();
         for scatter_id in &scatter_order {
-            if let Some(runtime) = self.scatters.get(scatter_id) {
-                let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("dragongui-scatter"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: &view,
-                        resolve_target: None,
-                        depth_slice: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })],
-                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                        view: &self.depth_view,
-                        depth_ops: Some(wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(1.0),
-                            store: wgpu::StoreOp::Store,
+            if let Some(runtime) = self.scatters.get_mut(scatter_id) {
+                let render_t0 = Instant::now();
+                {
+                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                        label: Some("dragongui-scatter"),
+                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                            view: &view,
+                            resolve_target: None,
+                            depth_slice: None,
+                            ops: wgpu::Operations {
+                                load: wgpu::LoadOp::Load,
+                                store: wgpu::StoreOp::Store,
+                            },
+                        })],
+                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                            view: &self.depth_view,
+                            depth_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(1.0),
+                                store: wgpu::StoreOp::Store,
+                            }),
+                            stencil_ops: Some(wgpu::Operations {
+                                load: wgpu::LoadOp::Clear(0),
+                                store: wgpu::StoreOp::Store,
+                            }),
                         }),
-                        stencil_ops: None,
-                    }),
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                });
-                runtime.widget.render(&mut pass);
+                        timestamp_writes: None,
+                        occlusion_query_set: None,
+                        multiview_mask: None,
+                    });
+                    runtime.widget.render(&mut pass);
+                }
+                runtime.metrics.last_render_encode_ms = render_t0.elapsed().as_secs_f64() * 1000.0;
             }
         }
 
         // Pass 3: text and overlay primitives. The overlay pipelines do not
         // write depth and always pass, but wgpu still requires a depth
-        // attachment because those pipelines were created with Depth32Float.
+        // attachment because those pipelines were created with a depth-stencil state.
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("dragongui-overlay"),
@@ -7278,7 +7442,10 @@ impl WgpuState {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
                     }),
-                    stencil_ops: None,
+                    stencil_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }),
                 }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
@@ -7511,6 +7678,8 @@ struct DragonApp {
     modifiers: ModifiersState,
     /// Whether a background Python task drain was held while a transient popup was open.
     deferred_python_task_drain: bool,
+    /// A coalesced Scatter3D frame upload was applied and should be presented before another one.
+    scatter_upload_redraw_pending: bool,
     command_seq: u64,
     command_history: VecDeque<RuntimeCommandRecord>,
 }
@@ -7545,6 +7714,7 @@ impl DragonApp {
             pressed_id: None,
             modifiers: ModifiersState::empty(),
             deferred_python_task_drain: false,
+            scatter_upload_redraw_pending: false,
             command_seq: 0,
             command_history: VecDeque::with_capacity(COMMAND_HISTORY_LIMIT),
         }
@@ -7722,6 +7892,9 @@ impl DragonApp {
             return;
         };
         bridge.clear_wake_pending();
+        if self.scatter_upload_redraw_pending {
+            return;
+        }
 
         let mut request_redraw = false;
         let mut commands = Vec::new();
@@ -7734,9 +7907,20 @@ impl DragonApp {
             if commands.is_empty() {
                 break;
             }
+            let batch_had_scatter_points = commands.iter().any(command_is_coalesced_scatter_points);
             batches += 1;
             for command in commands.drain(..) {
                 request_redraw |= self.apply_runtime_command(command);
+            }
+            if batch_had_scatter_points {
+                if request_redraw {
+                    self.scatter_upload_redraw_pending = true;
+                }
+                let pending = bridge.len();
+                if pending > 0 {
+                    bridge.wake();
+                }
+                break;
             }
             if batches >= MAX_COMMAND_DRAIN_BATCHES || drain_start.elapsed() >= COMMAND_DRAIN_BUDGET
             {
@@ -11717,7 +11901,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                                 is_title: false,
                                                 color: None,
                                                 font_size: None,
-                                                anchor: "top-left".to_string(),
+                                                anchor: "top-left".into(),
                                             },
                                             payload,
                                         )
@@ -11924,6 +12108,16 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                     }
                     self.frame_ms_total += t0.elapsed().as_secs_f64() * 1000.0;
                     self.frames_rendered += 1;
+                    self.scatter_upload_redraw_pending = false;
+                    if self
+                        .command_bridge
+                        .as_ref()
+                        .is_some_and(|bridge| !bridge.is_empty())
+                    {
+                        if let Some(bridge) = &self.command_bridge {
+                            bridge.wake();
+                        }
+                    }
                 }
                 if let Some(limit) = self.smoke_frames {
                     if self.frames_rendered >= limit {

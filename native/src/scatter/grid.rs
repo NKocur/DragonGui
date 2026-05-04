@@ -1,6 +1,7 @@
 /// Grid geometry for Scatter3D: bounding box, tick marks, grid planes, and
 /// screen-space label anchors. Ported from DragonSci src/grid.rs.
 use glam::Vec3;
+use std::fmt::Write as _;
 
 /// Expand raw data bounds to the nearest "nice" round numbers so the grid
 /// stays visually stable between frames that share a similar data range.
@@ -203,10 +204,11 @@ pub fn format_tick(v: f32) -> String {
     if v.abs() >= 1000.0 || (v.abs() < 0.01 && v != 0.0) {
         format!("{:.2e}", v)
     } else {
-        format!("{:.3}", v)
-            .trim_end_matches('0')
-            .trim_end_matches('.')
-            .to_string()
+        let mut s = String::with_capacity(16);
+        let _ = write!(&mut s, "{:.3}", v);
+        let trimmed_len = s.trim_end_matches('0').trim_end_matches('.').len();
+        s.truncate(trimmed_len);
+        s
     }
 }
 

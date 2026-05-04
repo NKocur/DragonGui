@@ -501,26 +501,21 @@ impl CommandQueue {
             id, coalesce: true, ..
         } = &command
         {
-            let mut filtered = VecDeque::with_capacity(inner.items.len());
-            let mut crossed_snapshot_barrier = false;
-            while let Some(queued) = inner.items.pop_back() {
-                let drop = !crossed_snapshot_barrier
-                    && matches!(
-                        &queued,
-                        Command::SetScatterPointsPacked {
-                            id: queued_id,
-                            coalesce: true,
-                            ..
-                        } if queued_id == id
-                    );
-                if matches!(queued, Command::DebugSnapshot { .. }) {
-                    crossed_snapshot_barrier = true;
-                }
-                if !drop {
-                    filtered.push_front(queued);
+            let mut index = inner.items.len();
+            while index > 0 {
+                index -= 1;
+                let remove = match &inner.items[index] {
+                    Command::SetScatterPointsPacked {
+                        id: queued_id,
+                        coalesce: true,
+                        ..
+                    } => queued_id == id,
+                    _ => false,
+                };
+                if remove {
+                    inner.items.remove(index);
                 }
             }
-            inner.items = filtered;
         }
         inner.items.push_back(command);
         Ok(())
@@ -894,9 +889,7 @@ impl NativeCommandSender {
         coalesce: Option<bool>,
     ) -> PyResult<()> {
         let xyz = byte_buffer_from_py(xyz, "scatter point payload")?;
-        let fmt = ScatterPayloadFormat::from_str(
-            payload_format.as_deref().unwrap_or("xyz_f32_v0"),
-        );
+        let fmt = ScatterPayloadFormat::from_str(payload_format.as_deref().unwrap_or("xyz_f32_v0"));
         let bytes_per_point = match fmt {
             ScatterPayloadFormat::PointInstanceV1 => 32,
             ScatterPayloadFormat::XyzF32V0 => 12,
@@ -2199,6 +2192,36 @@ mod tests {
     }
 
     #[test]
+    fn queue_removes_all_pending_coalesced_scatter_updates_by_widget() {
+        let queue = CommandQueue::default();
+
+        for value in [1_u8, 2, 3] {
+            queue
+                .push(Command::SetScatterPointsPacked {
+                    id: "scatter".to_string(),
+                    xyz: vec![value; 12],
+                    telemetry: None,
+                    colormap: "viridis".to_string(),
+                    payload_format: ScatterPayloadFormat::XyzF32V0,
+                    coalesce: true,
+                })
+                .unwrap();
+        }
+
+        assert_eq!(
+            queue.drain(),
+            vec![Command::SetScatterPointsPacked {
+                id: "scatter".to_string(),
+                xyz: vec![3; 12],
+                telemetry: None,
+                colormap: "viridis".to_string(),
+                payload_format: ScatterPayloadFormat::XyzF32V0,
+                coalesce: true,
+            }]
+        );
+    }
+
+    #[test]
     fn queue_preserves_noncoalesced_scatter_updates() {
         let queue = CommandQueue::default();
 
@@ -2219,7 +2242,7 @@ mod tests {
     }
 
     #[test]
-    fn queue_does_not_coalesce_across_debug_snapshot_barrier() {
+    fn queue_coalesces_scatter_updates_across_debug_snapshot() {
         let queue = CommandQueue::default();
 
         queue
@@ -2246,7 +2269,19 @@ mod tests {
             })
             .unwrap();
 
-        assert_eq!(queue.drain().len(), 3);
+        let commands = queue.drain();
+        assert_eq!(commands.len(), 2);
+        assert!(matches!(
+            commands[0],
+            Command::DebugSnapshot { request_id: 9 }
+        ));
+        match &commands[1] {
+            Command::SetScatterPointsPacked { xyz, colormap, .. } => {
+                assert_eq!(xyz, &vec![2; 12]);
+                assert_eq!(colormap, "turbo");
+            }
+            other => panic!("expected latest scatter update, got {other:?}"),
+        }
     }
 
     #[test]

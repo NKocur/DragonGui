@@ -5,7 +5,7 @@ pub mod grid;
 use bytemuck::{Pod, Zeroable};
 use camera::Camera;
 use grid::{build_grid, stable_face_bits, sticky_nice_bounds, GridGeometry, LineVertex};
-use std::time::Instant;
+use std::{borrow::Cow, time::Instant};
 
 // ---------------------------------------------------------------------------
 // GPU vertex layout
@@ -344,10 +344,10 @@ impl ScreenPickCache {
             cell_starts[c + 1] = cell_starts[c] + counts[c];
         }
 
-        // Fill sorted_indices using a cursor copy of cell_starts.
+        // Fill sorted_indices using counts as per-cell cursors.
         let total_visible = cell_starts[total_cells] as usize;
         let mut sorted_indices = vec![0u32; total_visible];
-        let mut cursor = cell_starts[..total_cells].to_vec();
+        counts.fill(0);
 
         for (i, &[sx, sy]) in screen_xy.iter().enumerate() {
             if sx.is_nan() {
@@ -356,8 +356,9 @@ impl ScreenPickCache {
             let cx = ((sx / cell_size) as u32).min(grid_cols - 1);
             let cy = ((sy / cell_size) as u32).min(grid_rows - 1);
             let c = (cx * grid_rows + cy) as usize;
-            sorted_indices[cursor[c] as usize] = i as u32;
-            cursor[c] += 1;
+            let slot = cell_starts[c] + counts[c];
+            sorted_indices[slot as usize] = i as u32;
+            counts[c] += 1;
         }
 
         Self {
@@ -391,9 +392,10 @@ impl ScreenPickCache {
 
     /// Collect candidate point indices whose grid cells overlap the search circle
     /// centred at `(local_x, local_y)` (viewport-local pixels) with radius `radius_px`.
-    pub fn candidates(&self, local_x: f32, local_y: f32, radius_px: f32) -> Vec<u32> {
+    pub fn candidates_into(&self, local_x: f32, local_y: f32, radius_px: f32, out: &mut Vec<u32>) {
+        out.clear();
         if self.grid_cols == 0 || self.grid_rows == 0 {
-            return Vec::new();
+            return;
         }
         let cs = self.cell_size;
         let min_cx = ((local_x - radius_px) / cs).floor().max(0.0) as u32;
@@ -401,7 +403,6 @@ impl ScreenPickCache {
         let min_cy = ((local_y - radius_px) / cs).floor().max(0.0) as u32;
         let max_cy = (((local_y + radius_px) / cs).floor() as u32).min(self.grid_rows - 1);
 
-        let mut out = Vec::new();
         for cx in min_cx..=max_cx {
             for cy in min_cy..=max_cy {
                 let c = (cx * self.grid_rows + cy) as usize;
@@ -412,6 +413,11 @@ impl ScreenPickCache {
                 }
             }
         }
+    }
+
+    pub fn candidates(&self, local_x: f32, local_y: f32, radius_px: f32) -> Vec<u32> {
+        let mut out = Vec::new();
+        self.candidates_into(local_x, local_y, radius_px, &mut out);
         out
     }
 }
@@ -428,6 +434,9 @@ pub struct PointActor {
     /// Hash-sorted copy for representative LOD sampling; None for stream actors.
     lod_vertex_buffer: Option<wgpu::Buffer>,
     lod_vertex_cap: u64,
+    lod_sampled_scratch: Vec<PointInstance>,
+    lod_bucket_keys_scratch: Vec<u32>,
+    lod_occupied_scratch: Vec<bool>,
     pub point_count: u32,
     pub points: Vec<PointInstance>,
     pub visible: bool,
@@ -453,6 +462,9 @@ impl PointActor {
             vertex_cap: 0,
             lod_vertex_buffer: None,
             lod_vertex_cap: 0,
+            lod_sampled_scratch: Vec::new(),
+            lod_bucket_keys_scratch: Vec::new(),
+            lod_occupied_scratch: Vec::new(),
             point_count: 0,
             points: Vec::new(),
             visible: true,
@@ -471,6 +483,7 @@ impl PointActor {
         &mut self,
         pts: &[PointInstance],
         build_lod: bool,
+        lod_factor: u32,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
     ) -> ScatterUploadTimings {
@@ -506,10 +519,14 @@ impl PointActor {
             let lod_t0 = Instant::now();
             upload_lod_buffer(
                 pts,
+                lod_factor,
                 &mut self.lod_vertex_buffer,
                 &mut self.lod_vertex_cap,
                 device,
                 queue,
+                &mut self.lod_sampled_scratch,
+                &mut self.lod_bucket_keys_scratch,
+                &mut self.lod_occupied_scratch,
             );
             lod_ms = lod_t0.elapsed().as_secs_f64() * 1000.0;
         } else if self.stream_mode.is_none() {
@@ -548,7 +565,32 @@ pub struct ProjectedLabel {
     /// Explicit font size in logical pixels. `None` uses the grid default (11/13 px).
     pub font_size: Option<f32>,
     /// Text anchor: `"left"`, `"center"`, `"right"`, or internal `"top-left"`.
-    pub anchor: String,
+    pub anchor: Cow<'static, str>,
+}
+
+struct GridLabelProjection {
+    local_x: f32,
+    local_y: f32,
+    text: String,
+    is_title: bool,
+    push_dir: glam::Vec2,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ScalarBarVertexCacheKey {
+    width: u32,
+    height: u32,
+    colormap: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct GridLabelProjectionCacheKey {
+    view_proj: glam::Mat4,
+    width: u32,
+    height: u32,
+    offset: [f32; 2],
+    scissor_offset: [u32; 2],
+    scissor_size: [u32; 2],
 }
 
 fn estimate_scatter_label_size(text: &str, is_title: bool) -> glam::Vec2 {
@@ -556,15 +598,23 @@ fn estimate_scatter_label_size(text: &str, is_title: bool) -> glam::Vec2 {
     let line_count = text.lines().count().max(1) as f32;
     let max_chars = text
         .lines()
-        .map(|line| line.chars().count())
+        .map(scatter_label_char_count)
         .max()
-        .unwrap_or_else(|| text.chars().count())
+        .unwrap_or_else(|| scatter_label_char_count(text))
         .max(1) as f32;
     let max_width = if is_title { 200.0_f32 } else { 120.0_f32 };
     glam::Vec2::new(
         (max_chars * font_size * 0.62 + 2.0).min(max_width),
         line_count * font_size * 1.3,
     )
+}
+
+fn scatter_label_char_count(text: &str) -> usize {
+    if text.is_ascii() {
+        text.len()
+    } else {
+        text.chars().count()
+    }
 }
 
 fn scatter_label_rect(local_x: f32, local_y: f32, text: &str, is_title: bool) -> [f32; 4] {
@@ -835,6 +885,66 @@ fn overlay_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
     }
 }
 
+fn overlay_to_ndc(w: f32, h: f32, px: f32, py: f32) -> [f32; 2] {
+    let nx = (px / w) * 2.0 - 1.0;
+    let ny = 1.0 - (py / h) * 2.0;
+    [nx, ny]
+}
+
+fn push_scalar_bar_vertices(w: f32, h: f32, colormap: &str, verts: &mut Vec<OverlayVertex>) {
+    let bar_w: f32 = 16.0;
+    let bar_h: f32 = (h * 0.45).min(220.0).max(60.0);
+    let margin_r: f32 = 52.0;
+    let bar_top: f32 = 32.0;
+    let bar_bottom: f32 = bar_top + bar_h;
+    let bar_x1: f32 = w - margin_r - bar_w;
+    let bar_x2: f32 = w - margin_r;
+    let n_strips: usize = 64;
+    let cmap = colormap::resolve(colormap);
+    for i in 0..n_strips {
+        let t0 = i as f32 / n_strips as f32;
+        let t1 = (i + 1) as f32 / n_strips as f32;
+        let t_mid = (t0 + t1) * 0.5;
+        let [r, g, b] = colormap::sample(cmap, 1.0 - t_mid);
+        let y0 = bar_top + t0 * bar_h;
+        let y1 = bar_top + t1 * bar_h;
+        verts.push(OverlayVertex {
+            position: overlay_to_ndc(w, h, bar_x1, y0),
+            color: [r, g, b],
+        });
+        verts.push(OverlayVertex {
+            position: overlay_to_ndc(w, h, bar_x2, y0),
+            color: [r, g, b],
+        });
+        verts.push(OverlayVertex {
+            position: overlay_to_ndc(w, h, bar_x1, y1),
+            color: [r, g, b],
+        });
+        verts.push(OverlayVertex {
+            position: overlay_to_ndc(w, h, bar_x2, y1),
+            color: [r, g, b],
+        });
+    }
+
+    let outline_col = [0.6f32, 0.6, 0.6];
+    let corners = [
+        overlay_to_ndc(w, h, bar_x1, bar_top),
+        overlay_to_ndc(w, h, bar_x2, bar_top),
+        overlay_to_ndc(w, h, bar_x2, bar_bottom),
+        overlay_to_ndc(w, h, bar_x1, bar_bottom),
+    ];
+    for j in 0..4usize {
+        verts.push(OverlayVertex {
+            position: corners[j],
+            color: outline_col,
+        });
+        verts.push(OverlayVertex {
+            position: corners[(j + 1) % 4],
+            color: outline_col,
+        });
+    }
+}
+
 fn line_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
     wgpu::VertexBufferLayout {
         array_stride: std::mem::size_of::<LineVertex>() as u64,
@@ -892,6 +1002,7 @@ fn scatter_layout_rect(
 
 pub struct ScatterWidget {
     pipeline: wgpu::RenderPipeline,
+    clip_mask_pipeline: wgpu::RenderPipeline,
     vertex_buffer: Option<wgpu::Buffer>,
     vertex_cap: u64,
     uniform_buffer: wgpu::Buffer,
@@ -922,10 +1033,14 @@ pub struct ScatterWidget {
     pub pending_labels: Vec<ProjectedLabel>,
     /// Number of grid-axis labels at the front of `pending_labels`; overlay labels follow.
     pending_overlay_offset: usize,
+    reproject_overlay_scratch: Vec<ProjectedLabel>,
+    grid_label_rects_scratch: Vec<[f32; 4]>,
+    grid_title_projection_scratch: Vec<GridLabelProjection>,
     last_face_bits: u8,
     last_grid_bounds: Option<(glam::Vec3, glam::Vec3)>,
     pub(crate) grid_display_bounds: Option<(glam::Vec3, glam::Vec3)>,
     last_grid_ortho_scale: Option<(f32, f32)>,
+    last_grid_label_projection_key: Option<GridLabelProjectionCacheKey>,
     pub chrome_dirty: bool,
     // ── 2D screen-space overlays (legend, scalar bar, orientation axes) ──────
     overlay_pipeline: wgpu::RenderPipeline,
@@ -937,6 +1052,9 @@ pub struct ScatterWidget {
     bg_vertex_buffer: Option<wgpu::Buffer>,
     bg_vertex_cap: u64,
     bg_vertex_count: u32,
+    overlay_vertices_scratch: Vec<OverlayVertex>,
+    scalar_bar_vertex_cache_key: Option<ScalarBarVertexCacheKey>,
+    scalar_bar_vertex_cache: Vec<OverlayVertex>,
     // ── Multi-actor point layers ──────────────────────────────────────────────
     /// Additional independently rendered point actors (actors beyond the legacy single buffer).
     pub extra_actors: std::collections::HashMap<u32, PointActor>,
@@ -948,6 +1066,9 @@ pub struct ScatterWidget {
     /// Hash-sorted copy of the main vertex buffer for representative LOD sampling.
     lod_vertex_buffer: Option<wgpu::Buffer>,
     lod_vertex_cap: u64,
+    lod_sampled_scratch: Vec<PointInstance>,
+    lod_bucket_keys_scratch: Vec<u32>,
+    lod_occupied_scratch: Vec<bool>,
     // ── Interaction / picking mode ────────────────────────────────────────────
     pub picking_mode: PickingMode,
     // ── Selection rectangle overlay ──────────────────────────────────────────
@@ -1020,15 +1141,29 @@ fn lod_sort_key(p: &PointInstance) -> u32 {
     h ^ (h >> 16)
 }
 
-/// Allocate (or reuse) `lod_buf`/`lod_cap` and write a hash-sorted copy of `pts`.
+fn lod_sample_count(point_count: usize, lod_factor: u32) -> usize {
+    if point_count == 0 {
+        return 0;
+    }
+    let factor = (lod_factor as usize).max(1);
+    (point_count / factor).max(1).min(point_count)
+}
+
+/// Allocate (or reuse) `lod_buf`/`lod_cap` and write a hash-selected LOD sample of `pts`.
+/// The three scratch Vecs are reused across calls to avoid per-frame heap allocation.
 fn upload_lod_buffer(
     pts: &[PointInstance],
+    lod_factor: u32,
     lod_buf: &mut Option<wgpu::Buffer>,
     lod_cap: &mut u64,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
+    sampled_scratch: &mut Vec<PointInstance>,
+    bucket_keys_scratch: &mut Vec<u32>,
+    occupied_scratch: &mut Vec<bool>,
 ) {
-    let size = (pts.len() * std::mem::size_of::<PointInstance>()) as u64;
+    let sample_count = lod_sample_count(pts.len(), lod_factor);
+    let size = (sample_count * std::mem::size_of::<PointInstance>()) as u64;
     if size == 0 {
         return;
     }
@@ -1042,9 +1177,91 @@ fn upload_lod_buffer(
         }));
         *lod_cap = cap;
     }
-    let mut sorted: Vec<PointInstance> = pts.to_vec();
-    sorted.sort_unstable_by_key(|p| lod_sort_key(p));
-    queue.write_buffer(lod_buf.as_ref().unwrap(), 0, bytemuck::cast_slice(&sorted));
+    if sample_count >= pts.len() {
+        queue.write_buffer(lod_buf.as_ref().unwrap(), 0, bytemuck::cast_slice(pts));
+        return;
+    }
+
+    // Grow scratch buffers if needed (never shrink — capacity is reused on future calls).
+    if sampled_scratch.len() < sample_count {
+        sampled_scratch.resize(sample_count, PointInstance::zeroed());
+    }
+    if bucket_keys_scratch.len() < sample_count {
+        bucket_keys_scratch.resize(sample_count, u32::MAX);
+    }
+    // Always reset the first sample_count slots — old data is stale.
+    bucket_keys_scratch[..sample_count].fill(u32::MAX);
+    if occupied_scratch.len() < sample_count {
+        occupied_scratch.resize(sample_count, false);
+    }
+    occupied_scratch[..sample_count].fill(false);
+
+    let sampled = &mut sampled_scratch[..sample_count];
+    let bucket_keys = &mut bucket_keys_scratch[..sample_count];
+    let occupied = &mut occupied_scratch[..sample_count];
+
+    let mut occupied_count = 0usize;
+    for point in pts {
+        let key = lod_sort_key(point);
+        let bucket = ((key as u64 * sample_count as u64) >> 32) as usize;
+        if !occupied[bucket] {
+            occupied[bucket] = true;
+            occupied_count += 1;
+        }
+        if key < bucket_keys[bucket] {
+            bucket_keys[bucket] = key;
+            sampled[bucket] = *point;
+        }
+    }
+
+    if occupied_count < sample_count {
+        let stride = (pts.len() / sample_count).max(1);
+        let mut src = 0usize;
+        for (i, is_occupied) in occupied.iter().copied().enumerate() {
+            if is_occupied {
+                continue;
+            }
+            sampled[i] = pts[src.min(pts.len() - 1)];
+            src = (src + stride).min(pts.len() - 1);
+        }
+    }
+    queue.write_buffer(lod_buf.as_ref().unwrap(), 0, bytemuck::cast_slice(sampled));
+}
+
+fn stencil_face(
+    compare: wgpu::CompareFunction,
+    pass_op: wgpu::StencilOperation,
+) -> wgpu::StencilFaceState {
+    wgpu::StencilFaceState {
+        compare,
+        fail_op: wgpu::StencilOperation::Keep,
+        depth_fail_op: wgpu::StencilOperation::Keep,
+        pass_op,
+    }
+}
+
+fn scatter_scene_stencil_state() -> wgpu::StencilState {
+    wgpu::StencilState {
+        front: stencil_face(wgpu::CompareFunction::Equal, wgpu::StencilOperation::Keep),
+        back: stencil_face(wgpu::CompareFunction::Equal, wgpu::StencilOperation::Keep),
+        read_mask: 0xff,
+        write_mask: 0x00,
+    }
+}
+
+fn scatter_clip_mask_stencil_state() -> wgpu::StencilState {
+    wgpu::StencilState {
+        front: stencil_face(
+            wgpu::CompareFunction::Always,
+            wgpu::StencilOperation::Replace,
+        ),
+        back: stencil_face(
+            wgpu::CompareFunction::Always,
+            wgpu::StencilOperation::Replace,
+        ),
+        read_mask: 0xff,
+        write_mask: 0xff,
+    }
 }
 
 impl ScatterWidget {
@@ -1070,6 +1287,10 @@ impl ScatterWidget {
             label: Some("scatter-mesh"),
             source: wgpu::ShaderSource::Wgsl(include_str!("mesh.wgsl").into()),
         });
+        let rounded_mask_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("scatter-rounded-mask"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("rounded_mask.wgsl").into()),
+        });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("scatter-bgl"),
@@ -1092,22 +1313,57 @@ impl ScatterWidget {
         });
 
         let depth_stencil = wgpu::DepthStencilState {
-            format: wgpu::TextureFormat::Depth32Float,
+            format: crate::DEPTH_STENCIL_FORMAT,
             depth_write_enabled: Some(true),
             depth_compare: Some(wgpu::CompareFunction::Less),
-            stencil: wgpu::StencilState::default(),
+            stencil: scatter_scene_stencil_state(),
             bias: wgpu::DepthBiasState::default(),
         };
         let point_depth_stencil = wgpu::DepthStencilState {
-            format: wgpu::TextureFormat::Depth32Float,
+            format: crate::DEPTH_STENCIL_FORMAT,
             // Scatter point clouds are visually sampled markers, not opaque
             // surfaces. Writing every anti-aliased point sprite into depth makes
             // dense coils/clouds look like a screen-side LOD fade.
             depth_write_enabled: Some(false),
             depth_compare: Some(wgpu::CompareFunction::Less),
-            stencil: wgpu::StencilState::default(),
+            stencil: scatter_scene_stencil_state(),
             bias: wgpu::DepthBiasState::default(),
         };
+
+        let clip_mask_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("scatter-rounded-mask"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &rounded_mask_shader,
+                entry_point: Some("vs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &rounded_mask_shader,
+                entry_point: Some("fs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::empty(),
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: crate::DEPTH_STENCIL_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: scatter_clip_mask_stencil_state(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("scatter"),
@@ -1174,10 +1430,10 @@ impl ScatterWidget {
                 immediate_size: 0,
             });
         let overlay_depth_stencil = || wgpu::DepthStencilState {
-            format: wgpu::TextureFormat::Depth32Float,
+            format: crate::DEPTH_STENCIL_FORMAT,
             depth_write_enabled: Some(false),
             depth_compare: Some(wgpu::CompareFunction::Always),
-            stencil: wgpu::StencilState::default(),
+            stencil: scatter_scene_stencil_state(),
             bias: wgpu::DepthBiasState::default(),
         };
         let overlay_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -1249,10 +1505,10 @@ impl ScatterWidget {
             immediate_size: 0,
         });
         let mesh_depth_stencil = |depth_write_enabled: bool| wgpu::DepthStencilState {
-            format: wgpu::TextureFormat::Depth32Float,
+            format: crate::DEPTH_STENCIL_FORMAT,
             depth_write_enabled: Some(depth_write_enabled),
             depth_compare: Some(wgpu::CompareFunction::Less),
-            stencil: wgpu::StencilState::default(),
+            stencil: scatter_scene_stencil_state(),
             bias: wgpu::DepthBiasState::default(),
         };
         let mesh_blend = wgpu::BlendState {
@@ -1374,6 +1630,7 @@ impl ScatterWidget {
 
         Self {
             pipeline,
+            clip_mask_pipeline,
             vertex_buffer: None,
             vertex_cap: 0,
             uniform_buffer,
@@ -1398,10 +1655,14 @@ impl ScatterWidget {
             grid_labels: Vec::new(),
             pending_labels: Vec::new(),
             pending_overlay_offset: 0,
+            reproject_overlay_scratch: Vec::new(),
+            grid_label_rects_scratch: Vec::new(),
+            grid_title_projection_scratch: Vec::new(),
             last_face_bits: 0xFF,
             last_grid_bounds: None,
             grid_display_bounds: None,
             last_grid_ortho_scale: None,
+            last_grid_label_projection_key: None,
             chrome_dirty: false,
             overlay_pipeline,
             overlay_vertex_buffer: None,
@@ -1411,6 +1672,9 @@ impl ScatterWidget {
             bg_vertex_buffer: None,
             bg_vertex_cap: 0,
             bg_vertex_count: 0,
+            overlay_vertices_scratch: Vec::new(),
+            scalar_bar_vertex_cache_key: None,
+            scalar_bar_vertex_cache: Vec::new(),
             extra_actors: std::collections::HashMap::new(),
             lod_enabled: false,
             lod_threshold: 200_000,
@@ -1418,6 +1682,9 @@ impl ScatterWidget {
             lod_active: false,
             lod_vertex_buffer: None,
             lod_vertex_cap: 0,
+            lod_sampled_scratch: Vec::new(),
+            lod_bucket_keys_scratch: Vec::new(),
+            lod_occupied_scratch: Vec::new(),
             picking_mode: PickingMode::Point,
             selection_rect: None,
             selection_polygon: None,
@@ -1473,10 +1740,14 @@ impl ScatterWidget {
             let lod_t0 = Instant::now();
             upload_lod_buffer(
                 points,
+                self.lod_factor,
                 &mut self.lod_vertex_buffer,
                 &mut self.lod_vertex_cap,
                 device,
                 queue,
+                &mut self.lod_sampled_scratch,
+                &mut self.lod_bucket_keys_scratch,
+                &mut self.lod_occupied_scratch,
             );
             lod_t0.elapsed().as_secs_f64() * 1000.0
         } else {
@@ -1501,10 +1772,14 @@ impl ScatterWidget {
         if self.should_build_lod(self.point_count) {
             upload_lod_buffer(
                 primary_points,
+                self.lod_factor,
                 &mut self.lod_vertex_buffer,
                 &mut self.lod_vertex_cap,
                 device,
                 queue,
+                &mut self.lod_sampled_scratch,
+                &mut self.lod_bucket_keys_scratch,
+                &mut self.lod_occupied_scratch,
             );
         } else {
             self.lod_vertex_buffer = None;
@@ -1513,16 +1788,21 @@ impl ScatterWidget {
 
         let lod_enabled = self.lod_enabled;
         let lod_threshold = self.lod_threshold;
+        let lod_factor = self.lod_factor;
         for actor in self.extra_actors.values_mut() {
             let build_lod =
                 lod_enabled && actor.stream_mode.is_none() && actor.point_count > lod_threshold;
             if build_lod {
                 upload_lod_buffer(
                     &actor.points,
+                    lod_factor,
                     &mut actor.lod_vertex_buffer,
                     &mut actor.lod_vertex_cap,
                     device,
                     queue,
+                    &mut actor.lod_sampled_scratch,
+                    &mut actor.lod_bucket_keys_scratch,
+                    &mut actor.lod_occupied_scratch,
                 );
             } else if actor.stream_mode.is_none() {
                 actor.lod_vertex_buffer = None;
@@ -1614,10 +1894,7 @@ impl ScatterWidget {
     /// dimensions, otherwise a zero-width layout produces an extreme aspect
     /// ratio and an unusably distant camera.
     pub fn has_visible_viewport(&self) -> bool {
-        self.width > 1
-            && self.height > 1
-            && self.scissor_size[0] > 1
-            && self.scissor_size[1] > 1
+        self.width > 1 && self.height > 1 && self.scissor_size[0] > 1 && self.scissor_size[1] > 1
     }
 
     /// Restore the camera to its initial fit position (R / Home key).
@@ -1713,7 +1990,7 @@ impl ScatterWidget {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Depth32Float,
+                format: crate::DEPTH_STENCIL_FORMAT,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                 view_formats: &[],
             });
@@ -1787,7 +2064,10 @@ impl ScatterWidget {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
                     }),
-                    stencil_ops: None,
+                    stencil_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0),
+                        store: wgpu::StoreOp::Store,
+                    }),
                 }),
                 occlusion_query_set: None,
                 timestamp_writes: None,
@@ -1895,6 +2175,24 @@ impl ScatterWidget {
         self.chrome_dirty = true;
     }
 
+    fn grid_label_projection_key(&self) -> Option<GridLabelProjectionCacheKey> {
+        if self.width == 0
+            || self.height == 0
+            || self.scissor_size[0] == 0
+            || self.scissor_size[1] == 0
+        {
+            return None;
+        }
+        Some(GridLabelProjectionCacheKey {
+            view_proj: self.camera.view_proj(),
+            width: self.width,
+            height: self.height,
+            offset: self.offset,
+            scissor_offset: self.scissor_offset,
+            scissor_size: self.scissor_size,
+        })
+    }
+
     /// Rebuild grid geometry if bounds, camera face, or chrome changed.
     /// Call after any operation that could change the visible grid.
     pub fn refresh_grid(
@@ -1937,7 +2235,9 @@ impl ScatterWidget {
             && self.last_grid_bounds == bounds_key
             && self.last_grid_ortho_scale == ortho_scale
         {
-            self.reproject_grid_labels();
+            if self.last_grid_label_projection_key != self.grid_label_projection_key() {
+                self.reproject_grid_labels();
+            }
             return; // nothing changed
         }
 
@@ -1987,15 +2287,17 @@ impl ScatterWidget {
     }
 
     fn reproject_grid_labels(&mut self) {
-        let overlay_labels = if self.pending_overlay_offset < self.pending_labels.len() {
-            self.pending_labels.split_off(self.pending_overlay_offset)
-        } else {
-            Vec::new()
-        };
+        let mut overlay_labels = std::mem::take(&mut self.reproject_overlay_scratch);
+        overlay_labels.clear();
+        if self.pending_overlay_offset < self.pending_labels.len() {
+            overlay_labels.extend(self.pending_labels.drain(self.pending_overlay_offset..));
+        }
         self.pending_labels.clear();
         self.pending_overlay_offset = 0;
         if self.width == 0 || self.height == 0 {
-            self.pending_labels.extend(overlay_labels);
+            self.pending_labels.extend(overlay_labels.drain(..));
+            self.reproject_overlay_scratch = overlay_labels;
+            self.last_grid_label_projection_key = None;
             return;
         }
         let vp = self.camera.view_proj();
@@ -2006,24 +2308,19 @@ impl ScatterWidget {
         let sy0 = self.scissor_offset[1] as f32;
         let sx1 = sx0 + self.scissor_size[0] as f32;
         let sy1 = sy0 + self.scissor_size[1] as f32;
+        let offset = self.offset;
         const MIN_TICK_LABEL_PUSH_PX: f32 = 16.0;
 
-        struct GridLabelProjection {
-            local_x: f32,
-            local_y: f32,
-            text: String,
-            is_title: bool,
-            push_dir: glam::Vec2,
-        }
-
-        let visible_in_scissor = |local_x: f32, local_y: f32| -> bool {
-            let screen_x = self.offset[0] + local_x;
-            let screen_y = self.offset[1] + local_y;
+        let visible_in_scissor = move |local_x: f32, local_y: f32| -> bool {
+            let screen_x = offset[0] + local_x;
+            let screen_y = offset[1] + local_y;
             screen_x >= sx0 && screen_x <= sx1 && screen_y >= sy0 && screen_y <= sy1
         };
 
-        let mut tick_label_rects: Vec<[f32; 4]> = Vec::new();
-        let mut title_projections: Vec<GridLabelProjection> = Vec::new();
+        let mut tick_label_rects = std::mem::take(&mut self.grid_label_rects_scratch);
+        tick_label_rects.clear();
+        let mut title_projections = std::mem::take(&mut self.grid_title_projection_scratch);
+        title_projections.clear();
 
         for anchor in &self.grid_labels {
             let p = anchor.world_pos;
@@ -2096,13 +2393,13 @@ impl ScatterWidget {
                     is_title: false,
                     color: None,
                     font_size: None,
-                    anchor: "top-left".to_string(),
+                    anchor: "top-left".into(),
                 });
             }
         }
 
         let mut occupied_rects = tick_label_rects;
-        for title in title_projections {
+        for title in title_projections.drain(..) {
             let (local_x, local_y) = push_scatter_title_away_from_rects(
                 title.local_x,
                 title.local_y,
@@ -2121,12 +2418,18 @@ impl ScatterWidget {
                 is_title: title.is_title,
                 color: None,
                 font_size: None,
-                anchor: "top-left".to_string(),
+                anchor: "top-left".into(),
             });
         }
         // Mark where grid-axis labels end; refresh_overlays() will truncate here before appending.
         self.pending_overlay_offset = self.pending_labels.len();
-        self.pending_labels.extend(overlay_labels);
+        self.pending_labels.extend(overlay_labels.drain(..));
+        occupied_rects.clear();
+        title_projections.clear();
+        self.grid_label_rects_scratch = occupied_rects;
+        self.grid_title_projection_scratch = title_projections;
+        self.reproject_overlay_scratch = overlay_labels;
+        self.last_grid_label_projection_key = self.grid_label_projection_key();
     }
 
     /// Rebuild screen-space overlay geometry (orientation axes, legend swatches,
@@ -2209,14 +2512,11 @@ impl ScatterWidget {
             return;
         }
 
-        let mut verts: Vec<OverlayVertex> = Vec::new();
+        let mut verts = std::mem::take(&mut self.overlay_vertices_scratch);
+        verts.clear();
 
         // Helper: convert viewport-local px coords → NDC
-        let to_ndc = |px: f32, py: f32| -> [f32; 2] {
-            let nx = (px / w) * 2.0 - 1.0;
-            let ny = 1.0 - (py / h) * 2.0;
-            [nx, ny]
-        };
+        let to_ndc = |px: f32, py: f32| -> [f32; 2] { overlay_to_ndc(w, h, px, py) };
 
         // ── Orientation axes ─────────────────────────────────────────────────
         if has_orient {
@@ -2284,7 +2584,7 @@ impl ScatterWidget {
                     is_title: true,
                     color: None,
                     font_size: None,
-                    anchor: "left".to_string(),
+                    anchor: "left".into(),
                 });
             }
             let entries_y = legend_y + title_h;
@@ -2320,65 +2620,41 @@ impl ScatterWidget {
                     is_title: false,
                     color: None,
                     font_size: None,
-                    anchor: "left".to_string(),
+                    anchor: "left".into(),
                 });
             }
         }
 
         // ── Scalar bar ───────────────────────────────────────────────────────
         if has_scalar {
-            let sb = &self.chrome.scalar_bar;
             let bar_w: f32 = 16.0;
             let bar_h: f32 = (h * 0.45).min(220.0).max(60.0);
             let margin_r: f32 = 52.0;
             let bar_top: f32 = 32.0;
-            let bar_bottom: f32 = bar_top + bar_h;
             let bar_x1: f32 = w - margin_r - bar_w;
             let bar_x2: f32 = w - margin_r;
-            let n_strips: usize = 64;
-            let cmap = colormap::resolve(&sb.colormap);
-            for i in 0..n_strips {
-                let t0 = i as f32 / n_strips as f32;
-                let t1 = (i + 1) as f32 / n_strips as f32;
-                let t_mid = (t0 + t1) * 0.5;
-                let [r, g, b] = colormap::sample(cmap, 1.0 - t_mid);
-                let y0 = bar_top + t0 * bar_h;
-                let y1 = bar_top + t1 * bar_h;
-                verts.push(OverlayVertex {
-                    position: to_ndc(bar_x1, y0),
-                    color: [r, g, b],
-                });
-                verts.push(OverlayVertex {
-                    position: to_ndc(bar_x2, y0),
-                    color: [r, g, b],
-                });
-                verts.push(OverlayVertex {
-                    position: to_ndc(bar_x1, y1),
-                    color: [r, g, b],
-                });
-                verts.push(OverlayVertex {
-                    position: to_ndc(bar_x2, y1),
-                    color: [r, g, b],
+            let scalar_cache_matches =
+                self.scalar_bar_vertex_cache_key
+                    .as_ref()
+                    .is_some_and(|key| {
+                        key.width == self.width
+                            && key.height == self.height
+                            && key.colormap == self.chrome.scalar_bar.colormap
+                    });
+            if !scalar_cache_matches {
+                let colormap = self.chrome.scalar_bar.colormap.clone();
+                let mut cached = std::mem::take(&mut self.scalar_bar_vertex_cache);
+                cached.clear();
+                push_scalar_bar_vertices(w, h, &colormap, &mut cached);
+                self.scalar_bar_vertex_cache = cached;
+                self.scalar_bar_vertex_cache_key = Some(ScalarBarVertexCacheKey {
+                    width: self.width,
+                    height: self.height,
+                    colormap,
                 });
             }
-            // Outline
-            let outline_col = [0.6f32, 0.6, 0.6];
-            let corners = [
-                to_ndc(bar_x1, bar_top),
-                to_ndc(bar_x2, bar_top),
-                to_ndc(bar_x2, bar_bottom),
-                to_ndc(bar_x1, bar_bottom),
-            ];
-            for j in 0..4usize {
-                verts.push(OverlayVertex {
-                    position: corners[j],
-                    color: outline_col,
-                });
-                verts.push(OverlayVertex {
-                    position: corners[(j + 1) % 4],
-                    color: outline_col,
-                });
-            }
+            let sb = &self.chrome.scalar_bar;
+            verts.extend_from_slice(&self.scalar_bar_vertex_cache);
             // Tick labels: up to 6 ticks (top + intermediates + bottom).
             // Minimum pixel gap between labels; skip intermediates when bar is too short.
             let min_label_gap_px: f32 = 18.0;
@@ -2404,7 +2680,7 @@ impl ScatterWidget {
                     is_title: false,
                     color: None,
                     font_size: None,
-                    anchor: "top-left".to_string(),
+                    anchor: "top-left".into(),
                 });
             }
             if let Some(title) = &sb.title {
@@ -2415,7 +2691,7 @@ impl ScatterWidget {
                     is_title: true,
                     color: None,
                     font_size: None,
-                    anchor: "top-left".to_string(),
+                    anchor: "top-left".into(),
                 });
             }
         }
@@ -2461,6 +2737,8 @@ impl ScatterWidget {
         }
 
         self.upload_overlay_vertices(&verts, device, queue);
+        verts.clear();
+        self.overlay_vertices_scratch = verts;
 
         // Project world-space user labels to screen space and append to pending_labels.
         if !self.user_labels.is_empty() && self.width > 0 && self.height > 0 {
@@ -2498,7 +2776,7 @@ impl ScatterWidget {
                     is_title: false,
                     color: Some(label.color),
                     font_size: Some(label.size),
-                    anchor: label.anchor.clone(),
+                    anchor: label.anchor.clone().into(),
                 });
             }
         }
@@ -2717,7 +2995,7 @@ impl ScatterWidget {
             .entry(id)
             .or_insert_with(|| PointActor::new(id));
         let build_lod = self.lod_enabled && (pts.len() as u32) > self.lod_threshold;
-        actor.upload(&pts, build_lod, device, queue);
+        actor.upload(&pts, build_lod, self.lod_factor, device, queue);
         actor.points = pts;
         actor.pick_cache = None; // belt-and-suspenders: upload() already clears, but points just changed too
         actor.data_min = mn;
@@ -2736,7 +3014,7 @@ impl ScatterWidget {
         if let Some(actor) = self.extra_actors.get_mut(&id) {
             let (mn, mx) = PointActor::compute_bounds(&pts);
             let build_lod = self.lod_enabled && (pts.len() as u32) > self.lod_threshold;
-            actor.upload(&pts, build_lod, device, queue);
+            actor.upload(&pts, build_lod, self.lod_factor, device, queue);
             actor.points = pts;
             actor.data_min = mn;
             actor.data_max = mx;
@@ -3154,6 +3432,10 @@ impl ScatterWidget {
             self.scissor_size[0],
             self.scissor_size[1],
         );
+        pass.set_stencil_reference(1);
+        pass.set_pipeline(&self.clip_mask_pipeline);
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.draw(0..4, 0..1);
 
         // Background fill drawn first so everything else renders on top.
         if has_bg {
@@ -3193,9 +3475,7 @@ impl ScatterWidget {
             if let Some(vb) = draw_vb {
                 pass.set_vertex_buffer(0, vb.slice(..));
                 let draw_count = if is_lod {
-                    (self.point_count / self.lod_factor)
-                        .max(1)
-                        .min(self.point_count)
+                    lod_sample_count(self.point_count as usize, self.lod_factor) as u32
                 } else {
                     self.point_count
                 };
@@ -3221,9 +3501,7 @@ impl ScatterWidget {
                     pass.set_bind_group(0, &self.bind_group, &[]);
                     pass.set_vertex_buffer(0, vb.slice(..));
                     let draw_count = if is_lod {
-                        (actor.point_count / self.lod_factor)
-                            .max(1)
-                            .min(actor.point_count)
+                        lod_sample_count(actor.point_count as usize, self.lod_factor) as u32
                     } else {
                         actor.point_count
                     };

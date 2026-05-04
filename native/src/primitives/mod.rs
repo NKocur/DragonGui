@@ -245,7 +245,7 @@ impl PrimitivesRenderer {
                 ..Default::default()
             },
             depth_stencil: Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
+                format: crate::DEPTH_STENCIL_FORMAT,
                 depth_write_enabled: Some(false),
                 depth_compare: Some(wgpu::CompareFunction::Always),
                 stencil: wgpu::StencilState::default(),
@@ -3161,6 +3161,220 @@ fn emit_rects_inner(
                 }
             }
 
+            WidgetKind::Led => {
+                let state_off = led_state_is_off(node);
+                let base_color = node
+                    .props
+                    .led_color
+                    .as_ref()
+                    .map(|color| color.resolve(theme))
+                    .unwrap_or_else(|| led_default_color(node, theme));
+                let default_fill = styled_bg.unwrap_or(if state_off {
+                    mix(base_color, theme.background, 0.28)
+                } else {
+                    base_color
+                });
+
+                let dot_part_visual = part_visual_for(node, state, "dot");
+                let dot_visual = visual.as_ref().clone().merged(&dot_part_visual);
+                let dot_style = node.style.parts.parts.get("dot");
+                let fallback_side = w.min(h).max(1.0);
+                let dot_w = dot_style
+                    .and_then(|style| style.layout.width)
+                    .map(|width| width.max(1.0) * sf)
+                    .unwrap_or(fallback_side)
+                    .min(w.max(1.0));
+                let dot_h = dot_style
+                    .and_then(|style| style.layout.height)
+                    .map(|height| height.max(1.0) * sf)
+                    .unwrap_or(dot_w)
+                    .min(h.max(1.0));
+                let dot_x = x + (w - dot_w) * 0.5;
+                let dot_y = y + (h - dot_h) * 0.5;
+                let dot_rect = [dot_x, dot_y, dot_w, dot_h];
+                let dot_radius = dot_w.min(dot_h) * 0.5;
+                let fill_solid = resolve_color(&dot_part_visual.background, theme)
+                    .map(|color| apply_opacity(color, dot_part_visual.opacity.or(visual.opacity)))
+                    .unwrap_or_else(|| {
+                        apply_opacity(default_fill, dot_part_visual.opacity.or(visual.opacity))
+                    });
+
+                if !state_off && fill_solid[3] > 0.001 {
+                    let glow_visual = part_visual_for(node, state, "glow");
+                    let glow_style = node.style.parts.parts.get("glow");
+                    let glow_pad = fallback_side * 0.22;
+                    let glow_w = glow_style
+                        .and_then(|style| style.layout.width)
+                        .map(|width| width.max(1.0) * sf)
+                        .unwrap_or(dot_w + glow_pad * 2.0)
+                        .max(1.0);
+                    let glow_h = glow_style
+                        .and_then(|style| style.layout.height)
+                        .map(|height| height.max(1.0) * sf)
+                        .unwrap_or(dot_h + glow_pad * 2.0)
+                        .max(1.0);
+                    let glow_rect = [
+                        dot_x + (dot_w - glow_w) * 0.5,
+                        dot_y + (dot_h - glow_h) * 0.5,
+                        glow_w,
+                        glow_h,
+                    ];
+                    let glow_start = out.len();
+                    let glow_color = resolve_color(&glow_visual.background, theme)
+                        .or_else(|| resolve_color(&glow_visual.foreground, theme))
+                        .unwrap_or(fill_solid);
+                    let glow_alpha =
+                        glow_visual.opacity.unwrap_or(0.16) * visual.opacity.unwrap_or(1.0);
+                    let glow_color = with_alpha(glow_color, glow_color[3] * glow_alpha);
+                    let glow_radii =
+                        visual_radii_with_fallback(&glow_visual, [glow_w.min(glow_h) * 0.5; 4], sf);
+                    if glow_visual.box_shadows.is_some() {
+                        emit_box_shadows(
+                            out,
+                            glow_rect,
+                            glow_radii,
+                            &glow_visual,
+                            theme,
+                            sf,
+                            paint_clip,
+                        );
+                        if glow_visual.background.is_some()
+                            || glow_visual.background_paint.is_some()
+                        {
+                            let glow_fill =
+                                resolve_part_background_paint(&glow_visual, theme, glow_color);
+                            emit_paint_rect_radii(out, glow_rect, glow_fill, glow_radii);
+                        }
+                    } else if glow_color[3] > 0.001 {
+                        let glow_cover = [glow_rect[0], glow_rect[1], glow_rect[2], glow_rect[3]];
+                        if let Some(local_clip) = local_clip_for_rect(glow_cover, paint_clip) {
+                            out.push(inst_shadow_clipped(
+                                glow_cover,
+                                glow_color,
+                                glow_radii,
+                                4.0 * sf,
+                                local_clip,
+                            ));
+                        }
+                    }
+                    apply_transform_to_instances(
+                        &mut out[glow_start..],
+                        glow_visual.transform,
+                        sf,
+                        [
+                            glow_rect[0] + glow_rect[2] * 0.5,
+                            glow_rect[1] + glow_rect[3] * 0.5,
+                        ],
+                    );
+                }
+
+                let dot_start = out.len();
+                emit_box_shadows(
+                    out,
+                    dot_rect,
+                    visual_radii_with_fallback(&dot_part_visual, [dot_radius; 4], sf),
+                    &dot_part_visual,
+                    theme,
+                    sf,
+                    paint_clip,
+                );
+                let fill = if dot_visual.background_paint.is_some() {
+                    resolve_background_paint(&dot_visual, theme, fill_solid)
+                } else {
+                    FillPaint::Solid(fill_solid)
+                };
+                let border_color = resolve_color(&dot_part_visual.border_color, theme)
+                    .map(|color| apply_opacity(color, dot_part_visual.opacity.or(visual.opacity)))
+                    .or(styled_border)
+                    .unwrap_or_else(|| {
+                        if state_off {
+                            mix(theme.border, fill_solid, 0.35)
+                        } else {
+                            darken(fill_solid, 0.42)
+                        }
+                    });
+                let dot_border_w = dot_part_visual
+                    .border_width
+                    .map(|width| width.max(0.0) * sf)
+                    .or_else(|| visual.border_width.map(|width| width.max(0.0) * sf))
+                    .unwrap_or(border_w)
+                    .min(dot_w.min(dot_h) * 0.35);
+                let dot_radii = visual_radii_with_fallback(&dot_visual, [dot_radius; 4], sf);
+                emit_bordered_paint_rect_radii(
+                    out,
+                    dot_rect,
+                    border_color,
+                    fill,
+                    dot_radii,
+                    dot_border_w,
+                );
+                apply_transform_to_instances(
+                    &mut out[dot_start..],
+                    dot_part_visual.transform,
+                    sf,
+                    [dot_x + dot_w * 0.5, dot_y + dot_h * 0.5],
+                );
+
+                if !state_off && fallback_side >= 8.0 {
+                    let highlight_visual = part_visual_for(node, state, "highlight");
+                    let highlight_style = node.style.parts.parts.get("highlight");
+                    let highlight_w = highlight_style
+                        .and_then(|style| style.layout.width)
+                        .map(|width| width.max(1.0) * sf)
+                        .unwrap_or(dot_w * 0.34)
+                        .min(dot_w);
+                    let highlight_h = highlight_style
+                        .and_then(|style| style.layout.height)
+                        .map(|height| height.max(1.0) * sf)
+                        .unwrap_or(dot_h * 0.22)
+                        .min(dot_h);
+                    let highlight = [
+                        dot_x + dot_w * 0.24,
+                        dot_y + dot_h * 0.18,
+                        highlight_w,
+                        highlight_h,
+                    ];
+                    let highlight_color = resolve_color(&highlight_visual.background, theme)
+                        .or_else(|| resolve_color(&highlight_visual.foreground, theme))
+                        .map(|color| {
+                            apply_opacity(color, highlight_visual.opacity.or(visual.opacity))
+                        })
+                        .unwrap_or_else(|| {
+                            apply_opacity(
+                                [1.0, 1.0, 1.0, 0.34],
+                                highlight_visual.opacity.or(visual.opacity),
+                            )
+                        });
+                    if highlight_color[3] > 0.001 {
+                        let highlight_start = out.len();
+                        let highlight_radii = visual_radii_with_fallback(
+                            &highlight_visual,
+                            [highlight_h * 0.5; 4],
+                            sf,
+                        );
+                        emit_paint_rect_radii(
+                            out,
+                            highlight,
+                            resolve_part_background_paint(
+                                &highlight_visual,
+                                theme,
+                                highlight_color,
+                            ),
+                            highlight_radii,
+                        );
+                        apply_transform_to_instances(
+                            &mut out[highlight_start..],
+                            highlight_visual.transform,
+                            sf,
+                            [
+                                highlight[0] + highlight[2] * 0.5,
+                                highlight[1] + highlight[3] * 0.5,
+                            ],
+                        );
+                    }
+                }
+            }
+
             WidgetKind::Tab => {
                 let active = state.is_active_tab(&node.id);
                 let tab_visual = part_visual_for(node, state, "tab");
@@ -4266,6 +4480,27 @@ fn standalone_badge_fill(node: &WidgetNode, theme: &Theme) -> [f32; 4] {
         mix(theme.surface_alt, semantic, 0.22)
     } else {
         semantic
+    }
+}
+
+fn led_state_is_off(node: &WidgetNode) -> bool {
+    matches!(
+        node.props
+            .led_state
+            .as_deref()
+            .unwrap_or("off")
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "off" | "false" | "0" | "inactive" | "disabled"
+    )
+}
+
+fn led_default_color(node: &WidgetNode, theme: &Theme) -> [f32; 4] {
+    if led_state_is_off(node) {
+        theme.disabled
+    } else {
+        theme.success
     }
 }
 
@@ -7771,6 +8006,96 @@ mod tests {
         assert!(out
             .iter()
             .any(|inst| inst.color == mix(theme.surface_alt, theme.accent, 0.14)));
+    }
+
+    #[test]
+    fn led_internal_parts_customize_dot_glow_and_highlight() {
+        let mut led = node("status", WidgetKind::Led);
+        led.props.led_state = Some("on".to_string());
+        led.style.parts.parts.insert(
+            "dot".to_string(),
+            PartStyle {
+                layout: PartLayoutStyle {
+                    width: Some(12.0),
+                    height: Some(10.0),
+                    ..Default::default()
+                },
+                visual: VisualStyle {
+                    background: Some(rgba(0.10, 0.20, 0.30)),
+                    border_width: Some(0.0),
+                    border_radius: Some(2.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        led.style.parts.parts.insert(
+            "glow".to_string(),
+            PartStyle {
+                layout: PartLayoutStyle {
+                    width: Some(18.0),
+                    height: Some(18.0),
+                    ..Default::default()
+                },
+                visual: VisualStyle {
+                    background: Some(rgba(0.40, 0.50, 0.60)),
+                    opacity: Some(0.25),
+                    box_shadows: Some(Vec::new()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        led.style.parts.parts.insert(
+            "highlight".to_string(),
+            PartStyle {
+                layout: PartLayoutStyle {
+                    width: Some(4.0),
+                    height: Some(3.0),
+                    ..Default::default()
+                },
+                visual: VisualStyle {
+                    background: Some(rgba(0.70, 0.80, 0.90)),
+                    opacity: Some(0.5),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "status".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 20.0,
+                h: 20.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &led,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        assert!(has_rect(
+            &out,
+            [0.40, 0.50, 0.60, 0.25],
+            [1.0, 1.0, 18.0, 18.0]
+        ));
+        assert!(has_rect(
+            &out,
+            [0.10, 0.20, 0.30, 1.0],
+            [4.0, 5.0, 12.0, 10.0]
+        ));
+        assert!(out.iter().any(|inst| inst.color == [0.70, 0.80, 0.90, 0.5]));
     }
 
     #[test]

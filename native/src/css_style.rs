@@ -2790,6 +2790,7 @@ pub fn widget_kind_from_css_type(name: &str) -> Option<WidgetKind> {
         "Modal" => Some(WidgetKind::Modal),
         "Badge" => Some(WidgetKind::Badge),
         "Tag" => Some(WidgetKind::Tag),
+        "LED" | "Led" => Some(WidgetKind::Led),
         "MenuBar" => Some(WidgetKind::MenuBar),
         "Menu" => Some(WidgetKind::Menu),
         "MenuItem" => Some(WidgetKind::MenuItem),
@@ -2834,6 +2835,7 @@ pub fn css_type_name(kind: WidgetKind) -> Option<&'static str> {
         WidgetKind::Modal => Some("Modal"),
         WidgetKind::Badge => Some("Badge"),
         WidgetKind::Tag => Some("Tag"),
+        WidgetKind::Led => Some("LED"),
         WidgetKind::MenuBar => Some("MenuBar"),
         WidgetKind::Menu => Some("Menu"),
         WidgetKind::MenuItem => Some("MenuItem"),
@@ -2985,8 +2987,10 @@ fn node_style_attributes(node: &WidgetNode) -> Vec<StyleAttribute> {
     push_attr_opt(&mut attributes, "tooltip", props.tooltip.as_deref());
     push_attr_opt(&mut attributes, "path", props.image_path.as_deref());
     push_attr_opt(&mut attributes, "fit", props.image_fit.as_deref());
+    push_attr_opt(&mut attributes, "state", props.led_state.as_deref());
     push_attr_number_opt(&mut attributes, "width", props.fixed_width);
     push_attr_number_opt(&mut attributes, "height", props.fixed_height);
+    push_attr_number_opt(&mut attributes, "size", props.led_size);
     push_attr_number_opt(&mut attributes, "min", props.min);
     push_attr_number_opt(&mut attributes, "max", props.max);
     push_attr_number_opt(&mut attributes, "step", props.step);
@@ -3056,6 +3060,18 @@ fn node_css_classes(node: &WidgetNode) -> Vec<&str> {
         {
             if !classes.iter().any(|class| *class == level) {
                 classes.push(level);
+            }
+        }
+    }
+    if node.kind == WidgetKind::Led {
+        if let Some(state) = node
+            .props
+            .led_state
+            .as_deref()
+            .filter(|state| !state.is_empty())
+        {
+            if !classes.iter().any(|class| *class == state) {
+                classes.push(state);
             }
         }
     }
@@ -3725,6 +3741,7 @@ fn widget_kind_supports_part(kind: WidgetKind, part: &str) -> bool {
             "field" | "chevron" | "menu" | "item" | "item-selected" | "item-hover"
         ),
         WidgetKind::Checkbox => matches!(part, "row" | "box" | "indicator" | "label"),
+        WidgetKind::Led => matches!(part, "dot" | "glow" | "highlight"),
         WidgetKind::Slider => matches!(part, "track" | "fill" | "thumb"),
         WidgetKind::ProgressBar => matches!(part, "track" | "fill" | "label"),
         WidgetKind::Tabs => matches!(part, "header"),
@@ -17039,6 +17056,75 @@ mod tests {
         assert_eq!(fill.layout.height, Some(8.0));
         assert_eq!(label.text.color, Some(ColorRef::Token("text".to_string())));
         assert_eq!(label.text.font_weight, Some(700));
+    }
+
+    #[test]
+    fn stylesheet_cascade_applies_led_part_styles() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "status",
+                "type": "led",
+                "props": {"state": "busy", "size": 16}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                LED {
+                    width: 20px;
+                    height: 20px;
+                    border-radius: 3px;
+                }
+                LED.busy::dot {
+                    background: warning;
+                    border-color: #112233;
+                    border-width: 2px;
+                    border-radius: 4px;
+                }
+                LED::glow {
+                    width: 28px;
+                    height: 28px;
+                    background: warning;
+                    opacity: 0.22;
+                    box-shadow: none;
+                }
+                LED::highlight {
+                    width: 6px;
+                    height: 4px;
+                    background: rgba(255, 255, 255, 0.6);
+                    opacity: 0.5;
+                }
+                "#,
+            )
+            .unwrap();
+
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+        let led = &tree.children[0];
+        let dot = led.style.parts.parts.get("dot").unwrap();
+        let glow = led.style.parts.parts.get("glow").unwrap();
+        let highlight = led.style.parts.parts.get("highlight").unwrap();
+
+        assert_eq!(led.style.layout.width, Some(20.0));
+        assert_eq!(led.style.layout.height, Some(20.0));
+        assert_eq!(led.style.visual.border_radius, Some(3.0));
+        assert_eq!(
+            dot.visual.background,
+            Some(ColorRef::Token("warning".to_string()))
+        );
+        assert_eq!(dot.visual.border_width, Some(2.0));
+        assert_eq!(dot.visual.border_radius, Some(4.0));
+        assert_eq!(glow.layout.width, Some(28.0));
+        assert_eq!(glow.layout.height, Some(28.0));
+        assert_eq!(glow.visual.opacity, Some(0.22));
+        assert_eq!(glow.visual.box_shadows, Some(Vec::new()));
+        assert_eq!(highlight.layout.width, Some(6.0));
+        assert_eq!(highlight.layout.height, Some(4.0));
+        assert_eq!(highlight.visual.opacity, Some(0.5));
     }
 
     #[test]

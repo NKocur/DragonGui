@@ -267,7 +267,7 @@ def _diff_props(old: VNode, new: VNode, path: tuple[str, ...]) -> list[Patch]:
     old_props = old.props
     new_props = new.props
     for prop in old_props:
-        old_value = old_props.get(prop, _MISSING)
+        old_value = old_props[prop]
         new_value = new_props.get(prop, _MISSING)
         if new_value is _MISSING:
             patches.append(
@@ -310,7 +310,7 @@ def _diff_mapping(
 ) -> dict[str, object | None]:
     changes: dict[str, object | None] = {}
     for key in old:
-        old_value = old.get(key, _MISSING)
+        old_value = old[key]
         new_value = new.get(key, _MISSING)
         if new_value is _MISSING:
             changes[key] = None

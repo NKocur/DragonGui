@@ -17,6 +17,9 @@ pub(crate) mod text;
 pub(crate) mod theme;
 pub(crate) mod toast;
 
+pub(crate) const DEPTH_STENCIL_FORMAT: wgpu::TextureFormat =
+    wgpu::TextureFormat::Depth24PlusStencil8;
+
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict};
 use rfd::FileDialog;

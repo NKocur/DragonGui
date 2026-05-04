@@ -2,7 +2,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use crate::css_style::{StylesheetOrigin, StylesheetStore};
-use crate::style::NodeStyle;
+use crate::style::{ColorRef, NodeStyle};
 use crate::theme::{parse_web_color, Theme};
 
 // ---------------------------------------------------------------------------
@@ -104,6 +104,35 @@ fn parse_theme_color(v: Option<&serde_json::Value>) -> Option<[f32; 4]> {
     parse_web_color(v?.as_str()?)
 }
 
+fn parse_color_ref(v: Option<&serde_json::Value>) -> Option<ColorRef> {
+    match v? {
+        Value::String(s) => parse_web_color(s)
+            .map(ColorRef::Rgba)
+            .or_else(|| Some(ColorRef::Token(s.trim().to_string()))),
+        Value::Array(items) if items.len() == 3 || items.len() == 4 => {
+            let r = items.first()?.as_f64()? as f32;
+            let g = items.get(1)?.as_f64()? as f32;
+            let b = items.get(2)?.as_f64()? as f32;
+            let a = items.get(3).and_then(Value::as_f64).unwrap_or(1.0) as f32;
+            Some(ColorRef::Rgba([
+                normalize_color_channel(r),
+                normalize_color_channel(g),
+                normalize_color_channel(b),
+                a.clamp(0.0, 1.0),
+            ]))
+        }
+        _ => None,
+    }
+}
+
+fn normalize_color_channel(value: f32) -> f32 {
+    if value > 1.0 {
+        (value / 255.0).clamp(0.0, 1.0)
+    } else {
+        value.clamp(0.0, 1.0)
+    }
+}
+
 pub fn parse_stylesheets_from_doc(doc: &serde_json::Value) -> StylesheetStore {
     let mut store = StylesheetStore::default();
     let Some(stylesheets) = doc.get("stylesheets").and_then(|value| value.as_array()) else {
@@ -156,6 +185,7 @@ pub enum WidgetKind {
     Modal,
     Badge,
     Tag,
+    Led,
     Button,
     Checkbox,
     Dropdown,
@@ -200,6 +230,7 @@ impl WidgetKind {
             "modal" => WidgetKind::Modal,
             "badge" => WidgetKind::Badge,
             "tag" => WidgetKind::Tag,
+            "led" => WidgetKind::Led,
             "button" => WidgetKind::Button,
             "checkbox" => WidgetKind::Checkbox,
             "dropdown" => WidgetKind::Dropdown,
@@ -307,6 +338,10 @@ pub struct NodeProps {
     pub image_path: Option<String>,
     /// Image fit mode: contain, cover, or stretch.
     pub image_fit: Option<String>,
+    /// LED status state name and resolved indicator color.
+    pub led_state: Option<String>,
+    pub led_color: Option<ColorRef>,
+    pub led_size: Option<f32>,
     /// Scatter3D colormap name.
     pub scatter_colormap: Option<String>,
     /// Scatter3D base64-encoded startup payload.
@@ -553,6 +588,17 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         .and_then(|v| v.as_str())
         .filter(|v| !v.is_empty())
         .map(|v| v.to_ascii_lowercase());
+    let led_state = props
+        .get("state")
+        .and_then(|v| v.as_str())
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_string());
+    let led_color = parse_color_ref(props.get("color"));
+    let led_size = props
+        .get("size")
+        .and_then(|v| v.as_f64())
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .map(|v| v as f32);
     let (scatter_colormap, scatter_data_b64, scatter_data_format) =
         if matches!(kind, WidgetKind::Scatter3D) {
             let cmap = props
@@ -847,6 +893,9 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         tooltip,
         image_path,
         image_fit,
+        led_state,
+        led_color,
+        led_size,
         scatter_colormap,
         scatter_data_b64,
         scatter_data_format,
@@ -977,6 +1026,41 @@ mod tests {
         assert_eq!(image.props.image_fit.as_deref(), Some("cover"));
         assert_eq!(image.props.fixed_width, Some(160.0));
         assert_eq!(image.props.fixed_height, Some(90.0));
+    }
+
+    #[test]
+    fn parse_led_widget_props() {
+        let doc = json!({
+            "window": {
+                "id": "window",
+                "type": "window",
+                "props": {"title": "LED", "width": 320, "height": 240},
+                "children": [{
+                    "id": "status",
+                    "type": "led",
+                    "props": {
+                        "state": "busy",
+                        "color": "#ffcc33",
+                        "size": 18
+                    }
+                }]
+            }
+        });
+
+        let tree = parse_widget_tree(&doc).unwrap();
+        let led = &tree.children[0];
+
+        assert_eq!(led.kind, WidgetKind::Led);
+        assert_eq!(led.props.led_state.as_deref(), Some("busy"));
+        assert_eq!(led.props.led_size, Some(18.0));
+        assert_color_close(
+            led.props
+                .led_color
+                .as_ref()
+                .unwrap()
+                .resolve(&Theme::dark()),
+            [1.0, 0.8, 0x33 as f32 / 255.0, 1.0],
+        );
     }
 
     fn assert_color_close(actual: [f32; 4], expected: [f32; 4]) {

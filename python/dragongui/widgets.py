@@ -401,6 +401,7 @@ _SUPPORTED_PARTS_BY_KIND: dict[str, set[str]] = {
     },
     "dropdown": {"field", "chevron", "menu", "item", "item-selected", "item-hover"},
     "checkbox": {"row", "box", "indicator", "label"},
+    "led": {"dot", "glow", "highlight"},
     "slider": {"track", "fill", "thumb"},
     "progress_bar": {"track", "fill", "label"},
     "tabs": {"header"},
@@ -482,6 +483,7 @@ FloatCallback = Callable[[float], None]
 StringCallback = Callable[[str], None]
 ColorCallback = Callable[[tuple[int, ...]], None]
 BadgeValue = str | int | None
+LedColorValue = str | Sequence[object]
 
 
 @dataclass(frozen=True)
@@ -671,6 +673,24 @@ def _badge_level(value: str) -> str:
         allowed = ", ".join(sorted(_BADGE_LEVELS))
         raise ValueError(f"unknown badge level {value!r}; expected one of: {allowed}")
     return level
+
+
+def _led_state_name(value: object) -> str:
+    if isinstance(value, bool):
+        return "on" if value else "off"
+    state = str(value).strip()
+    if not state:
+        raise ValueError("LED state must be a non-empty string or bool")
+    return state
+
+
+def _led_color_value(value: LedColorValue) -> str:
+    if isinstance(value, str):
+        color = value.strip()
+        if not color:
+            raise ValueError("LED color must be a non-empty string or RGB/RGBA sequence")
+        return color
+    return _color_hex(_normalize_color_tuple(value, alpha=True))
 
 
 class _BuildContext:
@@ -1775,6 +1795,94 @@ class Tag(Badge):
             tooltip=tooltip,
             parent=parent,
         )
+
+
+class LED(Widget):
+    """Compact status light with boolean or named states.
+
+    ``state`` may be a bool (``True`` = ``"on"``, ``False`` = ``"off"``) or a
+    string.  Named states resolve through ``states``; ``on`` and ``off`` always
+    have default colors unless overridden.
+    """
+
+    kind = "led"
+
+    def __init__(
+        self,
+        state: bool | str = False,
+        *,
+        states: Mapping[str, LedColorValue] | None = None,
+        on_color: LedColorValue = "success",
+        off_color: LedColorValue = "disabled",
+        size: int | float = 14,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        size_f = float(size)
+        if not math.isfinite(size_f) or size_f <= 0:
+            raise ValueError("LED size must be a positive finite number")
+        self.states: dict[str, str] = {
+            "on": _led_color_value(on_color),
+            "off": _led_color_value(off_color),
+        }
+        if states is not None:
+            if not isinstance(states, Mapping):
+                raise TypeError("LED states must be a mapping of state name to color")
+            for name, color in states.items():
+                self.states[_led_state_name(name)] = _led_color_value(color)
+        self.state = _led_state_name(state)
+        self.color = self._color_for_state(self.state)
+        self.size = size_f
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def _color_for_state(self, state: str) -> str:
+        try:
+            return self.states[state]
+        except KeyError as exc:
+            known = ", ".join(sorted(self.states))
+            raise ValueError(f"unknown LED state {state!r}; expected one of: {known}") from exc
+
+    @property
+    def on(self) -> bool:
+        return self.state == "on"
+
+    def set_state(self, state: bool | str, *, color: LedColorValue | None = None) -> None:
+        state_name = _led_state_name(state)
+        if color is not None:
+            self.states[state_name] = _led_color_value(color)
+        self.state = state_name
+        self.color = self._color_for_state(state_name)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("state", self.state)
+            handle.enqueue_set_prop("color", self.color)
+
+    def set_on(self, on: bool = True) -> None:
+        self.set_state(bool(on))
+
+    def set_color(self, color: LedColorValue) -> None:
+        self.states[self.state] = _led_color_value(color)
+        self.color = self.states[self.state]
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("color", self.color)
+
+    def set_size(self, size: int | float) -> None:
+        size_f = float(size)
+        if not math.isfinite(size_f) or size_f <= 0:
+            raise ValueError("LED size must be a positive finite number")
+        self.size = size_f
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("size", self.size)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "state": self.state,
+            "color": self.color,
+            "size": self.size,
+        }
 
 
 class Button(Widget):

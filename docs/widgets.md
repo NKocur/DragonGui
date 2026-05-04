@@ -95,6 +95,7 @@ Helper builders:
 | `Label(text, wrap=True)` | Static text. Wraps by default inside constrained containers; pass `wrap=False` for single-line labels. `set_value(value)` updates text. |
 | `Badge(text, level="info")` | Compact status/count pill. `level` may be `neutral`, `info`, `success`, `warning`, `danger`, or `error`. Supports `set_value(value)` and `set_level(level)`. |
 | `Tag(text, level="neutral")` | Compact bordered status label with the same API as `Badge`. |
+| `LED(state=False, states=None, on_color="success", off_color="disabled", size=14)` | Compact status light. Boolean state maps to `on`/`off`; string state names resolve through `states`. Supports `set_state()`, `set_on()`, `set_color()`, and `set_size()`. |
 | `Button(text, on_click=None, badge=None, disabled=False)` | Clickable button. Emits `click` when `on_click` is supplied and not disabled. `click()` invokes the Python callback directly. Optional badge supports `set_badge(value)`. |
 | `TextInput(value="", placeholder="", on_change=None, disabled=False)` | Editable text field. `set_value(value)` updates text. |
 | `TextArea(value="", placeholder="", rows=4, wrap=True, on_change=None, disabled=False)` | Editable multiline text field. Newlines are preserved; `rows` controls preferred height; overflow scrolls inside the field; `wrap` controls long-line wrapping. `set_value(value)` updates text. |
@@ -209,6 +210,7 @@ and debug snapshot path.
 | `Collapsible` | `on_change(value: bool)` | `set_expanded(value)`, `expand()`, `collapse()`, `toggle()`. |
 | `Button`, `Tab`, `NavItem` badges | None | `set_badge(value)` updates or hides the live badge. |
 | `Badge`, `Tag` | None | `set_value(value)` updates text; `set_level(level)` updates semantic color. |
+| `LED` | None | `set_state(value)`, `set_on(value)`, `set_color(color)`, and `set_size(size)` update the live indicator. |
 | `ColorPicker` | `on_change(value: tuple[int, ...])` | `set_value(value, notify=False)` updates silently by default; `notify=True` invokes the callback. |
 | `Scatter3D` | `on_pick(point: ScatterPick)` or compatible index/x/y/z callback | `set_points(...)`, `set_colormap(...)`. |
 | `DataFrameTable` | `on_select(selection: TableSelection)` or compatible row/column/value callback | `set_frame(...)`. |

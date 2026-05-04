@@ -165,6 +165,7 @@ updates instead of rebuilding the whole app.
 | `Label` | Text display. |
 | `Badge` | Compact status/count pill with semantic levels. |
 | `Tag` | Compact bordered status label with semantic levels. |
+| `LED` | Compact status light with boolean on/off state or named color states. |
 | `Button` | Clickable command control with `on_click` and optional badge text/count. |
 | `TextInput` | Editable single-line text input with `on_change`. |
 | `TextArea` | Editable multiline text input with rows, wrapping, internal scrolling, and `on_change`. |
@@ -190,6 +191,7 @@ Current interaction support includes:
 - Button click callbacks.
 - Inline badges on buttons, tabs, and navigation items.
 - Standalone `Badge` and `Tag` status widgets.
+- LED status lights with live state/color updates.
 - Checkbox toggling.
 - Dropdown open/select behavior.
 - Number input typing, steppers, clamping, and callbacks.

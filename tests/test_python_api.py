@@ -207,6 +207,10 @@ def test_inline_part_style_catalog_serializes_for_supported_widgets() -> None:
             ("row", "box", "indicator", "label"),
         ),
         (
+            lambda style: dg.LED(True, style=style, parent=None),
+            ("dot", "glow", "highlight"),
+        ),
+        (
             lambda style: dg.Slider(0.5, style=style, parent=None),
             ("track", "fill", "thumb"),
         ),
@@ -1294,6 +1298,7 @@ def test_live_widget_setters_enqueue_native_props() -> None:
     slider = dg.Slider(0.0, min=0, max=1, id="slider", parent=None)
     dropdown = dg.Dropdown(["x", "y"], id="dropdown", parent=None)
     checkbox = dg.Checkbox("Enabled", id="checkbox", parent=None)
+    led = dg.LED(False, id="led", states={"busy": "#ffcc33"}, parent=None)
     collapsible = dg.Collapsible("Advanced", id="advanced", expanded=False, parent=None)
     tabs = dg.Tabs(value="one", id="tabs", parent=None)
     dg.Tab("One", value="one", parent=tabs)
@@ -1310,6 +1315,7 @@ def test_live_widget_setters_enqueue_native_props() -> None:
         slider,
         dropdown,
         checkbox,
+        led,
         collapsible,
         tabs,
         pages,
@@ -1325,6 +1331,9 @@ def test_live_widget_setters_enqueue_native_props() -> None:
     slider.set_value(2.0)
     dropdown.set_value("y")
     checkbox.set_checked(True)
+    led.set_state("busy")
+    led.set_color("#ffaa00")
+    led.set_size(18)
     collapsible.set_expanded(True)
     tabs.set_value("two")
     pages.set_value("two")
@@ -1344,6 +1353,9 @@ def test_live_widget_setters_enqueue_native_props() -> None:
     assert slider.value == 1.0
     assert dropdown.value == "y"
     assert checkbox.checked is True
+    assert led.state == "busy"
+    assert led.color == "#ffaa00"
+    assert led.size == 18.0
     assert collapsible.expanded is True
     assert tabs.value == "two"
     assert pages.value == "two"
@@ -1356,6 +1368,10 @@ def test_live_widget_setters_enqueue_native_props() -> None:
         ("slider", "value", 1.0),
         ("dropdown", "value", "y"),
         ("checkbox", "checked", True),
+        ("led", "state", "busy"),
+        ("led", "color", "#ffcc33"),
+        ("led", "color", "#ffaa00"),
+        ("led", "size", 18.0),
         ("advanced", "expanded", True),
         ("tabs", "value", "two"),
         ("pages", "value", "two"),
@@ -2153,6 +2169,8 @@ def test_m5_theme_and_mutable_control_props_serialize() -> None:
     slider = dg.Slider(0.5, min=0, max=1, step=0.25, parent=win)
     badge = dg.Badge("live", level="success", parent=win)
     tag = dg.Tag("queued", level="warning", parent=win)
+    led = dg.LED(True, parent=win)
+    custom_led = dg.LED("paused", states={"paused": "#ffcc33", "ready": "success"}, parent=win)
 
     document = app.document(win)
 
@@ -2167,6 +2185,13 @@ def test_m5_theme_and_mutable_control_props_serialize() -> None:
     assert badge.to_dict()["props"] == {"text": "live", "level": "success"}
     assert tag.to_dict()["type"] == "tag"
     assert tag.to_dict()["props"] == {"text": "queued", "level": "warning"}
+    assert led.to_dict()["type"] == "led"
+    assert led.to_dict()["props"] == {"state": "on", "color": "success", "size": 14.0}
+    assert custom_led.to_dict()["props"] == {
+        "state": "paused",
+        "color": "#ffcc33",
+        "size": 14.0,
+    }
     assert text_area.to_dict()["type"] == "text_area"
     assert text_area.to_dict()["props"]["value"] == "line 1\nline 2"
     assert text_area.to_dict()["props"]["placeholder"] == "Notes"
@@ -2180,6 +2205,10 @@ def test_m5_theme_and_mutable_control_props_serialize() -> None:
         dg.Button("Bad", badge=True, parent=None)
     with pytest.raises(ValueError, match="unknown badge level"):
         dg.Badge("Bad", level="urgent", parent=None)
+    with pytest.raises(ValueError, match="unknown LED state"):
+        dg.LED("missing", states={"ready": "success"}, parent=None)
+    with pytest.raises(ValueError, match="size"):
+        dg.LED(size=0, parent=None)
 
 
 def test_change_callback_wrappers_update_python_handles() -> None:
@@ -5716,6 +5745,8 @@ def test_scroll_area_default_serialization() -> None:
     assert node["props"] == {}
     assert node["style"]["overflow_y"] == "auto"
     assert node["style"]["overflow_x"] == "hidden"
+    assert node["style"]["flex_grow"] == 1
+    assert node["style"]["flex_shrink"] == 1
     assert node["style"]["gap"] == 8
     assert node["style"]["min_height"] == 0
 

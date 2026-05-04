@@ -485,8 +485,10 @@ CSS:
 
 - Type selector: `ScrollArea`.
 - Parts: `scrollbar-track`, `scrollbar-thumb`.
-- Typically styled with `height`, `min-height`, `flex`, `gap`, `padding`, and
-  `overflow-x` / `overflow-y`.
+- Typically styled with `min-height`, `flex`, `gap`, `padding`, and
+  `overflow-x` / `overflow-y`. Leave `height` unset when the scroll area should
+  share a column with fixed controls; the default flex behavior takes the
+  remaining space without covering siblings.
 
 ### `Panel`
 
@@ -1029,6 +1031,41 @@ CSS:
 - The current `level` is exposed as an automatic CSS class, so selectors such
   as `Tag.neutral`, `Tag.warning`, and `Tag.danger` work.
 
+### `LED`
+
+Constructor:
+
+```python
+dg.LED(state=False, states=None, on_color="success", off_color="disabled", size=14, id=None, key=None, class_=None, style=None, tooltip=None, parent=...)
+```
+
+Options:
+
+| Option | Notes |
+| --- | --- |
+| `state` | `bool` or string state name. `True` maps to `on`; `False` maps to `off`. |
+| `states` | Optional mapping of string state names to colors, for example `{"busy": "warning", "ready": "#2dd36f"}`. |
+| `on_color` / `off_color` | Default colors for boolean state use. Accepts theme tokens, CSS color strings, or RGB/RGBA sequences. |
+| `size` | Indicator diameter in logical pixels. |
+
+Live methods:
+
+- `set_state(state, color=None)`
+- `set_on(on=True)`
+- `set_color(color)`
+- `set_size(size)`
+
+CSS:
+
+- Type selector: `LED`.
+- Parts: `LED::dot`, `LED::glow`, `LED::highlight`.
+- The current state is exposed as the `state` attribute and as an automatic CSS
+  class, so selectors such as `LED.on`, `LED.busy`, and `LED[state="off"]`
+  work.
+- `LED::dot` controls the visible light body. `LED::glow` controls the halo
+  behind on states; `opacity: 0` hides it, and `box-shadow: none` suppresses
+  the built-in soft shadow. `LED::highlight` controls the small shine mark.
+
 ## Input And Control Widgets
 
 ### `Button`
@@ -1505,6 +1542,7 @@ Current CSS type selectors:
 - `Modal`
 - `Badge`
 - `Tag`
+- `LED`
 - `MenuBar`
 - `Menu`
 - `MenuItem`

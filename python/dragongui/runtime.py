@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import base64
 from collections import deque
 from collections.abc import Callable, Iterable, Mapping
 import inspect
 import json
 import math
 from threading import RLock
+import time
 import traceback
 from typing import Any
 
@@ -760,9 +762,8 @@ class AppHandle:
         tooltip_x: str | None = None, tooltip_y: str | None = None, tooltip_z: str | None = None,
     ) -> None:
         if not self._native_method_available("enqueue_add_scatter_actor_packed"):
-            import base64 as _base64
             self.enqueue_add_scatter_actor(
-                widget_id, actor_id, _base64.b64encode(payload).decode("ascii"),
+                widget_id, actor_id, base64.b64encode(payload).decode("ascii"),
                 colormap, payload_format, hover_meta, tooltip_x, tooltip_y, tooltip_z,
             )
             return
@@ -785,9 +786,8 @@ class AppHandle:
         tooltip_x: str | None = None, tooltip_y: str | None = None, tooltip_z: str | None = None,
     ) -> None:
         if not self._native_method_available("enqueue_update_scatter_actor_packed"):
-            import base64 as _base64
             self.enqueue_update_scatter_actor(
-                widget_id, actor_id, _base64.b64encode(payload).decode("ascii"),
+                widget_id, actor_id, base64.b64encode(payload).decode("ascii"),
                 colormap, payload_format, tooltip_x, tooltip_y, tooltip_z,
             )
             return
@@ -830,9 +830,8 @@ class AppHandle:
         self, widget_id: str, actor_id: int, payload: bytes, colormap: str, payload_format: str
     ) -> None:
         if not self._native_method_available("enqueue_stream_scatter_actor_packed"):
-            import base64 as _base64
             self.enqueue_stream_scatter_actor(
-                widget_id, actor_id, _base64.b64encode(payload).decode("ascii"),
+                widget_id, actor_id, base64.b64encode(payload).decode("ascii"),
                 colormap, payload_format,
             )
             return
@@ -1058,15 +1057,13 @@ class AppHandle:
                 colormap = patch.value.get("colormap", "viridis")
                 data_format = patch.value.get("data_format", "xyz_f32_v0")
                 if isinstance(data_b64, str):
-                    import base64
-                    import time as _time
                     # data_b64 == "" means zero points — send an empty payload to clear native state.
                     payload = base64.b64decode(data_b64) if data_b64 else b""
                     self.enqueue_set_scatter_points_packed(
                         patch.node_id,
                         payload,
                         pack_ms=0.0,
-                        enqueue_epoch_ms=_time.time() * 1000.0,
+                        enqueue_epoch_ms=time.time() * 1000.0,
                         colormap=colormap if isinstance(colormap, str) else "viridis",
                         payload_format=data_format if isinstance(data_format, str) else "xyz_f32_v0",
                     )

@@ -7,6 +7,7 @@ import struct
 import sys
 import threading
 import tempfile
+import time
 import zlib
 
 if __name__ == "__main__" and __package__ is None:
@@ -114,7 +115,7 @@ class DemoFrame:
             )
             u = u.ravel()[:rows]
             v = v.ravel()[:rows]
-            sweep = np.exp(-((u - np.sin(phase * 0.72) * 0.72) ** 2) * np.float32(36.0))
+            sweep = np.exp(-((u - np.sin(phase) * 0.72) ** 2) * np.float32(36.0))
             self.x = u * np.float32(14.0) + np.sin(v * np.float32(math.tau) + phase) * np.float32(0.32)
             self.y = v * np.float32(5.5) + np.cos(u * np.float32(math.tau) - phase) * np.float32(0.22)
             self.z = (
@@ -288,6 +289,79 @@ Slider::thumb {
     border-radius: 999px;
 }
 
+LED {
+    width: 16px;
+    height: 16px;
+    background: success;
+    border-color: rgba(0, 0, 0, 0.58);
+}
+
+LED.off {
+    background: disabled;
+}
+
+LED.stream,
+LED.busy {
+    background: #ffcc33;
+}
+
+LED::dot {
+    width: 12px;
+    height: 12px;
+    border: 1px solid rgba(0, 0, 0, 0.64);
+    border-radius: 999px;
+}
+
+LED::glow {
+    width: 24px;
+    height: 24px;
+    opacity: 0.14;
+    border-radius: 999px;
+}
+
+LED.off::glow {
+    opacity: 0;
+}
+
+LED::highlight {
+    width: 4px;
+    height: 3px;
+    background: rgba(255, 255, 255, 0.74);
+    border-radius: 999px;
+}
+
+LED.css-demo {
+    width: 22px;
+    height: 22px;
+    background: #ffcc33;
+    border-color: rgba(255, 204, 51, 0.64);
+    border-radius: 5px;
+}
+
+LED.css-demo::dot {
+    width: 15px;
+    height: 15px;
+    background: radial-gradient(circle at 28% 24%, #fff7c7 0%, #ffcc33 42%, #9a5c00 100%);
+    border: 1px solid rgba(94, 58, 0, 0.82);
+    border-radius: 5px;
+}
+
+LED.css-demo::glow {
+    width: 27px;
+    height: 27px;
+    background: #ffcc33;
+    opacity: 0.18;
+    box-shadow: none;
+    border-radius: 999px;
+}
+
+LED.css-demo::highlight {
+    width: 5px;
+    height: 3px;
+    background: rgba(255, 255, 255, 0.72);
+    border-radius: 999px;
+}
+
 ProgressBar {
     background: rgba(255, 255, 255, 0.10);
     border-color: rgba(255, 255, 255, 0.14);
@@ -326,7 +400,8 @@ Panel.scatter-controls {
 }
 
 ScrollArea.scatter-control-scroll {
-    height: 100%;
+    flex-grow: 1;
+    flex-shrink: 1;
     min-height: 0;
     overflow-y: auto;
 }
@@ -441,6 +516,79 @@ Slider::thumb {
     box-shadow: 0 2px 5px rgba(82, 42, 12, 0.28);
 }
 
+LED {
+    width: 21px;
+    height: 15px;
+    background: #2c8c99;
+    border-color: #735f4a;
+    border-radius: 4px;
+}
+
+LED.off {
+    background: #c9b99f;
+}
+
+LED.stream,
+LED.busy {
+    background: #d06b2c;
+}
+
+LED::dot {
+    width: 11px;
+    height: 11px;
+    background: #2c8c99;
+    border: 1px solid #735f4a;
+    border-radius: 2px;
+    transform: rotate(45deg);
+}
+
+LED.off::dot {
+    background: #c9b99f;
+}
+
+LED.stream::dot,
+LED.busy::dot {
+    background: #d06b2c;
+}
+
+LED::glow {
+    opacity: 0;
+    box-shadow: none;
+}
+
+LED::highlight {
+    opacity: 0;
+}
+
+LED.css-demo {
+    width: 34px;
+    height: 18px;
+    background: #fffaf0;
+    border-color: #9f8970;
+    border-radius: 3px;
+}
+
+LED.css-demo::dot {
+    width: 25px;
+    height: 9px;
+    background: linear-gradient(90deg, #7b3d12 0%, #d06b2c 48%, #ffe0b8 100%);
+    border: 1px solid #7b3d12;
+    border-radius: 2px;
+    transform: none;
+}
+
+LED.css-demo::glow {
+    opacity: 0;
+    box-shadow: none;
+}
+
+LED.css-demo::highlight {
+    width: 10px;
+    height: 2px;
+    background: rgba(255, 250, 240, 0.82);
+    opacity: 0.65;
+}
+
 ProgressBar {
     background: #ffffff;
     border-color: #9f8970;
@@ -516,6 +664,98 @@ Slider::thumb {
     background: #39ff88;
     border-color: #00e5ff;
 }
+
+LED {
+    width: 20px;
+    height: 20px;
+    background: #39ff88;
+    border-color: #00e5ff;
+    border-radius: 999px;
+}
+
+LED.off {
+    background: #22306a;
+    border-color: #56628f;
+}
+
+LED.stream,
+LED.busy {
+    background: #ff36d6;
+    border-color: #00e5ff;
+}
+
+LED::dot {
+    width: 14px;
+    height: 14px;
+    background: radial-gradient(circle at 25% 20%, #ffffff 0%, #39ff88 34%, #008dff 100%);
+    border: 1px solid #d7fbff;
+    border-radius: 999px;
+}
+
+LED.stream::dot,
+LED.busy::dot {
+    background: radial-gradient(circle at 24% 18%, #ffffff 0%, #ff36d6 36%, #5b1cff 100%);
+}
+
+LED::glow {
+    width: 38px;
+    height: 38px;
+    background: rgba(57, 255, 136, 0.34);
+    opacity: 0.42;
+    border-radius: 999px;
+    box-shadow: 0 0 18px 6px rgba(57, 255, 136, 0.45);
+}
+
+LED.stream::glow,
+LED.busy::glow {
+    background: rgba(255, 54, 214, 0.40);
+    box-shadow: 0 0 20px 7px rgba(255, 54, 214, 0.52);
+}
+
+LED.off::glow {
+    opacity: 0.05;
+    box-shadow: none;
+}
+
+LED::highlight {
+    width: 6px;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.92);
+    border-radius: 999px;
+    transform: rotate(-22deg);
+}
+
+LED.css-demo {
+    width: 30px;
+    height: 30px;
+    background: #ff36d6;
+    border-color: #00e5ff;
+    border-radius: 999px;
+    box-shadow: 0 0 12px 2px rgba(0, 229, 255, 0.38);
+}
+
+LED.css-demo::dot {
+    width: 19px;
+    height: 19px;
+    background: radial-gradient(circle at 28% 20%, #ffffff 0%, #00e5ff 24%, #ff36d6 58%, #3910a8 100%);
+    border: 2px solid #39ff88;
+    border-radius: 999px;
+}
+
+LED.css-demo::glow {
+    width: 52px;
+    height: 52px;
+    background: rgba(0, 229, 255, 0.30);
+    opacity: 0.48;
+    box-shadow: 0 0 28px 10px rgba(0, 229, 255, 0.56);
+}
+
+LED.css-demo::highlight {
+    width: 8px;
+    height: 5px;
+    background: rgba(255, 255, 255, 0.96);
+    transform: rotate(-30deg);
+}
 """
 
 
@@ -532,7 +772,9 @@ win = dg.Window("DragonGUI All Features V3 Demo", width=1440, height=900)
 
 stream_controller: dg.ScatterFrameStream | None = None
 stream_build_thread: threading.Thread | None = None
+stats_thread: threading.Thread | None = None
 stream_cancel = threading.Event()
+stats_stop = threading.Event()
 state_lock = threading.Lock()
 demo_state = {
     "mode": "lidar",
@@ -554,6 +796,7 @@ demo_state = {
     "ticks_x": 5,
     "ticks_y": 5,
     "ticks_z": 5,
+    "stats_auto": False,
 }
 initial_frame = DemoFrame(mode="lidar")
 demo_image_path = make_demo_image()
@@ -562,6 +805,149 @@ stream_payload_cache: dict[tuple[str, str], list[tuple[float, dg.ScatterPayload]
 
 def set_status(message: str) -> None:
     status.set_value(message)
+
+
+def fmt_ms(value: object) -> str:
+    try:
+        ms = float(value)
+    except (TypeError, ValueError):
+        return "--"
+    return f"{ms:.2f} ms"
+
+
+def fmt_count(value: object) -> str:
+    try:
+        return f"{int(value):,}"
+    except (TypeError, ValueError):
+        return "--"
+
+
+def fmt_payload(value: object) -> str:
+    try:
+        bytes_value = float(value)
+    except (TypeError, ValueError):
+        return "--"
+    if bytes_value >= 1024 * 1024:
+        return f"{bytes_value / (1024 * 1024):.2f} MiB"
+    if bytes_value >= 1024:
+        return f"{bytes_value / 1024:.1f} KiB"
+    return f"{bytes_value:.0f} B"
+
+
+def metric_ms(metrics: dict[str, object], key: str) -> str:
+    return fmt_ms(metrics.get(key))
+
+
+def update_scatter_stats(snapshot: dict[str, object], observed_fps: float | None = None) -> None:
+    runtime = snapshot.get("runtime", {})
+    gpu = snapshot.get("gpu", {})
+    if not isinstance(runtime, dict) or not isinstance(gpu, dict):
+        return
+    resources = gpu.get("resources", {})
+    if not isinstance(resources, dict):
+        return
+    scatters = resources.get("scatters", {})
+    scatter_metrics: dict[str, object] = {}
+    if isinstance(scatters, dict):
+        selected = scatters.get(scatter.id)
+        if isinstance(selected, dict):
+            scatter_metrics = selected
+    if not scatter_metrics:
+        selected = resources.get("scatter", {})
+        if isinstance(selected, dict):
+            scatter_metrics = selected
+
+    frame_ms_value = runtime.get("frame_ms")
+    try:
+        frame_ms = float(frame_ms_value)
+    except (TypeError, ValueError):
+        frame_ms = 0.0
+    frame_fps = 1000.0 / frame_ms if frame_ms > 0.0 else 0.0
+    observed_text = "--" if observed_fps is None else f"{observed_fps:.1f} fps"
+    lod = scatter_metrics.get("lod", {})
+    lod_active = bool(lod.get("active")) if isinstance(lod, dict) else False
+    scatter_stats_summary.set_value(
+        "\n".join(
+            (
+                f"Frame CPU avg: {fmt_ms(frame_ms_value)} ({frame_fps:.1f} fps)",
+                f"Observed redraws: {observed_text} / {fmt_count(runtime.get('frames_rendered'))} frames",
+                f"Scatter encode: {metric_ms(scatter_metrics, 'last_render_encode_ms')}",
+                "Payload: "
+                f"{fmt_count(scatter_metrics.get('last_point_count'))} pts / "
+                f"{fmt_payload(scatter_metrics.get('last_payload_bytes'))}",
+                "Native update: "
+                f"{metric_ms(scatter_metrics, 'last_total_native_ms')} total, "
+                f"{metric_ms(scatter_metrics, 'last_upload_ms')} upload",
+                "Decode/grid/overlay: "
+                f"{metric_ms(scatter_metrics, 'last_decode_ms')} / "
+                f"{metric_ms(scatter_metrics, 'last_grid_ms')} / "
+                f"{metric_ms(scatter_metrics, 'last_overlay_ms')}",
+                "Updates: "
+                f"{fmt_count(scatter_metrics.get('updates'))}, "
+                f"LOD {'active' if lod_active else 'idle'}, "
+                f"{scatter_metrics.get('payload_status', '--')}",
+            )
+        )
+    )
+
+
+def refresh_scatter_stats() -> None:
+    def worker() -> None:
+        try:
+            snapshot = app.debug_snapshot(timeout_ms=500)
+            app.call_soon_threadsafe(lambda s=snapshot: update_scatter_stats(s))
+        except RuntimeError:
+            pass
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def toggle_scatter_stats(enabled: bool) -> None:
+    with state_lock:
+        demo_state["stats_auto"] = bool(enabled)
+    set_status(f"Scatter stats: {'auto' if enabled else 'paused'}")
+    if enabled:
+        refresh_scatter_stats()
+
+
+def scatter_stats_worker() -> None:
+    last_time: float | None = None
+    last_frames: int | None = None
+    if stats_stop.wait(2.0):
+        return
+    while not stats_stop.is_set():
+        with state_lock:
+            enabled = bool(demo_state["stats_auto"])
+        if not enabled:
+            stats_stop.wait(0.25)
+            continue
+        try:
+            snapshot = app.debug_snapshot(timeout_ms=500)
+        except RuntimeError:
+            stats_stop.wait(0.25)
+            continue
+        runtime = snapshot.get("runtime", {})
+        frames = 0
+        if isinstance(runtime, dict):
+            try:
+                frames = int(runtime.get("frames_rendered", 0))
+            except (TypeError, ValueError):
+                frames = 0
+        now = time.perf_counter()
+        observed_fps = None
+        if last_time is not None and last_frames is not None:
+            elapsed = now - last_time
+            if elapsed > 0.0:
+                observed_fps = max(0.0, (frames - last_frames) / elapsed)
+        last_time = now
+        last_frames = frames
+        try:
+            app.call_soon_threadsafe(
+                lambda s=snapshot, fps=observed_fps: update_scatter_stats(s, fps)
+            )
+        except RuntimeError:
+            break
+        stats_stop.wait(1.0)
 
 
 def apply_theme(name: str) -> None:
@@ -601,7 +987,7 @@ def set_colormap(name: str) -> None:
 
 
 def set_stream_interval(value: float) -> None:
-    interval_ms = max(20.0, float(value))
+    interval_ms = max(5.0, float(value))
     with state_lock:
         demo_state["stream_interval_ms"] = interval_ms
     stream_interval_label.set_value(f"Stream interval: {interval_ms:.0f} ms")
@@ -743,11 +1129,12 @@ def stream_payloads_for_mode(mode: str, colormap: str) -> list[tuple[float, dg.S
         app.call_soon_threadsafe(lambda m=mode: set_status(f"Prebuilding {m} stream frames"))
     except RuntimeError:
         pass
+    phase_step = math.tau / STREAM_FRAME_COUNT
     built = [
         (
-            index * 0.38,
+            index * phase_step,
             dg.Scatter3D.prepare_points(
-                DemoFrame(phase=index * 0.38, mode=mode),
+                DemoFrame(phase=index * phase_step, mode=mode),
                 x="x",
                 y="y",
                 z="z",
@@ -767,7 +1154,7 @@ def record_stream_frame(
     metrics: dg.ScatterStreamMetrics | None = None,
 ) -> None:
     demo_state["phase"] = phase
-    progress.set_value((phase % 6.0) / 6.0)
+    progress.set_value((phase % math.tau) / math.tau)
     if metrics is None:
         set_status(f"Streaming {mode}: phase {phase:.2f}")
     else:
@@ -977,6 +1364,8 @@ with dg.HLayout(style={"gap": 0}):
         dg.Label("DragonGUI", class_="brand")
         dg.Label("All features V3", class_="subtle")
         with dg.FlowLayout(gap=6, row_gap=4):
+            dg.LED(True, tooltip="Renderer online")
+            dg.LED("stream", states={"stream": "warning"}, tooltip="Custom stream state")
             dg.Badge("Grid", level="success")
             dg.Tag("Scatter3D", level="info")
         dg.Separator()
@@ -1033,6 +1422,33 @@ with dg.HLayout(style={"gap": 0}):
                         class_="scatter-control-scroll",
                         style=SCATTER_CONTROLS_SCROLL_STYLE,
                     ):
+                        dg.Label("Performance")
+                        dg.Button(
+                            "Refresh stats",
+                            class_="primary",
+                            on_click=refresh_scatter_stats,
+                            style={"height": 34, "width": 170},
+                        )
+                        dg.Checkbox(
+                            "Auto stats",
+                            checked=False,
+                            on_change=toggle_scatter_stats,
+                            style={"height": 34},
+                        )
+                        scatter_stats_summary = dg.Label(
+                            "\n".join(
+                                (
+                                    "Frame CPU avg: --",
+                                    "Observed redraws: --",
+                                    "Scatter encode: --",
+                                    "Payload: --",
+                                    "Native update: --",
+                                    "Decode/grid/overlay: --",
+                                    "Updates: --",
+                                )
+                            )
+                        )
+                        dg.Separator()
                         dg.Label("Data")
                         mode = dg.Dropdown(("lidar", "helix", "wave", "cloud"), value="lidar", on_change=push_scatter)
                         dg.Dropdown(("Viridis", "Magma", "Plasma", "Turbo", "Cividis"), value="Turbo", on_change=set_colormap)
@@ -1070,7 +1486,7 @@ with dg.HLayout(style={"gap": 0}):
                         dg.Button("Start stream", on_click=start_stream)
                         dg.Button("Stop stream", on_click=stop_stream)
                         stream_interval_label = dg.Label("Stream interval: 40 ms")
-                        dg.Slider(40, min=20, max=250, step=5, on_change=set_stream_interval)
+                        dg.Slider(40, min=5, max=250, step=5, on_change=set_stream_interval)
                 scatter = dg.Scatter3D(
                     initial_frame,
                     x="x",
@@ -1102,6 +1518,10 @@ with dg.HLayout(style={"gap": 0}):
             with dg.GridLayout(columns=2, min_column_width=360, gap=GRID_GAP, style=GRID_STYLE):
                 with dg.Panel("Form controls", style=CARD_STYLE):
                     with dg.FlowLayout(gap=8, row_gap=6):
+                        dg.LED(True, tooltip="Boolean on state")
+                        dg.LED(False, tooltip="Boolean off state")
+                        dg.LED("busy", states={"busy": "#ffcc33", "ready": "success"}, tooltip="Named custom state")
+                        dg.LED("busy", states={"busy": "#ffcc33"}, class_="css-demo", tooltip="CSS styled LED parts")
                         dg.Badge("live", level="success")
                         dg.Badge("queued", level="warning")
                         dg.Tag("styled", level="info")
@@ -1238,6 +1658,9 @@ with dg.ContextMenu(target=table, width=230, parent=win):
     dg.MenuItem("Load Wave Table", on_click=lambda: update_table("wave"))
     dg.MenuItem("Load Cloud Table", on_click=lambda: update_table("cloud"))
 
+stats_thread = threading.Thread(target=scatter_stats_worker, daemon=True)
+stats_thread.start()
+
 try:
     result = app.run(win)
 except dg.BackendUnavailableError:
@@ -1247,6 +1670,9 @@ except dg.BackendUnavailableError:
 else:
     print(result)
 finally:
+    stats_stop.set()
     stream_cancel.set()
+    if stats_thread is not None:
+        stats_thread.join(timeout=0.25)
     if stream_controller is not None:
         stream_controller.stop(timeout=0.25)

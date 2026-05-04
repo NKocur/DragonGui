@@ -166,7 +166,7 @@ impl TextRendererDg {
             wgpu::MultisampleState::default(),
             // Text is a 2D overlay: no depth writes, always passes depth test.
             Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
+                format: crate::DEPTH_STENCIL_FORMAT,
                 depth_write_enabled: Some(false),
                 depth_compare: Some(wgpu::CompareFunction::Always),
                 stencil: wgpu::StencilState::default(),
@@ -178,7 +178,7 @@ impl TextRendererDg {
             device,
             wgpu::MultisampleState::default(),
             Some(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth32Float,
+                format: crate::DEPTH_STENCIL_FORMAT,
                 depth_write_enabled: Some(false),
                 depth_compare: Some(wgpu::CompareFunction::Always),
                 stencil: wgpu::StencilState::default(),
@@ -1781,6 +1781,7 @@ fn widget_kind_name(kind: WidgetKind) -> &'static str {
         WidgetKind::Modal => "modal",
         WidgetKind::Badge => "badge",
         WidgetKind::Tag => "tag",
+        WidgetKind::Led => "led",
         WidgetKind::Button => "button",
         WidgetKind::Checkbox => "checkbox",
         WidgetKind::Dropdown => "dropdown",

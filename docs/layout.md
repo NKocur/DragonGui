@@ -60,6 +60,11 @@ with dg.Panel("Controls", style={"height": 420, "min_height": 0}):
         ...
 ```
 
+Inside a vertical layout with fixed controls before or after it, leave the
+`ScrollArea` height unset. By default it grows into the remaining space, can
+shrink below its content, and owns the overflow, matching Qt/Tk style layout
+behavior.
+
 This mirrors mature GUI toolkits such as Qt: layouts distribute bounded
 rectangles, while scroll containers explicitly own clipping and scroll ranges.
 `GridLayout` does not guess which child should scroll; put long content inside a

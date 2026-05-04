@@ -312,8 +312,8 @@ fn style_for(
             flex_grow: 1.0,
             flex_shrink: 1.0,
             size: Size {
-                width: Dimension::Percent(1.0),
-                height: Dimension::Percent(1.0),
+                width: Dimension::Auto,
+                height: Dimension::Auto,
             },
             min_size: Size {
                 width: Dimension::Length(0.0),
@@ -548,6 +548,18 @@ fn style_for(
             flex_shrink: 0.0,
             ..Default::default()
         },
+
+        WidgetKind::Led => {
+            let led_size = node.props.led_size.unwrap_or(14.0).max(1.0) * sf;
+            Style {
+                size: Size {
+                    width: Dimension::Length(led_size),
+                    height: Dimension::Length(led_size),
+                },
+                flex_shrink: 0.0,
+                ..Default::default()
+            }
+        }
 
         WidgetKind::Checkbox => Style {
             size: Size {
@@ -4731,6 +4743,104 @@ mod tests {
         assert!(
             max_scroll > 0.0,
             "parsed probe document should produce scroll range for layout-scroll-body"
+        );
+    }
+
+    #[test]
+    fn scroll_area_default_takes_remaining_space_without_covering_siblings() {
+        let mut rows = Vec::new();
+        for index in 0..8 {
+            let mut row = node(
+                &format!("row-{index}"),
+                WidgetKind::Button,
+                NodeProps {
+                    text: Some(format!("Row {index}")),
+                    ..NodeProps::default()
+                },
+                vec![],
+            );
+            row.style.layout.height = Some(30.0);
+            row.style.layout.flex_shrink = Some(0.0);
+            rows.push(row);
+        }
+
+        let mut refresh = node(
+            "refresh",
+            WidgetKind::Button,
+            NodeProps {
+                text: Some("Refresh stats".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        refresh.style.layout.height = Some(34.0);
+        refresh.style.layout.flex_shrink = Some(0.0);
+
+        let mut scroller = node(
+            "controls-scroll",
+            WidgetKind::ScrollArea,
+            NodeProps::default(),
+            rows,
+        );
+        scroller.style.layout.gap = Some(8.0);
+
+        let mut auto_stats = node(
+            "auto-stats",
+            WidgetKind::Checkbox,
+            NodeProps {
+                text: Some("Auto stats".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        auto_stats.style.layout.height = Some(34.0);
+        auto_stats.style.layout.flex_shrink = Some(0.0);
+
+        let mut controls = node(
+            "controls",
+            WidgetKind::Panel,
+            NodeProps::default(),
+            vec![refresh, scroller, auto_stats],
+        );
+        controls.style.layout.height = Some(150.0);
+        controls.style.layout.padding = Some(8.0);
+        controls.style.layout.gap = Some(8.0);
+        controls.style.layout.overflow = Some(OverflowStyle::Hidden);
+
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![controls],
+        );
+
+        let state = WidgetState::default();
+        let layout = compute_layout(&root, 260.0, 180.0, 1.0, &Theme::dark(), Some(&state));
+        let refresh_rect = layout.rects.get("refresh").unwrap();
+        let refresh_clip = layout.clips.get("refresh").unwrap();
+        let scroller_rect = layout.rects.get("controls-scroll").unwrap();
+        let auto_rect = layout.rects.get("auto-stats").unwrap();
+        let auto_clip = layout.clips.get("auto-stats").unwrap();
+        let max_scroll = layout
+            .scroll_max_y
+            .get("controls-scroll")
+            .copied()
+            .unwrap_or(0.0);
+        let first_row = layout.rects.get("row-0").unwrap();
+        let last_row = layout.rects.get("row-7").unwrap();
+
+        assert!(
+            refresh_clip.h > 0.0 && auto_clip.h > 0.0,
+            "fixed controls should remain visible around the scroll area: refresh={refresh_rect:?} refresh_clip={refresh_clip:?} auto={auto_rect:?} auto_clip={auto_clip:?}"
+        );
+        assert!(
+            refresh_rect.y + refresh_rect.h <= scroller_rect.y
+                && scroller_rect.y + scroller_rect.h <= auto_rect.y,
+            "scroll area should be laid out between fixed controls, not over them: refresh={refresh_rect:?} scroller={scroller_rect:?} auto={auto_rect:?}"
+        );
+        assert!(
+            max_scroll > 0.0,
+            "scroll area should own overflow from its rows: scroller={scroller_rect:?} first_row={first_row:?} last_row={last_row:?} max_scroll={max_scroll}"
         );
     }
 
