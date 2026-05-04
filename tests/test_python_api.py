@@ -1253,7 +1253,9 @@ def test_live_widget_setters_enqueue_native_props() -> None:
     class Sender:
         def __init__(self) -> None:
             self.props: list[tuple[str, str, object]] = []
-            self.scatter_payloads: list[tuple[str, bytes, float | None, float | None, str]] = []
+            self.scatter_payloads: list[
+                tuple[str, bytes, float | None, float | None, str, bool]
+            ] = []
 
         def enqueue_set_prop(self, widget_id: str, prop: str, value: object) -> None:
             self.props.append((widget_id, prop, value))
@@ -1267,8 +1269,9 @@ def test_live_widget_setters_enqueue_native_props() -> None:
             colormap: str = "viridis",
             payload_format: str = "xyz_f32_v0",
             coalesce: bool = True,
+            fit: bool = False,
         ) -> None:
-            self.scatter_payloads.append((widget_id, xyz, pack_ms, enqueue_epoch_ms, colormap))
+            self.scatter_payloads.append((widget_id, xyz, pack_ms, enqueue_epoch_ms, colormap, fit))
 
         def enqueue_set_scatter_hover_tooltip(self, widget_id: str, enabled: bool) -> None:
             pass
@@ -1341,7 +1344,7 @@ def test_live_widget_setters_enqueue_native_props() -> None:
     original_pack = widgets_module._pack_xyz_bytes
     widgets_module._pack_xyz_bytes = lambda frame, x, y, z: monkey_payload
     try:
-        scatter.set_points(DemoFrame(), x="x", y="y", z="z")
+        scatter.set_points(DemoFrame(), x="x", y="y", z="z", fit=True)
     finally:
         widgets_module._pack_xyz_bytes = original_pack
 
@@ -1377,12 +1380,13 @@ def test_live_widget_setters_enqueue_native_props() -> None:
         ("pages", "value", "two"),
     ]
     assert len(sender.scatter_payloads) == 1
-    widget_id, payload, pack_ms, enqueue_epoch_ms, colormap = sender.scatter_payloads[0]
+    widget_id, payload, pack_ms, enqueue_epoch_ms, colormap, fit = sender.scatter_payloads[0]
     assert widget_id == "scatter"
     assert payload == monkey_payload
     assert pack_ms is not None and pack_ms >= 0.0
     assert enqueue_epoch_ms is not None and enqueue_epoch_ms > 0.0
     assert colormap == "viridis"
+    assert fit is True
 
 
 def test_scatter_colormap_serializes_and_live_update_reuploads_points(monkeypatch) -> None:
@@ -1399,6 +1403,7 @@ def test_scatter_colormap_serializes_and_live_update_reuploads_points(monkeypatc
             colormap: str = "viridis",
             payload_format: str = "xyz_f32_v0",
             coalesce: bool = True,
+            fit: bool = False,
         ) -> None:
             self.scatter_payloads.append((widget_id, xyz, colormap))
 

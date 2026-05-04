@@ -2874,6 +2874,7 @@ class Scatter3D(Widget):
         *,
         coalesce: bool = True,
         update_metadata: bool = True,
+        fit: bool = False,
     ) -> None:
         """Apply a prepared payload on the UI thread without repacking data."""
         if update_metadata:
@@ -2885,7 +2886,7 @@ class Scatter3D(Widget):
             self._cached_payload = payload.data
             self._cached_payload_b64 = None
             self._payload_token = zlib.crc32(payload.data) if payload.data else 0
-        self.enqueue_prepared_points(payload, coalesce=coalesce)
+        self.enqueue_prepared_points(payload, coalesce=coalesce, fit=fit)
 
     def enqueue_prepared_points(
         self,
@@ -2893,6 +2894,7 @@ class Scatter3D(Widget):
         *,
         coalesce: bool = True,
         include_metadata: bool = True,
+        fit: bool = False,
     ) -> None:
         """Thread-safe native enqueue for an already-packed primary scatter frame."""
         handle = self._live()
@@ -2905,6 +2907,7 @@ class Scatter3D(Widget):
             colormap=payload.colormap,
             payload_format=payload.payload_format,
             coalesce=coalesce,
+            fit=fit,
         )
         if include_metadata:
             handle.enqueue_set_scatter_tooltip_axis_labels(*payload.axis_labels)
@@ -2948,6 +2951,7 @@ class Scatter3D(Widget):
         nan_color: tuple[float, float, float] | None = _UNSET,
         size_range: tuple[float, float] | None = _UNSET,
         hover: "str | list[str] | None" = _UNSET,
+        fit: bool = False,
     ) -> None:
         self.frame = frame
         self.x = x
@@ -3011,6 +3015,7 @@ class Scatter3D(Widget):
                 enqueue_epoch_ms=time.time() * 1000.0,
                 colormap=self.colormap,
                 payload_format=self.data_format,
+                fit=fit,
             )
             handle.enqueue_set_scatter_tooltip_axis_labels(self.x, self.y, self.z)
             meta = self._extract_hover_meta(self.frame, self._hover)

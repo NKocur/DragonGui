@@ -269,7 +269,7 @@ Important APIs:
 - `App.debug_snapshot(timeout_ms=1000)`
 - `Widget.set_style(style)`
 - `Container.replace_children(children)`
-- `Scatter3D.set_points(frame, x=..., y=..., z=...)`
+- `Scatter3D.set_points(frame, x=..., y=..., z=..., fit=True)` when replacing the scene bounds
 - `DataFrameTable.set_frame(frame)`
 - `App.set_buffer_resource(...)`
 - `App.release_resource(resource_id)`

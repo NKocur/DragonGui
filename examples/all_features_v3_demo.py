@@ -964,7 +964,9 @@ def next_frame(mode: str | None = None) -> DemoFrame:
 
 
 def push_scatter(mode: str | None = None) -> None:
+    previous_mode = str(demo_state["mode"])
     frame = next_frame(mode)
+    refit_camera = mode is not None and str(demo_state["mode"]) != previous_mode
     scatter.set_points(
         frame,
         x="x",
@@ -972,6 +974,7 @@ def push_scatter(mode: str | None = None) -> None:
         z="z",
         scalars="z",
         hover=["row_id", "group", "signal"],
+        fit=refit_camera,
     )
     progress.set_value((demo_state["phase"] % 6.0) / 6.0)
     set_status(f"Scatter: {demo_state['mode']} phase {demo_state['phase']:.2f}")

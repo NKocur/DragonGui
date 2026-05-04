@@ -81,6 +81,8 @@ pub enum Command {
         colormap: String,
         /// Wire format; defaults to xyz_f32_v0 when absent.
         payload_format: ScatterPayloadFormat,
+        /// Refit the camera to this payload's bounds after upload.
+        fit: bool,
         /// When true, older pending point updates for this scatter are dropped.
         coalesce: bool,
     },
@@ -492,30 +494,40 @@ pub struct CommandQueue {
 }
 
 impl CommandQueue {
-    pub fn push(&self, command: Command) -> Result<(), CommandQueueError> {
+    pub fn push(&self, mut command: Command) -> Result<(), CommandQueueError> {
         if self.is_closed() {
             return Err(CommandQueueError::Closed);
         }
         let mut inner = self.inner.lock().expect("command queue mutex poisoned");
         if let Command::SetScatterPointsPacked {
-            id, coalesce: true, ..
-        } = &command
+            id,
+            fit,
+            coalesce: true,
+            ..
+        } = &mut command
         {
+            let target_id = id.clone();
+            let mut fit_after_upload = *fit;
             let mut index = inner.items.len();
             while index > 0 {
                 index -= 1;
                 let remove = match &inner.items[index] {
                     Command::SetScatterPointsPacked {
                         id: queued_id,
+                        fit: queued_fit,
                         coalesce: true,
                         ..
-                    } => queued_id == id,
+                    } if queued_id == &target_id => {
+                        fit_after_upload |= *queued_fit;
+                        true
+                    }
                     _ => false,
                 };
                 if remove {
                     inner.items.remove(index);
                 }
             }
+            *fit = fit_after_upload;
         }
         inner.items.push_back(command);
         Ok(())
@@ -877,7 +889,7 @@ impl NativeCommandSender {
         self.enqueue(Command::Invalidate { id, dirty })
     }
 
-    #[pyo3(signature = (id, xyz, pack_ms=None, enqueue_epoch_ms=None, colormap=None, payload_format=None, coalesce=None))]
+    #[pyo3(signature = (id, xyz, pack_ms=None, enqueue_epoch_ms=None, colormap=None, payload_format=None, coalesce=None, fit=false))]
     fn enqueue_set_scatter_points_packed(
         &self,
         id: String,
@@ -887,6 +899,7 @@ impl NativeCommandSender {
         colormap: Option<String>,
         payload_format: Option<String>,
         coalesce: Option<bool>,
+        fit: bool,
     ) -> PyResult<()> {
         let xyz = byte_buffer_from_py(xyz, "scatter point payload")?;
         let fmt = ScatterPayloadFormat::from_str(payload_format.as_deref().unwrap_or("xyz_f32_v0"));
@@ -912,6 +925,7 @@ impl NativeCommandSender {
             telemetry,
             colormap: normalize_colormap(colormap),
             payload_format: fmt,
+            fit,
             coalesce: coalesce.unwrap_or(true),
         })
     }
@@ -1970,6 +1984,7 @@ mod tests {
                 telemetry: None,
                 colormap: "viridis".to_string(),
                 payload_format: ScatterPayloadFormat::XyzF32V0,
+                fit: false,
                 coalesce: true,
             })
             .unwrap();
@@ -2040,6 +2055,7 @@ mod tests {
                     telemetry: None,
                     colormap: "viridis".to_string(),
                     payload_format: ScatterPayloadFormat::XyzF32V0,
+                    fit: false,
                     coalesce: true,
                 },
                 Command::SetTableData {
@@ -2142,6 +2158,7 @@ mod tests {
                 telemetry: None,
                 colormap: "viridis".to_string(),
                 payload_format: ScatterPayloadFormat::XyzF32V0,
+                fit: true,
                 coalesce: true,
             })
             .unwrap();
@@ -2153,6 +2170,7 @@ mod tests {
                 telemetry: None,
                 colormap: "viridis".to_string(),
                 payload_format: ScatterPayloadFormat::XyzF32V0,
+                fit: false,
                 coalesce: true,
             })
             .unwrap();
@@ -2163,6 +2181,7 @@ mod tests {
                 telemetry: None,
                 colormap: "turbo".to_string(),
                 payload_format: ScatterPayloadFormat::XyzF32V0,
+                fit: false,
                 coalesce: true,
             })
             .unwrap();
@@ -2177,6 +2196,7 @@ mod tests {
                     telemetry: None,
                     colormap: "viridis".to_string(),
                     payload_format: ScatterPayloadFormat::XyzF32V0,
+                    fit: false,
                     coalesce: true,
                 },
                 Command::SetScatterPointsPacked {
@@ -2185,6 +2205,7 @@ mod tests {
                     telemetry: None,
                     colormap: "turbo".to_string(),
                     payload_format: ScatterPayloadFormat::XyzF32V0,
+                    fit: true,
                     coalesce: true,
                 },
             ]
@@ -2203,6 +2224,7 @@ mod tests {
                     telemetry: None,
                     colormap: "viridis".to_string(),
                     payload_format: ScatterPayloadFormat::XyzF32V0,
+                    fit: value == 1,
                     coalesce: true,
                 })
                 .unwrap();
@@ -2216,6 +2238,7 @@ mod tests {
                 telemetry: None,
                 colormap: "viridis".to_string(),
                 payload_format: ScatterPayloadFormat::XyzF32V0,
+                fit: true,
                 coalesce: true,
             }]
         );
@@ -2233,6 +2256,7 @@ mod tests {
                     telemetry: None,
                     colormap: "viridis".to_string(),
                     payload_format: ScatterPayloadFormat::XyzF32V0,
+                    fit: false,
                     coalesce: false,
                 })
                 .unwrap();
@@ -2252,6 +2276,7 @@ mod tests {
                 telemetry: None,
                 colormap: "viridis".to_string(),
                 payload_format: ScatterPayloadFormat::XyzF32V0,
+                fit: false,
                 coalesce: true,
             })
             .unwrap();
@@ -2265,6 +2290,7 @@ mod tests {
                 telemetry: None,
                 colormap: "turbo".to_string(),
                 payload_format: ScatterPayloadFormat::XyzF32V0,
+                fit: false,
                 coalesce: true,
             })
             .unwrap();

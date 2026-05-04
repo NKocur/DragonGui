@@ -1422,7 +1422,7 @@ automatically emits a `point_instance_v1` packet (per-point RGBA). Otherwise it 
 
 Live methods:
 
-- `set_points(frame, x, y=None, z=None, *, color=None, colors=None, scalars=None, point_size=None, point_sizes=None, opacity=None, clim=None, log_scale=None, nan_color=None, size_range=None)` — replace point data.
+- `set_points(frame, x, y=None, z=None, *, color=None, colors=None, scalars=None, point_size=None, point_sizes=None, opacity=None, clim=None, log_scale=None, nan_color=None, size_range=None, fit=False)` — replace point data. Set `fit=True` when replacing the scene with a different coordinate frame so the camera target and orbit center refit to the new bounds.
 - `set_colormap(colormap)` — change colormap; repacks data if per-point colors are baked.
 - `reset_camera()` — reset camera to last fitted position.
 - `view_xy()`, `view_xz()`, `view_yz()`, `view_isometric()` — snap to a preset view direction.

@@ -112,6 +112,7 @@ class LiveWidgetHandle:
         colormap: str = "viridis",
         payload_format: str = "xyz_f32_v0",
         coalesce: bool = True,
+        fit: bool = False,
     ) -> None:
         self.ensure_open()
         self.app.enqueue_set_scatter_points_packed(
@@ -122,6 +123,7 @@ class LiveWidgetHandle:
             colormap=colormap,
             payload_format=payload_format,
             coalesce=coalesce,
+            fit=fit,
         )
 
     def enqueue_reset_scatter_camera(self) -> None:
@@ -546,6 +548,7 @@ class AppHandle:
         colormap: str = "viridis",
         payload_format: str = "xyz_f32_v0",
         coalesce: bool = True,
+        fit: bool = False,
     ) -> None:
         self._send_or_queue_native(
             "enqueue_set_scatter_points_packed",
@@ -556,6 +559,7 @@ class AppHandle:
             _scatter_colormap(colormap),
             payload_format,
             bool(coalesce),
+            bool(fit),
         )
 
     def enqueue_reset_scatter_camera(self, widget_id: str) -> None:

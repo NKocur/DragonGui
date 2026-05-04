@@ -103,14 +103,30 @@ fn coalesce_runtime_command_batch(commands: &mut Vec<Command>) {
     if commands.len() < 2 {
         return;
     }
-    let mut seen_scatter_updates = HashSet::new();
+    let mut seen_scatter_updates = HashMap::new();
     let mut filtered = Vec::with_capacity(commands.len());
     while let Some(command) = commands.pop() {
         let keep = match &command {
-            Command::DebugSnapshot { .. } => true,
             Command::SetScatterPointsPacked {
-                id, coalesce: true, ..
-            } => seen_scatter_updates.insert(id.clone()),
+                id,
+                fit,
+                coalesce: true,
+                ..
+            } => {
+                if let Some(index) = seen_scatter_updates.get(id).copied() {
+                    if *fit {
+                        if let Command::SetScatterPointsPacked { fit: kept_fit, .. } =
+                            &mut filtered[index]
+                        {
+                            *kept_fit = true;
+                        }
+                    }
+                    false
+                } else {
+                    seen_scatter_updates.insert(id.clone(), filtered.len());
+                    true
+                }
+            }
             _ => true,
         };
         if keep {
@@ -2343,6 +2359,7 @@ mod style_patch_tests {
                 telemetry: None,
                 colormap: "viridis".to_string(),
                 payload_format: ScatterPayloadFormat::XyzF32V0,
+                fit: true,
                 coalesce: true,
             },
             Command::DrainPythonTasks,
@@ -2352,6 +2369,7 @@ mod style_patch_tests {
                 telemetry: None,
                 colormap: "turbo".to_string(),
                 payload_format: ScatterPayloadFormat::XyzF32V0,
+                fit: false,
                 coalesce: true,
             },
         ];
@@ -2368,6 +2386,7 @@ mod style_patch_tests {
                     telemetry: None,
                     colormap: "turbo".to_string(),
                     payload_format: ScatterPayloadFormat::XyzF32V0,
+                    fit: true,
                     coalesce: true,
                 },
             ]
@@ -2383,6 +2402,7 @@ mod style_patch_tests {
                 telemetry: None,
                 colormap: "viridis".to_string(),
                 payload_format: ScatterPayloadFormat::XyzF32V0,
+                fit: true,
                 coalesce: true,
             },
             Command::DebugSnapshot { request_id: 1 },
@@ -2392,6 +2412,7 @@ mod style_patch_tests {
                 telemetry: None,
                 colormap: "turbo".to_string(),
                 payload_format: ScatterPayloadFormat::XyzF32V0,
+                fit: false,
                 coalesce: true,
             },
         ];
@@ -2404,9 +2425,12 @@ mod style_patch_tests {
             Command::DebugSnapshot { request_id: 1 }
         ));
         match &commands[1] {
-            Command::SetScatterPointsPacked { xyz, colormap, .. } => {
+            Command::SetScatterPointsPacked {
+                xyz, colormap, fit, ..
+            } => {
                 assert_eq!(xyz, &vec![2; 12]);
                 assert_eq!(colormap, "turbo");
+                assert!(*fit);
             }
             other => panic!("expected latest scatter update, got {other:?}"),
         }
@@ -6386,6 +6410,7 @@ impl WgpuState {
         telemetry: Option<ScatterTelemetry>,
         colormap: String,
         data_format: ScatterPayloadFormat,
+        fit: bool,
     ) -> Result<bool, DragonError> {
         if self.widget_kind(id) != Some(WidgetKind::Scatter3D) {
             return Ok(false);
@@ -6488,7 +6513,9 @@ impl WgpuState {
         let upload_timings = runtime
             .widget
             .set_points(&self.device, &self.queue, &runtime.points);
-        // Fit on first visible data load; preserve camera for subsequent live updates.
+        // Fit on first visible data load, or when the caller declares this
+        // payload replaces the scene with a different coordinate frame.
+        // Preserve camera for ordinary live updates.
         //
         // Startup resource uploads can arrive while a scatter is hidden inside
         // an inactive page. Hidden scatters have a zero-sized layout rect, and
@@ -6496,7 +6523,7 @@ impl WgpuState {
         // units away. Leave `fitted_once` false so the next visible layout pass
         // can fit with the real viewport dimensions.
         let mut camera_fitted = false;
-        if !runtime.fitted_once
+        if (fit || !runtime.fitted_once)
             && !runtime.points.is_empty()
             && runtime.widget.has_visible_viewport()
         {
@@ -6505,6 +6532,8 @@ impl WgpuState {
                 .fit_to_bounds(data_min, data_max, &self.queue);
             runtime.fitted_once = true;
             camera_fitted = true;
+        } else if fit {
+            runtime.fitted_once = false;
         }
         let grid_t0 = Instant::now();
         runtime
@@ -8147,10 +8176,11 @@ impl DragonApp {
                 telemetry,
                 colormap,
                 payload_format,
+                fit,
                 coalesce: _,
             } => {
                 let detail = Some(format!(
-                    "payload_bytes={}, colormap={colormap}, format={}",
+                    "payload_bytes={}, colormap={colormap}, format={}, fit={fit}",
                     xyz.len(),
                     payload_format.as_str()
                 ));
@@ -8171,6 +8201,7 @@ impl DragonApp {
                         telemetry,
                         colormap,
                         payload_format,
+                        fit,
                     ) {
                         Ok(true) => (Some(Dirty::GpuData), "applied".to_string(), true),
                         Ok(false) => {
