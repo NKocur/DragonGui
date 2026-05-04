@@ -697,18 +697,18 @@ LED.busy::dot {
 }
 
 LED::glow {
-    width: 38px;
-    height: 38px;
-    background: rgba(57, 255, 136, 0.34);
-    opacity: 0.42;
+    width: 20px;
+    height: 20px;
+    background: rgba(57, 255, 136, 0.02);
+    opacity: 0.6;
     border-radius: 999px;
-    box-shadow: 0 0 18px 6px rgba(57, 255, 136, 0.45);
+    box-shadow: 0 0 2px 0px rgba(57, 255, 136, 0.04);
 }
 
 LED.stream::glow,
 LED.busy::glow {
-    background: rgba(255, 54, 214, 0.40);
-    box-shadow: 0 0 20px 7px rgba(255, 54, 214, 0.52);
+    background: rgba(255, 54, 214, 0.02);
+    box-shadow: 0 0 2px 0px rgba(255, 54, 214, 0.04);
 }
 
 LED.off::glow {
@@ -730,7 +730,7 @@ LED.css-demo {
     background: #ff36d6;
     border-color: #00e5ff;
     border-radius: 999px;
-    box-shadow: 0 0 12px 2px rgba(0, 229, 255, 0.38);
+    box-shadow: 0 0 3px 0px rgba(0, 229, 255, 0.18);
 }
 
 LED.css-demo::dot {
@@ -742,11 +742,11 @@ LED.css-demo::dot {
 }
 
 LED.css-demo::glow {
-    width: 52px;
-    height: 52px;
-    background: rgba(0, 229, 255, 0.30);
-    opacity: 0.48;
-    box-shadow: 0 0 28px 10px rgba(0, 229, 255, 0.56);
+    width: 34px;
+    height: 34px;
+    background: rgba(0, 229, 255, 0.03);
+    opacity: 0.6;
+    box-shadow: 0 0 3px 0px rgba(0, 229, 255, 0.06);
 }
 
 LED.css-demo::highlight {
@@ -1519,7 +1519,7 @@ with dg.HLayout(style={"gap": 0}):
         with dg.Page("controls", title="Controls"):
             with dg.GridLayout(columns=2, min_column_width=360, gap=GRID_GAP, style=GRID_STYLE):
                 with dg.Panel("Form controls", style=CARD_STYLE):
-                    with dg.FlowLayout(gap=8, row_gap=6):
+                    with dg.FlowLayout(gap=8, row_gap=6, cross_align="center"):
                         dg.LED(True, tooltip="Boolean on state")
                         dg.LED(False, tooltip="Boolean off state")
                         dg.LED("busy", states={"busy": "#ffcc33", "ready": "success"}, tooltip="Named custom state")
