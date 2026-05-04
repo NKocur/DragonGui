@@ -506,6 +506,11 @@ class AppHandle:
     def call_soon_threadsafe(self, fn: Callable[[], None]) -> None:
         if not callable(fn):
             raise TypeError("call_soon_threadsafe expects a callable")
+        try:
+            from .diagnostics import _get_collector
+            _get_collector().record_enqueue()
+        except Exception:
+            pass
         with self._lock:
             if self._closed:
                 raise RuntimeError("DragonGUI app handle is closed")
@@ -1224,8 +1229,13 @@ class AppHandle:
                 task = self._tasks.popleft()
             try:
                 task()
-            except Exception:  # pragma: no cover - diagnostic path
+            except Exception as _exc:  # pragma: no cover - diagnostic path
                 traceback.print_exc()
+                try:
+                    from .diagnostics import record_task_failure
+                    record_task_failure(task, _exc)
+                except Exception:
+                    pass
             processed += 1
 
         with self._lock:

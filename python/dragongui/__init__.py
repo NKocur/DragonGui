@@ -10,8 +10,10 @@ from .dialogs import (
     pick_folder_dialog,
     save_file_dialog,
 )
+from .diagnostics import register_thread_role, thread_role
 from .notifications import toast
 from .runtime import ToastHandle
+from .thread_monitor import ThreadMonitor
 from .theme import Theme
 from .vdom import Patch, ResourceRef, VNode
 from .widgets import (
@@ -146,6 +148,9 @@ __all__ = [
     "toast",
     "link_cameras",
     "unlink_cameras",
+    "ThreadMonitor",
+    "register_thread_role",
+    "thread_role",
 ]
 
 __version__ = "0.1.0"

@@ -6,6 +6,93 @@ import pytest
 
 import dragongui as dg
 import dragongui.app as app_module
+import dragongui.thread_monitor as thread_monitor_module
+
+
+def test_component_initial_render_has_live_app_context(monkeypatch) -> None:
+    class Sender:
+        def __init__(self, handle: object) -> None:
+            self.handle = handle
+            self.props: list[tuple[str, str, object]] = []
+
+        def enqueue_drain_python_tasks(self) -> None:
+            self.handle._drain_python_tasks()
+
+        def enqueue_set_prop(self, widget_id: str, prop: str, value: object) -> None:
+            self.props.append((widget_id, prop, value))
+
+        def close(self) -> None:
+            pass
+
+    app = dg.App()
+    seen: dict[str, object] = {}
+    sender: Sender | None = None
+
+    @dg.component
+    def StartupTask(ctx: dg.ComponentCtx) -> dg.Window:
+        status = ctx.state("status", "waiting")
+        once: list[bool] = ctx.state("once", [False]).value
+        seen["ctx_app"] = ctx.app
+        if not once[0] and ctx.app is not None:
+            once[0] = True
+            ctx.app.call_soon_threadsafe(lambda: status.set("ready"))
+        win = dg.Window("Startup", key="window")
+        dg.Label(str(status.value), id="status", key="status", parent=win)
+        return win
+
+    def fake_run_document(document, click_callbacks, change_callbacks, app_handle=None):
+        nonlocal sender
+        assert app_handle is not None
+        assert seen["ctx_app"] is app_handle
+        assert document["window"]["children"][0]["props"]["text"] == "waiting"
+        sender = Sender(app_handle)
+        app_handle._bind_native_sender(sender)
+        return {"status": "ok"}
+
+    monkeypatch.setattr(app_module, "native_event_loop_available", lambda: True)
+    monkeypatch.setattr(app_module, "run_document", fake_run_document)
+
+    result = app.run(StartupTask())
+
+    assert result == {"status": "ok"}
+    assert sender is not None
+    assert sender.props == [("status", "text", "ready")]
+
+
+def test_thread_monitor_starts_during_initial_component_render(monkeypatch) -> None:
+    started: dict[str, object] = {}
+
+    def fake_start_monitor(app_handle, snap_slot, history_seconds, refresh_hz) -> None:
+        started["app_handle"] = app_handle
+        started["snap_slot"] = snap_slot
+        started["history_seconds"] = history_seconds
+        started["refresh_hz"] = refresh_hz
+
+    @dg.component
+    def MonitorTool(ctx: dg.ComponentCtx) -> dg.Window:
+        win = dg.Window("Monitor", key="window")
+        with dg.VLayout(parent=win):
+            dg.ThreadMonitor(
+                key="monitor",
+                history_seconds=12,
+                refresh_hz=3.0,
+            )
+        return win
+
+    def fake_run_document(document, click_callbacks, change_callbacks, app_handle=None):
+        assert app_handle is not None
+        assert started["app_handle"] is app_handle
+        return {"status": "ok"}
+
+    monkeypatch.setattr(thread_monitor_module, "_start_monitor", fake_start_monitor)
+    monkeypatch.setattr(app_module, "native_event_loop_available", lambda: True)
+    monkeypatch.setattr(app_module, "run_document", fake_run_document)
+
+    result = dg.App().run(MonitorTool())
+
+    assert result == {"status": "ok"}
+    assert started["history_seconds"] == 12
+    assert started["refresh_hz"] == 3.0
 
 
 def test_component_state_rerenders_and_applies_live_prop_patch(monkeypatch) -> None:

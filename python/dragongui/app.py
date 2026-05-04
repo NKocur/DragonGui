@@ -73,15 +73,23 @@ class App:
     def run(self, window: Window | ComponentInstance) -> dict[str, Any]:
         """Start the native event loop for a window."""
         component_runtime = window._runtime if isinstance(window, ComponentInstance) else None
-        if component_runtime is not None:
-            window = render_component_window(window)
-        click_cbs, change_cbs = _collect_runtime_callbacks(window)
-        handle = AppHandle()
-        widgets = _walk_widget_tree(window)
         bind_live = native_event_loop_available()
+        handle = AppHandle()
+        if component_runtime is not None and bind_live:
+            component_runtime.attach(handle)
+        if component_runtime is not None:
+            try:
+                window = render_component_window(window)
+            except Exception:
+                if bind_live:
+                    component_runtime.detach()
+                    handle._close()
+                raise
+        click_cbs, change_cbs = _collect_runtime_callbacks(window)
+        widgets = _walk_widget_tree(window)
         if bind_live:
             self._handle = handle
-            if component_runtime is not None:
+            if component_runtime is not None and component_runtime.app_handle is not handle:
                 component_runtime.attach(handle)
             handle.register_widget_callbacks(window)
             for widget in widgets:
