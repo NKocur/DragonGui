@@ -352,10 +352,14 @@ NavItem:hover::item {
     color: var(--j-text);
 }
 
+NavItem:selected::item {
+    background: var(--j-brand-soft);
+    color: var(--j-brand);
+    font-weight: 600;
+}
+
 NavItem::accent {
-    width: 4px;
     background: var(--j-brand);
-    border-radius: 999px;
 }
 
 NumberInput::stepper {

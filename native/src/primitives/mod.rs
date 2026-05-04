@@ -3040,41 +3040,13 @@ fn emit_rects_inner(
             WidgetKind::Menu => {
                 let menu_radius_lp = visual.border_radius.unwrap_or(4.0).max(0.0);
                 let menu_radii = visual_radii(&visual, menu_radius_lp, sf);
-                emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], menu_radii, out);
-                let menu_open = state.open_menu.as_deref() == Some(node.id.as_str());
-                let menu_fill = if visual.background_paint.is_some() {
-                    Some(resolve_background_paint(&visual, theme, theme.surface_alt))
-                } else {
-                    styled_bg
-                        .or_else(|| {
-                            if state.is_disabled(&node.id) {
-                                None
-                            } else if menu_open {
-                                Some(mix(
-                                    theme.surface_alt,
-                                    styled_accent.unwrap_or(theme.accent),
-                                    0.24,
-                                ))
-                            } else if state.pressed.as_deref() == Some(node.id.as_str()) {
-                                Some(mix(
-                                    theme.surface_alt,
-                                    styled_accent.unwrap_or(theme.accent),
-                                    0.20,
-                                ))
-                            } else if state.hovered.as_deref() == Some(node.id.as_str())
-                                || state.focused.as_deref() == Some(node.id.as_str())
-                            {
-                                Some(mix(
-                                    theme.surface_alt,
-                                    styled_accent.unwrap_or(theme.accent),
-                                    0.14,
-                                ))
-                            } else {
-                                None
-                            }
-                        })
-                        .map(FillPaint::Solid)
-                };
+                // Only render background/border if CSS explicitly sets them.
+                // Hover/active/open states are expressed via text color only.
+                let menu_fill = visual
+                    .background_paint
+                    .as_ref()
+                    .map(|_| resolve_background_paint(&visual, theme, theme.surface_alt))
+                    .or_else(|| styled_bg.map(FillPaint::Solid));
                 let menu_border_w = visual
                     .border_width
                     .map(|width| (width.max(0.0) * sf).max(0.0))
@@ -3517,58 +3489,55 @@ fn emit_rects_inner(
                     .map(|width| (width.max(0.0) * sf).max(0.0))
                     .unwrap_or(0.0);
                 let item_fill = apply_opacity(fill, item_visual.opacity);
-                if item_border_w > 0.0 {
-                    emit_bordered_rect_radii(
-                        out,
-                        [x, y, w, h],
-                        resolve_color(&item_visual.border_color, theme).unwrap_or(theme.border),
-                        item_fill,
-                        item_radii,
-                        item_border_w,
-                    );
-                } else {
-                    out.push(inst_radii([x, y, w, h], item_fill, item_radii));
-                }
-                if active {
-                    let bar_w = node
-                        .style
-                        .parts
-                        .parts
+
+                // Resolve accent bar width through the state cascade so that
+                // NavItem::accent { width: 0px } hides it and
+                // NavItem:selected::accent { width: 4px } overrides the base.
+                // No minimum clamp — 0.0 means no bar.
+                let bar_w = if active {
+                    let base_w = node.style.parts.parts
                         .get("accent")
-                        .and_then(|part| part.layout.width)
-                        .map(|width| (width.max(1.0) * sf).max(1.0))
-                        .unwrap_or(PANEL_ACCENT_WIDTH_LP * sf);
-                    let accent_border_w = accent_visual
-                        .border_width
-                        .map(|width| (width.max(0.0) * sf).max(0.0))
-                        .unwrap_or(0.0);
-                    let inset = item_border_w.max(accent_border_w);
-                    let accent_rect = [
-                        x + inset,
-                        y + inset,
-                        bar_w.min((w - inset * 2.0).max(1.0)),
-                        (h - inset * 2.0).max(1.0),
-                    ];
+                        .and_then(|p| p.layout.width);
+                    let selected_w = selected_part_style_for_state(
+                        &node.style, &node.id, state, "accent",
+                    )
+                    .and_then(|p| p.layout.width);
+                    let pseudo_w = state_part_style_for_state(
+                        &node.style, &node.id, state, "accent",
+                    )
+                    .and_then(|p| p.layout.width);
+                    (pseudo_w.or(selected_w).or(base_w).unwrap_or(PANEL_ACCENT_WIDTH_LP) * sf)
+                        .max(0.0)
+                } else {
+                    0.0
+                };
+
+                let accent_border_w = accent_visual
+                    .border_width
+                    .map(|width| (width.max(0.0) * sf).max(0.0))
+                    .unwrap_or(0.0);
+
+                if bar_w > 0.0 {
+                    // Side-by-side layout: accent bar on the left edge, item background
+                    // immediately to its right. They share no pixels so the bar looks
+                    // like an integrated part of the item rather than an overlay.
                     let accent_fill = apply_opacity(
                         resolve_color(&accent_visual.background, theme)
                             .or(resolve_color(&accent_visual.foreground, theme))
                             .unwrap_or_else(|| styled_accent.unwrap_or(theme.accent)),
                         accent_visual.opacity,
                     );
+                    // Bar inherits the item's outer left corners; right corners are square
+                    // so it flush-joins the item background.
                     let accent_radii = visual_radii_with_fallback(
                         &accent_visual,
-                        [
-                            (item_radii[0] - inset).max(0.0),
-                            0.0,
-                            0.0,
-                            (item_radii[3] - inset).max(0.0),
-                        ],
+                        [item_radii[0], 0.0, 0.0, item_radii[3]],
                         sf,
                     );
                     if accent_border_w > 0.0 {
                         emit_bordered_rect_radii(
                             out,
-                            accent_rect,
+                            [x, y, bar_w, h],
                             resolve_color(&accent_visual.border_color, theme)
                                 .unwrap_or(accent_fill),
                             accent_fill,
@@ -3576,7 +3545,38 @@ fn emit_rects_inner(
                             accent_border_w,
                         );
                     } else {
-                        out.push(inst_radii(accent_rect, accent_fill, accent_radii));
+                        out.push(inst_radii([x, y, bar_w, h], accent_fill, accent_radii));
+                    }
+                    // Item starts right of the bar; left corners are square to match the bar.
+                    let item_rect = [x + bar_w, y, (w - bar_w).max(0.0), h];
+                    let item_rect_radii = [0.0, item_radii[1], item_radii[2], 0.0];
+                    if item_border_w > 0.0 {
+                        emit_bordered_rect_radii(
+                            out,
+                            item_rect,
+                            resolve_color(&item_visual.border_color, theme)
+                                .unwrap_or(theme.border),
+                            item_fill,
+                            item_rect_radii,
+                            item_border_w,
+                        );
+                    } else {
+                        out.push(inst_radii(item_rect, item_fill, item_rect_radii));
+                    }
+                } else {
+                    // No bar (inactive, or width: 0px): full-width item.
+                    if item_border_w > 0.0 {
+                        emit_bordered_rect_radii(
+                            out,
+                            [x, y, w, h],
+                            resolve_color(&item_visual.border_color, theme)
+                                .unwrap_or(theme.border),
+                            item_fill,
+                            item_radii,
+                            item_border_w,
+                        );
+                    } else {
+                        out.push(inst_radii([x, y, w, h], item_fill, item_radii));
                     }
                 }
                 if let Some(rect) = badge_rect(node, [x, y, w, h], theme, sf, theme.spacing * sf) {

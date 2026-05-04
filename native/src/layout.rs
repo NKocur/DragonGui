@@ -400,13 +400,13 @@ fn style_for(
                 ),
             },
             padding: taffy::geometry::Rect {
-                left: LengthPercentage::Length(panel_pad),
-                right: LengthPercentage::Length(panel_pad),
+                left: LengthPercentage::Length(theme.spacing * 0.5 * sf),
+                right: LengthPercentage::Length(theme.spacing * 0.5 * sf),
                 top: LengthPercentage::Length(0.0),
                 bottom: LengthPercentage::Length(0.0),
             },
             gap: taffy::geometry::Size {
-                width: LengthPercentage::Length(ctrl_gap),
+                width: LengthPercentage::Length(2.0 * sf),
                 height: LengthPercentage::Length(0.0),
             },
             ..Default::default()
@@ -927,7 +927,8 @@ fn intrinsic_leaf_width(node: &WidgetNode, theme: &Theme) -> Option<f32> {
                 standalone_badge_width_for_text(&node.style, text, theme, 1.0).clamp(24.0, 220.0)
             }),
         WidgetKind::Menu => {
-            Some((text_w.unwrap_or(0.0) + pad + MENU_LABEL_WIDTH_SAFETY_LP).clamp(44.0, 180.0))
+            let menu_pad = theme.spacing;
+            Some((text_w.unwrap_or(0.0) + menu_pad + MENU_LABEL_WIDTH_SAFETY_LP).clamp(28.0, 180.0))
         }
         WidgetKind::Dropdown => Some((text_w.unwrap_or(0.0) + pad + 22.0).clamp(112.0, 260.0)),
         WidgetKind::NumberInput => Some((text_w.unwrap_or(0.0) + pad + 34.0).clamp(96.0, 220.0)),
@@ -3420,7 +3421,7 @@ mod tests {
         let layout = compute_layout(&root, 240.0, 80.0, 1.0, &theme, None);
         let debug = layout.rects.get("debug").unwrap();
         let text_w = estimate_text_width("Debug", theme.font_size);
-        let available_text_w = debug.w - theme.spacing * 2.0;
+        let available_text_w = debug.w - theme.spacing;
 
         assert!(
             available_text_w >= text_w + MENU_LABEL_WIDTH_SAFETY_LP - 0.5,

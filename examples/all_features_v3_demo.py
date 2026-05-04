@@ -245,8 +245,7 @@ Button.primary {
 }
 
 Button:hover,
-Dropdown:hover,
-MenuBar Menu:hover {
+Dropdown:hover {
     background: rgba(90, 169, 255, 0.18);
     border-color: rgba(90, 169, 255, 0.70);
 }

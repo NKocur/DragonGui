@@ -121,3 +121,9 @@ Menu {
     border-radius: var(--dg-radius);
     accent: accent;
 }
+
+Menu:hover,
+Menu:active,
+Menu:open {
+    color: accent;
+}

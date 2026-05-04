@@ -1253,6 +1253,11 @@ fn collect_text(
                             r.y + r.h,
                         )
                     }
+                    WidgetKind::Menu => {
+                        let menu_pad = pad * 0.5;
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        (r.x + menu_pad, top, r.x + menu_pad, r.y, r.x + r.w - menu_pad, r.y + r.h)
+                    }
                     _ => {
                         let top = if label_text_should_top_align(
                             node,
