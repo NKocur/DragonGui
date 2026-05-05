@@ -1574,6 +1574,44 @@ def test_line_plot_serializes_packed_xy_series() -> None:
     assert props["series"][0]["data_b64"]
 
 
+def test_histogram_serializes_binned_data() -> None:
+    np = pytest.importorskip("numpy")
+
+    class NumericFrame:
+        columns = ("latency",)
+        dtypes = ("float32",)
+        shape = (6, 1)
+        latency = np.array([0.0, 1.0, 1.5, 2.0, 2.5, float("nan")], dtype=np.float32)
+
+        def __getitem__(self, column: str) -> object:
+            return getattr(self, column)
+
+    hist = dg.Histogram(
+        NumericFrame(),
+        value="latency",
+        bins=3,
+        range=(0.0, 3.0),
+        color="#42a5ff",
+        parent=None,
+    )
+    props = hist.to_dict()["props"]
+
+    assert hist.to_dict()["type"] == "histogram"
+    assert props["frame"]["rows"] == 6
+    assert props["value"] == "latency"
+    assert props["x_label"] == "latency"
+    assert props["y_label"] == "count"
+    assert props["mode"] == "count"
+    assert props["show_toolbar"] is False
+    assert props["interaction"] == "inspect"
+    assert props["auto_fit"] is True
+    assert props["input_count"] == 6
+    assert props["finite_count"] == 5
+    assert props["edges"] == [0.0, 1.0, 2.0, 3.0]
+    assert props["counts"] == [1.0, 2.0, 2.0]
+    assert props["color"] == "#42a5ff"
+
+
 def test_line_plot_y_only_uses_sample_index() -> None:
     np = pytest.importorskip("numpy")
 

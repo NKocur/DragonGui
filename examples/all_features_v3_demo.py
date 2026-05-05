@@ -24,6 +24,7 @@ except ImportError as exc:  # pragma: no cover - manual demo guard
 POINT_ROWS = 125_000
 TABLE_ROWS = 50_000
 LINE_ROWS = 720
+HISTOGRAM_ROWS = 8_000
 STREAM_FRAME_COUNT = 24
 GRID_GAP = 12
 GRID_STYLE = {"padding": 10, "align_items": "start", "flex_grow": 0, "flex_shrink": 1}
@@ -104,6 +105,46 @@ LINE_STACK_STYLE = {
     "flex_grow": 1,
     "flex_shrink": 1,
     "align_self": "stretch",
+}
+HISTOGRAM_LAYOUT_STYLE = {
+    "padding": 10,
+    "gap": GRID_GAP,
+    "align_items": "stretch",
+    "flex_grow": 1,
+    "flex_shrink": 1,
+    "min_width": 0,
+    "min_height": 0,
+    "overflow_y": "hidden",
+}
+HISTOGRAM_CONTROLS_PANEL_STYLE = {
+    "width": 280,
+    "padding": 10,
+    "gap": 8,
+    "font_size": 14,
+    "line_height": "18px",
+    "flex_grow": 0,
+    "flex_shrink": 0,
+    "align_self": "stretch",
+    "min_height": 0,
+    "overflow_y": "hidden",
+}
+HISTOGRAM_CONTROLS_SCROLL_STYLE = {
+    "padding_bottom": 26,
+    "gap": 8,
+    "font_size": 14,
+    "line_height": "18px",
+    "flex_grow": 1,
+    "flex_shrink": 1,
+    "min_height": 0,
+}
+HISTOGRAM_SCROLL_STYLE = {
+    "flex_grow": 1,
+    "flex_shrink": 1,
+    "min_width": 0,
+    "min_height": 0,
+    "padding_right": 18,
+    "padding_bottom": 22,
+    "overflow_y": "auto",
 }
 DEBUG_MONITOR_STYLE = {
     "height": 540,
@@ -225,6 +266,28 @@ class LineFrame:
             center = np.float32(offset + idx / max(1, rows - 1) * 60.0)
             width = t - center
             self.events += np.exp(-(width * width) / np.float32(0.20)) * np.float32(height)
+
+    def __getitem__(self, column: str) -> object:
+        return getattr(self, column)
+
+
+class HistogramFrame:
+    columns = ("latency_ms", "score", "revenue", "residual")
+    dtypes = ("float32", "float32", "float32", "float32")
+
+    def __init__(self, rows: int = HISTOGRAM_ROWS) -> None:
+        self.shape = (rows, len(self.columns))
+        rng = np.random.default_rng(303)
+        fast = rng.normal(43.0, 8.0, int(rows * 0.70))
+        slow = rng.normal(91.0, 20.0, rows - len(fast))
+        self.latency_ms = np.clip(np.concatenate([fast, slow]), 0.0, 170.0).astype(np.float32)
+        self.score = rng.beta(4.0, 1.7, rows).astype(np.float32)
+        self.revenue = rng.lognormal(mean=3.3, sigma=0.6, size=rows).astype(np.float32)
+        x = np.linspace(-math.tau, math.tau, rows, dtype=np.float32)
+        self.residual = (
+            np.sin(x * np.float32(1.65)) * np.float32(0.38)
+            + rng.normal(0.0, 0.15, rows)
+        ).astype(np.float32)
 
     def __getitem__(self, column: str) -> object:
         return getattr(self, column)
@@ -449,6 +512,7 @@ ProgressBar {
 }
 
 DataFrameTable,
+Histogram,
 LinePlot,
 Scatter3D,
 Image {
@@ -468,6 +532,32 @@ LinePlot {
 
 LinePlot.stream-plot {
     min-height: 205px;
+}
+
+Histogram {
+    width: 100%;
+    min-height: 220px;
+    flex-grow: 1;
+    flex-shrink: 1;
+    background: rgba(4, 8, 18, 0.72);
+    border-radius: 12px;
+    padding: 10px;
+}
+
+Histogram.latency {
+    color: #5aa9ff;
+}
+
+Histogram.density {
+    color: #74ddb0;
+}
+
+Histogram.percent {
+    color: #ffcc66;
+}
+
+Histogram.cumulative {
+    color: #f36b7f;
 }
 
 Scatter3D {
@@ -536,6 +626,38 @@ VLayout.line-stack {
     height: calc(100% - 8px);
     min-height: 0;
     align-self: stretch;
+}
+
+HLayout.histogram-layout {
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    align-items: stretch;
+    overflow-y: hidden;
+}
+
+Panel.histogram-controls {
+    height: calc(100% - 8px);
+    max-height: calc(100% - 8px);
+    align-self: stretch;
+    overflow-y: hidden;
+    flex-grow: 0;
+    flex-shrink: 0;
+}
+
+ScrollArea.histogram-control-scroll,
+ScrollArea.histogram-scroll {
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+GridLayout.histogram-grid {
+    width: 100%;
+    min-width: 0;
+    align-items: stretch;
 }
 """
 
@@ -722,6 +844,7 @@ ProgressBar {
 }
 
 DataFrameTable,
+Histogram,
 LinePlot,
 Scatter3D,
 Image {
@@ -729,6 +852,11 @@ Image {
 }
 
 LinePlot {
+    background: #fffdf7;
+    border-color: #9f8970;
+}
+
+Histogram {
     background: #fffdf7;
     border-color: #9f8970;
 }
@@ -893,6 +1021,11 @@ LinePlot {
     background: rgba(4, 8, 28, 0.86);
     border-color: #00e5ff;
 }
+
+Histogram {
+    background: rgba(4, 8, 28, 0.86);
+    border-color: #00e5ff;
+}
 """
 
 
@@ -939,17 +1072,24 @@ demo_state = {
     "line_width": 2.0,
     "line_ticks": 5,
     "line_window": None,
+    "histogram_ticks": 5,
 }
 initial_frame = DemoFrame(mode="lidar")
 line_frame = LineFrame()
+histogram_frame = HistogramFrame()
 demo_image_path = make_demo_image()
 stream_payload_cache: dict[tuple[str, str], list[tuple[float, dg.ScatterPayload]]] = {}
 line_plot_top: dg.LinePlot | None = None
 line_plot_mid: dg.LinePlot | None = None
 line_plot_bottom: dg.LinePlot | None = None
+histogram_latency: dg.Histogram | None = None
+histogram_score: dg.Histogram | None = None
+histogram_revenue: dg.Histogram | None = None
+histogram_residual: dg.Histogram | None = None
 line_width_label: dg.Label | None = None
 line_tick_label: dg.Label | None = None
 line_window_label: dg.Label | None = None
+histogram_tick_label: dg.Label | None = None
 
 
 def set_status(message: str) -> None:
@@ -1397,6 +1537,12 @@ def update_all_line_plots(callback) -> None:
             callback(plot)
 
 
+def update_all_histograms(callback) -> None:
+    for hist in (histogram_latency, histogram_score, histogram_revenue, histogram_residual):
+        if hist is not None:
+            callback(hist)
+
+
 def set_line_width(value: float) -> None:
     width = max(0.5, float(value))
     demo_state["line_width"] = width
@@ -1554,6 +1700,40 @@ def stop_line_stream() -> None:
     set_status("Line stream stopped")
 
 
+def set_histogram_tick_count(value: float) -> None:
+    count = max(2, min(9, int(round(float(value)))))
+    demo_state["histogram_ticks"] = count
+    if histogram_tick_label is not None:
+        histogram_tick_label.set_value(f"Ticks: {count}")
+    update_all_histograms(lambda hist: hist.set_tick_count(count))
+    set_status(f"Histogram ticks: {count}")
+
+
+def set_histogram_grid(enabled: bool) -> None:
+    update_all_histograms(lambda hist: hist.set_grid_visible(bool(enabled)))
+    set_status(f"Histogram grid: {enabled}")
+
+
+def set_histogram_axes(enabled: bool) -> None:
+    update_all_histograms(lambda hist: hist.set_axes_visible(bool(enabled)))
+    set_status(f"Histogram axes: {enabled}")
+
+
+def set_histogram_ticks(enabled: bool) -> None:
+    update_all_histograms(lambda hist: hist.set_ticks_visible(bool(enabled)))
+    set_status(f"Histogram tick labels: {enabled}")
+
+
+def set_histogram_toolbar(enabled: bool) -> None:
+    update_all_histograms(lambda hist: hist.set_toolbar_visible(bool(enabled)))
+    set_status(f"Histogram toolbar: {enabled}")
+
+
+def fit_histograms() -> None:
+    update_all_histograms(lambda hist: hist.fit())
+    set_status("Histograms fit to data")
+
+
 def update_table(mode: str) -> None:
     table.set_frame(DemoFrame(phase=demo_state["phase"] + 0.6, mode=mode, rows=TABLE_ROWS))
     set_status(f"Table frame: {mode}")
@@ -1678,6 +1858,8 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
     global stream_interval_label, dynamic_panel, style_panel, style_label, style_button
     global line_plot_top, line_plot_mid, line_plot_bottom
     global line_width_label, line_tick_label, line_window_label
+    global histogram_latency, histogram_score, histogram_revenue, histogram_residual
+    global histogram_tick_label
     global confirm_modal, about_modal
 
     win = dg.Window("DragonGUI All Features V3 Demo", width=1440, height=900)
@@ -1697,6 +1879,8 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
             dg.MenuItem("Start Stream", on_click=start_line_stream)
             dg.MenuItem("Stop Stream", on_click=stop_line_stream)
             dg.MenuItem("Fit Plots", on_click=fit_line_plots)
+        with dg.Menu("Histogram"):
+            dg.MenuItem("Fit Histograms", on_click=fit_histograms)
         with dg.Menu("Help"):
             dg.MenuItem("About", on_click=lambda: about_modal.show())
 
@@ -1711,10 +1895,12 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                 dg.Badge("Grid", level="success")
                 dg.Tag("Scatter3D", level="info")
                 dg.Tag("LinePlot", level="info")
+                dg.Tag("Histogram", level="warning")
             dg.Separator()
             dg.NavItem("Overview", page="overview")
             dg.NavItem("Scatter", page="scatter")
             dg.NavItem("Line plots", page="lineplots")
+            dg.NavItem("Histograms", page="histograms")
             dg.NavItem("Controls", page="controls")
             dg.NavItem("Data", page="data")
             dg.NavItem("Runtime", page="runtime")
@@ -1734,6 +1920,9 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                     with dg.Panel("Data", class_="highlight", style=CARD_STYLE):
                         dg.Label(f"{TABLE_ROWS:,}", class_="stat-value")
                         dg.Label("Virtualized table rows", class_="stat-label")
+                    with dg.Panel("Histograms", class_="highlight", style=CARD_STYLE):
+                        dg.Label(f"{HISTOGRAM_ROWS:,}", class_="stat-value")
+                        dg.Label("Distribution samples", class_="stat-label")
                     with dg.Panel("Layout", class_="highlight", style=CARD_STYLE):
                         dg.Label("Grid + Flow", class_="stat-value")
                         dg.Label("Responsive page composition", class_="stat-label")
@@ -1986,6 +2175,130 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                                 key="v3-line-bottom",
                             )
 
+            with dg.Page("histograms", title="Histograms"):
+                with dg.HLayout(class_="histogram-layout", style=HISTOGRAM_LAYOUT_STYLE):
+                    with dg.Panel(
+                        "Histogram controls",
+                        class_="histogram-controls",
+                        style=HISTOGRAM_CONTROLS_PANEL_STYLE,
+                    ):
+                        with dg.ScrollArea(
+                            axis="y",
+                            gap=8,
+                            class_="histogram-control-scroll",
+                            style=HISTOGRAM_CONTROLS_SCROLL_STYLE,
+                        ):
+                            dg.Label("Viewport tools")
+                            dg.Button("Fit all histograms", class_="primary", on_click=fit_histograms)
+                            dg.Label(
+                                "Each histogram toolbar mirrors the line plot tools: fit, pan, wheel zoom, box zoom, grid, and axes.",
+                                class_="subtle",
+                            )
+                            dg.Separator()
+                            dg.Label("Visibility")
+                            histogram_tick_label = dg.Label("Ticks: 5")
+                            dg.Slider(5, min=2, max=9, step=1, on_change=set_histogram_tick_count)
+                            with dg.FlowLayout(gap=8, row_gap=8):
+                                dg.Checkbox("Grid", checked=True, on_change=set_histogram_grid)
+                                dg.Checkbox("Axes", checked=True, on_change=set_histogram_axes)
+                                dg.Checkbox("Ticks", checked=True, on_change=set_histogram_ticks)
+                                dg.Checkbox("Toolbar", checked=True, on_change=set_histogram_toolbar)
+                            dg.Separator()
+                            dg.Label("Coverage")
+                            with dg.FlowLayout(gap=6, row_gap=6):
+                                dg.Badge("count", level="info")
+                                dg.Badge("density", level="success")
+                                dg.Badge("percent", level="warning")
+                                dg.Badge("cumulative", level="danger")
+                            dg.Label(
+                                "This section stresses normalized modes, explicit bins, cumulative bars, and toolbar interaction in styled panels.",
+                                class_="subtle",
+                            )
+
+                    with dg.ScrollArea(
+                        axis="y",
+                        gap=12,
+                        class_="histogram-scroll",
+                        style=HISTOGRAM_SCROLL_STYLE,
+                    ):
+                        with dg.GridLayout(
+                            columns=2,
+                            min_column_width=420,
+                            gap=GRID_GAP,
+                            row_gap=GRID_GAP,
+                            class_="histogram-grid",
+                            style={"width": "100%", "align_items": "stretch", "min_width": 0},
+                        ):
+                            with dg.Panel("Latency distribution", style=CARD_STYLE):
+                                dg.Label("Bimodal response-time data over a fixed 0-170 ms range.", class_="subtle")
+                                histogram_latency = dg.Histogram(
+                                    histogram_frame,
+                                    value="latency_ms",
+                                    bins=34,
+                                    range=(0.0, 170.0),
+                                    label="Latency",
+                                    x_label="latency (ms)",
+                                    y_label="requests",
+                                    color="#5aa9ff",
+                                    show_toolbar=True,
+                                    tick_count=5,
+                                    class_="latency",
+                                    key="v3-hist-latency",
+                                )
+
+                            with dg.Panel("Density normalization", style=CARD_STYLE):
+                                dg.Label("Score values normalized so total bin area is one.", class_="subtle")
+                                histogram_score = dg.Histogram(
+                                    histogram_frame,
+                                    value="score",
+                                    bins=26,
+                                    range=(0.0, 1.0),
+                                    mode="density",
+                                    x_label="score",
+                                    y_label="density",
+                                    color="#74ddb0",
+                                    show_toolbar=True,
+                                    tick_count=5,
+                                    class_="density",
+                                    key="v3-hist-score",
+                                )
+
+                            with dg.Panel("Explicit revenue bins", style=CARD_STYLE):
+                                dg.Label("Log-normal revenue with manually supplied threshold bins.", class_="subtle")
+                                histogram_revenue = dg.Histogram(
+                                    histogram_frame,
+                                    value="revenue",
+                                    bin_edges=(0, 12, 20, 32, 50, 80, 125, 200, 320),
+                                    mode="percent",
+                                    x_label="revenue",
+                                    y_label="share (%)",
+                                    color="#ffcc66",
+                                    show_toolbar=True,
+                                    tick_count=5,
+                                    class_="percent",
+                                    bar_gap=2.0,
+                                    key="v3-hist-revenue",
+                                )
+
+                            with dg.Panel("Cumulative residuals", style=CARD_STYLE):
+                                dg.Label("Residual values accumulated left to right as probability mass.", class_="subtle")
+                                histogram_residual = dg.Histogram(
+                                    histogram_frame,
+                                    value="residual",
+                                    bins=30,
+                                    range=(-1.2, 1.2),
+                                    mode="probability",
+                                    cumulative=True,
+                                    x_label="residual",
+                                    y_label="cumulative probability",
+                                    color="#f36b7f",
+                                    show_toolbar=True,
+                                    tick_count=5,
+                                    class_="cumulative",
+                                    bar_gap=1.5,
+                                    key="v3-hist-residual",
+                                )
+
             with dg.Page("controls", title="Controls"):
                 with dg.GridLayout(columns=2, min_column_width=360, gap=GRID_GAP, style=GRID_STYLE):
                     with dg.Panel("Form controls", style=CARD_STYLE):
@@ -2143,7 +2456,7 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
 
     about_modal = dg.alert(
         "About DragonGUI",
-        "This V3 demo uses responsive grids, CSS themes, Scatter3D, LinePlot, DataFrameTable, modals, menus, context menus, toasts, resources, and live runtime updates.",
+        "This V3 demo uses responsive grids, CSS themes, Scatter3D, LinePlot, Histogram, DataFrameTable, modals, menus, context menus, toasts, resources, and live runtime updates.",
         open=False,
         parent=win,
     )

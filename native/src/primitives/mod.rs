@@ -1572,6 +1572,411 @@ fn emit_line_plot(
     emit_line_plot_toolbar(out, node, theme, sf, rect);
 }
 
+pub(crate) fn histogram_plot_rect(node: &WidgetNode, sf: f32, rect: [f32; 4]) -> [f32; 4] {
+    let base_pad = 10.0 * sf;
+    let show_ticks = node.props.histogram.show_ticks && rect[2] >= 220.0 && rect[3] >= 150.0;
+    let show_axis_labels = node.props.histogram.show_axes && rect[2] >= 260.0 && rect[3] >= 205.0;
+    let show_toolbar = histogram_toolbar_enabled(node, rect);
+    let left = if node.props.histogram.show_axes || show_ticks {
+        if show_axis_labels {
+            48.0 * sf
+        } else {
+            34.0 * sf
+        }
+    } else {
+        base_pad
+    };
+    let bottom = if node.props.histogram.show_axes || show_ticks {
+        if show_axis_labels {
+            42.0 * sf
+        } else {
+            28.0 * sf
+        }
+    } else {
+        base_pad
+    };
+    let x = rect[0] + left;
+    let top = if show_toolbar { 44.0 * sf } else { base_pad };
+    let y = rect[1] + top;
+    let w = (rect[2] - left - base_pad).max(1.0);
+    let h = (rect[3] - top - bottom).max(1.0);
+    [x, y, w, h]
+}
+
+fn histogram_toolbar_enabled(node: &WidgetNode, rect: [f32; 4]) -> bool {
+    node.props.histogram.show_toolbar && rect[2] >= 190.0 && rect[3] >= 150.0
+}
+
+fn histogram_ticks_enabled(node: &WidgetNode, rect: [f32; 4]) -> bool {
+    node.props.histogram.show_ticks && rect[2] >= 220.0 && rect[3] >= 150.0
+}
+
+fn histogram_axis_labels_enabled(node: &WidgetNode, rect: [f32; 4]) -> bool {
+    node.props.histogram.show_axes && rect[2] >= 260.0 && rect[3] >= 205.0
+}
+
+pub(crate) fn histogram_resolved_bounds(node: &WidgetNode) -> Option<LinePlotBounds> {
+    if !node.props.histogram.auto_fit {
+        if let (Some(x_min), Some(x_max), Some(y_min), Some(y_max)) = (
+            node.props.histogram.x_min,
+            node.props.histogram.x_max,
+            node.props.histogram.y_min,
+            node.props.histogram.y_max,
+        ) {
+            if x_min.is_finite()
+                && x_max.is_finite()
+                && y_min.is_finite()
+                && y_max.is_finite()
+                && x_max > x_min
+                && y_max > y_min
+            {
+                return Some(LinePlotBounds {
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                });
+            }
+        }
+    }
+    histogram_data_bounds(node)
+}
+
+fn histogram_data_bounds(node: &WidgetNode) -> Option<LinePlotBounds> {
+    let histogram = &node.props.histogram;
+    if histogram.edges.len() != histogram.counts.len().saturating_add(1) {
+        return None;
+    }
+    let x_min = *histogram.edges.first()?;
+    let x_max = *histogram.edges.last()?;
+    if !x_min.is_finite() || !x_max.is_finite() || x_max <= x_min {
+        return None;
+    }
+    let mut y_max = histogram
+        .counts
+        .iter()
+        .copied()
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .fold(0.0_f32, f32::max);
+    if y_max <= 0.0 {
+        y_max = 1.0;
+    }
+    y_max *= 1.08;
+    Some(LinePlotBounds {
+        x_min,
+        x_max,
+        y_min: 0.0,
+        y_max,
+    })
+}
+
+fn emit_histogram(
+    out: &mut Vec<RectInstance>,
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    rect: [f32; 4],
+    styled_bg: Option<[f32; 4]>,
+    styled_border: Option<[f32; 4]>,
+    styled_accent: Option<[f32; 4]>,
+    radii: [f32; 4],
+    border_w: f32,
+) {
+    emit_bordered_rect_radii(
+        out,
+        rect,
+        styled_border.unwrap_or(theme.border),
+        styled_bg.unwrap_or(theme.surface),
+        radii,
+        border_w,
+    );
+    if rect[2] <= 2.0 || rect[3] <= 2.0 {
+        return;
+    }
+    let plot = histogram_plot_rect(node, sf, rect);
+    let plot_fill = mix(styled_bg.unwrap_or(theme.surface), theme.background, 0.18);
+    out.push(inst_radii(plot, plot_fill, [2.0 * sf; 4]));
+
+    let Some(bounds) = histogram_resolved_bounds(node) else {
+        emit_line_plot_grid(
+            out,
+            plot,
+            theme,
+            sf,
+            node.props.histogram.show_grid,
+            node.props.histogram.show_axes,
+            node.props.histogram.show_ticks,
+            None,
+            &[],
+            &[],
+        );
+        emit_histogram_toolbar(out, node, theme, sf, rect);
+        return;
+    };
+    let tick_count = node.props.histogram.tick_count.clamp(2, 9);
+    let x_ticks = line_plot_ticks(bounds.x_min, bounds.x_max, tick_count);
+    let y_ticks = line_plot_ticks(bounds.y_min, bounds.y_max, tick_count);
+    emit_line_plot_grid(
+        out,
+        plot,
+        theme,
+        sf,
+        node.props.histogram.show_grid,
+        node.props.histogram.show_axes,
+        node.props.histogram.show_ticks,
+        Some(bounds),
+        &x_ticks,
+        &y_ticks,
+    );
+
+    let color = node
+        .props
+        .histogram
+        .color
+        .as_ref()
+        .map(|color| color.resolve(theme))
+        .unwrap_or(styled_accent.unwrap_or(theme.accent));
+    let gap = node.props.histogram.bar_gap.max(0.0) * sf;
+    let span = (bounds.x_max - bounds.x_min).max(f32::EPSILON);
+    for (index, count) in node.props.histogram.counts.iter().copied().enumerate() {
+        if !count.is_finite() || count <= 0.0 {
+            continue;
+        }
+        let Some(left) = node.props.histogram.edges.get(index).copied() else {
+            continue;
+        };
+        let Some(right) = node.props.histogram.edges.get(index + 1).copied() else {
+            continue;
+        };
+        if right <= left || right < bounds.x_min || left > bounds.x_max {
+            continue;
+        }
+        let clipped_left = left.max(bounds.x_min);
+        let clipped_right = right.min(bounds.x_max);
+        let x0 = plot[0] + ((clipped_left - bounds.x_min) / span).clamp(0.0, 1.0) * plot[2];
+        let x1 = plot[0] + ((clipped_right - bounds.x_min) / span).clamp(0.0, 1.0) * plot[2];
+        let width = (x1 - x0).max(0.0);
+        if width <= 0.5 {
+            continue;
+        }
+        let inset = gap.min(width * 0.42);
+        let bar_w = (width - inset * 2.0).max(0.75);
+        let visible_bottom = bounds.y_min.max(0.0);
+        let visible_top = count.min(bounds.y_max);
+        if visible_top <= visible_bottom {
+            continue;
+        }
+        let y_span = (bounds.y_max - bounds.y_min).max(f32::EPSILON);
+        let t0 = ((visible_bottom - bounds.y_min) / y_span).clamp(0.0, 1.0);
+        let t1 = ((visible_top - bounds.y_min) / y_span).clamp(0.0, 1.0);
+        let bar_h = (plot[3] * (t1 - t0)).max(0.75);
+        let bar_x = x0 + inset;
+        let bar_y = plot[1] + plot[3] * (1.0 - t1);
+        out.push(inst_radii(
+            [bar_x, bar_y, bar_w, bar_h],
+            color,
+            [2.0 * sf, 2.0 * sf, 0.0, 0.0],
+        ));
+    }
+    emit_histogram_selection_rect(out, node, theme, sf, plot);
+    emit_histogram_toolbar(out, node, theme, sf, rect);
+}
+
+fn histogram_toolbar_buttons(
+    node: &WidgetNode,
+    sf: f32,
+    rect: [f32; 4],
+) -> Vec<(&'static str, [f32; 4], bool)> {
+    if !histogram_toolbar_enabled(node, rect) {
+        return Vec::new();
+    }
+    let pad = 10.0 * sf;
+    let button = 24.0 * sf;
+    let gap = 5.0 * sf;
+    let labels = ["Fit", "Pan", "Zoom", "Box", "Grid", "Axes"];
+    let total = button * labels.len() as f32 + gap * (labels.len().saturating_sub(1)) as f32;
+    let y = rect[1] + pad;
+    let mut x = rect[0] + rect[2] - pad - total;
+    let mut buttons = Vec::with_capacity(labels.len());
+    for label in labels {
+        let active = match label {
+            "Pan" => node.props.histogram.interaction == "pan",
+            "Zoom" => node.props.histogram.interaction == "zoom",
+            "Box" => node.props.histogram.interaction == "box_zoom",
+            "Grid" => node.props.histogram.show_grid,
+            "Axes" => node.props.histogram.show_axes || node.props.histogram.show_ticks,
+            _ => true,
+        };
+        buttons.push((label, [x, y, button, button], active));
+        x += button + gap;
+    }
+    buttons
+}
+
+fn emit_histogram_selection_rect(
+    out: &mut Vec<RectInstance>,
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    plot: [f32; 4],
+) {
+    let Some(raw) = node.props.histogram.selection_rect else {
+        return;
+    };
+    let x0 = raw[0].min(raw[2]).clamp(plot[0], plot[0] + plot[2]);
+    let x1 = raw[0].max(raw[2]).clamp(plot[0], plot[0] + plot[2]);
+    let y0 = raw[1].min(raw[3]).clamp(plot[1], plot[1] + plot[3]);
+    let y1 = raw[1].max(raw[3]).clamp(plot[1], plot[1] + plot[3]);
+    let rect = [x0, y0, x1 - x0, y1 - y0];
+    if rect[2] < 2.0 * sf || rect[3] < 2.0 * sf {
+        return;
+    }
+    let mut fill = mix(theme.accent, theme.surface, 0.24);
+    fill[3] = 0.18;
+    let mut border = mix(theme.accent, theme.text, 0.20);
+    border[3] = 0.82;
+    emit_bordered_rect_radii(out, rect, border, fill, [2.0 * sf; 4], 1.0 * sf);
+}
+
+pub(crate) fn histogram_toolbar_hit(
+    node: &WidgetNode,
+    sf: f32,
+    rect: [f32; 4],
+    pos: [f32; 2],
+) -> Option<&'static str> {
+    for (label, button, _) in histogram_toolbar_buttons(node, sf, rect) {
+        if pos[0] >= button[0]
+            && pos[0] < button[0] + button[2]
+            && pos[1] >= button[1]
+            && pos[1] < button[1] + button[3]
+        {
+            return Some(label);
+        }
+    }
+    None
+}
+
+fn emit_histogram_toolbar(
+    out: &mut Vec<RectInstance>,
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    rect: [f32; 4],
+) {
+    for (label, button, active) in histogram_toolbar_buttons(node, sf, rect) {
+        let mut fill = if active {
+            mix(theme.surface_alt, theme.accent, 0.18)
+        } else {
+            mix(theme.surface_alt, theme.surface, 0.45)
+        };
+        fill[3] = fill[3].min(0.88);
+        let mut border = if active {
+            mix(theme.border, theme.accent, 0.50)
+        } else {
+            mix(theme.border, theme.muted_text, 0.20)
+        };
+        border[3] = border[3].min(0.68);
+        emit_bordered_rect_radii(out, button, border, fill, [4.0 * sf; 4], 1.0 * sf);
+        let mut icon = if active {
+            mix(theme.text, theme.accent, 0.24)
+        } else {
+            mix(theme.muted_text, theme.text, 0.20)
+        };
+        icon[3] = icon[3].min(0.92);
+        emit_line_plot_toolbar_icon(out, label, button, icon, sf);
+    }
+}
+
+pub(crate) fn histogram_text_labels(
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    rect: [f32; 4],
+) -> Vec<LinePlotTextLabel> {
+    let mut labels = Vec::new();
+    let plot = histogram_plot_rect(node, sf, rect);
+    let tick_color = mix(theme.muted_text, theme.text, 0.18);
+    let tick_color = Some([tick_color[0], tick_color[1], tick_color[2]]);
+
+    if histogram_axis_labels_enabled(node, rect) {
+        let axis_color = mix(theme.muted_text, theme.text, 0.72);
+        let axis_color = Some([axis_color[0], axis_color[1], axis_color[2]]);
+        if let Some(label) = node.props.histogram.x_label.as_deref() {
+            labels.push(LinePlotTextLabel {
+                text: label.to_string(),
+                screen_x: plot[0] + plot[2] * 0.5,
+                screen_y: rect[1] + rect[3] - 11.0 * sf,
+                is_title: true,
+                anchor: "plot-x-label",
+                color: axis_color,
+                font_size: Some(LINE_PLOT_AXIS_LABEL_FONT_SIZE_LP),
+                clip_rect: None,
+            });
+        }
+        if let Some(label) = node.props.histogram.y_label.as_deref() {
+            labels.push(LinePlotTextLabel {
+                text: label.to_string(),
+                screen_x: rect[0] + 18.0 * sf,
+                screen_y: plot[1] + plot[3] * 0.5,
+                is_title: true,
+                anchor: "plot-y-label",
+                color: axis_color,
+                font_size: Some(LINE_PLOT_AXIS_LABEL_FONT_SIZE_LP),
+                clip_rect: None,
+            });
+        }
+    }
+
+    let Some(bounds) = histogram_resolved_bounds(node) else {
+        return labels;
+    };
+    if histogram_ticks_enabled(node, rect) {
+        let tick_count = node.props.histogram.tick_count.clamp(2, 9);
+        let x_ticks = line_plot_ticks(bounds.x_min, bounds.x_max, tick_count);
+        let y_ticks = line_plot_ticks(bounds.y_min, bounds.y_max, tick_count);
+        let x_step = x_ticks
+            .windows(2)
+            .next()
+            .map(|pair| (pair[1] - pair[0]).abs())
+            .unwrap_or_else(|| (bounds.x_max - bounds.x_min).abs());
+        let y_step = y_ticks
+            .windows(2)
+            .next()
+            .map(|pair| (pair[1] - pair[0]).abs())
+            .unwrap_or_else(|| (bounds.y_max - bounds.y_min).abs());
+        for tick in x_ticks {
+            let t = ((tick - bounds.x_min) / (bounds.x_max - bounds.x_min).max(f32::EPSILON))
+                .clamp(0.0, 1.0);
+            labels.push(LinePlotTextLabel {
+                text: format_line_plot_tick(tick, x_step),
+                screen_x: plot[0] + plot[2] * t,
+                screen_y: plot[1] + plot[3] + 7.0 * sf,
+                is_title: false,
+                anchor: "plot-x-tick",
+                color: tick_color,
+                font_size: Some(10.0),
+                clip_rect: None,
+            });
+        }
+        for tick in y_ticks {
+            let t = ((tick - bounds.y_min) / (bounds.y_max - bounds.y_min).max(f32::EPSILON))
+                .clamp(0.0, 1.0);
+            labels.push(LinePlotTextLabel {
+                text: format_line_plot_tick(tick, y_step),
+                screen_x: plot[0] - 2.0 * sf,
+                screen_y: plot[1] + plot[3] * (1.0 - t),
+                is_title: false,
+                anchor: "plot-y-tick",
+                color: tick_color,
+                font_size: Some(10.0),
+                clip_rect: None,
+            });
+        }
+    }
+
+    labels
+}
+
 pub(crate) fn line_plot_resolved_bounds(node: &WidgetNode) -> Option<LinePlotBounds> {
     if !node.props.line_plot_auto_fit {
         if let (Some(x_min), Some(x_max), Some(y_min), Some(y_max)) = (
@@ -5539,6 +5944,19 @@ fn emit_rects_inner(
                     thumb_border_w,
                 );
             }
+
+            WidgetKind::Histogram => emit_histogram(
+                out,
+                node,
+                theme,
+                sf,
+                [x, y, w, h],
+                styled_bg,
+                styled_border,
+                styled_accent,
+                radii,
+                border_w,
+            ),
 
             WidgetKind::LinePlot => emit_line_plot(
                 out,

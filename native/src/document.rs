@@ -98,6 +98,31 @@ pub struct LinePlotHoverProp {
     pub color: Option<ColorRef>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct HistogramProp {
+    pub edges: Vec<f32>,
+    pub counts: Vec<f32>,
+    pub color: Option<ColorRef>,
+    pub label: Option<String>,
+    pub x_label: Option<String>,
+    pub y_label: Option<String>,
+    pub mode: String,
+    pub cumulative: bool,
+    pub show_grid: bool,
+    pub show_axes: bool,
+    pub show_ticks: bool,
+    pub show_toolbar: bool,
+    pub tick_count: usize,
+    pub auto_fit: bool,
+    pub x_min: Option<f32>,
+    pub x_max: Option<f32>,
+    pub y_min: Option<f32>,
+    pub y_max: Option<f32>,
+    pub interaction: String,
+    pub selection_rect: Option<[f32; 4]>,
+    pub bar_gap: f32,
+}
+
 // ---------------------------------------------------------------------------
 // Python theme parsing
 // ---------------------------------------------------------------------------
@@ -223,6 +248,125 @@ fn parse_line_plot_series_item(value: &serde_json::Value) -> Option<LinePlotSeri
     })
 }
 
+fn parse_f32_vec(v: Option<&serde_json::Value>) -> Vec<f32> {
+    v.and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_f64)
+                .filter(|value| value.is_finite())
+                .map(|value| value as f32)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn parse_histogram_props(props: &serde_json::Value) -> HistogramProp {
+    let mut edges = parse_f32_vec(props.get("edges"));
+    let mut counts = parse_f32_vec(props.get("counts"));
+    if edges.len() != counts.len().saturating_add(1) {
+        edges.clear();
+        counts.clear();
+    }
+    if edges
+        .windows(2)
+        .any(|pair| !pair[0].is_finite() || !pair[1].is_finite() || pair[1] <= pair[0])
+    {
+        edges.clear();
+        counts.clear();
+    }
+    let mode = props
+        .get("mode")
+        .and_then(Value::as_str)
+        .filter(|value| matches!(*value, "count" | "density" | "probability" | "percent"))
+        .unwrap_or("count")
+        .to_string();
+    HistogramProp {
+        edges,
+        counts,
+        color: parse_color_ref(props.get("color")),
+        label: props
+            .get("label")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        x_label: props
+            .get("x_label")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        y_label: props
+            .get("y_label")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        mode,
+        cumulative: props
+            .get("cumulative")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        show_grid: props
+            .get("show_grid")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        show_axes: props
+            .get("show_axes")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        show_ticks: props
+            .get("show_ticks")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        show_toolbar: props
+            .get("show_toolbar")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        tick_count: props
+            .get("tick_count")
+            .and_then(Value::as_u64)
+            .map(|value| value as usize)
+            .unwrap_or(5)
+            .clamp(2, 9),
+        auto_fit: props
+            .get("auto_fit")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        x_min: props
+            .get("x_min")
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+            .map(|value| value as f32),
+        x_max: props
+            .get("x_max")
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+            .map(|value| value as f32),
+        y_min: props
+            .get("y_min")
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+            .map(|value| value as f32),
+        y_max: props
+            .get("y_max")
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+            .map(|value| value as f32),
+        interaction: props
+            .get("interaction")
+            .and_then(Value::as_str)
+            .filter(|value| matches!(*value, "inspect" | "pan" | "zoom" | "box_zoom"))
+            .unwrap_or("inspect")
+            .to_string(),
+        selection_rect: None,
+        bar_gap: props
+            .get("bar_gap")
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite() && *value >= 0.0)
+            .map(|value| value as f32)
+            .unwrap_or(1.0),
+    }
+}
+
 pub(crate) fn parse_line_plot_line_style(value: Option<&str>) -> String {
     let normalized = value
         .unwrap_or("solid")
@@ -334,6 +478,7 @@ pub enum WidgetKind {
     Page,
     Sidebar,
     NavItem,
+    Histogram,
     LinePlot,
     Scatter3D,
     DataFrameTable,
@@ -380,6 +525,7 @@ impl WidgetKind {
             "page" => WidgetKind::Page,
             "sidebar" => WidgetKind::Sidebar,
             "nav_item" => WidgetKind::NavItem,
+            "histogram" => WidgetKind::Histogram,
             "line_plot" => WidgetKind::LinePlot,
             "scatter_3d" => WidgetKind::Scatter3D,
             "dataframe_table" => WidgetKind::DataFrameTable,
@@ -493,6 +639,8 @@ pub struct NodeProps {
     pub line_plot_interaction: String,
     pub line_plot_selection_rect: Option<[f32; 4]>,
     pub line_plot_hover: Option<LinePlotHoverProp>,
+    /// Histogram pre-binned startup data and chrome props.
+    pub histogram: HistogramProp,
     /// Scatter3D colormap name.
     pub scatter_colormap: Option<String>,
     /// Scatter3D base64-encoded startup payload.
@@ -895,6 +1043,11 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
             None,
         )
     };
+    let histogram = if matches!(kind, WidgetKind::Histogram) {
+        parse_histogram_props(props)
+    } else {
+        HistogramProp::default()
+    };
     let (scatter_colormap, scatter_data_b64, scatter_data_format) =
         if matches!(kind, WidgetKind::Scatter3D) {
             let cmap = props
@@ -1214,6 +1367,7 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         line_plot_interaction,
         line_plot_selection_rect,
         line_plot_hover,
+        histogram,
         scatter_colormap,
         scatter_data_b64,
         scatter_data_format,
@@ -1408,6 +1562,55 @@ mod tests {
                 .resolve(&Theme::dark()),
             [1.0, 0.8, 0x33 as f32 / 255.0, 1.0],
         );
+    }
+
+    #[test]
+    fn parse_histogram_widget_props() {
+        let node = parse_widget_node(&json!({
+            "id": "hist",
+            "type": "histogram",
+            "props": {
+                "edges": [0.0, 1.0, 2.0, 3.0],
+                "counts": [2.0, 5.0, 1.0],
+                "color": "#42a5ff",
+                "label": "Latency",
+                "x_label": "ms",
+                "y_label": "count",
+                "mode": "count",
+                "cumulative": false,
+                "show_grid": false,
+                "show_axes": true,
+                "show_ticks": false,
+                "show_toolbar": true,
+                "auto_fit": false,
+                "x_min": 0.0,
+                "x_max": 3.0,
+                "y_min": 0.0,
+                "y_max": 6.0,
+                "interaction": "zoom",
+                "tick_count": 7,
+                "bar_gap": 2.0
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(node.kind, WidgetKind::Histogram);
+        assert_eq!(node.props.histogram.edges, vec![0.0, 1.0, 2.0, 3.0]);
+        assert_eq!(node.props.histogram.counts, vec![2.0, 5.0, 1.0]);
+        assert_eq!(node.props.histogram.label.as_deref(), Some("Latency"));
+        assert_eq!(node.props.histogram.x_label.as_deref(), Some("ms"));
+        assert_eq!(node.props.histogram.y_label.as_deref(), Some("count"));
+        assert!(!node.props.histogram.show_grid);
+        assert!(!node.props.histogram.show_ticks);
+        assert!(node.props.histogram.show_toolbar);
+        assert!(!node.props.histogram.auto_fit);
+        assert_eq!(node.props.histogram.x_min, Some(0.0));
+        assert_eq!(node.props.histogram.x_max, Some(3.0));
+        assert_eq!(node.props.histogram.y_min, Some(0.0));
+        assert_eq!(node.props.histogram.y_max, Some(6.0));
+        assert_eq!(node.props.histogram.interaction, "zoom");
+        assert_eq!(node.props.histogram.tick_count, 7);
+        assert_eq!(node.props.histogram.bar_gap, 2.0);
     }
 
     fn assert_color_close(actual: [f32; 4], expected: [f32; 4]) {

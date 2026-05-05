@@ -574,6 +574,16 @@ class LinePlotPayload:
     frame_summary: Any | None = None
 
 
+@dataclass(frozen=True)
+class HistogramBins:
+    """Immutable histogram bin payload used by the Histogram widget."""
+
+    edges: tuple[float, ...]
+    counts: tuple[float, ...]
+    input_count: int
+    finite_count: int
+
+
 @dataclass
 class ScatterStreamMetrics:
     produced: int = 0
@@ -2766,6 +2776,7 @@ def _line_plot_optional_colors(
 
 _LINE_PLOT_LINE_STYLES = {"solid", "dashed", "dotted", "dashdot"}
 _LINE_PLOT_LEGEND_POSITIONS = {"top-right", "top-left", "bottom-right", "bottom-left"}
+_HISTOGRAM_MODES = {"count", "density", "probability", "percent"}
 
 
 def _normalize_line_plot_line_style(value: object) -> str:
@@ -2822,6 +2833,330 @@ def _pack_xy_values(x_values: Any, y_values: Any | None = None) -> bytes | None:
         return memoryview(out.view(np.uint8).reshape(-1)).tobytes()
     except (ImportError, TypeError, ValueError):
         return None
+
+
+def _histogram_column_values(data: Any, value: str | None) -> Any:
+    if value is None:
+        return data
+    return _get_frame_col(data, value)
+
+
+def _histogram_mode(value: str) -> str:
+    mode = str(value).strip().lower().replace("_", "-")
+    aliases = {"counts": "count", "prob": "probability", "percentage": "percent"}
+    mode = aliases.get(mode, mode)
+    if mode not in _HISTOGRAM_MODES:
+        raise ValueError(
+            "Histogram mode must be 'count', 'density', 'probability', or 'percent'"
+        )
+    return mode
+
+
+def _finite_float_values(values: Any) -> tuple[list[float], int]:
+    try:
+        import numpy as np
+
+        arr = np.asarray(values, dtype=np.float64).reshape(-1)
+        input_count = int(arr.size)
+        finite = arr[np.isfinite(arr)]
+        return [float(item) for item in finite.tolist()], input_count
+    except (ImportError, TypeError, ValueError):
+        out: list[float] = []
+        input_count = 0
+        for item in values:
+            input_count += 1
+            try:
+                number = float(item)
+            except (TypeError, ValueError):
+                continue
+            if math.isfinite(number):
+                out.append(number)
+        return out, input_count
+
+
+def _normalize_histogram_edges(edges: Sequence[object]) -> tuple[float, ...]:
+    if isinstance(edges, (str, bytes, bytearray)) or not isinstance(edges, Sequence):
+        raise TypeError("Histogram bin_edges must be a sequence of numbers")
+    normalized = tuple(float(edge) for edge in edges)
+    if len(normalized) < 2:
+        raise ValueError("Histogram bin_edges must contain at least two values")
+    if any(not math.isfinite(edge) for edge in normalized):
+        raise ValueError("Histogram bin_edges must be finite")
+    if any(right <= left for left, right in zip(normalized, normalized[1:])):
+        raise ValueError("Histogram bin_edges must be strictly increasing")
+    return normalized
+
+
+def _histogram_edges(
+    values: Sequence[float],
+    *,
+    bins: int | Sequence[object],
+    range: tuple[float, float] | None,
+    bin_edges: Sequence[object] | None,
+) -> tuple[float, ...]:
+    if bin_edges is not None:
+        return _normalize_histogram_edges(bin_edges)
+    if isinstance(bins, Sequence) and not isinstance(bins, (str, bytes, bytearray)):
+        return _normalize_histogram_edges(bins)
+    bin_count = int(bins)
+    if bin_count <= 0:
+        raise ValueError("Histogram bins must be greater than zero")
+    if range is not None:
+        lo, hi = float(range[0]), float(range[1])
+    elif values:
+        lo, hi = min(values), max(values)
+    else:
+        lo, hi = 0.0, 1.0
+    if not math.isfinite(lo) or not math.isfinite(hi):
+        raise ValueError("Histogram range must be finite")
+    if hi < lo:
+        raise ValueError("Histogram range max must be greater than or equal to min")
+    if hi == lo:
+        lo -= 0.5
+        hi += 0.5
+    step = (hi - lo) / bin_count
+    return tuple(lo + step * index for index in range_fn(bin_count + 1))
+
+
+def range_fn(count_value: int) -> range:
+    return range(count_value)
+
+
+def _compute_histogram_bins(
+    data: Any,
+    *,
+    value: str | None,
+    bins: int | Sequence[object],
+    range: tuple[float, float] | None,
+    bin_edges: Sequence[object] | None,
+    mode: str,
+    cumulative: bool,
+) -> HistogramBins:
+    values, input_count = _finite_float_values(_histogram_column_values(data, value))
+    edges = _histogram_edges(values, bins=bins, range=range, bin_edges=bin_edges)
+    counts = [0.0 for _ in range_fn(len(edges) - 1)]
+    if counts:
+        lo = edges[0]
+        hi = edges[-1]
+        width = hi - lo
+        for number in values:
+            if number < lo or number > hi:
+                continue
+            if number == hi:
+                index = len(counts) - 1
+            else:
+                index = int((number - lo) / width * len(counts)) if width > 0 else 0
+                index = max(0, min(len(counts) - 1, index))
+            counts[index] += 1.0
+    total = sum(counts)
+    if mode in {"probability", "percent"} and total > 0.0:
+        scale = 100.0 if mode == "percent" else 1.0
+        counts = [count / total * scale for count in counts]
+    elif mode == "density" and total > 0.0:
+        counts = [
+            count / (total * (right - left))
+            if right > left else 0.0
+            for count, left, right in zip(counts, edges, edges[1:])
+        ]
+    if cumulative:
+        running = 0.0
+        cumulative_counts: list[float] = []
+        for count in counts:
+            running += count
+            cumulative_counts.append(running)
+        counts = cumulative_counts
+    return HistogramBins(
+        edges=tuple(float(edge) for edge in edges),
+        counts=tuple(float(count) for count in counts),
+        input_count=input_count,
+        finite_count=len(values),
+    )
+
+
+class Histogram(Widget):
+    kind = "histogram"
+
+    def __init__(
+        self,
+        data: Any,
+        *,
+        value: str | None = None,
+        bins: int | Sequence[object] = 30,
+        bin_edges: Sequence[object] | None = None,
+        range: tuple[float, float] | None = None,
+        mode: str = "count",
+        cumulative: bool = False,
+        label: str | None = None,
+        x_label: str | None = None,
+        y_label: str | None = None,
+        color: str | Sequence[object] | None = None,
+        show_grid: bool = True,
+        show_axes: bool = True,
+        show_ticks: bool = True,
+        show_toolbar: bool = False,
+        interaction: str = "inspect",
+        tick_count: int = 5,
+        auto_fit: bool = True,
+        bar_gap: float = 1.0,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.data = data
+        self.value = None if value is None else str(value)
+        self.bins = bins
+        self.bin_edges = None if bin_edges is None else tuple(bin_edges)
+        self.range = range
+        self.mode = _histogram_mode(mode)
+        self.cumulative = bool(cumulative)
+        self.label = None if label is None else str(label)
+        self.x_label = str(x_label if x_label is not None else (self.value or "value"))
+        default_y = {
+            "count": "count",
+            "density": "density",
+            "probability": "probability",
+            "percent": "percent",
+        }[self.mode]
+        self.y_label = str(y_label if y_label is not None else default_y)
+        self.color = color
+        self.show_grid = bool(show_grid)
+        self.show_axes = bool(show_axes)
+        self.show_ticks = bool(show_ticks)
+        self.show_toolbar = bool(show_toolbar)
+        if interaction not in {"inspect", "pan", "zoom", "box_zoom"}:
+            raise ValueError(
+                "Histogram interaction must be 'inspect', 'pan', 'zoom', or 'box_zoom'"
+            )
+        self.interaction = interaction
+        self.tick_count = max(2, min(9, int(tick_count)))
+        self.auto_fit = bool(auto_fit)
+        self.bar_gap = max(0.0, float(bar_gap))
+        self.frame_summary = summarize_frame(data)
+        self._bins = _compute_histogram_bins(
+            data,
+            value=self.value,
+            bins=self.bins,
+            range=self.range,
+            bin_edges=self.bin_edges,
+            mode=self.mode,
+            cumulative=self.cumulative,
+        )
+        super().__init__(
+            id=id,
+            key=key,
+            class_=class_,
+            style=style,
+            tooltip=tooltip,
+            parent=parent,
+        )
+
+    def set_data(
+        self,
+        data: Any,
+        *,
+        value: str | None = None,
+        bins: int | Sequence[object] | None = None,
+        bin_edges: Sequence[object] | None = None,
+        range: tuple[float, float] | None = None,
+    ) -> None:
+        self.data = data
+        if value is not None:
+            self.value = str(value)
+        if bins is not None:
+            self.bins = bins
+        if bin_edges is not None:
+            self.bin_edges = tuple(bin_edges)
+        if range is not None:
+            self.range = range
+        self.frame_summary = summarize_frame(data)
+        self._bins = _compute_histogram_bins(
+            data,
+            value=self.value,
+            bins=self.bins,
+            range=self.range,
+            bin_edges=self.bin_edges,
+            mode=self.mode,
+            cumulative=self.cumulative,
+        )
+        if self.is_live:
+            raise RuntimeError("live Histogram.set_data is not implemented yet")
+
+    def set_grid_visible(self, visible: bool) -> None:
+        self.show_grid = bool(visible)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("show_grid", self.show_grid)
+
+    def set_axes_visible(self, visible: bool) -> None:
+        self.show_axes = bool(visible)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("show_axes", self.show_axes)
+
+    def set_ticks_visible(self, visible: bool) -> None:
+        self.show_ticks = bool(visible)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("show_ticks", self.show_ticks)
+
+    def set_toolbar_visible(self, visible: bool) -> None:
+        self.show_toolbar = bool(visible)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("show_toolbar", self.show_toolbar)
+
+    def set_interaction(self, interaction: str) -> None:
+        if interaction not in {"inspect", "pan", "zoom", "box_zoom"}:
+            raise ValueError(
+                "Histogram interaction must be 'inspect', 'pan', 'zoom', or 'box_zoom'"
+            )
+        self.interaction = interaction
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("interaction", self.interaction)
+
+    def fit(self) -> None:
+        self.auto_fit = True
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("auto_fit", True)
+
+    def set_tick_count(self, count: int) -> None:
+        self.tick_count = max(2, min(9, int(count)))
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("tick_count", self.tick_count)
+
+    def set_axis_labels(self, *, x: str | None = None, y: str | None = None) -> None:
+        if x is not None:
+            self.x_label = str(x)
+        if y is not None:
+            self.y_label = str(y)
+        if (handle := self._live()) is not None:
+            if x is not None:
+                handle.enqueue_set_prop("x_label", self.x_label)
+            if y is not None:
+                handle.enqueue_set_prop("y_label", self.y_label)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "frame": self.frame_summary.to_dict(),
+            "value": self.value or "",
+            "label": self.label or "",
+            "x_label": self.x_label,
+            "y_label": self.y_label,
+            "mode": self.mode,
+            "cumulative": self.cumulative,
+            "show_grid": self.show_grid,
+            "show_axes": self.show_axes,
+            "show_ticks": self.show_ticks,
+            "show_toolbar": self.show_toolbar,
+            "interaction": self.interaction,
+            "tick_count": self.tick_count,
+            "auto_fit": self.auto_fit,
+            "bar_gap": self.bar_gap,
+            "color": self.color,
+            "input_count": self._bins.input_count,
+            "finite_count": self._bins.finite_count,
+            "edges": list(self._bins.edges),
+            "counts": list(self._bins.counts),
+        }
 
 
 class LinePlot(Widget):

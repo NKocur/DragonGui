@@ -37,6 +37,7 @@ use crate::layout::{
 };
 use crate::overlays::{find_node, menu_popup_width};
 use crate::primitives::{
+    histogram_plot_rect, histogram_resolved_bounds, histogram_text_labels, histogram_toolbar_hit,
     interpolate_visual_style, line_plot_plot_rect, line_plot_resolved_bounds,
     line_plot_text_labels, line_plot_toolbar_hit, panel_scrollbar_geometry, LinePlotBounds,
     PanelScrollbarAxis, PanelScrollbarAxisGeometry, PrimitivesRenderer,
@@ -1048,6 +1049,7 @@ fn widget_kind_name(kind: &WidgetKind) -> &'static str {
         WidgetKind::Page => "page",
         WidgetKind::Sidebar => "sidebar",
         WidgetKind::NavItem => "nav_item",
+        WidgetKind::Histogram => "histogram",
         WidgetKind::LinePlot => "line_plot",
         WidgetKind::Scatter3D => "scatter_3d",
         WidgetKind::DataFrameTable => "dataframe_table",
@@ -2036,6 +2038,28 @@ fn props_snapshot(node: &WidgetNode) -> Value {
             "sample_rows": props.table_sample_rows,
         },
     });
+    if node.kind == WidgetKind::Histogram {
+        if let Value::Object(map) = &mut snapshot {
+            map.insert(
+                "histogram".to_string(),
+                json!({
+                    "bins": props.histogram.counts.len(),
+                    "edges": props.histogram.edges.len(),
+                    "mode": props.histogram.mode.as_str(),
+                    "cumulative": props.histogram.cumulative,
+                    "x_label": props.histogram.x_label.as_deref(),
+                    "y_label": props.histogram.y_label.as_deref(),
+                    "show_grid": props.histogram.show_grid,
+                    "show_axes": props.histogram.show_axes,
+                    "show_ticks": props.histogram.show_ticks,
+                    "show_toolbar": props.histogram.show_toolbar,
+                    "tick_count": props.histogram.tick_count,
+                    "auto_fit": props.histogram.auto_fit,
+                    "interaction": props.histogram.interaction.as_str(),
+                }),
+            );
+        }
+    }
     if node.kind == WidgetKind::LinePlot {
         let line_plot_series = props
             .line_plot_series
@@ -4445,14 +4469,14 @@ fn number_input_step_at_pos(
     None
 }
 
-fn push_line_plot_overlay_labels(
+fn push_plot_overlay_labels(
     text: &mut TextRendererDg,
     node: &WidgetNode,
     layout: &crate::layout::LayoutResult,
     theme: &Theme,
     sf: f32,
 ) {
-    if node.kind == WidgetKind::LinePlot {
+    if matches!(node.kind, WidgetKind::Histogram | WidgetKind::LinePlot) {
         if let Some(rect) = layout.visible_rect(&node.id) {
             let clip = glyphon::TextBounds {
                 left: rect.x as i32,
@@ -4460,7 +4484,12 @@ fn push_line_plot_overlay_labels(
                 right: (rect.x + rect.w) as i32,
                 bottom: (rect.y + rect.h) as i32,
             };
-            for label in line_plot_text_labels(node, theme, sf, [rect.x, rect.y, rect.w, rect.h]) {
+            let labels = if node.kind == WidgetKind::Histogram {
+                histogram_text_labels(node, theme, sf, [rect.x, rect.y, rect.w, rect.h])
+            } else {
+                line_plot_text_labels(node, theme, sf, [rect.x, rect.y, rect.w, rect.h])
+            };
+            for label in labels {
                 let label_clip = label
                     .clip_rect
                     .map(|clip_rect| glyphon::TextBounds {
@@ -4485,7 +4514,7 @@ fn push_line_plot_overlay_labels(
         }
     }
     for child in &node.children {
-        push_line_plot_overlay_labels(text, child, layout, theme, sf);
+        push_plot_overlay_labels(text, child, layout, theme, sf);
     }
 }
 
@@ -6298,6 +6327,67 @@ impl WgpuState {
                 }
             }
         }
+        if kind == WidgetKind::Histogram {
+            let Some(tree) = self.widget_tree.as_mut() else {
+                return None;
+            };
+            let Some(node) = find_widget_mut(tree, id) else {
+                return None;
+            };
+            match (prop, value) {
+                ("show_grid", CommandValue::Bool(visible)) => {
+                    node.props.histogram.show_grid = visible;
+                    return Some(Dirty::Visual);
+                }
+                ("show_axes", CommandValue::Bool(visible)) => {
+                    node.props.histogram.show_axes = visible;
+                    return Some(Dirty::Text);
+                }
+                ("show_ticks", CommandValue::Bool(visible)) => {
+                    node.props.histogram.show_ticks = visible;
+                    return Some(Dirty::Text);
+                }
+                ("show_toolbar", CommandValue::Bool(visible)) => {
+                    node.props.histogram.show_toolbar = visible;
+                    return Some(Dirty::Text);
+                }
+                ("tick_count", CommandValue::Float(count)) => {
+                    node.props.histogram.tick_count = (count.round() as isize).clamp(2, 9) as usize;
+                    return Some(Dirty::Text);
+                }
+                ("x_label", CommandValue::Text(label)) => {
+                    node.props.histogram.x_label = (!label.trim().is_empty()).then_some(label);
+                    return Some(Dirty::Text);
+                }
+                ("y_label", CommandValue::Text(label)) => {
+                    node.props.histogram.y_label = (!label.trim().is_empty()).then_some(label);
+                    return Some(Dirty::Text);
+                }
+                ("auto_fit", CommandValue::Bool(auto_fit)) => {
+                    node.props.histogram.auto_fit = auto_fit;
+                    if auto_fit {
+                        node.props.histogram.x_min = None;
+                        node.props.histogram.x_max = None;
+                        node.props.histogram.y_min = None;
+                        node.props.histogram.y_max = None;
+                    }
+                    return Some(Dirty::Visual);
+                }
+                ("interaction", CommandValue::Text(mode)) => {
+                    if matches!(mode.as_str(), "inspect" | "pan" | "zoom" | "box_zoom") {
+                        node.props.histogram.interaction = mode;
+                        return Some(Dirty::Visual);
+                    }
+                    return None;
+                }
+                (_, _) => {
+                    eprintln!(
+                        "DragonGUI: ignoring unsupported live SetProp for widget {id:?} ({kind:?}).{prop}"
+                    );
+                    return None;
+                }
+            }
+        }
         if matches!(
             kind,
             WidgetKind::Button | WidgetKind::Tab | WidgetKind::NavItem
@@ -7019,6 +7109,88 @@ impl WgpuState {
         true
     }
 
+    fn activate_histogram_toolbar(&mut self, id: &str, pos: [f32; 2]) -> bool {
+        if self.widget_kind(id) != Some(WidgetKind::Histogram) {
+            return false;
+        }
+        let hit = {
+            let Some(layout) = self.current_layout.as_ref() else {
+                return false;
+            };
+            let Some(rect) = layout.visible_rect(id) else {
+                return false;
+            };
+            let Some(tree) = self.widget_tree.as_ref() else {
+                return false;
+            };
+            let Some(node) = find_node(tree, id) else {
+                return false;
+            };
+            histogram_toolbar_hit(
+                node,
+                self.scale_factor,
+                [rect.x, rect.y, rect.w, rect.h],
+                pos,
+            )
+        };
+        let Some(action) = hit else {
+            return false;
+        };
+        let Some(tree) = self.widget_tree.as_mut() else {
+            return false;
+        };
+        let Some(node) = find_widget_mut(tree, id) else {
+            return false;
+        };
+        match action {
+            "Fit" => {
+                node.props.histogram.auto_fit = true;
+                node.props.histogram.x_min = None;
+                node.props.histogram.x_max = None;
+                node.props.histogram.y_min = None;
+                node.props.histogram.y_max = None;
+                node.props.histogram.selection_rect = None;
+            }
+            "Pan" => {
+                node.props.histogram.interaction = if node.props.histogram.interaction == "pan" {
+                    "inspect"
+                } else {
+                    "pan"
+                }
+                .to_string();
+            }
+            "Zoom" => {
+                node.props.histogram.interaction = if node.props.histogram.interaction == "zoom" {
+                    "inspect"
+                } else {
+                    "zoom"
+                }
+                .to_string();
+            }
+            "Box" => {
+                node.props.histogram.interaction =
+                    if node.props.histogram.interaction == "box_zoom" {
+                        "inspect"
+                    } else {
+                        "box_zoom"
+                    }
+                    .to_string();
+                node.props.histogram.selection_rect = None;
+            }
+            "Grid" => {
+                node.props.histogram.show_grid = !node.props.histogram.show_grid;
+            }
+            "Axes" => {
+                let visible = !(node.props.histogram.show_axes || node.props.histogram.show_ticks);
+                node.props.histogram.show_axes = visible;
+                node.props.histogram.show_ticks = visible;
+            }
+            _ => return false,
+        }
+        self.rebuild_primitives();
+        true
+    }
+
     fn line_plot_at(&self, pos: [f32; 2]) -> Option<String> {
         self.hit_test_ui(pos)
             .and_then(|(id, kind)| (kind == WidgetKind::LinePlot).then_some(id))
@@ -7028,6 +7200,17 @@ impl WgpuState {
         let tree = self.widget_tree.as_ref()?;
         let node = find_node(tree, id)?;
         (node.kind == WidgetKind::LinePlot).then_some(node.props.line_plot_interaction.as_str())
+    }
+
+    fn histogram_at(&self, pos: [f32; 2]) -> Option<String> {
+        self.hit_test_ui(pos)
+            .and_then(|(id, kind)| (kind == WidgetKind::Histogram).then_some(id))
+    }
+
+    fn histogram_interaction(&self, id: &str) -> Option<&str> {
+        let tree = self.widget_tree.as_ref()?;
+        let node = find_node(tree, id)?;
+        (node.kind == WidgetKind::Histogram).then_some(node.props.histogram.interaction.as_str())
     }
 
     fn line_plot_toolbar_hit_at(&self, id: &str, pos: [f32; 2]) -> Option<&'static str> {
@@ -7044,6 +7227,171 @@ impl WgpuState {
             [rect.x, rect.y, rect.w, rect.h],
             pos,
         )
+    }
+
+    fn histogram_toolbar_hit_at(&self, id: &str, pos: [f32; 2]) -> Option<&'static str> {
+        if self.widget_kind(id) != Some(WidgetKind::Histogram) {
+            return None;
+        }
+        let layout = self.current_layout.as_ref()?;
+        let rect = layout.visible_rect(id)?;
+        let tree = self.widget_tree.as_ref()?;
+        let node = find_node(tree, id)?;
+        histogram_toolbar_hit(
+            node,
+            self.scale_factor,
+            [rect.x, rect.y, rect.w, rect.h],
+            pos,
+        )
+    }
+
+    fn pan_histogram(&mut self, id: &str, delta: [f32; 2]) -> bool {
+        let Some((plot, bounds)) = self.histogram_plot_rect_and_bounds(id) else {
+            return false;
+        };
+        if plot[2] <= 1.0 || plot[3] <= 1.0 {
+            return false;
+        }
+        let dx = -delta[0] / plot[2] * (bounds.x_max - bounds.x_min);
+        let dy = delta[1] / plot[3] * (bounds.y_max - bounds.y_min);
+        self.set_histogram_bounds(
+            id,
+            LinePlotBounds {
+                x_min: bounds.x_min + dx,
+                x_max: bounds.x_max + dx,
+                y_min: (bounds.y_min + dy).max(0.0),
+                y_max: (bounds.y_max + dy).max(f32::EPSILON),
+            },
+        )
+    }
+
+    fn zoom_histogram(&mut self, id: &str, pos: [f32; 2], scroll_y: f32) -> bool {
+        let Some((plot, bounds)) = self.histogram_plot_rect_and_bounds(id) else {
+            return false;
+        };
+        if plot[2] <= 1.0 || plot[3] <= 1.0 {
+            return false;
+        }
+        let tx = ((pos[0] - plot[0]) / plot[2]).clamp(0.0, 1.0);
+        let ty = ((pos[1] - plot[1]) / plot[3]).clamp(0.0, 1.0);
+        let anchor_x = bounds.x_min + tx * (bounds.x_max - bounds.x_min);
+        let anchor_y = bounds.y_max - ty * (bounds.y_max - bounds.y_min);
+        let factor = (1.0 - scroll_y * 0.12).clamp(0.25, 4.0);
+        let new_w = ((bounds.x_max - bounds.x_min) * factor).max(f32::EPSILON);
+        let new_h = ((bounds.y_max - bounds.y_min) * factor).max(f32::EPSILON);
+        self.set_histogram_bounds(
+            id,
+            LinePlotBounds {
+                x_min: anchor_x - tx * new_w,
+                x_max: anchor_x + (1.0 - tx) * new_w,
+                y_min: (anchor_y - (1.0 - ty) * new_h).max(0.0),
+                y_max: (anchor_y + ty * new_h).max(f32::EPSILON),
+            },
+        )
+    }
+
+    fn histogram_plot_rect_and_bounds(&self, id: &str) -> Option<([f32; 4], LinePlotBounds)> {
+        let layout = self.current_layout.as_ref()?;
+        let rect = layout.visible_rect(id)?;
+        let tree = self.widget_tree.as_ref()?;
+        let node = find_node(tree, id)?;
+        let plot = histogram_plot_rect(node, self.scale_factor, [rect.x, rect.y, rect.w, rect.h]);
+        let bounds = histogram_resolved_bounds(node)?;
+        Some((plot, bounds))
+    }
+
+    fn set_histogram_bounds(&mut self, id: &str, bounds: LinePlotBounds) -> bool {
+        if !bounds.x_min.is_finite()
+            || !bounds.x_max.is_finite()
+            || !bounds.y_min.is_finite()
+            || !bounds.y_max.is_finite()
+            || bounds.x_max <= bounds.x_min
+            || bounds.y_max <= bounds.y_min
+        {
+            return false;
+        }
+        let Some(tree) = self.widget_tree.as_mut() else {
+            return false;
+        };
+        let Some(node) = find_widget_mut(tree, id) else {
+            return false;
+        };
+        node.props.histogram.auto_fit = false;
+        node.props.histogram.x_min = Some(bounds.x_min);
+        node.props.histogram.x_max = Some(bounds.x_max);
+        node.props.histogram.y_min = Some(bounds.y_min.max(0.0));
+        node.props.histogram.y_max = Some(bounds.y_max);
+        self.rebuild_visuals();
+        true
+    }
+
+    fn update_histogram_selection_rect(
+        &mut self,
+        id: &str,
+        start: [f32; 2],
+        current: [f32; 2],
+    ) -> bool {
+        let Some(tree) = self.widget_tree.as_mut() else {
+            return false;
+        };
+        let Some(node) = find_widget_mut(tree, id) else {
+            return false;
+        };
+        if node.kind != WidgetKind::Histogram {
+            return false;
+        }
+        node.props.histogram.selection_rect = Some([start[0], start[1], current[0], current[1]]);
+        self.rebuild_visuals();
+        true
+    }
+
+    fn finish_histogram_box_zoom(&mut self, id: &str, start: [f32; 2], end: [f32; 2]) -> bool {
+        let Some((plot, bounds)) = self.histogram_plot_rect_and_bounds(id) else {
+            self.clear_histogram_selection_rect(id);
+            return false;
+        };
+        let x0 = start[0].min(end[0]).clamp(plot[0], plot[0] + plot[2]);
+        let x1 = start[0].max(end[0]).clamp(plot[0], plot[0] + plot[2]);
+        let y0 = start[1].min(end[1]).clamp(plot[1], plot[1] + plot[3]);
+        let y1 = start[1].max(end[1]).clamp(plot[1], plot[1] + plot[3]);
+        if x1 - x0 < 6.0 || y1 - y0 < 6.0 || plot[2] <= 1.0 || plot[3] <= 1.0 {
+            self.clear_histogram_selection_rect(id);
+            return false;
+        }
+        let tx0 = ((x0 - plot[0]) / plot[2]).clamp(0.0, 1.0);
+        let tx1 = ((x1 - plot[0]) / plot[2]).clamp(0.0, 1.0);
+        let ty0 = ((y0 - plot[1]) / plot[3]).clamp(0.0, 1.0);
+        let ty1 = ((y1 - plot[1]) / plot[3]).clamp(0.0, 1.0);
+        let x_min = bounds.x_min + tx0 * (bounds.x_max - bounds.x_min);
+        let x_max = bounds.x_min + tx1 * (bounds.x_max - bounds.x_min);
+        let y_max = bounds.y_max - ty0 * (bounds.y_max - bounds.y_min);
+        let y_min = (bounds.y_max - ty1 * (bounds.y_max - bounds.y_min)).max(0.0);
+        let changed = self.set_histogram_bounds(
+            id,
+            LinePlotBounds {
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+            },
+        );
+        self.clear_histogram_selection_rect(id);
+        changed
+    }
+
+    fn clear_histogram_selection_rect(&mut self, id: &str) -> bool {
+        let Some(tree) = self.widget_tree.as_mut() else {
+            return false;
+        };
+        let Some(node) = find_widget_mut(tree, id) else {
+            return false;
+        };
+        if node.props.histogram.selection_rect.is_none() {
+            return false;
+        }
+        node.props.histogram.selection_rect = None;
+        self.rebuild_visuals();
+        true
     }
 
     fn pan_line_plot(&mut self, id: &str, delta: [f32; 2]) -> bool {
@@ -8244,7 +8592,7 @@ impl WgpuState {
                 t.clear_scatter_labels();
                 if let (Some(tree), Some(layout)) = (widget_tree.as_ref(), current_layout.as_ref())
                 {
-                    push_line_plot_overlay_labels(t, tree, layout, theme, *scale_factor);
+                    push_plot_overlay_labels(t, tree, layout, theme, *scale_factor);
                 }
                 for id in visible_scatter_order.iter() {
                     if let Some(rt) = scatters.get(id) {
@@ -8650,6 +8998,10 @@ struct DragonApp {
     line_plot_pan_drag: Option<String>,
     /// Active line plot box-zoom drag session.
     line_plot_box_zoom_drag: Option<LinePlotBoxZoomDrag>,
+    /// Active histogram pan drag session.
+    histogram_pan_drag: Option<String>,
+    /// Active histogram box-zoom drag session.
+    histogram_box_zoom_drag: Option<LinePlotBoxZoomDrag>,
     /// Active panel scrollbar drag session.
     scrollbar_drag: Option<ScrollbarDrag>,
     scatter_press_pos: Option<[f32; 2]>,
@@ -8695,6 +9047,8 @@ impl DragonApp {
             slider_drag: None,
             line_plot_pan_drag: None,
             line_plot_box_zoom_drag: None,
+            histogram_pan_drag: None,
+            histogram_box_zoom_drag: None,
             scrollbar_drag: None,
             scatter_press_pos: None,
             active_scatter_id: None,
@@ -11470,6 +11824,16 @@ impl DragonApp {
                     needs_text_rebuild = true;
                 }
             }
+            WidgetKind::Histogram => {
+                let pos = self.last_mouse_pos.unwrap_or([0.0, 0.0]);
+                if self
+                    .gpu
+                    .as_mut()
+                    .is_some_and(|gpu| gpu.activate_histogram_toolbar(id, pos))
+                {
+                    needs_text_rebuild = true;
+                }
+            }
             _ => {}
         }
 
@@ -12429,6 +12793,8 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                             self.slider_drag = None;
                             let released_line_plot_pan = self.line_plot_pan_drag.take().is_some();
                             let released_line_plot_box_zoom = self.line_plot_box_zoom_drag.take();
+                            let released_histogram_pan = self.histogram_pan_drag.take().is_some();
+                            let released_histogram_box_zoom = self.histogram_box_zoom_drag.take();
                             if released_scrollbar {
                                 self.request_redraw();
                                 return;
@@ -12441,6 +12807,18 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                 let pos = self.last_mouse_pos.unwrap_or(drag.start);
                                 if let Some(gpu) = &mut self.gpu {
                                     gpu.finish_line_plot_box_zoom(&drag.widget_id, drag.start, pos);
+                                }
+                                self.request_redraw();
+                                return;
+                            }
+                            if released_histogram_pan {
+                                self.request_redraw();
+                                return;
+                            }
+                            if let Some(drag) = released_histogram_box_zoom {
+                                let pos = self.last_mouse_pos.unwrap_or(drag.start);
+                                if let Some(gpu) = &mut self.gpu {
+                                    gpu.finish_histogram_box_zoom(&drag.widget_id, drag.start, pos);
                                 }
                                 self.request_redraw();
                                 return;
@@ -12704,6 +13082,41 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                 }
                             }
 
+                            if let Some(id) = (!modal_active)
+                                .then(|| self.gpu.as_ref().and_then(|g| g.histogram_at(pos)))
+                                .flatten()
+                            {
+                                let is_toolbar = self
+                                    .gpu
+                                    .as_ref()
+                                    .and_then(|g| g.histogram_toolbar_hit_at(&id, pos))
+                                    .is_some();
+                                let is_pan =
+                                    self.gpu.as_ref().and_then(|g| g.histogram_interaction(&id))
+                                        == Some("pan");
+                                if is_pan && !is_toolbar {
+                                    self.set_focus(Some(id.clone()));
+                                    self.histogram_pan_drag = Some(id);
+                                    self.request_redraw();
+                                    return;
+                                }
+                                let is_box_zoom =
+                                    self.gpu.as_ref().and_then(|g| g.histogram_interaction(&id))
+                                        == Some("box_zoom");
+                                if is_box_zoom && !is_toolbar {
+                                    self.set_focus(Some(id.clone()));
+                                    if let Some(gpu) = &mut self.gpu {
+                                        gpu.update_histogram_selection_rect(&id, pos, pos);
+                                    }
+                                    self.histogram_box_zoom_drag = Some(LinePlotBoxZoomDrag {
+                                        widget_id: id,
+                                        start: pos,
+                                    });
+                                    self.request_redraw();
+                                    return;
+                                }
+                            }
+
                             if let Some((id, kind)) =
                                 self.gpu.as_ref().and_then(|g| g.hit_test_ui(pos))
                             {
@@ -12918,6 +13331,23 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                     }) {
                         self.request_redraw();
                     }
+                } else if let Some(id) = self.histogram_pan_drag.clone() {
+                    if let Some(old) = self.last_mouse_pos {
+                        let delta = [new_pos[0] - old[0], new_pos[1] - old[1]];
+                        if self
+                            .gpu
+                            .as_mut()
+                            .is_some_and(|gpu| gpu.pan_histogram(&id, delta))
+                        {
+                            self.request_redraw();
+                        }
+                    }
+                } else if let Some(drag) = self.histogram_box_zoom_drag.clone() {
+                    if self.gpu.as_mut().is_some_and(|gpu| {
+                        gpu.update_histogram_selection_rect(&drag.widget_id, drag.start, new_pos)
+                    }) {
+                        self.request_redraw();
+                    }
                 } else if self.rect_select_active {
                     if let Some(sid) = self.active_scatter_id.clone() {
                         if let Some(gpu) = &mut self.gpu {
@@ -12989,6 +13419,8 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                     && self.slider_drag.is_none()
                     && self.line_plot_pan_drag.is_none()
                     && self.line_plot_box_zoom_drag.is_none()
+                    && self.histogram_pan_drag.is_none()
+                    && self.histogram_box_zoom_drag.is_none()
                     && !self.orbit_active
                     && !self.pan_active
                     && !self.rect_select_active
@@ -13239,6 +13671,23 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                 .gpu
                                 .as_mut()
                                 .is_some_and(|gpu| gpu.zoom_line_plot(&id, pos, scroll_y))
+                            {
+                                self.request_redraw();
+                            }
+                            return;
+                        }
+                    }
+                    if let Some(id) = self.gpu.as_ref().and_then(|gpu| gpu.histogram_at(pos)) {
+                        let is_zoom = self
+                            .gpu
+                            .as_ref()
+                            .and_then(|gpu| gpu.histogram_interaction(&id))
+                            == Some("zoom");
+                        if is_zoom {
+                            if self
+                                .gpu
+                                .as_mut()
+                                .is_some_and(|gpu| gpu.zoom_histogram(&id, pos, scroll_y))
                             {
                                 self.request_redraw();
                             }

@@ -2168,6 +2168,7 @@ fn widget_kind_name(kind: WidgetKind) -> &'static str {
         WidgetKind::Page => "page",
         WidgetKind::Sidebar => "sidebar",
         WidgetKind::NavItem => "nav_item",
+        WidgetKind::Histogram => "histogram",
         WidgetKind::LinePlot => "line_plot",
         WidgetKind::Scatter3D => "scatter_3d",
         WidgetKind::DataFrameTable => "dataframe_table",

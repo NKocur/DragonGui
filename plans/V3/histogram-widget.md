@@ -23,6 +23,31 @@ and live updates.
 - Render professionally by default in dashboards and control panels.
 - Add focused probes and V3 demo coverage.
 
+## Current Status
+
+Implemented first static slice:
+
+- Python `dg.Histogram(...)` API with integer bins, explicit `bin_edges`,
+  optional `range`, and `mode="count" | "density" | "probability" | "percent"`.
+- Python-side finite-value filtering and pre-binned edge/count serialization.
+- Native `WidgetKind::Histogram` document parsing, CSS type selector support,
+  debug snapshot metadata, flex/grid sizing, and primitive bar rendering.
+- Native plot background, grid, axes, tick marks, bar color, and configurable
+  `bar_gap`.
+- Axis labels, tick labels, and optional toolbar buttons for fit, pan, wheel
+  zoom, box zoom, grid, and axes are wired through the same overlay text and
+  icon primitives used by `LinePlot`.
+- Native viewport state supports toolbar fit, pan drags, wheel zoom mode, and
+  box zoom selection.
+- Probe coverage in `examples/css_feature_probes/histogram_probe.py`.
+
+Not implemented yet:
+
+- Native packed value upload/binning commands.
+- Live `set_data` updates.
+- Hover readouts, selection callbacks, legends, grouped/weighted series,
+  native packed value upload/binning, and CSS parts.
+
 ## Non-Goals
 
 - Full statistical plotting grammar in the first version.
@@ -446,12 +471,17 @@ Native tests:
 
 ### Phase 1: Static Single-Series Histogram
 
-- Add Python `Histogram` widget.
-- Add native `WidgetKind::Histogram`.
-- Support packed float32 values.
-- Support integer bins and explicit bin edges.
-- Render bars, axes, grid, and basic hover highlight.
-- Add `histogram_probe.py`.
+- [x] Add Python `Histogram` widget.
+- [x] Add native `WidgetKind::Histogram`.
+- [x] Support integer bins, explicit bin edges, range, and normalized modes via
+  Python-side pre-binning.
+- [x] Render bars, axes, grid, and tick marks.
+- [x] Add axis/tick text labels.
+- [x] Add first toolbar buttons for grid and axes/ticks.
+- [x] Add viewport fit, pan, wheel zoom, and box zoom toolbar behavior.
+- [x] Add `histogram_probe.py`.
+- [ ] Add packed float32 value upload and native binning.
+- [ ] Add basic hover highlight/readout.
 
 ### Phase 2: Live Updates And Selection
 

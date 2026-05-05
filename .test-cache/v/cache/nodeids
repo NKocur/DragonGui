@@ -61,6 +61,7 @@
   "tests/test_python_api.py::test_grid_layout_rejects_invalid_columns",
   "tests/test_python_api.py::test_grid_layout_template_track_helpers",
   "tests/test_python_api.py::test_grid_layout_template_tracks",
+  "tests/test_python_api.py::test_histogram_serializes_binned_data",
   "tests/test_python_api.py::test_image_serializes_validates_and_updates_live_props",
   "tests/test_python_api.py::test_inline_part_style_catalog_serializes_for_supported_widgets",
   "tests/test_python_api.py::test_line_plot_live_methods_enqueue_native_commands",

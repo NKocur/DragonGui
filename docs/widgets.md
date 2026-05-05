@@ -116,6 +116,7 @@ Helper builders:
 | Widget | Features |
 | --- | --- |
 | `Image(path, fit="contain", width=None, height=None)` | Image widget. `fit` may be `contain`, `cover`, or `stretch`; width/height must be positive when supplied. Supports `set_path()`, `reload()`, and `set_fit()`. |
+| `Histogram(data, value=None, bins=30, bin_edges=None, range=None, mode="count", cumulative=False)` | Static single-series histogram. Filters non-finite values, supports integer bins or explicit bin edges, and serializes pre-binned edges/counts for native rendering. Modes are `count`, `density`, `probability`, and `percent`. Supports axis/tick labels and optional toolbar buttons for fit, pan, wheel zoom, box zoom, grid, and axes. |
 | `Scatter3D(frame, x, y, z, colormap="viridis", on_pick=None)` | GPU 3D scatter plot. Uses frame metadata and packed float32 xyz data when NumPy/addressable columns are available. Emits `ScatterPick` callbacks for point clicks. Supports `set_points(..., fit=True)` when replacing the scene, plus `set_colormap()`, `show_grid()`, and `set_grid_options(sticky=True, all_edges=False)` for live updates. |
 | `DataFrameTable(frame, page_size=100, sample_rows=DEFAULT_TABLE_SAMPLE_ROWS, on_select=None)` | Virtualized table for dataframe-like objects. Extracts metadata, cell samples, and optional column buffers. Emits selection callbacks with `TableSelection` from mouse or keyboard selection. Supports `set_frame()`. Supports `DataFrameTable::header`, `row`, `row-selected`, and `grid-line`. |
 
@@ -212,6 +213,7 @@ and debug snapshot path.
 | `Badge`, `Tag` | None | `set_value(value)` updates text; `set_level(level)` updates semantic color. |
 | `LED` | None | `set_state(value)`, `set_on(value)`, `set_color(color)`, and `set_size(size)` update the live indicator. |
 | `ColorPicker` | `on_change(value: tuple[int, ...])` | `set_value(value, notify=False)` updates silently by default; `notify=True` invokes the callback. |
+| `Histogram` | None | Static first slice; live data updates are planned. |
 | `Scatter3D` | `on_pick(point: ScatterPick)` or compatible index/x/y/z callback | `set_points(...)`, `set_colormap(...)`. |
 | `DataFrameTable` | `on_select(selection: TableSelection)` or compatible row/column/value callback | `set_frame(...)`. |
 | `Image` | None | `set_path(...)`, `reload()`, `set_fit(...)`. |

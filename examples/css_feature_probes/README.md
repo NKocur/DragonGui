@@ -55,3 +55,4 @@ Suggested order:
 24. `layout_containers_probe.py` - HLayout/VLayout sizing, titled Panel spacing, absolute children, nested panels, scrollable panels, Spacer, and Separator.
 25. `form_controls_probe.py` - TextInput, TextArea, Checkbox, Dropdown, Button badges, Slider, NumberInput, ProgressBar, disabled states, and form-control parts.
 26. `overlay_stack_probe.py` - modal, toast, tooltip, dropdown, context menu, MenuBar, scrim styling, edge clamping, and overlay theme stress.
+27. `histogram_probe.py` - first-slice Histogram rendering, count/density/percent/cumulative modes, explicit bin edges, and native bar chrome.

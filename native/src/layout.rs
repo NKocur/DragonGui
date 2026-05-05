@@ -693,7 +693,8 @@ fn style_for(
         }
 
         // ── plot / table: grow to fill remaining space ────────────────────
-        WidgetKind::LinePlot
+        WidgetKind::Histogram
+        | WidgetKind::LinePlot
         | WidgetKind::Scatter3D
         | WidgetKind::DataFrameTable
         | WidgetKind::Tabs
