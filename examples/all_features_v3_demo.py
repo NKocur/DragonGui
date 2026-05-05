@@ -23,6 +23,7 @@ except ImportError as exc:  # pragma: no cover - manual demo guard
 
 POINT_ROWS = 125_000
 TABLE_ROWS = 50_000
+LINE_ROWS = 720
 STREAM_FRAME_COUNT = 24
 GRID_GAP = 12
 GRID_STYLE = {"padding": 10, "align_items": "start", "flex_grow": 0, "flex_shrink": 1}
@@ -46,7 +47,7 @@ SCATTER_GRID_STYLE = {
 }
 SCATTER_CONTROLS_PANEL_STYLE = {
     "padding": 10,
-    "gap": 0,
+    "gap": 8,
     "font_size": 14,
     "line_height": "18px",
     "flex_grow": 1,
@@ -63,6 +64,46 @@ SCATTER_CONTROLS_SCROLL_STYLE = {
     "flex_grow": 1,
     "flex_shrink": 1,
     "min_height": 0,
+}
+LINE_LAYOUT_STYLE = {
+    "padding": 10,
+    "gap": GRID_GAP,
+    "align_items": "stretch",
+    "flex_grow": 1,
+    "flex_shrink": 1,
+    "min_width": 0,
+    "min_height": 0,
+    "overflow_y": "hidden",
+}
+LINE_CONTROLS_PANEL_STYLE = {
+    "width": 280,
+    "padding": 10,
+    "gap": 8,
+    "font_size": 14,
+    "line_height": "18px",
+    "flex_grow": 0,
+    "flex_shrink": 0,
+    "align_self": "stretch",
+    "min_height": 0,
+    "overflow_y": "hidden",
+}
+LINE_CONTROLS_SCROLL_STYLE = {
+    "padding_bottom": 26,
+    "gap": 8,
+    "font_size": 14,
+    "line_height": "18px",
+    "flex_grow": 1,
+    "flex_shrink": 1,
+    "min_height": 0,
+}
+LINE_STACK_STYLE = {
+    "gap": 10,
+    "width": "100%",
+    "min_width": 0,
+    "min_height": 0,
+    "flex_grow": 1,
+    "flex_shrink": 1,
+    "align_self": "stretch",
 }
 DEBUG_MONITOR_STYLE = {
     "height": 540,
@@ -151,6 +192,39 @@ class DemoFrame:
         self.row_id = np.arange(rows, dtype=np.int64)
         self.group = np.where(self.signal > 0.45, "high", np.where(self.signal < -0.45, "low", "mid"))
         self.selected = self.score > 0.75
+
+    def __getitem__(self, column: str) -> object:
+        return getattr(self, column)
+
+
+class LineFrame:
+    columns = ("time", "temperature", "pressure", "vibration", "events")
+    dtypes = ("float32", "float32", "float32", "float32", "float32")
+
+    def __init__(self, rows: int = LINE_ROWS, offset: float = 0.0) -> None:
+        self.shape = (rows, len(self.columns))
+        t = np.linspace(offset, offset + 60.0, rows, dtype=np.float32)
+        phase = t / np.float32(60.0)
+        self.time = t
+        self.temperature = (
+            np.float32(68.0)
+            + np.sin(phase * np.float32(math.tau * 2.0)) * np.float32(4.6)
+            + np.sin(t * np.float32(1.9)) * np.float32(0.18)
+        ).astype(np.float32)
+        self.pressure = (
+            np.float32(31.0)
+            + np.cos(phase * np.float32(math.tau * 3.0)) * np.float32(2.2)
+            + np.sin(t * np.float32(0.72)) * np.float32(0.45)
+        ).astype(np.float32)
+        self.vibration = (
+            np.sin(t * np.float32(3.8)) * np.float32(0.7)
+            + np.sin(t * np.float32(12.2)) * np.float32(0.18)
+        ).astype(np.float32)
+        self.events = np.zeros(rows, dtype=np.float32)
+        for idx, height in ((112, 1.0), (276, 0.74), (431, 1.22), (606, 0.66)):
+            center = np.float32(offset + idx / max(1, rows - 1) * 60.0)
+            width = t - center
+            self.events += np.exp(-(width * width) / np.float32(0.20)) * np.float32(height)
 
     def __getitem__(self, column: str) -> object:
         return getattr(self, column)
@@ -375,10 +449,25 @@ ProgressBar {
 }
 
 DataFrameTable,
+LinePlot,
 Scatter3D,
 Image {
     border-color: rgba(90, 169, 255, 0.28);
     border-width: 1px;
+}
+
+LinePlot {
+    width: 100%;
+    min-height: 175px;
+    flex-grow: 1;
+    flex-shrink: 1;
+    background: rgba(4, 8, 18, 0.72);
+    border-radius: 12px;
+    padding: 10px;
+}
+
+LinePlot.stream-plot {
+    min-height: 205px;
 }
 
 Scatter3D {
@@ -415,6 +504,37 @@ ScrollArea.scatter-control-scroll {
 Scatter3D.main-scatter {
     height: calc(100% - 8px);
     min-height: 420px;
+    align-self: stretch;
+}
+
+HLayout.line-layout {
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    align-items: stretch;
+    overflow-y: hidden;
+}
+
+Panel.line-controls {
+    height: calc(100% - 8px);
+    max-height: calc(100% - 8px);
+    align-self: stretch;
+    overflow-y: hidden;
+    flex-grow: 0;
+    flex-shrink: 0;
+}
+
+ScrollArea.line-control-scroll {
+    flex-grow: 1;
+    flex-shrink: 1;
+    min-height: 0;
+    overflow-y: auto;
+}
+
+VLayout.line-stack {
+    height: calc(100% - 8px);
+    min-height: 0;
     align-self: stretch;
 }
 """
@@ -602,8 +722,14 @@ ProgressBar {
 }
 
 DataFrameTable,
+LinePlot,
 Scatter3D,
 Image {
+    border-color: #9f8970;
+}
+
+LinePlot {
+    background: #fffdf7;
     border-color: #9f8970;
 }
 """
@@ -762,6 +888,11 @@ LED.css-demo::highlight {
     background: rgba(255, 255, 255, 0.96);
     transform: rotate(-30deg);
 }
+
+LinePlot {
+    background: rgba(4, 8, 28, 0.86);
+    border-color: #00e5ff;
+}
 """
 
 
@@ -776,8 +907,10 @@ app = dg.App(theme=dg.Theme.dark(accent="#5aa9ff", radius=8, focus="#ffd36a"))
 app.stylesheet(CSS_THEMES["midnight"])
 stream_controller: dg.ScatterFrameStream | None = None
 stream_build_thread: threading.Thread | None = None
+line_stream_thread: threading.Thread | None = None
 stats_thread: threading.Thread | None = None
 stream_cancel = threading.Event()
+line_stream_stop = threading.Event()
 stats_stop = threading.Event()
 state_lock = threading.Lock()
 demo_state = {
@@ -802,10 +935,21 @@ demo_state = {
     "ticks_z": 5,
     "stats_auto": False,
     "page": "overview",
+    "line_stream_t": 60.0,
+    "line_width": 2.0,
+    "line_ticks": 5,
+    "line_window": None,
 }
 initial_frame = DemoFrame(mode="lidar")
+line_frame = LineFrame()
 demo_image_path = make_demo_image()
 stream_payload_cache: dict[tuple[str, str], list[tuple[float, dg.ScatterPayload]]] = {}
+line_plot_top: dg.LinePlot | None = None
+line_plot_mid: dg.LinePlot | None = None
+line_plot_bottom: dg.LinePlot | None = None
+line_width_label: dg.Label | None = None
+line_tick_label: dg.Label | None = None
+line_window_label: dg.Label | None = None
 
 
 def set_status(message: str) -> None:
@@ -1247,6 +1391,169 @@ def stop_stream() -> None:
     set_status("Scatter stream stopped")
 
 
+def update_all_line_plots(callback) -> None:
+    for plot in (line_plot_top, line_plot_mid, line_plot_bottom):
+        if plot is not None:
+            callback(plot)
+
+
+def set_line_width(value: float) -> None:
+    width = max(0.5, float(value))
+    demo_state["line_width"] = width
+    if line_width_label is not None:
+        line_width_label.set_value(f"Line width: {width:.1f}px")
+    update_all_line_plots(lambda plot: plot.set_line_width(width))
+    set_status(f"Line width: {width:.1f}px")
+
+
+def set_line_tick_count(value: float) -> None:
+    count = max(2, min(9, int(round(float(value)))))
+    demo_state["line_ticks"] = count
+    if line_tick_label is not None:
+        line_tick_label.set_value(f"Ticks: {count}")
+    update_all_line_plots(lambda plot: plot.set_tick_count(count))
+    set_status(f"Line ticks: {count}")
+
+
+def set_line_window(seconds: float | None) -> None:
+    demo_state["line_window"] = seconds
+    if line_window_label is not None:
+        line_window_label.set_value(
+            "Window: full history" if seconds is None else f"Window: latest {seconds:g}s"
+        )
+    update_all_line_plots(lambda plot: plot.set_window_size(seconds))
+    set_status("Line window: full history" if seconds is None else f"Line window: {seconds:g}s")
+
+
+def set_line_grid(enabled: bool) -> None:
+    update_all_line_plots(lambda plot: plot.set_grid_visible(bool(enabled)))
+    set_status(f"Line grid: {enabled}")
+
+
+def set_line_axes(enabled: bool) -> None:
+    update_all_line_plots(lambda plot: plot.set_axes_visible(bool(enabled)))
+    set_status(f"Line axes: {enabled}")
+
+
+def set_line_ticks(enabled: bool) -> None:
+    update_all_line_plots(lambda plot: plot.set_ticks_visible(bool(enabled)))
+    set_status(f"Line tick labels: {enabled}")
+
+
+def set_line_toolbar(enabled: bool) -> None:
+    update_all_line_plots(lambda plot: plot.set_toolbar_visible(bool(enabled)))
+    set_status(f"Line toolbar: {enabled}")
+
+
+def set_line_legend(enabled: bool) -> None:
+    update_all_line_plots(lambda plot: plot.set_legend_visible(bool(enabled)))
+    set_status(f"Line legend: {enabled}")
+
+
+def fit_line_plots() -> None:
+    update_all_line_plots(lambda plot: plot.fit())
+    if line_window_label is not None:
+        line_window_label.set_value("Window: full history")
+    demo_state["line_window"] = None
+    set_status("Line plots fit to data")
+
+
+def reset_line_plots() -> None:
+    demo_state["line_stream_t"] = 60.0
+    if line_plot_top is None or line_plot_mid is None or line_plot_bottom is None:
+        return
+    line_plot_top.set_data(
+        line_frame,
+        x="time",
+        y=("temperature", "pressure"),
+        labels=("Temperature", "Pressure"),
+        colors=("#5aa9ff", "#74ddb0"),
+        line_styles=("solid", "dashed"),
+    )
+    line_plot_mid.set_data(
+        line_frame,
+        x="time",
+        y=("vibration", "events"),
+        labels=("Vibration", "Events"),
+        colors=("#ffb45c", "#f36b7f"),
+        line_styles=("dotted", "dashdot"),
+    )
+    line_plot_bottom.set_data(
+        line_frame,
+        x="time",
+        y="temperature",
+        label="Live Temperature",
+        color="#5aa9ff",
+        line_style="solid",
+    )
+    update_all_line_plots(lambda plot: plot.set_line_width(float(demo_state["line_width"])))
+    update_all_line_plots(lambda plot: plot.set_tick_count(int(demo_state["line_ticks"])))
+    if demo_state["line_window"] is not None:
+        update_all_line_plots(lambda plot: plot.set_window_size(float(demo_state["line_window"])))
+    set_status("Line plots reset")
+
+
+def generated_line_batch(samples: int = 28) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    start = float(demo_state["line_stream_t"])
+    end = start + 1.35
+    t = np.linspace(start, end, samples, dtype=np.float32)
+    demo_state["line_stream_t"] = end
+    phase = t / np.float32(60.0)
+    temperature = (
+        np.float32(68.0)
+        + np.sin(phase * np.float32(math.tau * 2.0)) * np.float32(4.6)
+        + np.sin(t * np.float32(2.7)) * np.float32(0.35)
+    ).astype(np.float32)
+    pressure = (
+        np.float32(31.0)
+        + np.cos(phase * np.float32(math.tau * 3.0)) * np.float32(2.2)
+        + np.sin(t * np.float32(1.1)) * np.float32(0.55)
+    ).astype(np.float32)
+    vibration = (
+        np.sin(t * np.float32(3.8)) * np.float32(0.7)
+        + np.sin(t * np.float32(12.2)) * np.float32(0.22)
+    ).astype(np.float32)
+    center = np.float32(start + 0.72)
+    events = np.exp(-((t - center) ** 2) / np.float32(0.08)) * np.float32(1.15)
+    return t, temperature, pressure, vibration, events.astype(np.float32)
+
+
+def append_line_batch() -> None:
+    if line_plot_top is None or line_plot_mid is None or line_plot_bottom is None:
+        return
+    t, temperature, pressure, vibration, events = generated_line_batch()
+    line_plot_top.append_points(t, temperature, series="Temperature")
+    line_plot_top.append_points(t, pressure, series="Pressure")
+    line_plot_mid.append_points(t, vibration, series="Vibration")
+    line_plot_mid.append_points(t, events, series="Events")
+    line_plot_bottom.append_points(t, temperature, series="Live Temperature")
+    set_status(f"Line stream appended through t={float(t[-1]):.1f}s")
+
+
+def start_line_stream() -> None:
+    global line_stream_thread
+    if line_stream_thread is not None and line_stream_thread.is_alive():
+        set_status("Line stream already running")
+        return
+    line_stream_stop.clear()
+
+    def worker() -> None:
+        while not line_stream_stop.wait(0.12):
+            try:
+                app.call_soon_threadsafe(append_line_batch)
+            except RuntimeError:
+                break
+
+    line_stream_thread = threading.Thread(target=worker, daemon=True)
+    line_stream_thread.start()
+    set_status("Line stream started")
+
+
+def stop_line_stream() -> None:
+    line_stream_stop.set()
+    set_status("Line stream stopped")
+
+
 def update_table(mode: str) -> None:
     table.set_frame(DemoFrame(phase=demo_state["phase"] + 0.6, mode=mode, rows=TABLE_ROWS))
     set_status(f"Table frame: {mode}")
@@ -1369,6 +1676,8 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
     global win, status, progress, scatter_stats_summary, scatter, table
     global color_target, x_tick_label, y_tick_label, z_tick_label
     global stream_interval_label, dynamic_panel, style_panel, style_label, style_button
+    global line_plot_top, line_plot_mid, line_plot_bottom
+    global line_width_label, line_tick_label, line_window_label
     global confirm_modal, about_modal
 
     win = dg.Window("DragonGUI All Features V3 Demo", width=1440, height=900)
@@ -1383,6 +1692,11 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
             dg.MenuItem("Push LiDAR Frame", on_click=lambda: push_scatter("lidar"))
             dg.MenuItem("Start Stream", on_click=start_stream)
             dg.MenuItem("Stop Stream", on_click=stop_stream)
+        with dg.Menu("LinePlot"):
+            dg.MenuItem("Append Batch", on_click=append_line_batch)
+            dg.MenuItem("Start Stream", on_click=start_line_stream)
+            dg.MenuItem("Stop Stream", on_click=stop_line_stream)
+            dg.MenuItem("Fit Plots", on_click=fit_line_plots)
         with dg.Menu("Help"):
             dg.MenuItem("About", on_click=lambda: about_modal.show())
 
@@ -1396,9 +1710,11 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                 dg.LED("stream", states={"stream": "warning"}, tooltip="Custom stream state")
                 dg.Badge("Grid", level="success")
                 dg.Tag("Scatter3D", level="info")
+                dg.Tag("LinePlot", level="info")
             dg.Separator()
             dg.NavItem("Overview", page="overview")
             dg.NavItem("Scatter", page="scatter")
+            dg.NavItem("Line plots", page="lineplots")
             dg.NavItem("Controls", page="controls")
             dg.NavItem("Data", page="data")
             dg.NavItem("Runtime", page="runtime")
@@ -1542,6 +1858,133 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                         class_="main-scatter",
                         key="main-scatter",
                     )
+
+            with dg.Page("lineplots", title="Line plots"):
+                with dg.HLayout(class_="line-layout", style=LINE_LAYOUT_STYLE):
+                    with dg.Panel("Line plot controls", class_="line-controls", style=LINE_CONTROLS_PANEL_STYLE):
+                        with dg.ScrollArea(
+                            axis="y",
+                            gap=8,
+                            class_="line-control-scroll",
+                            style=LINE_CONTROLS_SCROLL_STYLE,
+                        ):
+                            dg.Label("Data")
+                            with dg.FlowLayout(gap=8, row_gap=8):
+                                dg.Button("Append batch", class_="primary", on_click=append_line_batch)
+                                dg.Button("Start stream", on_click=start_line_stream)
+                                dg.Button("Stop stream", on_click=stop_line_stream)
+                                dg.Button("Reset plots", on_click=reset_line_plots)
+                            dg.Button("Fit all plots", on_click=fit_line_plots)
+                            dg.Separator()
+                            dg.Label("Streaming window")
+                            line_window_label = dg.Label("Window: full history")
+                            with dg.FlowLayout(gap=8, row_gap=8):
+                                dg.Button("Follow 10s", on_click=lambda: set_line_window(10.0))
+                                dg.Button("Follow 30s", on_click=lambda: set_line_window(30.0))
+                                dg.Button("Full history", on_click=lambda: set_line_window(None))
+                            dg.Label(
+                                "A moving window keeps all appended samples but follows the newest x values.",
+                                class_="subtle",
+                            )
+                            dg.Separator()
+                            dg.Label("Style and visibility")
+                            line_width_label = dg.Label("Line width: 2.0px")
+                            dg.Slider(2.0, min=0.5, max=6.0, step=0.1, on_change=set_line_width)
+                            line_tick_label = dg.Label("Ticks: 5")
+                            dg.Slider(5, min=2, max=9, step=1, on_change=set_line_tick_count)
+                            with dg.FlowLayout(gap=8, row_gap=8):
+                                dg.Checkbox("Grid", checked=True, on_change=set_line_grid)
+                                dg.Checkbox("Axes", checked=True, on_change=set_line_axes)
+                                dg.Checkbox("Ticks", checked=True, on_change=set_line_ticks)
+                                dg.Checkbox("Legend", checked=True, on_change=set_line_legend)
+                                dg.Checkbox("Toolbar", checked=True, on_change=set_line_toolbar)
+                            dg.Label(
+                                "Toolbar buttons cover fit, pan, zoom, box zoom, grid, and axes. Hover over each plot to inspect the nearest point.",
+                                class_="subtle",
+                            )
+
+                    with dg.VLayout(class_="line-stack", style=LINE_STACK_STYLE):
+                        with dg.Panel(
+                            "Sensors: temperature and pressure",
+                            style={
+                                **CARD_STYLE,
+                                "flex_grow": 1,
+                                "flex_shrink": 1,
+                                "min_height": 0,
+                                "align_self": "stretch",
+                            },
+                        ):
+                            line_plot_top = dg.LinePlot(
+                                line_frame,
+                                x="time",
+                                y=("temperature", "pressure"),
+                                labels=("Temperature", "Pressure"),
+                                colors=("#5aa9ff", "#74ddb0"),
+                                line_styles=("solid", "dashed"),
+                                x_label="Elapsed time (s)",
+                                y_label="Sensor reading",
+                                show_legend=True,
+                                show_toolbar=True,
+                                tick_count=5,
+                                line_width=2.0,
+                                class_="stream-plot",
+                                key="v3-line-top",
+                            )
+
+                        with dg.Panel(
+                            "Line-style stress: vibration and events",
+                            style={
+                                **CARD_STYLE,
+                                "flex_grow": 1,
+                                "flex_shrink": 1,
+                                "min_height": 0,
+                                "align_self": "stretch",
+                            },
+                        ):
+                            line_plot_mid = dg.LinePlot(
+                                line_frame,
+                                x="time",
+                                y=("vibration", "events"),
+                                labels=("Vibration", "Events"),
+                                colors=("#ffb45c", "#f36b7f"),
+                                line_styles=("dotted", "dashdot"),
+                                x_label="Elapsed time (s)",
+                                y_label="Normalized signal",
+                                show_legend=True,
+                                show_toolbar=True,
+                                tick_count=5,
+                                line_width=2.0,
+                                class_="stream-plot",
+                                key="v3-line-mid",
+                            )
+
+                        with dg.Panel(
+                            "Streaming viewport",
+                            style={
+                                **CARD_STYLE,
+                                "flex_grow": 1,
+                                "flex_shrink": 1,
+                                "min_height": 0,
+                                "align_self": "stretch",
+                            },
+                        ):
+                            line_plot_bottom = dg.LinePlot(
+                                line_frame,
+                                x="time",
+                                y="temperature",
+                                label="Live Temperature",
+                                color="#5aa9ff",
+                                line_style="solid",
+                                x_label="Elapsed time (s)",
+                                y_label="Temperature",
+                                show_legend=True,
+                                show_toolbar=True,
+                                tick_count=5,
+                                line_width=2.0,
+                                window_size=None,
+                                class_="stream-plot",
+                                key="v3-line-bottom",
+                            )
 
             with dg.Page("controls", title="Controls"):
                 with dg.GridLayout(columns=2, min_column_width=360, gap=GRID_GAP, style=GRID_STYLE):
@@ -1700,7 +2143,7 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
 
     about_modal = dg.alert(
         "About DragonGUI",
-        "This V3 demo uses responsive grids, CSS themes, Scatter3D, DataFrameTable, modals, menus, context menus, toasts, resources, and live runtime updates.",
+        "This V3 demo uses responsive grids, CSS themes, Scatter3D, LinePlot, DataFrameTable, modals, menus, context menus, toasts, resources, and live runtime updates.",
         open=False,
         parent=win,
     )

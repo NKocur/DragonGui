@@ -84,9 +84,18 @@ impl LinePlotPayloadFormat {
 pub struct LinePlotSeriesProp {
     pub label: Option<String>,
     pub color: Option<ColorRef>,
+    pub line_style: String,
     pub points: Vec<[f32; 2]>,
     pub payload_format: LinePlotPayloadFormat,
     pub declared_point_count: Option<usize>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LinePlotHoverProp {
+    pub screen: [f32; 2],
+    pub plot: [f32; 2],
+    pub label: Option<String>,
+    pub color: Option<ColorRef>,
 }
 
 // ---------------------------------------------------------------------------
@@ -204,6 +213,7 @@ fn parse_line_plot_series_item(value: &serde_json::Value) -> Option<LinePlotSeri
             .filter(|s| !s.is_empty())
             .map(str::to_string),
         color: parse_color_ref(obj.get("color")),
+        line_style: parse_line_plot_line_style(obj.get("line_style").and_then(Value::as_str)),
         points,
         payload_format,
         declared_point_count: obj
@@ -211,6 +221,21 @@ fn parse_line_plot_series_item(value: &serde_json::Value) -> Option<LinePlotSeri
             .and_then(Value::as_u64)
             .map(|v| v as usize),
     })
+}
+
+pub(crate) fn parse_line_plot_line_style(value: Option<&str>) -> String {
+    let normalized = value
+        .unwrap_or("solid")
+        .trim()
+        .to_ascii_lowercase()
+        .replace('_', "-");
+    match normalized.as_str() {
+        "dash" => "dashed".to_string(),
+        "dot" => "dotted".to_string(),
+        "dash-dot" => "dashdot".to_string(),
+        "solid" | "dashed" | "dotted" | "dashdot" => normalized,
+        _ => "solid".to_string(),
+    }
 }
 
 fn decode_line_plot_xy_b64(data: &str) -> Result<Vec<[f32; 2]>, String> {
@@ -455,9 +480,19 @@ pub struct NodeProps {
     pub line_plot_show_axes: bool,
     pub line_plot_show_ticks: bool,
     pub line_plot_show_toolbar: bool,
+    pub line_plot_show_legend: bool,
+    pub line_plot_legend_position: String,
     pub line_plot_tick_count: usize,
     pub line_plot_auto_fit: bool,
     pub line_plot_line_width: f32,
+    pub line_plot_window_size: Option<f32>,
+    pub line_plot_x_min: Option<f32>,
+    pub line_plot_x_max: Option<f32>,
+    pub line_plot_y_min: Option<f32>,
+    pub line_plot_y_max: Option<f32>,
+    pub line_plot_interaction: String,
+    pub line_plot_selection_rect: Option<[f32; 4]>,
+    pub line_plot_hover: Option<LinePlotHoverProp>,
     /// Scatter3D colormap name.
     pub scatter_colormap: Option<String>,
     /// Scatter3D base64-encoded startup payload.
@@ -731,9 +766,19 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         line_plot_show_axes,
         line_plot_show_ticks,
         line_plot_show_toolbar,
+        line_plot_show_legend,
+        line_plot_legend_position,
         line_plot_tick_count,
         line_plot_auto_fit,
         line_plot_line_width,
+        line_plot_window_size,
+        line_plot_x_min,
+        line_plot_x_max,
+        line_plot_y_min,
+        line_plot_y_max,
+        line_plot_interaction,
+        line_plot_selection_rect,
+        line_plot_hover,
     ) = if matches!(kind, WidgetKind::LinePlot) {
         let x_label = props
             .get("x_label")
@@ -761,6 +806,15 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
             .get("show_toolbar")
             .and_then(Value::as_bool)
             .unwrap_or(false);
+        let show_legend = props
+            .get("show_legend")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let legend_position = props
+            .get("legend_position")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .unwrap_or_else(|| "top-right".to_string());
         let tick_count = props
             .get("tick_count")
             .and_then(Value::as_u64)
@@ -777,6 +831,24 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
             .filter(|v| v.is_finite() && *v > 0.0)
             .map(|v| v as f32)
             .unwrap_or(2.0);
+        let window_size = props
+            .get("window_size")
+            .and_then(Value::as_f64)
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .map(|v| v as f32);
+        let limit = |name: &str| {
+            props
+                .get(name)
+                .and_then(Value::as_f64)
+                .filter(|v| v.is_finite())
+                .map(|v| v as f32)
+        };
+        let interaction = props
+            .get("interaction")
+            .and_then(Value::as_str)
+            .filter(|value| matches!(*value, "inspect" | "pan" | "zoom" | "box_zoom"))
+            .unwrap_or("inspect")
+            .to_string();
         (
             parse_line_plot_series(props),
             x_label,
@@ -785,9 +857,19 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
             show_axes,
             show_ticks,
             show_toolbar,
+            show_legend,
+            legend_position,
             tick_count,
             auto_fit,
             line_width,
+            window_size,
+            limit("x_min"),
+            limit("x_max"),
+            limit("y_min"),
+            limit("y_max"),
+            interaction,
+            None,
+            None,
         )
     } else {
         (
@@ -798,9 +880,19 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
             true,
             true,
             false,
+            false,
+            "top-right".to_string(),
             5,
             true,
             2.0,
+            None,
+            None,
+            None,
+            None,
+            None,
+            String::new(),
+            None,
+            None,
         )
     };
     let (scatter_colormap, scatter_data_b64, scatter_data_format) =
@@ -1109,9 +1201,19 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         line_plot_show_axes,
         line_plot_show_ticks,
         line_plot_show_toolbar,
+        line_plot_show_legend,
+        line_plot_legend_position,
         line_plot_tick_count,
         line_plot_auto_fit,
         line_plot_line_width,
+        line_plot_window_size,
+        line_plot_x_min,
+        line_plot_x_max,
+        line_plot_y_min,
+        line_plot_y_max,
+        line_plot_interaction,
+        line_plot_selection_rect,
+        line_plot_hover,
         scatter_colormap,
         scatter_data_b64,
         scatter_data_format,

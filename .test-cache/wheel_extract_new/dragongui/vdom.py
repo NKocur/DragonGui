@@ -172,7 +172,7 @@ def shallow_value_equal(left: object, right: object) -> bool:
         return left == right
     if isinstance(left, _SCALAR_TYPES) and isinstance(right, _SCALAR_TYPES):
         return left == right
-    if _is_small_sequence(left) and _is_small_sequence(right):
+    if _is_scalar_sequence(left) and _is_scalar_sequence(right):
         return tuple(left) == tuple(right)  # type: ignore[arg-type]
     if _is_small_mapping(left) and _is_small_mapping(right):
         left_map = left  # type: ignore[assignment]
@@ -264,18 +264,6 @@ def _diff_props(old: VNode, new: VNode, path: tuple[str, ...]) -> list[Patch]:
                 )
             )
         return patches
-    if old.type == "line_plot" and new.type == "line_plot":
-        if not _line_plot_props_equal(old.props, new.props):
-            patches.append(
-                Patch(
-                    kind=Patch.SET_PROP,
-                    path=path,
-                    node_id=old.id,
-                    prop="line_plot",
-                    value=new.props,
-                )
-            )
-        return patches
     old_props = old.props
     new_props = new.props
     for prop in old_props:
@@ -355,23 +343,12 @@ def _path_segment(node: VNode) -> str:
     return f"{node.type}:id={node.id}"
 
 
-def _is_small_value(value: object) -> bool:
-    return (
-        isinstance(value, _SCALAR_TYPES)
-        or isinstance(value, ResourceRef)
-        or _is_small_sequence(value)
-        or _is_small_mapping(value)
-    )
-
-
-def _is_small_sequence(value: object) -> bool:
+def _is_scalar_sequence(value: object) -> bool:
     if isinstance(value, (str, bytes, bytearray, memoryview)):
         return False
     if not isinstance(value, (list, tuple)):
         return False
-    if len(value) > 64:
-        return False
-    return all(_is_small_value(item) for item in value)
+    return all(isinstance(item, _SCALAR_TYPES) for item in value)
 
 
 def _is_small_mapping(value: object) -> bool:
@@ -382,7 +359,10 @@ def _is_small_mapping(value: object) -> bool:
     return all(
         isinstance(key, str)
         and (
-            _is_small_value(item)
+            isinstance(item, _SCALAR_TYPES)
+            or _is_scalar_sequence(item)
+            or isinstance(item, ResourceRef)
+            or _is_small_mapping(item)
         )
         for key, item in value.items()
     )
@@ -453,56 +433,6 @@ def _scatter_props_equal(left: object, right: object) -> bool:
     if l_token is not None or r_token is not None:
         return l_token == r_token
     return left_map.get("frame") == right_map.get("frame")
-
-
-def _line_plot_props_equal(left: object, right: object) -> bool:
-    left_map = left  # type: ignore[assignment]
-    right_map = right  # type: ignore[assignment]
-    assert isinstance(left_map, Mapping)
-    assert isinstance(right_map, Mapping)
-    for key in (
-        "x",
-        "y",
-        "x_label",
-        "y_label",
-        "show_grid",
-        "show_axes",
-        "show_ticks",
-        "show_toolbar",
-        "show_legend",
-        "legend_position",
-        "interaction",
-        "tick_count",
-        "auto_fit",
-        "line_width",
-        "window_size",
-        "max_points",
-    ):
-        if left_map.get(key) != right_map.get(key):
-            return False
-    return _line_plot_series_summary(left_map.get("series")) == _line_plot_series_summary(
-        right_map.get("series")
-    )
-
-
-def _line_plot_series_summary(value: object) -> tuple[tuple[object, ...], ...]:
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
-        return ()
-    summary: list[tuple[object, ...]] = []
-    for item in value:
-        if not isinstance(item, Mapping):
-            return ()
-        summary.append(
-            (
-                item.get("label"),
-                item.get("color"),
-                item.get("line_style"),
-                item.get("data_format"),
-                item.get("points"),
-                item.get("_payload_token"),
-            )
-        )
-    return tuple(summary)
 
 
 def _mapping_to_dict(value: Mapping[str, object]) -> dict[str, object]:

@@ -1445,11 +1445,11 @@ const LINE_PLOT_PALETTE: [[f32; 4]; 6] = [
 ];
 
 #[derive(Debug, Clone, Copy)]
-struct LinePlotBounds {
-    x_min: f32,
-    x_max: f32,
-    y_min: f32,
-    y_max: f32,
+pub(crate) struct LinePlotBounds {
+    pub x_min: f32,
+    pub x_max: f32,
+    pub y_min: f32,
+    pub y_max: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -1461,6 +1461,23 @@ pub(crate) struct LinePlotTextLabel {
     pub anchor: &'static str,
     pub color: Option<[f32; 3]>,
     pub font_size: Option<f32>,
+    pub clip_rect: Option<[f32; 4]>,
+}
+
+fn format_line_plot_hover_value(value: f32) -> String {
+    if !value.is_finite() {
+        return String::new();
+    }
+    let abs = value.abs();
+    if abs >= 10_000.0 || (abs > 0.0 && abs < 0.001) {
+        format!("{value:.2e}")
+    } else if abs >= 100.0 {
+        format!("{value:.1}")
+    } else if abs >= 10.0 {
+        format!("{value:.2}")
+    } else {
+        format!("{value:.3}")
+    }
 }
 
 fn emit_line_plot(
@@ -1491,8 +1508,8 @@ fn emit_line_plot(
     let plot_fill = mix(styled_bg.unwrap_or(theme.surface), theme.background, 0.18);
     out.push(inst_radii(plot, plot_fill, [2.0 * sf; 4]));
 
-    let bounds = match line_plot_bounds(node) {
-        Some(bounds) => expand_line_plot_bounds(bounds),
+    let bounds = match line_plot_resolved_bounds(node) {
+        Some(bounds) => bounds,
         None => {
             emit_line_plot_grid(
                 out,
@@ -1539,12 +1556,50 @@ fn emit_line_plot(
             .as_ref()
             .map(|color| color.resolve(theme))
             .unwrap_or(LINE_PLOT_PALETTE[series_index % LINE_PLOT_PALETTE.len()]);
-        emit_line_plot_series(out, &series.points, plot, bounds, line_width, color);
+        emit_line_plot_series(
+            out,
+            &series.points,
+            plot,
+            bounds,
+            line_width,
+            color,
+            &series.line_style,
+        );
     }
+    emit_line_plot_legend(out, node, theme, sf, plot);
+    emit_line_plot_hover(out, node, theme, sf, plot);
+    emit_line_plot_selection_rect(out, node, theme, sf, plot);
     emit_line_plot_toolbar(out, node, theme, sf, rect);
 }
 
-fn line_plot_bounds(node: &WidgetNode) -> Option<LinePlotBounds> {
+pub(crate) fn line_plot_resolved_bounds(node: &WidgetNode) -> Option<LinePlotBounds> {
+    if !node.props.line_plot_auto_fit {
+        if let (Some(x_min), Some(x_max), Some(y_min), Some(y_max)) = (
+            node.props.line_plot_x_min,
+            node.props.line_plot_x_max,
+            node.props.line_plot_y_min,
+            node.props.line_plot_y_max,
+        ) {
+            if x_min.is_finite()
+                && x_max.is_finite()
+                && y_min.is_finite()
+                && y_max.is_finite()
+                && x_max > x_min
+                && y_max > y_min
+            {
+                return Some(LinePlotBounds {
+                    x_min,
+                    x_max,
+                    y_min,
+                    y_max,
+                });
+            }
+        }
+    }
+    line_plot_data_bounds(node).map(expand_line_plot_bounds)
+}
+
+fn line_plot_data_bounds(node: &WidgetNode) -> Option<LinePlotBounds> {
     let mut bounds = LinePlotBounds {
         x_min: f32::INFINITY,
         x_max: f32::NEG_INFINITY,
@@ -1566,6 +1621,26 @@ fn line_plot_bounds(node: &WidgetNode) -> Option<LinePlotBounds> {
         }
     }
     has_point.then_some(bounds)
+}
+
+fn line_plot_visible_point_bounds(points: &[[f32; 2]], bounds: LinePlotBounds) -> (usize, usize) {
+    if points.is_empty() {
+        return (0, 0);
+    }
+    let first = points.first().map(|point| point[0]).unwrap_or(0.0);
+    let last = points.last().map(|point| point[0]).unwrap_or(0.0);
+    if !first.is_finite() || !last.is_finite() || first > last {
+        return (0, points.len());
+    }
+    let start = points.partition_point(|point| point[0] < bounds.x_min);
+    let end = points.partition_point(|point| point[0] <= bounds.x_max);
+    if start < end {
+        return (start.saturating_sub(1), (end + 1).min(points.len()));
+    }
+    if start > 0 && start < points.len() {
+        return (start - 1, start + 1);
+    }
+    (start, end)
 }
 
 fn expand_line_plot_bounds(mut bounds: LinePlotBounds) -> LinePlotBounds {
@@ -1591,8 +1666,8 @@ fn line_plot_outer_padding(node: &WidgetNode, sf: f32, rect: [f32; 4]) -> f32 {
     (pad_lp.max(4.0) * sf).min(rect[2].min(rect[3]) * 0.22)
 }
 
-fn line_plot_toolbar_enabled(_node: &WidgetNode, _rect: [f32; 4]) -> bool {
-    false
+fn line_plot_toolbar_enabled(node: &WidgetNode, rect: [f32; 4]) -> bool {
+    node.props.line_plot_show_toolbar && rect[2] >= 260.0 && rect[3] >= 180.0
 }
 
 fn line_plot_ticks_enabled(node: &WidgetNode, rect: [f32; 4]) -> bool {
@@ -1600,9 +1675,7 @@ fn line_plot_ticks_enabled(node: &WidgetNode, rect: [f32; 4]) -> bool {
 }
 
 fn line_plot_axis_labels_enabled(node: &WidgetNode, rect: [f32; 4]) -> bool {
-    (node.props.line_plot_show_axes || node.props.line_plot_show_ticks)
-        && rect[2] >= 260.0
-        && rect[3] >= 220.0
+    node.props.line_plot_show_axes && rect[2] >= 260.0 && rect[3] >= 220.0
 }
 
 fn line_plot_y_axis_label(node: &WidgetNode) -> Option<&str> {
@@ -1614,7 +1687,7 @@ fn line_plot_y_axis_label(node: &WidgetNode) -> Option<&str> {
     })
 }
 
-fn line_plot_plot_rect(node: &WidgetNode, sf: f32, rect: [f32; 4]) -> [f32; 4] {
+pub(crate) fn line_plot_plot_rect(node: &WidgetNode, sf: f32, rect: [f32; 4]) -> [f32; 4] {
     let [x, y, w, h] = rect;
     let pad = line_plot_outer_padding(node, sf, rect);
     let show_ticks = line_plot_ticks_enabled(node, rect);
@@ -1782,31 +1855,33 @@ fn emit_line_plot_grid(
             }
         }
     }
-    if let Some(bounds) = bounds {
-        let mut zero_color = mix(theme.border, theme.text, 0.30);
-        zero_color[3] = zero_color[3].min(0.46);
-        if bounds.y_min < 0.0 && bounds.y_max > 0.0 {
-            let t = ((0.0 - bounds.y_min) / (bounds.y_max - bounds.y_min).max(f32::EPSILON))
-                .clamp(0.0, 1.0);
-            let gy = plot[1] + plot[3] * (1.0 - t);
-            out.push(inst(
-                [plot[0], gy - stroke * 0.5, plot[2], stroke],
-                zero_color,
-                0.0,
-            ));
-        }
-        if bounds.x_min < 0.0 && bounds.x_max > 0.0 {
-            let t = ((0.0 - bounds.x_min) / (bounds.x_max - bounds.x_min).max(f32::EPSILON))
-                .clamp(0.0, 1.0);
-            let gx = plot[0] + plot[2] * t;
-            out.push(inst(
-                [gx - stroke * 0.5, plot[1], stroke, plot[3]],
-                zero_color,
-                0.0,
-            ));
+    if show_axes {
+        if let Some(bounds) = bounds {
+            let mut zero_color = mix(theme.border, theme.text, 0.30);
+            zero_color[3] = zero_color[3].min(0.46);
+            if bounds.y_min < 0.0 && bounds.y_max > 0.0 {
+                let t = ((0.0 - bounds.y_min) / (bounds.y_max - bounds.y_min).max(f32::EPSILON))
+                    .clamp(0.0, 1.0);
+                let gy = plot[1] + plot[3] * (1.0 - t);
+                out.push(inst(
+                    [plot[0], gy - stroke * 0.5, plot[2], stroke],
+                    zero_color,
+                    0.0,
+                ));
+            }
+            if bounds.x_min < 0.0 && bounds.x_max > 0.0 {
+                let t = ((0.0 - bounds.x_min) / (bounds.x_max - bounds.x_min).max(f32::EPSILON))
+                    .clamp(0.0, 1.0);
+                let gx = plot[0] + plot[2] * t;
+                out.push(inst(
+                    [gx - stroke * 0.5, plot[1], stroke, plot[3]],
+                    zero_color,
+                    0.0,
+                ));
+            }
         }
     }
-    if show_axes || show_ticks {
+    if show_axes {
         out.push(inst(
             [plot[0], plot[1] + plot[3] - stroke, plot[2], stroke],
             axis_color,
@@ -1850,21 +1925,23 @@ fn line_plot_toolbar_buttons(
         return Vec::new();
     }
     let pad = line_plot_outer_padding(node, sf, rect);
-    let button_h = 20.0 * sf;
+    let button = 24.0 * sf;
     let gap = 5.0 * sf;
-    let widths = [34.0 * sf, 42.0 * sf, 42.0 * sf];
-    let total = widths.iter().sum::<f32>() + gap * 2.0;
+    let total = button * 6.0 + gap * 5.0;
     let y = rect[1] + pad;
     let mut x = rect[0] + rect[2] - pad - total;
-    let mut buttons = Vec::with_capacity(3);
-    for (index, label) in ["Fit", "Grid", "Axes"].iter().enumerate() {
-        let active = match *label {
+    let mut buttons = Vec::with_capacity(6);
+    for label in ["Fit", "Pan", "Zoom", "Box", "Grid", "Axes"] {
+        let active = match label {
+            "Pan" => node.props.line_plot_interaction == "pan",
+            "Zoom" => node.props.line_plot_interaction == "zoom",
+            "Box" => node.props.line_plot_interaction == "box_zoom",
             "Grid" => node.props.line_plot_show_grid,
             "Axes" => node.props.line_plot_show_axes || node.props.line_plot_show_ticks,
             _ => true,
         };
-        buttons.push((*label, [x, y, widths[index], button_h], active));
-        x += widths[index] + gap;
+        buttons.push((label, [x, y, button, button], active));
+        x += button + gap;
     }
     buttons
 }
@@ -1894,7 +1971,7 @@ fn emit_line_plot_toolbar(
     sf: f32,
     rect: [f32; 4],
 ) {
-    for (_, button, active) in line_plot_toolbar_buttons(node, sf, rect) {
+    for (label, button, active) in line_plot_toolbar_buttons(node, sf, rect) {
         let mut fill = if active {
             mix(theme.surface_alt, theme.accent, 0.18)
         } else {
@@ -1907,7 +1984,456 @@ fn emit_line_plot_toolbar(
             mix(theme.border, theme.muted_text, 0.20)
         };
         border[3] = border[3].min(0.68);
-        emit_bordered_rect_radii(out, button, border, fill, [5.0 * sf; 4], 1.0 * sf);
+        emit_bordered_rect_radii(out, button, border, fill, [4.0 * sf; 4], 1.0 * sf);
+        let mut icon = if active {
+            mix(theme.text, theme.accent, 0.24)
+        } else {
+            mix(theme.muted_text, theme.text, 0.20)
+        };
+        icon[3] = icon[3].min(0.92);
+        emit_line_plot_toolbar_icon(out, label, button, icon, sf);
+    }
+}
+
+fn emit_line_plot_toolbar_icon(
+    out: &mut Vec<RectInstance>,
+    label: &str,
+    rect: [f32; 4],
+    color: Color,
+    sf: f32,
+) {
+    match label {
+        "Fit" => emit_line_plot_fit_icon(out, rect, color, sf),
+        "Pan" => emit_line_plot_pan_icon(out, rect, color, sf),
+        "Zoom" => emit_line_plot_zoom_icon(out, rect, color, sf),
+        "Box" => emit_line_plot_box_zoom_icon(out, rect, color, sf),
+        "Grid" => emit_line_plot_grid_icon(out, rect, color, sf),
+        "Axes" => emit_line_plot_axes_icon(out, rect, color, sf),
+        _ => {}
+    }
+}
+
+fn emit_line_plot_selection_rect(
+    out: &mut Vec<RectInstance>,
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    plot: [f32; 4],
+) {
+    let Some(raw) = node.props.line_plot_selection_rect else {
+        return;
+    };
+    let x0 = raw[0].min(raw[2]).clamp(plot[0], plot[0] + plot[2]);
+    let x1 = raw[0].max(raw[2]).clamp(plot[0], plot[0] + plot[2]);
+    let y0 = raw[1].min(raw[3]).clamp(plot[1], plot[1] + plot[3]);
+    let y1 = raw[1].max(raw[3]).clamp(plot[1], plot[1] + plot[3]);
+    let rect = [x0, y0, x1 - x0, y1 - y0];
+    if rect[2] < 2.0 * sf || rect[3] < 2.0 * sf {
+        return;
+    }
+    let mut fill = mix(theme.accent, theme.surface, 0.24);
+    fill[3] = 0.18;
+    let mut border = mix(theme.accent, theme.text, 0.20);
+    border[3] = 0.82;
+    emit_bordered_rect_radii(out, rect, border, fill, [2.0 * sf; 4], 1.0 * sf);
+}
+
+fn emit_line_plot_hover(
+    out: &mut Vec<RectInstance>,
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    plot: [f32; 4],
+) {
+    let Some(hover) = node.props.line_plot_hover.as_ref() else {
+        return;
+    };
+    let sx = hover.screen[0];
+    let sy = hover.screen[1];
+    if sx < plot[0] || sx > plot[0] + plot[2] || sy < plot[1] || sy > plot[1] + plot[3] {
+        return;
+    }
+    let mut cross = mix(theme.muted_text, theme.accent, 0.44);
+    cross[3] = 0.46;
+    let stroke = (1.0 * sf).max(1.0);
+    out.push(inst(
+        [sx - stroke * 0.5, plot[1], stroke, plot[3]],
+        cross,
+        0.0,
+    ));
+    out.push(inst(
+        [plot[0], sy - stroke * 0.5, plot[2], stroke],
+        cross,
+        0.0,
+    ));
+
+    let point_color = hover
+        .color
+        .as_ref()
+        .map(|color| color.resolve(theme))
+        .unwrap_or(theme.accent);
+    let marker = (6.0 * sf).max(5.0);
+    emit_bordered_rect_radii(
+        out,
+        [sx - marker * 0.5, sy - marker * 0.5, marker, marker],
+        theme.surface,
+        point_color,
+        [marker * 0.5; 4],
+        (1.25 * sf).max(1.0),
+    );
+
+    let readout = line_plot_hover_readout_rect(hover.screen, plot, sf);
+    let mut fill = mix(theme.surface, theme.background, 0.22);
+    fill[3] = 0.94;
+    let mut border = mix(theme.border, theme.accent, 0.42);
+    border[3] = 0.80;
+    emit_bordered_rect_radii(
+        out,
+        readout,
+        border,
+        fill,
+        [5.0 * sf; 4],
+        (1.0 * sf).max(1.0),
+    );
+}
+
+fn line_plot_hover_readout_rect(screen: [f32; 2], plot: [f32; 4], sf: f32) -> [f32; 4] {
+    let box_w = 168.0 * sf;
+    let box_h = 24.0 * sf;
+    let mut left = screen[0] + 10.0 * sf;
+    let mut top = screen[1] - box_h - 8.0 * sf;
+    if left + box_w > plot[0] + plot[2] {
+        left = screen[0] - box_w - 10.0 * sf;
+    }
+    if top < plot[1] {
+        top = screen[1] + 10.0 * sf;
+    }
+    [left, top, box_w, box_h]
+}
+
+fn line_plot_legend_entries(node: &WidgetNode, theme: &Theme) -> Vec<(String, [f32; 4], String)> {
+    node.props
+        .line_plot_series
+        .iter()
+        .enumerate()
+        .filter_map(|(index, series)| {
+            let label = series
+                .label
+                .as_deref()
+                .filter(|label| !label.trim().is_empty())?;
+            let color = series
+                .color
+                .as_ref()
+                .map(|color| color.resolve(theme))
+                .unwrap_or(LINE_PLOT_PALETTE[index % LINE_PLOT_PALETTE.len()]);
+            Some((label.to_string(), color, series.line_style.clone()))
+        })
+        .collect()
+}
+
+fn line_plot_legend_rect(node: &WidgetNode, plot: [f32; 4], sf: f32) -> Option<[f32; 4]> {
+    if !node.props.line_plot_show_legend {
+        return None;
+    }
+    let labels = node
+        .props
+        .line_plot_series
+        .iter()
+        .filter_map(|series| {
+            series.label.as_deref().and_then(|label| {
+                let label = label.trim();
+                (!label.is_empty()).then_some(label)
+            })
+        })
+        .collect::<Vec<_>>();
+    let entries = labels.len();
+    if entries == 0 {
+        return None;
+    }
+    let pad = 8.0 * sf;
+    let longest = labels
+        .iter()
+        .map(|label| label.chars().count())
+        .max()
+        .unwrap_or(1) as f32;
+    let label_w = (longest * 5.6 * sf).clamp(22.0 * sf, 86.0 * sf);
+    let w = (37.0 * sf + label_w).min((plot[2] - pad * 2.0).max(50.0 * sf));
+    let h = (entries as f32 * 17.0 * sf + 8.0 * sf).min((plot[3] - pad * 2.0).max(26.0 * sf));
+    let x = match node.props.line_plot_legend_position.as_str() {
+        "top-left" | "bottom-left" => plot[0] + pad,
+        _ => plot[0] + plot[2] - pad - w,
+    };
+    let y = match node.props.line_plot_legend_position.as_str() {
+        "bottom-left" | "bottom-right" => plot[1] + plot[3] - pad - h,
+        _ => plot[1] + pad,
+    };
+    Some([x, y, w, h])
+}
+
+fn emit_line_plot_legend(
+    out: &mut Vec<RectInstance>,
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    plot: [f32; 4],
+) {
+    let Some(rect) = line_plot_legend_rect(node, plot, sf) else {
+        return;
+    };
+    let entries = line_plot_legend_entries(node, theme);
+    if entries.is_empty() {
+        return;
+    }
+    let mut fill = mix(theme.surface, theme.background, 0.18);
+    fill[3] = 0.92;
+    let mut border = mix(theme.border, theme.accent, 0.28);
+    border[3] = 0.62;
+    emit_bordered_rect_radii(out, rect, border, fill, [6.0 * sf; 4], (1.0 * sf).max(1.0));
+
+    let x0 = rect[0] + 7.0 * sf;
+    let row_h = 17.0 * sf;
+    let content_h = entries.len() as f32 * row_h;
+    let mut cy = rect[1] + (rect[3] - content_h).max(0.0) * 0.5 + row_h * 0.5;
+    for (_, color, style) in entries {
+        push_styled_line_segment(
+            out,
+            [x0, cy],
+            [x0 + 22.0 * sf, cy],
+            (2.0 * sf).max(1.0),
+            color,
+            &style,
+        );
+        cy += row_h;
+    }
+}
+
+fn emit_line_plot_box_zoom_icon(
+    out: &mut Vec<RectInstance>,
+    rect: [f32; 4],
+    color: Color,
+    sf: f32,
+) {
+    let [x, y, w, h] = rect;
+    let stroke = (1.3 * sf).max(1.0);
+    let radius = stroke * 0.5;
+    let box_w = (12.0 * sf).min(w.min(h) * 0.56).max(stroke * 6.0);
+    let left = x + (w - box_w) * 0.5;
+    let top = y + (h - box_w) * 0.5;
+    let dash = box_w * 0.34;
+    for (rx, ry, sx, sy) in [
+        (left, top, 1.0, 1.0),
+        (left + box_w, top, -1.0, 1.0),
+        (left + box_w, top + box_w, -1.0, -1.0),
+        (left, top + box_w, 1.0, -1.0),
+    ] {
+        out.push(inst_radii(
+            [
+                if sx > 0.0 { rx } else { rx - dash },
+                ry - stroke * 0.5,
+                dash,
+                stroke,
+            ],
+            color,
+            [radius; 4],
+        ));
+        out.push(inst_radii(
+            [
+                rx - stroke * 0.5,
+                if sy > 0.0 { ry } else { ry - dash },
+                stroke,
+                dash,
+            ],
+            color,
+            [radius; 4],
+        ));
+    }
+}
+
+fn emit_line_plot_pan_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
+    let [x, y, w, h] = rect;
+    let stroke = (1.35 * sf).max(1.0);
+    let radius = stroke * 0.5;
+    let cx = x + w * 0.5;
+    let cy = y + h * 0.5;
+    let arm = (5.2 * sf).min(w.min(h) * 0.24).max(stroke * 2.0);
+    out.push(inst_radii(
+        [cx - arm, cy - stroke * 0.5, arm * 2.0, stroke],
+        color,
+        [radius; 4],
+    ));
+    out.push(inst_radii(
+        [cx - stroke * 0.5, cy - arm, stroke, arm * 2.0],
+        color,
+        [radius; 4],
+    ));
+    let head = (3.1 * sf).max(stroke * 1.5);
+    for (hx, hy, horizontal) in [
+        (cx - arm - head * 0.35, cy, true),
+        (cx + arm - head * 0.65, cy, true),
+        (cx, cy - arm - head * 0.35, false),
+        (cx, cy + arm - head * 0.65, false),
+    ] {
+        if horizontal {
+            out.push(inst_radii(
+                [hx, hy - head * 0.5, head, head],
+                color,
+                [head * 0.5; 4],
+            ));
+        } else {
+            out.push(inst_radii(
+                [hx - head * 0.5, hy, head, head],
+                color,
+                [head * 0.5; 4],
+            ));
+        }
+    }
+}
+
+fn emit_line_plot_zoom_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
+    let [x, y, w, h] = rect;
+    let stroke = (1.35 * sf).max(1.0);
+    let radius = stroke * 0.5;
+    let lens = (8.8 * sf).min(w.min(h) * 0.42).max(stroke * 4.0);
+    let left = x + w * 0.5 - lens * 0.64;
+    let top = y + h * 0.5 - lens * 0.64;
+    let right = left + lens;
+    let bottom = top + lens;
+    let third = lens / 3.0;
+    out.push(inst_radii(
+        [left + third * 0.42, top, third * 2.16, stroke],
+        color,
+        [radius; 4],
+    ));
+    out.push(inst_radii(
+        [left + third * 0.42, bottom - stroke, third * 2.16, stroke],
+        color,
+        [radius; 4],
+    ));
+    out.push(inst_radii(
+        [left, top + third * 0.42, stroke, third * 2.16],
+        color,
+        [radius; 4],
+    ));
+    out.push(inst_radii(
+        [right - stroke, top + third * 0.42, stroke, third * 2.16],
+        color,
+        [radius; 4],
+    ));
+    let handle_len = (6.6 * sf).min(w.min(h) * 0.30).max(stroke * 3.2);
+    let angle = 0.74_f32;
+    let start = [right - stroke * 0.72, bottom - stroke * 0.72];
+    let center = [
+        start[0] + angle.cos() * handle_len * 0.5,
+        start[1] + angle.sin() * handle_len * 0.5,
+    ];
+    let handle = [
+        center[0] - handle_len * 0.5,
+        center[1] - stroke * 0.5,
+        handle_len,
+        stroke,
+    ];
+    let mut mark = inst_radii(handle, color, [radius; 4]);
+    mark.transform2[0] = angle;
+    out.push(mark);
+    out.push(inst_radii(
+        [
+            start[0] - stroke * 0.58,
+            start[1] - stroke * 0.58,
+            stroke * 1.4,
+            stroke * 1.4,
+        ],
+        color,
+        [stroke * 0.7; 4],
+    ));
+}
+
+fn emit_line_plot_fit_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
+    let [x, y, w, h] = rect;
+    let stroke = (1.35 * sf).max(1.0);
+    let len = (5.6 * sf).min(w.min(h) * 0.32).max(stroke * 2.2);
+    let inset = (6.0 * sf).min(w.min(h) * 0.28);
+    let radius = stroke * 0.5;
+    for (cx, cy, sx, sy) in [
+        (x + inset, y + inset, 1.0, 1.0),
+        (x + w - inset, y + inset, -1.0, 1.0),
+        (x + w - inset, y + h - inset, -1.0, -1.0),
+        (x + inset, y + h - inset, 1.0, -1.0),
+    ] {
+        out.push(inst_radii(
+            [
+                if sx > 0.0 { cx } else { cx - len },
+                cy - stroke * 0.5,
+                len,
+                stroke,
+            ],
+            color,
+            [radius; 4],
+        ));
+        out.push(inst_radii(
+            [
+                cx - stroke * 0.5,
+                if sy > 0.0 { cy } else { cy - len },
+                stroke,
+                len,
+            ],
+            color,
+            [radius; 4],
+        ));
+    }
+}
+
+fn emit_line_plot_grid_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
+    let [x, y, w, h] = rect;
+    let stroke = (1.25 * sf).max(1.0);
+    let size = (12.0 * sf).min(w.min(h) * 0.58).max(stroke * 6.0);
+    let left = x + (w - size) * 0.5;
+    let top = y + (h - size) * 0.5;
+    let radius = stroke * 0.5;
+    for i in 0..=2 {
+        let t = i as f32 / 2.0;
+        let gx = left + size * t;
+        let gy = top + size * t;
+        out.push(inst_radii(
+            [gx - stroke * 0.5, top, stroke, size],
+            color,
+            [radius; 4],
+        ));
+        out.push(inst_radii(
+            [left, gy - stroke * 0.5, size, stroke],
+            color,
+            [radius; 4],
+        ));
+    }
+}
+
+fn emit_line_plot_axes_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
+    let [x, y, w, h] = rect;
+    let stroke = (1.45 * sf).max(1.0);
+    let size = (12.0 * sf).min(w.min(h) * 0.58).max(stroke * 5.0);
+    let left = x + (w - size) * 0.5;
+    let top = y + (h - size) * 0.5;
+    let bottom = top + size;
+    let radius = stroke * 0.5;
+    out.push(inst_radii(
+        [left, bottom - stroke, size, stroke],
+        color,
+        [radius; 4],
+    ));
+    out.push(inst_radii([left, top, stroke, size], color, [radius; 4]));
+    let tick = (3.2 * sf).max(stroke * 1.6);
+    for t in [0.38, 0.68] {
+        let tx = left + size * t;
+        let ty = bottom - size * t;
+        out.push(inst_radii(
+            [tx - stroke * 0.5, bottom - stroke, stroke, tick],
+            color,
+            [radius; 4],
+        ));
+        out.push(inst_radii(
+            [left - tick + stroke, ty - stroke * 0.5, tick, stroke],
+            color,
+            [radius; 4],
+        ));
     }
 }
 
@@ -1920,18 +2446,6 @@ pub(crate) fn line_plot_text_labels(
     let mut labels = Vec::new();
     let tick_color = mix(theme.muted_text, theme.text, 0.18);
     let tick_color = Some([tick_color[0], tick_color[1], tick_color[2]]);
-
-    for (text, button, _) in line_plot_toolbar_buttons(node, sf, rect) {
-        labels.push(LinePlotTextLabel {
-            text: text.to_string(),
-            screen_x: button[0] + button[2] * 0.5,
-            screen_y: button[1] + button[3] * 0.52,
-            is_title: false,
-            anchor: "center",
-            color: tick_color,
-            font_size: Some(10.0),
-        });
-    }
 
     let plot = line_plot_plot_rect(node, sf, rect);
     if line_plot_axis_labels_enabled(node, rect) {
@@ -1947,6 +2461,7 @@ pub(crate) fn line_plot_text_labels(
                 anchor: "plot-x-label",
                 color: axis_color,
                 font_size: Some(LINE_PLOT_AXIS_LABEL_FONT_SIZE_LP),
+                clip_rect: None,
             });
         }
         if let Some(label) = line_plot_y_axis_label(node) {
@@ -1958,11 +2473,12 @@ pub(crate) fn line_plot_text_labels(
                 anchor: "plot-y-label",
                 color: axis_color,
                 font_size: Some(LINE_PLOT_AXIS_LABEL_FONT_SIZE_LP),
+                clip_rect: None,
             });
         }
     }
 
-    let Some(bounds) = line_plot_bounds(node).map(expand_line_plot_bounds) else {
+    let Some(bounds) = line_plot_resolved_bounds(node) else {
         return labels;
     };
     let tick_count = node.props.line_plot_tick_count.clamp(2, 9);
@@ -1991,6 +2507,7 @@ pub(crate) fn line_plot_text_labels(
                 anchor: "plot-x-tick",
                 color: tick_color,
                 font_size: Some(10.0),
+                clip_rect: None,
             });
         }
         for tick in y_ticks {
@@ -2004,7 +2521,68 @@ pub(crate) fn line_plot_text_labels(
                 anchor: "plot-y-tick",
                 color: tick_color,
                 font_size: Some(10.0),
+                clip_rect: None,
             });
+        }
+    }
+
+    if let Some(hover) = node.props.line_plot_hover.as_ref() {
+        if hover.screen[0] < plot[0]
+            || hover.screen[0] > plot[0] + plot[2]
+            || hover.screen[1] < plot[1]
+            || hover.screen[1] > plot[1] + plot[3]
+        {
+            return labels;
+        }
+        let text = format!(
+            "{}x {}, y {}",
+            hover
+                .label
+                .as_deref()
+                .filter(|label| !label.is_empty())
+                .map(|label| format!("{label}: "))
+                .unwrap_or_default(),
+            format_line_plot_hover_value(hover.plot[0]),
+            format_line_plot_hover_value(hover.plot[1])
+        );
+        let clip_rect = line_plot_hover_readout_rect(hover.screen, plot, sf);
+        let color = mix(theme.text, theme.accent, 0.12);
+        labels.push(LinePlotTextLabel {
+            text,
+            screen_x: clip_rect[0] + clip_rect[2] * 0.5,
+            screen_y: clip_rect[1] + clip_rect[3] * 0.5,
+            is_title: false,
+            anchor: "plot-readout",
+            color: Some([color[0], color[1], color[2]]),
+            font_size: Some(10.0),
+            clip_rect: Some(clip_rect),
+        });
+    }
+
+    if let Some(legend_rect) = line_plot_legend_rect(node, plot, sf) {
+        let entries = line_plot_legend_entries(node, theme);
+        let color = mix(theme.text, theme.muted_text, 0.08);
+        let color = Some([color[0], color[1], color[2]]);
+        let row_h = 17.0 * sf;
+        let content_h = entries.len() as f32 * row_h;
+        let mut cy = legend_rect[1] + (legend_rect[3] - content_h).max(0.0) * 0.5 + row_h * 0.5;
+        for (label, _, _) in entries {
+            labels.push(LinePlotTextLabel {
+                text: label,
+                screen_x: legend_rect[0] + 35.0 * sf,
+                screen_y: cy - 7.5 * sf,
+                is_title: false,
+                anchor: "top-left",
+                color,
+                font_size: Some(10.0),
+                clip_rect: Some([
+                    legend_rect[0] + 34.0 * sf,
+                    cy - 9.0 * sf,
+                    (legend_rect[2] - 39.0 * sf).max(12.0 * sf),
+                    16.0 * sf,
+                ]),
+            });
+            cy += row_h;
         }
     }
 
@@ -2018,25 +2596,41 @@ fn emit_line_plot_series(
     bounds: LinePlotBounds,
     line_width: f32,
     color: [f32; 4],
+    line_style: &str,
 ) {
-    let segment_count = points.len().saturating_sub(1).max(1);
+    let (start, end) = line_plot_visible_point_bounds(points, bounds);
+    if end.saturating_sub(start) < 2 {
+        return;
+    }
+    let visible = &points[start..end];
+    let segment_count = visible.len().saturating_sub(1).max(1);
     let stride = ((segment_count + LINE_PLOT_MAX_SEGMENTS_PER_SERIES - 1)
         / LINE_PLOT_MAX_SEGMENTS_PER_SERIES)
         .max(1);
     let mut prev: Option<[f32; 2]> = None;
     let mut last_index = 0usize;
-    for idx in (0..points.len()).step_by(stride) {
-        emit_line_plot_point(out, points[idx], plot, bounds, line_width, color, &mut prev);
-        last_index = idx;
-    }
-    if last_index != points.len() - 1 {
+    for idx in (0..visible.len()).step_by(stride) {
         emit_line_plot_point(
             out,
-            points[points.len() - 1],
+            visible[idx],
             plot,
             bounds,
             line_width,
             color,
+            line_style,
+            &mut prev,
+        );
+        last_index = idx;
+    }
+    if last_index != visible.len() - 1 {
+        emit_line_plot_point(
+            out,
+            visible[visible.len() - 1],
+            plot,
+            bounds,
+            line_width,
+            color,
+            line_style,
             &mut prev,
         );
     }
@@ -2049,6 +2643,7 @@ fn emit_line_plot_point(
     bounds: LinePlotBounds,
     line_width: f32,
     color: [f32; 4],
+    line_style: &str,
     prev: &mut Option<[f32; 2]>,
 ) {
     let mapped = map_line_plot_point(point, plot, bounds);
@@ -2057,7 +2652,9 @@ fn emit_line_plot_point(
         return;
     };
     if let Some(previous) = *prev {
-        push_line_segment(out, previous, mapped, line_width, color);
+        if let Some((start, end)) = clip_line_segment_to_rect(previous, mapped, plot) {
+            push_styled_line_segment(out, start, end, line_width, color, line_style);
+        }
     }
     *prev = Some(mapped);
 }
@@ -2073,9 +2670,56 @@ fn map_line_plot_point(
     }
     let x_range = (bounds.x_max - bounds.x_min).max(f32::EPSILON);
     let y_range = (bounds.y_max - bounds.y_min).max(f32::EPSILON);
-    let tx = ((px - bounds.x_min) / x_range).clamp(0.0, 1.0);
-    let ty = ((py - bounds.y_min) / y_range).clamp(0.0, 1.0);
+    let tx = (px - bounds.x_min) / x_range;
+    let ty = (py - bounds.y_min) / y_range;
     Some([plot[0] + plot[2] * tx, plot[1] + plot[3] * (1.0 - ty)])
+}
+
+fn clip_line_segment_to_rect(
+    start: [f32; 2],
+    end: [f32; 2],
+    rect: [f32; 4],
+) -> Option<([f32; 2], [f32; 2])> {
+    let [left, top, width, height] = rect;
+    let right = left + width;
+    let bottom = top + height;
+    let dx = end[0] - start[0];
+    let dy = end[1] - start[1];
+    let mut t0 = 0.0_f32;
+    let mut t1 = 1.0_f32;
+
+    fn test_edge(p: f32, q: f32, t0: &mut f32, t1: &mut f32) -> bool {
+        if p.abs() <= f32::EPSILON {
+            return q >= 0.0;
+        }
+        let r = q / p;
+        if p < 0.0 {
+            if r > *t1 {
+                return false;
+            }
+            *t0 = (*t0).max(r);
+        } else {
+            if r < *t0 {
+                return false;
+            }
+            *t1 = (*t1).min(r);
+        }
+        true
+    }
+
+    if !test_edge(-dx, start[0] - left, &mut t0, &mut t1)
+        || !test_edge(dx, right - start[0], &mut t0, &mut t1)
+        || !test_edge(-dy, start[1] - top, &mut t0, &mut t1)
+        || !test_edge(dy, bottom - start[1], &mut t0, &mut t1)
+        || t0 > t1
+    {
+        return None;
+    }
+
+    Some((
+        [start[0] + dx * t0, start[1] + dy * t0],
+        [start[0] + dx * t1, start[1] + dy * t1],
+    ))
 }
 
 fn push_line_segment(
@@ -2106,6 +2750,48 @@ fn push_line_segment(
     );
     segment.transform2[0] = dy.atan2(dx);
     out.push(segment);
+}
+
+fn push_styled_line_segment(
+    out: &mut Vec<RectInstance>,
+    start: [f32; 2],
+    end: [f32; 2],
+    width: f32,
+    color: [f32; 4],
+    line_style: &str,
+) {
+    let dx = end[0] - start[0];
+    let dy = end[1] - start[1];
+    let len = (dx * dx + dy * dy).sqrt();
+    if len <= 0.25 || matches!(line_style, "solid" | "") {
+        push_line_segment(out, start, end, width, color);
+        return;
+    }
+    let dir = [dx / len, dy / len];
+    let pattern: &[(f32, bool)] = match line_style {
+        "dotted" => &[(1.2, true), (4.0, false)],
+        "dashdot" => &[(8.0, true), (4.0, false), (1.4, true), (4.0, false)],
+        "dashed" => &[(9.0, true), (5.0, false)],
+        _ => &[(len, true)],
+    };
+    let mut cursor = 0.0_f32;
+    let mut index = 0usize;
+    let min_on = width.max(1.0);
+    while cursor < len {
+        let (units, draw) = pattern[index % pattern.len()];
+        let seg_len = (units * width.max(1.0)).max(min_on);
+        let next = (cursor + seg_len).min(len);
+        if draw && next > cursor {
+            let a = [start[0] + dir[0] * cursor, start[1] + dir[1] * cursor];
+            let b = [start[0] + dir[0] * next, start[1] + dir[1] * next];
+            push_line_segment(out, a, b, width, color);
+        }
+        cursor = next;
+        index += 1;
+        if index > 2048 {
+            break;
+        }
+    }
 }
 
 fn part_style_mark_color(style: &PartStyle, theme: &Theme) -> Option<Color> {
@@ -3716,13 +4402,20 @@ fn emit_rects_inner(
             WidgetKind::Menu => {
                 let menu_radius_lp = visual.border_radius.unwrap_or(4.0).max(0.0);
                 let menu_radii = visual_radii(&visual, menu_radius_lp, sf);
-                // Only render background/border if CSS explicitly sets them.
-                // Hover/active/open states are expressed via text color only.
                 let menu_fill = visual
                     .background_paint
                     .as_ref()
                     .map(|_| resolve_background_paint(&visual, theme, theme.surface_alt))
-                    .or_else(|| styled_bg.map(FillPaint::Solid));
+                    .or_else(|| styled_bg.map(FillPaint::Solid))
+                    .or_else(|| {
+                        if state.open_menu.as_deref() == Some(node.id.as_str()) {
+                            Some(FillPaint::Solid(mix(theme.surface_alt, theme.accent, 0.24)))
+                        } else if state.hovered.as_deref() == Some(node.id.as_str()) {
+                            Some(FillPaint::Solid(mix(theme.surface_alt, theme.accent, 0.14)))
+                        } else {
+                            None
+                        }
+                    });
                 let menu_border_w = visual
                     .border_width
                     .map(|width| (width.max(0.0) * sf).max(0.0))

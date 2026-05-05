@@ -50,10 +50,10 @@ class SignalFrame:
 
 
 SERIES = {
-    "temperature": ("Temperature", "#5aa9ff"),
-    "pressure": ("Pressure", "#74ddb0"),
-    "vibration": ("Vibration", "#ffb45c"),
-    "events": ("Events", "#f36b7f"),
+    "temperature": ("Temperature", "#5aa9ff", "solid"),
+    "pressure": ("Pressure", "#74ddb0", "dashed"),
+    "vibration": ("Vibration", "#ffb45c", "dotted"),
+    "events": ("Events", "#f36b7f", "dashdot"),
 }
 
 frame = SignalFrame()
@@ -63,6 +63,7 @@ stream_thread: threading.Thread | None = None
 main_plot: dg.LinePlot | None = None
 status_label: dg.Label | None = None
 width_label: dg.Label | None = None
+window_label: dg.Label | None = None
 
 
 def _active_label() -> str:
@@ -73,6 +74,10 @@ def _active_color() -> str:
     return SERIES[str(probe_state["active"])][1]
 
 
+def _active_style() -> str:
+    return SERIES[str(probe_state["active"])][2]
+
+
 def _set_status(message: str) -> None:
     if status_label is not None:
         status_label.set_value(message)
@@ -81,10 +86,34 @@ def _set_status(message: str) -> None:
 def _show_series(column: str) -> None:
     probe_state["active"] = column
     probe_state["stream_t"] = 60.0
-    label, color = SERIES[column]
+    label, color, line_style = SERIES[column]
     if main_plot is not None:
-        main_plot.set_data(frame, x="time", y=column, label=label, color=color)
+        main_plot.set_data(
+            frame,
+            x="time",
+            y=column,
+            label=label,
+            color=color,
+            line_style=line_style,
+        )
     _set_status(f"showing {label.lower()}")
+
+
+def _show_all_series() -> None:
+    probe_state["active"] = "temperature"
+    probe_state["stream_t"] = 60.0
+    columns = tuple(SERIES)
+    if main_plot is not None:
+        main_plot.set_data(
+            frame,
+            x="time",
+            y=columns,
+            labels=tuple(SERIES[column][0] for column in columns),
+            colors=tuple(SERIES[column][1] for column in columns),
+            line_styles=tuple(SERIES[column][2] for column in columns),
+        )
+        main_plot.set_legend_visible(True)
+    _set_status("showing all styled traces")
 
 
 def _set_width(value: float) -> None:
@@ -113,11 +142,27 @@ def _set_ticks(visible: bool) -> None:
     _set_status("ticks on" if visible else "ticks off")
 
 
+def _set_toolbar(visible: bool) -> None:
+    if main_plot is not None:
+        main_plot.set_toolbar_visible(visible)
+    _set_status("toolbar on" if visible else "toolbar off")
+
+
 def _set_tick_count(value: float) -> None:
     count = int(round(value))
     if main_plot is not None:
         main_plot.set_tick_count(count)
     _set_status(f"{count} ticks")
+
+
+def _set_stream_window(seconds: float | None) -> None:
+    if main_plot is not None:
+        main_plot.set_window_size(seconds)
+    if window_label is not None:
+        window_label.set_value(
+            "Stream window: full history" if seconds is None else f"Stream window: {seconds:g}s"
+        )
+    _set_status("full stream history" if seconds is None else f"following latest {seconds:g}s")
 
 
 def _use_sensor_labels() -> None:
@@ -158,7 +203,7 @@ def _append_batch() -> None:
     if main_plot is None:
         return
     x, y = _generated_batch()
-    main_plot.append_points(x, y, series=_active_label(), max_points=720)
+    main_plot.append_points(x, y, series=_active_label())
     probe_state["batch"] = int(probe_state["batch"]) + 1
     _set_status(f"appended batch {probe_state['batch']} to {_active_label().lower()}")
 
@@ -356,7 +401,7 @@ win = dg.Window(
 with dg.VLayout(parent=win, class_="root"):
     dg.Label("LinePlot", class_="title")
     dg.Label(
-        "Controls exercise packed live replacement, append, clear, line width, and grid updates.",
+        "Controls exercise packed live replacement, append, clear, line width, grid updates, and the native plot toolbar.",
         class_="caption",
     )
 
@@ -369,6 +414,7 @@ with dg.VLayout(parent=win, class_="root"):
                 dg.Button("Pressure", on_click=lambda: _show_series("pressure"))
                 dg.Button("Vibration", on_click=lambda: _show_series("vibration"))
                 dg.Button("Events", on_click=lambda: _show_series("events"))
+                dg.Button("All + Legend", on_click=_show_all_series)
 
                 dg.Label("LIVE DATA", class_="section")
                 dg.Button("Append Batch", on_click=_append_batch)
@@ -380,9 +426,14 @@ with dg.VLayout(parent=win, class_="root"):
                 dg.Label("STYLE", class_="section")
                 width_label = dg.Label("Line width: 2.2px")
                 dg.Slider(2.2, min=0.5, max=6.0, step=0.1, on_change=_set_width)
+                window_label = dg.Label("Stream window: full history")
+                dg.Button("Follow 10s", on_click=lambda: _set_stream_window(10.0))
+                dg.Button("Follow 30s", on_click=lambda: _set_stream_window(30.0))
+                dg.Button("Full History", on_click=lambda: _set_stream_window(None))
                 dg.Checkbox("Grid", checked=True, on_change=_set_grid)
                 dg.Checkbox("Axes", checked=True, on_change=_set_axes)
                 dg.Checkbox("Ticks", checked=True, on_change=_set_ticks)
+                dg.Checkbox("Toolbar", checked=True, on_change=_set_toolbar)
                 dg.Label("Tick count")
                 dg.Slider(5, min=2, max=9, step=1, on_change=_set_tick_count)
                 dg.Button("Sensor Labels", on_click=_use_sensor_labels)
@@ -396,12 +447,18 @@ with dg.VLayout(parent=win, class_="root"):
                 y="temperature",
                 label="Temperature",
                 color="#5aa9ff",
+                line_style="solid",
                 x_label="Elapsed time (s)",
                 y_label="Temperature reading",
                 line_width=2.2,
                 tick_count=5,
-                max_points=720,
+                show_legend=True,
+                show_toolbar=True,
                 class_="primary",
+            )
+            dg.Label(
+                "Toolbar buttons: Fit refits data, Pan drags the view, Zoom uses the mouse wheel, Box drag-zooms a selected area, Grid toggles grid lines, Axes toggles axes and ticks. The plot supports solid, dashed, dotted, and dash-dot series with an in-plot legend.",
+                class_="caption",
             )
             dg.Label("PASS: controls update this plot without rebuilding the widget tree.", class_="pass")
 
@@ -413,6 +470,8 @@ with dg.VLayout(parent=win, class_="root"):
                     y=("temperature", "pressure"),
                     labels=("Temp", "Pressure"),
                     colors=("#5aa9ff", "#74ddb0"),
+                    line_styles=("solid", "dashed"),
+                    show_legend=True,
                     line_width=1.6,
                     show_toolbar=False,
                     tick_count=4,
@@ -426,6 +485,7 @@ with dg.VLayout(parent=win, class_="root"):
                     y="vibration",
                     label="Vibration",
                     color="#ffb45c",
+                    line_style="dotted",
                     line_width=1.6,
                     show_toolbar=False,
                     tick_count=4,
@@ -440,6 +500,7 @@ with dg.VLayout(parent=win, class_="root"):
                     y="events",
                     label="Events",
                     color="#f36b7f",
+                    line_style="dashdot",
                     line_width=2.4,
                     show_toolbar=False,
                     tick_count=4,

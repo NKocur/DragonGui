@@ -1561,9 +1561,14 @@ def test_line_plot_serializes_packed_xy_series() -> None:
     assert props["show_axes"] is True
     assert props["show_ticks"] is True
     assert props["show_toolbar"] is False
+    assert props["show_legend"] is False
+    assert props["legend_position"] == "top-right"
+    assert props["window_size"] is None
+    assert props["interaction"] == "inspect"
     assert props["tick_count"] == 5
     assert props["series"][0]["label"] == "Sensor"
     assert props["series"][0]["color"] == "#42a5ff"
+    assert props["series"][0]["line_style"] == "solid"
     assert props["series"][0]["data_format"] == "xy_f32_v0"
     assert props["series"][0]["points"] == 3
     assert props["series"][0]["data_b64"]
@@ -1604,17 +1609,31 @@ def test_line_plot_serializes_multiple_series() -> None:
         y=("temperature", "pressure"),
         labels=("Temp", "Pressure"),
         colors=("#42a5ff", "#74ddb0"),
+        line_styles=("solid", "dashed"),
+        show_legend=True,
+        legend_position="bottom-left",
         parent=None,
     )
     props = plot.props()
 
     assert props["y"] == ["temperature", "pressure"]
+    assert props["show_legend"] is True
+    assert props["legend_position"] == "bottom-left"
     assert [item["label"] for item in props["series"]] == ["Temp", "Pressure"]
     assert [item["color"] for item in props["series"]] == ["#42a5ff", "#74ddb0"]
+    assert [item["line_style"] for item in props["series"]] == ["solid", "dashed"]
     assert [item["points"] for item in props["series"]] == [3, 3]
 
     with pytest.raises(ValueError, match="label length"):
         dg.LinePlot(NumericFrame(), x="t", y=("temperature", "pressure"), label="One", parent=None)
+    with pytest.raises(ValueError, match="line_styles length"):
+        dg.LinePlot(
+            NumericFrame(),
+            x="t",
+            y=("temperature", "pressure"),
+            line_styles=("solid",),
+            parent=None,
+        )
 
 
 def test_line_plot_startup_resources_enqueue_packed_series() -> None:
@@ -1644,6 +1663,7 @@ def test_line_plot_startup_resources_enqueue_packed_series() -> None:
             label: str | None,
             color: str | None,
             line_width: float | None,
+            line_style: str | None,
             show_grid: bool | None,
             auto_fit: bool | None,
             max_points: int | None,
@@ -1658,6 +1678,7 @@ def test_line_plot_startup_resources_enqueue_packed_series() -> None:
                     label,
                     color,
                     line_width,
+                    line_style,
                     show_grid,
                     auto_fit,
                     max_points,
@@ -1695,7 +1716,7 @@ def test_line_plot_startup_resources_enqueue_packed_series() -> None:
     assert len(sender.set_data) == 2
     assert [item[1] for item in sender.set_data] == ["Temp", "Pressure"]
     assert [len(item[2]) for item in sender.set_data] == [3 * 8, 3 * 8]
-    assert all(item[9] is True for item in sender.set_data)
+    assert all(item[10] is True for item in sender.set_data)
 
 
 def test_line_plot_live_methods_enqueue_native_commands() -> None:
@@ -1727,6 +1748,7 @@ def test_line_plot_live_methods_enqueue_native_commands() -> None:
             label: str | None,
             color: str | None,
             line_width: float | None,
+            line_style: str | None,
             show_grid: bool | None,
             auto_fit: bool | None,
             max_points: int | None,
@@ -1741,6 +1763,7 @@ def test_line_plot_live_methods_enqueue_native_commands() -> None:
                     label,
                     color,
                     line_width,
+                    line_style,
                     show_grid,
                     auto_fit,
                     max_points,
@@ -1794,13 +1817,15 @@ def test_line_plot_live_methods_enqueue_native_commands() -> None:
     plot.set_axes_visible(False)
     plot.set_ticks_visible(False)
     plot.set_toolbar_visible(False)
+    plot.set_window_size(12.5)
+    plot.set_window_size(None)
     plot.set_tick_count(7)
     plot.set_axis_labels(x="Elapsed", y="Reading")
     plot.clear("Other")
 
     assert sender.cleared[0] == ("line", None)
     assert len(sender.set_data) == 1
-    widget_id, series, payload, label, color, width, grid, auto_fit, max_points, fit, coalesce = (
+    widget_id, series, payload, label, color, width, line_style, grid, auto_fit, max_points, fit, coalesce = (
         sender.set_data[0]
     )
     assert widget_id == "line"
@@ -1809,6 +1834,7 @@ def test_line_plot_live_methods_enqueue_native_commands() -> None:
     assert label == "Other"
     assert color == "#f36b7f"
     assert width == 1.5
+    assert line_style == "solid"
     assert grid is True
     assert auto_fit is True
     assert max_points == 5
@@ -1825,6 +1851,8 @@ def test_line_plot_live_methods_enqueue_native_commands() -> None:
         ("line", "show_axes", False),
         ("line", "show_ticks", False),
         ("line", "show_toolbar", False),
+        ("line", "window_size", 12.5),
+        ("line", "window_size", None),
         ("line", "tick_count", 7),
         ("line", "x_label", "Elapsed"),
         ("line", "y_label", "Reading"),

@@ -1512,6 +1512,7 @@ fn is_interactive(kind: &WidgetKind) -> bool {
             | WidgetKind::TextInput
             | WidgetKind::TextArea
             | WidgetKind::DataFrameTable
+            | WidgetKind::LinePlot
             | WidgetKind::Collapsible
             | WidgetKind::Tab
             | WidgetKind::NavItem

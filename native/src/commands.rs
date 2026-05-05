@@ -93,6 +93,7 @@ pub enum Command {
         label: Option<String>,
         color: Option<String>,
         line_width: Option<f32>,
+        line_style: Option<String>,
         show_grid: Option<bool>,
         auto_fit: Option<bool>,
         max_points: Option<usize>,
@@ -988,7 +989,7 @@ impl NativeCommandSender {
         })
     }
 
-    #[pyo3(signature = (id, series, xy, label=None, color=None, line_width=None, show_grid=None, auto_fit=None, max_points=None, fit=true, coalesce=true))]
+    #[pyo3(signature = (id, series, xy, label=None, color=None, line_width=None, line_style=None, show_grid=None, auto_fit=None, max_points=None, fit=true, coalesce=true))]
     fn enqueue_set_line_plot_data_packed(
         &self,
         id: String,
@@ -997,6 +998,7 @@ impl NativeCommandSender {
         label: Option<String>,
         color: Option<String>,
         line_width: Option<f32>,
+        line_style: Option<String>,
         show_grid: Option<bool>,
         auto_fit: Option<bool>,
         max_points: Option<usize>,
@@ -1017,6 +1019,7 @@ impl NativeCommandSender {
             label,
             color,
             line_width,
+            line_style,
             show_grid,
             auto_fit,
             max_points,

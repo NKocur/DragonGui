@@ -24,7 +24,7 @@ use crate::css_style::{
     matched_rule_labels_for_tree_with_media, DgKeyframes, DgMediaColorGamut, DgMediaColorScheme,
     DgMediaEnvironment, DgMediaHover, DgMediaPointer, StylesheetOrigin, StylesheetStore,
 };
-use crate::document::{self, NodeProps, WidgetKind, WidgetNode};
+use crate::document::{self, LinePlotHoverProp, NodeProps, WidgetKind, WidgetNode};
 use crate::document::{LinePlotPayloadFormat, ScatterPayloadFormat};
 use crate::error::DragonError;
 use crate::events::{
@@ -37,8 +37,9 @@ use crate::layout::{
 };
 use crate::overlays::{find_node, menu_popup_width};
 use crate::primitives::{
-    interpolate_visual_style, line_plot_text_labels, line_plot_toolbar_hit,
-    panel_scrollbar_geometry, PanelScrollbarAxis, PanelScrollbarAxisGeometry, PrimitivesRenderer,
+    interpolate_visual_style, line_plot_plot_rect, line_plot_resolved_bounds,
+    line_plot_text_labels, line_plot_toolbar_hit, panel_scrollbar_geometry, LinePlotBounds,
+    PanelScrollbarAxis, PanelScrollbarAxisGeometry, PrimitivesRenderer,
 };
 use crate::resources::ResourceRegistry;
 use crate::scatter::{self, PointInstance, ScatterWidget};
@@ -364,6 +365,85 @@ fn limit_line_plot_points(points: &mut Vec<[f32; 2]>, max_points: Option<usize>)
     }
     let drain = points.len() - max_points;
     points.drain(0..drain);
+}
+
+fn line_plot_visible_x_range(points: &[[f32; 2]], x_min: f32, x_max: f32) -> (usize, usize) {
+    if points.is_empty() {
+        return (0, 0);
+    }
+    let Some(first) = points.first().map(|point| point[0]) else {
+        return (0, 0);
+    };
+    let Some(last) = points.last().map(|point| point[0]) else {
+        return (0, 0);
+    };
+    if !first.is_finite() || !last.is_finite() || first > last {
+        return (0, points.len());
+    }
+    let start = points.partition_point(|point| point[0] < x_min);
+    let end = points.partition_point(|point| point[0] <= x_max);
+    (start, end)
+}
+
+fn apply_line_plot_window_to_node(node: &mut WidgetNode) -> bool {
+    let Some(window) = node
+        .props
+        .line_plot_window_size
+        .filter(|value| value.is_finite() && *value > 0.0)
+    else {
+        return false;
+    };
+    let latest_x = node
+        .props
+        .line_plot_series
+        .iter()
+        .filter_map(|series| series.points.iter().rev().find(|[x, _]| x.is_finite()))
+        .map(|[x, _]| *x)
+        .fold(f32::NEG_INFINITY, f32::max);
+    if !latest_x.is_finite() {
+        return false;
+    }
+    let x_max = latest_x;
+    let x_min = latest_x - window;
+    let mut y_min = f32::INFINITY;
+    let mut y_max = f32::NEG_INFINITY;
+    for series in &node.props.line_plot_series {
+        let (start, end) = line_plot_visible_x_range(&series.points, x_min, x_max);
+        for [x, y] in &series.points[start..end] {
+            if x.is_finite() && y.is_finite() {
+                y_min = y_min.min(*y);
+                y_max = y_max.max(*y);
+            }
+        }
+    }
+    if !y_min.is_finite() || !y_max.is_finite() {
+        for series in &node.props.line_plot_series {
+            for [_, y] in &series.points {
+                if y.is_finite() {
+                    y_min = y_min.min(*y);
+                    y_max = y_max.max(*y);
+                }
+            }
+        }
+    }
+    if !y_min.is_finite() || !y_max.is_finite() {
+        y_min = -1.0;
+        y_max = 1.0;
+    } else if (y_max - y_min).abs() <= f32::EPSILON {
+        let pad = y_min.abs().max(1.0) * 0.5;
+        y_min -= pad;
+        y_max += pad;
+    } else {
+        let pad = (y_max - y_min).abs() * 0.05;
+        y_min -= pad;
+        y_max += pad;
+    }
+    node.props.line_plot_auto_fit = false;
+    node.props.line_plot_x_min = Some(x_min);
+    node.props.line_plot_x_max = Some(x_max);
+    node.props.line_plot_y_min = Some(y_min);
+    node.props.line_plot_y_max = Some(y_max);
+    true
 }
 
 fn decode_scatter_points_bytes_into_colormap(
@@ -695,6 +775,37 @@ fn scroll_container_at_pos(
         .copied()
         .unwrap_or_else(|| scroll_container_max_y(node, layout));
     (max_scroll_x > 0.0 || max_scroll_y > 0.0).then(|| node.id.clone())
+}
+
+fn clear_line_plot_hover_except(node: &mut WidgetNode, keep_id: Option<&str>, changed: &mut bool) {
+    if node.kind == WidgetKind::LinePlot
+        && Some(node.id.as_str()) != keep_id
+        && node.props.line_plot_hover.is_some()
+    {
+        node.props.line_plot_hover = None;
+        *changed = true;
+    }
+    for child in &mut node.children {
+        clear_line_plot_hover_except(child, keep_id, changed);
+    }
+}
+
+fn map_line_plot_point_to_screen(
+    point: [f32; 2],
+    plot: [f32; 4],
+    bounds: LinePlotBounds,
+) -> Option<[f32; 2]> {
+    let [px, py] = point;
+    if !px.is_finite()
+        || !py.is_finite()
+        || bounds.x_max <= bounds.x_min
+        || bounds.y_max <= bounds.y_min
+    {
+        return None;
+    }
+    let tx = ((px - bounds.x_min) / (bounds.x_max - bounds.x_min)).clamp(0.0, 1.0);
+    let ty = ((py - bounds.y_min) / (bounds.y_max - bounds.y_min)).clamp(0.0, 1.0);
+    Some([plot[0] + plot[2] * tx, plot[1] + plot[3] * (1.0 - ty)])
 }
 
 #[derive(Clone, Debug)]
@@ -1932,6 +2043,7 @@ fn props_snapshot(node: &WidgetNode) -> Value {
             .map(|series| {
                 json!({
                     "label": series.label.as_deref(),
+                    "line_style": series.line_style,
                     "points": series.points.len(),
                     "declared_points": series.declared_point_count,
                 })
@@ -1946,7 +2058,10 @@ fn props_snapshot(node: &WidgetNode) -> Value {
                 "show_grid": props.line_plot_show_grid,
                 "show_axes": props.line_plot_show_axes,
                 "show_ticks": props.line_plot_show_ticks,
+                "show_legend": props.line_plot_show_legend,
+                "legend_position": props.line_plot_legend_position,
                 "tick_count": props.line_plot_tick_count,
+                "window_size": props.line_plot_window_size,
                 "series": line_plot_series,
                 }),
             );
@@ -4346,12 +4461,21 @@ fn push_line_plot_overlay_labels(
                 bottom: (rect.y + rect.h) as i32,
             };
             for label in line_plot_text_labels(node, theme, sf, [rect.x, rect.y, rect.w, rect.h]) {
+                let label_clip = label
+                    .clip_rect
+                    .map(|clip_rect| glyphon::TextBounds {
+                        left: clip_rect[0].floor() as i32,
+                        top: clip_rect[1].floor() as i32,
+                        right: (clip_rect[0] + clip_rect[2]).ceil() as i32,
+                        bottom: (clip_rect[1] + clip_rect[3]).ceil() as i32,
+                    })
+                    .unwrap_or(clip);
                 text.push_scatter_label(
                     &label.text,
                     label.screen_x,
                     label.screen_y,
                     label.is_title,
-                    clip,
+                    label_clip,
                     sf,
                     label.color,
                     label.font_size,
@@ -6094,6 +6218,20 @@ impl WgpuState {
                     node.props.line_plot_show_toolbar = visible;
                     return Some(Dirty::Text);
                 }
+                ("show_legend", CommandValue::Bool(visible)) => {
+                    node.props.line_plot_show_legend = visible;
+                    return Some(Dirty::Text);
+                }
+                ("legend_position", CommandValue::Text(position)) => {
+                    if matches!(
+                        position.as_str(),
+                        "top-right" | "top-left" | "bottom-right" | "bottom-left"
+                    ) {
+                        node.props.line_plot_legend_position = position;
+                        return Some(Dirty::Text);
+                    }
+                    return None;
+                }
                 ("tick_count", CommandValue::Float(count)) => {
                     node.props.line_plot_tick_count = (count.round() as isize).clamp(2, 9) as usize;
                     return Some(Dirty::Text);
@@ -6108,6 +6246,48 @@ impl WgpuState {
                 }
                 ("auto_fit", CommandValue::Bool(auto_fit)) => {
                     node.props.line_plot_auto_fit = auto_fit;
+                    return Some(Dirty::Visual);
+                }
+                ("window_size", CommandValue::Float(size)) => {
+                    node.props.line_plot_window_size =
+                        (size.is_finite() && size > 0.0).then_some(size);
+                    apply_line_plot_window_to_node(node);
+                    return Some(Dirty::Text);
+                }
+                ("window_size", CommandValue::None) => {
+                    node.props.line_plot_window_size = None;
+                    node.props.line_plot_auto_fit = true;
+                    node.props.line_plot_x_min = None;
+                    node.props.line_plot_x_max = None;
+                    node.props.line_plot_y_min = None;
+                    node.props.line_plot_y_max = None;
+                    return Some(Dirty::Text);
+                }
+                ("interaction", CommandValue::Text(mode)) => {
+                    if matches!(mode.as_str(), "inspect" | "pan" | "zoom" | "box_zoom") {
+                        node.props.line_plot_interaction = mode;
+                        return Some(Dirty::Visual);
+                    }
+                    return None;
+                }
+                ("x_min", CommandValue::Float(value)) => {
+                    node.props.line_plot_x_min = value.is_finite().then_some(value);
+                    node.props.line_plot_auto_fit = false;
+                    return Some(Dirty::Visual);
+                }
+                ("x_max", CommandValue::Float(value)) => {
+                    node.props.line_plot_x_max = value.is_finite().then_some(value);
+                    node.props.line_plot_auto_fit = false;
+                    return Some(Dirty::Visual);
+                }
+                ("y_min", CommandValue::Float(value)) => {
+                    node.props.line_plot_y_min = value.is_finite().then_some(value);
+                    node.props.line_plot_auto_fit = false;
+                    return Some(Dirty::Visual);
+                }
+                ("y_max", CommandValue::Float(value)) => {
+                    node.props.line_plot_y_max = value.is_finite().then_some(value);
+                    node.props.line_plot_auto_fit = false;
                     return Some(Dirty::Visual);
                 }
                 (_, _) => {
@@ -6623,6 +6803,7 @@ impl WgpuState {
         label: Option<String>,
         color: Option<String>,
         line_width: Option<f32>,
+        line_style: Option<String>,
         show_grid: Option<bool>,
         auto_fit: Option<bool>,
         max_points: Option<usize>,
@@ -6652,6 +6833,7 @@ impl WgpuState {
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| series.clone());
         let color = parse_line_plot_color(color);
+        let line_style = line_style.map(|value| document::parse_line_plot_line_style(Some(&value)));
         let point_count = points.len();
         if let Some(existing) = node
             .props
@@ -6663,6 +6845,9 @@ impl WgpuState {
             if color.is_some() {
                 existing.color = color;
             }
+            if let Some(line_style) = line_style.clone() {
+                existing.line_style = line_style;
+            }
             existing.points = points;
             existing.payload_format = payload_format;
             existing.declared_point_count = Some(point_count);
@@ -6672,11 +6857,13 @@ impl WgpuState {
                 .push(document::LinePlotSeriesProp {
                     label: Some(label),
                     color,
+                    line_style: line_style.unwrap_or_else(|| "solid".to_string()),
                     points,
                     payload_format,
                     declared_point_count: Some(point_count),
                 });
         }
+        apply_line_plot_window_to_node(node);
         Ok(true)
     }
 
@@ -6715,11 +6902,13 @@ impl WgpuState {
                 .push(document::LinePlotSeriesProp {
                     label: Some(series),
                     color: None,
+                    line_style: "solid".to_string(),
                     points,
                     payload_format,
                     declared_point_count: Some(point_count),
                 });
         }
+        apply_line_plot_window_to_node(node);
         Ok(true)
     }
 
@@ -6785,6 +6974,36 @@ impl WgpuState {
         match action {
             "Fit" => {
                 node.props.line_plot_auto_fit = true;
+                node.props.line_plot_x_min = None;
+                node.props.line_plot_x_max = None;
+                node.props.line_plot_y_min = None;
+                node.props.line_plot_y_max = None;
+            }
+            "Pan" => {
+                node.props.line_plot_interaction = if node.props.line_plot_interaction == "pan" {
+                    "inspect"
+                } else {
+                    "pan"
+                }
+                .to_string();
+            }
+            "Zoom" => {
+                node.props.line_plot_interaction = if node.props.line_plot_interaction == "zoom" {
+                    "inspect"
+                } else {
+                    "zoom"
+                }
+                .to_string();
+            }
+            "Box" => {
+                node.props.line_plot_interaction =
+                    if node.props.line_plot_interaction == "box_zoom" {
+                        "inspect"
+                    } else {
+                        "box_zoom"
+                    }
+                    .to_string();
+                node.props.line_plot_selection_rect = None;
             }
             "Grid" => {
                 node.props.line_plot_show_grid = !node.props.line_plot_show_grid;
@@ -6798,6 +7017,267 @@ impl WgpuState {
         }
         self.rebuild_primitives();
         true
+    }
+
+    fn line_plot_at(&self, pos: [f32; 2]) -> Option<String> {
+        self.hit_test_ui(pos)
+            .and_then(|(id, kind)| (kind == WidgetKind::LinePlot).then_some(id))
+    }
+
+    fn line_plot_interaction(&self, id: &str) -> Option<&str> {
+        let tree = self.widget_tree.as_ref()?;
+        let node = find_node(tree, id)?;
+        (node.kind == WidgetKind::LinePlot).then_some(node.props.line_plot_interaction.as_str())
+    }
+
+    fn line_plot_toolbar_hit_at(&self, id: &str, pos: [f32; 2]) -> Option<&'static str> {
+        if self.widget_kind(id) != Some(WidgetKind::LinePlot) {
+            return None;
+        }
+        let layout = self.current_layout.as_ref()?;
+        let rect = layout.visible_rect(id)?;
+        let tree = self.widget_tree.as_ref()?;
+        let node = find_node(tree, id)?;
+        line_plot_toolbar_hit(
+            node,
+            self.scale_factor,
+            [rect.x, rect.y, rect.w, rect.h],
+            pos,
+        )
+    }
+
+    fn pan_line_plot(&mut self, id: &str, delta: [f32; 2]) -> bool {
+        let Some((plot, bounds)) = self.line_plot_plot_rect_and_bounds(id) else {
+            return false;
+        };
+        if plot[2] <= 1.0 || plot[3] <= 1.0 {
+            return false;
+        }
+        let dx = -delta[0] / plot[2] * (bounds.x_max - bounds.x_min);
+        let dy = delta[1] / plot[3] * (bounds.y_max - bounds.y_min);
+        self.set_line_plot_bounds(
+            id,
+            LinePlotBounds {
+                x_min: bounds.x_min + dx,
+                x_max: bounds.x_max + dx,
+                y_min: bounds.y_min + dy,
+                y_max: bounds.y_max + dy,
+            },
+        )
+    }
+
+    fn zoom_line_plot(&mut self, id: &str, pos: [f32; 2], scroll_y: f32) -> bool {
+        let Some((plot, bounds)) = self.line_plot_plot_rect_and_bounds(id) else {
+            return false;
+        };
+        if plot[2] <= 1.0 || plot[3] <= 1.0 {
+            return false;
+        }
+        let tx = ((pos[0] - plot[0]) / plot[2]).clamp(0.0, 1.0);
+        let ty = ((pos[1] - plot[1]) / plot[3]).clamp(0.0, 1.0);
+        let anchor_x = bounds.x_min + tx * (bounds.x_max - bounds.x_min);
+        let anchor_y = bounds.y_max - ty * (bounds.y_max - bounds.y_min);
+        let factor = (1.0 - scroll_y * 0.12).clamp(0.25, 4.0);
+        let new_w = ((bounds.x_max - bounds.x_min) * factor).max(f32::EPSILON);
+        let new_h = ((bounds.y_max - bounds.y_min) * factor).max(f32::EPSILON);
+        self.set_line_plot_bounds(
+            id,
+            LinePlotBounds {
+                x_min: anchor_x - tx * new_w,
+                x_max: anchor_x + (1.0 - tx) * new_w,
+                y_min: anchor_y - (1.0 - ty) * new_h,
+                y_max: anchor_y + ty * new_h,
+            },
+        )
+    }
+
+    fn line_plot_plot_rect_and_bounds(&self, id: &str) -> Option<([f32; 4], LinePlotBounds)> {
+        let layout = self.current_layout.as_ref()?;
+        let rect = layout.visible_rect(id)?;
+        let tree = self.widget_tree.as_ref()?;
+        let node = find_node(tree, id)?;
+        let plot = line_plot_plot_rect(node, self.scale_factor, [rect.x, rect.y, rect.w, rect.h]);
+        let bounds = line_plot_resolved_bounds(node)?;
+        Some((plot, bounds))
+    }
+
+    fn set_line_plot_bounds(&mut self, id: &str, bounds: LinePlotBounds) -> bool {
+        if !bounds.x_min.is_finite()
+            || !bounds.x_max.is_finite()
+            || !bounds.y_min.is_finite()
+            || !bounds.y_max.is_finite()
+            || bounds.x_max <= bounds.x_min
+            || bounds.y_max <= bounds.y_min
+        {
+            return false;
+        }
+        let Some(tree) = self.widget_tree.as_mut() else {
+            return false;
+        };
+        let Some(node) = find_widget_mut(tree, id) else {
+            return false;
+        };
+        node.props.line_plot_auto_fit = false;
+        node.props.line_plot_x_min = Some(bounds.x_min);
+        node.props.line_plot_x_max = Some(bounds.x_max);
+        node.props.line_plot_y_min = Some(bounds.y_min);
+        node.props.line_plot_y_max = Some(bounds.y_max);
+        self.rebuild_visuals();
+        true
+    }
+
+    fn update_line_plot_selection_rect(
+        &mut self,
+        id: &str,
+        start: [f32; 2],
+        current: [f32; 2],
+    ) -> bool {
+        let Some(tree) = self.widget_tree.as_mut() else {
+            return false;
+        };
+        let Some(node) = find_widget_mut(tree, id) else {
+            return false;
+        };
+        if node.kind != WidgetKind::LinePlot {
+            return false;
+        }
+        node.props.line_plot_selection_rect = Some([start[0], start[1], current[0], current[1]]);
+        self.rebuild_visuals();
+        true
+    }
+
+    fn finish_line_plot_box_zoom(&mut self, id: &str, start: [f32; 2], end: [f32; 2]) -> bool {
+        let Some((plot, bounds)) = self.line_plot_plot_rect_and_bounds(id) else {
+            self.clear_line_plot_selection_rect(id);
+            return false;
+        };
+        let x0 = start[0].min(end[0]).clamp(plot[0], plot[0] + plot[2]);
+        let x1 = start[0].max(end[0]).clamp(plot[0], plot[0] + plot[2]);
+        let y0 = start[1].min(end[1]).clamp(plot[1], plot[1] + plot[3]);
+        let y1 = start[1].max(end[1]).clamp(plot[1], plot[1] + plot[3]);
+        if x1 - x0 < 6.0 || y1 - y0 < 6.0 || plot[2] <= 1.0 || plot[3] <= 1.0 {
+            self.clear_line_plot_selection_rect(id);
+            return false;
+        }
+        let tx0 = ((x0 - plot[0]) / plot[2]).clamp(0.0, 1.0);
+        let tx1 = ((x1 - plot[0]) / plot[2]).clamp(0.0, 1.0);
+        let ty0 = ((y0 - plot[1]) / plot[3]).clamp(0.0, 1.0);
+        let ty1 = ((y1 - plot[1]) / plot[3]).clamp(0.0, 1.0);
+        let x_min = bounds.x_min + tx0 * (bounds.x_max - bounds.x_min);
+        let x_max = bounds.x_min + tx1 * (bounds.x_max - bounds.x_min);
+        let y_max = bounds.y_max - ty0 * (bounds.y_max - bounds.y_min);
+        let y_min = bounds.y_max - ty1 * (bounds.y_max - bounds.y_min);
+        let changed = self.set_line_plot_bounds(
+            id,
+            LinePlotBounds {
+                x_min,
+                x_max,
+                y_min,
+                y_max,
+            },
+        );
+        self.clear_line_plot_selection_rect(id);
+        changed
+    }
+
+    fn clear_line_plot_selection_rect(&mut self, id: &str) -> bool {
+        let Some(tree) = self.widget_tree.as_mut() else {
+            return false;
+        };
+        let Some(node) = find_widget_mut(tree, id) else {
+            return false;
+        };
+        if node.props.line_plot_selection_rect.is_none() {
+            return false;
+        }
+        node.props.line_plot_selection_rect = None;
+        self.rebuild_visuals();
+        true
+    }
+
+    fn update_line_plot_hover(&mut self, pos: [f32; 2]) -> bool {
+        let hit = self.line_plot_at(pos).and_then(|id| {
+            (self.line_plot_interaction(&id) == Some("inspect"))
+                .then(|| {
+                    self.nearest_line_plot_point(&id, pos)
+                        .map(|hover| (id, hover))
+                })
+                .flatten()
+        });
+        let mut changed = false;
+        let Some(tree) = self.widget_tree.as_mut() else {
+            return false;
+        };
+        clear_line_plot_hover_except(tree, hit.as_ref().map(|(id, _)| id.as_str()), &mut changed);
+        if let Some((id, hover)) = hit {
+            if let Some(node) = find_widget_mut(tree, &id) {
+                let should_update = node.props.line_plot_hover.as_ref().is_none_or(|current| {
+                    (current.screen[0] - hover.screen[0]).abs() > 0.5
+                        || (current.screen[1] - hover.screen[1]).abs() > 0.5
+                        || (current.plot[0] - hover.plot[0]).abs() > f32::EPSILON
+                        || (current.plot[1] - hover.plot[1]).abs() > f32::EPSILON
+                        || current.label != hover.label
+                });
+                if should_update {
+                    node.props.line_plot_hover = Some(hover);
+                    changed = true;
+                }
+            }
+        }
+        if changed {
+            self.rebuild_visuals();
+        }
+        changed
+    }
+
+    fn clear_line_plot_hover_all(&mut self) -> bool {
+        let Some(tree) = self.widget_tree.as_mut() else {
+            return false;
+        };
+        let mut changed = false;
+        clear_line_plot_hover_except(tree, None, &mut changed);
+        if changed {
+            self.rebuild_visuals();
+        }
+        changed
+    }
+
+    fn nearest_line_plot_point(&self, id: &str, pos: [f32; 2]) -> Option<LinePlotHoverProp> {
+        let (plot, bounds) = self.line_plot_plot_rect_and_bounds(id)?;
+        if pos[0] < plot[0]
+            || pos[0] > plot[0] + plot[2]
+            || pos[1] < plot[1]
+            || pos[1] > plot[1] + plot[3]
+        {
+            return None;
+        }
+        let tree = self.widget_tree.as_ref()?;
+        let node = find_node(tree, id)?;
+        let mut best: Option<(f32, LinePlotHoverProp)> = None;
+        for series in &node.props.line_plot_series {
+            let (start, end) =
+                line_plot_visible_x_range(&series.points, bounds.x_min, bounds.x_max);
+            for point in &series.points[start..end] {
+                let Some(screen) = map_line_plot_point_to_screen(*point, plot, bounds) else {
+                    continue;
+                };
+                let dx = screen[0] - pos[0];
+                let dy = screen[1] - pos[1];
+                let d2 = dx * dx + dy * dy;
+                if best.as_ref().is_none_or(|(best_d2, _)| d2 < *best_d2) {
+                    best = Some((
+                        d2,
+                        LinePlotHoverProp {
+                            screen,
+                            plot: *point,
+                            label: series.label.clone(),
+                            color: series.color.clone(),
+                        },
+                    ));
+                }
+            }
+        }
+        best.and_then(|(d2, hover)| (d2 <= 18.0_f32.powi(2)).then_some(hover))
     }
 
     fn refresh_table_sort(&mut self, id: &str) {
@@ -8138,6 +8618,12 @@ fn merge_dirty(current: Option<Dirty>, next: Dirty) -> Dirty {
     }
 }
 
+#[derive(Debug, Clone)]
+struct LinePlotBoxZoomDrag {
+    widget_id: String,
+    start: [f32; 2],
+}
+
 struct DragonApp {
     spec: Option<AppSpec>,
     command_bridge: Option<Arc<CommandBridge>>,
@@ -8160,6 +8646,10 @@ struct DragonApp {
     change_cbs: HashMap<String, Box<dyn Fn(ChangeValue) + Send>>,
     /// Active slider drag session (pointer-down on a Slider widget).
     slider_drag: Option<SliderDrag>,
+    /// Active line plot pan drag session.
+    line_plot_pan_drag: Option<String>,
+    /// Active line plot box-zoom drag session.
+    line_plot_box_zoom_drag: Option<LinePlotBoxZoomDrag>,
     /// Active panel scrollbar drag session.
     scrollbar_drag: Option<ScrollbarDrag>,
     scatter_press_pos: Option<[f32; 2]>,
@@ -8203,6 +8693,8 @@ impl DragonApp {
             click_cbs: HashMap::new(),
             change_cbs: HashMap::new(),
             slider_drag: None,
+            line_plot_pan_drag: None,
+            line_plot_box_zoom_drag: None,
             scrollbar_drag: None,
             scatter_press_pos: None,
             active_scatter_id: None,
@@ -8706,6 +9198,7 @@ impl DragonApp {
                 label,
                 color,
                 line_width,
+                line_style,
                 show_grid,
                 auto_fit,
                 max_points,
@@ -8735,6 +9228,7 @@ impl DragonApp {
                         label,
                         color,
                         line_width,
+                        line_style,
                         show_grid,
                         auto_fit,
                         max_points,
@@ -11933,7 +12427,21 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                 self.flush_slider_change(&id);
                             }
                             self.slider_drag = None;
+                            let released_line_plot_pan = self.line_plot_pan_drag.take().is_some();
+                            let released_line_plot_box_zoom = self.line_plot_box_zoom_drag.take();
                             if released_scrollbar {
+                                self.request_redraw();
+                                return;
+                            }
+                            if released_line_plot_pan {
+                                self.request_redraw();
+                                return;
+                            }
+                            if let Some(drag) = released_line_plot_box_zoom {
+                                let pos = self.last_mouse_pos.unwrap_or(drag.start);
+                                if let Some(gpu) = &mut self.gpu {
+                                    gpu.finish_line_plot_box_zoom(&drag.widget_id, drag.start, pos);
+                                }
                                 self.request_redraw();
                                 return;
                             }
@@ -12161,6 +12669,41 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                 return;
                             }
 
+                            if let Some(id) = (!modal_active)
+                                .then(|| self.gpu.as_ref().and_then(|g| g.line_plot_at(pos)))
+                                .flatten()
+                            {
+                                let is_toolbar = self
+                                    .gpu
+                                    .as_ref()
+                                    .and_then(|g| g.line_plot_toolbar_hit_at(&id, pos))
+                                    .is_some();
+                                let is_pan =
+                                    self.gpu.as_ref().and_then(|g| g.line_plot_interaction(&id))
+                                        == Some("pan");
+                                if is_pan && !is_toolbar {
+                                    self.set_focus(Some(id.clone()));
+                                    self.line_plot_pan_drag = Some(id);
+                                    self.request_redraw();
+                                    return;
+                                }
+                                let is_box_zoom =
+                                    self.gpu.as_ref().and_then(|g| g.line_plot_interaction(&id))
+                                        == Some("box_zoom");
+                                if is_box_zoom && !is_toolbar {
+                                    self.set_focus(Some(id.clone()));
+                                    if let Some(gpu) = &mut self.gpu {
+                                        gpu.update_line_plot_selection_rect(&id, pos, pos);
+                                    }
+                                    self.line_plot_box_zoom_drag = Some(LinePlotBoxZoomDrag {
+                                        widget_id: id,
+                                        start: pos,
+                                    });
+                                    self.request_redraw();
+                                    return;
+                                }
+                            }
+
                             if let Some((id, kind)) =
                                 self.gpu.as_ref().and_then(|g| g.hit_test_ui(pos))
                             {
@@ -12319,7 +12862,8 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                     let requires_layout =
                         gpu.hover_change_requires_layout(old_hover.as_deref(), None);
                     let cleared = gpu.update_hover_state(None, None);
-                    if cleared {
+                    let cleared_line_plot_hover = gpu.clear_line_plot_hover_all();
+                    if cleared || cleared_line_plot_hover {
                         if requires_layout {
                             gpu.apply_layout();
                         } else {
@@ -12357,6 +12901,23 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                     self.update_scrollbar_drag(new_pos);
                 } else if self.slider_drag.is_some() {
                     self.update_slider_drag(new_pos[0], false);
+                } else if let Some(id) = self.line_plot_pan_drag.clone() {
+                    if let Some(old) = self.last_mouse_pos {
+                        let delta = [new_pos[0] - old[0], new_pos[1] - old[1]];
+                        if self
+                            .gpu
+                            .as_mut()
+                            .is_some_and(|gpu| gpu.pan_line_plot(&id, delta))
+                        {
+                            self.request_redraw();
+                        }
+                    }
+                } else if let Some(drag) = self.line_plot_box_zoom_drag.clone() {
+                    if self.gpu.as_mut().is_some_and(|gpu| {
+                        gpu.update_line_plot_selection_rect(&drag.widget_id, drag.start, new_pos)
+                    }) {
+                        self.request_redraw();
+                    }
                 } else if self.rect_select_active {
                     if let Some(sid) = self.active_scatter_id.clone() {
                         if let Some(gpu) = &mut self.gpu {
@@ -12426,6 +12987,8 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                 // Update hover state when no button is held.
                 if self.scrollbar_drag.is_none()
                     && self.slider_drag.is_none()
+                    && self.line_plot_pan_drag.is_none()
+                    && self.line_plot_box_zoom_drag.is_none()
                     && !self.orbit_active
                     && !self.pan_active
                     && !self.rect_select_active
@@ -12500,6 +13063,14 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                     }
                     for (id, payload) in stale_payloads {
                         self.emit_change(&id, ChangeValue::Text(payload));
+                    }
+
+                    if self
+                        .gpu
+                        .as_mut()
+                        .is_some_and(|gpu| gpu.update_line_plot_hover(new_pos))
+                    {
+                        self.request_redraw();
                     }
 
                     // Scatter hover tooltip: pick nearest point and show a floating label.
@@ -12656,6 +13227,23 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                         };
                         self.scroll_table(&id, row_delta, col_delta);
                         return;
+                    }
+                    if let Some(id) = self.gpu.as_ref().and_then(|gpu| gpu.line_plot_at(pos)) {
+                        let is_zoom = self
+                            .gpu
+                            .as_ref()
+                            .and_then(|gpu| gpu.line_plot_interaction(&id))
+                            == Some("zoom");
+                        if is_zoom {
+                            if self
+                                .gpu
+                                .as_mut()
+                                .is_some_and(|gpu| gpu.zoom_line_plot(&id, pos, scroll_y))
+                            {
+                                self.request_redraw();
+                            }
+                            return;
+                        }
                     }
                     // Scatter zoom wins over parent scroll container when pointer is over the plot.
                     if let Some(sid) = self.gpu.as_ref().and_then(|gpu| gpu.scatter_at(pos)) {

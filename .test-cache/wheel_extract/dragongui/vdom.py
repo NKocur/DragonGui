@@ -166,11 +166,13 @@ def shallow_value_equal(left: object, right: object) -> bool:
         return True
     if _is_table_payload(left) and _is_table_payload(right):
         return _table_payload_equal(left, right)
+    if _is_scatter_props(left) and _is_scatter_props(right):
+        return _scatter_props_equal(left, right)
     if isinstance(left, ResourceRef) or isinstance(right, ResourceRef):
         return left == right
     if isinstance(left, _SCALAR_TYPES) and isinstance(right, _SCALAR_TYPES):
         return left == right
-    if _is_scalar_sequence(left) and _is_scalar_sequence(right):
+    if _is_small_sequence(left) and _is_small_sequence(right):
         return tuple(left) == tuple(right)  # type: ignore[arg-type]
     if _is_small_mapping(left) and _is_small_mapping(right):
         left_map = left  # type: ignore[assignment]
@@ -208,7 +210,7 @@ def _diff_node(old: VNode, new: VNode, *, path: tuple[str, ...]) -> list[Patch]:
             )
         )
 
-    if _child_identity_sequence(old.children) != _child_identity_sequence(new.children):
+    if not _child_identities_equal(old.children, new.children):
         patches.append(
             Patch(
                 kind=Patch.REPLACE_CHILDREN,
@@ -230,6 +232,12 @@ def _diff_node(old: VNode, new: VNode, *, path: tuple[str, ...]) -> list[Patch]:
     return patches
 
 
+def _child_identities_equal(left: Sequence[VNode], right: Sequence[VNode]) -> bool:
+    if len(left) != len(right):
+        return False
+    return all(old.identity() == new.identity() for old, new in zip(left, right, strict=True))
+
+
 def _diff_props(old: VNode, new: VNode, path: tuple[str, ...]) -> list[Patch]:
     patches: list[Patch] = []
     if old.type == "dataframe_table" and new.type == "dataframe_table":
@@ -244,22 +252,36 @@ def _diff_props(old: VNode, new: VNode, path: tuple[str, ...]) -> list[Patch]:
                 )
             )
         return patches
-    old_props = old.props
-    new_props = new.props
-    for prop in sorted(set(old_props) | set(new_props)):
-        old_value = old_props.get(prop, _MISSING)
-        new_value = new_props.get(prop, _MISSING)
-        if old_value is _MISSING:
+    if old.type == "scatter_3d" and new.type == "scatter_3d":
+        if not _scatter_props_equal(old.props, new.props):
             patches.append(
                 Patch(
                     kind=Patch.SET_PROP,
                     path=path,
                     node_id=old.id,
-                    prop=prop,
-                    value=new_value,
+                    prop="scatter",
+                    value=new.props,
                 )
             )
-        elif new_value is _MISSING:
+        return patches
+    if old.type == "line_plot" and new.type == "line_plot":
+        if not _line_plot_props_equal(old.props, new.props):
+            patches.append(
+                Patch(
+                    kind=Patch.SET_PROP,
+                    path=path,
+                    node_id=old.id,
+                    prop="line_plot",
+                    value=new.props,
+                )
+            )
+        return patches
+    old_props = old.props
+    new_props = new.props
+    for prop in old_props:
+        old_value = old_props[prop]
+        new_value = new_props.get(prop, _MISSING)
+        if new_value is _MISSING:
             patches.append(
                 Patch(
                     kind=Patch.SET_PROP,
@@ -279,6 +301,18 @@ def _diff_props(old: VNode, new: VNode, path: tuple[str, ...]) -> list[Patch]:
                     value=new_value,
                 )
             )
+    for prop, new_value in new_props.items():
+        if prop in old_props:
+            continue
+        patches.append(
+            Patch(
+                kind=Patch.SET_PROP,
+                path=path,
+                node_id=old.id,
+                prop=prop,
+                value=new_value,
+            )
+        )
     return patches
 
 
@@ -287,20 +321,17 @@ def _diff_mapping(
     new: Mapping[str, object],
 ) -> dict[str, object | None]:
     changes: dict[str, object | None] = {}
-    for key in sorted(set(old) | set(new)):
-        old_value = old.get(key, _MISSING)
+    for key in old:
+        old_value = old[key]
         new_value = new.get(key, _MISSING)
-        if old_value is _MISSING:
-            changes[key] = new_value
-        elif new_value is _MISSING:
+        if new_value is _MISSING:
             changes[key] = None
         elif not shallow_value_equal(old_value, new_value):
             changes[key] = new_value
+    for key, new_value in new.items():
+        if key not in old:
+            changes[key] = new_value
     return changes
-
-
-def _child_identity_sequence(children: Sequence[VNode]) -> tuple[tuple[str, str | None, str | None], ...]:
-    return tuple(child.identity() for child in children)
 
 
 def _retain_child_ids(old_children: Sequence[VNode], new_children: Sequence[VNode]) -> tuple[VNode, ...]:
@@ -324,12 +355,23 @@ def _path_segment(node: VNode) -> str:
     return f"{node.type}:id={node.id}"
 
 
-def _is_scalar_sequence(value: object) -> bool:
+def _is_small_value(value: object) -> bool:
+    return (
+        isinstance(value, _SCALAR_TYPES)
+        or isinstance(value, ResourceRef)
+        or _is_small_sequence(value)
+        or _is_small_mapping(value)
+    )
+
+
+def _is_small_sequence(value: object) -> bool:
     if isinstance(value, (str, bytes, bytearray, memoryview)):
         return False
     if not isinstance(value, (list, tuple)):
         return False
-    return all(isinstance(item, _SCALAR_TYPES) for item in value)
+    if len(value) > 64:
+        return False
+    return all(_is_small_value(item) for item in value)
 
 
 def _is_small_mapping(value: object) -> bool:
@@ -340,10 +382,7 @@ def _is_small_mapping(value: object) -> bool:
     return all(
         isinstance(key, str)
         and (
-            isinstance(item, _SCALAR_TYPES)
-            or _is_scalar_sequence(item)
-            or isinstance(item, ResourceRef)
-            or _is_small_mapping(item)
+            _is_small_value(item)
         )
         for key, item in value.items()
     )
@@ -374,6 +413,96 @@ def _table_payload_equal(left: object, right: object) -> bool:
     if any(left_map.get(key) != right_map.get(key) for key in keys):
         return False
     return left_map.get("frame") == right_map.get("frame")
+
+
+def _is_scatter_props(value: object) -> bool:
+    return (
+        isinstance(value, Mapping)
+        and isinstance(value.get("frame"), Mapping)
+        and "data_b64" in value
+        and "x" in value
+    )
+
+
+def _scatter_props_equal(left: object, right: object) -> bool:
+    left_map = left  # type: ignore[assignment]
+    right_map = right  # type: ignore[assignment]
+    assert isinstance(left_map, Mapping)
+    assert isinstance(right_map, Mapping)
+    # Structural options: column names, colormap, format, callbacks, grid chrome, overlays.
+    for key in (
+        "x", "y", "z", "colormap", "data_format", "events",
+        "grid_visible", "major_planes", "minor_planes", "grid_sticky", "grid_all_edges",
+        "axis_x", "axis_y", "axis_z",
+        "axis_vis_x", "axis_vis_y", "axis_vis_z",
+        "tick_x", "tick_y", "tick_z",
+        "background",
+        "legend_visible", "legend_position", "legend_entries", "legend_title",
+        "scalar_bar_visible", "scalar_bar_vmin", "scalar_bar_vmax",
+        "scalar_bar_log_scale", "scalar_bar_colormap", "scalar_bar_title",
+        "orientation_axes_visible",
+    ):
+        if left_map.get(key) != right_map.get(key):
+            return False
+    # Data identity: compact token from packed payload (avoids O(n) base64 comparison).
+    # When present, comparing the token is sufficient to detect data changes.
+    # When absent (e.g. manual VNode construction), fall back to comparing the
+    # frame handle, which supports ResourceRef equality by identity+version.
+    l_token = left_map.get("_payload_token")
+    r_token = right_map.get("_payload_token")
+    if l_token is not None or r_token is not None:
+        return l_token == r_token
+    return left_map.get("frame") == right_map.get("frame")
+
+
+def _line_plot_props_equal(left: object, right: object) -> bool:
+    left_map = left  # type: ignore[assignment]
+    right_map = right  # type: ignore[assignment]
+    assert isinstance(left_map, Mapping)
+    assert isinstance(right_map, Mapping)
+    for key in (
+        "x",
+        "y",
+        "x_label",
+        "y_label",
+        "show_grid",
+        "show_axes",
+        "show_ticks",
+        "show_toolbar",
+        "show_legend",
+        "legend_position",
+        "interaction",
+        "tick_count",
+        "auto_fit",
+        "line_width",
+        "window_size",
+        "max_points",
+    ):
+        if left_map.get(key) != right_map.get(key):
+            return False
+    return _line_plot_series_summary(left_map.get("series")) == _line_plot_series_summary(
+        right_map.get("series")
+    )
+
+
+def _line_plot_series_summary(value: object) -> tuple[tuple[object, ...], ...]:
+    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
+        return ()
+    summary: list[tuple[object, ...]] = []
+    for item in value:
+        if not isinstance(item, Mapping):
+            return ()
+        summary.append(
+            (
+                item.get("label"),
+                item.get("color"),
+                item.get("line_style"),
+                item.get("data_format"),
+                item.get("points"),
+                item.get("_payload_token"),
+            )
+        )
+    return tuple(summary)
 
 
 def _mapping_to_dict(value: Mapping[str, object]) -> dict[str, object]:

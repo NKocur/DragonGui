@@ -467,6 +467,20 @@ impl TextRendererDg {
         let mut label_clip = clip;
         let (text_align, left, top) = match anchor {
             "top-left" => (TextAlign::Left, screen_x, screen_y),
+            "plot-toolbar-button" => (
+                TextAlign::Center,
+                label_clip.left as f32,
+                label_clip.top as f32
+                    + ((label_clip.bottom - label_clip.top).max(1) as f32 - line_height).max(0.0)
+                        * 0.5,
+            ),
+            "plot-readout" => (
+                TextAlign::Center,
+                label_clip.left as f32,
+                label_clip.top as f32
+                    + ((label_clip.bottom - label_clip.top).max(1) as f32 - line_height).max(0.0)
+                        * 0.5,
+            ),
             "plot-x-tick" => {
                 let width = 40.0 * scale;
                 label_clip = intersect_text_bounds(
