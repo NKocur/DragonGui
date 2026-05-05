@@ -23,6 +23,7 @@ winit = "0.30"
 wgpu = "29"
 glam = "0.28"
 bytemuck = { version = "1", features = ["derive"] }
+ab_glyph = "0.2.32"
 base64 = "0.22"
 flate2 = "1"
 serde = { version = "1", features = ["derive"] }

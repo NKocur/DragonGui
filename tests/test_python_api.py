@@ -1528,6 +1528,310 @@ def test_dataframe_table_column_buffers_pack_supported_numeric_columns() -> None
     assert len(buffers[2]["data"]) > 8 + (3 + 1) * 8
 
 
+def test_line_plot_serializes_packed_xy_series() -> None:
+    np = pytest.importorskip("numpy")
+
+    class NumericFrame:
+        columns = ("t", "value")
+        dtypes = ("float32", "float32")
+        shape = (3, 2)
+        t = np.array([0.0, 1.0, 2.0], dtype=np.float32)
+        value = np.array([2.0, 3.5, 4.0], dtype=np.float32)
+
+        def __getitem__(self, column: str) -> object:
+            return getattr(self, column)
+
+    plot = dg.LinePlot(
+        NumericFrame(),
+        x="t",
+        y="value",
+        label="Sensor",
+        color="#42a5ff",
+        line_width=1.5,
+        parent=None,
+    )
+
+    props = plot.to_dict()["props"]
+
+    assert plot.to_dict()["type"] == "line_plot"
+    assert props["frame"]["rows"] == 3
+    assert props["x_label"] == "t"
+    assert props["y_label"] == "value"
+    assert props["line_width"] == 1.5
+    assert props["show_axes"] is True
+    assert props["show_ticks"] is True
+    assert props["show_toolbar"] is False
+    assert props["tick_count"] == 5
+    assert props["series"][0]["label"] == "Sensor"
+    assert props["series"][0]["color"] == "#42a5ff"
+    assert props["series"][0]["data_format"] == "xy_f32_v0"
+    assert props["series"][0]["points"] == 3
+    assert props["series"][0]["data_b64"]
+
+
+def test_line_plot_y_only_uses_sample_index() -> None:
+    np = pytest.importorskip("numpy")
+
+    class NumericFrame:
+        value = np.array([2.0, 3.5, 4.0], dtype=np.float32)
+
+    plot = dg.LinePlot(NumericFrame(), y="value", parent=None)
+    payload = dg.LinePlot.prepare_points(NumericFrame(), y="value")
+
+    assert plot.props()["x_label"] == "sample"
+    assert plot.props()["series"][0]["points"] == 3
+    assert payload.point_count == 3
+    assert len(payload.data) == 3 * 8
+
+
+def test_line_plot_serializes_multiple_series() -> None:
+    np = pytest.importorskip("numpy")
+
+    class NumericFrame:
+        columns = ("t", "temperature", "pressure")
+        dtypes = ("float32", "float32", "float32")
+        shape = (3, 3)
+        t = np.array([0.0, 1.0, 2.0], dtype=np.float32)
+        temperature = np.array([68.0, 69.5, 70.0], dtype=np.float32)
+        pressure = np.array([30.0, 31.0, 29.5], dtype=np.float32)
+
+        def __getitem__(self, column: str) -> object:
+            return getattr(self, column)
+
+    plot = dg.LinePlot(
+        NumericFrame(),
+        x="t",
+        y=("temperature", "pressure"),
+        labels=("Temp", "Pressure"),
+        colors=("#42a5ff", "#74ddb0"),
+        parent=None,
+    )
+    props = plot.props()
+
+    assert props["y"] == ["temperature", "pressure"]
+    assert [item["label"] for item in props["series"]] == ["Temp", "Pressure"]
+    assert [item["color"] for item in props["series"]] == ["#42a5ff", "#74ddb0"]
+    assert [item["points"] for item in props["series"]] == [3, 3]
+
+    with pytest.raises(ValueError, match="label length"):
+        dg.LinePlot(NumericFrame(), x="t", y=("temperature", "pressure"), label="One", parent=None)
+
+
+def test_line_plot_startup_resources_enqueue_packed_series() -> None:
+    np = pytest.importorskip("numpy")
+
+    class NumericFrame:
+        columns = ("t", "temperature", "pressure")
+        dtypes = ("float32", "float32", "float32")
+        shape = (3, 3)
+        t = np.array([0.0, 1.0, 2.0], dtype=np.float32)
+        temperature = np.array([68.0, 69.5, 70.0], dtype=np.float32)
+        pressure = np.array([30.0, 31.0, 29.5], dtype=np.float32)
+
+        def __getitem__(self, column: str) -> object:
+            return getattr(self, column)
+
+    class Sender:
+        def __init__(self) -> None:
+            self.set_data: list[tuple[object, ...]] = []
+            self.props: list[tuple[str, str, object]] = []
+
+        def enqueue_set_line_plot_data_packed(
+            self,
+            widget_id: str,
+            series: str,
+            xy: bytes,
+            label: str | None,
+            color: str | None,
+            line_width: float | None,
+            show_grid: bool | None,
+            auto_fit: bool | None,
+            max_points: int | None,
+            fit: bool,
+            coalesce: bool,
+        ) -> None:
+            self.set_data.append(
+                (
+                    widget_id,
+                    series,
+                    xy,
+                    label,
+                    color,
+                    line_width,
+                    show_grid,
+                    auto_fit,
+                    max_points,
+                    fit,
+                    coalesce,
+                )
+            )
+
+        def enqueue_set_prop(self, widget_id: str, prop: str, value: object) -> None:
+            self.props.append((widget_id, prop, value))
+
+        def close(self) -> None:
+            pass
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+    plot = dg.LinePlot(
+        NumericFrame(),
+        x="t",
+        y=("temperature", "pressure"),
+        labels=("Temp", "Pressure"),
+        colors=("#42a5ff", "#74ddb0"),
+        x_label="Elapsed",
+        y_label="Reading",
+        id="line",
+        parent=None,
+    )
+    plot._bind_live(handle.widget_handle(plot.id))
+
+    plot._queue_startup_resources()
+
+    assert ("line", "x_label", "Elapsed") in sender.props
+    assert ("line", "y_label", "Reading") in sender.props
+    assert len(sender.set_data) == 2
+    assert [item[1] for item in sender.set_data] == ["Temp", "Pressure"]
+    assert [len(item[2]) for item in sender.set_data] == [3 * 8, 3 * 8]
+    assert all(item[9] is True for item in sender.set_data)
+
+
+def test_line_plot_live_methods_enqueue_native_commands() -> None:
+    np = pytest.importorskip("numpy")
+
+    class NumericFrame:
+        columns = ("t", "value", "other")
+        dtypes = ("float32", "float32", "float32")
+        shape = (3, 3)
+        t = np.array([0.0, 1.0, 2.0], dtype=np.float32)
+        value = np.array([2.0, 3.5, 4.0], dtype=np.float32)
+        other = np.array([7.0, 8.0, 9.0], dtype=np.float32)
+
+        def __getitem__(self, column: str) -> object:
+            return getattr(self, column)
+
+    class Sender:
+        def __init__(self) -> None:
+            self.set_data: list[tuple[object, ...]] = []
+            self.appended: list[tuple[object, ...]] = []
+            self.cleared: list[tuple[str, str | None]] = []
+            self.props: list[tuple[str, str, object]] = []
+
+        def enqueue_set_line_plot_data_packed(
+            self,
+            widget_id: str,
+            series: str,
+            xy: bytes,
+            label: str | None,
+            color: str | None,
+            line_width: float | None,
+            show_grid: bool | None,
+            auto_fit: bool | None,
+            max_points: int | None,
+            fit: bool,
+            coalesce: bool,
+        ) -> None:
+            self.set_data.append(
+                (
+                    widget_id,
+                    series,
+                    xy,
+                    label,
+                    color,
+                    line_width,
+                    show_grid,
+                    auto_fit,
+                    max_points,
+                    fit,
+                    coalesce,
+                )
+            )
+
+        def enqueue_append_line_plot_points_packed(
+            self,
+            widget_id: str,
+            series: str,
+            xy: bytes,
+            max_points: int | None,
+        ) -> None:
+            self.appended.append((widget_id, series, xy, max_points))
+
+        def enqueue_clear_line_plot_series(self, widget_id: str, series: str | None) -> None:
+            self.cleared.append((widget_id, series))
+
+        def enqueue_set_prop(self, widget_id: str, prop: str, value: object) -> None:
+            self.props.append((widget_id, prop, value))
+
+        def close(self) -> None:
+            pass
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+    plot = dg.LinePlot(
+        NumericFrame(),
+        x="t",
+        y="value",
+        label="Sensor",
+        color="#42a5ff",
+        line_width=1.5,
+        max_points=5,
+        id="line",
+        parent=None,
+    )
+    plot._bind_live(handle.widget_handle(plot.id))
+
+    plot.set_data(NumericFrame(), x="t", y="other", label="Other", color="#f36b7f", fit=False)
+    plot.append_points(
+        np.array([3.0, 4.0], dtype=np.float32),
+        np.array([10.0, 11.0], dtype=np.float32),
+        series="Other",
+    )
+    plot.set_line_width(3.25)
+    plot.set_grid_visible(False)
+    plot.set_axes_visible(False)
+    plot.set_ticks_visible(False)
+    plot.set_toolbar_visible(False)
+    plot.set_tick_count(7)
+    plot.set_axis_labels(x="Elapsed", y="Reading")
+    plot.clear("Other")
+
+    assert sender.cleared[0] == ("line", None)
+    assert len(sender.set_data) == 1
+    widget_id, series, payload, label, color, width, grid, auto_fit, max_points, fit, coalesce = (
+        sender.set_data[0]
+    )
+    assert widget_id == "line"
+    assert series == "Other"
+    assert len(payload) == 3 * 8
+    assert label == "Other"
+    assert color == "#f36b7f"
+    assert width == 1.5
+    assert grid is True
+    assert auto_fit is True
+    assert max_points == 5
+    assert fit is False
+    assert coalesce is True
+    assert sender.appended[0][0:2] == ("line", "Other")
+    assert len(sender.appended[0][2]) == 2 * 8
+    assert sender.appended[0][3] == 5
+    assert sender.props == [
+        ("line", "x_label", "t"),
+        ("line", "y_label", "Other"),
+        ("line", "line_width", 3.25),
+        ("line", "show_grid", False),
+        ("line", "show_axes", False),
+        ("line", "show_ticks", False),
+        ("line", "show_toolbar", False),
+        ("line", "tick_count", 7),
+        ("line", "x_label", "Elapsed"),
+        ("line", "y_label", "Reading"),
+    ]
+    assert sender.cleared[-1] == ("line", "Other")
+
+
 def test_scatter_xyz_raw_pack_has_expected_size() -> None:
     np = pytest.importorskip("numpy")
 
@@ -5699,12 +6003,51 @@ def test_grid_layout_gap_in_style() -> None:
     assert node["style"].get("row_gap") == 4
 
 
+def test_grid_layout_template_tracks() -> None:
+    """GridLayout can serialize compact explicit track templates."""
+    win = dg.Window("Grid")
+    dg.GridLayout(template_columns=(44, "1fr", "auto"), template_rows="18px auto", id="g")
+    node = win.to_dict()["children"][0]
+    assert node["props"].get("template_columns") == [44, {"fr": 1}, "auto"]
+    assert node["props"].get("template_rows") == [18, "auto"]
+    assert "columns" not in node["props"]
+    assert "min_column_width" not in node["props"]
+
+
+def test_grid_layout_template_track_helpers() -> None:
+    """GridLayout accepts structured fit-content/minmax/repeat track helpers."""
+    win = dg.Window("Grid")
+    dg.GridLayout(
+        template_columns=(
+            {"fit_content": "40%"},
+            {"minmax": (72, "1fr")},
+            {"repeat": {"kind": "auto-fill", "tracks": [{"min": 80, "max": "1fr"}]}},
+        ),
+        id="g",
+    )
+    node = win.to_dict()["children"][0]
+    assert node["props"].get("template_columns") == [
+        {"fit_content": {"percent": 40}},
+        {"minmax": {"min": 72, "max": {"fr": 1}}},
+        {
+            "repeat": {
+                "kind": "auto-fill",
+                "tracks": [{"minmax": {"min": 80, "max": {"fr": 1}}}],
+            }
+        },
+    ]
+
+
 def test_grid_layout_rejects_invalid_columns() -> None:
     dg.Window("Grid")
     with pytest.raises(ValueError):
         dg.GridLayout(columns=0)
     with pytest.raises(ValueError):
         dg.GridLayout(columns="fixed")
+    with pytest.raises(ValueError):
+        dg.GridLayout(template_columns=("bogus",))
+    with pytest.raises(ValueError):
+        dg.GridLayout(template_columns=("0fr",))
 
 
 def test_flow_layout_serialization() -> None:

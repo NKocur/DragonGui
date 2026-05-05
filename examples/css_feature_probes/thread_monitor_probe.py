@@ -15,8 +15,9 @@ import threading
 import time
 from pathlib import Path
 
-if __name__ == "__main__" and __package__ is None:
-    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "python"))
+_REPO_PYTHON = str(Path(__file__).resolve().parents[2] / "python")
+if _REPO_PYTHON not in sys.path:
+    sys.path.insert(0, _REPO_PYTHON)
 
 import dragongui as dg
 

@@ -1,8 +1,11 @@
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine as _;
+
 use crate::css_style::{StylesheetOrigin, StylesheetStore};
-use crate::style::{ColorRef, NodeStyle};
+use crate::style::{parse_grid_template_tracks_value, ColorRef, GridTrackSize, NodeStyle};
 use crate::theme::{parse_web_color, Theme};
 
 // ---------------------------------------------------------------------------
@@ -55,6 +58,35 @@ impl ScatterPayloadFormat {
             Self::PointInstanceV1 => "point_instance_v1",
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Line plot payload format
+// ---------------------------------------------------------------------------
+
+/// Wire format for 2D line plot data embedded in `NodeProps`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LinePlotPayloadFormat {
+    /// Packed little-endian float32 xy pairs, 8 bytes per point.
+    #[default]
+    XyF32V0,
+}
+
+impl LinePlotPayloadFormat {
+    pub fn from_str(s: &str) -> Self {
+        match s.trim() {
+            _ => Self::XyF32V0,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LinePlotSeriesProp {
+    pub label: Option<String>,
+    pub color: Option<ColorRef>,
+    pub points: Vec<[f32; 2]>,
+    pub payload_format: LinePlotPayloadFormat,
+    pub declared_point_count: Option<usize>,
 }
 
 // ---------------------------------------------------------------------------
@@ -131,6 +163,73 @@ fn normalize_color_channel(value: f32) -> f32 {
     } else {
         value.clamp(0.0, 1.0)
     }
+}
+
+fn parse_line_plot_series(props: &serde_json::Value) -> Vec<LinePlotSeriesProp> {
+    props
+        .get("series")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(parse_line_plot_series_item)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn parse_line_plot_series_item(value: &serde_json::Value) -> Option<LinePlotSeriesProp> {
+    let obj = value.as_object()?;
+    let payload_format = obj
+        .get("data_format")
+        .and_then(Value::as_str)
+        .map(LinePlotPayloadFormat::from_str)
+        .unwrap_or_default();
+    let points = obj
+        .get("data_b64")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(|data| match decode_line_plot_xy_b64(data) {
+            Ok(points) => points,
+            Err(err) => {
+                eprintln!("DragonGUI: line plot data decode: {err}");
+                Vec::new()
+            }
+        })
+        .unwrap_or_default();
+    Some(LinePlotSeriesProp {
+        label: obj
+            .get("label")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        color: parse_color_ref(obj.get("color")),
+        points,
+        payload_format,
+        declared_point_count: obj
+            .get("points")
+            .and_then(Value::as_u64)
+            .map(|v| v as usize),
+    })
+}
+
+fn decode_line_plot_xy_b64(data: &str) -> Result<Vec<[f32; 2]>, String> {
+    let bytes = BASE64.decode(data).map_err(|e| format!("base64: {e}"))?;
+    if bytes.len() % 8 != 0 {
+        return Err(format!(
+            "payload length {} is not a multiple of 8 (xy float32)",
+            bytes.len()
+        ));
+    }
+    Ok(bytes
+        .chunks_exact(8)
+        .map(|chunk| {
+            [
+                f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]),
+                f32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]),
+            ]
+        })
+        .collect())
 }
 
 pub fn parse_stylesheets_from_doc(doc: &serde_json::Value) -> StylesheetStore {
@@ -210,6 +309,7 @@ pub enum WidgetKind {
     Page,
     Sidebar,
     NavItem,
+    LinePlot,
     Scatter3D,
     DataFrameTable,
     Image,
@@ -255,6 +355,7 @@ impl WidgetKind {
             "page" => WidgetKind::Page,
             "sidebar" => WidgetKind::Sidebar,
             "nav_item" => WidgetKind::NavItem,
+            "line_plot" => WidgetKind::LinePlot,
             "scatter_3d" => WidgetKind::Scatter3D,
             "dataframe_table" => WidgetKind::DataFrameTable,
             "image" => WidgetKind::Image,
@@ -276,6 +377,10 @@ pub struct NodeProps {
     pub grid_columns: Option<u16>,
     /// GridLayout: minimum column width in logical pixels for minmax tracks.
     pub grid_min_column_width: Option<f32>,
+    /// GridLayout: explicit column track template.
+    pub grid_template_columns: Option<Vec<GridTrackSize>>,
+    /// GridLayout: explicit row track template.
+    pub grid_template_rows: Option<Vec<GridTrackSize>>,
     /// FlowLayout main-axis alignment: start, center, or end.
     pub flow_align: Option<String>,
     /// FlowLayout cross-axis alignment: start, center, end, or stretch.
@@ -342,6 +447,17 @@ pub struct NodeProps {
     pub led_state: Option<String>,
     pub led_color: Option<ColorRef>,
     pub led_size: Option<f32>,
+    /// LinePlot packed startup series.
+    pub line_plot_series: Vec<LinePlotSeriesProp>,
+    pub line_plot_x_label: Option<String>,
+    pub line_plot_y_label: Option<String>,
+    pub line_plot_show_grid: bool,
+    pub line_plot_show_axes: bool,
+    pub line_plot_show_ticks: bool,
+    pub line_plot_show_toolbar: bool,
+    pub line_plot_tick_count: usize,
+    pub line_plot_auto_fit: bool,
+    pub line_plot_line_width: f32,
     /// Scatter3D colormap name.
     pub scatter_colormap: Option<String>,
     /// Scatter3D base64-encoded startup payload.
@@ -462,6 +578,14 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         .get("min_column_width")
         .and_then(|v| v.as_f64())
         .map(|v| v as f32);
+    let grid_template_columns = props
+        .get("template_columns")
+        .or_else(|| props.get("grid_template_columns"))
+        .and_then(parse_grid_template_tracks_value);
+    let grid_template_rows = props
+        .get("template_rows")
+        .or_else(|| props.get("grid_template_rows"))
+        .and_then(parse_grid_template_tracks_value);
     let flow_align = props
         .get("align")
         .and_then(|v| v.as_str())
@@ -599,6 +723,86 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         .and_then(|v| v.as_f64())
         .filter(|v| v.is_finite() && *v > 0.0)
         .map(|v| v as f32);
+    let (
+        line_plot_series,
+        line_plot_x_label,
+        line_plot_y_label,
+        line_plot_show_grid,
+        line_plot_show_axes,
+        line_plot_show_ticks,
+        line_plot_show_toolbar,
+        line_plot_tick_count,
+        line_plot_auto_fit,
+        line_plot_line_width,
+    ) = if matches!(kind, WidgetKind::LinePlot) {
+        let x_label = props
+            .get("x_label")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        let y_label = props
+            .get("y_label")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        let show_grid = props
+            .get("show_grid")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        let show_axes = props
+            .get("show_axes")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        let show_ticks = props
+            .get("show_ticks")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        let show_toolbar = props
+            .get("show_toolbar")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let tick_count = props
+            .get("tick_count")
+            .and_then(Value::as_u64)
+            .map(|v| v as usize)
+            .unwrap_or(5)
+            .clamp(2, 9);
+        let auto_fit = props
+            .get("auto_fit")
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        let line_width = props
+            .get("line_width")
+            .and_then(Value::as_f64)
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .map(|v| v as f32)
+            .unwrap_or(2.0);
+        (
+            parse_line_plot_series(props),
+            x_label,
+            y_label,
+            show_grid,
+            show_axes,
+            show_ticks,
+            show_toolbar,
+            tick_count,
+            auto_fit,
+            line_width,
+        )
+    } else {
+        (
+            Vec::new(),
+            None,
+            None,
+            true,
+            true,
+            true,
+            false,
+            5,
+            true,
+            2.0,
+        )
+    };
     let (scatter_colormap, scatter_data_b64, scatter_data_format) =
         if matches!(kind, WidgetKind::Scatter3D) {
             let cmap = props
@@ -862,6 +1066,8 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         fixed_height,
         grid_columns,
         grid_min_column_width,
+        grid_template_columns,
+        grid_template_rows,
         flow_align,
         flow_cross_align,
         orientation,
@@ -896,6 +1102,16 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         led_state,
         led_color,
         led_size,
+        line_plot_series,
+        line_plot_x_label,
+        line_plot_y_label,
+        line_plot_show_grid,
+        line_plot_show_axes,
+        line_plot_show_ticks,
+        line_plot_show_toolbar,
+        line_plot_tick_count,
+        line_plot_auto_fit,
+        line_plot_line_width,
         scatter_colormap,
         scatter_data_b64,
         scatter_data_format,
@@ -996,6 +1212,35 @@ mod tests {
         assert_eq!(tree.style_json.get("background").unwrap(), "surface");
         assert_eq!(tree.style.layout.width, Some(320.0));
         assert!(tree.style.hover.background.is_some());
+    }
+
+    #[test]
+    fn parse_grid_layout_template_track_props() {
+        let node = parse_widget_node(&json!({
+            "id": "stats",
+            "type": "grid_layout",
+            "props": {
+                "template_columns": [44, {"fr": 1}, {"minmax": {"min": 72, "max": {"fr": 1}}}],
+                "template_rows": "18px auto"
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(
+            node.props.grid_template_columns,
+            Some(vec![
+                GridTrackSize::LogicalPx(44.0),
+                GridTrackSize::Fraction(1.0),
+                GridTrackSize::MinMax {
+                    min: crate::style::GridTrackMinSize::LogicalPx(72.0),
+                    max: crate::style::GridTrackMaxSize::Fraction(1.0),
+                },
+            ])
+        );
+        assert_eq!(
+            node.props.grid_template_rows,
+            Some(vec![GridTrackSize::LogicalPx(18.0), GridTrackSize::Auto])
+        );
     }
 
     #[test]

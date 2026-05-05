@@ -1180,6 +1180,11 @@ fn parse_layout(map: &serde_json::Map<String, Value>, out: &mut LayoutStyle) {
     out.overflow_x = text_value(map, "overflow_x", "overflow-x").and_then(parse_overflow);
     out.overflow_y = text_value(map, "overflow_y", "overflow-y").and_then(parse_overflow);
     out.position = text_value(map, "position", "position").and_then(parse_position);
+    out.grid_template_columns =
+        value_for_keys(map, "grid_template_columns", "grid-template-columns")
+            .and_then(parse_grid_template_tracks_value);
+    out.grid_template_rows = value_for_keys(map, "grid_template_rows", "grid-template-rows")
+        .and_then(parse_grid_template_tracks_value);
     out.grid_auto_flow =
         text_value(map, "grid_auto_flow", "grid-auto-flow").and_then(parse_grid_auto_flow);
     out.grid_area = text_value(map, "grid_area", "grid-area").and_then(|value| {
@@ -2075,6 +2080,214 @@ fn parse_grid_auto_flow(value: &str) -> Option<GridAutoFlowStyle> {
     }
 }
 
+pub fn parse_grid_template_tracks_value(value: &Value) -> Option<Vec<GridTrackSize>> {
+    let tracks = match value {
+        Value::Array(items) => items
+            .iter()
+            .map(parse_grid_track_value)
+            .collect::<Option<Vec<_>>>()?,
+        Value::String(text) => parse_grid_template_tracks_text(text)?,
+        _ => vec![parse_grid_track_value(value)?],
+    };
+    (!tracks.is_empty()).then_some(tracks)
+}
+
+fn parse_grid_template_tracks_text(value: &str) -> Option<Vec<GridTrackSize>> {
+    let tracks = value
+        .split_whitespace()
+        .map(parse_grid_track_text)
+        .collect::<Option<Vec<_>>>()?;
+    (!tracks.is_empty()).then_some(tracks)
+}
+
+fn parse_grid_track_value(value: &Value) -> Option<GridTrackSize> {
+    match value {
+        Value::Number(_) | Value::String(_) => parse_grid_track_text_or_number(value),
+        Value::Object(map) => parse_grid_track_object(map),
+        _ => None,
+    }
+}
+
+fn parse_grid_track_text_or_number(value: &Value) -> Option<GridTrackSize> {
+    match value {
+        Value::Number(_) => Some(GridTrackSize::LogicalPx(grid_number(value, false)?)),
+        Value::String(text) => parse_grid_track_text(text),
+        _ => None,
+    }
+}
+
+fn parse_grid_track_text(value: &str) -> Option<GridTrackSize> {
+    let token = value.trim().to_ascii_lowercase();
+    if token.is_empty() {
+        return None;
+    }
+    if token == "auto" {
+        return Some(GridTrackSize::Auto);
+    }
+    if let Some(raw) = token.strip_suffix("fr") {
+        return Some(GridTrackSize::Fraction(parse_track_float(raw, true)?));
+    }
+    if let Some(raw) = token.strip_suffix("px") {
+        return Some(GridTrackSize::LogicalPx(parse_track_float(raw, false)?));
+    }
+    if let Some(raw) = token.strip_suffix('%') {
+        return Some(GridTrackSize::Percent(parse_track_float(raw, false)?));
+    }
+    if let Some(inner) = strip_grid_function(&token, "fit-content") {
+        return Some(GridTrackSize::FitContent(parse_grid_fit_content_text(
+            inner,
+        )?));
+    }
+    if let Some(inner) = strip_grid_function(&token, "minmax") {
+        let (min, max) = inner.split_once(',')?;
+        return Some(GridTrackSize::MinMax {
+            min: parse_grid_min_track_text(min)?,
+            max: parse_grid_max_track_text(max)?,
+        });
+    }
+    Some(GridTrackSize::LogicalPx(parse_track_float(&token, false)?))
+}
+
+fn parse_grid_track_object(map: &serde_json::Map<String, Value>) -> Option<GridTrackSize> {
+    if let Some(value) = map.get("fr") {
+        return Some(GridTrackSize::Fraction(grid_number(value, true)?));
+    }
+    if let Some(value) = map.get("percent") {
+        return Some(GridTrackSize::Percent(grid_number(value, false)?));
+    }
+    if let Some(value) = map.get("fit_content").or_else(|| map.get("fit")) {
+        return Some(GridTrackSize::FitContent(parse_grid_fit_content_value(
+            value,
+        )?));
+    }
+    if let Some(value) = map.get("minmax") {
+        let (min, max) = parse_grid_minmax_value(value)?;
+        return Some(GridTrackSize::MinMax { min, max });
+    }
+    if map.contains_key("min") || map.contains_key("max") {
+        let (min, max) = parse_grid_minmax_map(map)?;
+        return Some(GridTrackSize::MinMax { min, max });
+    }
+    if let Some(value) = map.get("repeat") {
+        let repeat = value.as_object()?;
+        let kind = match repeat
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or("auto-fit")
+        {
+            "auto-fit" => GridTrackRepeatKind::AutoFit,
+            "auto-fill" => GridTrackRepeatKind::AutoFill,
+            _ => return None,
+        };
+        let tracks = parse_grid_template_tracks_value(repeat.get("tracks")?)?;
+        return Some(GridTrackSize::Repeat { kind, tracks });
+    }
+    None
+}
+
+fn parse_grid_fit_content_value(value: &Value) -> Option<GridTrackFitContentSize> {
+    match parse_grid_track_value(value)? {
+        GridTrackSize::LogicalPx(value) => Some(GridTrackFitContentSize::LogicalPx(value)),
+        GridTrackSize::Percent(value) => Some(GridTrackFitContentSize::Percent(value)),
+        _ => None,
+    }
+}
+
+fn parse_grid_fit_content_text(value: &str) -> Option<GridTrackFitContentSize> {
+    match parse_grid_track_text(value)? {
+        GridTrackSize::LogicalPx(value) => Some(GridTrackFitContentSize::LogicalPx(value)),
+        GridTrackSize::Percent(value) => Some(GridTrackFitContentSize::Percent(value)),
+        _ => None,
+    }
+}
+
+fn parse_grid_minmax_value(value: &Value) -> Option<(GridTrackMinSize, GridTrackMaxSize)> {
+    match value {
+        Value::Object(map) => parse_grid_minmax_map(map),
+        Value::Array(items) if items.len() == 2 => Some((
+            parse_grid_min_track_value(items.first()?)?,
+            parse_grid_max_track_value(items.get(1)?)?,
+        )),
+        _ => None,
+    }
+}
+
+fn parse_grid_minmax_map(
+    map: &serde_json::Map<String, Value>,
+) -> Option<(GridTrackMinSize, GridTrackMaxSize)> {
+    Some((
+        parse_grid_min_track_value(map.get("min")?)?,
+        parse_grid_max_track_value(map.get("max")?)?,
+    ))
+}
+
+fn parse_grid_min_track_value(value: &Value) -> Option<GridTrackMinSize> {
+    match parse_grid_track_value(value)? {
+        GridTrackSize::LogicalPx(value) => Some(GridTrackMinSize::LogicalPx(value)),
+        GridTrackSize::Percent(value) => Some(GridTrackMinSize::Percent(value)),
+        GridTrackSize::Auto => Some(GridTrackMinSize::Auto),
+        _ => None,
+    }
+}
+
+fn parse_grid_max_track_value(value: &Value) -> Option<GridTrackMaxSize> {
+    match parse_grid_track_value(value)? {
+        GridTrackSize::LogicalPx(value) => Some(GridTrackMaxSize::LogicalPx(value)),
+        GridTrackSize::Percent(value) => Some(GridTrackMaxSize::Percent(value)),
+        GridTrackSize::Fraction(value) => Some(GridTrackMaxSize::Fraction(value)),
+        GridTrackSize::Auto => Some(GridTrackMaxSize::Auto),
+        _ => None,
+    }
+}
+
+fn parse_grid_min_track_text(value: &str) -> Option<GridTrackMinSize> {
+    match parse_grid_track_text(value)? {
+        GridTrackSize::LogicalPx(value) => Some(GridTrackMinSize::LogicalPx(value)),
+        GridTrackSize::Percent(value) => Some(GridTrackMinSize::Percent(value)),
+        GridTrackSize::Auto => Some(GridTrackMinSize::Auto),
+        _ => None,
+    }
+}
+
+fn parse_grid_max_track_text(value: &str) -> Option<GridTrackMaxSize> {
+    match parse_grid_track_text(value)? {
+        GridTrackSize::LogicalPx(value) => Some(GridTrackMaxSize::LogicalPx(value)),
+        GridTrackSize::Percent(value) => Some(GridTrackMaxSize::Percent(value)),
+        GridTrackSize::Fraction(value) => Some(GridTrackMaxSize::Fraction(value)),
+        GridTrackSize::Auto => Some(GridTrackMaxSize::Auto),
+        _ => None,
+    }
+}
+
+fn strip_grid_function<'a>(value: &'a str, name: &str) -> Option<&'a str> {
+    let prefix = format!("{name}(");
+    if value.starts_with(&prefix) && value.ends_with(')') {
+        Some(&value[prefix.len()..value.len() - 1])
+    } else {
+        None
+    }
+}
+
+fn grid_number(value: &Value, positive: bool) -> Option<f32> {
+    let number = match value {
+        Value::Number(_) => value.as_f64()? as f32,
+        Value::String(text) => text.trim().parse::<f32>().ok()?,
+        _ => return None,
+    };
+    if !number.is_finite() || number < 0.0 || (positive && number <= 0.0) {
+        return None;
+    }
+    Some(number)
+}
+
+fn parse_track_float(value: &str, positive: bool) -> Option<f32> {
+    let number = value.trim().parse::<f32>().ok()?;
+    if !number.is_finite() || number < 0.0 || (positive && number <= 0.0) {
+        return None;
+    }
+    Some(number)
+}
+
 fn parse_font_family(value: &str) -> Option<FontFamily> {
     let value = value.trim();
     if value.is_empty() {
@@ -2196,6 +2409,8 @@ mod tests {
             "width": 240,
             "display": "flex",
             "flex_direction": "row",
+            "grid_template_columns": [44, {"fr": 1}],
+            "grid-template-rows": "18px auto",
             "grid-auto-flow": "column dense",
             "padding": 12,
             "background": "surface_alt",
@@ -2229,6 +2444,17 @@ mod tests {
         assert_eq!(style.layout.width, Some(240.0));
         assert_eq!(style.layout.display, Some(DisplayStyle::Flex));
         assert_eq!(style.layout.flex_direction, Some(FlexDirectionStyle::Row));
+        assert_eq!(
+            style.layout.grid_template_columns,
+            Some(vec![
+                GridTrackSize::LogicalPx(44.0),
+                GridTrackSize::Fraction(1.0)
+            ])
+        );
+        assert_eq!(
+            style.layout.grid_template_rows,
+            Some(vec![GridTrackSize::LogicalPx(18.0), GridTrackSize::Auto])
+        );
         assert_eq!(
             style.layout.grid_auto_flow,
             Some(GridAutoFlowStyle::ColumnDense)

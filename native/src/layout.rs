@@ -668,8 +668,9 @@ fn style_for(
             }
         }
 
-        // ── scatter / table: grow to fill remaining space ─────────────────
-        WidgetKind::Scatter3D
+        // ── plot / table: grow to fill remaining space ────────────────────
+        WidgetKind::LinePlot
+        | WidgetKind::Scatter3D
         | WidgetKind::DataFrameTable
         | WidgetKind::Tabs
         | WidgetKind::Pages => Style {
@@ -719,7 +720,27 @@ fn apply_grid_layout_default_tracks(
     sf: f32,
     parent_size: Option<(f32, f32)>,
 ) {
-    if node.kind != WidgetKind::GridLayout || node.style.layout.grid_template_columns.is_some() {
+    if node.kind != WidgetKind::GridLayout {
+        return;
+    }
+    if node.style.layout.grid_template_rows.is_none() {
+        if let Some(tracks) = &node.props.grid_template_rows {
+            style.grid_template_rows = tracks
+                .iter()
+                .cloned()
+                .map(|track| grid_track_size(track, sf))
+                .collect();
+        }
+    }
+    if node.style.layout.grid_template_columns.is_some() {
+        return;
+    }
+    if let Some(tracks) = &node.props.grid_template_columns {
+        style.grid_template_columns = tracks
+            .iter()
+            .cloned()
+            .map(|track| grid_track_size(track, sf))
+            .collect();
         return;
     }
     let min_fn = node
@@ -900,6 +921,7 @@ fn apply_intrinsic_leaf_width(
     if !matches!(
         parent_kind,
         Some(WidgetKind::HLayout | WidgetKind::StatusBar | WidgetKind::Tabs)
+            | Some(WidgetKind::GridLayout)
             | Some(WidgetKind::MenuBar)
     ) {
         return;
@@ -2700,6 +2722,43 @@ mod tests {
     }
 
     #[test]
+    fn grid_auto_track_uses_badge_intrinsic_width() {
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "grid",
+                WidgetKind::GridLayout,
+                NodeProps {
+                    grid_template_columns: Some(vec![GridTrackSize::Auto]),
+                    ..NodeProps::default()
+                },
+                vec![node(
+                    "tag",
+                    WidgetKind::Tag,
+                    NodeProps {
+                        text: Some("busy".to_string()),
+                        level: Some("warning".to_string()),
+                        ..NodeProps::default()
+                    },
+                    vec![],
+                )],
+            )],
+        );
+
+        let layout = compute_layout(&root, 320.0, 90.0, 1.0, &Theme::dark(), None);
+        let tag = layout.rects.get("tag").unwrap();
+
+        assert!(
+            tag.w >= 36.0,
+            "tag width should be intrinsic, got {}",
+            tag.w
+        );
+        assert_eq!(tag.h, 22.0);
+    }
+
+    #[test]
     fn hovered_tooltip_gets_overlay_layout_and_children() {
         let root = node(
             "window",
@@ -3978,6 +4037,41 @@ mod tests {
         );
         assert!(first.w <= grid.w);
         assert!(second.w <= grid.w);
+    }
+
+    #[test]
+    fn grid_layout_props_template_columns_keep_compact_tracks() {
+        let props = NodeProps {
+            grid_template_columns: Some(vec![
+                GridTrackSize::LogicalPx(44.0),
+                GridTrackSize::Fraction(1.0),
+            ]),
+            ..NodeProps::default()
+        };
+        let mut grid = node(
+            "grid",
+            WidgetKind::GridLayout,
+            props,
+            vec![
+                node("key", WidgetKind::Label, NodeProps::default(), vec![]),
+                node("value", WidgetKind::Label, NodeProps::default(), vec![]),
+            ],
+        );
+        grid.style.layout.gap = Some(6.0);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![grid],
+        );
+
+        let layout = compute_layout(&root, 240.0, 120.0, 1.0, &Theme::dark(), None);
+        let key = layout.rects.get("key").unwrap();
+        let value = layout.rects.get("value").unwrap();
+
+        assert_eq!(key.w, 44.0);
+        assert_eq!(value.x, key.x + 50.0);
+        assert!(value.w > key.w);
     }
 
     #[test]

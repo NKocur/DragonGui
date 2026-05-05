@@ -11,12 +11,29 @@ import time
 import traceback
 from typing import Any
 
+from .diagnostics import _get_collector as _diagnostics_collector
+from .diagnostics import record_task_failure as _record_task_failure
+
 
 _MAX_PYTHON_TASKS_PER_DRAIN = 100
 _TOAST_LEVELS = {"info", "success", "warning", "error"}
 _TOAST_POSITIONS = {"top-right", "top-left", "bottom-right", "bottom-left"}
 _active_app_handle: AppHandle | None = None
 _active_app_lock = RLock()
+
+
+class _ScheduledPythonTask:
+    __slots__ = ("fn", "origin", "diagnostics")
+
+    def __init__(
+        self,
+        fn: Callable[[], None],
+        origin: Any | None,
+        diagnostics: bool,
+    ) -> None:
+        self.fn = fn
+        self.origin = origin
+        self.diagnostics = diagnostics
 
 
 class ToastHandle:
@@ -125,6 +142,54 @@ class LiveWidgetHandle:
             coalesce=coalesce,
             fit=fit,
         )
+
+    def enqueue_set_line_plot_data_packed(
+        self,
+        series: str,
+        xy: bytes,
+        *,
+        label: str | None = None,
+        color: object | None = None,
+        line_width: float | None = None,
+        show_grid: bool | None = None,
+        auto_fit: bool | None = None,
+        max_points: int | None = None,
+        fit: bool = True,
+        coalesce: bool = True,
+    ) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_line_plot_data_packed(
+            self.id,
+            series,
+            xy,
+            label=label,
+            color=color,
+            line_width=line_width,
+            show_grid=show_grid,
+            auto_fit=auto_fit,
+            max_points=max_points,
+            fit=fit,
+            coalesce=coalesce,
+        )
+
+    def enqueue_append_line_plot_points_packed(
+        self,
+        series: str,
+        xy: bytes,
+        *,
+        max_points: int | None = None,
+    ) -> None:
+        self.ensure_open()
+        self.app.enqueue_append_line_plot_points_packed(
+            self.id,
+            series,
+            xy,
+            max_points=max_points,
+        )
+
+    def enqueue_clear_line_plot_series(self, series: str | None = None) -> None:
+        self.ensure_open()
+        self.app.enqueue_clear_line_plot_series(self.id, series)
 
     def enqueue_reset_scatter_camera(self) -> None:
         self.ensure_open()
@@ -474,7 +539,7 @@ class AppHandle:
 
     def __init__(self) -> None:
         self._lock = RLock()
-        self._tasks: deque[Callable[[], None]] = deque()
+        self._tasks: deque[_ScheduledPythonTask] = deque()
         self._pending_native: deque[tuple[str, tuple[object, ...]]] = deque()
         self._click_callbacks: dict[str, Callable[[], None]] = {}
         self._change_callbacks: dict[str, Callable[[object], None]] = {}
@@ -503,19 +568,31 @@ class AppHandle:
                 self._click_callbacks.pop(widget_id, None)
                 self._change_callbacks.pop(widget_id, None)
 
-    def call_soon_threadsafe(self, fn: Callable[[], None]) -> None:
+    def call_soon_threadsafe(
+        self,
+        fn: Callable[[], None],
+        *,
+        _diagnostics: bool = True,
+    ) -> None:
         if not callable(fn):
             raise TypeError("call_soon_threadsafe expects a callable")
+        collector = None
         try:
-            from .diagnostics import _get_collector
-            _get_collector().record_enqueue()
+            if _diagnostics:
+                collector = _diagnostics_collector()
         except Exception:
-            pass
+            collector = None
+        scheduled = _ScheduledPythonTask(fn, None, _diagnostics)
         with self._lock:
             if self._closed:
                 raise RuntimeError("DragonGUI app handle is closed")
-            self._tasks.append(fn)
+            self._tasks.append(scheduled)
             sender = self._native_sender
+        if collector is not None:
+            try:
+                scheduled.origin = collector.record_enqueue()
+            except Exception:
+                pass
         if sender is not None:
             try:
                 sender.enqueue_drain_python_tasks()
@@ -566,6 +643,55 @@ class AppHandle:
             bool(coalesce),
             bool(fit),
         )
+
+    def enqueue_set_line_plot_data_packed(
+        self,
+        widget_id: str,
+        series: str,
+        xy: bytes,
+        *,
+        label: str | None = None,
+        color: object | None = None,
+        line_width: float | None = None,
+        show_grid: bool | None = None,
+        auto_fit: bool | None = None,
+        max_points: int | None = None,
+        fit: bool = True,
+        coalesce: bool = True,
+    ) -> None:
+        self._send_or_queue_native(
+            "enqueue_set_line_plot_data_packed",
+            widget_id,
+            series,
+            xy,
+            label,
+            _line_plot_color_arg(color),
+            None if line_width is None else float(line_width),
+            show_grid,
+            auto_fit,
+            max_points,
+            bool(fit),
+            bool(coalesce),
+        )
+
+    def enqueue_append_line_plot_points_packed(
+        self,
+        widget_id: str,
+        series: str,
+        xy: bytes,
+        *,
+        max_points: int | None = None,
+    ) -> None:
+        self._send_or_queue_native(
+            "enqueue_append_line_plot_points_packed",
+            widget_id,
+            series,
+            xy,
+            max_points,
+        )
+
+    def enqueue_clear_line_plot_series(self, widget_id: str, series: str | None = None) -> None:
+        self._send_or_queue_native("enqueue_clear_line_plot_series", widget_id, series)
 
     def enqueue_reset_scatter_camera(self, widget_id: str) -> None:
         self._send_or_queue_native("enqueue_reset_scatter_camera", widget_id)
@@ -1153,6 +1279,47 @@ class AppHandle:
                         nid, bool(v["orientation_axes_visible"])
                     )
                 return
+            if patch.prop == "line_plot" and isinstance(patch.value, Mapping):
+                v = patch.value
+                line_width = v.get("line_width")
+                show_grid = v.get("show_grid")
+                auto_fit = v.get("auto_fit")
+                max_points = v.get("max_points")
+                for prop_name in (
+                    "x_label",
+                    "y_label",
+                    "show_grid",
+                    "show_axes",
+                    "show_ticks",
+                    "show_toolbar",
+                    "tick_count",
+                    "auto_fit",
+                    "line_width",
+                ):
+                    if prop_name in v:
+                        self.enqueue_set_prop(patch.node_id, prop_name, v[prop_name])
+                series_items = v.get("series", [])
+                if isinstance(series_items, list):
+                    for item in series_items:
+                        if not isinstance(item, Mapping):
+                            continue
+                        data_b64 = item.get("data_b64")
+                        if not isinstance(data_b64, str):
+                            continue
+                        label = str(item.get("label") or "series")
+                        self.enqueue_set_line_plot_data_packed(
+                            patch.node_id,
+                            label,
+                            base64.b64decode(data_b64) if data_b64 else b"",
+                            label=label,
+                            color=item.get("color"),
+                            line_width=float(line_width) if line_width is not None else None,
+                            show_grid=bool(show_grid) if show_grid is not None else None,
+                            auto_fit=bool(auto_fit) if auto_fit is not None else None,
+                            max_points=int(max_points) if max_points is not None else None,
+                            fit=True,
+                        )
+                return
             self.enqueue_set_prop(patch.node_id, patch.prop, patch.value)
             return
         if patch.kind == Patch.SET_STYLE:
@@ -1226,16 +1393,17 @@ class AppHandle:
             with self._lock:
                 if not self._tasks:
                     return
-                task = self._tasks.popleft()
+                scheduled = self._tasks.popleft()
+            task = scheduled.fn
             try:
                 task()
             except Exception as _exc:  # pragma: no cover - diagnostic path
                 traceback.print_exc()
-                try:
-                    from .diagnostics import record_task_failure
-                    record_task_failure(task, _exc)
-                except Exception:
-                    pass
+                if scheduled.diagnostics:
+                    try:
+                        _record_task_failure(task, _exc, scheduled.origin)
+                    except Exception:
+                        pass
             processed += 1
 
         with self._lock:
@@ -1417,6 +1585,16 @@ def _scatter_colormap(value: object) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError("scatter colormap must be a non-empty string")
     return value.strip().lower()
+
+
+def _line_plot_color_arg(value: object | None) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)) and len(value) in {3, 4}:
+        return ",".join(str(float(channel)) for channel in value)
+    return str(value)
 
 
 def _byte_view(data: object, context: str) -> memoryview:

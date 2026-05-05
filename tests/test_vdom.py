@@ -158,6 +158,21 @@ def test_pseudo_state_style_mappings_compare_structurally() -> None:
     ) == []
 
 
+def test_small_nested_sequences_compare_structurally() -> None:
+    columns = [10, {"fr": 1}, "auto"]
+
+    assert shallow_value_equal(columns, list(columns))
+    assert diff(
+        VNode(type="grid_layout", id="grid", key="grid", props={"template_columns": columns}),
+        VNode(
+            type="grid_layout",
+            id="grid",
+            key="grid",
+            props={"template_columns": list(columns)},
+        ),
+    ) == []
+
+
 def test_resource_refs_compare_by_identity_and_version_only() -> None:
     class ExplosiveEq:
         def __eq__(self, other: object) -> bool:

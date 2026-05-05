@@ -1432,6 +1432,682 @@ fn apply_opacity(mut color: [f32; 4], opacity: Option<f32>) -> [f32; 4] {
     color
 }
 
+const LINE_PLOT_MAX_SEGMENTS_PER_SERIES: usize = 4096;
+const LINE_PLOT_AXIS_LABEL_FONT_SIZE_LP: f32 = 14.0;
+const LINE_PLOT_AXIS_LABEL_GUTTER_LP: f32 = 18.0;
+const LINE_PLOT_PALETTE: [[f32; 4]; 6] = [
+    [0.33, 0.66, 1.00, 1.0],
+    [0.30, 0.84, 0.52, 1.0],
+    [1.00, 0.65, 0.22, 1.0],
+    [0.94, 0.39, 0.48, 1.0],
+    [0.72, 0.56, 1.00, 1.0],
+    [0.26, 0.80, 0.82, 1.0],
+];
+
+#[derive(Debug, Clone, Copy)]
+struct LinePlotBounds {
+    x_min: f32,
+    x_max: f32,
+    y_min: f32,
+    y_max: f32,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct LinePlotTextLabel {
+    pub text: String,
+    pub screen_x: f32,
+    pub screen_y: f32,
+    pub is_title: bool,
+    pub anchor: &'static str,
+    pub color: Option<[f32; 3]>,
+    pub font_size: Option<f32>,
+}
+
+fn emit_line_plot(
+    out: &mut Vec<RectInstance>,
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    rect: [f32; 4],
+    styled_bg: Option<[f32; 4]>,
+    styled_border: Option<[f32; 4]>,
+    radii: [f32; 4],
+    border_w: f32,
+) {
+    let [_, _, w, h] = rect;
+    emit_bordered_rect_radii(
+        out,
+        rect,
+        styled_border.unwrap_or(theme.border),
+        styled_bg.unwrap_or(theme.surface),
+        radii,
+        border_w,
+    );
+    if w <= 2.0 || h <= 2.0 {
+        return;
+    }
+
+    let plot = line_plot_plot_rect(node, sf, rect);
+    let plot_fill = mix(styled_bg.unwrap_or(theme.surface), theme.background, 0.18);
+    out.push(inst_radii(plot, plot_fill, [2.0 * sf; 4]));
+
+    let bounds = match line_plot_bounds(node) {
+        Some(bounds) => expand_line_plot_bounds(bounds),
+        None => {
+            emit_line_plot_grid(
+                out,
+                plot,
+                theme,
+                sf,
+                node.props.line_plot_show_grid,
+                node.props.line_plot_show_axes,
+                node.props.line_plot_show_ticks,
+                None,
+                &[],
+                &[],
+            );
+            emit_line_plot_toolbar(out, node, theme, sf, rect);
+            return;
+        }
+    };
+
+    let tick_count = node.props.line_plot_tick_count.clamp(2, 9);
+    let x_ticks = line_plot_ticks(bounds.x_min, bounds.x_max, tick_count);
+    let y_ticks = line_plot_ticks(bounds.y_min, bounds.y_max, tick_count);
+    emit_line_plot_grid(
+        out,
+        plot,
+        theme,
+        sf,
+        node.props.line_plot_show_grid,
+        node.props.line_plot_show_axes,
+        node.props.line_plot_show_ticks,
+        Some(bounds),
+        &x_ticks,
+        &y_ticks,
+    );
+
+    let line_width = (node.props.line_plot_line_width.max(0.5) * sf)
+        .max(1.0)
+        .min(plot[3].max(1.0) * 0.10);
+    for (series_index, series) in node.props.line_plot_series.iter().enumerate() {
+        if series.points.len() < 2 {
+            continue;
+        }
+        let color = series
+            .color
+            .as_ref()
+            .map(|color| color.resolve(theme))
+            .unwrap_or(LINE_PLOT_PALETTE[series_index % LINE_PLOT_PALETTE.len()]);
+        emit_line_plot_series(out, &series.points, plot, bounds, line_width, color);
+    }
+    emit_line_plot_toolbar(out, node, theme, sf, rect);
+}
+
+fn line_plot_bounds(node: &WidgetNode) -> Option<LinePlotBounds> {
+    let mut bounds = LinePlotBounds {
+        x_min: f32::INFINITY,
+        x_max: f32::NEG_INFINITY,
+        y_min: f32::INFINITY,
+        y_max: f32::NEG_INFINITY,
+    };
+    let mut has_point = false;
+    for series in &node.props.line_plot_series {
+        for point in &series.points {
+            let [px, py] = *point;
+            if !px.is_finite() || !py.is_finite() {
+                continue;
+            }
+            bounds.x_min = bounds.x_min.min(px);
+            bounds.x_max = bounds.x_max.max(px);
+            bounds.y_min = bounds.y_min.min(py);
+            bounds.y_max = bounds.y_max.max(py);
+            has_point = true;
+        }
+    }
+    has_point.then_some(bounds)
+}
+
+fn expand_line_plot_bounds(mut bounds: LinePlotBounds) -> LinePlotBounds {
+    if (bounds.x_max - bounds.x_min).abs() <= f32::EPSILON {
+        let pad = bounds.x_min.abs().max(1.0) * 0.5;
+        bounds.x_min -= pad;
+        bounds.x_max += pad;
+    }
+    if (bounds.y_max - bounds.y_min).abs() <= f32::EPSILON {
+        let pad = bounds.y_min.abs().max(1.0) * 0.5;
+        bounds.y_min -= pad;
+        bounds.y_max += pad;
+    } else {
+        let pad = (bounds.y_max - bounds.y_min).abs() * 0.04;
+        bounds.y_min -= pad;
+        bounds.y_max += pad;
+    }
+    bounds
+}
+
+fn line_plot_outer_padding(node: &WidgetNode, sf: f32, rect: [f32; 4]) -> f32 {
+    let pad_lp = uniform_layout_padding(&node.style.layout).unwrap_or(12.0);
+    (pad_lp.max(4.0) * sf).min(rect[2].min(rect[3]) * 0.22)
+}
+
+fn line_plot_toolbar_enabled(_node: &WidgetNode, _rect: [f32; 4]) -> bool {
+    false
+}
+
+fn line_plot_ticks_enabled(node: &WidgetNode, rect: [f32; 4]) -> bool {
+    node.props.line_plot_show_ticks && rect[2] >= 240.0 && rect[3] >= 170.0
+}
+
+fn line_plot_axis_labels_enabled(node: &WidgetNode, rect: [f32; 4]) -> bool {
+    (node.props.line_plot_show_axes || node.props.line_plot_show_ticks)
+        && rect[2] >= 260.0
+        && rect[3] >= 220.0
+}
+
+fn line_plot_y_axis_label(node: &WidgetNode) -> Option<&str> {
+    node.props.line_plot_y_label.as_deref().or_else(|| {
+        node.props
+            .line_plot_series
+            .iter()
+            .find_map(|series| series.label.as_deref())
+    })
+}
+
+fn line_plot_plot_rect(node: &WidgetNode, sf: f32, rect: [f32; 4]) -> [f32; 4] {
+    let [x, y, w, h] = rect;
+    let pad = line_plot_outer_padding(node, sf, rect);
+    let show_ticks = line_plot_ticks_enabled(node, rect);
+    let show_axis_labels = line_plot_axis_labels_enabled(node, rect);
+    let show_toolbar = line_plot_toolbar_enabled(node, rect);
+    let left_extra = if show_ticks { 30.0 * sf } else { 0.0 };
+    let bottom_extra = if show_ticks { 24.0 * sf } else { 0.0 };
+    let left_label_extra = if show_axis_labels {
+        LINE_PLOT_AXIS_LABEL_GUTTER_LP * sf
+    } else {
+        0.0
+    };
+    let bottom_label_extra = if show_axis_labels { 18.0 * sf } else { 0.0 };
+    let top_extra = if show_toolbar { 30.0 * sf } else { 0.0 };
+    let right_extra = if show_ticks { 8.0 * sf } else { 0.0 };
+    let left = (pad + left_extra + left_label_extra).min(w * 0.42);
+    let right = (pad + right_extra).min(w * 0.24);
+    let top = (pad + top_extra).min(h * 0.36);
+    let bottom = (pad + bottom_extra + bottom_label_extra).min(h * 0.38);
+    [
+        x + left,
+        y + top,
+        (w - left - right).max(1.0),
+        (h - top - bottom).max(1.0),
+    ]
+}
+
+fn line_plot_ticks(min: f32, max: f32, target_count: usize) -> Vec<f32> {
+    if !min.is_finite() || !max.is_finite() || max <= min {
+        return Vec::new();
+    }
+    let target = target_count.clamp(2, 9) as f32;
+    let range = max - min;
+    let step = nice_line_plot_step(range / (target - 1.0));
+    if !step.is_finite() || step <= 0.0 {
+        return Vec::new();
+    }
+    let start = (min / step).ceil() * step;
+    let mut value = start;
+    let mut ticks = Vec::new();
+    while value <= max + step * 0.5 && ticks.len() < 12 {
+        if value >= min - step * 0.5 {
+            ticks.push(if value.abs() < step * 1.0e-4 {
+                0.0
+            } else {
+                value
+            });
+        }
+        value += step;
+    }
+    ticks
+}
+
+fn nice_line_plot_step(raw_step: f32) -> f32 {
+    if !raw_step.is_finite() || raw_step <= 0.0 {
+        return 1.0;
+    }
+    let exponent = raw_step.log10().floor();
+    let base = 10.0_f32.powf(exponent);
+    let fraction = raw_step / base;
+    let nice_fraction = if fraction <= 1.0 {
+        1.0
+    } else if fraction <= 2.0 {
+        2.0
+    } else if fraction <= 5.0 {
+        5.0
+    } else {
+        10.0
+    };
+    nice_fraction * base
+}
+
+fn line_plot_tick_decimals(step: f32) -> usize {
+    if !step.is_finite() || step <= 0.0 || step >= 1.0 {
+        return 0;
+    }
+    (-step.log10().floor() as usize + 1).min(5)
+}
+
+fn format_line_plot_tick(value: f32, step: f32) -> String {
+    if !value.is_finite() {
+        return String::new();
+    }
+    let abs = value.abs();
+    if abs >= 10_000.0 || (abs > 0.0 && abs < 0.001) {
+        return format!("{value:.1e}");
+    }
+    let decimals = line_plot_tick_decimals(step);
+    let mut text = format!("{value:.decimals$}");
+    if text.contains('.') {
+        while text.ends_with('0') {
+            text.pop();
+        }
+        if text.ends_with('.') {
+            text.pop();
+        }
+    }
+    if text == "-0" {
+        "0".to_string()
+    } else {
+        text
+    }
+}
+
+fn emit_line_plot_grid(
+    out: &mut Vec<RectInstance>,
+    plot: [f32; 4],
+    theme: &Theme,
+    sf: f32,
+    show_grid: bool,
+    show_axes: bool,
+    show_ticks: bool,
+    bounds: Option<LinePlotBounds>,
+    x_ticks: &[f32],
+    y_ticks: &[f32],
+) {
+    let stroke = (1.0 * sf).max(1.0);
+    let mut axis_color = mix(theme.border, theme.text, 0.18);
+    axis_color[3] = axis_color[3].min(0.72);
+    if show_grid {
+        let mut grid_color = mix(theme.border, theme.muted_text, 0.18);
+        grid_color[3] = grid_color[3].min(0.34);
+        if let Some(bounds) = bounds {
+            for tick in x_ticks {
+                let t = ((*tick - bounds.x_min) / (bounds.x_max - bounds.x_min).max(f32::EPSILON))
+                    .clamp(0.0, 1.0);
+                if t <= 0.001 || t >= 0.999 {
+                    continue;
+                }
+                let gx = plot[0] + plot[2] * t;
+                out.push(inst(
+                    [gx - stroke * 0.5, plot[1], stroke, plot[3]],
+                    grid_color,
+                    0.0,
+                ));
+            }
+            for tick in y_ticks {
+                let t = ((*tick - bounds.y_min) / (bounds.y_max - bounds.y_min).max(f32::EPSILON))
+                    .clamp(0.0, 1.0);
+                if t <= 0.001 || t >= 0.999 {
+                    continue;
+                }
+                let gy = plot[1] + plot[3] * (1.0 - t);
+                out.push(inst(
+                    [plot[0], gy - stroke * 0.5, plot[2], stroke],
+                    grid_color,
+                    0.0,
+                ));
+            }
+        } else {
+            for i in 1..4 {
+                let t = i as f32 / 4.0;
+                let gx = plot[0] + plot[2] * t;
+                let gy = plot[1] + plot[3] * t;
+                out.push(inst(
+                    [gx - stroke * 0.5, plot[1], stroke, plot[3]],
+                    grid_color,
+                    0.0,
+                ));
+                out.push(inst(
+                    [plot[0], gy - stroke * 0.5, plot[2], stroke],
+                    grid_color,
+                    0.0,
+                ));
+            }
+        }
+    }
+    if let Some(bounds) = bounds {
+        let mut zero_color = mix(theme.border, theme.text, 0.30);
+        zero_color[3] = zero_color[3].min(0.46);
+        if bounds.y_min < 0.0 && bounds.y_max > 0.0 {
+            let t = ((0.0 - bounds.y_min) / (bounds.y_max - bounds.y_min).max(f32::EPSILON))
+                .clamp(0.0, 1.0);
+            let gy = plot[1] + plot[3] * (1.0 - t);
+            out.push(inst(
+                [plot[0], gy - stroke * 0.5, plot[2], stroke],
+                zero_color,
+                0.0,
+            ));
+        }
+        if bounds.x_min < 0.0 && bounds.x_max > 0.0 {
+            let t = ((0.0 - bounds.x_min) / (bounds.x_max - bounds.x_min).max(f32::EPSILON))
+                .clamp(0.0, 1.0);
+            let gx = plot[0] + plot[2] * t;
+            out.push(inst(
+                [gx - stroke * 0.5, plot[1], stroke, plot[3]],
+                zero_color,
+                0.0,
+            ));
+        }
+    }
+    if show_axes || show_ticks {
+        out.push(inst(
+            [plot[0], plot[1] + plot[3] - stroke, plot[2], stroke],
+            axis_color,
+            0.0,
+        ));
+        out.push(inst([plot[0], plot[1], stroke, plot[3]], axis_color, 0.0));
+    }
+    if show_ticks {
+        let tick_len = 4.0 * sf;
+        if let Some(bounds) = bounds {
+            for tick in x_ticks {
+                let t = ((*tick - bounds.x_min) / (bounds.x_max - bounds.x_min).max(f32::EPSILON))
+                    .clamp(0.0, 1.0);
+                let gx = plot[0] + plot[2] * t;
+                out.push(inst(
+                    [gx - stroke * 0.5, plot[1] + plot[3], stroke, tick_len],
+                    axis_color,
+                    0.0,
+                ));
+            }
+            for tick in y_ticks {
+                let t = ((*tick - bounds.y_min) / (bounds.y_max - bounds.y_min).max(f32::EPSILON))
+                    .clamp(0.0, 1.0);
+                let gy = plot[1] + plot[3] * (1.0 - t);
+                out.push(inst(
+                    [plot[0] - tick_len, gy - stroke * 0.5, tick_len, stroke],
+                    axis_color,
+                    0.0,
+                ));
+            }
+        }
+    }
+}
+
+fn line_plot_toolbar_buttons(
+    node: &WidgetNode,
+    sf: f32,
+    rect: [f32; 4],
+) -> Vec<(&'static str, [f32; 4], bool)> {
+    if !line_plot_toolbar_enabled(node, rect) {
+        return Vec::new();
+    }
+    let pad = line_plot_outer_padding(node, sf, rect);
+    let button_h = 20.0 * sf;
+    let gap = 5.0 * sf;
+    let widths = [34.0 * sf, 42.0 * sf, 42.0 * sf];
+    let total = widths.iter().sum::<f32>() + gap * 2.0;
+    let y = rect[1] + pad;
+    let mut x = rect[0] + rect[2] - pad - total;
+    let mut buttons = Vec::with_capacity(3);
+    for (index, label) in ["Fit", "Grid", "Axes"].iter().enumerate() {
+        let active = match *label {
+            "Grid" => node.props.line_plot_show_grid,
+            "Axes" => node.props.line_plot_show_axes || node.props.line_plot_show_ticks,
+            _ => true,
+        };
+        buttons.push((*label, [x, y, widths[index], button_h], active));
+        x += widths[index] + gap;
+    }
+    buttons
+}
+
+pub(crate) fn line_plot_toolbar_hit(
+    node: &WidgetNode,
+    sf: f32,
+    rect: [f32; 4],
+    pos: [f32; 2],
+) -> Option<&'static str> {
+    for (label, button, _) in line_plot_toolbar_buttons(node, sf, rect) {
+        if pos[0] >= button[0]
+            && pos[0] < button[0] + button[2]
+            && pos[1] >= button[1]
+            && pos[1] < button[1] + button[3]
+        {
+            return Some(label);
+        }
+    }
+    None
+}
+
+fn emit_line_plot_toolbar(
+    out: &mut Vec<RectInstance>,
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    rect: [f32; 4],
+) {
+    for (_, button, active) in line_plot_toolbar_buttons(node, sf, rect) {
+        let mut fill = if active {
+            mix(theme.surface_alt, theme.accent, 0.18)
+        } else {
+            mix(theme.surface_alt, theme.surface, 0.45)
+        };
+        fill[3] = fill[3].min(0.88);
+        let mut border = if active {
+            mix(theme.border, theme.accent, 0.50)
+        } else {
+            mix(theme.border, theme.muted_text, 0.20)
+        };
+        border[3] = border[3].min(0.68);
+        emit_bordered_rect_radii(out, button, border, fill, [5.0 * sf; 4], 1.0 * sf);
+    }
+}
+
+pub(crate) fn line_plot_text_labels(
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    rect: [f32; 4],
+) -> Vec<LinePlotTextLabel> {
+    let mut labels = Vec::new();
+    let tick_color = mix(theme.muted_text, theme.text, 0.18);
+    let tick_color = Some([tick_color[0], tick_color[1], tick_color[2]]);
+
+    for (text, button, _) in line_plot_toolbar_buttons(node, sf, rect) {
+        labels.push(LinePlotTextLabel {
+            text: text.to_string(),
+            screen_x: button[0] + button[2] * 0.5,
+            screen_y: button[1] + button[3] * 0.52,
+            is_title: false,
+            anchor: "center",
+            color: tick_color,
+            font_size: Some(10.0),
+        });
+    }
+
+    let plot = line_plot_plot_rect(node, sf, rect);
+    if line_plot_axis_labels_enabled(node, rect) {
+        let axis_color = mix(theme.muted_text, theme.text, 0.72);
+        let axis_color = Some([axis_color[0], axis_color[1], axis_color[2]]);
+        let pad = line_plot_outer_padding(node, sf, rect);
+        if let Some(label) = node.props.line_plot_x_label.as_deref() {
+            labels.push(LinePlotTextLabel {
+                text: label.to_string(),
+                screen_x: plot[0] + plot[2] * 0.5,
+                screen_y: rect[1] + rect[3] - pad,
+                is_title: true,
+                anchor: "plot-x-label",
+                color: axis_color,
+                font_size: Some(LINE_PLOT_AXIS_LABEL_FONT_SIZE_LP),
+            });
+        }
+        if let Some(label) = line_plot_y_axis_label(node) {
+            labels.push(LinePlotTextLabel {
+                text: label.to_string(),
+                screen_x: rect[0] + pad + LINE_PLOT_AXIS_LABEL_GUTTER_LP * sf * 0.5,
+                screen_y: plot[1] + plot[3] * 0.5,
+                is_title: true,
+                anchor: "plot-y-label",
+                color: axis_color,
+                font_size: Some(LINE_PLOT_AXIS_LABEL_FONT_SIZE_LP),
+            });
+        }
+    }
+
+    let Some(bounds) = line_plot_bounds(node).map(expand_line_plot_bounds) else {
+        return labels;
+    };
+    let tick_count = node.props.line_plot_tick_count.clamp(2, 9);
+    let x_ticks = line_plot_ticks(bounds.x_min, bounds.x_max, tick_count);
+    let y_ticks = line_plot_ticks(bounds.y_min, bounds.y_max, tick_count);
+    let x_step = x_ticks
+        .windows(2)
+        .next()
+        .map(|pair| (pair[1] - pair[0]).abs())
+        .unwrap_or_else(|| (bounds.x_max - bounds.x_min).abs());
+    let y_step = y_ticks
+        .windows(2)
+        .next()
+        .map(|pair| (pair[1] - pair[0]).abs())
+        .unwrap_or_else(|| (bounds.y_max - bounds.y_min).abs());
+
+    if line_plot_ticks_enabled(node, rect) {
+        for tick in x_ticks {
+            let t = ((tick - bounds.x_min) / (bounds.x_max - bounds.x_min).max(f32::EPSILON))
+                .clamp(0.0, 1.0);
+            labels.push(LinePlotTextLabel {
+                text: format_line_plot_tick(tick, x_step),
+                screen_x: plot[0] + plot[2] * t,
+                screen_y: plot[1] + plot[3] + 7.0 * sf,
+                is_title: false,
+                anchor: "plot-x-tick",
+                color: tick_color,
+                font_size: Some(10.0),
+            });
+        }
+        for tick in y_ticks {
+            let t = ((tick - bounds.y_min) / (bounds.y_max - bounds.y_min).max(f32::EPSILON))
+                .clamp(0.0, 1.0);
+            labels.push(LinePlotTextLabel {
+                text: format_line_plot_tick(tick, y_step),
+                screen_x: plot[0] - 2.0 * sf,
+                screen_y: plot[1] + plot[3] * (1.0 - t),
+                is_title: false,
+                anchor: "plot-y-tick",
+                color: tick_color,
+                font_size: Some(10.0),
+            });
+        }
+    }
+
+    labels
+}
+
+fn emit_line_plot_series(
+    out: &mut Vec<RectInstance>,
+    points: &[[f32; 2]],
+    plot: [f32; 4],
+    bounds: LinePlotBounds,
+    line_width: f32,
+    color: [f32; 4],
+) {
+    let segment_count = points.len().saturating_sub(1).max(1);
+    let stride = ((segment_count + LINE_PLOT_MAX_SEGMENTS_PER_SERIES - 1)
+        / LINE_PLOT_MAX_SEGMENTS_PER_SERIES)
+        .max(1);
+    let mut prev: Option<[f32; 2]> = None;
+    let mut last_index = 0usize;
+    for idx in (0..points.len()).step_by(stride) {
+        emit_line_plot_point(out, points[idx], plot, bounds, line_width, color, &mut prev);
+        last_index = idx;
+    }
+    if last_index != points.len() - 1 {
+        emit_line_plot_point(
+            out,
+            points[points.len() - 1],
+            plot,
+            bounds,
+            line_width,
+            color,
+            &mut prev,
+        );
+    }
+}
+
+fn emit_line_plot_point(
+    out: &mut Vec<RectInstance>,
+    point: [f32; 2],
+    plot: [f32; 4],
+    bounds: LinePlotBounds,
+    line_width: f32,
+    color: [f32; 4],
+    prev: &mut Option<[f32; 2]>,
+) {
+    let mapped = map_line_plot_point(point, plot, bounds);
+    let Some(mapped) = mapped else {
+        *prev = None;
+        return;
+    };
+    if let Some(previous) = *prev {
+        push_line_segment(out, previous, mapped, line_width, color);
+    }
+    *prev = Some(mapped);
+}
+
+fn map_line_plot_point(
+    point: [f32; 2],
+    plot: [f32; 4],
+    bounds: LinePlotBounds,
+) -> Option<[f32; 2]> {
+    let [px, py] = point;
+    if !px.is_finite() || !py.is_finite() {
+        return None;
+    }
+    let x_range = (bounds.x_max - bounds.x_min).max(f32::EPSILON);
+    let y_range = (bounds.y_max - bounds.y_min).max(f32::EPSILON);
+    let tx = ((px - bounds.x_min) / x_range).clamp(0.0, 1.0);
+    let ty = ((py - bounds.y_min) / y_range).clamp(0.0, 1.0);
+    Some([plot[0] + plot[2] * tx, plot[1] + plot[3] * (1.0 - ty)])
+}
+
+fn push_line_segment(
+    out: &mut Vec<RectInstance>,
+    start: [f32; 2],
+    end: [f32; 2],
+    width: f32,
+    color: [f32; 4],
+) {
+    let dx = end[0] - start[0];
+    let dy = end[1] - start[1];
+    let len = (dx * dx + dy * dy).sqrt();
+    if len <= 0.25 {
+        let radius = width * 0.5;
+        out.push(inst_radii(
+            [start[0] - radius, start[1] - radius, width, width],
+            color,
+            [radius; 4],
+        ));
+        return;
+    }
+    let cx = (start[0] + end[0]) * 0.5;
+    let cy = (start[1] + end[1]) * 0.5;
+    let mut segment = inst_radii(
+        [cx - len * 0.5, cy - width * 0.5, len, width],
+        color,
+        [width * 0.5; 4],
+    );
+    segment.transform2[0] = dy.atan2(dx);
+    out.push(segment);
+}
+
 fn part_style_mark_color(style: &PartStyle, theme: &Theme) -> Option<Color> {
     let color = style
         .text
@@ -3495,18 +4171,23 @@ fn emit_rects_inner(
                 // NavItem:selected::accent { width: 4px } overrides the base.
                 // No minimum clamp — 0.0 means no bar.
                 let bar_w = if active {
-                    let base_w = node.style.parts.parts
+                    let base_w = node
+                        .style
+                        .parts
+                        .parts
                         .get("accent")
                         .and_then(|p| p.layout.width);
-                    let selected_w = selected_part_style_for_state(
-                        &node.style, &node.id, state, "accent",
-                    )
-                    .and_then(|p| p.layout.width);
-                    let pseudo_w = state_part_style_for_state(
-                        &node.style, &node.id, state, "accent",
-                    )
-                    .and_then(|p| p.layout.width);
-                    (pseudo_w.or(selected_w).or(base_w).unwrap_or(PANEL_ACCENT_WIDTH_LP) * sf)
+                    let selected_w =
+                        selected_part_style_for_state(&node.style, &node.id, state, "accent")
+                            .and_then(|p| p.layout.width);
+                    let pseudo_w =
+                        state_part_style_for_state(&node.style, &node.id, state, "accent")
+                            .and_then(|p| p.layout.width);
+                    (pseudo_w
+                        .or(selected_w)
+                        .or(base_w)
+                        .unwrap_or(PANEL_ACCENT_WIDTH_LP)
+                        * sf)
                         .max(0.0)
                 } else {
                     0.0
@@ -3554,8 +4235,7 @@ fn emit_rects_inner(
                         emit_bordered_rect_radii(
                             out,
                             item_rect,
-                            resolve_color(&item_visual.border_color, theme)
-                                .unwrap_or(theme.border),
+                            resolve_color(&item_visual.border_color, theme).unwrap_or(theme.border),
                             item_fill,
                             item_rect_radii,
                             item_border_w,
@@ -3569,8 +4249,7 @@ fn emit_rects_inner(
                         emit_bordered_rect_radii(
                             out,
                             [x, y, w, h],
-                            resolve_color(&item_visual.border_color, theme)
-                                .unwrap_or(theme.border),
+                            resolve_color(&item_visual.border_color, theme).unwrap_or(theme.border),
                             item_fill,
                             item_radii,
                             item_border_w,
@@ -4167,6 +4846,18 @@ fn emit_rects_inner(
                     thumb_border_w,
                 );
             }
+
+            WidgetKind::LinePlot => emit_line_plot(
+                out,
+                node,
+                theme,
+                sf,
+                [x, y, w, h],
+                styled_bg,
+                styled_border,
+                radii,
+                border_w,
+            ),
 
             WidgetKind::Scatter3D => {
                 emit_bordered_rect_radii(

@@ -64,6 +64,13 @@ SCATTER_CONTROLS_SCROLL_STYLE = {
     "flex_shrink": 1,
     "min_height": 0,
 }
+DEBUG_MONITOR_STYLE = {
+    "height": 540,
+    "min_height": 0,
+    "flex_grow": 1,
+    "flex_shrink": 1,
+    "align_self": "stretch",
+}
 
 
 def make_demo_image() -> str:
@@ -767,8 +774,6 @@ CSS_THEMES = {
 
 app = dg.App(theme=dg.Theme.dark(accent="#5aa9ff", radius=8, focus="#ffd36a"))
 app.stylesheet(CSS_THEMES["midnight"])
-win = dg.Window("DragonGUI All Features V3 Demo", width=1440, height=900)
-
 stream_controller: dg.ScatterFrameStream | None = None
 stream_build_thread: threading.Thread | None = None
 stats_thread: threading.Thread | None = None
@@ -796,6 +801,7 @@ demo_state = {
     "ticks_y": 5,
     "ticks_z": 5,
     "stats_auto": False,
+    "page": "overview",
 }
 initial_frame = DemoFrame(mode="lidar")
 demo_image_path = make_demo_image()
@@ -907,6 +913,17 @@ def toggle_scatter_stats(enabled: bool) -> None:
     set_status(f"Scatter stats: {'auto' if enabled else 'paused'}")
     if enabled:
         refresh_scatter_stats()
+
+
+def set_page(value: str) -> None:
+    with state_lock:
+        demo_state["page"] = value
+    set_status(f"Page: {value}")
+
+
+def debug_page_active() -> bool:
+    with state_lock:
+        return demo_state.get("page") == "debug"
 
 
 def scatter_stats_worker() -> None:
@@ -1347,324 +1364,361 @@ def cycle_style() -> None:
     set_status("Applied live style patch")
 
 
-with dg.MenuBar(height=34, tooltip="Menus render as native overlays."):
-    with dg.Menu("File"):
-        dg.MenuItem("Open CSV...", on_click=choose_csv)
-        dg.MenuItem("Print Snapshot", on_click=print_snapshot)
-        dg.MenuItem("Upload Buffer", on_click=upload_buffer)
-        dg.MenuItem("Release Buffer", on_click=release_buffer)
-    with dg.Menu("Scatter"):
-        dg.MenuItem("Push LiDAR Frame", on_click=lambda: push_scatter("lidar"))
-        dg.MenuItem("Start Stream", on_click=start_stream)
-        dg.MenuItem("Stop Stream", on_click=stop_stream)
-    with dg.Menu("Help"):
-        dg.MenuItem("About", on_click=lambda: about_modal.show())
+@dg.component
+def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
+    global win, status, progress, scatter_stats_summary, scatter, table
+    global color_target, x_tick_label, y_tick_label, z_tick_label
+    global stream_interval_label, dynamic_panel, style_panel, style_label, style_button
+    global confirm_modal, about_modal
+
+    win = dg.Window("DragonGUI All Features V3 Demo", width=1440, height=900)
+
+    with dg.MenuBar(height=34, tooltip="Menus render as native overlays."):
+        with dg.Menu("File"):
+            dg.MenuItem("Open CSV...", on_click=choose_csv)
+            dg.MenuItem("Print Snapshot", on_click=print_snapshot)
+            dg.MenuItem("Upload Buffer", on_click=upload_buffer)
+            dg.MenuItem("Release Buffer", on_click=release_buffer)
+        with dg.Menu("Scatter"):
+            dg.MenuItem("Push LiDAR Frame", on_click=lambda: push_scatter("lidar"))
+            dg.MenuItem("Start Stream", on_click=start_stream)
+            dg.MenuItem("Stop Stream", on_click=stop_stream)
+        with dg.Menu("Help"):
+            dg.MenuItem("About", on_click=lambda: about_modal.show())
 
 
-with dg.HLayout(style={"gap": 0}):
-    with dg.Sidebar(width=238, style={"padding": 12, "gap": 8}):
-        dg.Label("DragonGUI", class_="brand")
-        dg.Label("All features V3", class_="subtle")
-        with dg.FlowLayout(gap=6, row_gap=4):
-            dg.LED(True, tooltip="Renderer online")
-            dg.LED("stream", states={"stream": "warning"}, tooltip="Custom stream state")
-            dg.Badge("Grid", level="success")
-            dg.Tag("Scatter3D", level="info")
-        dg.Separator()
-        dg.NavItem("Overview", page="overview")
-        dg.NavItem("Scatter", page="scatter")
-        dg.NavItem("Controls", page="controls")
-        dg.NavItem("Data", page="data")
-        dg.NavItem("Runtime", page="runtime")
-        dg.NavItem("Styling", page="styling")
-        dg.NavItem("Layout", page="layout")
-        dg.Spacer()
-        dg.Separator()
-        dg.Label("Responsive grids, CSS, overlays, tables, and live native commands.", class_="subtle")
+    with dg.HLayout(style={"gap": 0}):
+        with dg.Sidebar(width=238, style={"padding": 12, "gap": 8}):
+            dg.Label("DragonGUI", class_="brand")
+            dg.Label("All features V3", class_="subtle")
+            with dg.FlowLayout(gap=6, row_gap=4):
+                dg.LED(True, tooltip="Renderer online")
+                dg.LED("stream", states={"stream": "warning"}, tooltip="Custom stream state")
+                dg.Badge("Grid", level="success")
+                dg.Tag("Scatter3D", level="info")
+            dg.Separator()
+            dg.NavItem("Overview", page="overview")
+            dg.NavItem("Scatter", page="scatter")
+            dg.NavItem("Controls", page="controls")
+            dg.NavItem("Data", page="data")
+            dg.NavItem("Runtime", page="runtime")
+            dg.NavItem("Debug", page="debug")
+            dg.NavItem("Styling", page="styling")
+            dg.NavItem("Layout", page="layout")
+            dg.Spacer()
+            dg.Separator()
+            dg.Label("Responsive grids, CSS, overlays, tables, and live native commands.", class_="subtle")
 
-    with dg.Pages(value="overview", on_change=lambda value: set_status(f"Page: {value}")):
-        with dg.Page("overview", title="Overview"):
-            with dg.GridLayout(columns=3, min_column_width=270, gap=GRID_GAP, style=GRID_STYLE):
-                with dg.Panel("Frame", class_="highlight", style=CARD_STYLE):
-                    dg.Label(f"{POINT_ROWS:,}", class_="stat-value")
-                    dg.Label("Scatter points per generated frame", class_="stat-label")
-                with dg.Panel("Data", class_="highlight", style=CARD_STYLE):
-                    dg.Label(f"{TABLE_ROWS:,}", class_="stat-value")
-                    dg.Label("Virtualized table rows", class_="stat-label")
-                with dg.Panel("Layout", class_="highlight", style=CARD_STYLE):
-                    dg.Label("Grid + Flow", class_="stat-value")
-                    dg.Label("Responsive page composition", class_="stat-label")
-                with dg.Panel("Quick actions", style=CARD_STYLE):
-                    with dg.FlowLayout(gap=8, row_gap=8):
-                        dg.Button("Push LiDAR", class_="primary", on_click=lambda: push_scatter("lidar"))
-                        dg.Button("Start Stream", on_click=start_stream)
-                        dg.Button("Stop Stream", on_click=stop_stream)
-                        dg.Button("Snapshot", on_click=print_snapshot)
-                    progress = dg.ProgressBar(0.0, min=0, max=1, show_value=True)
-                with dg.Panel("Visual asset", style=CARD_STYLE):
-                    dg.Image(demo_image_path, fit="cover", height=180, style={"border_radius": 10})
-                    dg.Label("Generated PNG image, styled as a native textured quad.", class_="subtle")
-                with dg.Panel("Theme", style=CARD_STYLE):
-                    dg.Button("Midnight", on_click=lambda: apply_theme("midnight"))
-                    dg.Button("Paper", on_click=lambda: apply_theme("paper"))
-                    dg.Button("Neon", on_click=lambda: apply_theme("neon"))
+        with dg.Pages(value="overview", on_change=set_page, key="main-pages"):
+            with dg.Page("overview", title="Overview"):
+                with dg.GridLayout(columns=3, min_column_width=270, gap=GRID_GAP, style=GRID_STYLE):
+                    with dg.Panel("Frame", class_="highlight", style=CARD_STYLE):
+                        dg.Label(f"{POINT_ROWS:,}", class_="stat-value")
+                        dg.Label("Scatter points per generated frame", class_="stat-label")
+                    with dg.Panel("Data", class_="highlight", style=CARD_STYLE):
+                        dg.Label(f"{TABLE_ROWS:,}", class_="stat-value")
+                        dg.Label("Virtualized table rows", class_="stat-label")
+                    with dg.Panel("Layout", class_="highlight", style=CARD_STYLE):
+                        dg.Label("Grid + Flow", class_="stat-value")
+                        dg.Label("Responsive page composition", class_="stat-label")
+                    with dg.Panel("Quick actions", style=CARD_STYLE):
+                        with dg.FlowLayout(gap=8, row_gap=8):
+                            dg.Button("Push LiDAR", class_="primary", on_click=lambda: push_scatter("lidar"))
+                            dg.Button("Start Stream", on_click=start_stream)
+                            dg.Button("Stop Stream", on_click=stop_stream)
+                            dg.Button("Snapshot", on_click=print_snapshot)
+                        progress = dg.ProgressBar(0.0, min=0, max=1, show_value=True)
+                    with dg.Panel("Visual asset", style=CARD_STYLE):
+                        dg.Image(demo_image_path, fit="cover", height=180, style={"border_radius": 10})
+                        dg.Label("Generated PNG image, styled as a native textured quad.", class_="subtle")
+                    with dg.Panel("Theme", style=CARD_STYLE):
+                        dg.Button("Midnight", on_click=lambda: apply_theme("midnight"))
+                        dg.Button("Paper", on_click=lambda: apply_theme("paper"))
+                        dg.Button("Neon", on_click=lambda: apply_theme("neon"))
 
-        with dg.Page("scatter", title="Scatter3D"):
-            with dg.GridLayout(
-                columns=2,
-                min_column_width=380,
-                gap=GRID_GAP,
-                class_="scatter-grid",
-                style=SCATTER_GRID_STYLE,
-            ):
-                with dg.Panel("Scatter controls", class_="scatter-controls", style=SCATTER_CONTROLS_PANEL_STYLE):
-                    with dg.ScrollArea(
-                        axis="y",
-                        gap=8,
-                        class_="scatter-control-scroll",
-                        style=SCATTER_CONTROLS_SCROLL_STYLE,
-                    ):
-                        dg.Label("Performance")
-                        dg.Button(
-                            "Refresh stats",
-                            class_="primary",
-                            on_click=refresh_scatter_stats,
-                            style={"height": 34, "width": 170},
-                        )
-                        dg.Checkbox(
-                            "Auto stats",
-                            checked=False,
-                            on_change=toggle_scatter_stats,
-                            style={"height": 34},
-                        )
-                        scatter_stats_summary = dg.Label(
-                            "\n".join(
-                                (
-                                    "Frame CPU avg: --",
-                                    "Observed redraws: --",
-                                    "Scatter encode: --",
-                                    "Payload: --",
-                                    "Native update: --",
-                                    "Decode/grid/overlay: --",
-                                    "Updates: --",
+            with dg.Page("scatter", title="Scatter3D"):
+                with dg.GridLayout(
+                    columns=2,
+                    min_column_width=380,
+                    gap=GRID_GAP,
+                    class_="scatter-grid",
+                    style=SCATTER_GRID_STYLE,
+                ):
+                    with dg.Panel("Scatter controls", class_="scatter-controls", style=SCATTER_CONTROLS_PANEL_STYLE):
+                        with dg.ScrollArea(
+                            axis="y",
+                            gap=8,
+                            class_="scatter-control-scroll",
+                            style=SCATTER_CONTROLS_SCROLL_STYLE,
+                        ):
+                            dg.Label("Performance")
+                            dg.Button(
+                                "Refresh stats",
+                                class_="primary",
+                                on_click=refresh_scatter_stats,
+                                style={"height": 34, "width": 170},
+                            )
+                            dg.Checkbox(
+                                "Auto stats",
+                                checked=False,
+                                on_change=toggle_scatter_stats,
+                                style={"height": 34},
+                            )
+                            scatter_stats_summary = dg.Label(
+                                "\n".join(
+                                    (
+                                        "Frame CPU avg: --",
+                                        "Observed redraws: --",
+                                        "Scatter encode: --",
+                                        "Payload: --",
+                                        "Native update: --",
+                                        "Decode/grid/overlay: --",
+                                        "Updates: --",
+                                    )
                                 )
                             )
-                        )
-                        dg.Separator()
-                        dg.Label("Data")
-                        mode = dg.Dropdown(("lidar", "helix", "wave", "cloud"), value="lidar", on_change=push_scatter)
-                        dg.Dropdown(("Viridis", "Magma", "Plasma", "Turbo", "Cividis"), value="Turbo", on_change=set_colormap)
-                        dg.Dropdown(("Circle", "Square", "Gaussian"), value="Circle", on_change=set_scatter_point_style)
-                        with dg.FlowLayout(gap=8, row_gap=8):
-                            dg.Button("Push frame", class_="primary", on_click=lambda: push_scatter(mode.value))
-                            dg.Button("Fit camera", on_click=lambda: scatter.fit())
-                        dg.Label("View")
-                        dg.Dropdown(("Isometric", "XY", "XZ", "YZ"), value="Isometric", on_change=set_scatter_view)
-                        with dg.FlowLayout(gap=8, row_gap=6):
-                            dg.Checkbox("Grid", checked=True, on_change=toggle_grid)
-                            dg.Checkbox("Grid planes", checked=True, on_change=toggle_planes)
-                            dg.Checkbox("Orientation", checked=True, on_change=toggle_orientation)
-                        with dg.FlowLayout(gap=8, row_gap=6):
-                            dg.Checkbox("Sticky grid", checked=True, on_change=toggle_grid_sticky)
-                            dg.Checkbox("All edges", checked=False, on_change=toggle_grid_all_edges)
-                        dg.Label("Axis labels")
-                        dg.TextInput("x", placeholder="X label", on_change=lambda value: update_axis_label("x", value))
-                        dg.TextInput("y", placeholder="Y label", on_change=lambda value: update_axis_label("y", value))
-                        dg.TextInput("z", placeholder="Z label", on_change=lambda value: update_axis_label("z", value))
-                        with dg.FlowLayout(gap=8, row_gap=6):
-                            dg.Checkbox("X axis", checked=True, on_change=lambda value: toggle_axis_visibility("x", value))
-                            dg.Checkbox("Y axis", checked=True, on_change=lambda value: toggle_axis_visibility("y", value))
-                            dg.Checkbox("Z axis", checked=True, on_change=lambda value: toggle_axis_visibility("z", value))
-                        x_tick_label = dg.Label("X ticks: 5")
-                        dg.Slider(5, min=2, max=12, step=1, on_change=lambda value: set_tick_count("x", value))
-                        y_tick_label = dg.Label("Y ticks: 5")
-                        dg.Slider(5, min=2, max=12, step=1, on_change=lambda value: set_tick_count("y", value))
-                        z_tick_label = dg.Label("Z ticks: 5")
-                        dg.Slider(5, min=2, max=12, step=1, on_change=lambda value: set_tick_count("z", value))
-                        dg.Button("Auto ticks", on_click=reset_tick_counts)
-                        dg.Label("Point size")
-                        dg.Slider(3.2, min=1.0, max=8.0, step=0.2, on_change=set_point_size)
-                        dg.Label("Stream")
-                        dg.Button("Start stream", on_click=start_stream)
-                        dg.Button("Stop stream", on_click=stop_stream)
-                        stream_interval_label = dg.Label("Stream interval: 40 ms")
-                        dg.Slider(40, min=5, max=250, step=5, on_change=set_stream_interval)
-                scatter = dg.Scatter3D(
-                    initial_frame,
-                    x="x",
-                    y="y",
-                    z="z",
-                    scalars="z",
-                    colormap="turbo",
-                    point_size=3.2,
-                    opacity=1.0,
-                    grid=True,
-                    major_planes=True,
-                    minor_planes=True,
-                    grid_sticky=True,
-                    grid_all_edges=False,
-                    orientation_axes=True,
-                    scalar_bar=True,
-                    scalar_bar_title="z",
-                    axis_x="x",
-                    axis_y="y",
-                    axis_z="z",
-                    background=(0.02, 0.02, 0.03),
-                    hover=["row_id", "group", "signal"],
-                    on_pick=pick_scatter_point,
-                    class_="main-scatter",
-                    key="main-scatter",
-                )
-
-        with dg.Page("controls", title="Controls"):
-            with dg.GridLayout(columns=2, min_column_width=360, gap=GRID_GAP, style=GRID_STYLE):
-                with dg.Panel("Form controls", style=CARD_STYLE):
-                    with dg.FlowLayout(gap=8, row_gap=6, cross_align="center"):
-                        dg.LED(True, tooltip="Boolean on state")
-                        dg.LED(False, tooltip="Boolean off state")
-                        dg.LED("busy", states={"busy": "#ffcc33", "ready": "success"}, tooltip="Named custom state")
-                        dg.LED("busy", states={"busy": "#ffcc33"}, class_="css-demo", tooltip="CSS styled LED parts")
-                        dg.Badge("live", level="success")
-                        dg.Badge("queued", level="warning")
-                        dg.Tag("styled", level="info")
-                    dg.TextInput("editable text", placeholder="Type here", on_change=lambda v: set_status(f"Text: {v}"))
-                    dg.Dropdown(("Low", "Medium", "High"), value="Medium", on_change=lambda v: set_status(f"Dropdown: {v}"))
-                    dg.Slider(0.42, min=0, max=1, step=0.02, on_change=lambda v: set_status(f"Slider: {v:.2f}"))
-                    dg.NumberInput(42, min=0, max=100, step=0.5, on_change=lambda v: set_status(f"Number: {v:g}"))
-                    color_target = dg.Button(
-                        "Color target",
-                        style={"height": 38, "background": "#5aa9ff", "border_color": "#5aa9ff"},
+                            dg.Separator()
+                            dg.Label("Data")
+                            mode = dg.Dropdown(("lidar", "helix", "wave", "cloud"), value="lidar", on_change=push_scatter)
+                            dg.Dropdown(("Viridis", "Magma", "Plasma", "Turbo", "Cividis"), value="Turbo", on_change=set_colormap)
+                            dg.Dropdown(("Circle", "Square", "Gaussian"), value="Circle", on_change=set_scatter_point_style)
+                            with dg.FlowLayout(gap=8, row_gap=8):
+                                dg.Button("Push frame", class_="primary", on_click=lambda: push_scatter(mode.value))
+                                dg.Button("Fit camera", on_click=lambda: scatter.fit())
+                            dg.Label("View")
+                            dg.Dropdown(("Isometric", "XY", "XZ", "YZ"), value="Isometric", on_change=set_scatter_view)
+                            with dg.FlowLayout(gap=8, row_gap=6):
+                                dg.Checkbox("Grid", checked=True, on_change=toggle_grid)
+                                dg.Checkbox("Grid planes", checked=True, on_change=toggle_planes)
+                                dg.Checkbox("Orientation", checked=True, on_change=toggle_orientation)
+                            with dg.FlowLayout(gap=8, row_gap=6):
+                                dg.Checkbox("Sticky grid", checked=True, on_change=toggle_grid_sticky)
+                                dg.Checkbox("All edges", checked=False, on_change=toggle_grid_all_edges)
+                            dg.Label("Axis labels")
+                            dg.TextInput("x", placeholder="X label", on_change=lambda value: update_axis_label("x", value))
+                            dg.TextInput("y", placeholder="Y label", on_change=lambda value: update_axis_label("y", value))
+                            dg.TextInput("z", placeholder="Z label", on_change=lambda value: update_axis_label("z", value))
+                            with dg.FlowLayout(gap=8, row_gap=6):
+                                dg.Checkbox("X axis", checked=True, on_change=lambda value: toggle_axis_visibility("x", value))
+                                dg.Checkbox("Y axis", checked=True, on_change=lambda value: toggle_axis_visibility("y", value))
+                                dg.Checkbox("Z axis", checked=True, on_change=lambda value: toggle_axis_visibility("z", value))
+                            x_tick_label = dg.Label("X ticks: 5")
+                            dg.Slider(5, min=2, max=12, step=1, on_change=lambda value: set_tick_count("x", value))
+                            y_tick_label = dg.Label("Y ticks: 5")
+                            dg.Slider(5, min=2, max=12, step=1, on_change=lambda value: set_tick_count("y", value))
+                            z_tick_label = dg.Label("Z ticks: 5")
+                            dg.Slider(5, min=2, max=12, step=1, on_change=lambda value: set_tick_count("z", value))
+                            dg.Button("Auto ticks", on_click=reset_tick_counts)
+                            dg.Label("Point size")
+                            dg.Slider(3.2, min=1.0, max=8.0, step=0.2, on_change=set_point_size)
+                            dg.Label("Stream")
+                            dg.Button("Start stream", on_click=start_stream)
+                            dg.Button("Stop stream", on_click=stop_stream)
+                            stream_interval_label = dg.Label("Stream interval: 40 ms")
+                            dg.Slider(40, min=5, max=250, step=5, on_change=set_stream_interval)
+                    scatter = dg.Scatter3D(
+                        initial_frame,
+                        x="x",
+                        y="y",
+                        z="z",
+                        scalars="z",
+                        colormap="turbo",
+                        point_size=3.2,
+                        opacity=1.0,
+                        grid=True,
+                        major_planes=True,
+                        minor_planes=True,
+                        grid_sticky=True,
+                        grid_all_edges=False,
+                        orientation_axes=True,
+                        scalar_bar=True,
+                        scalar_bar_title="z",
+                        axis_x="x",
+                        axis_y="y",
+                        axis_z="z",
+                        background=(0.02, 0.02, 0.03),
+                        hover=["row_id", "group", "signal"],
+                        on_pick=pick_scatter_point,
+                        class_="main-scatter",
+                        key="main-scatter",
                     )
-                    dg.ColorPicker((90, 169, 255), alpha=False, on_change=apply_demo_color)
-                    dg.Checkbox("Enable analysis", checked=True, on_change=lambda v: set_status(f"Analysis: {v}"))
-                    dg.Button("Regular button", on_click=lambda: set_status("Button clicked"))
-                    dg.Button("Show toast", badge="new", on_click=show_demo_toast)
-                    dg.Button("Disabled button", disabled=True)
-                    dg.TextInput("disabled input", disabled=True)
-                with dg.Panel("Tabs and disclosure", style=CARD_STYLE):
-                    with dg.Tabs(value="one", on_change=lambda v: set_status(f"Tab: {v}")):
-                        with dg.Tab("One", value="one"):
-                            dg.Label("Tab content one")
-                            tab_button = dg.Button("Tooltip target", on_click=lambda: set_status("Tab button"))
-                            with dg.Tooltip(target=tab_button):
-                                dg.Label("Rich tooltip")
-                                dg.ProgressBar(0.66, show_value=True)
-                        with dg.Tab("Two", value="two"):
-                            dg.Checkbox("A checkbox in a tab", checked=False)
-                            dg.TextArea("Line one\nLine two\nLine three", rows=3)
-                        with dg.Tab("Three", value="three"):
-                            dg.Slider(0.7, min=0, max=1, step=0.05)
-                    with dg.Collapsible("Advanced notes", expanded=False):
-                        dg.TextArea("Extra notes\nstay scrollable\ninside the panel", rows=3)
 
-        with dg.Page("data", title="Data"):
-            with dg.GridLayout(columns=2, min_column_width=390, gap=GRID_GAP, style=GRID_STYLE):
-                with dg.Panel("Data controls", style=CARD_STYLE):
-                    dg.Button("Load LiDAR Table", on_click=lambda: update_table("lidar"))
-                    dg.Button("Load Helix Table", on_click=lambda: update_table("helix"))
-                    dg.Button("Load Wave Table", on_click=lambda: update_table("wave"))
-                    dg.Button("Load Cloud Table", on_click=lambda: update_table("cloud"))
-                    dg.Separator()
-                    dg.Button("Upload Buffer", on_click=upload_buffer)
-                    dg.Button("Release Buffer", on_click=release_buffer)
-                    dg.Button("Confirm Reset", on_click=lambda: confirm_modal.show())
-                    dg.Button("Print Snapshot", on_click=print_snapshot)
-                    dg.Label("DataFrameTable virtualizes rows and columns.", class_="subtle")
-                table = dg.DataFrameTable(
-                    DemoFrame(rows=TABLE_ROWS),
-                    page_size=90,
-                    on_select=select_table_cell,
-                    key="main-table",
-                )
+            with dg.Page("controls", title="Controls"):
+                with dg.GridLayout(columns=2, min_column_width=360, gap=GRID_GAP, style=GRID_STYLE):
+                    with dg.Panel("Form controls", style=CARD_STYLE):
+                        with dg.FlowLayout(gap=8, row_gap=6, cross_align="center"):
+                            dg.LED(True, tooltip="Boolean on state")
+                            dg.LED(False, tooltip="Boolean off state")
+                            dg.LED("busy", states={"busy": "#ffcc33", "ready": "success"}, tooltip="Named custom state")
+                            dg.LED("busy", states={"busy": "#ffcc33"}, class_="css-demo", tooltip="CSS styled LED parts")
+                            dg.Badge("live", level="success")
+                            dg.Badge("queued", level="warning")
+                            dg.Tag("styled", level="info")
+                        dg.TextInput("editable text", placeholder="Type here", on_change=lambda v: set_status(f"Text: {v}"))
+                        dg.Dropdown(("Low", "Medium", "High"), value="Medium", on_change=lambda v: set_status(f"Dropdown: {v}"))
+                        dg.Slider(0.42, min=0, max=1, step=0.02, on_change=lambda v: set_status(f"Slider: {v:.2f}"))
+                        dg.NumberInput(42, min=0, max=100, step=0.5, on_change=lambda v: set_status(f"Number: {v:g}"))
+                        color_target = dg.Button(
+                            "Color target",
+                            style={"height": 38, "background": "#5aa9ff", "border_color": "#5aa9ff"},
+                        )
+                        dg.ColorPicker((90, 169, 255), alpha=False, on_change=apply_demo_color)
+                        dg.Checkbox("Enable analysis", checked=True, on_change=lambda v: set_status(f"Analysis: {v}"))
+                        dg.Button("Regular button", on_click=lambda: set_status("Button clicked"))
+                        dg.Button("Show toast", badge="new", on_click=show_demo_toast)
+                        dg.Button("Disabled button", disabled=True)
+                        dg.TextInput("disabled input", disabled=True)
+                    with dg.Panel("Tabs and disclosure", style=CARD_STYLE):
+                        with dg.Tabs(value="one", on_change=lambda v: set_status(f"Tab: {v}")):
+                            with dg.Tab("One", value="one"):
+                                dg.Label("Tab content one")
+                                tab_button = dg.Button("Tooltip target", on_click=lambda: set_status("Tab button"))
+                                with dg.Tooltip(target=tab_button):
+                                    dg.Label("Rich tooltip")
+                                    dg.ProgressBar(0.66, show_value=True)
+                            with dg.Tab("Two", value="two"):
+                                dg.Checkbox("A checkbox in a tab", checked=False)
+                                dg.TextArea("Line one\nLine two\nLine three", rows=3)
+                            with dg.Tab("Three", value="three"):
+                                dg.Slider(0.7, min=0, max=1, step=0.05)
+                        with dg.Collapsible("Advanced notes", expanded=False):
+                            dg.TextArea("Extra notes\nstay scrollable\ninside the panel", rows=3)
 
-        with dg.Page("runtime", title="Runtime"):
-            with dg.GridLayout(columns=2, min_column_width=360, gap=GRID_GAP, style=GRID_STYLE):
-                with dg.Panel("Live commands", style=CARD_STYLE):
-                    dg.Button("Replace children", on_click=swap_children)
-                    dg.Button("Cycle style", on_click=cycle_style)
-                    dg.Button("Print snapshot", on_click=print_snapshot)
-                    dg.Button("Upload buffer", on_click=upload_buffer)
-                    dg.Button("Release buffer", on_click=release_buffer)
-                    dg.Label("Commands are retained-tree updates sent to the native runtime.", class_="subtle")
-                with dg.Panel("ReplaceChildren target", class_="highlight", style=CARD_STYLE):
-                    with dg.VLayout(style={"gap": 4}) as dynamic_panel:
-                        for child in make_summary_children():
-                            dynamic_panel.add(child)
+            with dg.Page("data", title="Data"):
+                with dg.GridLayout(columns=2, min_column_width=390, gap=GRID_GAP, style=GRID_STYLE):
+                    with dg.Panel("Data controls", style=CARD_STYLE):
+                        dg.Button("Load LiDAR Table", on_click=lambda: update_table("lidar"))
+                        dg.Button("Load Helix Table", on_click=lambda: update_table("helix"))
+                        dg.Button("Load Wave Table", on_click=lambda: update_table("wave"))
+                        dg.Button("Load Cloud Table", on_click=lambda: update_table("cloud"))
+                        dg.Separator()
+                        dg.Button("Upload Buffer", on_click=upload_buffer)
+                        dg.Button("Release Buffer", on_click=release_buffer)
+                        dg.Button("Confirm Reset", on_click=lambda: confirm_modal.show())
+                        dg.Button("Print Snapshot", on_click=print_snapshot)
+                        dg.Label("DataFrameTable virtualizes rows and columns.", class_="subtle")
+                    table = dg.DataFrameTable(
+                        DemoFrame(rows=TABLE_ROWS),
+                        page_size=90,
+                        on_select=select_table_cell,
+                        key="main-table",
+                    )
 
-        with dg.Page("styling", title="Styling"):
-            with dg.GridLayout(columns=2, min_column_width=360, gap=GRID_GAP, style=GRID_STYLE):
-                with dg.Panel("CSS themes", style=CARD_STYLE):
-                    dg.Button("Midnight CSS", on_click=lambda: apply_theme("midnight"))
-                    dg.Button("Paper CSS", on_click=lambda: apply_theme("paper"))
-                    dg.Button("Neon CSS", on_click=lambda: apply_theme("neon"))
-                    dg.Separator()
-                    with dg.Panel("Horizontal overflow", style={"height": 94, "overflow_x": "auto", "overflow_y": "hidden", "padding": 12}):
-                        with dg.HLayout(style={"width": 430, "height": 34, "gap": 8, "flex_shrink": 0}):
-                            dg.Button("First", style={"width": 126, "flex_shrink": 0})
-                            dg.Button("Second", style={"width": 126, "flex_shrink": 0})
-                            dg.Button("Third", style={"width": 126, "flex_shrink": 0})
-                    dg.Button("Danger token", style={"background": "danger", "border_color": "danger"})
-                    dg.Button("Warning token", style={"background": "warning", "border_color": "warning"})
-                    dg.Button("Success token", style={"background": "success", "border_color": "success"})
-                with dg.Panel("Live style preview", style={**CARD_STYLE, **styles[0]["panel"]}) as style_panel:
-                    style_label = dg.Label("Styled label", style={"font_size": 16, **styles[0]["label"]})
-                    style_button = dg.Button("Cycle this panel", on_click=cycle_style, style={"height": 44, "width": 190, **styles[0]["button"]})
-                    dg.Image(demo_image_path, fit="cover", height=170, style={"border_color": "accent", "border_radius": 10})
-                    dg.Label("CSS, inline style, pseudo states, and live style patches.", class_="subtle")
+            with dg.Page("runtime", title="Runtime"):
+                with dg.GridLayout(columns=2, min_column_width=360, gap=GRID_GAP, style=GRID_STYLE):
+                    with dg.Panel("Live commands", style=CARD_STYLE):
+                        dg.Button("Replace children", on_click=swap_children)
+                        dg.Button("Cycle style", on_click=cycle_style)
+                        dg.Button("Print snapshot", on_click=print_snapshot)
+                        dg.Button("Upload buffer", on_click=upload_buffer)
+                        dg.Button("Release buffer", on_click=release_buffer)
+                        dg.Label("Commands are retained-tree updates sent to the native runtime.", class_="subtle")
+                    with dg.Panel("ReplaceChildren target", class_="highlight", style=CARD_STYLE):
+                        with dg.VLayout(style={"gap": 4}) as dynamic_panel:
+                            for child in make_summary_children():
+                                dynamic_panel.add(child)
 
-        with dg.Page("layout", title="Layout"):
-            with dg.GridLayout(columns=3, min_column_width=300, gap=GRID_GAP, style=GRID_STYLE):
-                with dg.Panel("Flow wrap", style=CARD_STYLE):
-                    with dg.FlowLayout(gap=8, row_gap=8):
-                        for label in ["Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta", "Eta"]:
-                            dg.Button(label)
-                    dg.Label("FlowLayout wraps intrinsic controls without clipping.", class_="subtle")
-                with dg.Panel("Vertical scroll", class_="scroll-card", style=CARD_STYLE):
-                    for index in range(1, 18):
-                        dg.Label(f"Scrollable row {index:02d}")
-                    dg.Button("Last action")
-                with dg.Panel("Composition", style=CARD_STYLE):
-                    dg.Label("GridLayout chooses columns from available width.", class_="subtle")
-                    dg.Label("Panels use bounded padding and overflow rules.", class_="subtle")
-                    dg.Label("Rounded controls get paint breathing room in titled panels.", class_="subtle")
-                    dg.ProgressBar(0.72, show_value=True)
+            with dg.Page("debug", title="Debug"):
+                with dg.GridLayout(columns=2, min_column_width=420, gap=GRID_GAP, style=GRID_STYLE):
+                    dg.ThreadMonitor(
+                        key="debug-thread-monitor",
+                        show_threads=True,
+                        show_queue=True,
+                        show_failures=True,
+                        history_seconds=30,
+                        refresh_hz=4.0,
+                        max_threads=60,
+                        max_dead_threads=12,
+                        enabled=debug_page_active,
+                        class_="debug-monitor",
+                        style=DEBUG_MONITOR_STYLE,
+                    )
+                    with dg.Panel("Snapshot tools", style=CARD_STYLE):
+                        dg.Button("Print snapshot", class_="primary", on_click=print_snapshot)
+                        dg.Button("Refresh scatter stats", on_click=refresh_scatter_stats)
+                        dg.Checkbox("Auto scatter stats", checked=False, on_change=toggle_scatter_stats)
+                        dg.Separator()
+                        dg.Label("ThreadMonitor shows Python task queue, producer threads, and task failures.", class_="subtle")
+                        dg.Label("Use the scatter controls or background stream to create live task traffic.", class_="subtle")
+
+            with dg.Page("styling", title="Styling"):
+                with dg.GridLayout(columns=2, min_column_width=360, gap=GRID_GAP, style=GRID_STYLE):
+                    with dg.Panel("CSS themes", style=CARD_STYLE):
+                        dg.Button("Midnight CSS", on_click=lambda: apply_theme("midnight"))
+                        dg.Button("Paper CSS", on_click=lambda: apply_theme("paper"))
+                        dg.Button("Neon CSS", on_click=lambda: apply_theme("neon"))
+                        dg.Separator()
+                        with dg.Panel("Horizontal overflow", style={"height": 94, "overflow_x": "auto", "overflow_y": "hidden", "padding": 12}):
+                            with dg.HLayout(style={"width": 430, "height": 34, "gap": 8, "flex_shrink": 0}):
+                                dg.Button("First", style={"width": 126, "flex_shrink": 0})
+                                dg.Button("Second", style={"width": 126, "flex_shrink": 0})
+                                dg.Button("Third", style={"width": 126, "flex_shrink": 0})
+                        dg.Button("Danger token", style={"background": "danger", "border_color": "danger"})
+                        dg.Button("Warning token", style={"background": "warning", "border_color": "warning"})
+                        dg.Button("Success token", style={"background": "success", "border_color": "success"})
+                    with dg.Panel("Live style preview", style={**CARD_STYLE, **styles[0]["panel"]}) as style_panel:
+                        style_label = dg.Label("Styled label", style={"font_size": 16, **styles[0]["label"]})
+                        style_button = dg.Button("Cycle this panel", on_click=cycle_style, style={"height": 44, "width": 190, **styles[0]["button"]})
+                        dg.Image(demo_image_path, fit="cover", height=170, style={"border_color": "accent", "border_radius": 10})
+                        dg.Label("CSS, inline style, pseudo states, and live style patches.", class_="subtle")
+
+            with dg.Page("layout", title="Layout"):
+                with dg.GridLayout(columns=3, min_column_width=300, gap=GRID_GAP, style=GRID_STYLE):
+                    with dg.Panel("Flow wrap", style=CARD_STYLE):
+                        with dg.FlowLayout(gap=8, row_gap=8):
+                            for label in ["Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta", "Eta"]:
+                                dg.Button(label)
+                        dg.Label("FlowLayout wraps intrinsic controls without clipping.", class_="subtle")
+                    with dg.Panel("Vertical scroll", class_="scroll-card", style=CARD_STYLE):
+                        for index in range(1, 18):
+                            dg.Label(f"Scrollable row {index:02d}")
+                        dg.Button("Last action")
+                    with dg.Panel("Composition", style=CARD_STYLE):
+                        dg.Label("GridLayout chooses columns from available width.", class_="subtle")
+                        dg.Label("Panels use bounded padding and overflow rules.", class_="subtle")
+                        dg.Label("Rounded controls get paint breathing room in titled panels.", class_="subtle")
+                        dg.ProgressBar(0.72, show_value=True)
 
 
-with dg.StatusBar(height=40):
-    status = dg.TextInput("Ready", placeholder="status", style={"width": 360})
-    dg.Separator(orientation="vertical")
-    dg.Label(f"{POINT_ROWS:,} points")
-    dg.Label(f"{TABLE_ROWS:,} table rows")
-    dg.Spacer()
-    dg.Label("All features V3")
+    with dg.StatusBar(height=40):
+        status = dg.TextInput("Ready", placeholder="status", style={"width": 360})
+        dg.Separator(orientation="vertical")
+        dg.Label(f"{POINT_ROWS:,} points")
+        dg.Label(f"{TABLE_ROWS:,} table rows")
+        dg.Spacer()
+        dg.Label("All features V3")
 
 
-confirm_modal = dg.confirm(
-    "Reset Demo State",
-    "This modal blocks background input until it is closed.",
-    open=False,
-    on_confirm=lambda: set_status("Confirmed reset action"),
-    on_cancel=lambda: set_status("Cancelled reset action"),
-    parent=win,
-)
+    confirm_modal = dg.confirm(
+        "Reset Demo State",
+        "This modal blocks background input until it is closed.",
+        open=False,
+        on_confirm=lambda: set_status("Confirmed reset action"),
+        on_cancel=lambda: set_status("Cancelled reset action"),
+        parent=win,
+    )
 
-about_modal = dg.alert(
-    "About DragonGUI",
-    "This V3 demo uses responsive grids, CSS themes, Scatter3D, DataFrameTable, modals, menus, context menus, toasts, resources, and live runtime updates.",
-    open=False,
-    parent=win,
-)
+    about_modal = dg.alert(
+        "About DragonGUI",
+        "This V3 demo uses responsive grids, CSS themes, Scatter3D, DataFrameTable, modals, menus, context menus, toasts, resources, and live runtime updates.",
+        open=False,
+        parent=win,
+    )
 
-with dg.ContextMenu(target=table, width=230, parent=win):
-    dg.MenuItem("Print Snapshot", on_click=print_snapshot)
-    dg.MenuItem("Load Wave Table", on_click=lambda: update_table("wave"))
-    dg.MenuItem("Load Cloud Table", on_click=lambda: update_table("cloud"))
+    with dg.ContextMenu(target=table, width=230, parent=win):
+        dg.MenuItem("Print Snapshot", on_click=print_snapshot)
+        dg.MenuItem("Load Wave Table", on_click=lambda: update_table("wave"))
+        dg.MenuItem("Load Cloud Table", on_click=lambda: update_table("cloud"))
+
+    return win
+
+
 
 stats_thread = threading.Thread(target=scatter_stats_worker, daemon=True)
 stats_thread.start()
 
 try:
-    result = app.run(win)
+    result = app.run(AllFeaturesV3())
 except dg.BackendUnavailableError:
     print("DragonGUI source import works.")
     print("Native backend is not built, so this run prints the UI document.")

@@ -12,7 +12,7 @@ use pyo3::types::PyAny;
 use winit::event_loop::EventLoopProxy;
 
 use crate::css_style::{parse_stylesheet, StylesheetOrigin};
-use crate::document::ScatterPayloadFormat;
+use crate::document::{LinePlotPayloadFormat, ScatterPayloadFormat};
 
 /// User event sent into the winit loop when the Python/Rust runtime bridge has
 /// work waiting.  Keep this small and cloneable; all payloads stay in the
@@ -85,6 +85,31 @@ pub enum Command {
         fit: bool,
         /// When true, older pending point updates for this scatter are dropped.
         coalesce: bool,
+    },
+    SetLinePlotDataPacked {
+        id: String,
+        series: String,
+        xy: Vec<u8>,
+        label: Option<String>,
+        color: Option<String>,
+        line_width: Option<f32>,
+        show_grid: Option<bool>,
+        auto_fit: Option<bool>,
+        max_points: Option<usize>,
+        payload_format: LinePlotPayloadFormat,
+        fit: bool,
+        coalesce: bool,
+    },
+    AppendLinePlotPointsPacked {
+        id: String,
+        series: String,
+        xy: Vec<u8>,
+        max_points: Option<usize>,
+        payload_format: LinePlotPayloadFormat,
+    },
+    ClearLinePlotSeries {
+        id: String,
+        series: Option<String>,
     },
     SetScatterPrimaryHoverMeta {
         id: String,
@@ -529,6 +554,39 @@ impl CommandQueue {
             }
             *fit = fit_after_upload;
         }
+        if let Command::SetLinePlotDataPacked {
+            id,
+            series,
+            fit,
+            coalesce: true,
+            ..
+        } = &mut command
+        {
+            let target_id = id.clone();
+            let target_series = series.clone();
+            let mut fit_after_upload = *fit;
+            let mut index = inner.items.len();
+            while index > 0 {
+                index -= 1;
+                let remove = match &inner.items[index] {
+                    Command::SetLinePlotDataPacked {
+                        id: queued_id,
+                        series: queued_series,
+                        fit: queued_fit,
+                        coalesce: true,
+                        ..
+                    } if queued_id == &target_id && queued_series == &target_series => {
+                        fit_after_upload |= *queued_fit;
+                        true
+                    }
+                    _ => false,
+                };
+                if remove {
+                    inner.items.remove(index);
+                }
+            }
+            *fit = fit_after_upload;
+        }
         inner.items.push_back(command);
         Ok(())
     }
@@ -928,6 +986,73 @@ impl NativeCommandSender {
             fit,
             coalesce: coalesce.unwrap_or(true),
         })
+    }
+
+    #[pyo3(signature = (id, series, xy, label=None, color=None, line_width=None, show_grid=None, auto_fit=None, max_points=None, fit=true, coalesce=true))]
+    fn enqueue_set_line_plot_data_packed(
+        &self,
+        id: String,
+        series: String,
+        xy: &Bound<'_, PyAny>,
+        label: Option<String>,
+        color: Option<String>,
+        line_width: Option<f32>,
+        show_grid: Option<bool>,
+        auto_fit: Option<bool>,
+        max_points: Option<usize>,
+        fit: bool,
+        coalesce: bool,
+    ) -> PyResult<()> {
+        let xy = byte_buffer_from_py(xy, "line plot xy payload")?;
+        if xy.len() % 8 != 0 {
+            return Err(PyValueError::new_err(format!(
+                "line plot xy payload length {} is not a multiple of 8",
+                xy.len()
+            )));
+        }
+        self.enqueue(Command::SetLinePlotDataPacked {
+            id,
+            series,
+            xy,
+            label,
+            color,
+            line_width,
+            show_grid,
+            auto_fit,
+            max_points,
+            payload_format: LinePlotPayloadFormat::XyF32V0,
+            fit,
+            coalesce,
+        })
+    }
+
+    #[pyo3(signature = (id, series, xy, max_points=None))]
+    fn enqueue_append_line_plot_points_packed(
+        &self,
+        id: String,
+        series: String,
+        xy: &Bound<'_, PyAny>,
+        max_points: Option<usize>,
+    ) -> PyResult<()> {
+        let xy = byte_buffer_from_py(xy, "line plot append payload")?;
+        if xy.len() % 8 != 0 {
+            return Err(PyValueError::new_err(format!(
+                "line plot append payload length {} is not a multiple of 8",
+                xy.len()
+            )));
+        }
+        self.enqueue(Command::AppendLinePlotPointsPacked {
+            id,
+            series,
+            xy,
+            max_points,
+            payload_format: LinePlotPayloadFormat::XyF32V0,
+        })
+    }
+
+    #[pyo3(signature = (id, series=None))]
+    fn enqueue_clear_line_plot_series(&self, id: String, series: Option<String>) -> PyResult<()> {
+        self.enqueue(Command::ClearLinePlotSeries { id, series })
     }
 
     fn enqueue_reset_scatter_camera(&self, id: String) -> PyResult<()> {

@@ -74,6 +74,9 @@ class App:
         """Start the native event loop for a window."""
         component_runtime = window._runtime if isinstance(window, ComponentInstance) else None
         bind_live = native_event_loop_available()
+        if bind_live:
+            from .diagnostics import _reset_collector
+            _reset_collector()
         handle = AppHandle()
         if component_runtime is not None and bind_live:
             component_runtime.attach(handle)

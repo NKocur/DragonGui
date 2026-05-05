@@ -91,6 +91,36 @@ def _try_pack_xyz(frame: Any, x_col: str, y_col: str, z_col: str) -> str | None:
     return base64.b64encode(buf).decode("ascii")
 
 
+def _pack_xy_bytes(frame: Any, x_col: str | None, y_col: str) -> object | None:
+    """Serialize xy columns as packed float32 little-endian pairs."""
+    try:
+        import numpy as np
+
+        ys = np.asarray(_get_frame_col(frame, y_col), dtype=np.float32).reshape(-1)
+        if x_col is None:
+            xs = np.arange(len(ys), dtype=np.float32)
+        else:
+            xs = np.asarray(_get_frame_col(frame, x_col), dtype=np.float32).reshape(-1)
+        if len(xs) != len(ys):
+            raise ValueError("LinePlot x and y columns must have the same length")
+        if len(ys) == 0:
+            return b""
+        out = np.empty((len(ys), 2), dtype="<f4")
+        out[:, 0] = xs
+        out[:, 1] = ys
+        return out.view(np.uint8).reshape(-1)
+    except (ImportError, AttributeError, TypeError, ValueError):
+        return None
+
+
+def _try_pack_xy(frame: Any, x_col: str | None, y_col: str) -> str | None:
+    """Serialize xy columns as base64 for startup document compatibility."""
+    buf = _pack_xy_bytes(frame, x_col, y_col)
+    if buf is None:
+        return None
+    return base64.b64encode(buf).decode("ascii")
+
+
 # Qualitative palette for categorical colors (tab10-style, [0,1] RGB).
 _CATEGORICAL_PALETTE: list[tuple[float, float, float]] = [
     (0.122, 0.467, 0.706),  # blue
@@ -528,6 +558,19 @@ class ScatterPayload:
     pack_ms: float = 0.0
     axis_labels: tuple[str, str, str] = ("x", "y", "z")
     hover_meta: str | None = None
+    frame_summary: Any | None = None
+
+
+@dataclass(frozen=True)
+class LinePlotPayload:
+    """Immutable packed LinePlot payload safe to prepare off the UI thread."""
+
+    data: bytes
+    payload_format: str
+    point_count: int
+    pack_ms: float = 0.0
+    x_label: str = "sample"
+    y_label: str = "value"
     frame_summary: Any | None = None
 
 
@@ -970,6 +1013,158 @@ class ScrollArea(Container):
         super().__init__(id=id, key=key, class_=class_, style=merged, tooltip=tooltip, parent=parent)
 
 
+GridTrackValue = int | float | str | Mapping[str, object]
+GridTrackTemplate = Sequence[GridTrackValue] | str
+
+
+def _grid_track_number(value: object, name: str, *, positive: bool = False) -> int | float:
+    if isinstance(value, bool):
+        raise ValueError(f"GridLayout {name} track sizes must be numeric")
+    if isinstance(value, str):
+        try:
+            num = float(value)
+        except ValueError as exc:
+            raise ValueError(f"GridLayout {name} track sizes must be numeric") from exc
+    elif isinstance(value, numbers.Real):
+        num = float(value)
+    else:
+        raise ValueError(f"GridLayout {name} track sizes must be numeric")
+    if not math.isfinite(num) or num < 0 or (positive and num <= 0):
+        qualifier = "positive" if positive else "non-negative"
+        raise ValueError(f"GridLayout {name} track sizes must be {qualifier}")
+    return int(num) if num.is_integer() else num
+
+
+def _grid_track_percent(value: object, name: str) -> dict[str, object]:
+    return {"percent": _grid_track_number(value, name)}
+
+
+def _normalize_grid_fit_content(value: object, name: str) -> object:
+    track = _normalize_grid_track(value, name)
+    if isinstance(track, (int, float)):
+        return track
+    if isinstance(track, Mapping) and set(track) == {"percent"}:
+        return dict(track)
+    raise ValueError(f"GridLayout {name} fit-content tracks require px or percent sizes")
+
+
+def _normalize_grid_min_track(value: object, name: str) -> object:
+    track = _normalize_grid_track(value, name)
+    if isinstance(track, (int, float)) or track == "auto":
+        return track
+    if isinstance(track, Mapping) and set(track) == {"percent"}:
+        return dict(track)
+    raise ValueError(f"GridLayout {name} minmax min tracks require px, percent, or auto")
+
+
+def _normalize_grid_max_track(value: object, name: str) -> object:
+    track = _normalize_grid_track(value, name)
+    if isinstance(track, (int, float)) or track == "auto":
+        return track
+    if isinstance(track, Mapping) and set(track) <= {"percent", "fr"}:
+        return dict(track)
+    raise ValueError(f"GridLayout {name} minmax max tracks require px, percent, fr, or auto")
+
+
+def _normalize_grid_minmax(value: object, name: str) -> dict[str, object]:
+    if isinstance(value, Mapping):
+        if "min" not in value or "max" not in value:
+            raise ValueError(f"GridLayout {name} minmax tracks require min and max")
+        min_value = value["min"]
+        max_value = value["max"]
+    elif (
+        isinstance(value, Sequence)
+        and not isinstance(value, (str, bytes, bytearray))
+        and len(value) == 2
+    ):
+        min_value, max_value = value
+    else:
+        raise ValueError(f"GridLayout {name} minmax tracks require a two-item sequence")
+    return {
+        "min": _normalize_grid_min_track(min_value, name),
+        "max": _normalize_grid_max_track(max_value, name),
+    }
+
+
+def _normalize_grid_track_mapping(value: Mapping[str, object], name: str) -> object:
+    if "fr" in value:
+        return {"fr": _grid_track_number(value["fr"], name, positive=True)}
+    if "percent" in value:
+        return _grid_track_percent(value["percent"], name)
+    if "fit_content" in value:
+        return {"fit_content": _normalize_grid_fit_content(value["fit_content"], name)}
+    if "fit" in value:
+        return {"fit_content": _normalize_grid_fit_content(value["fit"], name)}
+    if "minmax" in value:
+        return {"minmax": _normalize_grid_minmax(value["minmax"], name)}
+    if "min" in value or "max" in value:
+        return {"minmax": _normalize_grid_minmax(value, name)}
+    if "repeat" in value:
+        repeat = value["repeat"]
+        if not isinstance(repeat, Mapping):
+            raise ValueError(f"GridLayout {name} repeat tracks require a mapping")
+        kind = str(repeat.get("kind", "auto-fit")).strip().lower()
+        if kind not in {"auto-fit", "auto-fill"}:
+            raise ValueError("GridLayout repeat kind must be 'auto-fit' or 'auto-fill'")
+        tracks = repeat.get("tracks")
+        return {
+            "repeat": {
+                "kind": kind,
+                "tracks": _normalize_grid_template_tracks(tracks, name),
+            }
+        }
+    raise ValueError(f"GridLayout {name} track mapping is not recognized")
+
+
+def _normalize_grid_track_text(value: str, name: str) -> object:
+    token = value.strip().lower()
+    if not token:
+        raise ValueError(f"GridLayout {name} track values cannot be empty")
+    if token == "auto":
+        return "auto"
+    if token.endswith("fr"):
+        return {"fr": _grid_track_number(token[:-2].strip(), name, positive=True)}
+    if token.endswith("px"):
+        return _grid_track_number(token[:-2].strip(), name)
+    if token.endswith("%"):
+        return _grid_track_percent(token[:-1].strip(), name)
+    if token.startswith("fit-content(") and token.endswith(")"):
+        return {"fit_content": _normalize_grid_fit_content(token[12:-1], name)}
+    if token.startswith("minmax(") and token.endswith(")"):
+        parts = token[7:-1].split(",", 1)
+        if len(parts) != 2:
+            raise ValueError(f"GridLayout {name} minmax tracks require two values")
+        return {
+            "minmax": {
+                "min": _normalize_grid_min_track(parts[0].strip(), name),
+                "max": _normalize_grid_max_track(parts[1].strip(), name),
+            }
+        }
+    raise ValueError(f"GridLayout {name} track value {value!r} is not supported")
+
+
+def _normalize_grid_track(value: object, name: str) -> object:
+    if isinstance(value, Mapping):
+        return _normalize_grid_track_mapping(value, name)
+    if isinstance(value, str):
+        return _normalize_grid_track_text(value, name)
+    return _grid_track_number(value, name)
+
+
+def _normalize_grid_template_tracks(value: object, name: str) -> list[object]:
+    if value is None:
+        raise ValueError(f"GridLayout {name} cannot be None")
+    if isinstance(value, str):
+        raw_tracks: list[object] = value.split()
+    elif isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+        raw_tracks = list(value)
+    else:
+        raise ValueError(f"GridLayout {name} must be a sequence or whitespace-separated string")
+    if not raw_tracks:
+        raise ValueError(f"GridLayout {name} must contain at least one track")
+    return [_normalize_grid_track(track, name) for track in raw_tracks]
+
+
 class GridLayout(Container):
     """Responsive CSS-grid container.
 
@@ -978,9 +1173,12 @@ class GridLayout(Container):
     column count and ``min_column_width`` are given, the layout uses up to that
     many columns and collapses to fewer columns when there is not enough space.
 
-    ``gap`` sets both row and column gap; ``row_gap`` overrides the row gap
-    independently.  Both are in logical pixels.  All arguments may be
-    overridden by CSS class rules applied to the widget.
+    ``template_columns`` and ``template_rows`` accept explicit grid track
+    definitions such as ``(44, "1fr")`` for compact key/value layouts.  When
+    ``template_columns`` is provided, it overrides ``columns`` and
+    ``min_column_width``. ``gap`` sets both row and column gap; ``row_gap``
+    overrides the row gap independently.  Both are in logical pixels.  All
+    arguments may be overridden by CSS class rules applied to the widget.
     """
 
     kind = "grid_layout"
@@ -990,6 +1188,8 @@ class GridLayout(Container):
         *,
         columns: "int | str" = 2,
         min_column_width: "int | None" = 320,
+        template_columns: "GridTrackTemplate | None" = None,
+        template_rows: "GridTrackTemplate | None" = None,
         gap: "int | None" = None,
         row_gap: "int | None" = None,
         id: "str | None" = None,
@@ -1015,6 +1215,16 @@ class GridLayout(Container):
             raise ValueError("GridLayout row_gap must be non-negative")
         self._grid_columns = columns
         self._grid_min_column_width = min_column_width
+        self._grid_template_columns = (
+            _normalize_grid_template_tracks(template_columns, "template_columns")
+            if template_columns is not None
+            else None
+        )
+        self._grid_template_rows = (
+            _normalize_grid_template_tracks(template_rows, "template_rows")
+            if template_rows is not None
+            else None
+        )
         extra: "dict[str, object]" = {}
         if gap is not None:
             extra["gap"] = int(gap)
@@ -1025,9 +1235,13 @@ class GridLayout(Container):
 
     def props(self) -> "dict[str, Any]":
         p: "dict[str, Any]" = {}
-        if self._grid_columns != "auto" and isinstance(self._grid_columns, int):
+        if self._grid_template_columns is not None:
+            p["template_columns"] = self._grid_template_columns
+        elif self._grid_columns != "auto" and isinstance(self._grid_columns, int):
             p["columns"] = self._grid_columns
-        if self._grid_min_column_width is not None:
+        if self._grid_template_rows is not None:
+            p["template_rows"] = self._grid_template_rows
+        if self._grid_template_columns is None and self._grid_min_column_width is not None:
             p["min_column_width"] = int(self._grid_min_column_width)
         return p
 
@@ -2494,6 +2708,424 @@ def _scatter_needs_v1(
         or clim is not None
         or log_scale
     )
+
+
+def _line_plot_columns(value: str | Sequence[str]) -> tuple[str, ...]:
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            raise ValueError("LinePlot y must be a non-empty column name")
+        return (text,)
+    if isinstance(value, (bytes, bytearray)) or not isinstance(value, Sequence):
+        raise TypeError("LinePlot y must be a column name or sequence of column names")
+    columns = tuple(str(item).strip() for item in value)
+    if not columns or any(not item for item in columns):
+        raise ValueError("LinePlot y columns must be non-empty")
+    return columns
+
+
+def _line_plot_optional_values(
+    value: str | Sequence[object] | None,
+    *,
+    count: int,
+    name: str,
+) -> tuple[object | None, ...]:
+    if value is None:
+        return (None,) * count
+    if isinstance(value, str):
+        if count != 1:
+            raise ValueError(f"LinePlot {name} length must match y series count")
+        return (value,)
+    if isinstance(value, (bytes, bytearray)) or not isinstance(value, Sequence):
+        raise TypeError(f"LinePlot {name} must be a value or sequence")
+    values = tuple(value)
+    if len(values) != count:
+        raise ValueError(f"LinePlot {name} length must match y series count")
+    return values
+
+
+def _line_plot_optional_colors(
+    value: object | Sequence[object] | None,
+    *,
+    count: int,
+    name: str,
+) -> tuple[object | None, ...]:
+    if value is None:
+        return (None,) * count
+    if isinstance(value, str):
+        return (value,) * count
+    if isinstance(value, (bytes, bytearray)) or not isinstance(value, Sequence):
+        return (value,) * count
+    values = tuple(value)
+    if len(values) in {3, 4} and all(isinstance(item, (int, float)) for item in values):
+        return (values,) * count
+    if len(values) != count:
+        raise ValueError(f"LinePlot {name} length must match y series count")
+    return values
+
+
+def _pack_xy_values(x_values: Any, y_values: Any | None = None) -> bytes | None:
+    try:
+        import numpy as np
+
+        if y_values is None:
+            ys = np.asarray(x_values, dtype=np.float32).reshape(-1)
+            xs = np.arange(len(ys), dtype=np.float32)
+        else:
+            xs = np.asarray(x_values, dtype=np.float32).reshape(-1)
+            ys = np.asarray(y_values, dtype=np.float32).reshape(-1)
+        if len(xs) != len(ys):
+            raise ValueError("LinePlot x and y values must have the same length")
+        if len(ys) == 0:
+            return b""
+        out = np.empty((len(ys), 2), dtype="<f4")
+        out[:, 0] = xs
+        out[:, 1] = ys
+        return memoryview(out.view(np.uint8).reshape(-1)).tobytes()
+    except (ImportError, TypeError, ValueError):
+        return None
+
+
+class LinePlot(Widget):
+    kind = "line_plot"
+
+    def __init__(
+        self,
+        frame: Any = None,
+        *,
+        x: str | None = None,
+        y: str | Sequence[str],
+        label: str | None = None,
+        labels: Sequence[str] | None = None,
+        color: str | Sequence[object] | None = None,
+        colors: Sequence[object] | None = None,
+        x_label: str | None = None,
+        y_label: str | None = None,
+        show_grid: bool = True,
+        show_axes: bool = True,
+        show_ticks: bool = True,
+        show_toolbar: bool = False,
+        tick_count: int = 5,
+        auto_fit: bool = True,
+        line_width: float = 2.0,
+        max_points: int | None = None,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.frame = frame
+        self.x = x
+        self.y_columns = _line_plot_columns(y)
+        if labels is not None and label is not None:
+            raise ValueError("LinePlot accepts either label or labels, not both")
+        if colors is not None and color is not None:
+            raise ValueError("LinePlot accepts either color or colors, not both")
+        label_values = (
+            _line_plot_optional_values(labels, count=len(self.y_columns), name="labels")
+            if labels is not None
+            else _line_plot_optional_values(label, count=len(self.y_columns), name="label")
+        )
+        self.labels = tuple(None if item is None else str(item) for item in label_values)
+        self.colors = _line_plot_optional_colors(
+            colors if colors is not None else color,
+            count=len(self.y_columns),
+            name="colors",
+        )
+        self.x_label = str(x_label if x_label is not None else (x if x is not None else "sample"))
+        self.y_label = str(y_label if y_label is not None else self.y_columns[0])
+        self.show_grid = bool(show_grid)
+        self.show_axes = bool(show_axes)
+        self.show_ticks = bool(show_ticks)
+        self.show_toolbar = bool(show_toolbar)
+        self.tick_count = max(2, min(9, int(tick_count)))
+        self.auto_fit = bool(auto_fit)
+        self.line_width = max(0.5, float(line_width))
+        self.max_points = None if max_points is None else max(1, int(max_points))
+        self.frame_summary = summarize_frame(frame)
+        self.data_format = "xy_f32_v0"
+        self._cached_payloads: dict[str, bytes | None] = {}
+        self._cached_payload_b64: dict[str, str | None] = {}
+        self._payload_tokens: dict[str, int] = {}
+        self._refresh_cached_payload_b64()
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    @property
+    def y(self) -> str | list[str]:
+        return self.y_columns[0] if len(self.y_columns) == 1 else list(self.y_columns)
+
+    @property
+    def label(self) -> str | None:
+        label = self.labels[0] if self.labels else None
+        return label if label else None
+
+    @property
+    def color(self) -> object | None:
+        return self.colors[0] if self.colors else None
+
+    @staticmethod
+    def _immutable_payload_bytes(payload: object) -> bytes:
+        if isinstance(payload, bytes):
+            return payload
+        return memoryview(payload).tobytes()
+
+    @staticmethod
+    def _payload_point_count(payload: bytes, payload_format: str) -> int:
+        bytes_per_point = 8 if payload_format == "xy_f32_v0" else 0
+        return len(payload) // bytes_per_point if bytes_per_point else 0
+
+    def _series_label(self, index: int) -> str:
+        label = self.labels[index] if index < len(self.labels) else None
+        return str(label) if label else self.y_columns[index]
+
+    def _series_color(self, index: int) -> object | None:
+        return self.colors[index] if index < len(self.colors) else None
+
+    def _build_payload(self, y_column: str) -> bytes | None:
+        return _pack_xy_bytes(self.frame, self.x, y_column)
+
+    def _refresh_cached_payload_b64(self) -> None:
+        self._cached_payloads.clear()
+        self._cached_payload_b64.clear()
+        self._payload_tokens.clear()
+        for y_column in self.y_columns:
+            payload = self._build_payload(y_column)
+            if payload is None:
+                self._cached_payloads[y_column] = None
+                self._cached_payload_b64[y_column] = None
+                self._payload_tokens[y_column] = 0
+                continue
+            data = self._immutable_payload_bytes(payload)
+            self._cached_payloads[y_column] = data
+            self._cached_payload_b64[y_column] = base64.b64encode(data).decode("ascii")
+            self._payload_tokens[y_column] = zlib.crc32(data) if data else 0
+
+    @classmethod
+    def prepare_points(
+        cls,
+        frame: Any,
+        *,
+        x: str | None = None,
+        y: str,
+        x_label: str | None = None,
+        y_label: str | None = None,
+    ) -> LinePlotPayload:
+        """Pack one LinePlot series without mutating a live widget."""
+        t0 = time.perf_counter()
+        raw = _pack_xy_bytes(frame, x, y)
+        pack_ms = (time.perf_counter() - t0) * 1000.0
+        if raw is None:
+            raise RuntimeError("LinePlot.prepare_points requires NumPy and a numeric y column")
+        data = cls._immutable_payload_bytes(raw)
+        return LinePlotPayload(
+            data=data,
+            payload_format="xy_f32_v0",
+            point_count=cls._payload_point_count(data, "xy_f32_v0"),
+            pack_ms=pack_ms,
+            x_label=str(x_label if x_label is not None else (x if x is not None else "sample")),
+            y_label=str(y_label if y_label is not None else y),
+            frame_summary=summarize_frame(frame),
+        )
+
+    @classmethod
+    def prepare_series(
+        cls,
+        frame: Any,
+        *,
+        x: str | None = None,
+        y: str | Sequence[str],
+    ) -> tuple[LinePlotPayload, ...]:
+        """Pack one or more LinePlot series without mutating a live widget."""
+        return tuple(cls.prepare_points(frame, x=x, y=column) for column in _line_plot_columns(y))
+
+    def set_data(
+        self,
+        frame: Any,
+        *,
+        x: str | None = None,
+        y: str | Sequence[str] | None = None,
+        label: str | None = None,
+        labels: Sequence[str] | None = None,
+        color: str | Sequence[object] | None = None,
+        colors: Sequence[object] | None = None,
+        fit: bool = True,
+    ) -> None:
+        self.frame = frame
+        self.x = x
+        if y is not None:
+            self.y_columns = _line_plot_columns(y)
+        if labels is not None or label is not None:
+            if labels is not None and label is not None:
+                raise ValueError("LinePlot.set_data accepts either label or labels, not both")
+            label_values = (
+                _line_plot_optional_values(labels, count=len(self.y_columns), name="labels")
+                if labels is not None
+                else _line_plot_optional_values(label, count=len(self.y_columns), name="label")
+            )
+            self.labels = tuple(None if item is None else str(item) for item in label_values)
+        if colors is not None or color is not None:
+            if colors is not None and color is not None:
+                raise ValueError("LinePlot.set_data accepts either color or colors, not both")
+            self.colors = _line_plot_optional_colors(
+                colors if colors is not None else color,
+                count=len(self.y_columns),
+                name="colors",
+            )
+        self.x_label = str(x if x is not None else "sample")
+        self.y_label = self._series_label(0)
+        self.frame_summary = summarize_frame(frame)
+        self._refresh_cached_payload_b64()
+        if (handle := self._live()) is not None:
+            handle.enqueue_clear_line_plot_series()
+            handle.enqueue_set_prop("x_label", self.x_label)
+            handle.enqueue_set_prop("y_label", self.y_label)
+            for index, y_column in enumerate(self.y_columns):
+                payload = self._cached_payloads.get(y_column)
+                if payload is None:
+                    raise RuntimeError("live LinePlot.set_data requires numeric x/y columns")
+                handle.enqueue_set_line_plot_data_packed(
+                    self._series_label(index),
+                    payload,
+                    label=self._series_label(index),
+                    color=self._series_color(index),
+                    line_width=self.line_width,
+                    show_grid=self.show_grid,
+                    auto_fit=self.auto_fit,
+                    max_points=self.max_points,
+                    fit=fit,
+                )
+
+    def append_points(
+        self,
+        x_values: Any,
+        y_values: Any | None = None,
+        *,
+        series: str | None = None,
+        max_points: int | None = None,
+    ) -> None:
+        payload = _pack_xy_values(x_values, y_values)
+        if payload is None:
+            raise RuntimeError("LinePlot.append_points requires numeric x/y values")
+        target = series or self._series_label(0)
+        effective_max = max_points if max_points is not None else self.max_points
+        if (handle := self._live()) is not None:
+            handle.enqueue_append_line_plot_points_packed(
+                target,
+                payload,
+                max_points=None if effective_max is None else int(effective_max),
+            )
+
+    def clear(self, series: str | None = None) -> None:
+        if (handle := self._live()) is not None:
+            handle.enqueue_clear_line_plot_series(series)
+
+    def _queue_startup_resources(self) -> None:
+        handle = self._live()
+        if handle is None:
+            return
+        handle.enqueue_set_prop("x_label", self.x_label)
+        handle.enqueue_set_prop("y_label", self.y_label)
+        handle.enqueue_set_prop("show_grid", self.show_grid)
+        handle.enqueue_set_prop("show_axes", self.show_axes)
+        handle.enqueue_set_prop("show_ticks", self.show_ticks)
+        handle.enqueue_set_prop("show_toolbar", self.show_toolbar)
+        handle.enqueue_set_prop("tick_count", self.tick_count)
+        for index, y_column in enumerate(self.y_columns):
+            payload = self._cached_payloads.get(y_column)
+            if payload is None:
+                continue
+            handle.enqueue_set_line_plot_data_packed(
+                self._series_label(index),
+                payload,
+                label=self._series_label(index),
+                color=self._series_color(index),
+                line_width=self.line_width,
+                show_grid=self.show_grid,
+                auto_fit=self.auto_fit,
+                max_points=self.max_points,
+                fit=self.auto_fit,
+                coalesce=True,
+            )
+
+    def set_line_width(self, width: float) -> None:
+        self.line_width = max(0.5, float(width))
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("line_width", self.line_width)
+
+    def set_grid_visible(self, visible: bool) -> None:
+        self.show_grid = bool(visible)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("show_grid", self.show_grid)
+
+    def set_axes_visible(self, visible: bool) -> None:
+        self.show_axes = bool(visible)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("show_axes", self.show_axes)
+
+    def set_ticks_visible(self, visible: bool) -> None:
+        self.show_ticks = bool(visible)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("show_ticks", self.show_ticks)
+
+    def set_toolbar_visible(self, visible: bool) -> None:
+        self.show_toolbar = bool(visible)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("show_toolbar", self.show_toolbar)
+
+    def set_tick_count(self, count: int) -> None:
+        self.tick_count = max(2, min(9, int(count)))
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("tick_count", self.tick_count)
+
+    def set_axis_labels(self, *, x: str | None = None, y: str | None = None) -> None:
+        if x is not None:
+            self.x_label = str(x)
+        if y is not None:
+            self.y_label = str(y)
+        if (handle := self._live()) is not None:
+            if x is not None:
+                handle.enqueue_set_prop("x_label", self.x_label)
+            if y is not None:
+                handle.enqueue_set_prop("y_label", self.y_label)
+
+    def props(self) -> dict[str, Any]:
+        include_payload = _include_startup_resource_payloads()
+        if include_payload and any(
+            self._cached_payload_b64.get(column) is None for column in self.y_columns
+        ):
+            self._refresh_cached_payload_b64()
+        series_items: list[dict[str, Any]] = []
+        for index, y_column in enumerate(self.y_columns):
+            payload = self._cached_payloads.get(y_column) or b""
+            item: dict[str, Any] = {
+                "label": self._series_label(index),
+                "data_format": self.data_format,
+                "points": self._payload_point_count(payload, self.data_format),
+                "_payload_token": self._payload_tokens.get(y_column, 0),
+            }
+            if (color := self._series_color(index)) is not None:
+                item["color"] = color
+            if include_payload:
+                item["data_b64"] = self._cached_payload_b64.get(y_column) or ""
+            series_items.append(item)
+        return {
+            "frame": self.frame_summary.to_dict(),
+            "x": self.x or "",
+            "y": self.y,
+            "x_label": self.x_label,
+            "y_label": self.y_label,
+            "show_grid": self.show_grid,
+            "show_axes": self.show_axes,
+            "show_ticks": self.show_ticks,
+            "show_toolbar": self.show_toolbar,
+            "tick_count": self.tick_count,
+            "auto_fit": self.auto_fit,
+            "line_width": self.line_width,
+            "max_points": self.max_points,
+            "series": series_items,
+        }
 
 
 class Scatter3D(Widget):

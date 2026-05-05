@@ -24,8 +24,8 @@ use crate::css_style::{
     matched_rule_labels_for_tree_with_media, DgKeyframes, DgMediaColorGamut, DgMediaColorScheme,
     DgMediaEnvironment, DgMediaHover, DgMediaPointer, StylesheetOrigin, StylesheetStore,
 };
-use crate::document::ScatterPayloadFormat;
 use crate::document::{self, NodeProps, WidgetKind, WidgetNode};
+use crate::document::{LinePlotPayloadFormat, ScatterPayloadFormat};
 use crate::error::DragonError;
 use crate::events::{
     has_active_modal, hit_test, hit_test_hover, modal_blocks_point, ChangeValue, SliderDrag,
@@ -37,8 +37,8 @@ use crate::layout::{
 };
 use crate::overlays::{find_node, menu_popup_width};
 use crate::primitives::{
-    interpolate_visual_style, panel_scrollbar_geometry, PanelScrollbarAxis,
-    PanelScrollbarAxisGeometry, PrimitivesRenderer,
+    interpolate_visual_style, line_plot_text_labels, line_plot_toolbar_hit,
+    panel_scrollbar_geometry, PanelScrollbarAxis, PanelScrollbarAxisGeometry, PrimitivesRenderer,
 };
 use crate::resources::ResourceRegistry;
 use crate::scatter::{self, PointInstance, ScatterWidget};
@@ -104,6 +104,7 @@ fn coalesce_runtime_command_batch(commands: &mut Vec<Command>) {
         return;
     }
     let mut seen_scatter_updates = HashMap::new();
+    let mut seen_line_plot_updates = HashMap::new();
     let mut filtered = Vec::with_capacity(commands.len());
     while let Some(command) = commands.pop() {
         let keep = match &command {
@@ -124,6 +125,28 @@ fn coalesce_runtime_command_batch(commands: &mut Vec<Command>) {
                     false
                 } else {
                     seen_scatter_updates.insert(id.clone(), filtered.len());
+                    true
+                }
+            }
+            Command::SetLinePlotDataPacked {
+                id,
+                series,
+                fit,
+                coalesce: true,
+                ..
+            } => {
+                let key = (id.clone(), series.clone());
+                if let Some(index) = seen_line_plot_updates.get(&key).copied() {
+                    if *fit {
+                        if let Command::SetLinePlotDataPacked { fit: kept_fit, .. } =
+                            &mut filtered[index]
+                        {
+                            *kept_fit = true;
+                        }
+                    }
+                    false
+                } else {
+                    seen_line_plot_updates.insert(key, filtered.len());
                     true
                 }
             }
@@ -275,6 +298,72 @@ fn decode_actor_payload_bytes(
         }
     }
     Ok(pts)
+}
+
+fn decode_line_plot_points_bytes(
+    bytes: &[u8],
+    format: LinePlotPayloadFormat,
+) -> Result<Vec<[f32; 2]>, DragonError> {
+    match format {
+        LinePlotPayloadFormat::XyF32V0 => {
+            if bytes.len() % 8 != 0 {
+                return Err(DragonError::ParseError(format!(
+                    "line plot xy payload length {} is not a multiple of 8",
+                    bytes.len()
+                )));
+            }
+            Ok(bytes
+                .chunks_exact(8)
+                .map(|chunk| {
+                    [
+                        f32::from_le_bytes(chunk[0..4].try_into().unwrap()),
+                        f32::from_le_bytes(chunk[4..8].try_into().unwrap()),
+                    ]
+                })
+                .collect())
+        }
+    }
+}
+
+fn parse_line_plot_color(value: Option<String>) -> Option<ColorRef> {
+    let text = value?;
+    if text.trim().is_empty() {
+        return None;
+    }
+    if let Some(color) = parse_web_color(text.trim()) {
+        return Some(ColorRef::Rgba(color));
+    }
+    let parts: Vec<_> = text.split(',').map(str::trim).collect();
+    if parts.len() == 3 || parts.len() == 4 {
+        let parsed: Option<Vec<f32>> = parts.iter().map(|part| part.parse::<f32>().ok()).collect();
+        if let Some(values) = parsed {
+            let channel = |value: f32| {
+                if value > 1.0 {
+                    (value / 255.0).clamp(0.0, 1.0)
+                } else {
+                    value.clamp(0.0, 1.0)
+                }
+            };
+            return Some(ColorRef::Rgba([
+                channel(values[0]),
+                channel(values[1]),
+                channel(values[2]),
+                values.get(3).copied().unwrap_or(1.0).clamp(0.0, 1.0),
+            ]));
+        }
+    }
+    Some(ColorRef::Token(text))
+}
+
+fn limit_line_plot_points(points: &mut Vec<[f32; 2]>, max_points: Option<usize>) {
+    let Some(max_points) = max_points.filter(|value| *value > 0) else {
+        return;
+    };
+    if points.len() <= max_points {
+        return;
+    }
+    let drain = points.len() - max_points;
+    points.drain(0..drain);
 }
 
 fn decode_scatter_points_bytes_into_colormap(
@@ -848,6 +937,7 @@ fn widget_kind_name(kind: &WidgetKind) -> &'static str {
         WidgetKind::Page => "page",
         WidgetKind::Sidebar => "sidebar",
         WidgetKind::NavItem => "nav_item",
+        WidgetKind::LinePlot => "line_plot",
         WidgetKind::Scatter3D => "scatter_3d",
         WidgetKind::DataFrameTable => "dataframe_table",
         WidgetKind::Image => "image",
@@ -1791,7 +1881,7 @@ fn collect_computed_styles_snapshot(
 
 fn props_snapshot(node: &WidgetNode) -> Value {
     let props = &node.props;
-    json!({
+    let mut snapshot = json!({
         "text": props.text.as_deref(),
         "badge": props.badge.as_deref(),
         "level": props.level.as_deref(),
@@ -1799,6 +1889,12 @@ fn props_snapshot(node: &WidgetNode) -> Value {
         "fixed_height": props.fixed_height,
         "grid_columns": props.grid_columns,
         "grid_min_column_width": props.grid_min_column_width,
+        "grid_template_columns": props.grid_template_columns.as_ref().map(|tracks| {
+            tracks.iter().map(grid_track_json).collect::<Vec<_>>()
+        }),
+        "grid_template_rows": props.grid_template_rows.as_ref().map(|tracks| {
+            tracks.iter().map(grid_track_json).collect::<Vec<_>>()
+        }),
         "flow_align": props.flow_align.as_deref(),
         "flow_cross_align": props.flow_cross_align.as_deref(),
         "disabled": props.disabled,
@@ -1828,7 +1924,35 @@ fn props_snapshot(node: &WidgetNode) -> Value {
             "page_size": props.page_size,
             "sample_rows": props.table_sample_rows,
         },
-    })
+    });
+    if node.kind == WidgetKind::LinePlot {
+        let line_plot_series = props
+            .line_plot_series
+            .iter()
+            .map(|series| {
+                json!({
+                    "label": series.label.as_deref(),
+                    "points": series.points.len(),
+                    "declared_points": series.declared_point_count,
+                })
+            })
+            .collect::<Vec<_>>();
+        if let Value::Object(map) = &mut snapshot {
+            map.insert(
+                "line_plot".to_string(),
+                json!({
+                "x_label": props.line_plot_x_label.as_deref(),
+                "y_label": props.line_plot_y_label.as_deref(),
+                "show_grid": props.line_plot_show_grid,
+                "show_axes": props.line_plot_show_axes,
+                "show_ticks": props.line_plot_show_ticks,
+                "tick_count": props.line_plot_tick_count,
+                "series": line_plot_series,
+                }),
+            );
+        }
+    }
+    snapshot
 }
 
 fn node_snapshot(node: &WidgetNode) -> Value {
@@ -2541,6 +2665,19 @@ mod style_patch_tests {
         assert_eq!(dirty_name(Dirty::Visual), "visual");
         assert_eq!(dirty_name(Dirty::GpuData), "gpu_data");
         assert_eq!(dirty_name(Dirty::Full), "full");
+    }
+
+    #[test]
+    fn dirty_merge_keeps_highest_cost_rebuild() {
+        assert_eq!(merge_dirty(None, Dirty::Text), Dirty::Text);
+        assert_eq!(merge_dirty(Some(Dirty::Visual), Dirty::Text), Dirty::Text);
+        assert_eq!(merge_dirty(Some(Dirty::Text), Dirty::Visual), Dirty::Text);
+        assert_eq!(merge_dirty(Some(Dirty::Layout), Dirty::Text), Dirty::Layout);
+        assert_eq!(merge_dirty(Some(Dirty::Text), Dirty::Full), Dirty::Full);
+        assert_eq!(
+            merge_dirty(Some(Dirty::Visual), Dirty::GpuData),
+            Dirty::Visual
+        );
     }
 
     #[test]
@@ -3477,6 +3614,9 @@ struct WgpuState {
     selected_state_snapshot: HashSet<String>,
     expanded_transitions: HashMap<String, HoverTransition>,
     expanded_state_snapshot: HashSet<String>,
+    defer_rebuilds: bool,
+    deferred_dirty: Option<Dirty>,
+    deferred_scatter_style_sync: bool,
     animation_epoch: Instant,
 }
 
@@ -4190,6 +4330,41 @@ fn number_input_step_at_pos(
     None
 }
 
+fn push_line_plot_overlay_labels(
+    text: &mut TextRendererDg,
+    node: &WidgetNode,
+    layout: &crate::layout::LayoutResult,
+    theme: &Theme,
+    sf: f32,
+) {
+    if node.kind == WidgetKind::LinePlot {
+        if let Some(rect) = layout.visible_rect(&node.id) {
+            let clip = glyphon::TextBounds {
+                left: rect.x as i32,
+                top: rect.y as i32,
+                right: (rect.x + rect.w) as i32,
+                bottom: (rect.y + rect.h) as i32,
+            };
+            for label in line_plot_text_labels(node, theme, sf, [rect.x, rect.y, rect.w, rect.h]) {
+                text.push_scatter_label(
+                    &label.text,
+                    label.screen_x,
+                    label.screen_y,
+                    label.is_title,
+                    clip,
+                    sf,
+                    label.color,
+                    label.font_size,
+                    label.anchor,
+                );
+            }
+        }
+    }
+    for child in &node.children {
+        push_line_plot_overlay_labels(text, child, layout, theme, sf);
+    }
+}
+
 impl WgpuState {
     async fn new(window: Arc<Window>, spec: AppSpec) -> Result<(Self, f64), DragonError> {
         let size = window.inner_size();
@@ -4426,6 +4601,9 @@ impl WgpuState {
             selected_state_snapshot,
             expanded_transitions: HashMap::new(),
             expanded_state_snapshot,
+            defer_rebuilds: false,
+            deferred_dirty: None,
+            deferred_scatter_style_sync: false,
             animation_epoch: Instant::now(),
         };
 
@@ -5888,6 +6066,58 @@ impl WgpuState {
             }
             return Some(Dirty::Layout);
         }
+        if kind == WidgetKind::LinePlot {
+            let Some(tree) = self.widget_tree.as_mut() else {
+                return None;
+            };
+            let Some(node) = find_widget_mut(tree, id) else {
+                return None;
+            };
+            match (prop, value) {
+                ("line_width", CommandValue::Float(width)) => {
+                    node.props.line_plot_line_width = width.max(0.5);
+                    return Some(Dirty::Visual);
+                }
+                ("show_grid", CommandValue::Bool(visible)) => {
+                    node.props.line_plot_show_grid = visible;
+                    return Some(Dirty::Visual);
+                }
+                ("show_axes", CommandValue::Bool(visible)) => {
+                    node.props.line_plot_show_axes = visible;
+                    return Some(Dirty::Text);
+                }
+                ("show_ticks", CommandValue::Bool(visible)) => {
+                    node.props.line_plot_show_ticks = visible;
+                    return Some(Dirty::Text);
+                }
+                ("show_toolbar", CommandValue::Bool(visible)) => {
+                    node.props.line_plot_show_toolbar = visible;
+                    return Some(Dirty::Text);
+                }
+                ("tick_count", CommandValue::Float(count)) => {
+                    node.props.line_plot_tick_count = (count.round() as isize).clamp(2, 9) as usize;
+                    return Some(Dirty::Text);
+                }
+                ("x_label", CommandValue::Text(label)) => {
+                    node.props.line_plot_x_label = (!label.trim().is_empty()).then_some(label);
+                    return Some(Dirty::Text);
+                }
+                ("y_label", CommandValue::Text(label)) => {
+                    node.props.line_plot_y_label = (!label.trim().is_empty()).then_some(label);
+                    return Some(Dirty::Text);
+                }
+                ("auto_fit", CommandValue::Bool(auto_fit)) => {
+                    node.props.line_plot_auto_fit = auto_fit;
+                    return Some(Dirty::Visual);
+                }
+                (_, _) => {
+                    eprintln!(
+                        "DragonGUI: ignoring unsupported live SetProp for widget {id:?} ({kind:?}).{prop}"
+                    );
+                    return None;
+                }
+            }
+        }
         if matches!(
             kind,
             WidgetKind::Button | WidgetKind::Tab | WidgetKind::NavItem
@@ -6148,11 +6378,15 @@ impl WgpuState {
 
     fn rebuild_retained_maps(&mut self) {
         let mut widget_kinds = HashMap::new();
-        let widget_state = self.widget_tree.as_ref().map(|tree| {
+        let previous_state = self.widget_state.as_ref();
+        let mut widget_state = self.widget_tree.as_ref().map(|tree| {
             collect_widget_kinds(tree, &mut widget_kinds);
             self.resources.sync_from_tree(tree);
             WidgetState::from_tree(tree)
         });
+        if let (Some(previous), Some(current)) = (previous_state, widget_state.as_mut()) {
+            current.preserve_rebuild_state_from(previous);
+        }
         if self.widget_tree.is_none() {
             self.resources = ResourceRegistry::default();
         }
@@ -6378,6 +6612,191 @@ impl WgpuState {
     ) -> bool {
         self.resources
             .update_buffer(id.to_string(), kind.to_string(), bytes, owner_id);
+        true
+    }
+
+    fn set_line_plot_data_packed(
+        &mut self,
+        id: &str,
+        series: String,
+        xy: Vec<u8>,
+        label: Option<String>,
+        color: Option<String>,
+        line_width: Option<f32>,
+        show_grid: Option<bool>,
+        auto_fit: Option<bool>,
+        max_points: Option<usize>,
+        payload_format: LinePlotPayloadFormat,
+    ) -> Result<bool, DragonError> {
+        if self.widget_kind(id) != Some(WidgetKind::LinePlot) {
+            return Ok(false);
+        }
+        let mut points = decode_line_plot_points_bytes(&xy, payload_format)?;
+        limit_line_plot_points(&mut points, max_points);
+        let Some(tree) = self.widget_tree.as_mut() else {
+            return Ok(false);
+        };
+        let Some(node) = find_widget_mut(tree, id) else {
+            return Ok(false);
+        };
+        if let Some(width) = line_width {
+            node.props.line_plot_line_width = width.max(0.5);
+        }
+        if let Some(show_grid) = show_grid {
+            node.props.line_plot_show_grid = show_grid;
+        }
+        if let Some(auto_fit) = auto_fit {
+            node.props.line_plot_auto_fit = auto_fit;
+        }
+        let label = label
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| series.clone());
+        let color = parse_line_plot_color(color);
+        let point_count = points.len();
+        if let Some(existing) = node
+            .props
+            .line_plot_series
+            .iter_mut()
+            .find(|item| item.label.as_deref() == Some(series.as_str()))
+        {
+            existing.label = Some(label);
+            if color.is_some() {
+                existing.color = color;
+            }
+            existing.points = points;
+            existing.payload_format = payload_format;
+            existing.declared_point_count = Some(point_count);
+        } else {
+            node.props
+                .line_plot_series
+                .push(document::LinePlotSeriesProp {
+                    label: Some(label),
+                    color,
+                    points,
+                    payload_format,
+                    declared_point_count: Some(point_count),
+                });
+        }
+        Ok(true)
+    }
+
+    fn append_line_plot_points_packed(
+        &mut self,
+        id: &str,
+        series: String,
+        xy: Vec<u8>,
+        max_points: Option<usize>,
+        payload_format: LinePlotPayloadFormat,
+    ) -> Result<bool, DragonError> {
+        if self.widget_kind(id) != Some(WidgetKind::LinePlot) {
+            return Ok(false);
+        }
+        let mut points = decode_line_plot_points_bytes(&xy, payload_format)?;
+        let Some(tree) = self.widget_tree.as_mut() else {
+            return Ok(false);
+        };
+        let Some(node) = find_widget_mut(tree, id) else {
+            return Ok(false);
+        };
+        if let Some(existing) = node
+            .props
+            .line_plot_series
+            .iter_mut()
+            .find(|item| item.label.as_deref() == Some(series.as_str()))
+        {
+            existing.points.append(&mut points);
+            limit_line_plot_points(&mut existing.points, max_points);
+            existing.declared_point_count = Some(existing.points.len());
+        } else {
+            limit_line_plot_points(&mut points, max_points);
+            let point_count = points.len();
+            node.props
+                .line_plot_series
+                .push(document::LinePlotSeriesProp {
+                    label: Some(series),
+                    color: None,
+                    points,
+                    payload_format,
+                    declared_point_count: Some(point_count),
+                });
+        }
+        Ok(true)
+    }
+
+    fn clear_line_plot_series(&mut self, id: &str, series: Option<String>) -> bool {
+        if self.widget_kind(id) != Some(WidgetKind::LinePlot) {
+            return false;
+        }
+        let Some(tree) = self.widget_tree.as_mut() else {
+            return false;
+        };
+        let Some(node) = find_widget_mut(tree, id) else {
+            return false;
+        };
+        if let Some(series) = series {
+            for item in &mut node.props.line_plot_series {
+                if item.label.as_deref() == Some(series.as_str()) {
+                    item.points.clear();
+                    item.declared_point_count = Some(0);
+                }
+            }
+        } else {
+            for item in &mut node.props.line_plot_series {
+                item.points.clear();
+                item.declared_point_count = Some(0);
+            }
+        }
+        true
+    }
+
+    fn activate_line_plot_toolbar(&mut self, id: &str, pos: [f32; 2]) -> bool {
+        if self.widget_kind(id) != Some(WidgetKind::LinePlot) {
+            return false;
+        }
+        let hit = {
+            let Some(layout) = self.current_layout.as_ref() else {
+                return false;
+            };
+            let Some(rect) = layout.visible_rect(id) else {
+                return false;
+            };
+            let Some(tree) = self.widget_tree.as_ref() else {
+                return false;
+            };
+            let Some(node) = find_node(tree, id) else {
+                return false;
+            };
+            line_plot_toolbar_hit(
+                node,
+                self.scale_factor,
+                [rect.x, rect.y, rect.w, rect.h],
+                pos,
+            )
+        };
+        let Some(action) = hit else {
+            return false;
+        };
+        let Some(tree) = self.widget_tree.as_mut() else {
+            return false;
+        };
+        let Some(node) = find_widget_mut(tree, id) else {
+            return false;
+        };
+        match action {
+            "Fit" => {
+                node.props.line_plot_auto_fit = true;
+            }
+            "Grid" => {
+                node.props.line_plot_show_grid = !node.props.line_plot_show_grid;
+            }
+            "Axes" => {
+                let visible = !(node.props.line_plot_show_axes || node.props.line_plot_show_ticks);
+                node.props.line_plot_show_axes = visible;
+                node.props.line_plot_show_ticks = visible;
+            }
+            _ => return false,
+        }
+        self.rebuild_primitives();
         true
     }
 
@@ -6616,7 +7035,32 @@ impl WgpuState {
         }
     }
 
+    fn begin_deferred_rebuilds(&mut self) {
+        self.defer_rebuilds = true;
+    }
+
+    fn flush_deferred_rebuilds(&mut self) -> bool {
+        self.defer_rebuilds = false;
+        let Some(dirty) = self.deferred_dirty.take() else {
+            self.deferred_scatter_style_sync = false;
+            return false;
+        };
+        let scatter_style_sync = std::mem::take(&mut self.deferred_scatter_style_sync);
+        if scatter_style_sync && matches!(dirty, Dirty::Text) {
+            self.sync_scatter_style_overrides();
+        }
+        self.rebuild_for_dirty(dirty);
+        true
+    }
+
     fn rebuild_for_dirty(&mut self, dirty: Dirty) {
+        if self.defer_rebuilds {
+            if matches!(dirty, Dirty::Visual) {
+                self.deferred_scatter_style_sync = true;
+            }
+            self.deferred_dirty = Some(merge_dirty(self.deferred_dirty, dirty));
+            return;
+        }
         if matches!(dirty, Dirty::Layout | Dirty::Full) {
             self.cancel_hover_transitions();
         }
@@ -7310,11 +7754,18 @@ impl WgpuState {
                 scale_factor,
                 device,
                 queue,
+                widget_tree,
+                current_layout,
+                theme,
                 ..
             } = &mut *self;
             if let Some(t) = text.as_mut() {
                 // Rebuild scatter grid labels from each scatter's pending_labels.
                 t.clear_scatter_labels();
+                if let (Some(tree), Some(layout)) = (widget_tree.as_ref(), current_layout.as_ref())
+                {
+                    push_line_plot_overlay_labels(t, tree, layout, theme, *scale_factor);
+                }
                 for id in visible_scatter_order.iter() {
                     if let Some(rt) = scatters.get(id) {
                         let [vl, vt, vr, vb] = rt.widget.viewport_clip();
@@ -7670,6 +8121,23 @@ fn dirty_name(dirty: Dirty) -> &'static str {
     }
 }
 
+fn dirty_rank(dirty: Dirty) -> u8 {
+    match dirty {
+        Dirty::GpuData => 0,
+        Dirty::Visual => 1,
+        Dirty::Text => 2,
+        Dirty::Layout => 3,
+        Dirty::Full => 4,
+    }
+}
+
+fn merge_dirty(current: Option<Dirty>, next: Dirty) -> Dirty {
+    match current {
+        Some(current) if dirty_rank(current) >= dirty_rank(next) => current,
+        _ => next,
+    }
+}
+
 struct DragonApp {
     spec: Option<AppSpec>,
     command_bridge: Option<Arc<CommandBridge>>,
@@ -7938,8 +8406,14 @@ impl DragonApp {
             }
             let batch_had_scatter_points = commands.iter().any(command_is_coalesced_scatter_points);
             batches += 1;
+            if let Some(gpu) = self.gpu.as_mut() {
+                gpu.begin_deferred_rebuilds();
+            }
             for command in commands.drain(..) {
                 request_redraw |= self.apply_runtime_command(command);
+            }
+            if let Some(gpu) = self.gpu.as_mut() {
+                request_redraw |= gpu.flush_deferred_rebuilds();
             }
             if batch_had_scatter_points {
                 if request_redraw {
@@ -8218,6 +8692,155 @@ impl DragonApp {
                 };
                 self.record_runtime_command(
                     "SetScatterPointsPacked",
+                    Some(id),
+                    detail,
+                    dirty,
+                    &outcome,
+                    redraw,
+                )
+            }
+            Command::SetLinePlotDataPacked {
+                id,
+                series,
+                xy,
+                label,
+                color,
+                line_width,
+                show_grid,
+                auto_fit,
+                max_points,
+                payload_format,
+                fit: _,
+                coalesce: _,
+            } => {
+                let detail = Some(format!(
+                    "series={series}, payload_bytes={}, format={payload_format:?}",
+                    xy.len()
+                ));
+                let (dirty, outcome, redraw) = {
+                    let Some(gpu) = &mut self.gpu else {
+                        return self.record_runtime_command(
+                            "SetLinePlotDataPacked",
+                            Some(id),
+                            detail,
+                            None,
+                            "gpu_not_ready",
+                            false,
+                        );
+                    };
+                    match gpu.set_line_plot_data_packed(
+                        &id,
+                        series,
+                        xy,
+                        label,
+                        color,
+                        line_width,
+                        show_grid,
+                        auto_fit,
+                        max_points,
+                        payload_format,
+                    ) {
+                        Ok(true) => {
+                            gpu.rebuild_primitives();
+                            (Some(Dirty::Visual), "applied".to_string(), true)
+                        }
+                        Ok(false) => {
+                            eprintln!(
+                                "DragonGUI: dropping stale line plot update for widget {id:?}"
+                            );
+                            (None, "stale_widget".to_string(), false)
+                        }
+                        Err(err) => {
+                            eprintln!("DragonGUI: failed to apply line plot update: {err}");
+                            (None, format!("error: {err}"), false)
+                        }
+                    }
+                };
+                self.record_runtime_command(
+                    "SetLinePlotDataPacked",
+                    Some(id),
+                    detail,
+                    dirty,
+                    &outcome,
+                    redraw,
+                )
+            }
+            Command::AppendLinePlotPointsPacked {
+                id,
+                series,
+                xy,
+                max_points,
+                payload_format,
+            } => {
+                let detail = Some(format!(
+                    "series={series}, payload_bytes={}, format={payload_format:?}",
+                    xy.len()
+                ));
+                let (dirty, outcome, redraw) = {
+                    let Some(gpu) = &mut self.gpu else {
+                        return self.record_runtime_command(
+                            "AppendLinePlotPointsPacked",
+                            Some(id),
+                            detail,
+                            None,
+                            "gpu_not_ready",
+                            false,
+                        );
+                    };
+                    match gpu.append_line_plot_points_packed(
+                        &id,
+                        series,
+                        xy,
+                        max_points,
+                        payload_format,
+                    ) {
+                        Ok(true) => {
+                            gpu.rebuild_primitives();
+                            (Some(Dirty::Visual), "applied".to_string(), true)
+                        }
+                        Ok(false) => {
+                            eprintln!(
+                                "DragonGUI: dropping stale line plot append for widget {id:?}"
+                            );
+                            (None, "stale_widget".to_string(), false)
+                        }
+                        Err(err) => {
+                            eprintln!("DragonGUI: failed to append line plot points: {err}");
+                            (None, format!("error: {err}"), false)
+                        }
+                    }
+                };
+                self.record_runtime_command(
+                    "AppendLinePlotPointsPacked",
+                    Some(id),
+                    detail,
+                    dirty,
+                    &outcome,
+                    redraw,
+                )
+            }
+            Command::ClearLinePlotSeries { id, series } => {
+                let detail = Some(format!("series={}", series.as_deref().unwrap_or("*")));
+                let (dirty, outcome, redraw) = {
+                    let Some(gpu) = &mut self.gpu else {
+                        return self.record_runtime_command(
+                            "ClearLinePlotSeries",
+                            Some(id),
+                            detail,
+                            None,
+                            "gpu_not_ready",
+                            false,
+                        );
+                    };
+                    if gpu.clear_line_plot_series(&id, series) {
+                        gpu.rebuild_primitives();
+                        (Some(Dirty::Visual), "applied".to_string(), true)
+                    } else {
+                        (None, "stale_widget".to_string(), false)
+                    }
+                };
+                self.record_runtime_command(
+                    "ClearLinePlotSeries",
                     Some(id),
                     detail,
                     dirty,
@@ -10103,6 +10726,12 @@ impl DragonApp {
                 self.record_runtime_command("DismissToast", Some(id), None, None, &outcome, redraw)
             }
             Command::DebugSnapshot { request_id } => {
+                let resume_deferred_rebuilds =
+                    self.gpu.as_ref().is_some_and(|gpu| gpu.defer_rebuilds);
+                let flushed = self
+                    .gpu
+                    .as_mut()
+                    .is_some_and(WgpuState::flush_deferred_rebuilds);
                 self.record_runtime_command(
                     "DebugSnapshot",
                     None,
@@ -10114,7 +10743,12 @@ impl DragonApp {
                 if let Some(bridge) = &self.command_bridge {
                     bridge.complete_debug_snapshot(request_id, self.debug_snapshot_json());
                 }
-                false
+                if resume_deferred_rebuilds {
+                    if let Some(gpu) = self.gpu.as_mut() {
+                        gpu.begin_deferred_rebuilds();
+                    }
+                }
+                flushed
             }
         }
     }
@@ -10264,7 +10898,7 @@ impl DragonApp {
     }
 
     fn activate_widget(&mut self, id: &str, kind: WidgetKind) {
-        let needs_text_rebuild = matches!(kind, WidgetKind::Dropdown | WidgetKind::Menu);
+        let mut needs_text_rebuild = matches!(kind, WidgetKind::Dropdown | WidgetKind::Menu);
         let mut needs_layout_rebuild = false;
         let mut navigation_change: Option<(String, String)> = None;
         match kind {
@@ -10331,6 +10965,16 @@ impl DragonApp {
                     .and_then(|g| g.widget_state.as_mut())
                     .and_then(|ws| ws.activate_nav_item(id));
                 needs_layout_rebuild = navigation_change.is_some();
+            }
+            WidgetKind::LinePlot => {
+                let pos = self.last_mouse_pos.unwrap_or([0.0, 0.0]);
+                if self
+                    .gpu
+                    .as_mut()
+                    .is_some_and(|gpu| gpu.activate_line_plot_toolbar(id, pos))
+                {
+                    needs_text_rebuild = true;
+                }
             }
             _ => {}
         }

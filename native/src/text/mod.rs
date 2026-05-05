@@ -2,12 +2,15 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
+use ab_glyph::{point, Font as AbFont, FontArc, ScaleFont};
 use base64::Engine;
 use flate2::read::ZlibDecoder;
 use glyphon::cosmic_text::{FeatureTag, FontFeatures};
 use glyphon::{
-    Attrs, Buffer, Cache, Color, Family, FontSystem, Metrics, Resolution, Shaping,
+    Attrs, Buffer, Cache, Color, ContentType, CustomGlyph, CustomGlyphId, Family, FontSystem,
+    Metrics, RasterizeCustomGlyphRequest, RasterizedCustomGlyph, Resolution, Shaping,
     Style as GlyphStyle, SwashCache, TextArea, TextAtlas, TextBounds, TextRenderer, Viewport,
     Weight, Wrap,
 };
@@ -70,10 +73,25 @@ struct TextEntry {
     clip: TextBounds,
     untransformed_clip: TextBounds,
     color: Color,
+    custom_glyphs: Vec<CustomGlyph>,
 }
 
 type TextBufferCache = HashMap<TextKey, Vec<Buffer>>;
 type FontFamilyAliases = HashMap<String, String>;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct AxisLabelGlyphKey {
+    text: String,
+    font_size_milli: i32,
+    rotate_ccw: bool,
+}
+
+#[derive(Clone)]
+struct AxisLabelGlyphImage {
+    width: u16,
+    height: u16,
+    data: Vec<u8>,
+}
 
 #[derive(Clone, Copy, Debug, Default)]
 struct TextRenderOptions {
@@ -145,6 +163,9 @@ pub struct TextRendererDg {
     overlay_entry_start: usize,
     /// Ephemeral entries for scatter grid labels, cleared each frame.
     scatter_label_start: usize,
+    axis_label_glyph_ids: HashMap<AxisLabelGlyphKey, CustomGlyphId>,
+    axis_label_glyph_images: HashMap<CustomGlyphId, AxisLabelGlyphImage>,
+    next_axis_label_glyph_id: CustomGlyphId,
 }
 
 impl TextRendererDg {
@@ -198,6 +219,9 @@ impl TextRendererDg {
             entries: Vec::new(),
             overlay_entry_start: 0,
             scatter_label_start: 0,
+            axis_label_glyph_ids: HashMap::new(),
+            axis_label_glyph_images: HashMap::new(),
+            next_axis_label_glyph_id: 1,
         }
     }
 
@@ -413,6 +437,20 @@ impl TextRendererDg {
         font_size_override: Option<f32>,
         anchor: &str,
     ) {
+        if matches!(anchor, "plot-x-label" | "plot-y-label") {
+            self.push_axis_label_glyph(
+                text,
+                screen_x,
+                screen_y,
+                clip,
+                scale,
+                color_override,
+                font_size_override,
+                anchor,
+            );
+            return;
+        }
+
         let font_size = font_size_override.map(|s| s * scale).unwrap_or_else(|| {
             if is_title {
                 13.0 * scale
@@ -426,8 +464,39 @@ impl TextRendererDg {
         // ("left"/"center"/"right") adjust the x offset and text alignment.
         // "top-left" is used by scatter overlays whose source renderer provides
         // final text-area origins instead of center anchors.
+        let mut label_clip = clip;
         let (text_align, left, top) = match anchor {
             "top-left" => (TextAlign::Left, screen_x, screen_y),
+            "plot-x-tick" => {
+                let width = 40.0 * scale;
+                label_clip = intersect_text_bounds(
+                    clip,
+                    TextBounds {
+                        left: (screen_x - width * 0.5).floor() as i32,
+                        top: clip.top,
+                        right: (screen_x + width * 0.5).ceil() as i32,
+                        bottom: clip.bottom,
+                    },
+                );
+                (TextAlign::Center, label_clip.left as f32, screen_y)
+            }
+            "plot-y-tick" => {
+                let width = 30.0 * scale;
+                label_clip = intersect_text_bounds(
+                    clip,
+                    TextBounds {
+                        left: (screen_x - width).floor() as i32,
+                        top: clip.top,
+                        right: screen_x.ceil() as i32,
+                        bottom: clip.bottom,
+                    },
+                );
+                (
+                    TextAlign::Right,
+                    label_clip.left as f32,
+                    screen_y - font_size * 0.5,
+                )
+            }
             "top" => (TextAlign::Center, screen_x - avail_w * 0.5, screen_y),
             "bottom" => (
                 TextAlign::Center,
@@ -446,13 +515,7 @@ impl TextRendererDg {
                 screen_y - font_size * 0.5,
             ),
         };
-        let color = match color_override {
-            Some([r, g, b]) => {
-                let to_u8 = |v: f32| (v.clamp(0.0, 1.0) * 255.0) as u8;
-                Color::rgb(to_u8(r), to_u8(g), to_u8(b))
-            }
-            None => Color::rgb(0xbb, 0xbb, 0xbb),
-        };
+        let color = text_color_from_rgb_override(color_override);
         let weight = if is_title || font_size_override.is_some() {
             600
         } else {
@@ -471,7 +534,7 @@ impl TextRendererDg {
             weight,
             left,
             top,
-            clip,
+            label_clip,
             color,
             text_align,
             &mut cache,
@@ -479,6 +542,118 @@ impl TextRendererDg {
             &mut caret_positions,
             TextRenderOptions::default(),
         );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn push_axis_label_glyph(
+        &mut self,
+        text: &str,
+        screen_x: f32,
+        screen_y: f32,
+        clip: TextBounds,
+        scale: f32,
+        color_override: Option<[f32; 3]>,
+        font_size_override: Option<f32>,
+        anchor: &str,
+    ) {
+        let text = text.trim();
+        if text.is_empty() || clip.right <= clip.left || clip.bottom <= clip.top {
+            return;
+        }
+
+        let font_size = font_size_override.unwrap_or(14.0) * scale;
+        let rotate_ccw = anchor == "plot-y-label";
+        let key = AxisLabelGlyphKey {
+            text: text.to_string(),
+            font_size_milli: (font_size * 1000.0).round() as i32,
+            rotate_ccw,
+        };
+        let (glyph_id, image) = if let Some(id) = self.axis_label_glyph_ids.get(&key).copied() {
+            let Some(image) = self.axis_label_glyph_images.get(&id).cloned() else {
+                return;
+            };
+            (id, image)
+        } else {
+            let Some(image) = rasterize_axis_label_glyph(text, font_size, rotate_ccw) else {
+                return;
+            };
+            let Some(id) = self.register_axis_label_glyph(key, image.clone()) else {
+                return;
+            };
+            (id, image)
+        };
+
+        let width = image.width as f32;
+        let height = image.height as f32;
+        let (left, top) = match anchor {
+            "plot-x-label" => (screen_x - width * 0.5, screen_y - height),
+            "plot-y-label" => (screen_x - width * 0.5, screen_y - height * 0.5),
+            _ => (screen_x, screen_y),
+        };
+        if left >= clip.right as f32
+            || top >= clip.bottom as f32
+            || left + width <= clip.left as f32
+            || top + height <= clip.top as f32
+        {
+            return;
+        }
+
+        let mut buffer = Buffer::new(&mut self.font_system, Metrics::new(1.0, 1.0));
+        buffer.set_size(
+            &mut self.font_system,
+            Some(width.max(1.0)),
+            Some(height.max(1.0)),
+        );
+        let key = TextKey {
+            text: String::new(),
+            font_family: String::new(),
+            font_weight: Weight::NORMAL.0,
+            font_style: FontStyle::Normal,
+            tabular_nums: false,
+            letter_spacing_milli: 0,
+            font_size_milli: 1000,
+            line_height_milli: 1000,
+            width_milli: (width * 1000.0).round() as i32,
+            wrap: false,
+        };
+        self.entries.push(TextEntry {
+            key,
+            buffer,
+            left,
+            top,
+            scale: 1.0,
+            clip,
+            untransformed_clip: clip,
+            color: text_color_from_rgb_override(color_override),
+            custom_glyphs: vec![CustomGlyph {
+                id: glyph_id,
+                left: 0.0,
+                top: 0.0,
+                width,
+                height,
+                color: None,
+                snap_to_physical_pixel: true,
+                metadata: 0,
+            }],
+        });
+    }
+
+    fn register_axis_label_glyph(
+        &mut self,
+        key: AxisLabelGlyphKey,
+        image: AxisLabelGlyphImage,
+    ) -> Option<CustomGlyphId> {
+        if let Some(id) = self.axis_label_glyph_ids.get(&key) {
+            return Some(*id);
+        }
+        if self.next_axis_label_glyph_id == CustomGlyphId::MAX {
+            return None;
+        }
+        let id = self.next_axis_label_glyph_id;
+        self.next_axis_label_glyph_id += 1;
+        self.axis_label_glyph_ids.insert(key, id);
+        self.axis_label_glyph_images.insert(id, image);
+        Some(id)
     }
 
     fn sync_stylesheet_fonts(&mut self, stylesheets: &StylesheetStore) {
@@ -582,6 +757,7 @@ impl TextRendererDg {
             swash_cache,
             entries,
             overlay_entry_start,
+            axis_label_glyph_images,
             ..
         } = self;
 
@@ -595,12 +771,12 @@ impl TextRendererDg {
                 scale: e.scale,
                 bounds: e.clip,
                 default_color: e.color,
-                custom_glyphs: &[],
+                custom_glyphs: &e.custom_glyphs,
             })
             .collect();
 
         if !areas.is_empty() {
-            if let Err(e) = renderer.prepare(
+            if let Err(e) = renderer.prepare_with_custom(
                 device,
                 queue,
                 font_system,
@@ -608,6 +784,7 @@ impl TextRendererDg {
                 viewport,
                 areas,
                 swash_cache,
+                |request| axis_label_custom_glyph_image(axis_label_glyph_images, request),
             ) {
                 eprintln!("glyphon prepare error: {e}");
             }
@@ -622,12 +799,12 @@ impl TextRendererDg {
                 scale: e.scale,
                 bounds: e.clip,
                 default_color: e.color,
-                custom_glyphs: &[],
+                custom_glyphs: &e.custom_glyphs,
             })
             .collect();
 
         if !overlay_areas.is_empty() {
-            if let Err(e) = overlay_renderer.prepare(
+            if let Err(e) = overlay_renderer.prepare_with_custom(
                 device,
                 queue,
                 font_system,
@@ -635,6 +812,7 @@ impl TextRendererDg {
                 viewport,
                 overlay_areas,
                 swash_cache,
+                |request| axis_label_custom_glyph_image(axis_label_glyph_images, request),
             ) {
                 eprintln!("glyphon overlay prepare error: {e}");
             }
@@ -664,6 +842,164 @@ impl TextRendererDg {
             eprintln!("glyphon overlay render error: {e}");
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+fn text_color_from_rgb_override(color_override: Option<[f32; 3]>) -> Color {
+    match color_override {
+        Some([r, g, b]) => {
+            let to_u8 = |v: f32| (v.clamp(0.0, 1.0) * 255.0) as u8;
+            Color::rgb(to_u8(r), to_u8(g), to_u8(b))
+        }
+        None => Color::rgb(0xbb, 0xbb, 0xbb),
+    }
+}
+
+fn axis_label_custom_glyph_image(
+    images: &HashMap<CustomGlyphId, AxisLabelGlyphImage>,
+    request: RasterizeCustomGlyphRequest,
+) -> Option<RasterizedCustomGlyph> {
+    let image = images.get(&request.id)?;
+    if image.width != request.width || image.height != request.height {
+        return None;
+    }
+    Some(RasterizedCustomGlyph {
+        data: image.data.clone(),
+        content_type: ContentType::Mask,
+    })
+}
+
+struct AxisLabelMask {
+    width: usize,
+    height: usize,
+    alpha: Vec<u8>,
+}
+
+fn line_plot_axis_font() -> Option<&'static FontArc> {
+    static FONT: OnceLock<Option<FontArc>> = OnceLock::new();
+    FONT.get_or_init(|| {
+        [
+            "C:\\Windows\\Fonts\\segoeui.ttf",
+            "C:\\Windows\\Fonts\\arial.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation2/LiberationSans-Regular.ttf",
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+        ]
+        .iter()
+        .find_map(|path| {
+            let bytes = std::fs::read(Path::new(path)).ok()?;
+            FontArc::try_from_vec(bytes).ok()
+        })
+    })
+    .as_ref()
+}
+
+fn rasterize_axis_label_glyph(
+    label: &str,
+    font_size_px: f32,
+    rotate_ccw: bool,
+) -> Option<AxisLabelGlyphImage> {
+    let mask = rasterize_axis_label_mask(label, font_size_px)?;
+    let (width, height, data) = if rotate_ccw {
+        let width = mask.height;
+        let height = mask.width;
+        let mut data = vec![0_u8; width * height];
+        for y in 0..height {
+            for x in 0..width {
+                let src_x = mask.width - 1 - y;
+                let src_y = x;
+                data[y * width + x] = mask.alpha[src_y * mask.width + src_x];
+            }
+        }
+        (width, height, data)
+    } else {
+        (mask.width, mask.height, mask.alpha)
+    };
+    Some(AxisLabelGlyphImage {
+        width: u16::try_from(width).ok()?,
+        height: u16::try_from(height).ok()?,
+        data,
+    })
+}
+
+fn rasterize_axis_label_mask(label: &str, font_size_px: f32) -> Option<AxisLabelMask> {
+    let text = label.trim();
+    if text.is_empty() {
+        return None;
+    }
+
+    let font = line_plot_axis_font()?;
+    let font_size_px = font_size_px.max(6.0);
+    let scaled = font.as_scaled(font_size_px);
+    let baseline = scaled.ascent().ceil() + 1.0;
+    let mut x = 0.0_f32;
+    let mut previous = None;
+    let mut glyphs = Vec::new();
+    let mut min_x = f32::INFINITY;
+    let mut min_y = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut max_y = f32::NEG_INFINITY;
+
+    for ch in text.chars().filter(|ch| !ch.is_control()) {
+        let glyph_id = scaled.glyph_id(ch);
+        if let Some(previous) = previous {
+            x += scaled.kern(previous, glyph_id);
+        }
+        if ch.is_whitespace() {
+            x += scaled.h_advance(glyph_id).max(font_size_px * 0.32);
+            previous = Some(glyph_id);
+            continue;
+        }
+
+        let glyph = glyph_id.with_scale_and_position(font_size_px, point(x, baseline));
+        if let Some(outlined) = scaled.outline_glyph(glyph) {
+            let bounds = outlined.px_bounds();
+            min_x = min_x.min(bounds.min.x);
+            min_y = min_y.min(bounds.min.y);
+            max_x = max_x.max(bounds.max.x);
+            max_y = max_y.max(bounds.max.y);
+            glyphs.push(outlined);
+        }
+        x += scaled.h_advance(glyph_id);
+        previous = Some(glyph_id);
+    }
+
+    if glyphs.is_empty() || !min_x.is_finite() || !min_y.is_finite() {
+        return None;
+    }
+
+    let origin_x = min_x.floor() as i32 - 1;
+    let origin_y = min_y.floor() as i32 - 1;
+    let width = (max_x.ceil() as i32 - origin_x + 1).max(1) as usize;
+    let height = (max_y.ceil() as i32 - origin_y + 1).max(1) as usize;
+    let mut alpha = vec![0_u8; width * height];
+
+    for glyph in glyphs {
+        let bounds = glyph.px_bounds();
+        let base_x = bounds.min.x.floor() as i32 - origin_x;
+        let base_y = bounds.min.y.floor() as i32 - origin_y;
+        glyph.draw(|gx, gy, coverage| {
+            let px = base_x + gx as i32;
+            let py = base_y + gy as i32;
+            if px < 0 || py < 0 {
+                return;
+            }
+            let px = px as usize;
+            let py = py as usize;
+            if px >= width || py >= height {
+                return;
+            }
+            let coverage = (coverage.clamp(0.0, 1.0) * 255.0).round() as u8;
+            let target = &mut alpha[py * width + px];
+            *target = (*target).max(coverage);
+        });
+    }
+
+    Some(AxisLabelMask {
+        width,
+        height,
+        alpha,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1256,7 +1592,14 @@ fn collect_text(
                     WidgetKind::Menu => {
                         let menu_pad = pad * 0.5;
                         let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
-                        (r.x + menu_pad, top, r.x + menu_pad, r.y, r.x + r.w - menu_pad, r.y + r.h)
+                        (
+                            r.x + menu_pad,
+                            top,
+                            r.x + menu_pad,
+                            r.y,
+                            r.x + r.w - menu_pad,
+                            r.y + r.h,
+                        )
                     }
                     _ => {
                         let top = if label_text_should_top_align(
@@ -1811,6 +2154,7 @@ fn widget_kind_name(kind: WidgetKind) -> &'static str {
         WidgetKind::Page => "page",
         WidgetKind::Sidebar => "sidebar",
         WidgetKind::NavItem => "nav_item",
+        WidgetKind::LinePlot => "line_plot",
         WidgetKind::Scatter3D => "scatter_3d",
         WidgetKind::DataFrameTable => "dataframe_table",
         WidgetKind::Image => "image",
@@ -3602,6 +3946,7 @@ fn push_text_entry_impl(
         clip,
         untransformed_clip: clip,
         color,
+        custom_glyphs: Vec::new(),
     });
 }
 
@@ -4077,6 +4422,7 @@ mod tests {
                 bottom: 30,
             },
             color: Color::rgb(255, 255, 255),
+            custom_glyphs: Vec::new(),
         }];
 
         apply_transform_to_text_entries(
@@ -4136,6 +4482,7 @@ mod tests {
                 bottom: 50,
             },
             color: Color::rgb(255, 255, 255),
+            custom_glyphs: Vec::new(),
         }];
 
         apply_transform_to_text_entries(
@@ -4191,6 +4538,7 @@ mod tests {
                 bottom: 50,
             },
             color: Color::rgb(255, 255, 255),
+            custom_glyphs: Vec::new(),
         }];
 
         apply_transform_to_text_entries(

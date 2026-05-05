@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::document::{WidgetKind, WidgetNode};
-use crate::layout::{LayoutResult, Rect};
+use crate::layout::{is_scroll_container_node, LayoutResult, Rect};
 use crate::style::{VisualStyle, SLIDER_TRACK_MARGIN_LP};
 
 // ---------------------------------------------------------------------------
@@ -794,6 +794,150 @@ impl WidgetState {
         Some(())
     }
 
+    pub fn preserve_rebuild_state_from(&mut self, previous: &WidgetState) {
+        for (id, value) in &previous.checked {
+            if self.checked.contains_key(id) {
+                self.checked.insert(id.clone(), *value);
+            }
+        }
+
+        for (id, value) in &previous.float_val {
+            if self.float_val.contains_key(id) {
+                let (min, max) = self
+                    .float_range
+                    .get(id)
+                    .copied()
+                    .unwrap_or((f32::NEG_INFINITY, f32::INFINITY));
+                self.float_val
+                    .insert(id.clone(), value.clamp(min.min(max), min.max(max)));
+            }
+        }
+
+        for (id, value) in &previous.text_val {
+            if self.text_val.contains_key(id) {
+                self.text_val.insert(id.clone(), value.clone());
+                let cursor = previous.text_cursor.get(id).copied().unwrap_or(value.len());
+                self.text_cursor
+                    .insert(id.clone(), clamp_boundary(value, cursor));
+            }
+        }
+        self.invalid_numbers = previous
+            .invalid_numbers
+            .iter()
+            .filter(|id| self.text_val.contains_key(*id))
+            .cloned()
+            .collect();
+
+        for (id, scroll) in &previous.text_scroll_y {
+            if self.text_scroll_y.contains_key(id) {
+                self.text_scroll_y.insert(id.clone(), scroll.max(0.0));
+            }
+        }
+        for (id, scroll) in &previous.container_scroll_x {
+            if self.container_scroll_x.contains_key(id) {
+                self.container_scroll_x.insert(id.clone(), scroll.max(0.0));
+            }
+        }
+        for (id, scroll) in &previous.container_scroll_y {
+            if self.container_scroll_y.contains_key(id) {
+                self.container_scroll_y.insert(id.clone(), scroll.max(0.0));
+            }
+        }
+
+        for (id, index) in &previous.dropdown_index {
+            if let Some(items) = self.dropdown_items.get(id) {
+                if !items.is_empty() {
+                    self.dropdown_index
+                        .insert(id.clone(), (*index).min(items.len().saturating_sub(1)));
+                }
+            }
+        }
+
+        for (id, expanded) in &previous.expanded {
+            if self.expanded.contains_key(id) {
+                self.expanded.insert(id.clone(), *expanded);
+            }
+        }
+
+        for (id, previous_table) in &previous.tables {
+            let Some(table) = self.tables.get_mut(id) else {
+                continue;
+            };
+            let max_row = table.rows.saturating_sub(1);
+            let max_col = table.columns.len().saturating_sub(1);
+            table.scroll_row = previous_table.scroll_row.min(max_row);
+            table.scroll_col = previous_table.scroll_col.min(max_col);
+            table.selected = previous_table.selected.and_then(|(row, col)| {
+                (row < table.rows && col < table.columns.len()).then_some((row, col))
+            });
+            table.sort = previous_table
+                .sort
+                .filter(|(column, _)| *column < table.columns.len());
+            table.row_order = previous_table
+                .row_order
+                .clone()
+                .filter(|rows| rows.len() == table.rows);
+        }
+
+        let active_tabs: Vec<(String, String)> = previous
+            .active_tabs
+            .iter()
+            .map(|(id, value)| (id.clone(), value.clone()))
+            .collect();
+        let active_pages: Vec<(String, String)> = previous
+            .active_pages
+            .iter()
+            .map(|(id, value)| (id.clone(), value.clone()))
+            .collect();
+        for (id, value) in active_tabs {
+            let _ = self.set_active_tab_value(&id, &value);
+        }
+        for (id, value) in active_pages {
+            let _ = self.set_active_page_value(&id, &value);
+        }
+
+        if let Some(focused) = previous.focused.as_ref() {
+            if self.focus_order.iter().any(|id| id == focused) && !self.is_disabled(focused) {
+                self.focused = Some(focused.clone());
+            }
+        }
+        self.pressed = previous
+            .pressed
+            .as_ref()
+            .filter(|id| self.focus_order.iter().any(|focus_id| focus_id == *id))
+            .cloned();
+        self.open_dropdown = previous
+            .open_dropdown
+            .as_ref()
+            .filter(|id| self.dropdown_items.contains_key(*id) && !self.is_disabled(id))
+            .cloned();
+        self.dropdown_hover = previous
+            .dropdown_hover
+            .as_ref()
+            .filter(|(id, index)| {
+                self.open_dropdown.as_deref() == Some(id.as_str())
+                    && self
+                        .dropdown_items
+                        .get(id)
+                        .is_some_and(|items| *index < items.len())
+            })
+            .cloned();
+        self.open_menu = previous
+            .open_menu
+            .as_ref()
+            .filter(|id| self.menu_items.contains_key(*id) && !self.is_disabled(id))
+            .cloned();
+        self.open_context_menu = previous
+            .open_context_menu
+            .as_ref()
+            .filter(|id| self.menu_items.contains_key(*id))
+            .cloned();
+        self.context_menu_pos = self
+            .open_context_menu
+            .as_ref()
+            .and(previous.context_menu_pos);
+    }
+
     pub fn move_tab(&mut self, tab_id: &str, direction: i32) -> Option<(String, String, String)> {
         let parent = self.tab_parent.get(tab_id)?.clone();
         let current_value = self.tab_values.get(tab_id)?;
@@ -1164,6 +1308,10 @@ fn collect_state(node: &WidgetNode, s: &mut WidgetState, parent: Option<&WidgetN
             }
         }
         _ => {}
+    }
+    if is_scroll_container_node(node) {
+        s.container_scroll_x.entry(node.id.clone()).or_insert(0.0);
+        s.container_scroll_y.entry(node.id.clone()).or_insert(0.0);
     }
     if node.props.disabled {
         s.disabled.insert(node.id.clone());
@@ -1880,5 +2028,158 @@ mod tests {
 
         assert_eq!(state.set_active_tab_value("tabs", "missing"), None);
         assert_eq!(state.active_tab("tabs"), Some("b"));
+    }
+
+    #[test]
+    fn collected_state_tracks_scrollable_container_offsets() {
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "scroll-panel",
+                WidgetKind::Panel,
+                NodeProps::default(),
+                vec![node(
+                    "label",
+                    WidgetKind::Label,
+                    NodeProps::default(),
+                    vec![],
+                )],
+            )],
+        );
+
+        let state = WidgetState::from_tree(&root);
+
+        assert_eq!(
+            state.container_scroll_x.get("scroll-panel").copied(),
+            Some(0.0)
+        );
+        assert_eq!(
+            state.container_scroll_y.get("scroll-panel").copied(),
+            Some(0.0)
+        );
+        assert_eq!(state.container_scroll_y.get("window").copied(), None);
+    }
+
+    #[test]
+    fn rebuild_state_preserves_navigation_and_scroll_offsets() {
+        let mut previous = WidgetState::default();
+        previous.tabs.insert(
+            "tabs".to_string(),
+            vec![
+                NavigationItem {
+                    id: "tab-a".to_string(),
+                    value: "a".to_string(),
+                    disabled: false,
+                },
+                NavigationItem {
+                    id: "tab-b".to_string(),
+                    value: "b".to_string(),
+                    disabled: false,
+                },
+            ],
+        );
+        previous.pages.insert(
+            "pages".to_string(),
+            vec![
+                NavigationItem {
+                    id: "page-overview".to_string(),
+                    value: "overview".to_string(),
+                    disabled: false,
+                },
+                NavigationItem {
+                    id: "page-debug".to_string(),
+                    value: "debug".to_string(),
+                    disabled: false,
+                },
+            ],
+        );
+        let _ = previous.set_active_tab_value("tabs", "b");
+        let _ = previous.set_active_page_value("pages", "debug");
+        previous
+            .container_scroll_x
+            .insert("debug-scroll".to_string(), 18.0);
+        previous
+            .container_scroll_y
+            .insert("debug-scroll".to_string(), 240.0);
+        previous
+            .container_scroll_y
+            .insert("removed-scroll".to_string(), 80.0);
+        previous
+            .text_val
+            .insert("notes".to_string(), "queue lag".to_string());
+        previous.text_cursor.insert("notes".to_string(), 5);
+        previous.text_scroll_y.insert("notes".to_string(), 12.0);
+
+        let mut rebuilt = WidgetState::default();
+        rebuilt.tabs.insert(
+            "tabs".to_string(),
+            vec![
+                NavigationItem {
+                    id: "tab-a".to_string(),
+                    value: "a".to_string(),
+                    disabled: false,
+                },
+                NavigationItem {
+                    id: "tab-b".to_string(),
+                    value: "b".to_string(),
+                    disabled: false,
+                },
+            ],
+        );
+        rebuilt
+            .active_tabs
+            .insert("tabs".to_string(), "a".to_string());
+        rebuilt.pages.insert(
+            "pages".to_string(),
+            vec![
+                NavigationItem {
+                    id: "page-overview".to_string(),
+                    value: "overview".to_string(),
+                    disabled: false,
+                },
+                NavigationItem {
+                    id: "page-debug".to_string(),
+                    value: "debug".to_string(),
+                    disabled: false,
+                },
+            ],
+        );
+        rebuilt
+            .active_pages
+            .insert("pages".to_string(), "overview".to_string());
+        rebuilt
+            .container_scroll_x
+            .insert("debug-scroll".to_string(), 0.0);
+        rebuilt
+            .container_scroll_y
+            .insert("debug-scroll".to_string(), 0.0);
+        rebuilt.text_val.insert("notes".to_string(), String::new());
+        rebuilt.text_cursor.insert("notes".to_string(), 0);
+        rebuilt.text_scroll_y.insert("notes".to_string(), 0.0);
+
+        rebuilt.preserve_rebuild_state_from(&previous);
+
+        assert_eq!(rebuilt.active_tab("tabs"), Some("b"));
+        assert_eq!(rebuilt.active_page("pages"), Some("debug"));
+        assert_eq!(
+            rebuilt.container_scroll_x.get("debug-scroll").copied(),
+            Some(18.0)
+        );
+        assert_eq!(
+            rebuilt.container_scroll_y.get("debug-scroll").copied(),
+            Some(240.0)
+        );
+        assert_eq!(
+            rebuilt.container_scroll_y.get("removed-scroll").copied(),
+            None
+        );
+        assert_eq!(
+            rebuilt.text_val.get("notes").map(String::as_str),
+            Some("queue lag")
+        );
+        assert_eq!(rebuilt.text_cursor.get("notes").copied(), Some(5));
+        assert_eq!(rebuilt.text_scroll_y.get("notes").copied(), Some(12.0));
     }
 }
