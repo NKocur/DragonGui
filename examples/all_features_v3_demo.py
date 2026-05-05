@@ -681,9 +681,9 @@ MenuBar Menu {
 }
 
 MenuBar Menu:hover {
-    background: #ffe0b8;
-    border-color: #d06b2c;
-    color: #18202a;
+    background: transparent;
+    border-color: transparent;
+    color: #d06b2c;
 }
 
 Sidebar {
@@ -1028,11 +1028,286 @@ Histogram {
 }
 """
 
+CSS_TERMINAL = CSS_MIDNIGHT + """
+Window {
+    background: #030712;
+    color: #d1fae5;
+    font-family: "Consolas";
+}
+
+MenuBar,
+StatusBar {
+    background: #020617;
+    border-color: #10b981;
+    color: #d1fae5;
+}
+
+MenuBar Menu {
+    background: transparent;
+    border-color: transparent;
+    color: #a7f3d0;
+}
+
+MenuBar Menu:hover,
+MenuBar Menu:open {
+    background: transparent;
+    border-color: transparent;
+    color: #bef264;
+}
+
+Sidebar {
+    background: #020617;
+    border-color: #10b981;
+}
+
+Panel,
+Modal {
+    background:
+        linear-gradient(180deg, rgba(6, 78, 59, 0.22), rgba(3, 7, 18, 0.98)),
+        #030712;
+    border: 1px solid #10b981;
+    border-radius: 2px;
+    box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.16), 0 18px 36px rgba(0, 0, 0, 0.38);
+    color: #d1fae5;
+    accent: #34d399;
+}
+
+Panel.highlight {
+    border-color: #bef264;
+}
+
+Label.brand,
+Label.stat-value {
+    color: #6ee7b7;
+}
+
+Label.subtle,
+Label.stat-label {
+    color: rgba(209, 250, 229, 0.68);
+}
+
+Button,
+Dropdown,
+TextInput,
+TextArea,
+NumberInput {
+    background: #020617;
+    border-color: #10b981;
+    border-radius: 2px;
+    color: #d1fae5;
+    accent: #34d399;
+    font-family: "Consolas";
+}
+
+Button {
+    background: #052e2b;
+    color: #a7f3d0;
+}
+
+Button.primary {
+    background: #10b981;
+    border-color: #bef264;
+    color: #022c22;
+}
+
+Button:hover,
+Dropdown:hover,
+TextInput:hover,
+TextArea:hover,
+NumberInput:hover {
+    background: rgba(16, 185, 129, 0.12);
+    border-color: #bef264;
+}
+
+Button:focus,
+Dropdown:focus,
+TextInput:focus,
+TextArea:focus,
+NumberInput:focus {
+    outline: 2px solid rgba(190, 242, 100, 0.70);
+    outline-offset: 2px;
+}
+
+NavItem,
+Menu {
+    accent: #bef264;
+    color: #a7f3d0;
+    border-radius: 2px;
+}
+
+Checkbox {
+    accent: #bef264;
+    color: #d1fae5;
+}
+
+Checkbox::row,
+Dropdown::field,
+NumberInput::field,
+NumberInput::stepper {
+    background: rgba(16, 185, 129, 0.10);
+    border-radius: 2px;
+}
+
+Checkbox::box {
+    border-color: #10b981;
+    border-radius: 2px;
+}
+
+Checkbox::indicator {
+    background: #bef264;
+    border-radius: 1px;
+}
+
+Dropdown::chevron {
+    color: #bef264;
+}
+
+Dropdown::menu {
+    background: #020617;
+    border-color: #10b981;
+    border-radius: 2px;
+}
+
+Dropdown::item-hover {
+    background: rgba(16, 185, 129, 0.18);
+}
+
+Dropdown::item-selected {
+    background: rgba(190, 242, 100, 0.18);
+    color: #ecfccb;
+}
+
+Slider {
+    accent: #34d399;
+    track-color: rgba(16, 185, 129, 0.22);
+    thumb-color: #bef264;
+}
+
+Slider::track,
+ProgressBar::track {
+    background: rgba(16, 185, 129, 0.14);
+    border: 1px solid rgba(16, 185, 129, 0.46);
+    border-radius: 2px;
+}
+
+Slider::fill,
+ProgressBar::fill {
+    background: linear-gradient(90deg, #10b981, #bef264);
+    border-radius: 2px;
+}
+
+Slider::thumb {
+    width: 18px;
+    height: 18px;
+    background: #bef264;
+    border: 2px solid #10b981;
+    border-radius: 2px;
+}
+
+LED {
+    background: #10b981;
+    border-color: #bef264;
+    border-radius: 2px;
+}
+
+LED.off {
+    background: #064e3b;
+    border-color: rgba(16, 185, 129, 0.45);
+}
+
+LED.stream,
+LED.busy {
+    background: #bef264;
+    border-color: #34d399;
+}
+
+LED::dot {
+    background: #34d399;
+    border-color: #bef264;
+    border-radius: 1px;
+}
+
+LED.stream::dot,
+LED.busy::dot {
+    background: #bef264;
+}
+
+LED::glow {
+    opacity: 0.18;
+    background: #34d399;
+    border-radius: 2px;
+}
+
+LED::highlight {
+    opacity: 0;
+}
+
+ProgressBar {
+    background: #020617;
+    border-color: #10b981;
+    accent: #bef264;
+}
+
+Badge,
+Tag {
+    background: rgba(16, 185, 129, 0.16);
+    border-color: rgba(190, 242, 100, 0.45);
+    color: #d1fae5;
+    border-radius: 2px;
+}
+
+DataFrameTable,
+Histogram,
+LinePlot,
+Scatter3D,
+Image {
+    background: rgba(2, 6, 23, 0.92);
+    border-color: #10b981;
+    border-width: 1px;
+    border-radius: 2px;
+    color: #d1fae5;
+}
+
+Histogram.latency,
+LinePlot {
+    color: #34d399;
+}
+
+Histogram.density {
+    color: #bef264;
+}
+
+Histogram.percent {
+    color: #facc15;
+}
+
+Histogram.cumulative {
+    color: #6ee7b7;
+}
+
+VLayout::scrollbar-track,
+ScrollArea::scrollbar-track,
+Panel::scrollbar-track {
+    background: rgba(16, 185, 129, 0.10);
+    border: 1px solid rgba(16, 185, 129, 0.46);
+    border-radius: 2px;
+}
+
+VLayout::scrollbar-thumb,
+ScrollArea::scrollbar-thumb,
+Panel::scrollbar-thumb {
+    background: linear-gradient(180deg, #34d399, #bef264);
+    border: 1px solid rgba(190, 242, 100, 0.50);
+    border-radius: 2px;
+}
+"""
+
 
 CSS_THEMES = {
     "midnight": CSS_MIDNIGHT,
     "paper": CSS_PAPER,
     "neon": CSS_NEON,
+    "terminal": CSS_TERMINAL,
 }
 
 
@@ -1940,6 +2215,7 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                         dg.Button("Midnight", on_click=lambda: apply_theme("midnight"))
                         dg.Button("Paper", on_click=lambda: apply_theme("paper"))
                         dg.Button("Neon", on_click=lambda: apply_theme("neon"))
+                        dg.Button("Terminal", on_click=lambda: apply_theme("terminal"))
 
             with dg.Page("scatter", title="Scatter3D"):
                 with dg.GridLayout(
@@ -2403,6 +2679,7 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                         dg.Button("Midnight CSS", on_click=lambda: apply_theme("midnight"))
                         dg.Button("Paper CSS", on_click=lambda: apply_theme("paper"))
                         dg.Button("Neon CSS", on_click=lambda: apply_theme("neon"))
+                        dg.Button("Terminal CSS", on_click=lambda: apply_theme("terminal"))
                         dg.Separator()
                         with dg.Panel("Horizontal overflow", style={"height": 94, "overflow_x": "auto", "overflow_y": "hidden", "padding": 12}):
                             with dg.HLayout(style={"width": 430, "height": 34, "gap": 8, "flex_shrink": 0}):

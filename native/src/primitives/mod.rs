@@ -4811,16 +4811,7 @@ fn emit_rects_inner(
                     .background_paint
                     .as_ref()
                     .map(|_| resolve_background_paint(&visual, theme, theme.surface_alt))
-                    .or_else(|| styled_bg.map(FillPaint::Solid))
-                    .or_else(|| {
-                        if state.open_menu.as_deref() == Some(node.id.as_str()) {
-                            Some(FillPaint::Solid(mix(theme.surface_alt, theme.accent, 0.24)))
-                        } else if state.hovered.as_deref() == Some(node.id.as_str()) {
-                            Some(FillPaint::Solid(mix(theme.surface_alt, theme.accent, 0.14)))
-                        } else {
-                            None
-                        }
-                    });
+                    .or_else(|| styled_bg.map(FillPaint::Solid));
                 let menu_border_w = visual
                     .border_width
                     .map(|width| (width.max(0.0) * sf).max(0.0))
@@ -9770,31 +9761,10 @@ mod tests {
             "default closed menu should not render like a normal button"
         );
 
-        let mut open_state = WidgetState {
+        let open_state = WidgetState {
             open_menu: Some("file-menu".to_string()),
             ..Default::default()
         };
-        emit_rects(
-            &menu,
-            &layout,
-            &theme,
-            1.0,
-            &open_state,
-            &HashMap::new(),
-            &mut out,
-        );
-
-        let open_fill = mix(theme.surface_alt, theme.accent, 0.24);
-        let active = out
-            .iter()
-            .find(|inst| inst.color == open_fill)
-            .expect("open menu should emit a subtle menu-bar highlight");
-        assert_eq!(active.rect, [0.0, 0.0, 64.0, 30.0]);
-        assert_eq!(active.radii, [4.0; 4]);
-        assert!(!out.iter().any(|inst| inst.color == theme.border));
-
-        open_state.open_menu = None;
-        open_state.hovered = Some("file-menu".to_string());
         out.clear();
         emit_rects(
             &menu,
@@ -9805,9 +9775,29 @@ mod tests {
             &HashMap::new(),
             &mut out,
         );
-        assert!(out
-            .iter()
-            .any(|inst| inst.color == mix(theme.surface_alt, theme.accent, 0.14)));
+        assert!(
+            out.is_empty(),
+            "open top-level menu should leave the menu bar flat by default"
+        );
+
+        let hover_state = WidgetState {
+            hovered: Some("file-menu".to_string()),
+            ..Default::default()
+        };
+        out.clear();
+        emit_rects(
+            &menu,
+            &layout,
+            &theme,
+            1.0,
+            &hover_state,
+            &HashMap::new(),
+            &mut out,
+        );
+        assert!(
+            out.is_empty(),
+            "hovered top-level menu should rely on text color, not a button fill"
+        );
     }
 
     #[test]

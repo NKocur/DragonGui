@@ -2306,7 +2306,7 @@ fn is_obscured_by_overlay(
     r: &Rect,
     open_dropdown: Option<&str>,
     dropdown_overlay: Option<Rect>,
-    menu_overlays: [Option<Rect>; 2],
+    _menu_overlays: [Option<Rect>; 2],
     tooltip_overlay: Option<Rect>,
     extra_overlays: &[Rect],
 ) -> bool {
@@ -2314,10 +2314,6 @@ fn is_obscured_by_overlay(
         return false;
     }
     dropdown_overlay.is_some_and(|overlay| rects_intersect(*r, overlay))
-        || menu_overlays
-            .iter()
-            .flatten()
-            .any(|overlay| rects_intersect(*r, *overlay))
         || tooltip_overlay.is_some_and(|overlay| rects_intersect(*r, overlay))
         || extra_overlays
             .iter()
@@ -4271,7 +4267,7 @@ fn glyph_color(color: [f32; 4]) -> Color {
 mod tests {
     use super::*;
     use crate::document::NodeProps;
-    use crate::events::TableState;
+    use crate::events::{NavigationItem, TableState};
     use crate::resources::ResourceRegistry;
 
     fn node(id: &str, kind: WidgetKind) -> WidgetNode {
@@ -4921,6 +4917,113 @@ mod tests {
                 .iter()
                 .any(|entry| entry.key.text == "Modal copy"),
             "modal text should be collected into the overlay pass"
+        );
+    }
+
+    #[test]
+    fn menu_overlay_text_does_not_remove_underlying_base_text() {
+        let mut menu = node("file-menu", WidgetKind::Menu);
+        menu.props.text = Some("File".to_string());
+        let mut background = node("background", WidgetKind::Label);
+        background.props.text = Some("Text under menu popup".to_string());
+        let mut root = node("window", WidgetKind::Window);
+        root.children = vec![menu, background];
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "window".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 400.0,
+                h: 240.0,
+            },
+        );
+        layout.rects.insert(
+            "file-menu".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 70.0,
+                h: 30.0,
+            },
+        );
+        layout.rects.insert(
+            "background".to_string(),
+            Rect {
+                x: 12.0,
+                y: 40.0,
+                w: 210.0,
+                h: 32.0,
+            },
+        );
+
+        let theme = Theme::dark();
+        let mut state = WidgetState {
+            open_menu: Some("file-menu".to_string()),
+            ..Default::default()
+        };
+        state.menu_items.insert(
+            "file-menu".to_string(),
+            vec![NavigationItem {
+                id: "open-item".to_string(),
+                value: "Open".to_string(),
+                disabled: false,
+            }],
+        );
+        let menu_overlays = active_menu_overlay_rects(&root, &layout, &state, &theme, 1.0);
+        assert!(menu_overlays[0].is_some());
+
+        let mut font_system = FontSystem::new();
+        let font_aliases = FontFamilyAliases::default();
+        let mut cache = TextBufferCache::default();
+        let mut caret_positions = HashMap::new();
+        let mut entries = Vec::new();
+
+        collect_text(
+            &root,
+            &layout,
+            &state,
+            &theme,
+            None,
+            None,
+            menu_overlays,
+            None,
+            &[],
+            true,
+            &mut font_system,
+            &font_aliases,
+            1.0,
+            6.0,
+            &mut cache,
+            &mut caret_positions,
+            &mut entries,
+        );
+
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.key.text == "Text under menu popup"),
+            "menu popup should render above existing text without deleting it from the base pass"
+        );
+
+        collect_menu_overlay_text(
+            &root,
+            &layout,
+            &state,
+            &theme,
+            &mut font_system,
+            &font_aliases,
+            1.0,
+            6.0,
+            &mut cache,
+            &mut caret_positions,
+            &mut entries,
+        );
+
+        assert!(
+            entries.iter().any(|entry| entry.key.text == "Open"),
+            "menu item text should still be collected into the overlay pass"
         );
     }
 
