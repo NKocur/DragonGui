@@ -663,6 +663,25 @@ fn style_for(
             }
         }
 
+        WidgetKind::HtmlReport => {
+            let width = node.props.fixed_width.map(|w| Dimension::Length(w * sf));
+            let height = node.props.fixed_height.map(|h| Dimension::Length(h * sf));
+            let fixed = width.is_some() || height.is_some();
+            Style {
+                flex_grow: if fixed { 0.0 } else { 1.0 },
+                flex_shrink: 1.0,
+                size: Size {
+                    width: width.unwrap_or(Dimension::Auto),
+                    height: height.unwrap_or(Dimension::Length(360.0 * sf)),
+                },
+                min_size: Size {
+                    width: Dimension::Length(240.0 * sf),
+                    height: Dimension::Length(160.0 * sf),
+                },
+                ..Default::default()
+            }
+        }
+
         WidgetKind::ContextMenu => Style {
             flex_grow: 0.0,
             flex_shrink: 0.0,
@@ -1078,6 +1097,7 @@ fn default_leaf_height_px(node: &WidgetNode, theme: &Theme, sf: f32) -> f32 {
         }
         WidgetKind::Led => node.props.led_size.unwrap_or(14.0).max(1.0) * sf,
         WidgetKind::TextArea => text_area_height_lp(node, theme) * sf,
+        WidgetKind::HtmlReport => node.props.fixed_height.unwrap_or(360.0) * sf,
         WidgetKind::Separator => sf,
         _ => 0.0,
     }

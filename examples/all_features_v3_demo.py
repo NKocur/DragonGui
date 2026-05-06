@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 from pathlib import Path
 from pprint import pprint
@@ -9,6 +10,7 @@ import threading
 import tempfile
 import time
 import zlib
+from html import escape
 
 if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
@@ -20,6 +22,11 @@ try:
 except ImportError as exc:  # pragma: no cover - manual demo guard
     raise SystemExit("all_features_v3_demo.py requires NumPy") from exc
 
+try:
+    import plotly.graph_objects as go
+except ImportError:  # pragma: no cover - optional demo dependency
+    go = None
+
 
 POINT_ROWS = 125_000
 TABLE_ROWS = 50_000
@@ -27,6 +34,11 @@ LINE_ROWS = 720
 HISTOGRAM_ROWS = 8_000
 STREAM_FRAME_COUNT = 24
 GRID_GAP = 12
+REPORT_DIR = Path(tempfile.gettempdir()) / "dragongui_all_features_v3_reports"
+REPORT_OVERVIEW = REPORT_DIR / "plotly_style_sensor_report.html"
+REPORT_DETAIL = REPORT_DIR / "plotly_style_failure_report.html"
+REPORT_INLINE = REPORT_DIR / "plotly_style_inline_report.html"
+REPORT_BACKEND_LABEL = "Real Plotly" if go is not None else "Self-contained fallback"
 GRID_STYLE = {"padding": 10, "align_items": "start", "flex_grow": 0, "flex_shrink": 1}
 CARD_STYLE = {
     "padding": 10,
@@ -185,6 +197,460 @@ def make_demo_image() -> str:
     path = Path(tempfile.gettempdir()) / "dragongui_all_features_v3_demo.png"
     path.write_bytes(png)
     return str(path)
+
+
+def make_plotly_style_report(title: str, accent: str, label: str, offset: float) -> str:
+    points = [
+        [idx, 48.0 + 10.0 * math.sin(idx * 0.17 + offset) + 3.5 * math.cos(idx * 0.43 - offset)]
+        for idx in range(96)
+    ]
+    bars = [34 + 15 * math.sin(idx * 0.7 + offset) + 10 * math.cos(idx * 0.31) for idx in range(18)]
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{escape(title)}</title>
+  <style>
+    :root {{ color-scheme: dark; }}
+    body {{
+      margin: 0;
+      background: #0b1020;
+      color: #eef4ff;
+      font-family: Segoe UI, Arial, sans-serif;
+    }}
+    main {{ padding: 18px; }}
+    header {{
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+      gap: 18px;
+      margin-bottom: 14px;
+    }}
+    h1 {{ margin: 0 0 5px; font-size: 22px; }}
+    p {{ margin: 0; color: rgba(238, 244, 255, 0.66); }}
+    .summary {{
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }}
+    .metric {{
+      border: 1px solid rgba(255,255,255,.13);
+      border-radius: 7px;
+      background: #111a2c;
+      padding: 10px;
+    }}
+    .metric strong {{ display: block; font-size: 18px; color: white; }}
+    .metric span {{ color: rgba(238,244,255,.62); font-size: 12px; }}
+    .plotly-graph-div {{
+      position: relative;
+      height: 390px;
+      border: 1px solid rgba(255,255,255,.14);
+      border-radius: 8px;
+      background: #0e1728;
+      overflow: hidden;
+      user-select: none;
+    }}
+    .modebar {{
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      display: flex;
+      gap: 6px;
+      z-index: 3;
+    }}
+    .modebar button {{
+      height: 30px;
+      min-width: 36px;
+      border: 1px solid rgba(255,255,255,.20);
+      border-radius: 5px;
+      background: rgba(17, 26, 44, .94);
+      color: #edf3ff;
+      cursor: pointer;
+      font: inherit;
+      font-size: 12px;
+    }}
+    .modebar button.active {{ border-color: {accent}; color: white; }}
+    svg {{ width: 100%; height: 100%; display: block; }}
+    .hoverlabel {{
+      position: absolute;
+      left: 14px;
+      bottom: 12px;
+      border: 1px solid rgba(255,255,255,.16);
+      border-radius: 5px;
+      background: rgba(3,7,18,.86);
+      color: rgba(238,244,255,.82);
+      padding: 6px 8px;
+      font-size: 12px;
+    }}
+    .select-box {{
+      display: none;
+      position: absolute;
+      border: 1px solid {accent};
+      background: rgba(90,169,255,.12);
+      pointer-events: none;
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>{escape(title)}</h1>
+        <p>Self-contained report fixture using Plotly-style DOM, modebar controls, hover, wheel zoom, and drag selection.</p>
+      </div>
+    </header>
+    <section class="summary">
+      <div class="metric"><strong>{label}</strong><span>report variant</span></div>
+      <div class="metric"><strong>96</strong><span>trace samples</span></div>
+      <div class="metric"><strong>18</strong><span>distribution bins</span></div>
+    </section>
+    <section id="graph" class="plotly-graph-div">
+      <div class="modebar">
+        <button class="active" data-mode="pan">Pan</button>
+        <button data-mode="zoom">Zoom</button>
+        <button data-mode="select">Box</button>
+        <button data-mode="reset">Fit</button>
+      </div>
+      <svg id="plot" viewBox="0 0 840 390" aria-label="interactive report plot">
+        <g stroke="rgba(255,255,255,.12)" stroke-width="1">
+          <path d="M70 42V306M220 42V306M370 42V306M520 42V306M670 42V306M790 42V306"/>
+          <path d="M70 306H790M70 240H790M70 174H790M70 108H790M70 42H790"/>
+        </g>
+        <g id="bars" fill="rgba(116,221,176,.34)"></g>
+        <path id="trace" fill="none" stroke="{accent}" stroke-width="4" stroke-linecap="round"/>
+        <g fill="rgba(238,244,255,.72)" font-size="13">
+          <text x="70" y="342">0s</text>
+          <text x="396" y="342">elapsed</text>
+          <text x="752" y="342">96s</text>
+          <text x="18" y="50">high</text>
+          <text x="24" y="310">low</text>
+        </g>
+      </svg>
+      <div id="hover" class="hoverlabel">mode: pan, point: --</div>
+      <div id="selectBox" class="select-box"></div>
+    </section>
+  </main>
+  <script>
+    const traceData = {json.dumps(points, separators=(",", ":"))};
+    const barData = {json.dumps(bars, separators=(",", ":"))};
+    const graph = document.getElementById("graph");
+    const plot = document.getElementById("plot");
+    const trace = document.getElementById("trace");
+    const bars = document.getElementById("bars");
+    const hover = document.getElementById("hover");
+    const selectBox = document.getElementById("selectBox");
+    let mode = "pan";
+    let scale = 1.0;
+    let dragStart = null;
+    function sx(x) {{ return 70 + x * (720 / 95); }}
+    function sy(y) {{ return 306 - (y - 28) * (264 / 38) * scale; }}
+    function draw() {{
+      trace.setAttribute("d", traceData.map((p, i) =>
+        (i === 0 ? "M" : "L") + sx(p[0]).toFixed(1) + " " + sy(p[1]).toFixed(1)
+      ).join(" "));
+      bars.innerHTML = barData.map((value, i) => {{
+        const x = 80 + i * 38;
+        const h = Math.max(8, value * 3.0);
+        return '<rect x="' + x.toFixed(1) + '" y="' + (306 - h).toFixed(1) + '" width="23" height="' + h.toFixed(1) + '" rx="2"/>';
+      }}).join("");
+    }}
+    draw();
+    document.querySelectorAll(".modebar button").forEach(button => {{
+      button.addEventListener("click", () => {{
+        document.querySelectorAll(".modebar button").forEach(item => item.classList.remove("active"));
+        button.classList.add("active");
+        if (button.dataset.mode === "reset") {{
+          mode = "pan";
+          scale = 1.0;
+          selectBox.style.display = "none";
+          draw();
+        }} else {{
+          mode = button.dataset.mode;
+        }}
+        hover.textContent = "mode: " + mode + ", point: --";
+      }});
+    }});
+    plot.addEventListener("wheel", event => {{
+      event.preventDefault();
+      scale = Math.max(.72, Math.min(1.55, scale + (event.deltaY < 0 ? .08 : -.08)));
+      draw();
+      hover.textContent = "mode: wheel zoom, scale: " + scale.toFixed(2);
+    }}, {{ passive: false }});
+    plot.addEventListener("pointermove", event => {{
+      const rect = plot.getBoundingClientRect();
+      const x = Math.max(0, Math.min(95, Math.round((event.clientX - rect.left) / rect.width * 95)));
+      const point = traceData[x];
+      if (point) hover.textContent = "mode: " + mode + ", point: " + point[0] + ", " + point[1].toFixed(2);
+      if (dragStart && mode === "select") {{
+        const px = event.clientX - rect.left;
+        const py = event.clientY - rect.top;
+        selectBox.style.display = "block";
+        selectBox.style.left = Math.min(dragStart.x, px) + "px";
+        selectBox.style.top = Math.min(dragStart.y, py) + "px";
+        selectBox.style.width = Math.abs(px - dragStart.x) + "px";
+        selectBox.style.height = Math.abs(py - dragStart.y) + "px";
+      }}
+    }});
+    plot.addEventListener("pointerdown", event => {{
+      const rect = plot.getBoundingClientRect();
+      dragStart = {{ x: event.clientX - rect.left, y: event.clientY - rect.top }};
+      plot.setPointerCapture(event.pointerId);
+    }});
+    plot.addEventListener("pointerup", event => {{
+      dragStart = null;
+      plot.releasePointerCapture(event.pointerId);
+      if (mode !== "select") selectBox.style.display = "none";
+    }});
+  </script>
+</body>
+</html>
+"""
+
+
+def make_real_plotly_report(title: str, accent: str, label: str, offset: float) -> str:
+    if go is None:
+        return make_plotly_style_report(title, accent, label, offset)
+
+    x_values = list(range(96))
+    y_values = [
+        48.0 + 10.0 * math.sin(idx * 0.17 + offset) + 3.5 * math.cos(idx * 0.43 - offset)
+        for idx in x_values
+    ]
+    bar_x = list(range(18))
+    bar_y = [34 + 15 * math.sin(idx * 0.7 + offset) + 10 * math.cos(idx * 0.31) for idx in bar_x]
+    table_rows = [
+        ("Mean", f"{sum(y_values) / len(y_values):.2f}", "stable"),
+        ("Peak", f"{max(y_values):.2f}", "watch"),
+        ("Low", f"{min(y_values):.2f}", "ok"),
+        ("Last", f"{y_values[-1]:.2f}", "live"),
+        ("Bins", str(len(bar_y)), "complete"),
+    ]
+    config = {
+        "displayModeBar": True,
+        "displaylogo": False,
+        "responsive": True,
+        "scrollZoom": True,
+        "modeBarButtonsToRemove": ["lasso2d"],
+    }
+
+    trace_fig = go.Figure()
+    trace_fig.add_trace(
+        go.Scatter(
+            x=x_values,
+            y=y_values,
+            mode="lines+markers",
+            name=f"{label} signal",
+            line={"color": accent, "width": 3},
+            marker={"size": 5, "color": accent},
+            hovertemplate="elapsed=%{x}s<br>value=%{y:.2f}<extra></extra>",
+        )
+    )
+    trace_fig.update_layout(
+        title="Sensor trace",
+        template="plotly_dark",
+        paper_bgcolor="#0b1020",
+        plot_bgcolor="#0e1728",
+        font={"family": "Segoe UI, Arial, sans-serif", "color": "#eef4ff"},
+        margin={"l": 54, "r": 22, "t": 48, "b": 46},
+        height=330,
+        legend={"orientation": "h", "y": 1.12, "x": 0.72},
+    )
+    trace_fig.update_xaxes(title_text="elapsed time (s)", gridcolor="rgba(255,255,255,0.12)", zeroline=False)
+    trace_fig.update_yaxes(title_text="sensor value", gridcolor="rgba(255,255,255,0.12)", zeroline=False)
+
+    bar_fig = go.Figure()
+    bar_fig.add_trace(
+        go.Bar(
+            x=bar_x,
+            y=bar_y,
+            name="bins",
+            marker={"color": "rgba(116, 221, 176, 0.70)"},
+            hovertemplate="bin=%{x}<br>count=%{y:.1f}<extra></extra>",
+        )
+    )
+    bar_fig.update_layout(
+        title="Distribution bins",
+        template="plotly_dark",
+        paper_bgcolor="#0b1020",
+        plot_bgcolor="#0e1728",
+        font={"family": "Segoe UI, Arial, sans-serif", "color": "#eef4ff"},
+        margin={"l": 48, "r": 18, "t": 48, "b": 46},
+        height=300,
+        showlegend=False,
+    )
+    bar_fig.update_xaxes(title_text="bin", gridcolor="rgba(255,255,255,0.12)", zeroline=False)
+    bar_fig.update_yaxes(title_text="count", gridcolor="rgba(255,255,255,0.12)", zeroline=False)
+
+    table_fig = go.Figure()
+    table_fig.add_trace(
+        go.Table(
+            header={
+                "values": ["Metric", "Value", "Status"],
+                "fill_color": "#18243a",
+                "font": {"color": "#eef4ff", "size": 13},
+                "align": "left",
+                "height": 30,
+            },
+            cells={
+                "values": [
+                    [row[0] for row in table_rows],
+                    [row[1] for row in table_rows],
+                    [row[2] for row in table_rows],
+                ],
+                "fill_color": "#101827",
+                "font": {"color": "#dce7f7", "size": 12},
+                "align": "left",
+                "height": 28,
+            },
+        )
+    )
+    table_fig.update_layout(
+        title="Report table",
+        template="plotly_dark",
+        paper_bgcolor="#0b1020",
+        margin={"l": 8, "r": 8, "t": 48, "b": 8},
+        height=300,
+    )
+
+    trace_html = trace_fig.to_html(
+        full_html=False,
+        include_plotlyjs=True,
+        config=config,
+    )
+    bar_html = bar_fig.to_html(
+        full_html=False,
+        include_plotlyjs=False,
+        config=config,
+    )
+    table_html = table_fig.to_html(
+        full_html=False,
+        include_plotlyjs=False,
+        config=config,
+    )
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{escape(title)}</title>
+  <style>
+    :root {{ color-scheme: dark; }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      background: #0b1020;
+      color: #eef4ff;
+      font-family: Segoe UI, Arial, sans-serif;
+    }}
+    main {{ padding: 18px; }}
+    header {{
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 18px;
+      margin-bottom: 14px;
+    }}
+    h1 {{ margin: 0 0 5px; font-size: 22px; }}
+    p {{ margin: 0; color: rgba(238, 244, 255, 0.66); }}
+    .badge {{
+      flex-shrink: 0;
+      border: 1px solid {accent};
+      border-radius: 999px;
+      padding: 6px 10px;
+      color: white;
+      background: rgba(90, 169, 255, 0.14);
+      font-size: 12px;
+      font-weight: 700;
+    }}
+    .summary {{
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 14px;
+    }}
+    .metric {{
+      border: 1px solid rgba(255,255,255,.13);
+      border-radius: 7px;
+      background: #111a2c;
+      padding: 10px;
+    }}
+    .metric strong {{ display: block; font-size: 18px; color: white; }}
+    .metric span {{ color: rgba(238,244,255,.62); font-size: 12px; }}
+    .plot-grid {{
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(320px, .85fr);
+      gap: 14px;
+      align-items: stretch;
+    }}
+    .plot-card {{
+      min-width: 0;
+      border: 1px solid rgba(255,255,255,.14);
+      border-radius: 8px;
+      background: #0e1728;
+      overflow: hidden;
+      padding: 8px;
+    }}
+    .plot-card.full {{ grid-column: 1 / -1; }}
+    @media (max-width: 980px) {{
+      .summary {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+      .plot-grid {{ grid-template-columns: minmax(0, 1fr); }}
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>{escape(title)}</h1>
+        <p>Real Plotly HTML export with KPI cards, interactive charts, modebars, hover, wheel zoom, and a Plotly table.</p>
+      </div>
+      <div class="badge">Real Plotly</div>
+    </header>
+    <section class="summary">
+      <div class="metric"><strong>{label}</strong><span>report variant</span></div>
+      <div class="metric"><strong>{len(x_values)}</strong><span>trace samples</span></div>
+      <div class="metric"><strong>{max(y_values):.1f}</strong><span>peak value</span></div>
+      <div class="metric"><strong>{len(table_rows)}</strong><span>table rows</span></div>
+    </section>
+    <section class="plot-grid">
+      <div class="plot-card full">{trace_html}</div>
+      <div class="plot-card">{bar_html}</div>
+      <div class="plot-card">{table_html}</div>
+    </section>
+  </main>
+</body>
+</html>
+"""
+
+
+def make_report_html(title: str, accent: str, label: str, offset: float) -> str:
+    if go is not None:
+        return make_real_plotly_report(title, accent, label, offset)
+    return make_plotly_style_report(title, accent, label, offset)
+
+
+def write_demo_reports() -> tuple[str, str, str]:
+    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    REPORT_OVERVIEW.write_text(
+        make_report_html("Operations report", "#5aa9ff", "overview", 0.0),
+        encoding="utf-8",
+    )
+    REPORT_DETAIL.write_text(
+        make_report_html("Failure analysis report", "#f36b7f", "detail", 1.65),
+        encoding="utf-8",
+    )
+    REPORT_INLINE.write_text(
+        make_report_html("Inline report", "#74ddb0", "inline", 3.2),
+        encoding="utf-8",
+    )
+    return str(REPORT_OVERVIEW), str(REPORT_DETAIL), str(REPORT_INLINE)
+
+
+def inline_report_html() -> str:
+    return make_report_html("Inline report", "#74ddb0", "inline", 3.2)
 
 
 class DemoFrame:
@@ -515,6 +981,7 @@ DataFrameTable,
 Histogram,
 LinePlot,
 Scatter3D,
+HtmlReport,
 Image {
     border-color: rgba(90, 169, 255, 0.28);
     border-width: 1px;
@@ -567,6 +1034,22 @@ Scatter3D {
     background: rgba(4, 8, 18, 0.72);
     border-radius: 12px;
     scatter-point-style: circle;
+}
+
+HtmlReport {
+    width: 100%;
+    min-height: 420px;
+    flex-grow: 1;
+    flex-shrink: 1;
+    background: rgba(4, 8, 18, 0.72);
+    border-radius: 12px;
+    padding: 10px;
+}
+
+HtmlReport.report-viewer {
+    height: 540px;
+    min-height: 420px;
+    align-self: stretch;
 }
 
 GridLayout.scatter-grid {
@@ -847,6 +1330,7 @@ DataFrameTable,
 Histogram,
 LinePlot,
 Scatter3D,
+HtmlReport,
 Image {
     border-color: #9f8970;
 }
@@ -857,6 +1341,11 @@ LinePlot {
 }
 
 Histogram {
+    background: #fffdf7;
+    border-color: #9f8970;
+}
+
+HtmlReport {
     background: #fffdf7;
     border-color: #9f8970;
 }
@@ -1023,6 +1512,11 @@ LinePlot {
 }
 
 Histogram {
+    background: rgba(4, 8, 28, 0.86);
+    border-color: #00e5ff;
+}
+
+HtmlReport {
     background: rgba(4, 8, 28, 0.86);
     border-color: #00e5ff;
 }
@@ -1260,6 +1754,7 @@ DataFrameTable,
 Histogram,
 LinePlot,
 Scatter3D,
+HtmlReport,
 Image {
     background: rgba(2, 6, 23, 0.92);
     border-color: #10b981;
@@ -1353,10 +1848,13 @@ initial_frame = DemoFrame(mode="lidar")
 line_frame = LineFrame()
 histogram_frame = HistogramFrame()
 demo_image_path = make_demo_image()
+report_overview_path, report_detail_path, report_inline_path = write_demo_reports()
 stream_payload_cache: dict[tuple[str, str], list[tuple[float, dg.ScatterPayload]]] = {}
 line_plot_top: dg.LinePlot | None = None
 line_plot_mid: dg.LinePlot | None = None
 line_plot_bottom: dg.LinePlot | None = None
+html_report_view: dg.HtmlReport | None = None
+html_report_status: dg.Label | None = None
 histogram_latency: dg.Histogram | None = None
 histogram_score: dg.Histogram | None = None
 histogram_revenue: dg.Histogram | None = None
@@ -1483,6 +1981,66 @@ def set_page(value: str) -> None:
 def debug_page_active() -> bool:
     with state_lock:
         return demo_state.get("page") == "debug"
+
+
+def set_html_report_status(message: str) -> None:
+    if html_report_status is not None:
+        html_report_status.set_value(message)
+    set_status(message)
+
+
+def show_report_overview() -> None:
+    if html_report_view is not None:
+        html_report_view.set_path(report_overview_path)
+    set_html_report_status(f"{REPORT_BACKEND_LABEL}: {Path(report_overview_path).name}")
+
+
+def show_report_detail() -> None:
+    if html_report_view is not None:
+        html_report_view.set_path(report_detail_path)
+    set_html_report_status(f"{REPORT_BACKEND_LABEL}: {Path(report_detail_path).name}")
+
+
+def show_report_inline() -> None:
+    if html_report_view is not None:
+        if go is not None:
+            html_report_view.set_path(report_inline_path)
+            set_html_report_status(f"{REPORT_BACKEND_LABEL}: {Path(report_inline_path).name}")
+            return
+        html_report_view.set_html(inline_report_html(), base_dir=REPORT_DIR)
+    set_html_report_status(f"{REPORT_BACKEND_LABEL}: inline HTML")
+
+
+def reload_html_report() -> None:
+    if html_report_view is not None:
+        html_report_view.reload()
+    set_html_report_status("Report reloaded")
+
+
+def open_html_report_external() -> None:
+    if html_report_view is not None and html_report_view.open_external():
+        set_html_report_status("Report opened externally")
+    else:
+        set_html_report_status("External report open unavailable")
+
+
+def refresh_html_report_snapshot() -> None:
+    def worker() -> None:
+        try:
+            snapshot = app.debug_snapshot(timeout_ms=500)
+            gpu = snapshot.get("gpu", {})
+            renderer = gpu.get("renderer", {}) if isinstance(gpu, dict) else {}
+            reports = renderer.get("html_reports", {}) if isinstance(renderer, dict) else {}
+            enabled = reports.get("enabled") if isinstance(reports, dict) else None
+            instances = reports.get("instances") if isinstance(reports, dict) else {}
+            count = len(instances) if isinstance(instances, dict) else 0
+            recovered = reports.get("profile_recovered") if isinstance(reports, dict) else None
+            detail = f"HtmlReport: enabled={enabled}, instances={count}, recovered={recovered}"
+            app.call_soon_threadsafe(lambda text=detail: set_html_report_status(text))
+        except RuntimeError:
+            pass
+
+    threading.Thread(target=worker, daemon=True).start()
 
 
 def scatter_stats_worker() -> None:
@@ -2133,6 +2691,7 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
     global stream_interval_label, dynamic_panel, style_panel, style_label, style_button
     global line_plot_top, line_plot_mid, line_plot_bottom
     global line_width_label, line_tick_label, line_window_label
+    global html_report_view, html_report_status
     global histogram_latency, histogram_score, histogram_revenue, histogram_residual
     global histogram_tick_label
     global confirm_modal, about_modal
@@ -2171,6 +2730,7 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                 dg.Tag("Scatter3D", level="info")
                 dg.Tag("LinePlot", level="info")
                 dg.Tag("Histogram", level="warning")
+                dg.Tag("HtmlReport", level="success")
             dg.Separator()
             dg.NavItem("Overview", page="overview")
             dg.NavItem("Scatter", page="scatter")
@@ -2665,6 +3225,37 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                         class_="debug-monitor",
                         style=DEBUG_MONITOR_STYLE,
                     )
+                    with dg.Panel(
+                        "HTML report viewer",
+                        style={
+                            **CARD_STYLE,
+                            "min_height": 0,
+                            "align_self": "stretch",
+                            "flex_grow": 1,
+                            "flex_shrink": 1,
+                        },
+                    ):
+                        dg.Label(
+                            f"{REPORT_BACKEND_LABEL} report. File-backed and inline HTML reports are embedded with WebView2 on Windows.",
+                            class_="subtle",
+                        )
+                        with dg.FlowLayout(gap=8, row_gap=8):
+                            dg.Button("Overview", class_="primary", on_click=show_report_overview)
+                            dg.Button("Detail", on_click=show_report_detail)
+                            dg.Button("Inline", on_click=show_report_inline)
+                            dg.Button("Reload", on_click=reload_html_report)
+                            dg.Button("External", on_click=open_html_report_external)
+                            dg.Button("Snapshot", on_click=refresh_html_report_snapshot)
+                        html_report_view = dg.HtmlReport(
+                            report_overview_path,
+                            class_="report-viewer",
+                            key="debug-html-report",
+                            height=540,
+                        )
+                        html_report_status = dg.Label(
+                            f"{REPORT_BACKEND_LABEL}: {Path(report_overview_path).name}",
+                            class_="subtle",
+                        )
                     with dg.Panel("Snapshot tools", style=CARD_STYLE):
                         dg.Button("Print snapshot", class_="primary", on_click=print_snapshot)
                         dg.Button("Refresh scatter stats", on_click=refresh_scatter_stats)
@@ -2733,7 +3324,7 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
 
     about_modal = dg.alert(
         "About DragonGUI",
-        "This V3 demo uses responsive grids, CSS themes, Scatter3D, LinePlot, Histogram, DataFrameTable, modals, menus, context menus, toasts, resources, and live runtime updates.",
+        "This V3 demo uses responsive grids, CSS themes, Scatter3D, LinePlot, Histogram, HtmlReport, DataFrameTable, modals, menus, context menus, toasts, resources, and live runtime updates.",
         open=False,
         parent=win,
     )

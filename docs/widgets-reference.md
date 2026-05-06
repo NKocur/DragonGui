@@ -1420,6 +1420,13 @@ Options and callbacks:
 When any of `color`, `colors`, `scalars`, `point_sizes`, `opacity != 1.0`, `nan_color`, `clim`, or `log_scale=True` are used, the widget
 automatically emits a `point_instance_v1` packet (per-point RGBA). Otherwise it emits the compact `xyz_f32_v0` format (XYZ only, colored by z-range at render time).
 
+Mouse controls:
+
+- Left drag orbits the camera.
+- Middle drag, right drag, or Shift+left drag pans.
+- Mouse wheel zooms.
+- `R` or `Home` resets the active scatter camera.
+
 Live methods:
 
 - `set_points(frame, x, y=None, z=None, *, color=None, colors=None, scalars=None, point_size=None, point_sizes=None, opacity=None, clim=None, log_scale=None, nan_color=None, size_range=None, fit=False)` — replace point data. Set `fit=True` when replacing the scene with a different coordinate frame so the camera target and orbit center refit to the new bounds.

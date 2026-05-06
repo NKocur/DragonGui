@@ -1425,6 +1425,7 @@ fn collect_text(
             | WidgetKind::ProgressBar
             | WidgetKind::Tab
             | WidgetKind::NavItem
+            | WidgetKind::HtmlReport
     );
     if is_text_widget {
         let mut caret = None;
@@ -1771,7 +1772,8 @@ fn collect_text(
                                 caret_positions,
                                 text_options,
                             );
-                        } else if node.kind == WidgetKind::Label && node.props.wrap.unwrap_or(true)
+                        } else if matches!(node.kind, WidgetKind::Label | WidgetKind::HtmlReport)
+                            && node.props.wrap.unwrap_or(true)
                         {
                             push_wrapped_text_entry(
                                 font_system,
@@ -2172,6 +2174,7 @@ fn widget_kind_name(kind: WidgetKind) -> &'static str {
         WidgetKind::LinePlot => "line_plot",
         WidgetKind::Scatter3D => "scatter_3d",
         WidgetKind::DataFrameTable => "dataframe_table",
+        WidgetKind::HtmlReport => "html_report",
         WidgetKind::Image => "image",
         WidgetKind::Unknown => "unknown",
     }

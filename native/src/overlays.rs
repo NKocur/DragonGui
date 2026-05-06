@@ -334,7 +334,10 @@ fn tooltip_obstacle_weight(kind: &WidgetKind) -> Option<f32> {
         | WidgetKind::StatusBar
         | WidgetKind::MenuBar
         | WidgetKind::Modal => Some(0.05),
-        WidgetKind::Scatter3D | WidgetKind::DataFrameTable | WidgetKind::Image => Some(0.35),
+        WidgetKind::Scatter3D
+        | WidgetKind::DataFrameTable
+        | WidgetKind::HtmlReport
+        | WidgetKind::Image => Some(0.35),
         _ => Some(1.0),
     }
 }

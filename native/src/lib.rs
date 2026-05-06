@@ -4,6 +4,7 @@ pub mod css_style;
 mod document;
 mod error;
 pub(crate) mod events;
+pub(crate) mod html_report_webview;
 pub(crate) mod image_widget;
 pub(crate) mod layout;
 pub(crate) mod overlays;

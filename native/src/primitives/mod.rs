@@ -2013,16 +2013,24 @@ fn line_plot_data_bounds(node: &WidgetNode) -> Option<LinePlotBounds> {
     };
     let mut has_point = false;
     for series in &node.props.line_plot_series {
-        for point in &series.points {
-            let [px, py] = *point;
-            if !px.is_finite() || !py.is_finite() {
+        if let Some([x_min, x_max, y_min, y_max]) = series.bounds {
+            if x_min.is_finite() && x_max.is_finite() && y_min.is_finite() && y_max.is_finite() {
+                bounds.x_min = bounds.x_min.min(x_min);
+                bounds.x_max = bounds.x_max.max(x_max);
+                bounds.y_min = bounds.y_min.min(y_min);
+                bounds.y_max = bounds.y_max.max(y_max);
+                has_point = true;
                 continue;
             }
-            bounds.x_min = bounds.x_min.min(px);
-            bounds.x_max = bounds.x_max.max(px);
-            bounds.y_min = bounds.y_min.min(py);
-            bounds.y_max = bounds.y_max.max(py);
-            has_point = true;
+        }
+        for [px, py] in &series.points {
+            if px.is_finite() && py.is_finite() {
+                bounds.x_min = bounds.x_min.min(*px);
+                bounds.x_max = bounds.x_max.max(*px);
+                bounds.y_min = bounds.y_min.min(*py);
+                bounds.y_max = bounds.y_max.max(*py);
+                has_point = true;
+            }
         }
     }
     has_point.then_some(bounds)
@@ -5815,7 +5823,7 @@ fn emit_rects_inner(
                 }
             }
 
-            WidgetKind::Image => {
+            WidgetKind::Image | WidgetKind::HtmlReport => {
                 emit_bordered_paint_rect_radii(
                     out,
                     [x, y, w, h],

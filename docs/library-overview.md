@@ -216,7 +216,7 @@ Current interaction support includes:
 Scatter interaction:
 
 - Left drag orbits the camera.
-- Middle or right drag pans.
+- Middle drag, right drag, or Shift+left drag pans.
 - Mouse wheel zooms.
 - Resize updates the scatter viewport and camera aspect.
 

@@ -31,6 +31,7 @@ use crate::events::{
     has_active_modal, hit_test, hit_test_hover, modal_blocks_point, ChangeValue, SliderDrag,
     WidgetState,
 };
+use crate::html_report_webview::HtmlReportWebViewManager;
 use crate::image_widget::ImageRenderer;
 use crate::layout::{
     compute_layout, is_scroll_container_node, scroll_container_max_x, scroll_container_max_y, Rect,
@@ -159,7 +160,53 @@ fn coalesce_runtime_command_batch(commands: &mut Vec<Command>) {
         }
     }
     filtered.reverse();
+    coalesce_adjacent_line_plot_appends(&mut filtered);
     *commands = filtered;
+}
+
+fn coalesce_adjacent_line_plot_appends(commands: &mut Vec<Command>) {
+    if commands.len() < 2 {
+        return;
+    }
+    let mut merged: Vec<Command> = Vec::with_capacity(commands.len());
+    for command in commands.drain(..) {
+        match command {
+            Command::AppendLinePlotPointsPacked {
+                id,
+                series,
+                xy,
+                max_points,
+                payload_format,
+            } => {
+                if let Some(Command::AppendLinePlotPointsPacked {
+                    id: prev_id,
+                    series: prev_series,
+                    xy: prev_xy,
+                    max_points: prev_max_points,
+                    payload_format: prev_payload_format,
+                }) = merged.last_mut()
+                {
+                    if *prev_id == id
+                        && *prev_series == series
+                        && *prev_max_points == max_points
+                        && *prev_payload_format == payload_format
+                    {
+                        prev_xy.extend(xy);
+                        continue;
+                    }
+                }
+                merged.push(Command::AppendLinePlotPointsPacked {
+                    id,
+                    series,
+                    xy,
+                    max_points,
+                    payload_format,
+                });
+            }
+            other => merged.push(other),
+        }
+    }
+    *commands = merged;
 }
 
 fn command_is_coalesced_scatter_points(command: &Command) -> bool {
@@ -357,15 +404,29 @@ fn parse_line_plot_color(value: Option<String>) -> Option<ColorRef> {
     Some(ColorRef::Token(text))
 }
 
-fn limit_line_plot_points(points: &mut Vec<[f32; 2]>, max_points: Option<usize>) {
+fn limit_line_plot_points(points: &mut Vec<[f32; 2]>, max_points: Option<usize>) -> bool {
     let Some(max_points) = max_points.filter(|value| *value > 0) else {
-        return;
+        return false;
     };
     if points.len() <= max_points {
-        return;
+        return false;
     }
     let drain = points.len() - max_points;
     points.drain(0..drain);
+    true
+}
+
+fn merge_line_plot_bounds(current: Option<[f32; 4]>, next: Option<[f32; 4]>) -> Option<[f32; 4]> {
+    match (current, next) {
+        (Some([cx_min, cx_max, cy_min, cy_max]), Some([nx_min, nx_max, ny_min, ny_max])) => Some([
+            cx_min.min(nx_min),
+            cx_max.max(nx_max),
+            cy_min.min(ny_min),
+            cy_max.max(ny_max),
+        ]),
+        (Some(bounds), None) | (None, Some(bounds)) => Some(bounds),
+        (None, None) => None,
+    }
 }
 
 fn line_plot_visible_x_range(points: &[[f32; 2]], x_min: f32, x_max: f32) -> (usize, usize) {
@@ -386,6 +447,40 @@ fn line_plot_visible_x_range(points: &[[f32; 2]], x_min: f32, x_max: f32) -> (us
     (start, end)
 }
 
+fn line_plot_hover_x_range(
+    points: &[[f32; 2]],
+    bounds: LinePlotBounds,
+    plot: [f32; 4],
+    pos: [f32; 2],
+    radius_px: f32,
+) -> (usize, usize) {
+    if points.is_empty() || plot[2] <= 1.0 {
+        return (0, 0);
+    }
+    let Some(first) = points.first().map(|point| point[0]) else {
+        return (0, 0);
+    };
+    let Some(last) = points.last().map(|point| point[0]) else {
+        return (0, 0);
+    };
+    if !first.is_finite() || !last.is_finite() || first > last {
+        return line_plot_visible_x_range(points, bounds.x_min, bounds.x_max);
+    }
+    let x_span = (bounds.x_max - bounds.x_min).max(f32::EPSILON);
+    let tx = ((pos[0] - plot[0]) / plot[2]).clamp(0.0, 1.0);
+    let data_x = bounds.x_min + tx * x_span;
+    let radius_x = (radius_px.max(1.0) / plot[2]) * x_span;
+    let start = points.partition_point(|point| point[0] < data_x - radius_x);
+    let end = points.partition_point(|point| point[0] <= data_x + radius_x);
+    if start < end {
+        return (start.saturating_sub(1), (end + 1).min(points.len()));
+    }
+    if start > 0 && start < points.len() {
+        return (start - 1, start + 1);
+    }
+    (start, end)
+}
+
 fn apply_line_plot_window_to_node(node: &mut WidgetNode) -> bool {
     let Some(window) = node
         .props
@@ -398,8 +493,20 @@ fn apply_line_plot_window_to_node(node: &mut WidgetNode) -> bool {
         .props
         .line_plot_series
         .iter()
-        .filter_map(|series| series.points.iter().rev().find(|[x, _]| x.is_finite()))
-        .map(|[x, _]| *x)
+        .filter_map(|series| {
+            series
+                .bounds
+                .map(|bounds| bounds[1])
+                .filter(|x| x.is_finite())
+                .or_else(|| {
+                    series
+                        .points
+                        .iter()
+                        .rev()
+                        .find(|[x, _]| x.is_finite())
+                        .map(|[x, _]| *x)
+                })
+        })
         .fold(f32::NEG_INFINITY, f32::max);
     if !latest_x.is_finite() {
         return false;
@@ -419,6 +526,13 @@ fn apply_line_plot_window_to_node(node: &mut WidgetNode) -> bool {
     }
     if !y_min.is_finite() || !y_max.is_finite() {
         for series in &node.props.line_plot_series {
+            if let Some([_, _, series_y_min, series_y_max]) = series.bounds {
+                if series_y_min.is_finite() && series_y_max.is_finite() {
+                    y_min = y_min.min(series_y_min);
+                    y_max = y_max.max(series_y_max);
+                    continue;
+                }
+            }
             for [_, y] in &series.points {
                 if y.is_finite() {
                     y_min = y_min.min(*y);
@@ -1053,6 +1167,7 @@ fn widget_kind_name(kind: &WidgetKind) -> &'static str {
         WidgetKind::LinePlot => "line_plot",
         WidgetKind::Scatter3D => "scatter_3d",
         WidgetKind::DataFrameTable => "dataframe_table",
+        WidgetKind::HtmlReport => "html_report",
         WidgetKind::Image => "image",
         WidgetKind::Unknown => "unknown",
     }
@@ -2038,6 +2153,21 @@ fn props_snapshot(node: &WidgetNode) -> Value {
             "sample_rows": props.table_sample_rows,
         },
     });
+    if node.kind == WidgetKind::HtmlReport {
+        if let Value::Object(map) = &mut snapshot {
+            map.insert(
+                "html_report".to_string(),
+                json!({
+                    "path": props.html_report_path.as_deref(),
+                    "base_dir": props.html_report_base_dir.as_deref(),
+                    "allow_remote": props.html_report_allow_remote,
+                    "allow_scripts": props.html_report_allow_scripts,
+                    "external_fallback": props.html_report_external_fallback,
+                    "inline_bytes": props.html_report_html.as_ref().map(|html| html.len()),
+                }),
+            );
+        }
+    }
     if node.kind == WidgetKind::Histogram {
         if let Value::Object(map) = &mut snapshot {
             map.insert(
@@ -2473,6 +2603,60 @@ fn set_widget_image_prop(node: &mut WidgetNode, id: &str, prop: &str, value: Str
     true
 }
 
+fn set_widget_html_report_text_prop(
+    node: &mut WidgetNode,
+    id: &str,
+    prop: &str,
+    value: Option<String>,
+) -> bool {
+    let Some(target) = find_widget_mut(node, id) else {
+        return false;
+    };
+    if target.kind != WidgetKind::HtmlReport {
+        return false;
+    }
+    match prop {
+        "path" => {
+            target.props.html_report_path = value.filter(|v| !v.is_empty());
+            if target.props.html_report_path.is_some() {
+                target.props.html_report_html = None;
+                target.props.html_report_base_dir = None;
+            }
+        }
+        "html" => {
+            target.props.html_report_html = value.filter(|v| !v.trim().is_empty());
+            if target.props.html_report_html.is_some() {
+                target.props.html_report_path = None;
+            }
+        }
+        "base_dir" => target.props.html_report_base_dir = value.filter(|v| !v.is_empty()),
+        "text" => target.props.text = value.filter(|v| !v.is_empty()),
+        _ => return false,
+    }
+    true
+}
+
+fn set_widget_html_report_bool_prop(
+    node: &mut WidgetNode,
+    id: &str,
+    prop: &str,
+    value: bool,
+) -> bool {
+    let Some(target) = find_widget_mut(node, id) else {
+        return false;
+    };
+    if target.kind != WidgetKind::HtmlReport {
+        return false;
+    }
+    match prop {
+        "allow_remote" => target.props.html_report_allow_remote = value,
+        "allow_scripts" => target.props.html_report_allow_scripts = value,
+        "external_fallback" => target.props.html_report_external_fallback = value,
+        _ => return false,
+    }
+    true
+}
+
 fn merge_style_patch(target: &mut Map<String, Value>, patch: &Map<String, Value>) {
     for (key, value) in patch {
         if value.is_null() {
@@ -2696,6 +2880,53 @@ mod style_patch_tests {
                 assert!(*fit);
             }
             other => panic!("expected latest scatter update, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn command_batch_coalesces_adjacent_line_plot_appends() {
+        let mut commands = vec![
+            Command::AppendLinePlotPointsPacked {
+                id: "line".to_string(),
+                series: "temperature".to_string(),
+                xy: vec![1; 8],
+                max_points: Some(1024),
+                payload_format: LinePlotPayloadFormat::XyF32V0,
+            },
+            Command::AppendLinePlotPointsPacked {
+                id: "line".to_string(),
+                series: "temperature".to_string(),
+                xy: vec![2; 16],
+                max_points: Some(1024),
+                payload_format: LinePlotPayloadFormat::XyF32V0,
+            },
+            Command::AppendLinePlotPointsPacked {
+                id: "line".to_string(),
+                series: "pressure".to_string(),
+                xy: vec![3; 8],
+                max_points: Some(1024),
+                payload_format: LinePlotPayloadFormat::XyF32V0,
+            },
+        ];
+
+        coalesce_runtime_command_batch(&mut commands);
+
+        assert_eq!(commands.len(), 2);
+        match &commands[0] {
+            Command::AppendLinePlotPointsPacked { series, xy, .. } => {
+                assert_eq!(series, "temperature");
+                assert_eq!(xy.len(), 24);
+                assert_eq!(&xy[..8], &[1; 8]);
+                assert_eq!(&xy[8..], &[2; 16]);
+            }
+            other => panic!("expected coalesced append, got {other:?}"),
+        }
+        match &commands[1] {
+            Command::AppendLinePlotPointsPacked { series, xy, .. } => {
+                assert_eq!(series, "pressure");
+                assert_eq!(xy, &vec![3; 8]);
+            }
+            other => panic!("expected pressure append, got {other:?}"),
         }
     }
 
@@ -3728,6 +3959,7 @@ struct WgpuState {
     visible_scatter_order: Vec<String>,
     primitives: Option<PrimitivesRenderer>,
     images: Option<ImageRenderer>,
+    html_reports: HtmlReportWebViewManager,
     widget_tree: Option<WidgetNode>,
     widget_kinds: HashMap<String, WidgetKind>,
     caret_positions: HashMap<String, [f32; 2]>,
@@ -4732,6 +4964,7 @@ impl WgpuState {
             visible_scatter_order: Vec::new(),
             primitives,
             images,
+            html_reports: HtmlReportWebViewManager::new(window.as_ref()),
             widget_tree: spec.widget_tree,
             widget_kinds,
             caret_positions: HashMap::new(),
@@ -4825,6 +5058,7 @@ impl WgpuState {
             resources,
             primitives,
             images,
+            html_reports,
             text,
             scatters,
             visible_scatter_order,
@@ -4841,7 +5075,10 @@ impl WgpuState {
 
         let tree = match widget_tree.as_ref() {
             Some(t) => t,
-            None => return,
+            None => {
+                html_reports.hide_all();
+                return;
+            }
         };
 
         let w = config.width as f32;
@@ -4968,6 +5205,11 @@ impl WgpuState {
         }
 
         *current_layout = Some(layout);
+    }
+
+    fn sync_html_reports(&mut self) {
+        self.html_reports
+            .sync(self.widget_tree.as_ref(), self.current_layout.as_ref());
     }
 
     fn rebuild_primitives(&mut self) {
@@ -6430,6 +6672,51 @@ impl WgpuState {
             }
             return None;
         }
+        if kind == WidgetKind::HtmlReport {
+            match (prop, value) {
+                ("path" | "html" | "base_dir" | "text", CommandValue::Text(text)) => {
+                    if let Some(tree) = self.widget_tree.as_mut() {
+                        if set_widget_html_report_text_prop(tree, id, prop, Some(text)) {
+                            return Some(if prop == "text" {
+                                Dirty::Text
+                            } else {
+                                Dirty::Full
+                            });
+                        }
+                    }
+                    return None;
+                }
+                ("path" | "html" | "base_dir" | "text", CommandValue::None) => {
+                    if let Some(tree) = self.widget_tree.as_mut() {
+                        if set_widget_html_report_text_prop(tree, id, prop, None) {
+                            return Some(if prop == "text" {
+                                Dirty::Text
+                            } else {
+                                Dirty::Full
+                            });
+                        }
+                    }
+                    return None;
+                }
+                (
+                    "allow_remote" | "allow_scripts" | "external_fallback",
+                    CommandValue::Bool(enabled),
+                ) => {
+                    if let Some(tree) = self.widget_tree.as_mut() {
+                        if set_widget_html_report_bool_prop(tree, id, prop, enabled) {
+                            return Some(Dirty::Full);
+                        }
+                    }
+                    return None;
+                }
+                (_, _) => {
+                    eprintln!(
+                        "DragonGUI: ignoring unsupported live SetProp for widget {id:?} ({kind:?}).{prop}"
+                    );
+                    return None;
+                }
+            }
+        }
         let state = self.widget_state.as_mut()?;
         if matches!(kind, WidgetKind::Tabs | WidgetKind::Pages) && prop == "value" {
             let CommandValue::Text(value) = value else {
@@ -6904,6 +7191,7 @@ impl WgpuState {
         }
         let mut points = decode_line_plot_points_bytes(&xy, payload_format)?;
         limit_line_plot_points(&mut points, max_points);
+        let bounds = document::line_plot_points_bounds(&points);
         let Some(tree) = self.widget_tree.as_mut() else {
             return Ok(false);
         };
@@ -6939,6 +7227,7 @@ impl WgpuState {
                 existing.line_style = line_style;
             }
             existing.points = points;
+            existing.bounds = bounds;
             existing.payload_format = payload_format;
             existing.declared_point_count = Some(point_count);
         } else {
@@ -6949,6 +7238,7 @@ impl WgpuState {
                     color,
                     line_style: line_style.unwrap_or_else(|| "solid".to_string()),
                     points,
+                    bounds,
                     payload_format,
                     declared_point_count: Some(point_count),
                 });
@@ -6969,6 +7259,7 @@ impl WgpuState {
             return Ok(false);
         }
         let mut points = decode_line_plot_points_bytes(&xy, payload_format)?;
+        let appended_bounds = document::line_plot_points_bounds(&points);
         let Some(tree) = self.widget_tree.as_mut() else {
             return Ok(false);
         };
@@ -6981,11 +7272,18 @@ impl WgpuState {
             .iter_mut()
             .find(|item| item.label.as_deref() == Some(series.as_str()))
         {
+            let prior_bounds = existing.bounds;
             existing.points.append(&mut points);
-            limit_line_plot_points(&mut existing.points, max_points);
+            let trimmed = limit_line_plot_points(&mut existing.points, max_points);
+            existing.bounds = if trimmed {
+                document::line_plot_points_bounds(&existing.points)
+            } else {
+                merge_line_plot_bounds(prior_bounds, appended_bounds)
+            };
             existing.declared_point_count = Some(existing.points.len());
         } else {
             limit_line_plot_points(&mut points, max_points);
+            let bounds = document::line_plot_points_bounds(&points);
             let point_count = points.len();
             node.props
                 .line_plot_series
@@ -6994,6 +7292,7 @@ impl WgpuState {
                     color: None,
                     line_style: "solid".to_string(),
                     points,
+                    bounds,
                     payload_format,
                     declared_point_count: Some(point_count),
                 });
@@ -7016,12 +7315,14 @@ impl WgpuState {
             for item in &mut node.props.line_plot_series {
                 if item.label.as_deref() == Some(series.as_str()) {
                     item.points.clear();
+                    item.bounds = None;
                     item.declared_point_count = Some(0);
                 }
             }
         } else {
             for item in &mut node.props.line_plot_series {
                 item.points.clear();
+                item.bounds = None;
                 item.declared_point_count = Some(0);
             }
         }
@@ -7602,9 +7903,9 @@ impl WgpuState {
         let tree = self.widget_tree.as_ref()?;
         let node = find_node(tree, id)?;
         let mut best: Option<(f32, LinePlotHoverProp)> = None;
+        let radius = 18.0_f32;
         for series in &node.props.line_plot_series {
-            let (start, end) =
-                line_plot_visible_x_range(&series.points, bounds.x_min, bounds.x_max);
+            let (start, end) = line_plot_hover_x_range(&series.points, bounds, plot, pos, radius);
             for point in &series.points[start..end] {
                 let Some(screen) = map_line_plot_point_to_screen(*point, plot, bounds) else {
                     continue;
@@ -7625,7 +7926,7 @@ impl WgpuState {
                 }
             }
         }
-        best.and_then(|(d2, hover)| (d2 <= 18.0_f32.powi(2)).then_some(hover))
+        best.and_then(|(d2, hover)| (d2 <= radius.powi(2)).then_some(hover))
     }
 
     fn refresh_table_sort(&mut self, id: &str) {
@@ -8044,6 +8345,7 @@ impl WgpuState {
                 "surface_format": format!("{:?}", self.config.format),
                 "has_primitives": self.primitives.is_some(),
                 "has_text": self.text.is_some(),
+                "html_reports": self.html_reports.snapshot(),
                 "font_warnings": self.text.as_ref().map(|text| text.font_warnings()).unwrap_or(&[]),
                 "has_scatter": !self.scatters.is_empty(),
                 "scatter_widget_id": self.visible_scatter_order.first().map(|s| s.as_str()),
@@ -8572,6 +8874,8 @@ impl WgpuState {
     }
 
     fn render(&mut self) -> Result<(), DragonError> {
+        self.sync_html_reports();
+
         // Prepare text glyph uploads before acquiring the render pass (avoids
         // borrow conflicts with depth_view which is borrowed by the pass).
         {
@@ -8986,6 +9290,7 @@ struct DragonApp {
     last_mouse_pos: Option<[f32; 2]>,
     orbit_active: bool,
     pan_active: bool,
+    pan_button: Option<MouseButton>,
     /// True while the user is dragging a rectangle selection (rectangle picking mode).
     rect_select_active: bool,
     /// Button on_click callbacks (moved out of AppSpec in `resumed`).
@@ -9041,6 +9346,7 @@ impl DragonApp {
             last_mouse_pos: None,
             orbit_active: false,
             pan_active: false,
+            pan_button: None,
             rect_select_active: false,
             click_cbs: HashMap::new(),
             change_cbs: HashMap::new(),
@@ -9162,6 +9468,14 @@ impl DragonApp {
                 "smoke_frames": self.smoke_frames,
                 "orbit_active": self.orbit_active,
                 "pan_active": self.pan_active,
+                "pan_button": self.pan_button.as_ref().map(|button| match button {
+                    MouseButton::Left => "left",
+                    MouseButton::Right => "right",
+                    MouseButton::Middle => "middle",
+                    MouseButton::Back => "back",
+                    MouseButton::Forward => "forward",
+                    MouseButton::Other(_) => "other",
+                }),
                 "pressed_id": self.pressed_id.as_deref(),
                 "last_mouse_pos": self.last_mouse_pos,
                 "scrollbar_drag": self.scrollbar_drag.as_ref().map(|drag| json!({
@@ -9186,6 +9500,39 @@ impl DragonApp {
         if let Some(w) = &self.window {
             w.request_redraw();
         }
+    }
+
+    fn begin_scatter_pan(&mut self, scatter_id: String, button: MouseButton) {
+        self.active_scatter_id = Some(scatter_id.clone());
+        self.orbit_active = false;
+        self.pan_active = true;
+        self.pan_button = Some(button);
+        self.scatter_press_pos = None;
+        if let Some(gpu) = &mut self.gpu {
+            if let Some(rt) = gpu.scatters.get_mut(&scatter_id) {
+                rt.widget.lod_active = true;
+            }
+        }
+    }
+
+    fn finish_scatter_pan(&mut self, button: MouseButton) -> bool {
+        if !self.pan_active || self.pan_button != Some(button) {
+            return false;
+        }
+        self.pan_active = false;
+        self.pan_button = None;
+        if let Some(sid) = self.active_scatter_id.clone() {
+            if let Some(gpu) = &mut self.gpu {
+                if let Some(rt) = gpu.scatters.get_mut(&sid) {
+                    rt.widget.lod_active = false;
+                    rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                }
+            }
+        }
+        if !self.orbit_active && !self.pan_active && !self.rect_select_active {
+            self.active_scatter_id = None;
+        }
+        true
     }
 
     fn has_open_popup(&self) -> bool {
@@ -12782,6 +13129,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                             let was_orbiting = self.orbit_active;
                             let was_rect_select = self.rect_select_active;
                             let scatter_press = self.scatter_press_pos.take();
+                            let released_scatter_pan = self.finish_scatter_pan(MouseButton::Left);
                             self.orbit_active = false;
                             self.rect_select_active = false;
                             let released_scrollbar = self.scrollbar_drag.take().is_some();
@@ -12820,6 +13168,10 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                 if let Some(gpu) = &mut self.gpu {
                                     gpu.finish_histogram_box_zoom(&drag.widget_id, drag.start, pos);
                                 }
+                                self.request_redraw();
+                                return;
+                            }
+                            if released_scatter_pan {
                                 self.request_redraw();
                                 return;
                             }
@@ -13155,7 +13507,19 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                     .and_then(|g| g.scatters.get(&sid))
                                     .map(|rt| rt.widget.picking_mode)
                                     .unwrap_or(scatter::PickingMode::Point);
-                                if picking_mode == scatter::PickingMode::Rectangle
+                                if picking_mode == scatter::PickingMode::None {
+                                    // Interaction disabled - consume the event but do nothing.
+                                    self.orbit_active = false;
+                                    self.rect_select_active = false;
+                                    self.pan_active = false;
+                                    self.pan_button = None;
+                                } else if self.modifiers.shift_key() {
+                                    // Shift+left-drag matches the middle-drag pan path.
+                                    self.rect_select_active = false;
+                                    self.begin_scatter_pan(sid, MouseButton::Left);
+                                    self.request_redraw();
+                                    return;
+                                } else if picking_mode == scatter::PickingMode::Rectangle
                                     || picking_mode == scatter::PickingMode::Lasso
                                 {
                                     // Rectangle / lasso: start selection drag
@@ -13189,13 +13553,11 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                     }
                                     self.orbit_active = false;
                                     self.rect_select_active = true;
-                                } else if picking_mode == scatter::PickingMode::None {
-                                    // Interaction disabled — consume the event but do nothing.
-                                    self.orbit_active = false;
-                                    self.rect_select_active = false;
                                 } else {
                                     // PickingMode::Point — left drag orbits.
                                     self.orbit_active = true;
+                                    self.pan_active = false;
+                                    self.pan_button = None;
                                     self.rect_select_active = false;
                                     if let Some(gpu) = &mut self.gpu {
                                         if let Some(rt) = gpu.scatters.get_mut(&sid) {
@@ -13212,18 +13574,8 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
 
                     MouseButton::Middle | MouseButton::Right => {
                         if !pressed {
-                            let was_panning = self.pan_active;
-                            self.pan_active = false;
-                            if was_panning {
-                                if let Some(sid) = self.active_scatter_id.clone() {
-                                    if let Some(gpu) = &mut self.gpu {
-                                        if let Some(rt) = gpu.scatters.get_mut(&sid) {
-                                            rt.widget.lod_active = false;
-                                            rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
-                                        }
-                                    }
-                                    self.request_redraw();
-                                }
+                            if self.finish_scatter_pan(button) {
+                                self.request_redraw();
                             }
                         } else {
                             let pos = self.last_mouse_pos.unwrap_or([0.0, 0.0]);
@@ -13252,14 +13604,9 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                 }
                             }
                             let pan_scatter_id = self.gpu.as_ref().and_then(|g| g.scatter_at(pos));
-                            self.pan_active = pan_scatter_id.is_some();
-                            if let Some(ref sid) = pan_scatter_id {
-                                self.active_scatter_id = pan_scatter_id.clone();
-                                if let Some(gpu) = &mut self.gpu {
-                                    if let Some(rt) = gpu.scatters.get_mut(sid) {
-                                        rt.widget.lod_active = true;
-                                    }
-                                }
+                            if let Some(sid) = pan_scatter_id {
+                                self.begin_scatter_pan(sid, button);
+                                self.request_redraw();
                             }
                         }
                     }
@@ -13375,10 +13722,10 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                             let mut needs_redraw = false;
                             if let Some(gpu) = &mut self.gpu {
                                 if let Some(runtime) = gpu.scatters.get_mut(&sid) {
-                                    if self.orbit_active {
-                                        runtime.widget.camera.orbit(delta);
-                                    } else if self.pan_active {
+                                    if self.pan_active {
                                         runtime.widget.camera.pan(delta);
+                                    } else if self.orbit_active {
+                                        runtime.widget.camera.orbit(delta);
                                     }
                                     runtime.widget.update_camera(&gpu.queue);
                                     let (bmn, bmx) = runtime.merged_bounds();

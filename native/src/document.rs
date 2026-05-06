@@ -86,6 +86,7 @@ pub struct LinePlotSeriesProp {
     pub color: Option<ColorRef>,
     pub line_style: String,
     pub points: Vec<[f32; 2]>,
+    pub bounds: Option<[f32; 4]>,
     pub payload_format: LinePlotPayloadFormat,
     pub declared_point_count: Option<usize>,
 }
@@ -231,6 +232,7 @@ fn parse_line_plot_series_item(value: &serde_json::Value) -> Option<LinePlotSeri
             }
         })
         .unwrap_or_default();
+    let bounds = line_plot_points_bounds(&points);
     Some(LinePlotSeriesProp {
         label: obj
             .get("label")
@@ -240,12 +242,32 @@ fn parse_line_plot_series_item(value: &serde_json::Value) -> Option<LinePlotSeri
         color: parse_color_ref(obj.get("color")),
         line_style: parse_line_plot_line_style(obj.get("line_style").and_then(Value::as_str)),
         points,
+        bounds,
         payload_format,
         declared_point_count: obj
             .get("points")
             .and_then(Value::as_u64)
             .map(|v| v as usize),
     })
+}
+
+pub(crate) fn line_plot_points_bounds(points: &[[f32; 2]]) -> Option<[f32; 4]> {
+    let mut x_min = f32::INFINITY;
+    let mut x_max = f32::NEG_INFINITY;
+    let mut y_min = f32::INFINITY;
+    let mut y_max = f32::NEG_INFINITY;
+    let mut has_point = false;
+    for [x, y] in points {
+        if !x.is_finite() || !y.is_finite() {
+            continue;
+        }
+        x_min = x_min.min(*x);
+        x_max = x_max.max(*x);
+        y_min = y_min.min(*y);
+        y_max = y_max.max(*y);
+        has_point = true;
+    }
+    has_point.then_some([x_min, x_max, y_min, y_max])
 }
 
 fn parse_f32_vec(v: Option<&serde_json::Value>) -> Vec<f32> {
@@ -482,6 +504,7 @@ pub enum WidgetKind {
     LinePlot,
     Scatter3D,
     DataFrameTable,
+    HtmlReport,
     Image,
     Unknown,
 }
@@ -529,6 +552,7 @@ impl WidgetKind {
             "line_plot" => WidgetKind::LinePlot,
             "scatter_3d" => WidgetKind::Scatter3D,
             "dataframe_table" => WidgetKind::DataFrameTable,
+            "html_report" => WidgetKind::HtmlReport,
             "image" => WidgetKind::Image,
             _ => WidgetKind::Unknown,
         }
@@ -614,6 +638,18 @@ pub struct NodeProps {
     pub image_path: Option<String>,
     /// Image fit mode: contain, cover, or stretch.
     pub image_fit: Option<String>,
+    /// Local HTML report file path for future embedded webview backends.
+    pub html_report_path: Option<String>,
+    /// Inline HTML report document for future embedded webview backends.
+    pub html_report_html: Option<String>,
+    /// Base directory used to resolve relative resources for inline HTML reports.
+    pub html_report_base_dir: Option<String>,
+    /// Whether remote subresources are allowed when an embedded webview is active.
+    pub html_report_allow_remote: bool,
+    /// Whether scripts are allowed when an embedded webview is active.
+    pub html_report_allow_scripts: bool,
+    /// Whether opening in the system browser is an acceptable fallback.
+    pub html_report_external_fallback: bool,
     /// LED status state name and resolved indicator color.
     pub led_state: Option<String>,
     pub led_color: Option<ColorRef>,
@@ -885,16 +921,64 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         .and_then(|v| v.as_str())
         .filter(|v| !v.is_empty())
         .map(|v| v.to_string());
-    let image_path = props
-        .get("path")
-        .and_then(|v| v.as_str())
-        .filter(|v| !v.is_empty())
-        .map(|v| v.to_string());
-    let image_fit = props
-        .get("fit")
-        .and_then(|v| v.as_str())
-        .filter(|v| !v.is_empty())
-        .map(|v| v.to_ascii_lowercase());
+    let image_path = if matches!(kind, WidgetKind::Image) {
+        props
+            .get("path")
+            .and_then(|v| v.as_str())
+            .filter(|v| !v.is_empty())
+            .map(|v| v.to_string())
+    } else {
+        None
+    };
+    let image_fit = if matches!(kind, WidgetKind::Image) {
+        props
+            .get("fit")
+            .and_then(|v| v.as_str())
+            .filter(|v| !v.is_empty())
+            .map(|v| v.to_ascii_lowercase())
+    } else {
+        None
+    };
+    let (
+        html_report_path,
+        html_report_html,
+        html_report_base_dir,
+        html_report_allow_remote,
+        html_report_allow_scripts,
+        html_report_external_fallback,
+    ) = if matches!(kind, WidgetKind::HtmlReport) {
+        (
+            props
+                .get("path")
+                .and_then(|v| v.as_str())
+                .filter(|v| !v.is_empty())
+                .map(|v| v.to_string()),
+            props
+                .get("html")
+                .and_then(|v| v.as_str())
+                .filter(|v| !v.trim().is_empty())
+                .map(|v| v.to_string()),
+            props
+                .get("base_dir")
+                .and_then(|v| v.as_str())
+                .filter(|v| !v.is_empty())
+                .map(|v| v.to_string()),
+            props
+                .get("allow_remote")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            props
+                .get("allow_scripts")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+            props
+                .get("external_fallback")
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+        )
+    } else {
+        (None, None, None, false, false, false)
+    };
     let led_state = props
         .get("state")
         .and_then(|v| v.as_str())
@@ -1344,6 +1428,12 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         tooltip,
         image_path,
         image_fit,
+        html_report_path,
+        html_report_html,
+        html_report_base_dir,
+        html_report_allow_remote,
+        html_report_allow_scripts,
+        html_report_external_fallback,
         led_state,
         led_color,
         led_size,

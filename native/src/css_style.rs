@@ -2819,6 +2819,7 @@ pub fn widget_kind_from_css_type(name: &str) -> Option<WidgetKind> {
         "LinePlot" => Some(WidgetKind::LinePlot),
         "Scatter3D" => Some(WidgetKind::Scatter3D),
         "DataFrameTable" => Some(WidgetKind::DataFrameTable),
+        "HtmlReport" => Some(WidgetKind::HtmlReport),
         "Image" => Some(WidgetKind::Image),
         _ => None,
     }
@@ -2866,6 +2867,7 @@ pub fn css_type_name(kind: WidgetKind) -> Option<&'static str> {
         WidgetKind::LinePlot => Some("LinePlot"),
         WidgetKind::Scatter3D => Some("Scatter3D"),
         WidgetKind::DataFrameTable => Some("DataFrameTable"),
+        WidgetKind::HtmlReport => Some("HtmlReport"),
         WidgetKind::Image => Some("Image"),
         WidgetKind::Unknown => None,
     }
@@ -2991,6 +2993,31 @@ fn node_style_attributes(node: &WidgetNode) -> Vec<StyleAttribute> {
     push_attr_opt(&mut attributes, "tooltip", props.tooltip.as_deref());
     push_attr_opt(&mut attributes, "path", props.image_path.as_deref());
     push_attr_opt(&mut attributes, "fit", props.image_fit.as_deref());
+    push_attr_opt(
+        &mut attributes,
+        "html-report-path",
+        props.html_report_path.as_deref(),
+    );
+    push_attr_opt(
+        &mut attributes,
+        "html-report-base-dir",
+        props.html_report_base_dir.as_deref(),
+    );
+    push_attr_bool_if_true(
+        &mut attributes,
+        "allow-remote",
+        props.html_report_allow_remote,
+    );
+    push_attr_bool_if_true(
+        &mut attributes,
+        "allow-scripts",
+        props.html_report_allow_scripts,
+    );
+    push_attr_bool_if_true(
+        &mut attributes,
+        "external-fallback",
+        props.html_report_external_fallback,
+    );
     push_attr_opt(&mut attributes, "state", props.led_state.as_deref());
     push_attr_number_opt(&mut attributes, "width", props.fixed_width);
     push_attr_number_opt(&mut attributes, "height", props.fixed_height);
@@ -10667,6 +10694,7 @@ mod tests {
             WidgetKind::Histogram,
             WidgetKind::LinePlot,
             WidgetKind::Scatter3D,
+            WidgetKind::HtmlReport,
             WidgetKind::Image,
             WidgetKind::Toast,
         ];

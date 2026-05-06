@@ -119,7 +119,7 @@ with dg.HLayout():
             "Print Metrics",
             on_click=lambda: threading.Thread(target=print_scatter_metrics, daemon=True).start(),
         )
-        dg.Label("Drag/wheel the plot to orbit and zoom.")
+        dg.Label("Left drag orbits, Shift+left or middle drag pans, and wheel zooms.")
 
     scatter = dg.Scatter3D(initial, x="x", y="y", z="z", key="stream-scatter")
 

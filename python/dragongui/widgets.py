@@ -9,10 +9,13 @@ from dataclasses import dataclass
 from itertools import count
 import math
 import numbers
+from pathlib import Path
 import re
+import tempfile
 import threading
 import time
 from typing import Any, ClassVar, Self
+import webbrowser
 
 from .dataframe import (
     DEFAULT_TABLE_SAMPLE_ROWS,
@@ -2697,6 +2700,145 @@ class Image(Widget):
         }
 
 
+class HtmlReport(Widget):
+    """Display a local HTML report, with an external-browser fallback.
+
+    The native renderer currently shows a styled placeholder. The API is shaped
+    so the Windows WebView2 backend can consume the same serialized props later.
+    """
+
+    kind = "html_report"
+
+    def __init__(
+        self,
+        path: object | None = None,
+        *,
+        html: str | None = None,
+        base_dir: object | None = None,
+        allow_remote: bool = False,
+        allow_scripts: bool = True,
+        external_fallback: bool = True,
+        width: int | float | None = None,
+        height: int | float | None = 420,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        if path is None and html is None:
+            raise ValueError("HtmlReport requires either path or html")
+        if path is not None and html is not None:
+            raise ValueError("HtmlReport accepts path or html, not both")
+        self.path = None if path is None else self._normalize_path(path)
+        self.html = None if html is None else self._normalize_html(html)
+        self.base_dir = None if base_dir is None else self._normalize_path(base_dir)
+        self.allow_remote = bool(allow_remote)
+        self.allow_scripts = bool(allow_scripts)
+        self.external_fallback = bool(external_fallback)
+        self.width = None if width is None else float(width)
+        self.height = None if height is None else float(height)
+        if self.width is not None and self.width <= 0:
+            raise ValueError("HtmlReport width must be greater than zero")
+        if self.height is not None and self.height <= 0:
+            raise ValueError("HtmlReport height must be greater than zero")
+        self._external_temp_path: str | None = None
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    @classmethod
+    def from_html(
+        cls,
+        html: str,
+        *,
+        base_dir: object | None = None,
+        **kwargs: Any,
+    ) -> Self:
+        return cls(html=html, base_dir=base_dir, **kwargs)
+
+    @staticmethod
+    def _normalize_path(path: object) -> str:
+        text = str(path)
+        if not text:
+            raise ValueError("HtmlReport path must be a non-empty path")
+        return text
+
+    @staticmethod
+    def _normalize_html(html: str) -> str:
+        text = str(html)
+        if not text.strip():
+            raise ValueError("HtmlReport html must be non-empty")
+        return text
+
+    def _placeholder_text(self) -> str:
+        if self.path is not None:
+            name = Path(self.path).name or self.path
+            return f"HTML report: {name}\nOpen externally to view interactive content."
+        return "HTML report: inline document\nOpen externally to view interactive content."
+
+    def set_path(self, path: object) -> None:
+        self.path = self._normalize_path(path)
+        self.html = None
+        self.base_dir = None
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("path", self.path)
+            handle.enqueue_set_prop("html", None)
+            handle.enqueue_set_prop("base_dir", None)
+            handle.enqueue_set_prop("text", self._placeholder_text())
+
+    def set_html(self, html: str, *, base_dir: object | None = None) -> None:
+        self.html = self._normalize_html(html)
+        self.path = None
+        self.base_dir = None if base_dir is None else self._normalize_path(base_dir)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("html", self.html)
+            handle.enqueue_set_prop("path", None)
+            handle.enqueue_set_prop("base_dir", self.base_dir)
+            handle.enqueue_set_prop("text", self._placeholder_text())
+
+    def reload(self) -> None:
+        if (handle := self._live()) is None:
+            return
+        if self.path is not None:
+            handle.enqueue_set_prop("path", self.path)
+        else:
+            handle.enqueue_set_prop("html", self.html)
+
+    def open_external(self) -> bool:
+        if not self.external_fallback:
+            return False
+        if self.path is not None:
+            target = self.path
+            if not target.lower().startswith(("http://", "https://", "file://")):
+                target = Path(target).expanduser().resolve().as_uri()
+        else:
+            if self._external_temp_path is None:
+                with tempfile.NamedTemporaryFile(
+                    "w",
+                    suffix=".html",
+                    prefix="dragongui-html-report-",
+                    encoding="utf-8",
+                    delete=False,
+                ) as handle:
+                    handle.write(self.html or "")
+                    self._external_temp_path = handle.name
+            target = Path(self._external_temp_path).resolve().as_uri()
+        return bool(webbrowser.open(target))
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "html": self.html,
+            "base_dir": self.base_dir,
+            "allow_remote": self.allow_remote,
+            "allow_scripts": self.allow_scripts,
+            "external_fallback": self.external_fallback,
+            "width": self.width,
+            "height": self.height,
+            "text": self._placeholder_text(),
+        }
+
+
 def _scatter_needs_v1(
     color: Any,
     colors: Any,
@@ -3441,17 +3583,6 @@ class LinePlot(Widget):
         handle = self._live()
         if handle is None:
             return
-        handle.enqueue_set_prop("x_label", self.x_label)
-        handle.enqueue_set_prop("y_label", self.y_label)
-        handle.enqueue_set_prop("show_grid", self.show_grid)
-        handle.enqueue_set_prop("show_axes", self.show_axes)
-        handle.enqueue_set_prop("show_ticks", self.show_ticks)
-        handle.enqueue_set_prop("show_toolbar", self.show_toolbar)
-        handle.enqueue_set_prop("show_legend", self.show_legend)
-        handle.enqueue_set_prop("legend_position", self.legend_position)
-        handle.enqueue_set_prop("interaction", self.interaction)
-        handle.enqueue_set_prop("tick_count", self.tick_count)
-        handle.enqueue_set_prop("window_size", self.window_size)
         for index, y_column in enumerate(self.y_columns):
             payload = self._cached_payloads.get(y_column)
             if payload is None:

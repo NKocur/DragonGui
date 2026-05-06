@@ -590,6 +590,71 @@ def test_image_serializes_validates_and_updates_live_props() -> None:
         dg.Image("x.png", width=0, parent=None)
 
 
+def test_html_report_serializes_validates_and_updates_live_props() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.props: list[tuple[str, str, object]] = []
+
+        def enqueue_set_prop(self, widget_id: str, prop: str, value: object) -> None:
+            self.props.append((widget_id, prop, value))
+
+        def close(self) -> None:
+            pass
+
+    report = dg.HtmlReport(
+        Path("reports/plotly.html"),
+        height=360,
+        allow_remote=True,
+        id="html-report",
+        parent=None,
+    )
+
+    serialized = report.to_dict()
+    assert serialized["type"] == "html_report"
+    assert Path(serialized["props"]["path"]).parts[-2:] == ("reports", "plotly.html")
+    assert serialized["props"]["html"] is None
+    assert serialized["props"]["height"] == 360.0
+    assert serialized["props"]["allow_remote"] is True
+    assert "HTML report: plotly.html" in serialized["props"]["text"]
+
+    inline = dg.HtmlReport.from_html("<html><body>ok</body></html>", base_dir="reports", parent=None)
+    assert inline.to_dict()["props"]["path"] is None
+    assert inline.to_dict()["props"]["html"].startswith("<html>")
+    assert inline.to_dict()["props"]["base_dir"] == "reports"
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+    report._bind_live(handle.widget_handle(report.id))
+
+    report.set_path("reports/updated.html")
+    report.set_html("<html><body>updated</body></html>", base_dir="reports")
+    report.reload()
+
+    assert sender.props == [
+        ("html-report", "path", "reports/updated.html"),
+        ("html-report", "html", None),
+        ("html-report", "base_dir", None),
+        ("html-report", "text", "HTML report: updated.html\nOpen externally to view interactive content."),
+        ("html-report", "html", "<html><body>updated</body></html>"),
+        ("html-report", "path", None),
+        ("html-report", "base_dir", "reports"),
+        (
+            "html-report",
+            "text",
+            "HTML report: inline document\nOpen externally to view interactive content.",
+        ),
+        ("html-report", "html", "<html><body>updated</body></html>"),
+    ]
+
+    with pytest.raises(ValueError, match="either path or html"):
+        dg.HtmlReport(parent=None)
+    with pytest.raises(ValueError, match="path or html"):
+        dg.HtmlReport("report.html", html="<html></html>", parent=None)
+    with pytest.raises(ValueError, match="height"):
+        dg.HtmlReport("report.html", height=0, parent=None)
+
+
 def test_progress_bar_serializes_and_clamps_value() -> None:
     app = dg.App()
     win = dg.Window("Progress")
@@ -1749,8 +1814,7 @@ def test_line_plot_startup_resources_enqueue_packed_series() -> None:
 
     plot._queue_startup_resources()
 
-    assert ("line", "x_label", "Elapsed") in sender.props
-    assert ("line", "y_label", "Reading") in sender.props
+    assert sender.props == []
     assert len(sender.set_data) == 2
     assert [item[1] for item in sender.set_data] == ["Temp", "Pressure"]
     assert [len(item[2]) for item in sender.set_data] == [3 * 8, 3 * 8]
