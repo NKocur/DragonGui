@@ -7,6 +7,20 @@ use camera::Camera;
 use grid::{build_grid, stable_face_bits, sticky_nice_bounds, GridGeometry, LineVertex};
 use std::{borrow::Cow, time::Instant};
 
+const SCATTER_WRITE_BUFFER_CHUNK_BYTES: usize = 4 * 1024 * 1024;
+
+fn write_buffer_chunked(queue: &wgpu::Queue, buffer: &wgpu::Buffer, offset: u64, bytes: &[u8]) {
+    if bytes.is_empty() {
+        return;
+    }
+    let mut start = 0usize;
+    while start < bytes.len() {
+        let end = (start + SCATTER_WRITE_BUFFER_CHUNK_BYTES).min(bytes.len());
+        queue.write_buffer(buffer, offset + start as u64, &bytes[start..end]);
+        start = end;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // GPU vertex layout
 // ---------------------------------------------------------------------------
@@ -509,7 +523,8 @@ impl PointActor {
             self.vertex_cap = cap;
         }
         let primary_t0 = Instant::now();
-        queue.write_buffer(
+        write_buffer_chunked(
+            queue,
             self.vertex_buffer.as_ref().unwrap(),
             0,
             bytemuck::cast_slice(pts),
@@ -1213,7 +1228,12 @@ fn upload_lod_buffer(
         *lod_cap = cap;
     }
     if sample_count >= pts.len() {
-        queue.write_buffer(lod_buf.as_ref().unwrap(), 0, bytemuck::cast_slice(pts));
+        write_buffer_chunked(
+            queue,
+            lod_buf.as_ref().unwrap(),
+            0,
+            bytemuck::cast_slice(pts),
+        );
         return;
     }
 
@@ -1260,7 +1280,12 @@ fn upload_lod_buffer(
             src = (src + stride).min(pts.len() - 1);
         }
     }
-    queue.write_buffer(lod_buf.as_ref().unwrap(), 0, bytemuck::cast_slice(sampled));
+    write_buffer_chunked(
+        queue,
+        lod_buf.as_ref().unwrap(),
+        0,
+        bytemuck::cast_slice(sampled),
+    );
 }
 
 fn stencil_face(
@@ -1772,7 +1797,8 @@ impl ScatterWidget {
             self.vertex_cap = cap;
         }
         let primary_t0 = Instant::now();
-        queue.write_buffer(
+        write_buffer_chunked(
+            queue,
             self.vertex_buffer.as_ref().unwrap(),
             0,
             bytemuck::cast_slice(points),
@@ -1842,7 +1868,7 @@ impl ScatterWidget {
             self.vertex_cap = cap;
         }
         let primary_t0 = Instant::now();
-        queue.write_buffer(self.vertex_buffer.as_ref().unwrap(), 0, bytes);
+        write_buffer_chunked(queue, self.vertex_buffer.as_ref().unwrap(), 0, bytes);
         let primary_ms = primary_t0.elapsed().as_secs_f64() * 1000.0;
         self.point_count = point_count as u32;
         self.lod_vertex_buffer = None;
@@ -3323,15 +3349,25 @@ impl ScatterWidget {
                 actor.point_count = (actor.point_count + to_write as u32).min(cap as u32);
             }
             StreamMode::Ring => {
-                let mut offset = actor.stream_write_offset as usize;
-                for &pt in pts {
+                let src = if pts.len() > cap {
+                    &pts[pts.len() - cap..]
+                } else {
+                    pts
+                };
+                let offset = actor.stream_write_offset as usize;
+                let first_len = src.len().min(cap - offset);
+                if first_len > 0 {
                     let byte_off = (offset as u64) * (stride as u64);
-                    queue.write_buffer(buf, byte_off, bytemuck::cast_slice(&[pt]));
-                    actor.points[offset] = pt;
-                    offset = (offset + 1) % cap;
+                    queue.write_buffer(buf, byte_off, bytemuck::cast_slice(&src[..first_len]));
+                    actor.points[offset..offset + first_len].copy_from_slice(&src[..first_len]);
                 }
-                actor.stream_write_offset = offset as u32;
-                actor.point_count = cap.min(actor.point_count as usize + pts.len()) as u32;
+                let remaining = src.len().saturating_sub(first_len);
+                if remaining > 0 {
+                    queue.write_buffer(buf, 0, bytemuck::cast_slice(&src[first_len..]));
+                    actor.points[..remaining].copy_from_slice(&src[first_len..]);
+                }
+                actor.stream_write_offset = ((offset + src.len()) % cap) as u32;
+                actor.point_count = cap.min(actor.point_count as usize + src.len()) as u32;
             }
         }
         // Update bounds conservatively from CPU cache

@@ -11,6 +11,7 @@ pub(crate) mod overlays;
 pub(crate) mod primitives;
 pub(crate) mod resources;
 mod runtime;
+mod runtime_profile;
 pub(crate) mod scatter;
 pub(crate) mod style;
 pub(crate) mod table;
@@ -27,6 +28,7 @@ use rfd::FileDialog;
 
 #[pyfunction]
 fn backend_info(py: Python<'_>) -> PyResult<Py<PyDict>> {
+    let profile = runtime_profile::RuntimeProfileSelection::current();
     let info = PyDict::new(py);
     info.set_item("name", "dragongui")?;
     info.set_item("native", true)?;
@@ -34,6 +36,39 @@ fn backend_info(py: Python<'_>) -> PyResult<Py<PyDict>> {
     info.set_item("status", "m8-w0-shipping-widgets")?;
     info.set_item("layout", "taffy")?;
     info.set_item("text", "glyphon")?;
+
+    let platform = PyDict::new(py);
+    platform.set_item("os", runtime_profile::target_os())?;
+    platform.set_item("arch", runtime_profile::target_arch())?;
+    platform.set_item("profile", profile.profile.as_str())?;
+    platform.set_item("profile_requested", profile.requested.as_str())?;
+    platform.set_item("profile_source", profile.source)?;
+    platform.set_item("pi_feature", profile.pi_feature)?;
+    platform.set_item("auto_pi_target", profile.auto_pi_target)?;
+    platform.set_item("scatter_max_points", profile.scatter_max_points())?;
+    platform.set_item("scatter_lod_threshold", profile.scatter_lod_threshold())?;
+    platform.set_item("line_plot_max_points", profile.line_plot_max_points())?;
+    platform.set_item("table_page_size", profile.table_page_size())?;
+    platform.set_item("table_sample_rows", profile.table_sample_rows())?;
+    platform.set_item(
+        "table_column_buffer_rows",
+        profile.table_column_buffer_rows(),
+    )?;
+    platform.set_item(
+        "wgpu_backend_override",
+        std::env::var("DRAGONGUI_WGPU_BACKEND").ok(),
+    )?;
+    info.set_item("platform", platform)?;
+
+    let features = PyDict::new(py);
+    features.set_item("pi", cfg!(feature = "pi"))?;
+    features.set_item("gpu", cfg!(feature = "gpu"))?;
+    features.set_item("webview", runtime_profile::embedded_webview_available())?;
+    info.set_item("features", features)?;
+    info.set_item(
+        "webview_available",
+        runtime_profile::embedded_webview_available(),
+    )?;
     Ok(info.unbind())
 }
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import runpy
 import threading
 import subprocess
 import sys
@@ -654,12 +655,23 @@ def test_html_report_serializes_validates_and_updates_live_props() -> None:
     assert serialized["props"]["html"] is None
     assert serialized["props"]["height"] == 360.0
     assert serialized["props"]["allow_remote"] is True
+    assert serialized["props"]["allow_scripts"] is True
+    assert serialized["props"]["external_fallback"] is True
     assert "HTML report: plotly.html" in serialized["props"]["text"]
 
-    inline = dg.HtmlReport.from_html("<html><body>ok</body></html>", base_dir="reports", parent=None)
+    inline = dg.HtmlReport.from_html(
+        "<html><body>ok</body></html>",
+        base_dir="reports",
+        allow_scripts=False,
+        external_fallback=False,
+        parent=None,
+    )
     assert inline.to_dict()["props"]["path"] is None
     assert inline.to_dict()["props"]["html"].startswith("<html>")
     assert inline.to_dict()["props"]["base_dir"] == "reports"
+    assert inline.to_dict()["props"]["allow_scripts"] is False
+    assert inline.to_dict()["props"]["external_fallback"] is False
+    assert inline.open_external() is False
 
     handle = AppHandle()
     sender = Sender()
@@ -1771,6 +1783,33 @@ def test_line_plot_y_only_uses_sample_index() -> None:
     assert plot.props()["series"][0]["points"] == 3
     assert payload.point_count == 3
     assert len(payload.data) == 3 * 8
+
+
+def test_pi_profile_caps_line_plot_startup_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    np = pytest.importorskip("numpy")
+    monkeypatch.setenv("DRAGONGUI_PROFILE", "pi")
+
+    class NumericFrame:
+        columns = ("t", "value")
+        dtypes = ("float32", "float32")
+        shape = (60_000, 2)
+        t = np.arange(60_000, dtype=np.float32)
+        value = np.arange(60_000, dtype=np.float32)
+
+        def __getitem__(self, column: str) -> object:
+            return getattr(self, column)
+
+    plot = dg.LinePlot(
+        NumericFrame(),
+        x="t",
+        y="value",
+        max_points=100_000,
+        parent=None,
+    )
+    props = plot.props()
+
+    assert props["max_points"] == 50_000
+    assert props["series"][0]["points"] == 50_000
 
 
 def test_line_plot_serializes_multiple_series() -> None:
@@ -3280,11 +3319,86 @@ def test_dataframe_table_validation() -> None:
         dg.DataFrameTable(DemoFrame(), sample_rows=-1, parent=None)
 
 
-def test_backend_info_has_python_fallback() -> None:
+def test_pi_profile_caps_dataframe_table_startup_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DRAGONGUI_PROFILE", "pi")
+
+    class BigFrame:
+        columns = ("a", "b")
+        dtypes = ("int64", "int64")
+        shape = (1_000, 2)
+        a = list(range(1_000))
+        b = list(range(1_000))
+
+    table = dg.DataFrameTable(BigFrame(), page_size=100, sample_rows=2_048, parent=None)
+    props = table.props()
+
+    assert props["page_size"] == 64
+    assert props["sample_rows"] == 512
+    assert len(props["cells"]) == 512
+
+
+def test_pi_profile_caps_dataframe_table_column_buffers(monkeypatch: pytest.MonkeyPatch) -> None:
+    np = pytest.importorskip("numpy")
+    monkeypatch.setenv("DRAGONGUI_PROFILE", "pi")
+
+    class BigFrame:
+        columns = ("a",)
+        dtypes = ("float32",)
+        shape = (12_000, 1)
+        a = np.arange(12_000, dtype=np.float32)
+
+        def __getitem__(self, column: str) -> object:
+            return getattr(self, column)
+
+    table = dg.DataFrameTable(BigFrame(), page_size=100, sample_rows=2_048, parent=None)
+
+    assert len(table.column_buffers) == 1
+    assert table.column_buffers[0]["name"] == "a"
+    assert len(table.column_buffers[0]["data"]) == 10_000 * 4
+
+
+def test_pi_profile_demo_constants(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("numpy")
+    monkeypatch.setenv("DRAGONGUI_PROFILE", "pi")
+
+    demo = runpy.run_path(str(Path("examples/all_features_v3_demo.py")))
+    lab = runpy.run_path(str(Path("examples/scatter_perf_lab.py")))
+
+    assert demo["DG_PROFILE"] == "pi"
+    assert demo["POINT_ROWS"] == 40_000
+    assert demo["TABLE_ROWS"] == 10_000
+    assert demo["STREAM_FRAME_COUNT"] == 8
+
+    assert lab["DG_PROFILE"] == "pi"
+    assert lab["INITIAL_POINTS"] == 40_000
+    assert lab["MAX_LOD_THRESHOLD"] == 100_000
+    assert lab["WORKLOADS"] == (("25k", 25_000), ("50k", 50_000), ("100k", 100_000))
+
+
+def test_backend_info_has_platform_caps(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DRAGONGUI_PROFILE", "pi")
+    monkeypatch.setenv("DRAGONGUI_WGPU_BACKEND", "gl")
     info = dg.backend_info()
 
     assert info["name"] == "dragongui"
     assert "native" in info
+    assert info["webview_available"] in {True, False}
+
+    platform = info["platform"]
+    assert platform["profile"] == "pi"
+    assert platform["profile_requested"] == "pi"
+    assert platform["scatter_max_points"] == 100_000
+    assert platform["scatter_lod_threshold"] == 50_000
+    assert platform["line_plot_max_points"] == 50_000
+    assert platform["table_page_size"] == 64
+    assert platform["table_sample_rows"] == 512
+    assert platform["table_column_buffer_rows"] == 10_000
+    assert platform["wgpu_backend_override"] == "gl"
+
+    features = info["features"]
+    assert "pi" in features
+    assert "gpu" in features
+    assert "webview" in features
 
 
 def test_dev_fallback_allows_run_without_native_backend(monkeypatch) -> None:

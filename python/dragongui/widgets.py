@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from itertools import count
 import math
 import numbers
+import os
+import platform
 from pathlib import Path
 import re
 import tempfile
@@ -51,6 +53,67 @@ def _startup_resource_payload_scope(include: bool) -> AbstractContextManager[Non
 
 def _include_startup_resource_payloads() -> bool:
     return bool(_INCLUDE_STARTUP_RESOURCE_PAYLOADS.get())
+
+
+def _auto_pi_target() -> bool:
+    return platform.system().lower() == "linux" and platform.machine().lower() in {
+        "aarch64",
+        "arm64",
+    }
+
+
+def _runtime_profile_name() -> str:
+    requested = os.environ.get("DRAGONGUI_PROFILE", "auto").strip().lower()
+    if requested in {"pi", "rpi", "raspberry-pi", "raspberry_pi"}:
+        return "pi"
+    if requested == "desktop":
+        return "desktop"
+    return "pi" if _auto_pi_target() else "desktop"
+
+
+def _profile_line_plot_max_points() -> int | None:
+    return 50_000 if _runtime_profile_name() == "pi" else None
+
+
+def _effective_line_plot_max_points(max_points: int | None) -> int | None:
+    profile_max = _profile_line_plot_max_points()
+    if max_points is None:
+        return profile_max
+    explicit_max = max(1, int(max_points))
+    return explicit_max if profile_max is None else min(explicit_max, profile_max)
+
+
+def _profile_table_page_size() -> int | None:
+    return 64 if _runtime_profile_name() == "pi" else None
+
+
+def _effective_table_page_size(page_size: int) -> int:
+    requested = int(page_size)
+    profile_max = _profile_table_page_size()
+    return requested if profile_max is None else min(requested, profile_max)
+
+
+def _profile_table_sample_rows() -> int | None:
+    return 512 if _runtime_profile_name() == "pi" else None
+
+
+def _effective_table_sample_rows(sample_rows: int) -> int:
+    requested = int(sample_rows)
+    profile_max = _profile_table_sample_rows()
+    return requested if profile_max is None else min(requested, profile_max)
+
+
+def _profile_table_column_buffer_rows() -> int | None:
+    return 10_000 if _runtime_profile_name() == "pi" else None
+
+
+def _trim_xy_payload_bytes(payload: bytes, max_points: int | None) -> bytes:
+    if max_points is None:
+        return payload
+    point_count = len(payload) // 8
+    if point_count <= max_points:
+        return payload
+    return payload[(point_count - max_points) * 8 :]
 
 
 def _get_frame_col(frame: Any, col: str) -> Any:
@@ -3742,7 +3805,7 @@ class LinePlot(Widget):
             if window_size is None
             else max(float(window_size), 0.000001)
         )
-        self.max_points = None if max_points is None else max(1, int(max_points))
+        self.max_points = _effective_line_plot_max_points(max_points)
         self.frame_summary = summarize_frame(frame)
         self.data_format = "xy_f32_v0"
         self._cached_payloads: dict[str, bytes | None] = {}
@@ -3800,6 +3863,7 @@ class LinePlot(Widget):
                 self._payload_tokens[y_column] = 0
                 continue
             data = self._immutable_payload_bytes(payload)
+            data = _trim_xy_payload_bytes(data, self.max_points)
             self._cached_payloads[y_column] = data
             self._cached_payload_b64[y_column] = base64.b64encode(data).decode("ascii")
             self._payload_tokens[y_column] = zlib.crc32(data) if data else 0
@@ -3922,7 +3986,9 @@ class LinePlot(Widget):
         if payload is None:
             raise RuntimeError("LinePlot.append_points requires numeric x/y values")
         target = series or self._series_label(0)
-        effective_max = max_points if max_points is not None else self.max_points
+        effective_max = _effective_line_plot_max_points(
+            max_points if max_points is not None else self.max_points
+        )
         if (handle := self._live()) is not None:
             handle.enqueue_append_line_plot_points_packed(
                 target,
@@ -6600,12 +6666,18 @@ class DataFrameTable(Widget):
             raise ValueError("DataFrameTable page_size must be greater than zero")
         if sample_rows_i < 0:
             raise ValueError("DataFrameTable sample_rows cannot be negative")
+        page_size_i = _effective_table_page_size(page_size_i)
+        sample_rows_i = _effective_table_sample_rows(sample_rows_i)
         self.frame = frame
         self.page_size = page_size_i
         self.sample_rows = sample_rows_i
         self.frame_summary = summarize_frame(frame)
         self.cells = extract_table_sample(frame, self.frame_summary, self.sample_rows)
-        self.column_buffers = extract_table_column_buffers(frame, self.frame_summary)
+        self.column_buffers = extract_table_column_buffers(
+            frame,
+            self.frame_summary,
+            max_rows=_profile_table_column_buffer_rows(),
+        )
         self.on_select = on_select
         self.selection: TableSelection | None = None
         super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
@@ -6615,11 +6687,16 @@ class DataFrameTable(Widget):
         sample_rows_i = self.sample_rows if sample_rows is None else int(sample_rows)
         if sample_rows_i < 0:
             raise ValueError("DataFrameTable sample_rows cannot be negative")
+        sample_rows_i = _effective_table_sample_rows(sample_rows_i)
         self.frame = frame
         self.sample_rows = sample_rows_i
         self.frame_summary = summarize_frame(frame)
         self.cells = extract_table_sample(frame, self.frame_summary, self.sample_rows)
-        self.column_buffers = extract_table_column_buffers(frame, self.frame_summary)
+        self.column_buffers = extract_table_column_buffers(
+            frame,
+            self.frame_summary,
+            max_rows=_profile_table_column_buffer_rows(),
+        )
         if (handle := self._live()) is not None:
             if self.column_buffers:
                 handle.enqueue_set_table_data_columns(

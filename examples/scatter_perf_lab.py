@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import math
+import os
+import platform
 import sys
 import threading
 import time
@@ -15,6 +17,40 @@ try:
     import numpy as np
 except ImportError as exc:  # pragma: no cover - visual lab dependency
     raise SystemExit("scatter_perf_lab.py requires NumPy") from exc
+
+
+def _auto_pi_profile() -> bool:
+    if not (
+        sys.platform.startswith("linux")
+        and platform.machine().lower() in {"aarch64", "arm64"}
+    ):
+        return False
+    try:
+        model = Path("/proc/device-tree/model").read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return True
+    return "raspberry pi" in model.lower()
+
+
+def _demo_profile() -> str:
+    requested = os.environ.get("DRAGONGUI_PROFILE", "auto").strip().lower()
+    if requested in {"pi", "rpi", "raspberry-pi", "raspberry_pi"}:
+        return "pi"
+    if requested == "desktop":
+        return "desktop"
+    return "pi" if _auto_pi_profile() else "desktop"
+
+
+DG_PROFILE = _demo_profile()
+IS_PI_PROFILE = DG_PROFILE == "pi"
+INITIAL_POINTS = 40_000 if IS_PI_PROFILE else 125_000
+INITIAL_LOD_THRESHOLD = 25_000 if IS_PI_PROFILE else 50_000
+MAX_LOD_THRESHOLD = 100_000 if IS_PI_PROFILE else 500_000
+WORKLOADS = (
+    (("25k", 25_000), ("50k", 50_000), ("100k", 100_000))
+    if IS_PI_PROFILE
+    else (("125k", 125_000), ("300k", 300_000), ("1M", 1_000_000))
+)
 
 
 class ScatterFrame:
@@ -142,10 +178,10 @@ app.stylesheet(
 win = dg.Window("Scatter Perf Lab", width=1180, height=760)
 
 state = {
-    "points": 125_000,
+    "points": INITIAL_POINTS,
     "point_size": 3.6,
     "lod_enabled": False,
-    "lod_threshold": 50_000,
+    "lod_threshold": INITIAL_LOD_THRESHOLD,
     "lod_factor": 4,
     "auto_point_size": True,
     "interactive_render_scale": 1.0,
@@ -595,7 +631,7 @@ with win:
                         "Desktop defaults",
                         auto_point_size=True,
                         lod_enabled=False,
-                        threshold=200_000,
+                        threshold=min(200_000, MAX_LOD_THRESHOLD),
                         factor=8,
                         point_size=3.6,
                         render_scale=1.0,
@@ -609,7 +645,7 @@ with win:
                         "Pi defaults",
                         auto_point_size=True,
                         lod_enabled=True,
-                        threshold=50_000,
+                        threshold=INITIAL_LOD_THRESHOLD,
                         factor=4,
                         point_size=3.0,
                         render_scale=0.65,
@@ -624,7 +660,7 @@ with win:
                         "All off",
                         auto_point_size=False,
                         lod_enabled=False,
-                        threshold=500_000,
+                        threshold=MAX_LOD_THRESHOLD,
                         factor=1,
                         point_size=4.0,
                         render_scale=1.0,
@@ -638,7 +674,7 @@ with win:
                         "Max quality",
                         auto_point_size=False,
                         lod_enabled=False,
-                        threshold=500_000,
+                        threshold=MAX_LOD_THRESHOLD,
                         factor=1,
                         point_size=5.0,
                         render_scale=1.0,
@@ -654,14 +690,14 @@ with win:
 
             dg.Label("Workloads", class_="title")
             with dg.HLayout(class_="row"):
-                dg.Button("125k", on_click=lambda: load_workload(125_000))
-                dg.Button("300k", on_click=lambda: load_workload(300_000))
+                for label, count in WORKLOADS:
+                    dg.Button(label, on_click=lambda count=count: load_workload(count))
             with dg.HLayout(class_="row"):
-                dg.Button("1M", on_click=lambda: load_workload(1_000_000))
-                dg.Button("125k stream", on_click=lambda: load_workload(125_000, streaming=True))
-            with dg.HLayout(class_="row"):
-                dg.Button("300k stream", on_click=lambda: load_workload(300_000, streaming=True))
-                dg.Button("1M stream", on_click=lambda: load_workload(1_000_000, streaming=True))
+                for label, count in WORKLOADS:
+                    dg.Button(
+                        f"{label} stream",
+                        on_click=lambda count=count: load_workload(count, streaming=True),
+                    )
 
             dg.Label("Quality knobs", class_="title")
             dg.Checkbox("Adaptive point size", checked=True, on_change=set_auto_point_size)
@@ -670,7 +706,13 @@ with win:
             dg.Label("Point size", class_="subtle")
             point_size_slider = dg.Slider(3.6, min=1.0, max=8.0, step=0.2, on_change=set_point_size)
             dg.Label("LOD threshold", class_="subtle")
-            threshold_slider = dg.Slider(50_000, min=10_000, max=500_000, step=10_000, on_change=set_lod_threshold)
+            threshold_slider = dg.Slider(
+                INITIAL_LOD_THRESHOLD,
+                min=10_000,
+                max=MAX_LOD_THRESHOLD,
+                step=10_000,
+                on_change=set_lod_threshold,
+            )
             dg.Label("LOD factor", class_="subtle")
             factor_slider = dg.Slider(4, min=1, max=16, step=1, on_change=set_lod_factor)
             dg.Label("Interaction render scale", class_="subtle")
@@ -710,12 +752,15 @@ with win:
             )
 
 
-threading.Thread(target=stats_worker, daemon=True).start()
-threading.Thread(target=streaming_worker, daemon=True).start()
-threading.Thread(target=redraw_worker, daemon=True).start()
-
-if __name__ == "__main__":
+def main() -> None:
+    threading.Thread(target=stats_worker, daemon=True).start()
+    threading.Thread(target=streaming_worker, daemon=True).start()
+    threading.Thread(target=redraw_worker, daemon=True).start()
     try:
         print(app.run(win))
     finally:
         stop_event.set()
+
+
+if __name__ == "__main__":
+    main()

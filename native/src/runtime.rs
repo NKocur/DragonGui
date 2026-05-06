@@ -48,6 +48,7 @@ use crate::primitives::{
     RectInstance,
 };
 use crate::resources::ResourceRegistry;
+use crate::runtime_profile::{self, RuntimeProfileSelection};
 use crate::scatter::{self, PointInstance, ScatterWidget};
 use crate::style::{
     collapsible_header_height_for_style, number_stepper_width, number_stepper_width_for_style,
@@ -107,6 +108,250 @@ const DEMO_POINT_COUNT: usize = 500_000;
 const MAX_COMMAND_DRAIN_BATCHES: usize = 16;
 const MAX_COMMANDS_PER_DRAIN_BATCH: usize = 32;
 const COMMAND_DRAIN_BUDGET: Duration = Duration::from_millis(6);
+
+fn wgpu_backend_names(backends: wgpu::Backends) -> Vec<&'static str> {
+    let mut names = Vec::new();
+    if backends.contains(wgpu::Backends::VULKAN) {
+        names.push("vulkan");
+    }
+    if backends.contains(wgpu::Backends::GL) {
+        names.push("gl");
+    }
+    if backends.contains(wgpu::Backends::METAL) {
+        names.push("metal");
+    }
+    if backends.contains(wgpu::Backends::DX12) {
+        names.push("dx12");
+    }
+    if backends.contains(wgpu::Backends::BROWSER_WEBGPU) {
+        names.push("webgpu");
+    }
+    if backends.contains(wgpu::Backends::NOOP) {
+        names.push("noop");
+    }
+    names
+}
+
+fn parse_wgpu_backend_override(value: &str) -> Result<Option<(String, wgpu::Backends)>, String> {
+    let requested = value.trim();
+    if requested.is_empty() || requested.eq_ignore_ascii_case("auto") {
+        return Ok(None);
+    }
+
+    let mut backends = wgpu::Backends::empty();
+    for part in requested
+        .split(|c| matches!(c, ',' | '+' | '|'))
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+    {
+        let normalized = part.to_ascii_lowercase();
+        match normalized.as_str() {
+            "vulkan" | "vk" => backends |= wgpu::Backends::VULKAN,
+            "gl" | "gles" | "opengl" => backends |= wgpu::Backends::GL,
+            "metal" => backends |= wgpu::Backends::METAL,
+            "dx12" | "d3d12" | "directx12" => backends |= wgpu::Backends::DX12,
+            "webgpu" | "browser-webgpu" | "browser_webgpu" => {
+                backends |= wgpu::Backends::BROWSER_WEBGPU;
+            }
+            "noop" => backends |= wgpu::Backends::NOOP,
+            "all" => backends |= wgpu::Backends::all(),
+            _ => {
+                return Err(format!(
+                    "invalid DRAGONGUI_WGPU_BACKEND value {value:?}; expected auto, vulkan, gl, metal, dx12, webgpu, noop, all, or a comma-separated list"
+                ));
+            }
+        }
+    }
+
+    if backends.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some((requested.to_string(), backends)))
+}
+
+fn wgpu_backend_override_from_env() -> Result<Option<(String, wgpu::Backends)>, String> {
+    match std::env::var("DRAGONGUI_WGPU_BACKEND") {
+        Ok(value) => parse_wgpu_backend_override(&value),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => Err(
+            "invalid DRAGONGUI_WGPU_BACKEND value; environment value is not Unicode".to_string(),
+        ),
+    }
+}
+
+fn select_required_wgpu_limits(
+    profile: &RuntimeProfileSelection,
+    adapter_limits: &wgpu::Limits,
+) -> (wgpu::Limits, bool) {
+    if profile.use_pi_gpu_defaults() {
+        (
+            wgpu::Limits::downlevel_defaults().using_resolution(adapter_limits.clone()),
+            true,
+        )
+    } else {
+        (wgpu::Limits::default(), false)
+    }
+}
+
+fn debug_log(message: impl AsRef<str>) {
+    if runtime_profile::debug_log_enabled() {
+        eprintln!("[dragongui] {}", message.as_ref());
+    }
+}
+
+fn wgpu_limits_snapshot(limits: &wgpu::Limits) -> Value {
+    json!({
+        "max_texture_dimension_2d": limits.max_texture_dimension_2d,
+        "max_texture_dimension_3d": limits.max_texture_dimension_3d,
+        "max_bind_groups": limits.max_bind_groups,
+        "max_bindings_per_bind_group": limits.max_bindings_per_bind_group,
+        "max_sampled_textures_per_shader_stage": limits.max_sampled_textures_per_shader_stage,
+        "max_samplers_per_shader_stage": limits.max_samplers_per_shader_stage,
+        "max_storage_buffers_per_shader_stage": limits.max_storage_buffers_per_shader_stage,
+        "max_uniform_buffers_per_shader_stage": limits.max_uniform_buffers_per_shader_stage,
+        "max_uniform_buffer_binding_size": limits.max_uniform_buffer_binding_size,
+        "max_storage_buffer_binding_size": limits.max_storage_buffer_binding_size,
+        "max_vertex_buffers": limits.max_vertex_buffers,
+        "max_buffer_size": limits.max_buffer_size,
+        "max_vertex_attributes": limits.max_vertex_attributes,
+        "max_vertex_buffer_array_stride": limits.max_vertex_buffer_array_stride,
+        "max_inter_stage_shader_variables": limits.max_inter_stage_shader_variables,
+        "max_color_attachments": limits.max_color_attachments,
+    })
+}
+
+fn wgpu_adapter_info_snapshot(info: &wgpu::AdapterInfo) -> Value {
+    json!({
+        "name": info.name.as_str(),
+        "vendor": info.vendor,
+        "device": info.device,
+        "device_type": format!("{:?}", info.device_type),
+        "backend": info.backend.to_string(),
+        "driver": info.driver.as_str(),
+        "driver_info": info.driver_info.as_str(),
+        "device_pci_bus_id": info.device_pci_bus_id.as_str(),
+        "subgroup_min_size": info.subgroup_min_size,
+        "subgroup_max_size": info.subgroup_max_size,
+        "transient_saves_memory": info.transient_saves_memory,
+    })
+}
+
+fn runtime_platform_snapshot_without_gpu() -> Value {
+    let profile = RuntimeProfileSelection::current();
+    json!({
+        "os": runtime_profile::target_os(),
+        "arch": runtime_profile::target_arch(),
+        "profile": profile.profile.as_str(),
+        "profile_requested": profile.requested.as_str(),
+        "profile_source": profile.source,
+        "pi_feature": profile.pi_feature,
+        "auto_pi_target": profile.auto_pi_target,
+        "webview_available": runtime_profile::embedded_webview_available(),
+        "scatter_max_points": profile.scatter_max_points(),
+        "scatter_lod_threshold": profile.scatter_lod_threshold(),
+        "line_plot_max_points": profile.line_plot_max_points(),
+        "table_page_size": profile.table_page_size(),
+        "table_sample_rows": profile.table_sample_rows(),
+        "table_column_buffer_rows": profile.table_column_buffer_rows(),
+        "gpu_ready": false,
+        "wgpu_backend_override": std::env::var("DRAGONGUI_WGPU_BACKEND").ok(),
+    })
+}
+
+fn scatter_payload_point_count(
+    bytes: &[u8],
+    format: ScatterPayloadFormat,
+) -> Result<usize, DragonError> {
+    let stride = match format {
+        ScatterPayloadFormat::XyzF32V0 => 12,
+        ScatterPayloadFormat::PointInstanceV1 => std::mem::size_of::<PointInstance>(),
+    };
+    if bytes.len() % stride != 0 {
+        let label = match format {
+            ScatterPayloadFormat::XyzF32V0 => "xyz float32",
+            ScatterPayloadFormat::PointInstanceV1 => "PointInstance",
+        };
+        return Err(DragonError::ParseError(format!(
+            "scatter payload length {} is not a multiple of {} ({label})",
+            bytes.len(),
+            stride
+        )));
+    }
+    Ok(bytes.len() / stride)
+}
+
+fn validate_scatter_point_capacity_for_profile(
+    profile: &RuntimeProfileSelection,
+    limits: &wgpu::Limits,
+    point_count: usize,
+    context: &str,
+) -> Result<(), DragonError> {
+    if let Some(max_points) = profile.scatter_max_points() {
+        if point_count > max_points {
+            return Err(DragonError::Runtime(format!(
+                "{context} has {point_count} points; Pi profile cap is {max_points}"
+            )));
+        }
+    }
+
+    let stride = std::mem::size_of::<PointInstance>() as u64;
+    let bytes = (point_count as u64).saturating_mul(stride);
+    if bytes > limits.max_buffer_size {
+        return Err(DragonError::Runtime(format!(
+            "{context} requires {bytes} bytes for scatter points; device max_buffer_size is {}",
+            limits.max_buffer_size
+        )));
+    }
+    Ok(())
+}
+
+fn effective_line_plot_max_points(
+    profile: &RuntimeProfileSelection,
+    max_points: Option<usize>,
+) -> Option<usize> {
+    match (max_points, profile.line_plot_max_points()) {
+        (Some(requested), Some(profile_max)) => Some(requested.min(profile_max)),
+        (Some(requested), None) => Some(requested),
+        (None, Some(profile_max)) => Some(profile_max),
+        (None, None) => None,
+    }
+}
+
+fn effective_table_page_size(
+    profile: &RuntimeProfileSelection,
+    page_size: Option<usize>,
+) -> Option<usize> {
+    match (
+        page_size.map(|value| value.max(1)),
+        profile.table_page_size(),
+    ) {
+        (Some(requested), Some(profile_max)) => Some(requested.min(profile_max)),
+        (Some(requested), None) => Some(requested),
+        (None, Some(profile_max)) => Some(profile_max),
+        (None, None) => None,
+    }
+}
+
+fn effective_table_sample_rows(
+    profile: &RuntimeProfileSelection,
+    sample_rows: Option<usize>,
+) -> Option<usize> {
+    match (sample_rows, profile.table_sample_rows()) {
+        (Some(requested), Some(profile_max)) => Some(requested.min(profile_max)),
+        (Some(requested), None) => Some(requested),
+        (None, Some(profile_max)) => Some(profile_max),
+        (None, None) => None,
+    }
+}
+
+fn apply_scatter_profile_defaults(widget: &mut ScatterWidget, profile: &RuntimeProfileSelection) {
+    if let Some(threshold) = profile.scatter_lod_threshold() {
+        widget.lod_threshold = threshold;
+    }
+    if let Some(scale) = profile.scatter_interactive_render_scale() {
+        widget.interactive_render_scale = widget.interactive_render_scale.min(scale);
+    }
+}
 
 fn coalesce_runtime_command_batch(commands: &mut Vec<Command>) {
     if commands.len() < 2 {
@@ -366,6 +611,73 @@ fn decode_actor_payload_bytes(
     Ok(pts)
 }
 
+fn decode_actor_payload_checked(
+    b64: &str,
+    colormap: &str,
+    format: ScatterPayloadFormat,
+    profile: &RuntimeProfileSelection,
+    limits: &wgpu::Limits,
+    context: &str,
+) -> Result<Vec<PointInstance>, DragonError> {
+    let bytes = BASE64
+        .decode(b64)
+        .map_err(|e| DragonError::ParseError(format!("scatter actor base64: {e}")))?;
+    decode_actor_payload_bytes_checked(&bytes, colormap, format, profile, limits, context)
+}
+
+fn decode_actor_payload_bytes_checked(
+    bytes: &[u8],
+    colormap: &str,
+    format: ScatterPayloadFormat,
+    profile: &RuntimeProfileSelection,
+    limits: &wgpu::Limits,
+    context: &str,
+) -> Result<Vec<PointInstance>, DragonError> {
+    let point_count = scatter_payload_point_count(bytes, format)?;
+    validate_scatter_point_capacity_for_profile(profile, limits, point_count, context)?;
+    decode_actor_payload_bytes(bytes, colormap, format)
+}
+
+fn decode_startup_scatter_payload(
+    bytes: &[u8],
+    colormap: &str,
+    format: ScatterPayloadFormat,
+    profile: &RuntimeProfileSelection,
+    limits: &wgpu::Limits,
+) -> (Vec<PointInstance>, ScatterPayloadStatus) {
+    let point_count = match scatter_payload_point_count(bytes, format) {
+        Ok(point_count) => point_count,
+        Err(e) => {
+            let msg = e.to_string();
+            eprintln!("DragonGUI: {msg}");
+            return (Vec::new(), ScatterPayloadStatus::DecodeError(msg));
+        }
+    };
+    if let Err(e) =
+        validate_scatter_point_capacity_for_profile(profile, limits, point_count, "startup scatter")
+    {
+        let msg = e.to_string();
+        eprintln!("DragonGUI: {msg}");
+        return (Vec::new(), ScatterPayloadStatus::Rejected(msg));
+    }
+
+    let mut pts = Vec::new();
+    let result = match format {
+        ScatterPayloadFormat::XyzF32V0 => {
+            decode_scatter_points_bytes_into_colormap(bytes, &mut pts, colormap)
+        }
+        ScatterPayloadFormat::PointInstanceV1 => decode_scatter_points_v1(bytes, &mut pts),
+    };
+    match result {
+        Err(e) => {
+            let msg = e.to_string();
+            eprintln!("DragonGUI: {msg}");
+            (Vec::new(), ScatterPayloadStatus::DecodeError(msg))
+        }
+        Ok(_) => (pts, ScatterPayloadStatus::Ok),
+    }
+}
+
 fn decode_line_plot_points_bytes(
     bytes: &[u8],
     format: LinePlotPayloadFormat,
@@ -387,6 +699,29 @@ fn decode_line_plot_points_bytes(
                     ]
                 })
                 .collect())
+        }
+    }
+}
+
+fn decode_line_plot_points_bytes_limited(
+    bytes: &[u8],
+    format: LinePlotPayloadFormat,
+    max_points: Option<usize>,
+) -> Result<Vec<[f32; 2]>, DragonError> {
+    match format {
+        LinePlotPayloadFormat::XyF32V0 => {
+            if bytes.len() % 8 != 0 {
+                return Err(DragonError::ParseError(format!(
+                    "line plot xy payload length {} is not a multiple of 8",
+                    bytes.len()
+                )));
+            }
+            let point_count = bytes.len() / 8;
+            let start = max_points
+                .filter(|max_points| *max_points > 0 && point_count > *max_points)
+                .map(|max_points| (point_count - max_points) * 8)
+                .unwrap_or(0);
+            decode_line_plot_points_bytes(&bytes[start..], format)
         }
     }
 }
@@ -576,6 +911,70 @@ fn apply_line_plot_window_to_node(node: &mut WidgetNode) -> bool {
     node.props.line_plot_y_min = Some(y_min);
     node.props.line_plot_y_max = Some(y_max);
     true
+}
+
+fn apply_line_plot_profile_caps_to_tree(
+    node: &mut WidgetNode,
+    profile: &RuntimeProfileSelection,
+) -> bool {
+    let mut changed = false;
+    if node.kind == WidgetKind::LinePlot {
+        let effective_max =
+            effective_line_plot_max_points(profile, node.props.line_plot_max_points);
+        node.props.line_plot_max_points = effective_max;
+        if let Some(max_points) = effective_max {
+            for series in &mut node.props.line_plot_series {
+                if limit_line_plot_points(&mut series.points, Some(max_points)) {
+                    series.bounds = document::line_plot_points_bounds(&series.points);
+                    series.declared_point_count = Some(series.points.len());
+                    changed = true;
+                }
+            }
+            changed |= apply_line_plot_window_to_node(node);
+        }
+    }
+    for child in &mut node.children {
+        changed |= apply_line_plot_profile_caps_to_tree(child, profile);
+    }
+    changed
+}
+
+fn apply_table_profile_caps_to_tree(
+    node: &mut WidgetNode,
+    profile: &RuntimeProfileSelection,
+) -> bool {
+    let mut changed = false;
+    if node.kind == WidgetKind::DataFrameTable {
+        let effective_page_size = effective_table_page_size(profile, node.props.page_size);
+        if node.props.page_size != effective_page_size {
+            node.props.page_size = effective_page_size;
+            changed = true;
+        }
+
+        let effective_sample_rows =
+            effective_table_sample_rows(profile, node.props.table_sample_rows);
+        if node.props.table_sample_rows != effective_sample_rows {
+            node.props.table_sample_rows = effective_sample_rows;
+            changed = true;
+        }
+        if let Some(sample_rows) = effective_sample_rows {
+            let before = node.props.table_cells.len();
+            node.props.table_cells.truncate(sample_rows);
+            changed |= node.props.table_cells.len() != before;
+        }
+    }
+    for child in &mut node.children {
+        changed |= apply_table_profile_caps_to_tree(child, profile);
+    }
+    changed
+}
+
+fn apply_runtime_profile_caps_to_tree(
+    node: &mut WidgetNode,
+    profile: &RuntimeProfileSelection,
+) -> bool {
+    apply_line_plot_profile_caps_to_tree(node, profile)
+        | apply_table_profile_caps_to_tree(node, profile)
 }
 
 fn decode_scatter_points_bytes_into_colormap(
@@ -2516,6 +2915,7 @@ fn props_snapshot(node: &WidgetNode) -> Value {
                 "legend_position": props.line_plot_legend_position,
                 "tick_count": props.line_plot_tick_count,
                 "window_size": props.line_plot_window_size,
+                "max_points": props.line_plot_max_points,
                 "series": line_plot_series,
                 }),
             );
@@ -3087,6 +3487,16 @@ mod style_patch_tests {
     use crate::style::TransformStyle;
     use serde_json::json;
 
+    fn test_profile(profile: runtime_profile::RuntimeProfile) -> RuntimeProfileSelection {
+        RuntimeProfileSelection {
+            profile,
+            requested: profile.as_str().to_string(),
+            source: "test",
+            pi_feature: false,
+            auto_pi_target: false,
+        }
+    }
+
     #[test]
     fn format_4g_trims_decimal_labels_without_changing_shape() {
         assert_eq!(format_4g(0.0), "0");
@@ -3095,6 +3505,125 @@ mod style_patch_tests {
         assert_eq!(format_4g(1234.0), "1234");
         assert_eq!(format_4g(12_345.0), "1.234e4");
         assert_eq!(format_4g(0.0000123), "1.230e-5");
+    }
+
+    #[test]
+    fn wgpu_backend_override_parses_single_and_combined_values() {
+        let (_, vulkan) = parse_wgpu_backend_override("vulkan")
+            .unwrap()
+            .expect("backend override");
+        assert_eq!(vulkan, wgpu::Backends::VULKAN);
+
+        let (_, combined) = parse_wgpu_backend_override("vulkan,gl")
+            .unwrap()
+            .expect("backend override");
+        assert!(combined.contains(wgpu::Backends::VULKAN));
+        assert!(combined.contains(wgpu::Backends::GL));
+        assert!(!combined.contains(wgpu::Backends::DX12));
+    }
+
+    #[test]
+    fn wgpu_backend_override_allows_auto_and_rejects_unknown_values() {
+        assert!(parse_wgpu_backend_override("auto").unwrap().is_none());
+        assert!(parse_wgpu_backend_override("").unwrap().is_none());
+
+        let err = parse_wgpu_backend_override("banana").unwrap_err();
+        assert!(err.contains("invalid DRAGONGUI_WGPU_BACKEND"));
+    }
+
+    #[test]
+    fn required_wgpu_limits_use_downlevel_for_pi_profile() {
+        let profile = test_profile(runtime_profile::RuntimeProfile::Pi);
+        let adapter_limits = wgpu::Limits {
+            max_texture_dimension_2d: 8192,
+            max_bind_groups: 8,
+            max_buffer_size: 64 * 1024 * 1024,
+            ..wgpu::Limits::downlevel_defaults()
+        };
+
+        let (limits, downlevel) = select_required_wgpu_limits(&profile, &adapter_limits);
+
+        assert!(downlevel);
+        let expected = wgpu::Limits::downlevel_defaults().using_resolution(adapter_limits);
+        assert_eq!(
+            limits.max_texture_dimension_2d,
+            expected.max_texture_dimension_2d
+        );
+        assert_eq!(limits.max_bind_groups, expected.max_bind_groups);
+        assert_eq!(limits.max_buffer_size, expected.max_buffer_size);
+    }
+
+    #[test]
+    fn required_wgpu_limits_keep_desktop_defaults_for_desktop_profile() {
+        let profile = test_profile(runtime_profile::RuntimeProfile::Desktop);
+        let adapter_limits = wgpu::Limits {
+            max_texture_dimension_2d: 8192,
+            max_bind_groups: 8,
+            max_buffer_size: 64 * 1024 * 1024,
+            ..wgpu::Limits::downlevel_defaults()
+        };
+
+        let (limits, downlevel) = select_required_wgpu_limits(&profile, &adapter_limits);
+
+        assert!(!downlevel);
+        assert_eq!(
+            limits.max_texture_dimension_2d,
+            wgpu::Limits::default().max_texture_dimension_2d
+        );
+        assert_eq!(
+            limits.max_bind_groups,
+            wgpu::Limits::default().max_bind_groups
+        );
+    }
+
+    #[test]
+    fn scatter_capacity_rejects_payloads_over_pi_profile_cap() {
+        let profile = test_profile(runtime_profile::RuntimeProfile::Pi);
+        let limits = wgpu::Limits {
+            max_buffer_size: u64::MAX,
+            ..wgpu::Limits::downlevel_defaults()
+        };
+
+        let err = validate_scatter_point_capacity_for_profile(
+            &profile,
+            &limits,
+            100_001,
+            "scatter payload",
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(err.contains("scatter payload has 100001 points"));
+        assert!(err.contains("Pi profile cap is 100000"));
+    }
+
+    #[test]
+    fn scatter_capacity_rejects_payloads_over_device_buffer_limit() {
+        let profile = test_profile(runtime_profile::RuntimeProfile::Desktop);
+        let limits = wgpu::Limits {
+            max_buffer_size: 31,
+            ..wgpu::Limits::downlevel_defaults()
+        };
+
+        let err =
+            validate_scatter_point_capacity_for_profile(&profile, &limits, 1, "scatter payload")
+                .unwrap_err()
+                .to_string();
+
+        assert!(err.contains("scatter payload requires 32 bytes"));
+        assert!(err.contains("max_buffer_size is 31"));
+    }
+
+    #[test]
+    fn scatter_payload_count_validates_wire_stride() {
+        assert_eq!(
+            scatter_payload_point_count(&[0; 24], ScatterPayloadFormat::XyzF32V0).unwrap(),
+            2
+        );
+        let err = scatter_payload_point_count(&[0; 13], ScatterPayloadFormat::XyzF32V0)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("not a multiple of 12"));
     }
 
     #[test]
@@ -4245,6 +4774,13 @@ struct WgpuState {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    runtime_profile: RuntimeProfileSelection,
+    requested_backends: wgpu::Backends,
+    backend_override_requested: Option<String>,
+    adapter_info: wgpu::AdapterInfo,
+    adapter_limits: wgpu::Limits,
+    required_limits: wgpu::Limits,
+    downlevel_limits: bool,
     _depth_texture: wgpu::Texture,
     depth_view: wgpu::TextureView,
     theme: Theme,
@@ -4350,6 +4886,8 @@ enum ScatterPayloadStatus {
     Ok,
     /// Payload decoded successfully but every point position was non-finite.
     AllNonFinite,
+    /// Payload was structurally valid but rejected by runtime/device caps.
+    Rejected(String),
     DecodeError(String),
 }
 
@@ -5339,7 +5877,27 @@ impl WgpuState {
         let height = size.height.max(1);
         let scale_factor = window.scale_factor() as f32;
 
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let runtime_profile = RuntimeProfileSelection::current();
+        let mut instance_desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        if runtime_profile.use_pi_gpu_defaults() {
+            instance_desc.backends = wgpu::Backends::VULKAN | wgpu::Backends::GL;
+        }
+        instance_desc = instance_desc.with_env();
+        let backend_override = wgpu_backend_override_from_env().map_err(DragonError::GpuInit)?;
+        let backend_override_requested = backend_override
+            .as_ref()
+            .map(|(requested, _)| requested.clone());
+        if let Some((_, backends)) = backend_override {
+            instance_desc.backends = backends;
+        }
+        let requested_backends = instance_desc.backends;
+        debug_log(format!(
+            "profile={} requested_backends={:?} backend_override={:?}",
+            runtime_profile.profile.as_str(),
+            wgpu_backend_names(requested_backends),
+            backend_override_requested
+        ));
+        let instance = wgpu::Instance::new(instance_desc);
 
         let surface = instance
             .create_surface(Arc::clone(&window))
@@ -5347,18 +5905,35 @@ impl WgpuState {
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
+                power_preference: if runtime_profile.use_pi_gpu_defaults() {
+                    wgpu::PowerPreference::LowPower
+                } else {
+                    wgpu::PowerPreference::HighPerformance
+                },
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
             })
             .await
             .map_err(|e| DragonError::GpuInit(format!("adapter: {e}")))?;
 
+        let adapter_info = adapter.get_info();
+        let adapter_limits = adapter.limits();
+        let (required_limits, downlevel_limits) =
+            select_required_wgpu_limits(&runtime_profile, &adapter_limits);
+        debug_log(format!(
+            "adapter={} backend={} driver={} downlevel_limits={} max_buffer_size={}",
+            adapter_info.name,
+            adapter_info.backend,
+            adapter_info.driver,
+            downlevel_limits,
+            required_limits.max_buffer_size
+        ));
+
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("dragongui"),
                 required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
+                required_limits: required_limits.clone(),
                 experimental_features: wgpu::ExperimentalFeatures::default(),
                 memory_hints: wgpu::MemoryHints::default(),
                 trace: Default::default(),
@@ -5449,6 +6024,7 @@ impl WgpuState {
                     });
 
                 let mut widget = ScatterWidget::new(&device, config.format, width, height);
+                apply_scatter_profile_defaults(&mut widget, &runtime_profile);
                 let t0 = Instant::now();
                 let (mut pts, mut status) = if let Some(b64) = data_b64 {
                     let decoded_bytes = BASE64.decode(&b64);
@@ -5458,27 +6034,13 @@ impl WgpuState {
                             eprintln!("DragonGUI: {msg}");
                             (Vec::new(), ScatterPayloadStatus::DecodeError(msg))
                         }
-                        Ok(bytes) => {
-                            let mut pts = Vec::new();
-                            let result = match data_format {
-                                ScatterPayloadFormat::XyzF32V0 => {
-                                    decode_scatter_points_bytes_into_colormap(
-                                        &bytes, &mut pts, &colormap,
-                                    )
-                                }
-                                ScatterPayloadFormat::PointInstanceV1 => {
-                                    decode_scatter_points_v1(&bytes, &mut pts)
-                                }
-                            };
-                            match result {
-                                Err(e) => {
-                                    let msg = e.to_string();
-                                    eprintln!("DragonGUI: {msg}");
-                                    (Vec::new(), ScatterPayloadStatus::DecodeError(msg))
-                                }
-                                Ok(_) => (pts, ScatterPayloadStatus::Ok),
-                            }
-                        }
+                        Ok(bytes) => decode_startup_scatter_payload(
+                            &bytes,
+                            &colormap,
+                            data_format,
+                            &runtime_profile,
+                            &required_limits,
+                        ),
                     }
                 } else {
                     (Vec::new(), ScatterPayloadStatus::Empty)
@@ -5582,6 +6144,13 @@ impl WgpuState {
             device,
             queue,
             config,
+            runtime_profile,
+            requested_backends,
+            backend_override_requested,
+            adapter_info,
+            adapter_limits,
+            required_limits,
+            downlevel_limits,
             _depth_texture: depth_texture,
             depth_view,
             theme,
@@ -5625,6 +6194,17 @@ impl WgpuState {
             loading_screen,
         };
 
+        let profile_caps_changed = if let Some(tree) = &mut state.widget_tree {
+            apply_runtime_profile_caps_to_tree(tree, &state.runtime_profile)
+        } else {
+            false
+        };
+        if profile_caps_changed {
+            if let Some(tree) = state.widget_tree.as_ref() {
+                state.resources.sync_from_tree(tree);
+            }
+            state.widget_state = state.widget_tree.as_ref().map(WidgetState::from_tree);
+        }
         state.apply_layout();
 
         Ok((state, upload_ms))
@@ -7701,6 +8281,7 @@ impl WgpuState {
                     self.config.width.max(1),
                     self.config.height.max(1),
                 );
+                apply_scatter_profile_defaults(&mut widget, &self.runtime_profile);
                 let (mut pts, mut status) = if let Some(b64) = data_b64 {
                     let decoded_bytes = BASE64.decode(&b64);
                     match decoded_bytes {
@@ -7709,27 +8290,13 @@ impl WgpuState {
                             eprintln!("DragonGUI: {msg}");
                             (Vec::new(), ScatterPayloadStatus::DecodeError(msg))
                         }
-                        Ok(bytes) => {
-                            let mut pts = Vec::new();
-                            let result = match data_format {
-                                ScatterPayloadFormat::XyzF32V0 => {
-                                    decode_scatter_points_bytes_into_colormap(
-                                        &bytes, &mut pts, &colormap,
-                                    )
-                                }
-                                ScatterPayloadFormat::PointInstanceV1 => {
-                                    decode_scatter_points_v1(&bytes, &mut pts)
-                                }
-                            };
-                            match result {
-                                Err(e) => {
-                                    let msg = e.to_string();
-                                    eprintln!("DragonGUI: {msg}");
-                                    (Vec::new(), ScatterPayloadStatus::DecodeError(msg))
-                                }
-                                Ok(_) => (pts, ScatterPayloadStatus::Ok),
-                            }
-                        }
+                        Ok(bytes) => decode_startup_scatter_payload(
+                            &bytes,
+                            &colormap,
+                            data_format,
+                            &self.runtime_profile,
+                            &self.required_limits,
+                        ),
                     }
                 } else {
                     (Vec::new(), ScatterPayloadStatus::Empty)
@@ -7885,6 +8452,23 @@ impl WgpuState {
         true
     }
 
+    fn validate_scatter_point_capacity(
+        &self,
+        point_count: usize,
+        context: &str,
+    ) -> Result<(), DragonError> {
+        validate_scatter_point_capacity_for_profile(
+            &self.runtime_profile,
+            &self.required_limits,
+            point_count,
+            context,
+        )
+    }
+
+    fn effective_line_plot_max_points(&self, max_points: Option<usize>) -> Option<usize> {
+        effective_line_plot_max_points(&self.runtime_profile, max_points)
+    }
+
     fn set_line_plot_data_packed(
         &mut self,
         id: &str,
@@ -7902,8 +8486,9 @@ impl WgpuState {
         if self.widget_kind(id) != Some(WidgetKind::LinePlot) {
             return Ok(false);
         }
-        let mut points = decode_line_plot_points_bytes(&xy, payload_format)?;
-        limit_line_plot_points(&mut points, max_points);
+        let effective_max_points = self.effective_line_plot_max_points(max_points);
+        let points =
+            decode_line_plot_points_bytes_limited(&xy, payload_format, effective_max_points)?;
         let bounds = document::line_plot_points_bounds(&points);
         let Some(tree) = self.widget_tree.as_mut() else {
             return Ok(false);
@@ -7920,6 +8505,7 @@ impl WgpuState {
         if let Some(auto_fit) = auto_fit {
             node.props.line_plot_auto_fit = auto_fit;
         }
+        node.props.line_plot_max_points = effective_max_points;
         let label = label
             .filter(|value| !value.trim().is_empty())
             .unwrap_or_else(|| series.clone());
@@ -7971,7 +8557,9 @@ impl WgpuState {
         if self.widget_kind(id) != Some(WidgetKind::LinePlot) {
             return Ok(false);
         }
-        let mut points = decode_line_plot_points_bytes(&xy, payload_format)?;
+        let effective_max_points = self.effective_line_plot_max_points(max_points);
+        let mut points =
+            decode_line_plot_points_bytes_limited(&xy, payload_format, effective_max_points)?;
         let appended_bounds = document::line_plot_points_bounds(&points);
         let Some(tree) = self.widget_tree.as_mut() else {
             return Ok(false);
@@ -7987,7 +8575,7 @@ impl WgpuState {
         {
             let prior_bounds = existing.bounds;
             existing.points.append(&mut points);
-            let trimmed = limit_line_plot_points(&mut existing.points, max_points);
+            let trimmed = limit_line_plot_points(&mut existing.points, effective_max_points);
             existing.bounds = if trimmed {
                 document::line_plot_points_bounds(&existing.points)
             } else {
@@ -7995,7 +8583,6 @@ impl WgpuState {
             };
             existing.declared_point_count = Some(existing.points.len());
         } else {
-            limit_line_plot_points(&mut points, max_points);
             let bounds = document::line_plot_points_bounds(&points);
             let point_count = points.len();
             node.props
@@ -8010,6 +8597,7 @@ impl WgpuState {
                     declared_point_count: Some(point_count),
                 });
         }
+        node.props.line_plot_max_points = effective_max_points;
         apply_line_plot_window_to_node(node);
         Ok(true)
     }
@@ -8676,6 +9264,8 @@ impl WgpuState {
         if self.widget_kind(id) != Some(WidgetKind::Scatter3D) {
             return Ok(false);
         }
+        let point_count = scatter_payload_point_count(&xyz, data_format)?;
+        self.validate_scatter_point_capacity(point_count, "scatter payload")?;
         let Some(runtime) = self.scatters.get_mut(id) else {
             return Ok(false);
         };
@@ -8706,7 +9296,6 @@ impl WgpuState {
             } else {
                 bounds_t0.elapsed().as_secs_f64() * 1000.0
             };
-            let point_count = xyz.len() / std::mem::size_of::<PointInstance>();
             if maybe_bounds.is_none() && point_count > 0 {
                 runtime.payload_format = data_format;
                 runtime.points.clear();
@@ -9312,6 +9901,7 @@ impl WgpuState {
                 "height": self.config.height,
                 "scale_factor": self.scale_factor,
             },
+            "platform": self.platform_snapshot(),
             "theme": theme_snapshot(&self.theme),
             "stylesheets": {
                 "framework_rules": self.stylesheets.rules(crate::css_style::StylesheetOrigin::Framework).len(),
@@ -9331,6 +9921,13 @@ impl WgpuState {
             "toasts": self.toast_snapshot(),
             "renderer": {
                 "surface_format": format!("{:?}", self.config.format),
+                "requested_backends": wgpu_backend_names(self.requested_backends),
+                "adapter": wgpu_adapter_info_snapshot(&self.adapter_info),
+                "limits": {
+                    "adapter": wgpu_limits_snapshot(&self.adapter_limits),
+                    "required": wgpu_limits_snapshot(&self.required_limits),
+                    "downlevel": self.downlevel_limits,
+                },
                 "has_primitives": self.primitives.is_some(),
                 "has_text": self.text.is_some(),
                 "html_reports": self.html_reports.snapshot(),
@@ -9353,6 +9950,33 @@ impl WgpuState {
                     "resources": self.resources.buffer_count(),
                 },
             },
+        })
+    }
+
+    fn platform_snapshot(&self) -> Value {
+        json!({
+            "os": runtime_profile::target_os(),
+            "arch": runtime_profile::target_arch(),
+            "profile": self.runtime_profile.profile.as_str(),
+            "profile_requested": self.runtime_profile.requested.as_str(),
+            "profile_source": self.runtime_profile.source,
+            "pi_feature": self.runtime_profile.pi_feature,
+            "auto_pi_target": self.runtime_profile.auto_pi_target,
+            "webview_available": runtime_profile::embedded_webview_available(),
+            "scatter_max_points": self.runtime_profile.scatter_max_points(),
+            "scatter_lod_threshold": self.runtime_profile.scatter_lod_threshold(),
+            "line_plot_max_points": self.runtime_profile.line_plot_max_points(),
+            "table_page_size": self.runtime_profile.table_page_size(),
+            "table_sample_rows": self.runtime_profile.table_sample_rows(),
+            "table_column_buffer_rows": self.runtime_profile.table_column_buffer_rows(),
+            "gpu_ready": true,
+            "wgpu_backend": self.adapter_info.backend.to_string(),
+            "adapter": self.adapter_info.name.as_str(),
+            "driver": self.adapter_info.driver.as_str(),
+            "driver_info": self.adapter_info.driver_info.as_str(),
+            "requested_backends": wgpu_backend_names(self.requested_backends),
+            "wgpu_backend_override": self.backend_override_requested.as_deref(),
+            "downlevel_limits": self.downlevel_limits,
         })
     }
 
@@ -10569,6 +11193,9 @@ impl DragonApp {
             "runtime": {
                 "window_open": self.window.is_some(),
                 "gpu_ready": self.gpu.is_some(),
+                "platform": self.gpu.as_ref().map(WgpuState::platform_snapshot).unwrap_or_else(
+                    runtime_platform_snapshot_without_gpu,
+                ),
                 "frames_rendered": self.frames_rendered,
                 "upload_ms": self.upload_ms,
                 "frame_ms": frame_ms,
@@ -12031,7 +12658,17 @@ impl DragonApp {
                 let total_t0 = Instant::now();
                 let payload_bytes = payload_b64.len();
                 let decode_t0 = Instant::now();
-                let result = decode_actor_payload(&payload_b64, &colormap, payload_format);
+                let result = match self.gpu.as_ref() {
+                    Some(gpu) => decode_actor_payload_checked(
+                        &payload_b64,
+                        &colormap,
+                        payload_format,
+                        &gpu.runtime_profile,
+                        &gpu.required_limits,
+                        "scatter actor payload",
+                    ),
+                    None => decode_actor_payload(&payload_b64, &colormap, payload_format),
+                };
                 let decode_ms = decode_t0.elapsed().as_secs_f64() * 1000.0;
                 match result {
                     Err(e) => self.record_runtime_command(
@@ -12039,7 +12676,7 @@ impl DragonApp {
                         Some(id),
                         None,
                         None,
-                        &format!("decode error: {e}"),
+                        &format!("payload error: {e}"),
                         false,
                     ),
                     Ok(pts) => {
@@ -12082,7 +12719,17 @@ impl DragonApp {
                 let total_t0 = Instant::now();
                 let payload_bytes = payload.len();
                 let decode_t0 = Instant::now();
-                let result = decode_actor_payload_bytes(&payload, &colormap, payload_format);
+                let result = match self.gpu.as_ref() {
+                    Some(gpu) => decode_actor_payload_bytes_checked(
+                        &payload,
+                        &colormap,
+                        payload_format,
+                        &gpu.runtime_profile,
+                        &gpu.required_limits,
+                        "scatter actor payload",
+                    ),
+                    None => decode_actor_payload_bytes(&payload, &colormap, payload_format),
+                };
                 let decode_ms = decode_t0.elapsed().as_secs_f64() * 1000.0;
                 match result {
                     Err(e) => self.record_runtime_command(
@@ -12090,7 +12737,7 @@ impl DragonApp {
                         Some(id),
                         None,
                         None,
-                        &format!("decode error: {e}"),
+                        &format!("payload error: {e}"),
                         false,
                     ),
                     Ok(pts) => {
@@ -12132,7 +12779,17 @@ impl DragonApp {
                 let total_t0 = Instant::now();
                 let payload_bytes = payload_b64.len();
                 let decode_t0 = Instant::now();
-                let result = decode_actor_payload(&payload_b64, &colormap, payload_format);
+                let result = match self.gpu.as_ref() {
+                    Some(gpu) => decode_actor_payload_checked(
+                        &payload_b64,
+                        &colormap,
+                        payload_format,
+                        &gpu.runtime_profile,
+                        &gpu.required_limits,
+                        "scatter actor payload",
+                    ),
+                    None => decode_actor_payload(&payload_b64, &colormap, payload_format),
+                };
                 let decode_ms = decode_t0.elapsed().as_secs_f64() * 1000.0;
                 match result {
                     Err(e) => self.record_runtime_command(
@@ -12140,7 +12797,7 @@ impl DragonApp {
                         Some(id),
                         None,
                         None,
-                        &format!("decode error: {e}"),
+                        &format!("payload error: {e}"),
                         false,
                     ),
                     Ok(pts) => {
@@ -12181,7 +12838,17 @@ impl DragonApp {
                 let total_t0 = Instant::now();
                 let payload_bytes = payload.len();
                 let decode_t0 = Instant::now();
-                let result = decode_actor_payload_bytes(&payload, &colormap, payload_format);
+                let result = match self.gpu.as_ref() {
+                    Some(gpu) => decode_actor_payload_bytes_checked(
+                        &payload,
+                        &colormap,
+                        payload_format,
+                        &gpu.runtime_profile,
+                        &gpu.required_limits,
+                        "scatter actor payload",
+                    ),
+                    None => decode_actor_payload_bytes(&payload, &colormap, payload_format),
+                };
                 let decode_ms = decode_t0.elapsed().as_secs_f64() * 1000.0;
                 match result {
                     Err(e) => self.record_runtime_command(
@@ -12189,7 +12856,7 @@ impl DragonApp {
                         Some(id),
                         None,
                         None,
-                        &format!("decode error: {e}"),
+                        &format!("payload error: {e}"),
                         false,
                     ),
                     Ok(pts) => {
@@ -12360,24 +13027,36 @@ impl DragonApp {
                 } else {
                     scatter::StreamMode::Append
                 };
-                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
-                    let Some(rt) = gpu.scatters.get_mut(&id) else {
-                        return false;
-                    };
-                    rt.widget
-                        .add_stream_actor(actor_id, max_points, stream_mode, &gpu.device);
-                    true
-                });
+                let mut redraw = false;
+                let mut outcome = "no-op: scatter not found".to_string();
+                if let Some(gpu) = self.gpu.as_mut() {
+                    match gpu.validate_scatter_point_capacity(
+                        max_points as usize,
+                        "scatter stream capacity",
+                    ) {
+                        Err(e) => {
+                            outcome = format!("cap error: {e}");
+                        }
+                        Ok(()) => {
+                            if let Some(rt) = gpu.scatters.get_mut(&id) {
+                                rt.widget.add_stream_actor(
+                                    actor_id,
+                                    max_points,
+                                    stream_mode,
+                                    &gpu.device,
+                                );
+                                redraw = true;
+                                outcome = "ok".to_string();
+                            }
+                        }
+                    }
+                }
                 self.record_runtime_command(
                     "AddScatterStream",
                     Some(id),
                     None,
                     None,
-                    if redraw {
-                        "ok"
-                    } else {
-                        "no-op: scatter not found"
-                    },
+                    &outcome,
                     redraw,
                 )
             }
@@ -12388,30 +13067,41 @@ impl DragonApp {
                 colormap,
                 payload_format,
             } => {
-                let result = decode_actor_payload(&payload_b64, &colormap, payload_format);
+                let result = match self.gpu.as_ref() {
+                    Some(gpu) => decode_actor_payload_checked(
+                        &payload_b64,
+                        &colormap,
+                        payload_format,
+                        &gpu.runtime_profile,
+                        &gpu.required_limits,
+                        "scatter stream payload",
+                    ),
+                    None => decode_actor_payload(&payload_b64, &colormap, payload_format),
+                };
                 match result {
                     Err(e) => self.record_runtime_command(
                         "StreamScatterActor",
                         Some(id),
                         None,
                         None,
-                        &format!("decode error: {e}"),
+                        &format!("payload error: {e}"),
                         false,
                     ),
                     Ok(pts) => {
-                        let redraw = self.gpu.as_mut().is_some_and(|gpu| {
-                            gpu.stream_scatter_actor_points(&id, actor_id, &pts)
-                        });
+                        let mut redraw = false;
+                        let mut outcome = "no-op: scatter not found".to_string();
+                        if let Some(gpu) = self.gpu.as_mut() {
+                            redraw = gpu.stream_scatter_actor_points(&id, actor_id, &pts);
+                            if redraw {
+                                outcome = "ok".to_string();
+                            }
+                        }
                         self.record_runtime_command(
                             "StreamScatterActor",
                             Some(id),
                             None,
                             None,
-                            if redraw {
-                                "ok"
-                            } else {
-                                "no-op: scatter not found"
-                            },
+                            &outcome,
                             redraw,
                         )
                     }
@@ -12424,30 +13114,41 @@ impl DragonApp {
                 colormap,
                 payload_format,
             } => {
-                let result = decode_actor_payload_bytes(&payload, &colormap, payload_format);
+                let result = match self.gpu.as_ref() {
+                    Some(gpu) => decode_actor_payload_bytes_checked(
+                        &payload,
+                        &colormap,
+                        payload_format,
+                        &gpu.runtime_profile,
+                        &gpu.required_limits,
+                        "scatter stream payload",
+                    ),
+                    None => decode_actor_payload_bytes(&payload, &colormap, payload_format),
+                };
                 match result {
                     Err(e) => self.record_runtime_command(
                         "StreamScatterActorPacked",
                         Some(id),
                         None,
                         None,
-                        &format!("decode error: {e}"),
+                        &format!("payload error: {e}"),
                         false,
                     ),
                     Ok(pts) => {
-                        let redraw = self.gpu.as_mut().is_some_and(|gpu| {
-                            gpu.stream_scatter_actor_points(&id, actor_id, &pts)
-                        });
+                        let mut redraw = false;
+                        let mut outcome = "no-op: scatter not found".to_string();
+                        if let Some(gpu) = self.gpu.as_mut() {
+                            redraw = gpu.stream_scatter_actor_points(&id, actor_id, &pts);
+                            if redraw {
+                                outcome = "ok".to_string();
+                            }
+                        }
                         self.record_runtime_command(
                             "StreamScatterActorPacked",
                             Some(id),
                             None,
                             None,
-                            if redraw {
-                                "ok"
-                            } else {
-                                "no-op: scatter not found"
-                            },
+                            &outcome,
                             redraw,
                         )
                     }

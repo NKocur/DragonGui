@@ -652,4 +652,22 @@ mod platform {
             })
         }
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn unsupported_snapshot_is_stable() {
+            let manager = PlatformHtmlReportWebViewManager;
+            let snapshot = manager.snapshot();
+
+            assert_eq!(snapshot["platform"], "unsupported");
+            assert_eq!(snapshot["enabled"], false);
+            assert!(snapshot["reason"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("WebView2"));
+        }
+    }
 }

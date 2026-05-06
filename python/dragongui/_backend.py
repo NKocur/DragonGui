@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import platform
 from collections.abc import Sequence
 from typing import Any
 
@@ -25,14 +26,69 @@ def native_event_loop_available() -> bool:
 
 def backend_info() -> dict[str, Any]:
     if _native is None:
+        profile = _runtime_profile()
         return {
             "name": "dragongui",
             "native": False,
             "renderer": "unavailable",
             "status": "native extension has not been built",
+            "platform": {
+                "os": platform.system().lower(),
+                "arch": platform.machine().lower(),
+                "profile": profile,
+                "profile_requested": os.environ.get("DRAGONGUI_PROFILE", "auto"),
+                "profile_source": "python-fallback",
+                "pi_feature": False,
+                "auto_pi_target": _auto_pi_target(),
+                "scatter_max_points": _scatter_max_points(profile),
+                "scatter_lod_threshold": _scatter_lod_threshold(profile),
+                "line_plot_max_points": _line_plot_max_points(profile),
+                "table_page_size": _table_page_size(profile),
+                "table_sample_rows": _table_sample_rows(profile),
+                "table_column_buffer_rows": _table_column_buffer_rows(profile),
+                "wgpu_backend_override": os.environ.get("DRAGONGUI_WGPU_BACKEND"),
+            },
+            "features": {
+                "pi": False,
+                "gpu": False,
+                "webview": False,
+            },
+            "webview_available": False,
         }
 
-    return dict(_native.backend_info())
+    info = dict(_native.backend_info())
+    return _normalize_backend_info(info)
+
+
+def _normalize_backend_info(info: dict[str, Any]) -> dict[str, Any]:
+    profile = _runtime_profile()
+    platform_info = dict(info.get("platform") or {})
+    effective_profile = str(platform_info.get("profile") or profile)
+    platform_info.setdefault("os", platform.system().lower())
+    platform_info.setdefault("arch", platform.machine().lower())
+    platform_info.setdefault("profile", effective_profile)
+    platform_info.setdefault("profile_requested", os.environ.get("DRAGONGUI_PROFILE", "auto"))
+    platform_info.setdefault("profile_source", "python-normalized")
+    platform_info.setdefault("pi_feature", False)
+    platform_info.setdefault("auto_pi_target", _auto_pi_target())
+    platform_info.setdefault("scatter_max_points", _scatter_max_points(effective_profile))
+    platform_info.setdefault("scatter_lod_threshold", _scatter_lod_threshold(effective_profile))
+    platform_info.setdefault("line_plot_max_points", _line_plot_max_points(effective_profile))
+    platform_info.setdefault("table_page_size", _table_page_size(effective_profile))
+    platform_info.setdefault("table_sample_rows", _table_sample_rows(effective_profile))
+    platform_info.setdefault(
+        "table_column_buffer_rows", _table_column_buffer_rows(effective_profile)
+    )
+    platform_info.setdefault("wgpu_backend_override", os.environ.get("DRAGONGUI_WGPU_BACKEND"))
+    info["platform"] = platform_info
+
+    features = dict(info.get("features") or {})
+    features.setdefault("pi", False)
+    features.setdefault("gpu", bool(info.get("native")))
+    features.setdefault("webview", False)
+    info["features"] = features
+    info.setdefault("webview_available", bool(features["webview"]))
+    return info
 
 
 DialogFilters = Sequence[tuple[str, Sequence[str]]]
@@ -100,6 +156,23 @@ def run_document(
                 "runtime": {
                     "window_open": False,
                     "gpu_ready": False,
+                    "platform": {
+                        "os": platform.system().lower(),
+                        "arch": platform.machine().lower(),
+                        "profile": _runtime_profile(),
+                        "profile_requested": os.environ.get("DRAGONGUI_PROFILE", "auto"),
+                        "profile_source": "python-dev-fallback",
+                        "pi_feature": False,
+                        "auto_pi_target": _auto_pi_target(),
+                        "webview_available": False,
+                        "scatter_max_points": _scatter_max_points(_runtime_profile()),
+                        "scatter_lod_threshold": _scatter_lod_threshold(_runtime_profile()),
+                        "line_plot_max_points": _line_plot_max_points(_runtime_profile()),
+                        "table_page_size": _table_page_size(_runtime_profile()),
+                        "table_sample_rows": _table_sample_rows(_runtime_profile()),
+                        "table_column_buffer_rows": _table_column_buffer_rows(_runtime_profile()),
+                        "wgpu_backend_override": os.environ.get("DRAGONGUI_WGPU_BACKEND"),
+                    },
                     "frames_rendered": 0,
                     "upload_ms": 0.0,
                     "frame_ms": 0.0,
@@ -143,6 +216,46 @@ def run_document(
 def _dev_fallback_enabled() -> bool:
     value = os.environ.get("DRAGONGUI_DEV_FALLBACK", "")
     return value.lower() in {"1", "true", "yes", "on"}
+
+
+def _auto_pi_target() -> bool:
+    return platform.system().lower() == "linux" and platform.machine().lower() in {
+        "aarch64",
+        "arm64",
+    }
+
+
+def _runtime_profile() -> str:
+    requested = os.environ.get("DRAGONGUI_PROFILE", "auto").strip().lower()
+    if requested in {"pi", "rpi", "raspberry-pi", "raspberry_pi"}:
+        return "pi"
+    if requested == "desktop":
+        return "desktop"
+    return "pi" if _auto_pi_target() else "desktop"
+
+
+def _scatter_max_points(profile: str) -> int | None:
+    return 100_000 if profile == "pi" else None
+
+
+def _scatter_lod_threshold(profile: str) -> int | None:
+    return 50_000 if profile == "pi" else None
+
+
+def _line_plot_max_points(profile: str) -> int | None:
+    return 50_000 if profile == "pi" else None
+
+
+def _table_page_size(profile: str) -> int | None:
+    return 64 if profile == "pi" else None
+
+
+def _table_sample_rows(profile: str) -> int | None:
+    return 512 if profile == "pi" else None
+
+
+def _table_column_buffer_rows(profile: str) -> int | None:
+    return 10_000 if profile == "pi" else None
 
 
 def _dialog_filters(filters: DialogFilters | None) -> list[tuple[str, list[str]]] | None:

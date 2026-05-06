@@ -87,6 +87,7 @@ def extract_table_sample(
 def extract_table_column_buffers(
     frame: Any,
     summary: DataFrameSummary,
+    max_rows: int | None = None,
 ) -> list[dict[str, object]]:
     """Return packed native table column buffers for supported columns.
 
@@ -96,6 +97,11 @@ def extract_table_column_buffers(
     """
 
     if frame is None or summary.rows is None or summary.rows <= 0 or not summary.columns:
+        return []
+    row_limit = summary.rows
+    if max_rows is not None:
+        row_limit = min(row_limit, max(0, int(max_rows)))
+    if row_limit <= 0:
         return []
 
     try:
@@ -112,9 +118,9 @@ def extract_table_column_buffers(
             arr = np.asarray(column_data)
         except (TypeError, ValueError):
             continue
-        if arr.ndim != 1 or arr.shape[0] < summary.rows:
+        if arr.ndim != 1 or arr.shape[0] < row_limit:
             continue
-        packed = _pack_numpy_column(np, arr[: summary.rows])
+        packed = _pack_numpy_column(np, arr[:row_limit])
         if packed is None:
             continue
         dtype, payload = packed

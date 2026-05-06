@@ -312,20 +312,26 @@ fn normalize_color_channel(value: f32) -> f32 {
     }
 }
 
-fn parse_line_plot_series(props: &serde_json::Value) -> Vec<LinePlotSeriesProp> {
+fn parse_line_plot_series(
+    props: &serde_json::Value,
+    max_points: Option<usize>,
+) -> Vec<LinePlotSeriesProp> {
     props
         .get("series")
         .and_then(Value::as_array)
         .map(|items| {
             items
                 .iter()
-                .filter_map(parse_line_plot_series_item)
+                .filter_map(|item| parse_line_plot_series_item(item, max_points))
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default()
 }
 
-fn parse_line_plot_series_item(value: &serde_json::Value) -> Option<LinePlotSeriesProp> {
+fn parse_line_plot_series_item(
+    value: &serde_json::Value,
+    max_points: Option<usize>,
+) -> Option<LinePlotSeriesProp> {
     let obj = value.as_object()?;
     let payload_format = obj
         .get("data_format")
@@ -336,7 +342,7 @@ fn parse_line_plot_series_item(value: &serde_json::Value) -> Option<LinePlotSeri
         .get("data_b64")
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
-        .map(|data| match decode_line_plot_xy_b64(data) {
+        .map(|data| match decode_line_plot_xy_b64(data, max_points) {
             Ok(points) => points,
             Err(err) => {
                 eprintln!("DragonGUI: line plot data decode: {err}");
@@ -624,7 +630,7 @@ pub(crate) fn parse_line_plot_line_style(value: Option<&str>) -> String {
     }
 }
 
-fn decode_line_plot_xy_b64(data: &str) -> Result<Vec<[f32; 2]>, String> {
+fn decode_line_plot_xy_b64(data: &str, max_points: Option<usize>) -> Result<Vec<[f32; 2]>, String> {
     let bytes = BASE64.decode(data).map_err(|e| format!("base64: {e}"))?;
     if bytes.len() % 8 != 0 {
         return Err(format!(
@@ -632,7 +638,12 @@ fn decode_line_plot_xy_b64(data: &str) -> Result<Vec<[f32; 2]>, String> {
             bytes.len()
         ));
     }
-    Ok(bytes
+    let point_count = bytes.len() / 8;
+    let start = max_points
+        .filter(|max_points| *max_points > 0 && point_count > *max_points)
+        .map(|max_points| (point_count - max_points) * 8)
+        .unwrap_or(0);
+    Ok(bytes[start..]
         .chunks_exact(8)
         .map(|chunk| {
             [
@@ -890,6 +901,7 @@ pub struct NodeProps {
     pub line_plot_auto_fit: bool,
     pub line_plot_line_width: f32,
     pub line_plot_window_size: Option<f32>,
+    pub line_plot_max_points: Option<usize>,
     pub line_plot_x_min: Option<f32>,
     pub line_plot_x_max: Option<f32>,
     pub line_plot_y_min: Option<f32>,
@@ -1228,6 +1240,7 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         line_plot_auto_fit,
         line_plot_line_width,
         line_plot_window_size,
+        line_plot_max_points,
         line_plot_x_min,
         line_plot_x_max,
         line_plot_y_min,
@@ -1292,6 +1305,11 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
             .and_then(Value::as_f64)
             .filter(|v| v.is_finite() && *v > 0.0)
             .map(|v| v as f32);
+        let max_points = props
+            .get("max_points")
+            .and_then(Value::as_u64)
+            .filter(|v| *v > 0)
+            .map(|v| v as usize);
         let limit = |name: &str| {
             props
                 .get(name)
@@ -1306,7 +1324,7 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
             .unwrap_or("inspect")
             .to_string();
         (
-            parse_line_plot_series(props),
+            parse_line_plot_series(props, max_points),
             x_label,
             y_label,
             show_grid,
@@ -1319,6 +1337,7 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
             auto_fit,
             line_width,
             window_size,
+            max_points,
             limit("x_min"),
             limit("x_max"),
             limit("y_min"),
@@ -1341,6 +1360,7 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
             5,
             true,
             2.0,
+            None,
             None,
             None,
             None,
@@ -1679,6 +1699,7 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         line_plot_auto_fit,
         line_plot_line_width,
         line_plot_window_size,
+        line_plot_max_points,
         line_plot_x_min,
         line_plot_x_max,
         line_plot_y_min,

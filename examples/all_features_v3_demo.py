@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import platform
 from pathlib import Path
 from pprint import pprint
 import struct
@@ -28,11 +30,35 @@ except ImportError:  # pragma: no cover - optional demo dependency
     go = None
 
 
-POINT_ROWS = 125_000
-TABLE_ROWS = 50_000
+def _auto_pi_profile() -> bool:
+    if not (
+        sys.platform.startswith("linux")
+        and platform.machine().lower() in {"aarch64", "arm64"}
+    ):
+        return False
+    try:
+        model = Path("/proc/device-tree/model").read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return True
+    return "raspberry pi" in model.lower()
+
+
+def _demo_profile() -> str:
+    requested = os.environ.get("DRAGONGUI_PROFILE", "auto").strip().lower()
+    if requested in {"pi", "rpi", "raspberry-pi", "raspberry_pi"}:
+        return "pi"
+    if requested == "desktop":
+        return "desktop"
+    return "pi" if _auto_pi_profile() else "desktop"
+
+
+DG_PROFILE = _demo_profile()
+IS_PI_PROFILE = DG_PROFILE == "pi"
+POINT_ROWS = 40_000 if IS_PI_PROFILE else 125_000
+TABLE_ROWS = 10_000 if IS_PI_PROFILE else 50_000
 LINE_ROWS = 720
 HISTOGRAM_ROWS = 8_000
-STREAM_FRAME_COUNT = 24
+STREAM_FRAME_COUNT = 8 if IS_PI_PROFILE else 24
 GRID_GAP = 12
 REPORT_DIR = Path(tempfile.gettempdir()) / "dragongui_all_features_v3_reports"
 REPORT_OVERVIEW = REPORT_DIR / "plotly_style_sensor_report.html"
@@ -3409,28 +3435,30 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
 
     return win
 
+def main() -> None:
+    stats_thread = threading.Thread(target=scatter_stats_worker, daemon=True)
+    stats_thread.start()
 
-
-stats_thread = threading.Thread(target=scatter_stats_worker, daemon=True)
-stats_thread.start()
-
-try:
-    result = app.run_with_loading(
-        AllFeaturesV3,
-        title="DragonGUI All Features V3 Demo",
-        width=1440,
-        height=900,
-    )
-except dg.BackendUnavailableError:
-    print("DragonGUI source import works.")
-    print("Native backend is not built, so this run prints the UI document.")
-    pprint(redacted_document(app.document(win)))
-else:
-    print(result)
-finally:
-    stats_stop.set()
-    stream_cancel.set()
-    if stats_thread is not None:
+    try:
+        result = app.run_with_loading(
+            AllFeaturesV3,
+            title="DragonGUI All Features V3 Demo",
+            width=1440,
+            height=900,
+        )
+    except dg.BackendUnavailableError:
+        print("DragonGUI source import works.")
+        print("Native backend is not built, so this run prints the UI document.")
+        pprint(redacted_document(app.document(AllFeaturesV3())))
+    else:
+        print(result)
+    finally:
+        stats_stop.set()
+        stream_cancel.set()
         stats_thread.join(timeout=0.25)
-    if stream_controller is not None:
-        stream_controller.stop(timeout=0.25)
+        if stream_controller is not None:
+            stream_controller.stop(timeout=0.25)
+
+
+if __name__ == "__main__":
+    main()

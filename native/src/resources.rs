@@ -414,7 +414,8 @@ impl ResourceRegistry {
             .filter_map(|packet| {
                 let name = packet.name.clone();
                 TableColumnData::from_packet(packet).and_then(|data| {
-                    (data.len() >= resource.rows).then_some(TableColumnBuffer { name, data })
+                    (data.len() > 0 && data.len() <= resource.rows)
+                        .then_some(TableColumnBuffer { name, data })
                 })
             })
             .collect();
@@ -632,6 +633,51 @@ mod tests {
             registry.table_cell_text(Some("table-resource"), 2, 2),
             Some("gamma".to_string())
         );
+    }
+
+    #[test]
+    fn registry_accepts_partial_table_column_buffers() {
+        let root = crate::document::parse_widget_node(&json!({
+            "id": "root",
+            "type": "window",
+            "props": {},
+            "children": [{
+                "id": "table",
+                "type": "dataframe_table",
+                "props": {
+                    "resource_id": "table-resource",
+                    "frame": {
+                        "columns": ["x"],
+                        "dtypes": ["float32"],
+                        "rows": 3
+                    },
+                    "sample_rows": 0,
+                    "cells": []
+                }
+            }]
+        }))
+        .unwrap();
+        let props = &root.children[0].props;
+        let mut registry = ResourceRegistry::default();
+        registry.sync_from_tree(&root);
+        registry.update_table_columns(
+            "table-resource",
+            props,
+            vec![TableColumnPacket {
+                name: "x".to_string(),
+                dtype: "f32".to_string(),
+                bytes: [1.0_f32, 2.5]
+                    .into_iter()
+                    .flat_map(f32::to_le_bytes)
+                    .collect(),
+            }],
+        );
+
+        assert_eq!(
+            registry.table_cell_text(Some("table-resource"), 1, 0),
+            Some("2.5".to_string())
+        );
+        assert_eq!(registry.table_cell_text(Some("table-resource"), 2, 0), None);
     }
 
     #[test]

@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -25,7 +26,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install test dependencies
-        run: pip install pytest
+        run: pip install pytest numpy
 
       - name: pytest
         run: python -m pytest tests/ -v
@@ -62,6 +63,99 @@ jobs:
         run: cargo check --manifest-path native/Cargo.toml
         env:
           PYO3_PYTHON: ${{ steps.python.outputs.python-path }}
+
+  # -------------------------------------------------------------------------
+  # Raspberry Pi profile checks that do not require Pi hardware.
+  # This validates the profile gates, conservative caps, and native compile
+  # path. It is not a replacement for V3D/Mesa hardware validation.
+  # -------------------------------------------------------------------------
+  pi-profile-check:
+    name: Raspberry Pi profile check
+    runs-on: ubuntu-latest
+    needs: [python-tests, rust-check]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        id: python
+        with:
+          python-version: "3.12"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+          key: pi-profile
+
+      - name: cargo check with Pi feature
+        run: cargo check --manifest-path native/Cargo.toml --features pi
+        env:
+          PYO3_PYTHON: ${{ steps.python.outputs.python-path }}
+
+      - name: Install test dependencies
+        run: pip install pytest numpy
+
+      - name: Python Pi profile tests
+        run: >
+          python -m pytest tests/test_python_api.py -q
+          -k "pi_profile or backend_info or dev_fallback or line_plot or dataframe_table or scatter_lod"
+        env:
+          PYTHONPATH: python
+          DRAGONGUI_DEV_FALLBACK: "1"
+          DRAGONGUI_PROFILE: "pi"
+
+  # -------------------------------------------------------------------------
+  # Native aarch64 wheel build for the Pi profile.
+  # This is intentionally manual while the port is still pre-hardware-validation:
+  # it proves packaging on an arm64 hosted runner, but it still does not prove
+  # Raspberry Pi V3D/Mesa rendering behavior.
+  # -------------------------------------------------------------------------
+  pi-arm64-wheel:
+    name: Raspberry Pi arm64 wheel
+    runs-on: ubuntu-24.04-arm
+    if: github.event_name == 'workflow_dispatch'
+    needs: [pi-profile-check]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+          key: pi-arm64-wheel
+
+      - name: Build aarch64 Pi wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          command: build
+          args: >
+            --release
+            --manifest-path native/Cargo.toml
+            --features pyo3/extension-module,pi
+            --out dist
+            -i python3.12
+          manylinux: "2_28"
+          rust-toolchain: stable
+
+      - name: Install wheel and import smoke
+        run: |
+          python -m venv .venv-pi-wheel
+          . .venv-pi-wheel/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install dist/*.whl
+          python -c "import dragongui as dg; info = dg.backend_info(); print(info); assert info['native']; assert info['platform']['profile'] == 'pi'"
+        env:
+          DRAGONGUI_PROFILE: "pi"
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dragongui-pi-aarch64-wheel
+          path: dist/*.whl
 
   # -------------------------------------------------------------------------
   # Windows: build the native extension, run an import smoke test.

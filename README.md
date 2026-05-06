@@ -70,6 +70,14 @@ app.run(win)
 | Overlays | `alert()`, `confirm()`, `toast()` |
 | Utilities | `FileDialog`, `Theme` |
 
+## Raspberry Pi 5
+
+Raspberry Pi 5 support is in progress behind the Pi runtime profile. See
+[docs/raspberry-pi.md](docs/raspberry-pi.md) for the current source-build,
+profile, and smoke-test notes, and
+[docs/raspberry-pi-release-checklist.md](docs/raspberry-pi-release-checklist.md)
+for the hardware release gate.
+
 ## 3D Scatter
 
 `Scatter3D` renders large point clouds via wgpu with a wide API for interactive

@@ -121,6 +121,23 @@ Helper builders:
 | `Scatter3D(frame, x, y, z, colormap="viridis", on_pick=None)` | GPU 3D scatter plot. Uses frame metadata and packed float32 xyz data when NumPy/addressable columns are available. Emits `ScatterPick` callbacks for point clicks. Supports `set_points(..., fit=True)` when replacing the scene, `create_live_frame(mode="primary")` for retained full-frame sensor replacement, plus `set_colormap()`, `set_auto_point_size()`, `set_lod()`, `set_interactive_render_scale()`, `set_auto_quality()`, `show_grid()`, and `set_grid_options(sticky=True, all_edges=False)` for live updates. |
 | `DataFrameTable(frame, page_size=100, sample_rows=DEFAULT_TABLE_SAMPLE_ROWS, on_select=None)` | Virtualized table for dataframe-like objects. Extracts metadata, cell samples, and optional column buffers. Emits selection callbacks with `TableSelection` from mouse or keyboard selection. Supports `set_frame()`. Supports `DataFrameTable::header`, `row`, `row-selected`, and `grid-line`. |
 
+## Raspberry Pi Profile Caps
+
+Set `DRAGONGUI_PROFILE=pi` to force Pi-safe widget defaults on any platform
+while testing. On a Raspberry Pi 5 aarch64 Linux build, `auto` also selects the
+Pi profile.
+
+The Pi profile keeps desktop APIs intact but lowers expensive retained data:
+
+| Area | Pi Profile Behavior |
+| --- | --- |
+| `Scatter3D` | Caps scatter payloads at 100,000 points and rejects larger startup/live/actor/stream payloads with a clear runtime error before GPU allocation. Default LOD threshold is 50,000 points and interactive render scale is capped at 0.75. |
+| `LinePlot` | Caps retained data at 50,000 points per series. Startup and live payloads keep the newest points. Rendering still down-samples visible geometry internally. |
+| `DataFrameTable` | Caps default `page_size` to 64 rows, startup `sample_rows` to 512 rows, and packed column buffers to the first 10,000 rows. Rows beyond the packed buffer remain virtualized and show placeholders unless sampled cell text is available. |
+| `HtmlReport` | Embedded WebView is unsupported on Linux in this release. Use `HtmlReport.open_external()` for Plotly or other full HTML reports on Pi. |
+
+Desktop behavior is unchanged unless the Pi profile is active.
+
 Supported `Scatter3D` colormaps:
 
 ```text
