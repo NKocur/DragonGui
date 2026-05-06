@@ -293,6 +293,12 @@ class App:
             raise RuntimeError("DragonGUI app is not running")
         return self._handle.debug_snapshot(timeout_ms)
 
+    def request_redraw(self) -> None:
+        """Request one native redraw without changing widget state."""
+        if self._handle is None:
+            raise RuntimeError("DragonGUI app is not running")
+        self._handle.request_redraw()
+
     def set_buffer_resource(
         self,
         resource_id: str,

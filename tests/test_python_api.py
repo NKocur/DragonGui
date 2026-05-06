@@ -6200,6 +6200,200 @@ def test_scatter_update_actor_frame_without_columns_raises() -> None:
         s.update_actor(1, DemoFrame())
 
 
+def test_scatter_create_live_frame_returns_retained_handle() -> None:
+    """create_live_frame() returns a reusable full-frame replacement handle."""
+    s = dg.Scatter3D(DemoFrame(), x="x", y="y", z="z", parent=None)
+
+    live = s.create_live_frame(capacity=1_000_000, scalars="intensity", colormap="turbo")
+
+    assert isinstance(live, dg.ScatterLiveFrame)
+    assert live.handle == 0
+    assert live.mode == "primary"
+    assert live.capacity == 1_000_000
+    assert live.scalars == "intensity"
+    assert live.colormap == "turbo"
+
+
+def test_scatter_live_frame_adds_once_then_updates_same_actor(monkeypatch) -> None:
+    """replace() creates one actor and subsequent complete frames update that actor."""
+    fake_payloads = [b"first-frame", b"second-frame"]
+
+    def fake_pack(self, *args, **kwargs):
+        return fake_payloads.pop(0), kwargs.get("colormap") or "turbo", "point_instance_v1"
+
+    monkeypatch.setattr(widgets_module.Scatter3D, "_pack_actor_payload", fake_pack)
+
+    class Sender:
+        def __init__(self) -> None:
+            self.add_calls: list[tuple] = []
+            self.update_calls: list[tuple] = []
+            self.remove_calls: list[tuple] = []
+
+        def enqueue_add_scatter_actor_packed(
+            self,
+            widget_id: str,
+            actor_id: int,
+            payload: bytes,
+            colormap: str,
+            payload_format: str,
+            hover_meta=None,
+            tooltip_x=None,
+            tooltip_y=None,
+            tooltip_z=None,
+        ) -> None:
+            self.add_calls.append(
+                (widget_id, actor_id, payload, colormap, payload_format, tooltip_x, tooltip_y, tooltip_z)
+            )
+
+        def enqueue_update_scatter_actor_packed(
+            self,
+            widget_id: str,
+            actor_id: int,
+            payload: bytes,
+            colormap: str,
+            payload_format: str,
+            tooltip_x=None,
+            tooltip_y=None,
+            tooltip_z=None,
+        ) -> None:
+            self.update_calls.append(
+                (widget_id, actor_id, payload, colormap, payload_format, tooltip_x, tooltip_y, tooltip_z)
+            )
+
+        def enqueue_remove_scatter_actor(self, widget_id: str, actor_id: int) -> None:
+            self.remove_calls.append((widget_id, actor_id))
+
+        def close(self) -> None:
+            pass
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+
+    s = dg.Scatter3D(DemoFrame(), x="x", y="y", z="z", id="live-scatter", parent=None)
+    s._bind_live(handle.widget_handle(s.id))
+    live = s.create_live_frame(
+        x="x",
+        y="y",
+        z="z",
+        scalars="intensity",
+        colormap="turbo",
+        mode="actor",
+    )
+
+    live.replace(DemoFrame())
+    actor = live.handle
+    live.replace(DemoFrame())
+
+    assert actor is not None
+    assert live.handle == actor
+    assert len(sender.add_calls) == 1
+    assert len(sender.update_calls) == 1
+    assert sender.add_calls[0] == (
+        "live-scatter",
+        actor,
+        b"first-frame",
+        "turbo",
+        "point_instance_v1",
+        "x",
+        "y",
+        "z",
+    )
+    assert sender.update_calls[0] == (
+        "live-scatter",
+        actor,
+        b"second-frame",
+        "turbo",
+        "point_instance_v1",
+        "x",
+        "y",
+        "z",
+    )
+
+    live.remove()
+    assert live.handle is None
+    assert sender.remove_calls == [("live-scatter", actor)]
+
+
+def test_scatter_live_frame_primary_uses_prepared_points(monkeypatch) -> None:
+    """Default live-frame mode should enqueue primary packed points, not an actor layer."""
+    fake_payload = dg.ScatterPayload(
+        data=b"primary-frame",
+        payload_format="xyz_f32_v0",
+        colormap="turbo",
+        point_count=3,
+        pack_ms=1.25,
+        axis_labels=("x", "y", "z"),
+        hover_meta=None,
+        frame_summary=None,
+    )
+
+    monkeypatch.setattr(widgets_module.Scatter3D, "prepare_points", lambda *a, **kw: fake_payload)
+
+    class Sender:
+        def __init__(self) -> None:
+            self.primary_calls: list[tuple] = []
+            self.actor_calls: list[tuple] = []
+            self.axis_calls: list[tuple] = []
+
+        def enqueue_set_scatter_points_packed(self, *args) -> None:
+            self.primary_calls.append(args)
+
+        def enqueue_add_scatter_actor_packed(self, *args) -> None:
+            self.actor_calls.append(args)
+
+        def enqueue_update_scatter_actor_packed(self, *args) -> None:
+            self.actor_calls.append(args)
+
+        def enqueue_set_scatter_tooltip_axis_labels(self, *args) -> None:
+            self.axis_calls.append(args)
+
+        def close(self) -> None:
+            pass
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+
+    s = dg.Scatter3D(DemoFrame(), x="x", y="y", z="z", id="primary-live", parent=None)
+    s._bind_live(handle.widget_handle(s.id))
+    live = s.create_live_frame(x="x", y="y", z="z", colormap="turbo")
+
+    live.replace(DemoFrame(), fit=True)
+
+    assert live.handle == 0
+    assert len(sender.primary_calls) == 1
+    call = sender.primary_calls[0]
+    assert call[:3] == ("primary-live", b"primary-frame", 1.25)
+    assert isinstance(call[3], float)
+    assert call[4:] == ("turbo", "xyz_f32_v0", True, True, None, None)
+    assert sender.axis_calls == [("primary-live", "x", "y", "z")]
+    assert sender.actor_calls == []
+
+    prepared = dg.ScatterPayload(
+        data=b"prepared-frame",
+        payload_format="xyz_f32_v0",
+        colormap="turbo",
+        point_count=3,
+        pack_ms=0.5,
+        axis_labels=("x", "y", "z"),
+        bounds=((0.0, 1.0, 2.0), (3.0, 4.0, 5.0)),
+        hover_meta=None,
+        frame_summary=None,
+    )
+    live.replace_prepared(prepared, fit=False)
+    assert len(sender.primary_calls) == 2
+    assert sender.primary_calls[1][:3] == ("primary-live", b"prepared-frame", 0.5)
+    assert sender.primary_calls[1][4:] == (
+        "turbo",
+        "xyz_f32_v0",
+        True,
+        False,
+        (0.0, 1.0, 2.0),
+        (3.0, 4.0, 5.0),
+    )
+
+
 # ── pre-live clear() does not replay stale primary metadata on startup ────────
 
 def test_scatter_clear_prelive_suppresses_hover_meta_on_startup() -> None:

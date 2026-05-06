@@ -344,6 +344,29 @@ def _pack_point_instances(
         return None
 
 
+def _xyz_bounds(
+    frame: Any,
+    x_col: str,
+    y_col: str,
+    z_col: str,
+) -> tuple[tuple[float, float, float], tuple[float, float, float]] | None:
+    try:
+        import numpy as np
+
+        xs = np.asarray(_get_frame_col(frame, x_col), dtype=np.float32)
+        ys = np.asarray(_get_frame_col(frame, y_col), dtype=np.float32)
+        zs = np.asarray(_get_frame_col(frame, z_col), dtype=np.float32)
+        finite = np.isfinite(xs) & np.isfinite(ys) & np.isfinite(zs)
+        if not bool(np.any(finite)):
+            return None
+        return (
+            (float(np.min(xs[finite])), float(np.min(ys[finite])), float(np.min(zs[finite]))),
+            (float(np.max(xs[finite])), float(np.max(ys[finite])), float(np.max(zs[finite]))),
+        )
+    except (ImportError, AttributeError, TypeError, ValueError, KeyError):
+        return None
+
+
 _SCATTER_COLORMAPS = {
     "viridis",
     "plasma",
@@ -560,6 +583,7 @@ class ScatterPayload:
     point_count: int
     pack_ms: float = 0.0
     axis_labels: tuple[str, str, str] = ("x", "y", "z")
+    bounds: tuple[tuple[float, float, float], tuple[float, float, float]] | None = None
     hover_meta: str | None = None
     frame_summary: Any | None = None
 
@@ -714,6 +738,201 @@ ScatterPickCallback = Callable[[ScatterPick], None]
 _ids = count(1)
 _AUTO_PARENT = object()
 _UNSET = object()
+
+
+class ScatterLiveFrame:
+    """Retained full-frame replacement handle for high-rate scatter sources.
+
+    ``Scatter3D.set_points()`` is the simple full-scene replacement API. A
+    ``ScatterLiveFrame`` keeps one actor stable and replaces only that actor's
+    point payload, which better matches sensors that publish a complete current
+    frame on every tick.
+    """
+
+    def __init__(
+        self,
+        scatter: "Scatter3D",
+        *,
+        capacity: int | None = None,
+        x: str | None = None,
+        y: str | None = None,
+        z: str | None = None,
+        color: Any | None = None,
+        colors: Any | None = None,
+        scalars: str | Any | None = None,
+        point_size: float | None = None,
+        point_sizes: str | Any | None = None,
+        opacity: float | None = None,
+        colormap: str | None = None,
+        clim: tuple[float, float] | None = None,
+        log_scale: bool | None = None,
+        nan_color: tuple[float, float, float] | None = None,
+        size_range: tuple[float, float] | None = None,
+        mode: str = "primary",
+    ) -> None:
+        if mode not in ("primary", "actor"):
+            raise ValueError("ScatterLiveFrame mode must be 'primary' or 'actor'")
+        self.scatter = scatter
+        self.capacity = None if capacity is None else max(0, int(capacity))
+        self.mode = mode
+        self.actor: int | None = None
+        self.x = x
+        self.y = y
+        self.z = z
+        self.color = color
+        self.colors = colors
+        self.scalars = scalars
+        self.point_size = point_size
+        self.point_sizes = point_sizes
+        self.opacity = opacity
+        self.colormap = colormap
+        self.clim = clim
+        self.log_scale = log_scale
+        self.nan_color = nan_color
+        self.size_range = size_range
+        self.replaces = 0
+
+    @property
+    def handle(self) -> int | None:
+        """Native actor handle for actor mode; ``0`` for retained primary mode."""
+        if self.mode == "primary":
+            return 0
+        return self.actor
+
+    def replace(
+        self,
+        frame: Any,
+        *,
+        x: str | None = None,
+        y: str | None = None,
+        z: str | None = None,
+        color: Any | None = _UNSET,
+        colors: Any | None = _UNSET,
+        scalars: str | Any | None = _UNSET,
+        point_size: float | None = None,
+        point_sizes: str | Any | None = _UNSET,
+        opacity: float | None = None,
+        colormap: str | None = None,
+        clim: tuple[float, float] | None = _UNSET,
+        log_scale: bool | None = None,
+        nan_color: tuple[float, float, float] | None = _UNSET,
+        size_range: tuple[float, float] | None = _UNSET,
+        fit: bool = False,
+    ) -> None:
+        """Replace this live layer with a complete new frame."""
+        xx = x if x is not None else (self.x or self.scatter.x)
+        yy = y if y is not None else (self.y or self.scatter.y)
+        zz = z if z is not None else (self.z or self.scatter.z)
+        cc = self.color if color is _UNSET else color
+        explicit_colors = self.colors if colors is _UNSET else colors
+        scalar_values = self.scalars if scalars is _UNSET else scalars
+        ps = self.point_size if point_size is None else float(point_size)
+        pss = self.point_sizes if point_sizes is _UNSET else point_sizes
+        alpha = self.opacity if opacity is None else float(opacity)
+        cmap = self.colormap if colormap is None else colormap
+        scalar_range = self.clim if clim is _UNSET else clim
+        use_log = self.log_scale if log_scale is None else bool(log_scale)
+        nan = self.nan_color if nan_color is _UNSET else nan_color
+        size_rng = self.size_range if size_range is _UNSET else size_range
+
+        point_size_value = self.scatter.point_size if ps is None else ps
+        opacity_value = self.scatter.opacity if alpha is None else alpha
+        colormap_value = self.scatter.colormap if cmap is None else cmap
+        log_scale_value = self.scatter.log_scale if use_log is None else use_log
+
+        if self.mode == "primary":
+            payload = self.scatter.prepare_points(
+                frame,
+                x=xx,
+                y=yy,
+                z=zz,
+                color=cc,
+                colors=explicit_colors,
+                scalars=scalar_values,
+                point_size=point_size_value,
+                point_sizes=pss,
+                opacity=opacity_value,
+                colormap=colormap_value,
+                clim=scalar_range,
+                log_scale=log_scale_value,
+                nan_color=nan,
+                size_range=size_rng,
+            )
+            self.scatter.set_prepared_points(
+                payload,
+                coalesce=True,
+                update_metadata=True,
+                fit=fit,
+            )
+            self.replaces += 1
+            return
+
+        kwargs = {
+            "x": xx,
+            "y": yy,
+            "z": zz,
+            "color": cc,
+            "colors": explicit_colors,
+            "scalars": scalar_values,
+            "point_size": point_size_value,
+            "point_sizes": pss,
+            "opacity": opacity_value,
+            "colormap": colormap_value,
+            "clim": scalar_range,
+            "log_scale": log_scale_value,
+            "nan_color": nan,
+            "size_range": size_rng,
+        }
+        if self.actor is None:
+            self.actor = self.scatter.add_points(frame, **kwargs)
+        else:
+            self.scatter.update_actor(self.actor, frame, **kwargs)
+        self.replaces += 1
+        if fit:
+            self.scatter.fit()
+
+    def replace_prepared(
+        self,
+        payload: ScatterPayload,
+        *,
+        fit: bool = False,
+        update_metadata: bool = True,
+    ) -> None:
+        """Replace this live frame with an already-packed scatter payload.
+
+        This is the lowest-overhead UI-thread path for high-rate sources: parse
+        and pack the sensor frame on a worker thread with
+        ``Scatter3D.prepare_points(...)``, then enqueue the prepared payload here.
+        """
+        if self.mode == "primary":
+            self.scatter.set_prepared_points(
+                payload,
+                coalesce=True,
+                update_metadata=update_metadata,
+                fit=fit,
+            )
+            self.replaces += 1
+            return
+
+        raise NotImplementedError(
+            "ScatterLiveFrame.replace_prepared() is currently supported only for mode='primary'"
+        )
+
+    def remove(self) -> None:
+        """Remove this live layer from the scatter."""
+        if self.mode == "primary":
+            self.scatter.clear()
+            return
+        if self.actor is not None:
+            self.scatter.remove_actor(self.actor)
+            self.actor = None
+
+    def set_visible(self, visible: bool) -> None:
+        """Show or hide this live layer."""
+        if self.mode == "primary":
+            return
+        if self.actor is not None:
+            self.scatter.set_actor_visibility(self.actor, bool(visible))
 
 
 def _route_value(label: str) -> str:
@@ -3998,6 +4217,7 @@ class Scatter3D(Widget):
         scalars: str | Any | None = None,
         point_size: float = 4.0,
         point_sizes: str | Any | None = None,
+        auto_point_size: bool = True,
         opacity: float = 1.0,
         clim: tuple[float, float] | None = None,
         log_scale: bool = False,
@@ -4025,6 +4245,12 @@ class Scatter3D(Widget):
         orientation_axes: bool = False,
         hover: "str | list[str] | None" = None,
         on_hover: "ScatterPickCallback | None" = None,
+        lod: bool = False,
+        lod_threshold: int = 200_000,
+        lod_factor: int = 8,
+        interactive_render_scale: float = 1.0,
+        auto_quality: bool = False,
+        quality_target_fps: float = 10.0,
         id: str | None = None,
         key: str | None = None,
         class_: str | None = None,
@@ -4042,6 +4268,7 @@ class Scatter3D(Widget):
         self.scalars = scalars
         self.point_size = float(point_size)
         self.point_sizes = point_sizes
+        self.auto_point_size = bool(auto_point_size)
         self.opacity = float(max(0.0, min(1.0, opacity)))
         self.clim = clim
         self.log_scale = bool(log_scale)
@@ -4088,9 +4315,12 @@ class Scatter3D(Widget):
         self._scalar_bar_title: str | None = scalar_bar_title
         self._orientation_axes_visible: bool = bool(orientation_axes)
         # Phase 5 — LOD and picking mode (not startup props; always set live)
-        self._lod_enabled: bool = False
-        self._lod_threshold: int = 200_000
-        self._lod_factor: int = 8
+        self._lod_enabled: bool = bool(lod)
+        self._lod_threshold: int = max(0, int(lod_threshold))
+        self._lod_factor: int = max(1, int(lod_factor))
+        self._interactive_render_scale: float = max(0.25, min(1.0, float(interactive_render_scale)))
+        self._auto_quality: bool = bool(auto_quality)
+        self._quality_target_fps: float = max(1.0, float(quality_target_fps))
         self._picking_mode: str = "point"
         self._on_select: Any | None = None
         self._camera_links: set["Scatter3D"] = set()
@@ -4337,6 +4567,7 @@ class Scatter3D(Widget):
             )
         else:
             raw = _pack_xyz_bytes(frame, x, y, z)
+        bounds = _xyz_bounds(frame, x, y, z)
         pack_ms = (time.perf_counter() - t0) * 1000.0
         if raw is None:
             raise RuntimeError(
@@ -4350,6 +4581,7 @@ class Scatter3D(Widget):
             point_count=cls._payload_point_count(data, payload_format),
             pack_ms=pack_ms,
             axis_labels=(str(x), str(y), str(z)),
+            bounds=bounds,
             hover_meta=cls._extract_hover_meta(frame, hover),
             frame_summary=summarize_frame(frame),
         )
@@ -4394,6 +4626,8 @@ class Scatter3D(Widget):
             payload_format=payload.payload_format,
             coalesce=coalesce,
             fit=fit,
+            bounds_min=payload.bounds[0] if payload.bounds is not None else None,
+            bounds_max=payload.bounds[1] if payload.bounds is not None else None,
         )
         if include_metadata:
             handle.enqueue_set_scatter_tooltip_axis_labels(*payload.axis_labels)
@@ -5001,6 +5235,59 @@ class Scatter3D(Widget):
 
     # ── Multi-actor API ──────────────────────────────────────────────────────
 
+    def create_live_frame(
+        self,
+        frame: Any = None,
+        *,
+        capacity: int | None = None,
+        x: str | None = None,
+        y: str | None = None,
+        z: str | None = None,
+        color: Any | None = None,
+        colors: Any | None = None,
+        scalars: str | Any | None = None,
+        point_size: float | None = None,
+        point_sizes: str | Any | None = None,
+        opacity: float | None = None,
+        colormap: str | None = None,
+        clim: tuple[float, float] | None = None,
+        log_scale: bool | None = None,
+        nan_color: tuple[float, float, float] | None = None,
+        size_range: tuple[float, float] | None = None,
+        mode: str = "primary",
+        fit: bool = False,
+    ) -> ScatterLiveFrame:
+        """Create a retained full-frame replacement layer.
+
+        This is the preferred path for sensors such as LiDAR that publish one
+        complete current frame per tick. The default ``mode="primary"`` uses
+        the primary scatter upload path without rebuilding the declarative
+        widget tree. Use ``mode="actor"`` when the live frame should be an
+        independent point layer alongside existing primary data.
+        """
+        live = ScatterLiveFrame(
+            self,
+            capacity=capacity,
+            x=x,
+            y=y,
+            z=z,
+            color=color,
+            colors=colors,
+            scalars=scalars,
+            point_size=point_size,
+            point_sizes=point_sizes,
+            opacity=opacity,
+            colormap=colormap,
+            clim=clim,
+            log_scale=log_scale,
+            nan_color=nan_color,
+            size_range=size_range,
+            mode=mode,
+        )
+        if frame is not None:
+            live.replace(frame, fit=fit)
+        return live
+
     @staticmethod
     def _coerce_point_input(
         frame_or_positions: Any,
@@ -5343,10 +5630,45 @@ class Scatter3D(Widget):
         release. LOD never changes colors or point sizes.
         """
         self._lod_enabled = bool(enabled)
-        self._lod_threshold = int(threshold)
-        self._lod_factor = int(factor)
+        self._lod_threshold = max(0, int(threshold))
+        self._lod_factor = max(1, int(factor))
         if (wh := self._live()) is not None:
             wh.enqueue_set_scatter_lod(self._lod_enabled, self._lod_threshold, self._lod_factor)
+
+    def set_auto_point_size(self, enabled: bool = True) -> None:
+        """Enable or disable automatic point-size shrinking for dense views.
+
+        When enabled, native may shrink rendered point sprites in dense scatter
+        views to reduce overdraw. Disable this when exact point size encodes a
+        data variable and should remain visually fixed.
+        """
+        self.auto_point_size = bool(enabled)
+        if (wh := self._live()) is not None:
+            wh.enqueue_set_scatter_auto_point_size(self.auto_point_size)
+
+    def set_interactive_render_scale(self, scale: float) -> None:
+        """Set lower-resolution scatter rendering used during orbit/pan interaction.
+
+        ``1.0`` keeps full native resolution. Values below ``1.0`` reduce scatter
+        scene fill cost while interacting, then return to full resolution when
+        interaction stops. UI text and normal widgets still render full-res.
+        """
+        self._interactive_render_scale = max(0.25, min(1.0, float(scale)))
+        if (wh := self._live()) is not None:
+            wh.enqueue_set_scatter_interactive_render_scale(self._interactive_render_scale)
+
+    def set_auto_quality(self, enabled: bool = True, target_fps: float | None = None) -> None:
+        """Enable native interaction quality budgeting for dense scatter scenes.
+
+        When enabled, native may temporarily lower interaction render scale
+        while orbiting or panning if recent frame time exceeds the target.
+        Quality resets when interaction stops.
+        """
+        self._auto_quality = bool(enabled)
+        if target_fps is not None:
+            self._quality_target_fps = max(1.0, float(target_fps))
+        if (wh := self._live()) is not None:
+            wh.enqueue_set_scatter_auto_quality(self._auto_quality, self._quality_target_fps)
 
     def enable_point_picking(self, on_pick=None) -> None:
         """Switch to point-picking mode (default). Left click picks the nearest point."""
@@ -6041,6 +6363,9 @@ class Scatter3D(Widget):
                 handle.enqueue_set_scatter_primary_hover_meta(meta)
         # Sync LOD config (may have been changed before going live).
         handle.enqueue_set_scatter_lod(self._lod_enabled, self._lod_threshold, self._lod_factor)
+        handle.enqueue_set_scatter_auto_point_size(self.auto_point_size)
+        handle.enqueue_set_scatter_interactive_render_scale(self._interactive_render_scale)
+        handle.enqueue_set_scatter_auto_quality(self._auto_quality, self._quality_target_fps)
         # Sync picking mode.
         handle.enqueue_set_scatter_picking_mode(self._picking_mode)
         # Sync point style override if set before going live.

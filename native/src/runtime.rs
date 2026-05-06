@@ -5,6 +5,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
+use bytemuck::{Pod, Zeroable};
 use pyo3::prelude::*;
 use serde_json::{json, Map, Value};
 use winit::application::ApplicationHandler;
@@ -112,6 +113,7 @@ fn coalesce_runtime_command_batch(commands: &mut Vec<Command>) {
         return;
     }
     let mut seen_scatter_updates = HashMap::new();
+    let mut seen_scatter_actor_updates = HashMap::new();
     let mut seen_line_plot_updates = HashMap::new();
     let mut filtered = Vec::with_capacity(commands.len());
     while let Some(command) = commands.pop() {
@@ -155,6 +157,15 @@ fn coalesce_runtime_command_batch(commands: &mut Vec<Command>) {
                     false
                 } else {
                     seen_line_plot_updates.insert(key, filtered.len());
+                    true
+                }
+            }
+            Command::UpdateScatterActorPacked { id, actor_id, .. } => {
+                let key = (id.clone(), *actor_id);
+                if seen_scatter_actor_updates.contains_key(&key) {
+                    false
+                } else {
+                    seen_scatter_actor_updates.insert(key, filtered.len());
                     true
                 }
             }
@@ -218,6 +229,7 @@ fn command_is_coalesced_scatter_points(command: &Command) -> bool {
     matches!(
         command,
         Command::SetScatterPointsPacked { coalesce: true, .. }
+            | Command::UpdateScatterActorPacked { .. }
     )
 }
 
@@ -667,6 +679,35 @@ fn decode_scatter_points_v1(
     }
 }
 
+fn bounds_from_scatter_point_instances_v1(
+    bytes: &[u8],
+) -> Result<Option<(glam::Vec3, glam::Vec3)>, DragonError> {
+    const STRIDE: usize = std::mem::size_of::<PointInstance>();
+    if bytes.len() % STRIDE != 0 {
+        return Err(DragonError::ParseError(format!(
+            "scatter point_instance_v1 payload length {} is not a multiple of {} (PointInstance size)",
+            bytes.len(),
+            STRIDE
+        )));
+    }
+    let mut min = glam::Vec3::splat(f32::INFINITY);
+    let mut max = glam::Vec3::splat(f32::NEG_INFINITY);
+    for chunk in bytes.chunks_exact(STRIDE) {
+        let point = bytemuck::pod_read_unaligned::<PointInstance>(chunk);
+        let [x, y, z] = point.position;
+        if x.is_finite() && y.is_finite() && z.is_finite() {
+            let p = glam::Vec3::new(x, y, z);
+            min = min.min(p);
+            max = max.max(p);
+        }
+    }
+    if min.x > max.x {
+        Ok(None)
+    } else {
+        Ok(Some((min, max)))
+    }
+}
+
 fn compute_scatter_bounds(pts: &[PointInstance]) -> Option<(glam::Vec3, glam::Vec3)> {
     let mut min = glam::Vec3::splat(f32::INFINITY);
     let mut max = glam::Vec3::splat(f32::NEG_INFINITY);
@@ -745,6 +786,259 @@ fn create_depth_texture(
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     (texture, view)
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct ScatterCompositeUniforms {
+    target_rect: [f32; 4],
+    screen_size: [f32; 2],
+    _pad: [f32; 2],
+}
+
+struct ScatterCompositeRenderer {
+    pipeline: wgpu::RenderPipeline,
+    bind_group_layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
+    uniform_buffer: wgpu::Buffer,
+}
+
+impl ScatterCompositeRenderer {
+    fn new(device: &wgpu::Device, surface_format: wgpu::TextureFormat) -> Self {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("scatter-composite"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("scatter/composite.wgsl").into()),
+        });
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("scatter-composite-bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("scatter-composite-pl"),
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
+        });
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("scatter-composite"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    blend: Some(wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: wgpu::BlendFactor::One,
+                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                            operation: wgpu::BlendOperation::Add,
+                        },
+                    }),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("scatter-composite-sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            ..Default::default()
+        });
+        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("scatter-composite-uniforms"),
+            size: std::mem::size_of::<ScatterCompositeUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        Self {
+            pipeline,
+            bind_group_layout,
+            sampler,
+            uniform_buffer,
+        }
+    }
+
+    fn create_bind_group(
+        &self,
+        device: &wgpu::Device,
+        source_view: &wgpu::TextureView,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("scatter-composite-bg"),
+            layout: &self.bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(source_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        })
+    }
+
+    fn update_uniforms(
+        &self,
+        queue: &wgpu::Queue,
+        target_rect: [f32; 4],
+        screen_width: u32,
+        screen_height: u32,
+    ) {
+        let uniforms = ScatterCompositeUniforms {
+            target_rect,
+            screen_size: [screen_width as f32, screen_height as f32],
+            _pad: [0.0; 2],
+        };
+        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+    }
+
+    fn render<'pass>(
+        &'pass self,
+        pass: &mut wgpu::RenderPass<'pass>,
+        bind_group: &'pass wgpu::BindGroup,
+    ) {
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, bind_group, &[]);
+        pass.draw(0..4, 0..1);
+    }
+}
+
+struct ScatterRenderTarget {
+    _color_texture: wgpu::Texture,
+    color_view: wgpu::TextureView,
+    _depth_texture: wgpu::Texture,
+    depth_view: wgpu::TextureView,
+    bind_group: wgpu::BindGroup,
+    width: u32,
+    height: u32,
+    format: wgpu::TextureFormat,
+}
+
+impl ScatterRenderTarget {
+    fn new(
+        device: &wgpu::Device,
+        compositor: &ScatterCompositeRenderer,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+    ) -> Self {
+        let color_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("scatter-render-scale-color"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let color_view = color_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("scatter-render-scale-depth"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: crate::DEPTH_STENCIL_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group = compositor.create_bind_group(device, &color_view);
+        Self {
+            _color_texture: color_texture,
+            color_view,
+            _depth_texture: depth_texture,
+            depth_view,
+            bind_group,
+            width,
+            height,
+            format,
+        }
+    }
+
+    fn matches(&self, width: u32, height: u32, format: wgpu::TextureFormat) -> bool {
+        self.width == width && self.height == height && self.format == format
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct FrameRenderTimings {
+    total_ms: f64,
+    prepare_ms: f64,
+    acquire_ms: f64,
+    encode_ms: f64,
+    submit_ms: f64,
+    present_ms: f64,
+}
+
+impl FrameRenderTimings {
+    fn work_ms(self) -> f64 {
+        self.prepare_ms + self.encode_ms + self.submit_ms
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3965,6 +4259,7 @@ struct WgpuState {
     visible_scatter_order: Vec<String>,
     primitives: Option<PrimitivesRenderer>,
     images: Option<ImageRenderer>,
+    scatter_compositor: ScatterCompositeRenderer,
     html_reports: HtmlReportWebViewManager,
     widget_tree: Option<WidgetNode>,
     widget_kinds: HashMap<String, WidgetKind>,
@@ -4087,6 +4382,8 @@ fn loading_rect(rect: [f32; 4], color: [f32; 4], radius: f32) -> RectInstance {
 /// Per-widget scatter runtime state.
 struct ScatterRuntime {
     widget: ScatterWidget,
+    render_target: Option<ScatterRenderTarget>,
+    quality_last_change: Instant,
     /// CPU copy of point instances used for picking.
     points: Vec<PointInstance>,
     metrics: ScatterMetrics,
@@ -4122,6 +4419,60 @@ impl ScatterRuntime {
             mx = mx.max(mmx);
         }
         (mn, mx)
+    }
+
+    fn set_interaction_lod_active(
+        &mut self,
+        active: bool,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+    ) {
+        if active {
+            self.widget.lod_active = true;
+            self.metrics.last_lod_ms = if self.widget.lod_enabled {
+                self.widget.refresh_lod_buffers(&self.points, device, queue)
+            } else {
+                self.widget.refresh_point_size_scale(queue);
+                0.0
+            };
+        } else {
+            self.widget.set_lod_active(false, queue);
+            self.widget.set_quality_level(0);
+            self.metrics.last_lod_ms = 0.0;
+        }
+    }
+
+    fn update_quality_budget(&mut self, frame_ms: f64, now: Instant) -> bool {
+        if !self.widget.auto_quality_enabled || !self.widget.lod_active {
+            if self.widget.quality_level != 0 {
+                self.widget.set_quality_level(0);
+                self.quality_last_change = now;
+                return true;
+            }
+            return false;
+        }
+
+        if now.duration_since(self.quality_last_change) < Duration::from_millis(180) {
+            return false;
+        }
+
+        let target_ms = self.widget.quality_target_frame_ms as f64;
+        let current = self.widget.quality_level;
+        let next = if frame_ms > target_ms * 1.15 && current < 3 {
+            current + 1
+        } else if frame_ms < target_ms * 0.65 && current > 0 {
+            current - 1
+        } else {
+            current
+        };
+
+        if next != current {
+            self.widget.set_quality_level(next);
+            self.quality_last_change = now;
+            true
+        } else {
+            false
+        }
     }
 
     /// Pick the closest point across the primary buffer and all visible extra actors,
@@ -5155,6 +5506,8 @@ impl WgpuState {
                     scatter_id,
                     ScatterRuntime {
                         widget,
+                        render_target: None,
+                        quality_last_change: Instant::now(),
                         points: pts,
                         metrics: ScatterMetrics::default(),
                         fitted_once: matches!(status, ScatterPayloadStatus::Ok),
@@ -5183,6 +5536,7 @@ impl WgpuState {
             .widget_tree
             .as_ref()
             .map(|_| ImageRenderer::new(&device, &queue, config.format, width, height));
+        let scatter_compositor = ScatterCompositeRenderer::new(&device, config.format);
 
         let text = spec
             .widget_tree
@@ -5240,6 +5594,7 @@ impl WgpuState {
             visible_scatter_order: Vec::new(),
             primitives,
             images,
+            scatter_compositor,
             html_reports: HtmlReportWebViewManager::new(window.as_ref()),
             widget_tree: spec.widget_tree,
             widget_kinds,
@@ -7138,13 +7493,19 @@ impl WgpuState {
         pts: Vec<PointInstance>,
         hover_meta: Option<&str>,
         tooltip_axis_labels: &[String; 3],
+        payload_bytes: usize,
+        decode_ms: f64,
+        total_t0: Instant,
     ) -> bool {
         let Some(runtime) = self.scatters.get_mut(id) else {
             return false;
         };
+        let point_count = pts.len();
+        let upload_t0 = Instant::now();
         runtime
             .widget
             .add_actor(actor_id, pts, &self.device, &self.queue);
+        let upload_ms = upload_t0.elapsed().as_secs_f64() * 1000.0;
         if let Some(actor) = runtime.widget.extra_actors.get_mut(&actor_id) {
             actor.tooltip_axis_labels = tooltip_axis_labels.clone();
             if let Some(meta_json) = hover_meta {
@@ -7157,10 +7518,42 @@ impl WgpuState {
             }
         }
         let (bounds_min, bounds_max) = runtime.merged_bounds();
+        if !runtime.fitted_once && runtime.widget.has_visible_viewport() {
+            let (fit_min, fit_max) = if runtime.points.is_empty() {
+                runtime
+                    .widget
+                    .merged_extra_bounds()
+                    .unwrap_or((bounds_min, bounds_max))
+            } else {
+                (bounds_min, bounds_max)
+            };
+            runtime.widget.fit_to_bounds(fit_min, fit_max, &self.queue);
+            runtime.fitted_once = true;
+        }
+        let grid_t0 = Instant::now();
         runtime
             .widget
             .refresh_grid(bounds_min, bounds_max, &self.device, &self.queue);
+        let grid_ms = grid_t0.elapsed().as_secs_f64() * 1000.0;
+        let overlay_t0 = Instant::now();
         runtime.widget.refresh_overlays(&self.device, &self.queue);
+        let overlay_ms = overlay_t0.elapsed().as_secs_f64() * 1000.0;
+        runtime.metrics = ScatterMetrics {
+            updates: runtime.metrics.updates + 1,
+            last_point_count: point_count,
+            last_payload_bytes: payload_bytes,
+            last_pack_ms: 0.0,
+            last_queue_latency_ms: 0.0,
+            last_decode_ms: decode_ms,
+            last_bounds_ms: 0.0,
+            last_upload_ms: upload_ms,
+            last_primary_upload_ms: 0.0,
+            last_lod_ms: runtime.metrics.last_lod_ms,
+            last_grid_ms: grid_ms,
+            last_overlay_ms: overlay_ms,
+            last_total_native_ms: total_t0.elapsed().as_secs_f64() * 1000.0,
+            last_render_encode_ms: runtime.metrics.last_render_encode_ms,
+        };
         true
     }
 
@@ -7170,22 +7563,63 @@ impl WgpuState {
         actor_id: u32,
         pts: Vec<PointInstance>,
         tooltip_axis_labels: &[String; 3],
+        payload_bytes: usize,
+        decode_ms: f64,
+        total_t0: Instant,
     ) -> bool {
         let Some(runtime) = self.scatters.get_mut(id) else {
             return false;
         };
+        if !runtime.widget.extra_actors.contains_key(&actor_id) {
+            return false;
+        }
+        let point_count = pts.len();
+        let upload_t0 = Instant::now();
         runtime
             .widget
             .update_actor(actor_id, pts, &self.device, &self.queue);
+        let upload_ms = upload_t0.elapsed().as_secs_f64() * 1000.0;
         if let Some(actor) = runtime.widget.extra_actors.get_mut(&actor_id) {
             actor.tooltip_axis_labels = tooltip_axis_labels.clone();
             actor.pick_cache = None;
         }
         let (bounds_min, bounds_max) = runtime.merged_bounds();
+        if !runtime.fitted_once && runtime.widget.has_visible_viewport() {
+            let (fit_min, fit_max) = if runtime.points.is_empty() {
+                runtime
+                    .widget
+                    .merged_extra_bounds()
+                    .unwrap_or((bounds_min, bounds_max))
+            } else {
+                (bounds_min, bounds_max)
+            };
+            runtime.widget.fit_to_bounds(fit_min, fit_max, &self.queue);
+            runtime.fitted_once = true;
+        }
+        let grid_t0 = Instant::now();
         runtime
             .widget
             .refresh_grid(bounds_min, bounds_max, &self.device, &self.queue);
+        let grid_ms = grid_t0.elapsed().as_secs_f64() * 1000.0;
+        let overlay_t0 = Instant::now();
         runtime.widget.refresh_overlays(&self.device, &self.queue);
+        let overlay_ms = overlay_t0.elapsed().as_secs_f64() * 1000.0;
+        runtime.metrics = ScatterMetrics {
+            updates: runtime.metrics.updates + 1,
+            last_point_count: point_count,
+            last_payload_bytes: payload_bytes,
+            last_pack_ms: 0.0,
+            last_queue_latency_ms: 0.0,
+            last_decode_ms: decode_ms,
+            last_bounds_ms: 0.0,
+            last_upload_ms: upload_ms,
+            last_primary_upload_ms: 0.0,
+            last_lod_ms: runtime.metrics.last_lod_ms,
+            last_grid_ms: grid_ms,
+            last_overlay_ms: overlay_ms,
+            last_total_native_ms: total_t0.elapsed().as_secs_f64() * 1000.0,
+            last_render_encode_ms: runtime.metrics.last_render_encode_ms,
+        };
         true
     }
 
@@ -7322,6 +7756,8 @@ impl WgpuState {
                     id.clone(),
                     ScatterRuntime {
                         widget,
+                        render_target: None,
+                        quality_last_change: Instant::now(),
                         points: pts,
                         metrics: ScatterMetrics::default(),
                         fitted_once: matches!(status, ScatterPayloadStatus::Ok),
@@ -8249,6 +8685,153 @@ impl WgpuState {
             .map(|t| (now_epoch_ms() - t.enqueue_epoch_ms).max(0.0))
             .unwrap_or(0.0);
 
+        if data_format == ScatterPayloadFormat::PointInstanceV1 {
+            let telemetry_bounds = telemetry.as_ref().and_then(|t| t.bounds);
+            let bounds_t0 = Instant::now();
+            let maybe_bounds = if let Some((min, max)) = telemetry_bounds {
+                Some((glam::Vec3::from_array(min), glam::Vec3::from_array(max)))
+            } else {
+                match bounds_from_scatter_point_instances_v1(&xyz) {
+                    Ok(bounds) => bounds,
+                    Err(e) => {
+                        let msg = e.to_string();
+                        eprintln!("DragonGUI: {msg}");
+                        runtime.payload_status = ScatterPayloadStatus::DecodeError(msg.clone());
+                        return Err(DragonError::Runtime(msg));
+                    }
+                }
+            };
+            let bounds_ms = if telemetry_bounds.is_some() {
+                0.0
+            } else {
+                bounds_t0.elapsed().as_secs_f64() * 1000.0
+            };
+            let point_count = xyz.len() / std::mem::size_of::<PointInstance>();
+            if maybe_bounds.is_none() && point_count > 0 {
+                runtime.payload_format = data_format;
+                runtime.points.clear();
+                runtime.primary_pick_cache = None;
+                runtime.payload_status = ScatterPayloadStatus::AllNonFinite;
+                runtime.primary_hover_meta = Vec::new();
+                let cleared_hover_label = runtime.widget.hover_label.take().is_some();
+                runtime.data_min = glam::Vec3::ZERO;
+                runtime.data_max = glam::Vec3::ZERO;
+                let upload_timings = runtime.widget.set_points(&self.device, &self.queue, &[]);
+                let grid_t0 = Instant::now();
+                runtime.widget.refresh_grid(
+                    glam::Vec3::ZERO,
+                    glam::Vec3::ZERO,
+                    &self.device,
+                    &self.queue,
+                );
+                let grid_ms = grid_t0.elapsed().as_secs_f64() * 1000.0;
+                let overlay_t0 = Instant::now();
+                let overlay_ms = if cleared_hover_label {
+                    runtime.widget.refresh_overlays(&self.device, &self.queue);
+                    overlay_t0.elapsed().as_secs_f64() * 1000.0
+                } else {
+                    0.0
+                };
+                let pack_ms = telemetry.as_ref().map(|t| t.pack_ms).unwrap_or(0.0);
+                let reported_payload_bytes = telemetry
+                    .as_ref()
+                    .map(|t| t.payload_bytes)
+                    .unwrap_or(xyz.len());
+                runtime.metrics = ScatterMetrics {
+                    updates: runtime.metrics.updates + 1,
+                    last_point_count: 0,
+                    last_payload_bytes: reported_payload_bytes,
+                    last_pack_ms: pack_ms,
+                    last_queue_latency_ms: queue_latency_ms,
+                    last_decode_ms: 0.0,
+                    last_bounds_ms: bounds_ms,
+                    last_upload_ms: upload_timings.primary_ms
+                        + upload_timings.lod_ms
+                        + grid_ms
+                        + overlay_ms,
+                    last_primary_upload_ms: upload_timings.primary_ms,
+                    last_lod_ms: upload_timings.lod_ms,
+                    last_grid_ms: grid_ms,
+                    last_overlay_ms: overlay_ms,
+                    last_total_native_ms: total_t0.elapsed().as_secs_f64() * 1000.0,
+                    last_render_encode_ms: runtime.metrics.last_render_encode_ms,
+                };
+                return Ok(true);
+            }
+            if let Some(upload_timings) =
+                runtime
+                    .widget
+                    .set_point_instances_raw(&self.device, &self.queue, &xyz)
+            {
+                let (data_min, data_max) =
+                    maybe_bounds.unwrap_or((glam::Vec3::ZERO, glam::Vec3::ZERO));
+                runtime.payload_format = data_format;
+                runtime.points.clear();
+                runtime.primary_pick_cache = None;
+                runtime.primary_hover_meta = Vec::new();
+                let cleared_hover_label = runtime.widget.hover_label.take().is_some();
+                runtime.data_min = data_min;
+                runtime.data_max = data_max;
+                runtime.payload_status = ScatterPayloadStatus::Ok;
+
+                let mut camera_fitted = false;
+                if (fit || !runtime.fitted_once)
+                    && point_count > 0
+                    && runtime.widget.has_visible_viewport()
+                {
+                    runtime
+                        .widget
+                        .fit_to_bounds(data_min, data_max, &self.queue);
+                    runtime.fitted_once = true;
+                    camera_fitted = true;
+                } else if fit {
+                    runtime.fitted_once = false;
+                }
+                let grid_t0 = Instant::now();
+                runtime
+                    .widget
+                    .refresh_grid(data_min, data_max, &self.device, &self.queue);
+                let grid_ms = grid_t0.elapsed().as_secs_f64() * 1000.0;
+                let overlay_t0 = Instant::now();
+                let overlay_ms = if camera_fitted || cleared_hover_label {
+                    runtime.widget.refresh_overlays(&self.device, &self.queue);
+                    overlay_t0.elapsed().as_secs_f64() * 1000.0
+                } else {
+                    0.0
+                };
+
+                let pack_ms = telemetry.as_ref().map(|t| t.pack_ms).unwrap_or(0.0);
+                let reported_point_count = telemetry
+                    .as_ref()
+                    .map(|t| t.point_count)
+                    .unwrap_or(point_count);
+                let reported_payload_bytes = telemetry
+                    .as_ref()
+                    .map(|t| t.payload_bytes)
+                    .unwrap_or(xyz.len());
+                runtime.metrics = ScatterMetrics {
+                    updates: runtime.metrics.updates + 1,
+                    last_point_count: reported_point_count,
+                    last_payload_bytes: reported_payload_bytes,
+                    last_pack_ms: pack_ms,
+                    last_queue_latency_ms: queue_latency_ms,
+                    last_decode_ms: 0.0,
+                    last_bounds_ms: bounds_ms,
+                    last_upload_ms: upload_timings.primary_ms
+                        + upload_timings.lod_ms
+                        + grid_ms
+                        + overlay_ms,
+                    last_primary_upload_ms: upload_timings.primary_ms,
+                    last_lod_ms: upload_timings.lod_ms,
+                    last_grid_ms: grid_ms,
+                    last_overlay_ms: overlay_ms,
+                    last_total_native_ms: total_t0.elapsed().as_secs_f64() * 1000.0,
+                    last_render_encode_ms: runtime.metrics.last_render_encode_ms,
+                };
+                return Ok(true);
+            }
+        }
+
         let decode_t0 = Instant::now();
         let mut decoded = std::mem::take(&mut runtime.points);
         let result = match data_format {
@@ -8594,7 +9177,135 @@ impl WgpuState {
         })
     }
 
+    fn scatter_runtime_snapshot(
+        id: Option<&str>,
+        rt: &ScatterRuntime,
+        include_detail: bool,
+    ) -> Value {
+        let mut map = Map::new();
+        if let Some(id) = id {
+            map.insert("id".to_string(), json!(id));
+        }
+        map.insert("updates".to_string(), json!(rt.metrics.updates));
+        map.insert(
+            "last_point_count".to_string(),
+            json!(rt.metrics.last_point_count),
+        );
+        map.insert(
+            "last_payload_bytes".to_string(),
+            json!(rt.metrics.last_payload_bytes),
+        );
+        map.insert("last_pack_ms".to_string(), json!(rt.metrics.last_pack_ms));
+        map.insert(
+            "last_queue_latency_ms".to_string(),
+            json!(rt.metrics.last_queue_latency_ms),
+        );
+        map.insert(
+            "last_decode_ms".to_string(),
+            json!(rt.metrics.last_decode_ms),
+        );
+        map.insert(
+            "last_bounds_ms".to_string(),
+            json!(rt.metrics.last_bounds_ms),
+        );
+        map.insert(
+            "last_upload_ms".to_string(),
+            json!(rt.metrics.last_upload_ms),
+        );
+        map.insert(
+            "last_primary_upload_ms".to_string(),
+            json!(rt.metrics.last_primary_upload_ms),
+        );
+        map.insert("last_lod_ms".to_string(), json!(rt.metrics.last_lod_ms));
+        map.insert("last_grid_ms".to_string(), json!(rt.metrics.last_grid_ms));
+        map.insert(
+            "last_overlay_ms".to_string(),
+            json!(rt.metrics.last_overlay_ms),
+        );
+        map.insert(
+            "last_total_native_ms".to_string(),
+            json!(rt.metrics.last_total_native_ms),
+        );
+        map.insert(
+            "last_render_encode_ms".to_string(),
+            json!(rt.metrics.last_render_encode_ms),
+        );
+        map.insert(
+            "payload_status".to_string(),
+            json!(format!("{:?}", rt.payload_status)),
+        );
+        map.insert(
+            "effective_draw_point_count".to_string(),
+            json!(rt.widget.effective_draw_point_count()),
+        );
+        map.insert(
+            "auto_point_size".to_string(),
+            json!(rt.widget.auto_point_size),
+        );
+        map.insert(
+            "point_size_scale".to_string(),
+            json!(rt.widget.point_size_scale),
+        );
+        map.insert(
+            "interactive_render_scale".to_string(),
+            json!(rt.widget.interactive_render_scale),
+        );
+        map.insert(
+            "active_render_scale".to_string(),
+            json!(rt.widget.active_render_scale()),
+        );
+        map.insert(
+            "auto_quality".to_string(),
+            json!(rt.widget.auto_quality_enabled),
+        );
+        map.insert("quality_level".to_string(), json!(rt.widget.quality_level));
+        map.insert(
+            "quality_target_frame_ms".to_string(),
+            json!(rt.widget.quality_target_frame_ms),
+        );
+
+        if include_detail {
+            let cs = rt.widget.camera_state();
+            map.insert("fitted_once".to_string(), json!(rt.fitted_once));
+            map.insert(
+                "payload_format".to_string(),
+                json!(rt.payload_format.as_str()),
+            );
+            map.insert(
+                "camera".to_string(),
+                json!({
+                    "target": cs.target,
+                    "distance": cs.distance,
+                    "yaw": cs.yaw,
+                    "pitch": cs.pitch,
+                    "parallel": cs.parallel,
+                }),
+            );
+            map.insert(
+                "lod".to_string(),
+                json!({
+                    "enabled": rt.widget.lod_enabled,
+                    "active": rt.widget.lod_active,
+                    "threshold": rt.widget.lod_threshold,
+                    "factor": rt.widget.lod_factor,
+                }),
+            );
+        }
+
+        Value::Object(map)
+    }
+
     fn debug_snapshot_value(&self) -> Value {
+        let scatter = self.visible_scatter_order.first().and_then(|id| {
+            self.scatters
+                .get(id)
+                .map(|rt| Self::scatter_runtime_snapshot(Some(id), rt, false))
+        });
+        let scatters = self
+            .scatters
+            .iter()
+            .map(|(id, rt)| (id.clone(), Self::scatter_runtime_snapshot(None, rt, true)))
+            .collect::<serde_json::Map<_, _>>();
         json!({
             "window": {
                 "width": self.config.width,
@@ -8631,61 +9342,8 @@ impl WgpuState {
                 "caret_positions": &self.caret_positions,
             },
             "resources": {
-                "scatter": self.visible_scatter_order.first()
-                    .and_then(|id| self.scatters.get(id).map(|rt| (id, rt)))
-                    .map(|(id, rt)| json!({
-                    "id": id,
-                    "updates": rt.metrics.updates,
-                    "last_point_count": rt.metrics.last_point_count,
-                    "last_payload_bytes": rt.metrics.last_payload_bytes,
-                    "last_pack_ms": rt.metrics.last_pack_ms,
-                    "last_queue_latency_ms": rt.metrics.last_queue_latency_ms,
-                    "last_decode_ms": rt.metrics.last_decode_ms,
-                    "last_bounds_ms": rt.metrics.last_bounds_ms,
-                    "last_upload_ms": rt.metrics.last_upload_ms,
-                    "last_primary_upload_ms": rt.metrics.last_primary_upload_ms,
-                    "last_lod_ms": rt.metrics.last_lod_ms,
-                    "last_grid_ms": rt.metrics.last_grid_ms,
-                    "last_overlay_ms": rt.metrics.last_overlay_ms,
-                    "last_total_native_ms": rt.metrics.last_total_native_ms,
-                    "last_render_encode_ms": rt.metrics.last_render_encode_ms,
-                    "payload_status": format!("{:?}", rt.payload_status),
-                })),
-                "scatters": self.scatters.iter().map(|(id, rt)| {
-                    let cs = rt.widget.camera_state();
-                    (id.clone(), json!({
-                        "updates": rt.metrics.updates,
-                        "last_point_count": rt.metrics.last_point_count,
-                        "last_payload_bytes": rt.metrics.last_payload_bytes,
-                        "last_pack_ms": rt.metrics.last_pack_ms,
-                        "last_queue_latency_ms": rt.metrics.last_queue_latency_ms,
-                        "last_decode_ms": rt.metrics.last_decode_ms,
-                        "last_bounds_ms": rt.metrics.last_bounds_ms,
-                        "last_upload_ms": rt.metrics.last_upload_ms,
-                        "last_primary_upload_ms": rt.metrics.last_primary_upload_ms,
-                        "last_lod_ms": rt.metrics.last_lod_ms,
-                        "last_grid_ms": rt.metrics.last_grid_ms,
-                        "last_overlay_ms": rt.metrics.last_overlay_ms,
-                        "last_total_native_ms": rt.metrics.last_total_native_ms,
-                        "last_render_encode_ms": rt.metrics.last_render_encode_ms,
-                        "payload_status": format!("{:?}", rt.payload_status),
-                        "fitted_once": rt.fitted_once,
-                        "payload_format": rt.payload_format.as_str(),
-                        "camera": {
-                            "target": cs.target,
-                            "distance": cs.distance,
-                            "yaw": cs.yaw,
-                            "pitch": cs.pitch,
-                            "parallel": cs.parallel,
-                        },
-                        "lod": {
-                            "enabled": rt.widget.lod_enabled,
-                            "active": rt.widget.lod_active,
-                            "threshold": rt.widget.lod_threshold,
-                            "factor": rt.widget.lod_factor,
-                        },
-                    }))
-                }).collect::<serde_json::Map<_, _>>(),
+                "scatter": scatter,
+                "scatters": scatters,
                 "registry": self.resources.snapshot(),
                 "tables": {
                     "widgets": self.widget_state.as_ref().map(|state| state.tables.len()).unwrap_or(0),
@@ -9150,7 +9808,10 @@ impl WgpuState {
         self.current_layout.as_ref()?.rects.get(&id).copied()
     }
 
-    fn render(&mut self) -> Result<(), DragonError> {
+    fn render(&mut self) -> Result<FrameRenderTimings, DragonError> {
+        let frame_t0 = Instant::now();
+        let mut timings = FrameRenderTimings::default();
+        let prepare_t0 = Instant::now();
         self.sync_html_reports();
 
         // Prepare text glyph uploads before acquiring the render pass (avoids
@@ -9202,7 +9863,9 @@ impl WgpuState {
                 t.prepare(device, queue);
             }
         }
+        timings.prepare_ms = prepare_t0.elapsed().as_secs_f64() * 1000.0;
 
+        let acquire_t0 = Instant::now();
         let texture = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) => t,
             wgpu::CurrentSurfaceTexture::Suboptimal(t) => {
@@ -9211,15 +9874,21 @@ impl WgpuState {
             }
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 self.surface.configure(&self.device, &self.config);
-                return Ok(());
+                timings.acquire_ms = acquire_t0.elapsed().as_secs_f64() * 1000.0;
+                timings.total_ms = frame_t0.elapsed().as_secs_f64() * 1000.0;
+                return Ok(timings);
             }
             wgpu::CurrentSurfaceTexture::Timeout
             | wgpu::CurrentSurfaceTexture::Occluded
             | wgpu::CurrentSurfaceTexture::Validation => {
-                return Ok(());
+                timings.acquire_ms = acquire_t0.elapsed().as_secs_f64() * 1000.0;
+                timings.total_ms = frame_t0.elapsed().as_secs_f64() * 1000.0;
+                return Ok(timings);
             }
         };
+        timings.acquire_ms = acquire_t0.elapsed().as_secs_f64() * 1000.0;
 
+        let encode_t0 = Instant::now();
         let view = texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -9277,7 +9946,97 @@ impl WgpuState {
         for scatter_id in &scatter_order {
             if let Some(runtime) = self.scatters.get_mut(scatter_id) {
                 let render_t0 = Instant::now();
-                {
+                let render_scale = runtime.widget.active_render_scale();
+                if render_scale < 0.999 && runtime.widget.width > 0 && runtime.widget.height > 0 {
+                    let (target_width, target_height) =
+                        runtime.widget.scaled_render_target_size(render_scale);
+                    let recreate = runtime
+                        .render_target
+                        .as_ref()
+                        .map(|target| {
+                            !target.matches(target_width, target_height, self.config.format)
+                        })
+                        .unwrap_or(true);
+                    if recreate {
+                        runtime.render_target = Some(ScatterRenderTarget::new(
+                            &self.device,
+                            &self.scatter_compositor,
+                            target_width,
+                            target_height,
+                            self.config.format,
+                        ));
+                    }
+                    let target = runtime.render_target.as_ref().unwrap();
+                    {
+                        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("dragongui-scatter-scaled"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view: &target.color_view,
+                                resolve_target: None,
+                                depth_slice: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Clear(wgpu::Color {
+                                        r: 0.0,
+                                        g: 0.0,
+                                        b: 0.0,
+                                        a: 0.0,
+                                    }),
+                                    store: wgpu::StoreOp::Store,
+                                },
+                            })],
+                            depth_stencil_attachment: Some(
+                                wgpu::RenderPassDepthStencilAttachment {
+                                    view: &target.depth_view,
+                                    depth_ops: Some(wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(1.0),
+                                        store: wgpu::StoreOp::Store,
+                                    }),
+                                    stencil_ops: Some(wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(0),
+                                        store: wgpu::StoreOp::Store,
+                                    }),
+                                },
+                            ),
+                            timestamp_writes: None,
+                            occlusion_query_set: None,
+                            multiview_mask: None,
+                        });
+                        runtime
+                            .widget
+                            .render_offscreen(&mut pass, target_width, target_height);
+                    }
+                    self.scatter_compositor.update_uniforms(
+                        &self.queue,
+                        [
+                            runtime.widget.offset[0],
+                            runtime.widget.offset[1],
+                            runtime.widget.width as f32,
+                            runtime.widget.height as f32,
+                        ],
+                        self.config.width,
+                        self.config.height,
+                    );
+                    {
+                        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                            label: Some("dragongui-scatter-composite"),
+                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                view: &view,
+                                resolve_target: None,
+                                depth_slice: None,
+                                ops: wgpu::Operations {
+                                    load: wgpu::LoadOp::Load,
+                                    store: wgpu::StoreOp::Store,
+                                },
+                            })],
+                            depth_stencil_attachment: None,
+                            timestamp_writes: None,
+                            occlusion_query_set: None,
+                            multiview_mask: None,
+                        });
+                        self.scatter_compositor
+                            .render(&mut pass, &target.bind_group);
+                    }
+                } else {
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("dragongui-scatter"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -9359,11 +10118,17 @@ impl WgpuState {
                 t.render_overlays(&mut pass);
             }
         }
+        timings.encode_ms = encode_t0.elapsed().as_secs_f64() * 1000.0;
 
+        let submit_t0 = Instant::now();
         self.queue.submit(std::iter::once(encoder.finish()));
+        timings.submit_ms = submit_t0.elapsed().as_secs_f64() * 1000.0;
+        let present_t0 = Instant::now();
         texture.present();
+        timings.present_ms = present_t0.elapsed().as_secs_f64() * 1000.0;
+        timings.total_ms = frame_t0.elapsed().as_secs_f64() * 1000.0;
 
-        Ok(())
+        Ok(timings)
     }
 }
 
@@ -9415,6 +10180,7 @@ fn panel_scrollbar_axis_hit(
 const SLIDER_CALLBACK_INTERVAL: Duration = Duration::from_millis(33);
 const SLIDER_CHANGE_EPSILON: f32 = 0.000_001;
 const COMMAND_HISTORY_LIMIT: usize = 64;
+const FRAME_TELEMETRY_WINDOW: Duration = Duration::from_secs(1);
 
 struct SliderChangeDispatch {
     widget_id: String,
@@ -9564,6 +10330,14 @@ struct DragonApp {
     frames_rendered: u32,
     upload_ms: f64,
     frame_ms_total: f64,
+    last_frame_ms: f64,
+    last_frame_work_ms: f64,
+    last_frame_prepare_ms: f64,
+    last_frame_acquire_ms: f64,
+    last_frame_encode_ms: f64,
+    last_frame_submit_ms: f64,
+    last_frame_present_ms: f64,
+    frame_timestamps: VecDeque<Instant>,
     last_mouse_pos: Option<[f32; 2]>,
     orbit_active: bool,
     pan_active: bool,
@@ -9621,6 +10395,14 @@ impl DragonApp {
             frames_rendered: 0,
             upload_ms: 0.0,
             frame_ms_total: 0.0,
+            last_frame_ms: 0.0,
+            last_frame_work_ms: 0.0,
+            last_frame_prepare_ms: 0.0,
+            last_frame_acquire_ms: 0.0,
+            last_frame_encode_ms: 0.0,
+            last_frame_submit_ms: 0.0,
+            last_frame_present_ms: 0.0,
+            frame_timestamps: VecDeque::with_capacity(120),
             last_mouse_pos: None,
             orbit_active: false,
             pan_active: false,
@@ -9662,6 +10444,53 @@ impl DragonApp {
             upload_ms: self.upload_ms,
             frame_ms,
             debug_snapshot: self.debug_snapshot_json(),
+        }
+    }
+
+    fn record_frame_telemetry(&mut self, timings: FrameRenderTimings) {
+        self.last_frame_ms = timings.total_ms;
+        self.last_frame_work_ms = timings.work_ms();
+        self.last_frame_prepare_ms = timings.prepare_ms;
+        self.last_frame_acquire_ms = timings.acquire_ms;
+        self.last_frame_encode_ms = timings.encode_ms;
+        self.last_frame_submit_ms = timings.submit_ms;
+        self.last_frame_present_ms = timings.present_ms;
+        self.frame_ms_total += timings.total_ms;
+        self.frames_rendered += 1;
+
+        let now = Instant::now();
+        self.frame_timestamps.push_back(now);
+        while self
+            .frame_timestamps
+            .front()
+            .is_some_and(|front| now.duration_since(*front) > FRAME_TELEMETRY_WINDOW)
+        {
+            self.frame_timestamps.pop_front();
+        }
+    }
+
+    fn update_scatter_quality_budgets(&mut self, frame_ms: f64) -> bool {
+        let now = Instant::now();
+        self.gpu.as_mut().is_some_and(|gpu| {
+            let mut changed = false;
+            for runtime in gpu.scatters.values_mut() {
+                changed |= runtime.update_quality_budget(frame_ms, now);
+            }
+            changed
+        })
+    }
+
+    fn wall_fps(&self) -> f64 {
+        if self.frame_timestamps.len() < 2 {
+            return 0.0;
+        }
+        let first = self.frame_timestamps.front().copied().unwrap();
+        let last = self.frame_timestamps.back().copied().unwrap();
+        let span = last.duration_since(first).as_secs_f64();
+        if span > 0.0 {
+            (self.frame_timestamps.len().saturating_sub(1)) as f64 / span
+        } else {
+            0.0
         }
     }
 
@@ -9743,6 +10572,17 @@ impl DragonApp {
                 "frames_rendered": self.frames_rendered,
                 "upload_ms": self.upload_ms,
                 "frame_ms": frame_ms,
+                "frame_ms_avg": frame_ms,
+                "last_frame_ms": self.last_frame_ms,
+                "cpu_frame_ms": self.last_frame_ms,
+                "frame_work_ms": self.last_frame_work_ms,
+                "frame_prepare_ms": self.last_frame_prepare_ms,
+                "frame_acquire_ms": self.last_frame_acquire_ms,
+                "frame_encode_ms": self.last_frame_encode_ms,
+                "frame_submit_ms": self.last_frame_submit_ms,
+                "frame_present_ms": self.last_frame_present_ms,
+                "wall_fps": self.wall_fps(),
+                "frame_window_count": self.frame_timestamps.len(),
                 "command_queue_depth": queue_depth,
                 "loading_screen": self.gpu.as_ref().map(|gpu| {
                     let loading = &gpu.loading_screen;
@@ -9807,7 +10647,7 @@ impl DragonApp {
         self.scatter_press_pos = None;
         if let Some(gpu) = &mut self.gpu {
             if let Some(rt) = gpu.scatters.get_mut(&scatter_id) {
-                rt.widget.lod_active = true;
+                rt.set_interaction_lod_active(true, &gpu.device, &gpu.queue);
             }
         }
     }
@@ -9821,7 +10661,7 @@ impl DragonApp {
         if let Some(sid) = self.active_scatter_id.clone() {
             if let Some(gpu) = &mut self.gpu {
                 if let Some(rt) = gpu.scatters.get_mut(&sid) {
-                    rt.widget.lod_active = false;
+                    rt.set_interaction_lod_active(false, &gpu.device, &gpu.queue);
                     rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
                 }
             }
@@ -9956,6 +10796,9 @@ impl DragonApp {
                     outcome = "no_python_runtime";
                 }
                 self.record_runtime_command("DrainPythonTasks", None, None, None, outcome, false)
+            }
+            Command::RequestRedraw => {
+                self.record_runtime_command("RequestRedraw", None, None, None, "applied", true)
             }
             Command::Invalidate { id, dirty } => {
                 let (outcome, redraw) = {
@@ -11185,7 +12028,11 @@ impl DragonApp {
                 hover_meta,
                 tooltip_axis_labels,
             } => {
+                let total_t0 = Instant::now();
+                let payload_bytes = payload_b64.len();
+                let decode_t0 = Instant::now();
                 let result = decode_actor_payload(&payload_b64, &colormap, payload_format);
+                let decode_ms = decode_t0.elapsed().as_secs_f64() * 1000.0;
                 match result {
                     Err(e) => self.record_runtime_command(
                         "AddScatterActor",
@@ -11203,6 +12050,9 @@ impl DragonApp {
                                 pts,
                                 hover_meta.as_deref(),
                                 &tooltip_axis_labels,
+                                payload_bytes,
+                                decode_ms,
+                                total_t0,
                             )
                         });
                         self.record_runtime_command(
@@ -11229,7 +12079,11 @@ impl DragonApp {
                 hover_meta,
                 tooltip_axis_labels,
             } => {
+                let total_t0 = Instant::now();
+                let payload_bytes = payload.len();
+                let decode_t0 = Instant::now();
                 let result = decode_actor_payload_bytes(&payload, &colormap, payload_format);
+                let decode_ms = decode_t0.elapsed().as_secs_f64() * 1000.0;
                 match result {
                     Err(e) => self.record_runtime_command(
                         "AddScatterActorPacked",
@@ -11247,6 +12101,9 @@ impl DragonApp {
                                 pts,
                                 hover_meta.as_deref(),
                                 &tooltip_axis_labels,
+                                payload_bytes,
+                                decode_ms,
+                                total_t0,
                             )
                         });
                         self.record_runtime_command(
@@ -11272,7 +12129,11 @@ impl DragonApp {
                 payload_format,
                 tooltip_axis_labels,
             } => {
+                let total_t0 = Instant::now();
+                let payload_bytes = payload_b64.len();
+                let decode_t0 = Instant::now();
                 let result = decode_actor_payload(&payload_b64, &colormap, payload_format);
+                let decode_ms = decode_t0.elapsed().as_secs_f64() * 1000.0;
                 match result {
                     Err(e) => self.record_runtime_command(
                         "UpdateScatterActor",
@@ -11289,6 +12150,9 @@ impl DragonApp {
                                 actor_id,
                                 pts,
                                 &tooltip_axis_labels,
+                                payload_bytes,
+                                decode_ms,
+                                total_t0,
                             )
                         });
                         self.record_runtime_command(
@@ -11314,7 +12178,11 @@ impl DragonApp {
                 payload_format,
                 tooltip_axis_labels,
             } => {
+                let total_t0 = Instant::now();
+                let payload_bytes = payload.len();
+                let decode_t0 = Instant::now();
                 let result = decode_actor_payload_bytes(&payload, &colormap, payload_format);
+                let decode_ms = decode_t0.elapsed().as_secs_f64() * 1000.0;
                 match result {
                     Err(e) => self.record_runtime_command(
                         "UpdateScatterActorPacked",
@@ -11331,6 +12199,9 @@ impl DragonApp {
                                 actor_id,
                                 pts,
                                 &tooltip_axis_labels,
+                                payload_bytes,
+                                decode_ms,
+                                total_t0,
                             )
                         });
                         self.record_runtime_command(
@@ -11354,6 +12225,7 @@ impl DragonApp {
                         return false;
                     };
                     rt.widget.remove_actor(actor_id);
+                    rt.widget.refresh_point_size_scale(&gpu.queue);
                     let (bmn, bmx) = rt.merged_bounds();
                     rt.widget.refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
                     rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
@@ -11382,6 +12254,7 @@ impl DragonApp {
                         return false;
                     };
                     rt.widget.set_actor_visible(actor_id, visible);
+                    rt.widget.refresh_point_size_scale(&gpu.queue);
                     let (bmn, bmx) = rt.merged_bounds();
                     rt.widget.refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
                     rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
@@ -11406,6 +12279,7 @@ impl DragonApp {
                         return false;
                     };
                     rt.widget.clear_extra_actors();
+                    rt.widget.refresh_point_size_scale(&gpu.queue);
                     let (bmn, bmx) = rt.merged_bounds();
                     rt.widget.refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
                     rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
@@ -11446,10 +12320,11 @@ impl DragonApp {
                     rt.widget.hover_label = None;
                     rt.primary_hover_meta.clear();
                     rt.primary_pick_cache = None;
+                    rt.fitted_once = false;
                     // Clear transient selection/LOD state.
                     rt.widget.selection_rect = None;
                     rt.widget.selection_polygon = None;
-                    rt.widget.lod_active = false;
+                    rt.set_interaction_lod_active(false, &gpu.device, &gpu.queue);
                     // Refresh derived GPU state with zero bounds.
                     rt.widget.refresh_grid(
                         glam::Vec3::ZERO,
@@ -11583,7 +12458,7 @@ impl DragonApp {
                     let Some(rt) = gpu.scatters.get_mut(&id) else {
                         return false;
                     };
-                    rt.widget.clear_stream_actor(actor_id);
+                    rt.widget.clear_stream_actor(actor_id, &gpu.queue);
                     if let Some(actor) = rt.widget.extra_actors.get_mut(&actor_id) {
                         actor.pick_cache = None;
                     }
@@ -11620,14 +12495,95 @@ impl DragonApp {
                     rt.widget.lod_enabled = enabled;
                     rt.widget.lod_threshold = threshold;
                     rt.widget.lod_factor = factor;
-                    rt.metrics.last_lod_ms =
-                        rt.widget.refresh_lod_buffers(&rt.points, device, queue);
+                    if rt.widget.lod_active {
+                        rt.metrics.last_lod_ms =
+                            rt.widget.refresh_lod_buffers(&rt.points, device, queue);
+                    } else if !rt.widget.lod_enabled {
+                        rt.metrics.last_lod_ms =
+                            rt.widget.refresh_lod_buffers(&rt.points, device, queue);
+                    } else {
+                        rt.metrics.last_lod_ms = 0.0;
+                        rt.widget.refresh_point_size_scale(queue);
+                    }
                     true
                 });
                 self.record_runtime_command(
                     "SetScatterLod",
                     Some(id),
                     None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::SetScatterAutoPointSize { id, enabled } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.set_auto_point_size(enabled, &gpu.queue);
+                    true
+                });
+                self.record_runtime_command(
+                    "SetScatterAutoPointSize",
+                    Some(id),
+                    None,
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::SetScatterInteractiveRenderScale { id, scale } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    rt.widget.set_interactive_render_scale(scale);
+                    true
+                });
+                self.record_runtime_command(
+                    "SetScatterInteractiveRenderScale",
+                    Some(id),
+                    Some(format!("{scale:.3}")),
+                    None,
+                    if redraw {
+                        "ok"
+                    } else {
+                        "no-op: scatter not found"
+                    },
+                    redraw,
+                )
+            }
+            Command::SetScatterAutoQuality {
+                id,
+                enabled,
+                target_fps,
+            } => {
+                let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+                        return false;
+                    };
+                    let target_frame_ms = if target_fps.is_finite() && target_fps > 0.0 {
+                        1000.0 / target_fps
+                    } else {
+                        100.0
+                    };
+                    rt.widget.set_auto_quality(enabled, target_frame_ms);
+                    rt.quality_last_change = Instant::now();
+                    true
+                });
+                self.record_runtime_command(
+                    "SetScatterAutoQuality",
+                    Some(id),
+                    Some(format!("enabled={enabled}, target_fps={target_fps:.2}")),
                     None,
                     if redraw {
                         "ok"
@@ -13564,7 +14520,11 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                 if let Some(scatter_id) = self.active_scatter_id.clone() {
                                     if let Some(gpu) = &mut self.gpu {
                                         if let Some(rt) = gpu.scatters.get_mut(&scatter_id) {
-                                            rt.widget.lod_active = false;
+                                            rt.set_interaction_lod_active(
+                                                false,
+                                                &gpu.device,
+                                                &gpu.queue,
+                                            );
                                             rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
                                         }
                                     }
@@ -13886,7 +14846,11 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                     self.rect_select_active = false;
                                     if let Some(gpu) = &mut self.gpu {
                                         if let Some(rt) = gpu.scatters.get_mut(&sid) {
-                                            rt.widget.lod_active = true;
+                                            rt.set_interaction_lod_active(
+                                                true,
+                                                &gpu.device,
+                                                &gpu.queue,
+                                            );
                                         }
                                     }
                                 }
@@ -14484,14 +15448,19 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
 
             WindowEvent::RedrawRequested => {
                 if let Some(gpu) = &mut self.gpu {
-                    let t0 = Instant::now();
-                    if let Err(e) = gpu.render() {
-                        self.error = Some(e);
-                        event_loop.exit();
-                        return;
+                    let timings = match gpu.render() {
+                        Ok(timings) => timings,
+                        Err(e) => {
+                            self.error = Some(e);
+                            event_loop.exit();
+                            return;
+                        }
+                    };
+                    let quality_budget_ms = timings.work_ms();
+                    self.record_frame_telemetry(timings);
+                    if self.update_scatter_quality_budgets(quality_budget_ms) {
+                        self.request_redraw();
                     }
-                    self.frame_ms_total += t0.elapsed().as_secs_f64() * 1000.0;
-                    self.frames_rendered += 1;
                     self.scatter_upload_redraw_pending = false;
                     if self
                         .command_bridge

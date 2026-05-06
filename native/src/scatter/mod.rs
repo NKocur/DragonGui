@@ -64,6 +64,8 @@ struct Uniforms {
     screen_size: [f32; 2],
     style: u32,
     point_size: f32,
+    point_size_scale: f32,
+    _pad0: [f32; 3],
     clip_radii: [f32; 4],
 }
 
@@ -957,6 +959,33 @@ fn point_size_override_value(point_size: Option<f32>) -> f32 {
     point_size.map(|size| size.max(0.0)).unwrap_or(-1.0)
 }
 
+fn adaptive_point_size_scale(point_count: u32, width: u32, height: u32) -> f32 {
+    if point_count == 0 || width == 0 || height == 0 {
+        return 1.0;
+    }
+    let pixels = (width as f32 * height as f32).max(1.0);
+    let density = point_count as f32 / pixels;
+    if density <= 0.08 {
+        1.0
+    } else if density <= 0.40 {
+        let t = (density - 0.08) / (0.40 - 0.08);
+        1.0 + (0.55 - 1.0) * t
+    } else if density <= 0.90 {
+        let t = (density - 0.40) / (0.90 - 0.40);
+        0.55 + (0.35 - 0.55) * t
+    } else {
+        0.35
+    }
+}
+
+fn clamp_interactive_render_scale(scale: f32) -> f32 {
+    if scale.is_finite() {
+        scale.clamp(0.25, 1.0)
+    } else {
+        1.0
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct ScatterLayoutRect {
     offset: [f32; 2],
@@ -1019,6 +1048,12 @@ pub struct ScatterWidget {
     fit_center: glam::Vec3,
     fit_radius: f32,
     pub(crate) point_size_override: f32,
+    pub auto_point_size: bool,
+    pub(crate) point_size_scale: f32,
+    pub interactive_render_scale: f32,
+    pub auto_quality_enabled: bool,
+    pub quality_target_frame_ms: f32,
+    pub quality_level: u32,
     point_style: u32,
     clip_radii: [f32; 4],
     // ── Grid / chrome ────────────────────────────────────────────────────────
@@ -1645,6 +1680,12 @@ impl ScatterWidget {
             fit_center,
             fit_radius,
             point_size_override: -1.0,
+            auto_point_size: true,
+            point_size_scale: 1.0,
+            interactive_render_scale: 1.0,
+            auto_quality_enabled: false,
+            quality_target_frame_ms: 100.0,
+            quality_level: 0,
             point_style: 0,
             clip_radii: [0.0; 4],
             line_pipeline,
@@ -1715,6 +1756,8 @@ impl ScatterWidget {
             self.point_count = 0;
             self.lod_vertex_buffer = None;
             self.lod_vertex_cap = 0;
+            self.recompute_point_size_scale();
+            self.update_camera(queue);
             return ScatterUploadTimings::default();
         }
         if self.vertex_buffer.is_none() || size > self.vertex_cap {
@@ -1736,7 +1779,7 @@ impl ScatterWidget {
         );
         let primary_ms = primary_t0.elapsed().as_secs_f64() * 1000.0;
         self.point_count = points.len() as u32;
-        let lod_ms = if self.should_build_lod(self.point_count) {
+        let lod_ms = if self.should_build_active_lod(self.point_count) {
             let lod_t0 = Instant::now();
             upload_lod_buffer(
                 points,
@@ -1755,11 +1798,69 @@ impl ScatterWidget {
             self.lod_vertex_cap = 0;
             0.0
         };
+        self.recompute_point_size_scale();
+        self.update_camera(queue);
         ScatterUploadTimings { primary_ms, lod_ms }
+    }
+
+    /// Upload an already GPU-shaped point_instance_v1 payload directly.
+    ///
+    /// This avoids rebuilding a CPU `Vec<PointInstance>` for high-rate full-frame
+    /// streams. It intentionally declines the fast path while interaction LOD is
+    /// active because LOD sampling currently needs the CPU point slice.
+    pub fn set_point_instances_raw(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        bytes: &[u8],
+    ) -> Option<ScatterUploadTimings> {
+        const STRIDE: usize = std::mem::size_of::<PointInstance>();
+        if bytes.len() % STRIDE != 0 {
+            return None;
+        }
+        let point_count = bytes.len() / STRIDE;
+        if self.should_build_active_lod(point_count as u32) {
+            return None;
+        }
+        let size = bytes.len() as u64;
+        if size == 0 {
+            self.point_count = 0;
+            self.lod_vertex_buffer = None;
+            self.lod_vertex_cap = 0;
+            self.recompute_point_size_scale();
+            self.update_camera(queue);
+            return Some(ScatterUploadTimings::default());
+        }
+        if self.vertex_buffer.is_none() || size > self.vertex_cap {
+            let cap = (size * 2).max(4 * 1024 * 1024);
+            self.vertex_buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("scatter-vb"),
+                size: cap,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+            self.vertex_cap = cap;
+        }
+        let primary_t0 = Instant::now();
+        queue.write_buffer(self.vertex_buffer.as_ref().unwrap(), 0, bytes);
+        let primary_ms = primary_t0.elapsed().as_secs_f64() * 1000.0;
+        self.point_count = point_count as u32;
+        self.lod_vertex_buffer = None;
+        self.lod_vertex_cap = 0;
+        self.recompute_point_size_scale();
+        self.update_camera(queue);
+        Some(ScatterUploadTimings {
+            primary_ms,
+            lod_ms: 0.0,
+        })
     }
 
     fn should_build_lod(&self, point_count: u32) -> bool {
         self.lod_enabled && point_count > self.lod_threshold
+    }
+
+    fn should_build_active_lod(&self, point_count: u32) -> bool {
+        self.lod_active && self.should_build_lod(point_count)
     }
 
     pub fn refresh_lod_buffers(
@@ -1809,6 +1910,8 @@ impl ScatterWidget {
                 actor.lod_vertex_cap = 0;
             }
         }
+        self.recompute_point_size_scale();
+        self.update_camera(queue);
         t0.elapsed().as_secs_f64() * 1000.0
     }
 
@@ -1820,13 +1923,77 @@ impl ScatterWidget {
             screen_size: [self.width as f32, self.height as f32],
             style: self.point_style,
             point_size: self.point_size_override,
+            point_size_scale: self.point_size_scale,
+            _pad0: [0.0; 3],
             clip_radii: self.clip_radii,
         };
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
     }
 
+    fn recompute_point_size_scale(&mut self) {
+        self.point_size_scale = if self.auto_point_size {
+            adaptive_point_size_scale(self.effective_draw_point_count(), self.width, self.height)
+        } else {
+            1.0
+        };
+    }
+
+    pub fn set_auto_point_size(&mut self, enabled: bool, queue: &wgpu::Queue) {
+        self.auto_point_size = enabled;
+        self.recompute_point_size_scale();
+        self.update_camera(queue);
+    }
+
+    pub fn set_interactive_render_scale(&mut self, scale: f32) {
+        self.interactive_render_scale = clamp_interactive_render_scale(scale);
+    }
+
+    pub fn set_auto_quality(&mut self, enabled: bool, target_frame_ms: f32) {
+        self.auto_quality_enabled = enabled;
+        if target_frame_ms.is_finite() && target_frame_ms > 0.0 {
+            self.quality_target_frame_ms = target_frame_ms.max(4.0);
+        }
+        if !enabled {
+            self.quality_level = 0;
+        }
+    }
+
+    pub fn set_quality_level(&mut self, level: u32) {
+        self.quality_level = level.min(3);
+    }
+
+    pub fn active_render_scale(&self) -> f32 {
+        if self.lod_active {
+            if self.auto_quality_enabled {
+                let budget_scale = match self.quality_level {
+                    0 => 1.0,
+                    1 => 0.75,
+                    2 => 0.55,
+                    _ => 0.40,
+                };
+                self.interactive_render_scale.min(budget_scale)
+            } else {
+                self.interactive_render_scale
+            }
+        } else {
+            1.0
+        }
+    }
+
+    pub fn refresh_point_size_scale(&mut self, queue: &wgpu::Queue) {
+        self.recompute_point_size_scale();
+        self.update_camera(queue);
+    }
+
+    pub fn set_lod_active(&mut self, active: bool, queue: &wgpu::Queue) {
+        self.lod_active = active;
+        self.recompute_point_size_scale();
+        self.update_camera(queue);
+    }
+
     pub fn set_point_size_override(&mut self, point_size: Option<f32>, queue: &wgpu::Queue) {
         self.point_size_override = point_size_override_value(point_size);
+        self.recompute_point_size_scale();
         self.update_camera(queue);
     }
 
@@ -1840,11 +2007,35 @@ impl ScatterWidget {
     }
 
     fn effective_point_size(&self, base_size: f32) -> f32 {
-        if self.point_size_override >= 0.0 {
+        let size = if self.point_size_override >= 0.0 {
             self.point_size_override
         } else {
             base_size
-        }
+        };
+        size * self.point_size_scale
+    }
+
+    pub fn effective_draw_point_count(&self) -> u32 {
+        let primary =
+            if self.lod_enabled && self.lod_active && self.point_count > self.lod_threshold {
+                lod_sample_count(self.point_count as usize, self.lod_factor) as u32
+            } else {
+                self.point_count
+            };
+        primary
+            + self
+                .extra_actors
+                .values()
+                .filter(|actor| actor.visible && actor.point_count > 0)
+                .map(|actor| {
+                    if self.lod_enabled && self.lod_active && actor.point_count > self.lod_threshold
+                    {
+                        lod_sample_count(actor.point_count as usize, self.lod_factor) as u32
+                    } else {
+                        actor.point_count
+                    }
+                })
+                .sum::<u32>()
     }
 
     /// Place the scatter inside a sub-region of the window.
@@ -1870,6 +2061,7 @@ impl ScatterWidget {
         self.scissor_size = rect.scissor_size;
         self.clip_radii = clamp_clip_radii(clip_radii, w, h);
         self.camera.aspect = w / h.max(1.0);
+        self.recompute_point_size_scale();
         self.update_camera(queue);
         if dims_changed {
             self.screenshot_cache = None;
@@ -2021,6 +2213,8 @@ impl ScatterWidget {
             screen_size: [w as f32, h as f32],
             style: self.point_style,
             point_size: self.point_size_override,
+            point_size_scale: self.point_size_scale,
+            _pad0: [0.0; 3],
             clip_radii: self.clip_radii,
         };
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
@@ -2994,13 +3188,16 @@ impl ScatterWidget {
             .extra_actors
             .entry(id)
             .or_insert_with(|| PointActor::new(id));
-        let build_lod = self.lod_enabled && (pts.len() as u32) > self.lod_threshold;
+        let build_lod =
+            self.lod_active && self.lod_enabled && (pts.len() as u32) > self.lod_threshold;
         actor.upload(&pts, build_lod, self.lod_factor, device, queue);
         actor.points = pts;
         actor.pick_cache = None; // belt-and-suspenders: upload() already clears, but points just changed too
         actor.data_min = mn;
         actor.data_max = mx;
         actor.visible = true;
+        self.recompute_point_size_scale();
+        self.update_camera(queue);
     }
 
     /// Update (replace) an existing extra actor's points.
@@ -3013,12 +3210,15 @@ impl ScatterWidget {
     ) {
         if let Some(actor) = self.extra_actors.get_mut(&id) {
             let (mn, mx) = PointActor::compute_bounds(&pts);
-            let build_lod = self.lod_enabled && (pts.len() as u32) > self.lod_threshold;
+            let build_lod =
+                self.lod_active && self.lod_enabled && (pts.len() as u32) > self.lod_threshold;
             actor.upload(&pts, build_lod, self.lod_factor, device, queue);
             actor.points = pts;
             actor.data_min = mn;
             actor.data_max = mx;
             actor.hover_meta = Vec::new();
+            self.recompute_point_size_scale();
+            self.update_camera(queue);
         }
     }
 
@@ -3138,14 +3338,18 @@ impl ScatterWidget {
         let (mn, mx) = PointActor::compute_bounds(&actor.points[..actor.point_count as usize]);
         actor.data_min = mn;
         actor.data_max = mx;
+        self.recompute_point_size_scale();
+        self.update_camera(queue);
     }
 
-    pub fn clear_stream_actor(&mut self, id: u32) {
+    pub fn clear_stream_actor(&mut self, id: u32, queue: &wgpu::Queue) {
         if let Some(actor) = self.extra_actors.get_mut(&id) {
             actor.point_count = 0;
             actor.stream_write_offset = 0;
             actor.data_min = glam::Vec3::splat(f32::MAX);
             actor.data_max = glam::Vec3::splat(f32::MIN);
+            self.recompute_point_size_scale();
+            self.update_camera(queue);
         }
     }
 
@@ -3405,32 +3609,116 @@ impl ScatterWidget {
     /// then 2D screen-space overlays (orientation axes, legend, scalar bar).
     /// Applies viewport and scissor so the scatter only draws within its region.
     pub fn render<'pass, 'data: 'pass>(&'data self, pass: &mut wgpu::RenderPass<'pass>) {
+        self.render_with_viewport(
+            pass,
+            self.offset,
+            [self.width as f32, self.height as f32],
+            self.scissor_offset,
+            self.scissor_size,
+        );
+    }
+
+    pub fn render_offscreen<'pass, 'data: 'pass>(
+        &'data self,
+        pass: &mut wgpu::RenderPass<'pass>,
+        target_width: u32,
+        target_height: u32,
+    ) {
+        let (scissor_offset, scissor_size) = self.scaled_local_scissor(target_width, target_height);
+        self.render_with_viewport(
+            pass,
+            [0.0, 0.0],
+            [target_width as f32, target_height as f32],
+            scissor_offset,
+            scissor_size,
+        );
+    }
+
+    pub fn scaled_render_target_size(&self, scale: f32) -> (u32, u32) {
+        let scale = clamp_interactive_render_scale(scale);
+        (
+            ((self.width as f32) * scale).ceil().max(1.0) as u32,
+            ((self.height as f32) * scale).ceil().max(1.0) as u32,
+        )
+    }
+
+    fn scaled_local_scissor(&self, target_width: u32, target_height: u32) -> ([u32; 2], [u32; 2]) {
+        if self.width == 0 || self.height == 0 || target_width == 0 || target_height == 0 {
+            return ([0, 0], [0, 0]);
+        }
+        let sx = target_width as f32 / self.width as f32;
+        let sy = target_height as f32 / self.height as f32;
+        let left = ((self.scissor_offset[0] as f32 - self.offset[0]).max(0.0) * sx)
+            .floor()
+            .clamp(0.0, target_width as f32) as u32;
+        let top = ((self.scissor_offset[1] as f32 - self.offset[1]).max(0.0) * sy)
+            .floor()
+            .clamp(0.0, target_height as f32) as u32;
+        let right = ((self.scissor_offset[0] as f32 + self.scissor_size[0] as f32 - self.offset[0])
+            .max(0.0)
+            * sx)
+            .ceil()
+            .clamp(left as f32, target_width as f32) as u32;
+        let bottom = ((self.scissor_offset[1] as f32 + self.scissor_size[1] as f32
+            - self.offset[1])
+            .max(0.0)
+            * sy)
+            .ceil()
+            .clamp(top as f32, target_height as f32) as u32;
+        (
+            [left, top],
+            [right.saturating_sub(left), bottom.saturating_sub(top)],
+        )
+    }
+
+    fn render_with_viewport<'pass, 'data: 'pass>(
+        &'data self,
+        pass: &mut wgpu::RenderPass<'pass>,
+        viewport_offset: [f32; 2],
+        viewport_size: [f32; 2],
+        scissor_offset: [u32; 2],
+        scissor_size: [u32; 2],
+    ) {
         let has_grid = self.chrome.grid_visible
             && self.grid_vertex_count > 0
             && self.line_vertex_buffer.is_some();
         let has_user_lines =
             self.user_line_vertex_count > 0 && self.user_line_vertex_buffer.is_some();
         let has_points = self.point_count > 0 && self.vertex_buffer.is_some();
+        let has_extra_points = self
+            .extra_actors
+            .values()
+            .any(|actor| actor.visible && actor.point_count > 0 && actor.vertex_buffer.is_some());
         let has_overlay = self.overlay_vertex_count > 0 && self.overlay_vertex_buffer.is_some();
         let has_bg = self.bg_vertex_count > 0 && self.bg_vertex_buffer.is_some();
 
-        if (!has_bg && !has_grid && !has_user_lines && !has_points && !has_overlay)
+        if (!has_bg
+            && !has_grid
+            && !has_user_lines
+            && !has_points
+            && !has_extra_points
+            && !has_overlay)
             || self.width == 0
             || self.height == 0
-            || self.scissor_size[0] == 0
-            || self.scissor_size[1] == 0
+            || scissor_size[0] == 0
+            || scissor_size[1] == 0
         {
             return;
         }
 
-        let w = self.width as f32;
-        let h = self.height as f32;
-        pass.set_viewport(self.offset[0], self.offset[1], w, h, 0.0, 1.0);
+        pass.set_viewport(
+            viewport_offset[0],
+            viewport_offset[1],
+            viewport_size[0],
+            viewport_size[1],
+            0.0,
+            1.0,
+        );
         pass.set_scissor_rect(
-            self.scissor_offset[0],
-            self.scissor_offset[1],
-            self.scissor_size[0],
-            self.scissor_size[1],
+            scissor_offset[0],
+            scissor_offset[1],
+            scissor_size[0],
+            scissor_size[1],
         );
         pass.set_stencil_reference(1);
         pass.set_pipeline(&self.clip_mask_pipeline);
@@ -3587,6 +3875,14 @@ mod tests {
     }
 
     #[test]
+    fn adaptive_point_size_scale_shrinks_dense_views() {
+        assert_eq!(adaptive_point_size_scale(0, 800, 600), 1.0);
+        assert_eq!(adaptive_point_size_scale(10_000, 800, 600), 1.0);
+        assert!(adaptive_point_size_scale(125_000, 800, 600) < 1.0);
+        assert!(adaptive_point_size_scale(1_000_000, 800, 600) <= 0.35);
+    }
+
+    #[test]
     fn clipped_scatter_keeps_full_viewport_and_visible_scissor() {
         let rect = scatter_layout_rect(20.0, 40.0, 300.0, 180.0, Some([20.0, 96.0, 300.0, 72.0]));
 
@@ -3599,7 +3895,7 @@ mod tests {
 
     #[test]
     fn scatter_uniform_layout_stays_wgpu_aligned() {
-        assert_eq!(std::mem::size_of::<Uniforms>(), 96);
+        assert_eq!(std::mem::size_of::<Uniforms>(), 112);
     }
 
     #[test]

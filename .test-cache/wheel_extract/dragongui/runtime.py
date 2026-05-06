@@ -130,6 +130,8 @@ class LiveWidgetHandle:
         payload_format: str = "xyz_f32_v0",
         coalesce: bool = True,
         fit: bool = False,
+        bounds_min: tuple[float, float, float] | None = None,
+        bounds_max: tuple[float, float, float] | None = None,
     ) -> None:
         self.ensure_open()
         self.app.enqueue_set_scatter_points_packed(
@@ -141,6 +143,8 @@ class LiveWidgetHandle:
             payload_format=payload_format,
             coalesce=coalesce,
             fit=fit,
+            bounds_min=bounds_min,
+            bounds_max=bounds_max,
         )
 
     def enqueue_set_line_plot_data_packed(
@@ -450,6 +454,18 @@ class LiveWidgetHandle:
         self.ensure_open()
         self.app.enqueue_set_scatter_lod(self.id, enabled, threshold, factor)
 
+    def enqueue_set_scatter_auto_point_size(self, enabled: bool) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_auto_point_size(self.id, enabled)
+
+    def enqueue_set_scatter_interactive_render_scale(self, scale: float) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_interactive_render_scale(self.id, scale)
+
+    def enqueue_set_scatter_auto_quality(self, enabled: bool, target_fps: float) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_auto_quality(self.id, enabled, target_fps)
+
     def enqueue_set_scatter_picking_mode(self, mode: str) -> None:
         self.ensure_open()
         self.app.enqueue_set_scatter_picking_mode(self.id, mode)
@@ -633,6 +649,8 @@ class AppHandle:
         payload_format: str = "xyz_f32_v0",
         coalesce: bool = True,
         fit: bool = False,
+        bounds_min: tuple[float, float, float] | None = None,
+        bounds_max: tuple[float, float, float] | None = None,
     ) -> None:
         self._send_or_queue_native(
             "enqueue_set_scatter_points_packed",
@@ -644,6 +662,8 @@ class AppHandle:
             payload_format,
             bool(coalesce),
             bool(fit),
+            bounds_min,
+            bounds_max,
         )
 
     def enqueue_set_line_plot_data_packed(
@@ -986,6 +1006,27 @@ class AppHandle:
     ) -> None:
         self._send_or_queue_native("enqueue_set_scatter_lod", widget_id, enabled, threshold, factor)
 
+    def enqueue_set_scatter_auto_point_size(self, widget_id: str, enabled: bool) -> None:
+        if not self._native_method_available("enqueue_set_scatter_auto_point_size"):
+            return
+        self._send_or_queue_native("enqueue_set_scatter_auto_point_size", widget_id, enabled)
+
+    def enqueue_set_scatter_interactive_render_scale(self, widget_id: str, scale: float) -> None:
+        if not self._native_method_available("enqueue_set_scatter_interactive_render_scale"):
+            return
+        self._send_or_queue_native(
+            "enqueue_set_scatter_interactive_render_scale", widget_id, float(scale)
+        )
+
+    def enqueue_set_scatter_auto_quality(
+        self, widget_id: str, enabled: bool, target_fps: float
+    ) -> None:
+        if not self._native_method_available("enqueue_set_scatter_auto_quality"):
+            return
+        self._send_or_queue_native(
+            "enqueue_set_scatter_auto_quality", widget_id, bool(enabled), float(target_fps)
+        )
+
     def enqueue_set_scatter_picking_mode(self, widget_id: str, mode: str) -> None:
         self._send_or_queue_native("enqueue_set_scatter_picking_mode", widget_id, mode)
 
@@ -1155,6 +1196,10 @@ class AppHandle:
 
     def enqueue_dismiss_toast(self, toast_id: str) -> None:
         self._send_or_queue_native("enqueue_dismiss_toast", _toast_id(toast_id))
+
+    def request_redraw(self) -> None:
+        """Request one native redraw without changing widget state."""
+        self._send_or_queue_native("enqueue_request_redraw")
 
     def debug_snapshot(self, timeout_ms: int = 1000) -> dict[str, Any]:
         """Return a JSON-safe snapshot of the live native runtime."""

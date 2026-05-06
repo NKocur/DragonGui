@@ -424,6 +424,19 @@ pub enum Command {
         threshold: u32,
         factor: u32,
     },
+    SetScatterAutoPointSize {
+        id: String,
+        enabled: bool,
+    },
+    SetScatterInteractiveRenderScale {
+        id: String,
+        scale: f32,
+    },
+    SetScatterAutoQuality {
+        id: String,
+        enabled: bool,
+        target_fps: f32,
+    },
     SetScatterPickingMode {
         id: String,
         /// "point" | "rectangle" | "lasso" | "none"
@@ -484,6 +497,7 @@ pub enum Command {
         request_id: u64,
     },
     DrainPythonTasks,
+    RequestRedraw,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -492,6 +506,7 @@ pub struct ScatterTelemetry {
     pub enqueue_epoch_ms: f64,
     pub point_count: usize,
     pub payload_bytes: usize,
+    pub bounds: Option<([f32; 3], [f32; 3])>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -587,6 +602,25 @@ impl CommandQueue {
                 }
             }
             *fit = fit_after_upload;
+        }
+        if let Command::UpdateScatterActorPacked { id, actor_id, .. } = &command {
+            let target_id = id.clone();
+            let target_actor_id = *actor_id;
+            let mut index = inner.items.len();
+            while index > 0 {
+                index -= 1;
+                let remove = matches!(
+                    &inner.items[index],
+                    Command::UpdateScatterActorPacked {
+                        id: queued_id,
+                        actor_id: queued_actor_id,
+                        ..
+                    } if queued_id == &target_id && *queued_actor_id == target_actor_id
+                );
+                if remove {
+                    inner.items.remove(index);
+                }
+            }
         }
         inner.items.push_back(command);
         Ok(())
@@ -948,7 +982,7 @@ impl NativeCommandSender {
         self.enqueue(Command::Invalidate { id, dirty })
     }
 
-    #[pyo3(signature = (id, xyz, pack_ms=None, enqueue_epoch_ms=None, colormap=None, payload_format=None, coalesce=None, fit=false))]
+    #[pyo3(signature = (id, xyz, pack_ms=None, enqueue_epoch_ms=None, colormap=None, payload_format=None, coalesce=None, fit=false, bounds_min=None, bounds_max=None))]
     fn enqueue_set_scatter_points_packed(
         &self,
         id: String,
@@ -959,6 +993,8 @@ impl NativeCommandSender {
         payload_format: Option<String>,
         coalesce: Option<bool>,
         fit: bool,
+        bounds_min: Option<(f32, f32, f32)>,
+        bounds_max: Option<(f32, f32, f32)>,
     ) -> PyResult<()> {
         let xyz = byte_buffer_from_py(xyz, "scatter point payload")?;
         let fmt = ScatterPayloadFormat::from_str(payload_format.as_deref().unwrap_or("xyz_f32_v0"));
@@ -972,11 +1008,25 @@ impl NativeCommandSender {
             0
         };
         let payload_bytes = xyz.len();
+        let bounds = match (bounds_min, bounds_max) {
+            (Some(min), Some(max))
+                if min.0.is_finite()
+                    && min.1.is_finite()
+                    && min.2.is_finite()
+                    && max.0.is_finite()
+                    && max.1.is_finite()
+                    && max.2.is_finite() =>
+            {
+                Some(([min.0, min.1, min.2], [max.0, max.1, max.2]))
+            }
+            _ => None,
+        };
         let telemetry = Some(ScatterTelemetry {
             pack_ms: pack_ms.unwrap_or(0.0).max(0.0),
             enqueue_epoch_ms: enqueue_epoch_ms.unwrap_or_else(now_epoch_ms),
             point_count,
             payload_bytes,
+            bounds,
         });
         self.enqueue(Command::SetScatterPointsPacked {
             id,
@@ -1625,6 +1675,30 @@ impl NativeCommandSender {
         })
     }
 
+    #[pyo3(signature = (id, enabled))]
+    fn enqueue_set_scatter_auto_point_size(&self, id: String, enabled: bool) -> PyResult<()> {
+        self.enqueue(Command::SetScatterAutoPointSize { id, enabled })
+    }
+
+    #[pyo3(signature = (id, scale))]
+    fn enqueue_set_scatter_interactive_render_scale(&self, id: String, scale: f32) -> PyResult<()> {
+        self.enqueue(Command::SetScatterInteractiveRenderScale { id, scale })
+    }
+
+    #[pyo3(signature = (id, enabled, target_fps))]
+    fn enqueue_set_scatter_auto_quality(
+        &self,
+        id: String,
+        enabled: bool,
+        target_fps: f32,
+    ) -> PyResult<()> {
+        self.enqueue(Command::SetScatterAutoQuality {
+            id,
+            enabled,
+            target_fps,
+        })
+    }
+
     #[pyo3(signature = (id, mode))]
     fn enqueue_set_scatter_picking_mode(&self, id: String, mode: String) -> PyResult<()> {
         self.enqueue(Command::SetScatterPickingMode { id, mode })
@@ -1956,6 +2030,10 @@ impl NativeCommandSender {
 
     fn enqueue_drain_python_tasks(&self) -> PyResult<()> {
         self.enqueue(Command::DrainPythonTasks)
+    }
+
+    fn enqueue_request_redraw(&self) -> PyResult<()> {
+        self.enqueue(Command::RequestRedraw)
     }
 
     fn is_closed(&self) -> bool {
@@ -2435,6 +2513,55 @@ mod tests {
                 assert_eq!(colormap, "turbo");
             }
             other => panic!("expected latest scatter update, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn queue_coalesces_pending_scatter_actor_updates_by_actor() {
+        let queue = CommandQueue::default();
+
+        for value in [1_u8, 2, 3] {
+            queue
+                .push(Command::UpdateScatterActorPacked {
+                    id: "scatter".to_string(),
+                    actor_id: 7,
+                    payload: vec![value; 12],
+                    colormap: "viridis".to_string(),
+                    payload_format: ScatterPayloadFormat::XyzF32V0,
+                    tooltip_axis_labels: ["x".to_string(), "y".to_string(), "z".to_string()],
+                })
+                .unwrap();
+        }
+        queue
+            .push(Command::UpdateScatterActorPacked {
+                id: "scatter".to_string(),
+                actor_id: 8,
+                payload: vec![9; 12],
+                colormap: "turbo".to_string(),
+                payload_format: ScatterPayloadFormat::XyzF32V0,
+                tooltip_axis_labels: ["x".to_string(), "y".to_string(), "z".to_string()],
+            })
+            .unwrap();
+
+        let commands = queue.drain();
+        assert_eq!(commands.len(), 2);
+        match &commands[0] {
+            Command::UpdateScatterActorPacked {
+                actor_id, payload, ..
+            } => {
+                assert_eq!(*actor_id, 7);
+                assert_eq!(payload, &vec![3; 12]);
+            }
+            other => panic!("expected actor update, got {other:?}"),
+        }
+        match &commands[1] {
+            Command::UpdateScatterActorPacked {
+                actor_id, payload, ..
+            } => {
+                assert_eq!(*actor_id, 8);
+                assert_eq!(payload, &vec![9; 12]);
+            }
+            other => panic!("expected actor update, got {other:?}"),
         }
     }
 

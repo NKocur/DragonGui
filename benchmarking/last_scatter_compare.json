@@ -1,0 +1,76 @@
+{
+  "results": [
+    {
+      "backend": "dragongui",
+      "status": "ok",
+      "update_mode": "set-points",
+      "points": 1000000,
+      "duration_s": 3.0,
+      "target_update_hz": 60.0,
+      "completed_updates": 43,
+      "achieved_update_hz": 20.46322006658777,
+      "wall_s": 5.932633199961856,
+      "producer_build_ms": {
+        "avg": 70.01697209522908,
+        "p50": 68.31420003436506,
+        "p95": 95.02239990979433,
+        "max": 123.8167000701651
+      },
+      "ui_update_ms": {
+        "avg": 23.33850697560106,
+        "p50": 21.635200013406575,
+        "p95": 34.19679997023195,
+        "max": 35.60569998808205
+      },
+      "producer_late_ms": {
+        "avg": 0.0034651291275093724,
+        "p50": 0.002800021320581436,
+        "p95": 0.008600065484642982,
+        "max": 0.014599994756281376
+      },
+      "present_fps": 60.014265390883416,
+      "frame_work_ms": 0.2051,
+      "frame_total_ms": 15.26,
+      "native": {
+        "updates": 23,
+        "pack_ms": 7.927700062282383,
+        "decode_ms": 16.282700000000002,
+        "upload_ms": 4.7954,
+        "total_ms": 21.0795,
+        "render_encode_ms": 0.0054,
+        "effective_drawn": 1000000,
+        "point_scale": 0.3499999940395355
+      }
+    },
+    {
+      "backend": "vispy",
+      "status": "ok",
+      "points": 1000000,
+      "duration_s": 3.0,
+      "target_update_hz": 60.0,
+      "completed_updates": 23,
+      "achieved_update_hz": 8.141544149740653,
+      "wall_s": 3.109952299972065,
+      "producer_build_ms": {
+        "avg": 48.369078279432394,
+        "p50": 47.161799971945584,
+        "p95": 54.8590999096632,
+        "max": 60.37269998341799
+      },
+      "ui_update_ms": {
+        "avg": 61.996660868475296,
+        "p50": 61.47479999344796,
+        "p95": 67.66479997895658,
+        "max": 71.03550003375858
+      },
+      "producer_late_ms": {
+        "avg": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "present_fps": 3.9221707960632473,
+      "draw_events": 13
+    }
+  ]
+}

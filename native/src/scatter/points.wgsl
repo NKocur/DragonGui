@@ -8,6 +8,8 @@ struct Uniforms {
     style: u32,
     // Negative means use the packed per-point size.
     point_size: f32,
+    // Multiplier applied after the fixed/per-point size decision.
+    point_size_scale: f32,
     // Top-left, top-right, bottom-right, bottom-left viewport clip radii.
     clip_radii: vec4<f32>,
 }
@@ -42,7 +44,7 @@ fn vs_main(
     let clip_center = uniforms.view_proj * vec4<f32>(position, 1.0);
 
     // Billboard offset in clip space: keeps size constant in pixels
-    let effective_size = select(size, uniforms.point_size, uniforms.point_size >= 0.0);
+    let effective_size = select(size, uniforms.point_size, uniforms.point_size >= 0.0) * uniforms.point_size_scale;
     let ndc_offset = quad * effective_size / uniforms.screen_size * 2.0;
     let clip_offset = vec4<f32>(ndc_offset * clip_center.w, 0.0, 0.0);
     let center_ndc = clip_center.xyz / clip_center.w;

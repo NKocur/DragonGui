@@ -1381,6 +1381,7 @@ dg.Scatter3D(
     scalars=None,
     point_size=4.0,
     point_sizes=None,
+    auto_point_size=True,
     opacity=1.0,
     clim=None,
     log_scale=False,
@@ -1390,6 +1391,12 @@ dg.Scatter3D(
     minor_planes=False,
     grid_sticky=True,
     grid_all_edges=False,
+    lod=False,
+    lod_threshold=200_000,
+    lod_factor=8,
+    interactive_render_scale=1.0,
+    auto_quality=False,
+    quality_target_fps=10.0,
     id=None, key=None, class_=None, style=None, tooltip=None, parent=...
 )
 ```
@@ -1408,6 +1415,7 @@ Options and callbacks:
 | `scalars` | Column name or 1-D array of per-point scalar values mapped through `colormap`. Used when `color` and `colors` are both absent. |
 | `point_size` | Default uniform point size in logical pixels. Default `4.0`. |
 | `point_sizes` | Column name or 1-D array of per-point sizes. Overrides `point_size` when provided. |
+| `auto_point_size` | If `True`, native may shrink rendered point sprites in dense views to reduce overdraw. Set `False` when exact fixed sizes are required. |
 | `opacity` | Uniform alpha applied to all points. `1.0` = fully opaque. |
 | `clim` | `(lo, hi)` scalar data range for colormap normalization. Derived from data when `None`. |
 | `log_scale` | If `True`, apply log10 to scalar values before colormap mapping. |
@@ -1417,6 +1425,12 @@ Options and callbacks:
 | `major_planes` / `minor_planes` | Draw major grid planes and minor subdivision lines. |
 | `grid_sticky` | Keep automatically generated nice bounds and tick steps stable while new data remains inside the current grid range. Default `True`. |
 | `grid_all_edges` | Draw an unlabeled boundary box around all grid edges as a stable reference frame. Default `False`. |
+| `lod` | Enable representative point sampling while orbiting or panning when point count exceeds `lod_threshold`. Default `False`. |
+| `lod_threshold` | Point-count threshold for interaction LOD. Default `200_000`. |
+| `lod_factor` | Draw roughly `1 / lod_factor` of points while interaction LOD is active. Default `8`. |
+| `interactive_render_scale` | Render scatter scene content to a lower-resolution offscreen target while orbiting/panning, then upscale into the widget. `1.0` keeps full resolution; lower values reduce fill cost during interaction. Default `1.0`. |
+| `auto_quality` | Enable native interaction quality budgeting. When active, native may temporarily lower interaction render scale to approach `quality_target_fps`. Default `False`. |
+| `quality_target_fps` | Target frame rate for `auto_quality`. Default `10.0`. |
 | `on_pick` | Called with `ScatterPick` or `(index, x, y, z)` after a point pick. |
 
 When any of `color`, `colors`, `scalars`, `point_sizes`, `opacity != 1.0`, `nan_color`, `clim`, or `log_scale=True` are used, the widget
@@ -1432,6 +1446,7 @@ Mouse controls:
 Live methods:
 
 - `set_points(frame, x, y=None, z=None, *, color=None, colors=None, scalars=None, point_size=None, point_sizes=None, opacity=None, clim=None, log_scale=None, nan_color=None, size_range=None, fit=False)` — replace point data. Set `fit=True` when replacing the scene with a different coordinate frame so the camera target and orbit center refit to the new bounds.
+- `create_live_frame(frame=None, *, capacity=None, x=None, y=None, z=None, color=None, colors=None, scalars=None, point_size=None, point_sizes=None, opacity=None, colormap=None, clim=None, log_scale=None, nan_color=None, size_range=None, mode="primary", fit=False)` - create a retained replacement handle for sensors that publish complete frames. The default `mode="primary"` uses the fast primary packed update path without rebuilding the declarative widget tree; `mode="actor"` keeps an independent point actor layer. Call `live.replace(frame)` for simple use, or pack off the UI thread with `Scatter3D.prepare_points(...)` and call `live.replace_prepared(payload)` for high-rate streams.
 - `set_colormap(colormap)` — change colormap; repacks data if per-point colors are baked.
 - `reset_camera()` — reset camera to last fitted position.
 - `view_xy()`, `view_xz()`, `view_yz()`, `view_isometric()` — snap to a preset view direction.
@@ -1439,6 +1454,10 @@ Live methods:
 - `set_camera(state)` — apply a camera state dict with keys `target`, `distance`, `yaw`, `pitch`, `parallel`.
 - `get_camera()` — return current camera state dict via debug snapshot, or `None` if not live.
 - `set_point_style(style)` — set point shape: `"circle"`, `"square"`, or `"gaussian"`.
+- `set_auto_point_size(enabled=True)` — toggle native adaptive point-size shrinking for dense views.
+- `set_lod(enabled=True, threshold=200_000, factor=8)` — configure representative point sampling during orbit/pan interaction.
+- `set_interactive_render_scale(scale)` - set interaction-only scatter render scale in the range `0.25..1.0`.
+- `set_auto_quality(enabled=True, target_fps=None)` - enable or disable native interaction quality budgeting.
 - `show_grid(visible=True)` — show or hide grid/ticks/labels.
 - `show_grid_planes(major=True, minor=False)` — show or hide major and minor grid planes.
 - `set_grid_options(sticky=True, all_edges=False)` — update sticky auto bounds and all-edges boundary behavior.
