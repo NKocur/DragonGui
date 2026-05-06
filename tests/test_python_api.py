@@ -1096,6 +1096,61 @@ def test_app_handle_queues_and_drains_python_tasks() -> None:
         handle.call_soon_threadsafe(lambda: None)
 
 
+def test_app_handle_coalesces_python_task_drain_wakeups() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.wake_count = 0
+
+        def enqueue_drain_python_tasks(self) -> None:
+            self.wake_count += 1
+
+        def close(self) -> None:
+            pass
+
+    handle = AppHandle()
+    sender = Sender()
+    calls: list[int] = []
+    handle._bind_native_sender(sender)
+
+    for index in range(25):
+        handle.call_soon_threadsafe(lambda value=index: calls.append(value))
+
+    assert sender.wake_count == 1
+
+    handle._drain_python_tasks()
+
+    assert calls == list(range(25))
+    assert sender.wake_count == 1
+
+    handle.call_soon_threadsafe(lambda: calls.append(25))
+
+    assert sender.wake_count == 2
+
+
+def test_app_handle_request_redraw_and_exit_enqueue_native_commands() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def enqueue_request_redraw(self) -> None:
+            self.calls.append("redraw")
+
+        def enqueue_request_exit(self) -> None:
+            self.calls.append("exit")
+
+        def close(self) -> None:
+            pass
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+
+    handle.request_redraw()
+    handle.request_exit()
+
+    assert sender.calls == ["redraw", "exit"]
+
+
 def test_app_handle_bounds_python_task_drain() -> None:
     handle = AppHandle()
     calls = 0
@@ -6395,6 +6450,132 @@ def test_scatter_live_frame_primary_uses_prepared_points(monkeypatch) -> None:
 
 
 # ── pre-live clear() does not replay stale primary metadata on startup ────────
+
+def test_scatter_live_frame_enqueue_prepared_uses_primary_direct_path() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.primary_calls: list[tuple] = []
+            self.axis_calls: list[tuple] = []
+
+        def enqueue_set_scatter_points_packed(self, *args) -> None:
+            self.primary_calls.append(args)
+
+        def enqueue_set_scatter_tooltip_axis_labels(self, *args) -> None:
+            self.axis_calls.append(args)
+
+        def close(self) -> None:
+            pass
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+
+    scatter = dg.Scatter3D(DemoFrame(), x="x", y="y", z="z", id="direct-live", parent=None)
+    scatter._bind_live(handle.widget_handle(scatter.id))
+    live = scatter.create_live_frame(x="x", y="y", z="z", colormap="turbo")
+    payload = dg.ScatterPayload(
+        data=b"prepared-frame",
+        payload_format="point_instance_v1",
+        colormap="turbo",
+        point_count=3,
+        pack_ms=0.5,
+        axis_labels=("x", "y", "z"),
+        bounds=((0.0, 1.0, 2.0), (3.0, 4.0, 5.0)),
+        hover_meta=None,
+        frame_summary=None,
+    )
+
+    live.enqueue_prepared(payload, fit=True, update_metadata=True)
+
+    assert live.replaces == 1
+    assert len(sender.primary_calls) == 1
+    assert sender.primary_calls[0][:3] == ("direct-live", b"prepared-frame", 0.5)
+    assert sender.primary_calls[0][4:] == (
+        "turbo",
+        "point_instance_v1",
+        True,
+        True,
+        (0.0, 1.0, 2.0),
+        (3.0, 4.0, 5.0),
+    )
+    assert sender.axis_calls == [("direct-live", "x", "y", "z")]
+
+
+def test_scatter_prepared_stream_accepts_handoff_modes() -> None:
+    scatter = dg.Scatter3D(DemoFrame(), x="x", y="y", z="z", id="stream-handoff", parent=None)
+    payload = dg.ScatterPayload(
+        data=b"prepared-frame",
+        payload_format="point_instance_v1",
+        colormap="turbo",
+        point_count=3,
+    )
+
+    direct = scatter.stream_prepared_frames([payload], handoff="direct")
+    callback = scatter.stream_prepared_frames([payload], handoff="ui-callback")
+
+    assert direct.handoff == "direct"
+    assert callback.handoff == "callback"
+    with pytest.raises(ValueError, match="handoff"):
+        scatter.stream_prepared_frames([payload], handoff="worker")
+
+
+def test_scatter_frame_stream_callback_handoff_schedules_ui_callback() -> None:
+    payload = dg.ScatterPayload(
+        data=b"prepared-frame",
+        payload_format="point_instance_v1",
+        colormap="turbo",
+        point_count=3,
+    )
+
+    class App:
+        def __init__(self) -> None:
+            self.callbacks = 0
+
+        def call_soon_threadsafe(self, fn) -> None:
+            self.callbacks += 1
+            fn()
+
+    class Handle:
+        def __init__(self) -> None:
+            self.app = App()
+
+    class Scatter:
+        id = "fake-scatter"
+
+        def __init__(self) -> None:
+            self.handle = Handle()
+            self.enqueued: list[tuple[dg.ScatterPayload, dict[str, object]]] = []
+
+        def _live(self):
+            return self.handle
+
+        def enqueue_prepared_points(self, payload, **kwargs) -> None:
+            self.enqueued.append((payload, kwargs))
+
+    scatter = Scatter()
+    notifications: list[tuple[dg.ScatterPayload, int, dg.ScatterStreamMetrics]] = []
+    stream = dg.ScatterFrameStream(
+        scatter,
+        [payload],
+        loop=False,
+        handoff="callback",
+        on_frame=lambda payload, index, metrics: notifications.append((payload, index, metrics)),
+    )
+
+    stream.start()
+    assert stream._thread is not None
+    stream._thread.join(timeout=1.0)
+
+    assert not stream.running
+    assert scatter.handle.app.callbacks == 1
+    assert len(scatter.enqueued) == 1
+    assert scatter.enqueued[0][0] is payload
+    assert scatter.enqueued[0][1]["include_metadata"] is True
+    assert stream.metrics.produced == 1
+    assert stream.metrics.submitted == 1
+    assert len(notifications) == 1
+    assert notifications[0][2].submitted == 1
+
 
 def test_scatter_clear_prelive_suppresses_hover_meta_on_startup() -> None:
     """After clear() before going live, _queue_startup_resources must not enqueue primary hover meta."""

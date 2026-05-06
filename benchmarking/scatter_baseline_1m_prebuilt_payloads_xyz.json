@@ -1,0 +1,68 @@
+{
+  "results": [
+    {
+      "backend": "dragongui",
+      "status": "ok",
+      "update_mode": "live-frame",
+      "workload": "prebuilt-payloads",
+      "payload_format": "xyz",
+      "prebuild_count": 8,
+      "points": 1000000,
+      "duration_s": 3.0,
+      "target_update_hz": 60.0,
+      "completed_updates": 180,
+      "achieved_update_hz": 85.66603789005505,
+      "accepted_update_hz": 85.66603789005505,
+      "native_update_hz": 26.419035062656434,
+      "coalesced_updates": 80,
+      "wall_s": 3.7851496000075713,
+      "producer_build_ms": {
+        "avg": 0.04258777803948356,
+        "p50": 0.041449995478615165,
+        "p95": 0.0633999879937619,
+        "max": 0.09429999045096338
+      },
+      "producer_generate_ms": {
+        "avg": 0.004592221780007498,
+        "p50": 0.0043000036384910345,
+        "p95": 0.00689999433234334,
+        "max": 0.010899995686486363
+      },
+      "producer_pack_ms": {
+        "avg": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "ui_update_ms": {
+        "avg": 3.119116668272505,
+        "p50": 2.9605000017909333,
+        "p95": 4.3772000062745064,
+        "max": 6.752999994205311
+      },
+      "producer_late_ms": {
+        "avg": 2.3533292276422597,
+        "p50": 0.8469672029605135,
+        "p95": 11.20240002637729,
+        "max": 14.903933421010152
+      },
+      "present_fps": 152.82478911191185,
+      "frame_work_ms": 0.26980000000000004,
+      "frame_total_ms": 4.114999999999999,
+      "command_queue_depth": 1,
+      "native": {
+        "updates": 100,
+        "pack_ms": 0.0,
+        "decode_ms": 8.5845,
+        "bounds_ms": 0.0,
+        "upload_ms": 2.6759,
+        "grid_ms": 0.0021,
+        "overlay_ms": 0.0,
+        "total_ms": 11.262599999999999,
+        "render_encode_ms": 0.005699999999999999,
+        "effective_drawn": 1000000,
+        "point_scale": 0.3499999940395355
+      }
+    }
+  ]
+}

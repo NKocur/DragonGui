@@ -3,74 +3,66 @@
     {
       "backend": "dragongui",
       "status": "ok",
-      "update_mode": "set-points",
+      "update_mode": "live-frame",
+      "workload": "prebuilt-payloads",
+      "payload_format": "instances",
+      "prebuild_count": 8,
       "points": 1000000,
       "duration_s": 3.0,
       "target_update_hz": 60.0,
-      "completed_updates": 43,
-      "achieved_update_hz": 20.46322006658777,
-      "wall_s": 5.932633199961856,
+      "completed_updates": 180,
+      "achieved_update_hz": 82.60436519200978,
+      "accepted_update_hz": 82.60436519200978,
+      "native_update_hz": 13.477051554127863,
+      "coalesced_updates": 129,
+      "wall_s": 3.784210499987239,
       "producer_build_ms": {
-        "avg": 70.01697209522908,
-        "p50": 68.31420003436506,
-        "p95": 95.02239990979433,
-        "max": 123.8167000701651
+        "avg": 0.03704944538185373,
+        "p50": 0.0346999877365306,
+        "p95": 0.05339999916031957,
+        "max": 0.10309999925084412
       },
-      "ui_update_ms": {
-        "avg": 23.33850697560106,
-        "p50": 21.635200013406575,
-        "p95": 34.19679997023195,
-        "max": 35.60569998808205
+      "producer_generate_ms": {
+        "avg": 0.004140555716326667,
+        "p50": 0.0037999998312443495,
+        "p95": 0.006199989002197981,
+        "max": 0.034500000765547156
       },
-      "producer_late_ms": {
-        "avg": 0.0034651291275093724,
-        "p50": 0.002800021320581436,
-        "p95": 0.008600065484642982,
-        "max": 0.014599994756281376
-      },
-      "present_fps": 60.014265390883416,
-      "frame_work_ms": 0.2051,
-      "frame_total_ms": 15.26,
-      "native": {
-        "updates": 23,
-        "pack_ms": 7.927700062282383,
-        "decode_ms": 16.282700000000002,
-        "upload_ms": 4.7954,
-        "total_ms": 21.0795,
-        "render_encode_ms": 0.0054,
-        "effective_drawn": 1000000,
-        "point_scale": 0.3499999940395355
-      }
-    },
-    {
-      "backend": "vispy",
-      "status": "ok",
-      "points": 1000000,
-      "duration_s": 3.0,
-      "target_update_hz": 60.0,
-      "completed_updates": 23,
-      "achieved_update_hz": 8.141544149740653,
-      "wall_s": 3.109952299972065,
-      "producer_build_ms": {
-        "avg": 48.369078279432394,
-        "p50": 47.161799971945584,
-        "p95": 54.8590999096632,
-        "max": 60.37269998341799
-      },
-      "ui_update_ms": {
-        "avg": 61.996660868475296,
-        "p50": 61.47479999344796,
-        "p95": 67.66479997895658,
-        "max": 71.03550003375858
-      },
-      "producer_late_ms": {
+      "producer_pack_ms": {
         "avg": 0.0,
         "p50": 0.0,
         "p95": 0.0,
         "max": 0.0
       },
-      "present_fps": 3.9221707960632473,
-      "draw_events": 13
+      "ui_update_ms": {
+        "avg": 9.366227222360774,
+        "p50": 9.55404998967424,
+        "p95": 12.07359999534674,
+        "max": 17.248000018298626
+      },
+      "producer_late_ms": {
+        "avg": 5.903407578363032,
+        "p50": 5.708533659344539,
+        "p95": 14.813200366916135,
+        "max": 16.4706336800009
+      },
+      "present_fps": 147.37889640476703,
+      "frame_work_ms": 0.2947,
+      "frame_total_ms": 12.394,
+      "command_queue_depth": 2,
+      "native": {
+        "updates": 51,
+        "pack_ms": 0.0,
+        "decode_ms": 0.0,
+        "bounds_ms": 0.0,
+        "upload_ms": 3.1587,
+        "grid_ms": 0.0036,
+        "overlay_ms": 0.0,
+        "total_ms": 3.1761,
+        "render_encode_ms": 0.0065,
+        "effective_drawn": 1000000,
+        "point_scale": 0.3499999940395355
+      }
     }
   ]
 }

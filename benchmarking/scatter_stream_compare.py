@@ -118,6 +118,12 @@ def run_dragongui_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             "status": "skipped",
             "reason": "native DragonGUI backend is not available",
         }
+    if args.dragongui_handoff == "direct" and args.dragongui_update_mode != "live-frame":
+        return {
+            "backend": "dragongui",
+            "status": "error",
+            "reason": "--dragongui-handoff direct requires --dragongui-update-mode live-frame",
+        }
 
     factory = FrameFactory(args.points)
 
@@ -168,6 +174,9 @@ def run_dragongui_benchmark(args: argparse.Namespace) -> dict[str, Any]:
     ui_update_ms: list[float] = []
     completed_update_times: list[float] = []
     producer_late_ms: list[float] = []
+    paced_ack_wait_ms: list[float] = []
+    paced_ack_times: list[float] = []
+    paced_timeouts = 0
     lock = threading.Lock()
     live_frame: dg.ScatterLiveFrame | None = None
 
@@ -179,13 +188,41 @@ def run_dragongui_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             time.sleep(0.005)
         return False
 
+    def native_update_count(timeout_ms: int = 250) -> int | None:
+        try:
+            snapshot = app.debug_snapshot(timeout_ms=timeout_ms)
+        except RuntimeError:
+            return None
+        metrics = _scatter_metrics(snapshot, scatter.id)
+        return int(metrics.get("updates") or 0)
+
+    def wait_for_native_update_after(previous: int) -> int | None:
+        deadline = time.perf_counter() + max(0.001, float(args.paced_timeout_ms) / 1000.0)
+        while not stop_event.is_set():
+            remaining_ms = int(max(1.0, min(250.0, (deadline - time.perf_counter()) * 1000.0)))
+            if remaining_ms <= 0:
+                return None
+            count = native_update_count(timeout_ms=remaining_ms)
+            if count is None:
+                return None
+            if count > previous:
+                return count
+            if time.perf_counter() >= deadline:
+                return None
+            stop_event.wait(0.002)
+        return None
+
     def producer() -> None:
+        nonlocal live_frame, paced_timeouts
         if not wait_for_live_app():
             return
         interval = 1.0 / max(0.1, float(args.target_hz))
+        index = 0
+        last_native_update = 0
+        if args.producer_mode == "paced":
+            last_native_update = native_update_count(timeout_ms=1000) or 0
         end_time = time.perf_counter() + float(args.duration)
         next_update = time.perf_counter()
-        index = 0
         while not stop_event.is_set() and time.perf_counter() < end_time:
             now = time.perf_counter()
             if now < next_update:
@@ -213,6 +250,22 @@ def run_dragongui_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                     prepared_payload = prepare_scatter_payload(frame)
                     pack_ms = (time.perf_counter() - pack_t0) * 1000.0
             build_ms = (time.perf_counter() - build_t0) * 1000.0
+
+            def record_update(
+                *,
+                build: float = build_ms,
+                generate: float = generate_ms,
+                pack: float = pack_ms,
+                late: float = late_ms,
+                update_ms: float,
+            ) -> None:
+                with lock:
+                    producer_build_ms.append(build)
+                    producer_generate_ms.append(generate)
+                    producer_pack_ms.append(pack)
+                    ui_update_ms.append(update_ms)
+                    producer_late_ms.append(late)
+                    completed_update_times.append(time.perf_counter())
 
             def apply_frame(
                 f: ArrayFrame = frame,
@@ -247,20 +300,60 @@ def run_dragongui_benchmark(args: argparse.Namespace) -> dict[str, Any]:
                         live_frame = None
                     scatter.set_points(f, x="x", y="y", z="z", point_size=args.point_size, fit=False)
                 update_ms = (time.perf_counter() - update_t0) * 1000.0
-                with lock:
-                    producer_build_ms.append(build)
-                    producer_generate_ms.append(generate)
-                    producer_pack_ms.append(pack)
-                    ui_update_ms.append(update_ms)
-                    producer_late_ms.append(late)
-                    completed_update_times.append(time.perf_counter())
+                record_update(
+                    build=build,
+                    generate=generate,
+                    pack=pack,
+                    late=late,
+                    update_ms=update_ms,
+                )
 
             try:
-                app.call_soon_threadsafe(apply_frame)
+                if args.dragongui_handoff == "direct":
+                    if args.dragongui_update_mode != "live-frame":
+                        raise RuntimeError("direct handoff requires --dragongui-update-mode live-frame")
+                    assert prepared_payload is not None
+                    if live_frame is None:
+                        live_frame = scatter.create_live_frame(
+                            capacity=args.points,
+                            x="x",
+                            y="y",
+                            z="z",
+                            point_size=args.point_size,
+                            colormap="turbo",
+                        )
+                    update_t0 = time.perf_counter()
+                    live_frame.enqueue_prepared(
+                        prepared_payload,
+                        coalesce=True,
+                        update_metadata=live_frame.replaces == 0,
+                        fit=live_frame.replaces == 0,
+                    )
+                    update_ms = (time.perf_counter() - update_t0) * 1000.0
+                    record_update(update_ms=update_ms)
+                else:
+                    app.call_soon_threadsafe(apply_frame)
             except RuntimeError:
                 break
+            if args.producer_mode == "paced":
+                ack_t0 = time.perf_counter()
+                next_native_update = wait_for_native_update_after(last_native_update)
+                ack_ms = (time.perf_counter() - ack_t0) * 1000.0
+                if next_native_update is None:
+                    with lock:
+                        paced_timeouts += 1
+                        paced_ack_wait_ms.append(ack_ms)
+                    break
+                last_native_update = next_native_update
+                with lock:
+                    paced_ack_wait_ms.append(ack_ms)
+                    paced_ack_times.append(time.perf_counter())
             index += 1
             next_update = max(next_update + interval, time.perf_counter())
+        try:
+            app.request_exit()
+        except RuntimeError:
+            pass
 
     def frame_driver() -> None:
         if not wait_for_live_app():
@@ -278,7 +371,7 @@ def run_dragongui_benchmark(args: argparse.Namespace) -> dict[str, Any]:
             stop_event.wait(min(max(0.0, next_frame - time.perf_counter()), 0.01))
 
     old_smoke = os.environ.get("DRAGONGUI_SMOKE_FRAMES")
-    smoke_frames = max(30, int(min(float(args.frame_hz), 60.0) * (float(args.duration) + 1.0)))
+    smoke_frames = max(30, int(max(float(args.frame_hz), 1.0) * (float(args.duration) + 10.0)))
     os.environ["DRAGONGUI_SMOKE_FRAMES"] = str(smoke_frames)
     start = time.perf_counter()
     threading.Thread(target=producer, daemon=True).start()
@@ -303,9 +396,13 @@ def run_dragongui_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         update_values = list(ui_update_ms)
         update_times = list(completed_update_times)
         late_values = list(producer_late_ms)
+        ack_wait_values = list(paced_ack_wait_ms)
+        ack_times = list(paced_ack_times)
+        ack_timeouts = paced_timeouts
 
     native_updates = int(metrics.get("updates") or 0)
     accepted_update_hz = _hz_from_timestamps(update_times)
+    paced_ack_update_hz = _hz_from_timestamps(ack_times)
     native_update_hz = native_updates / max(0.001, wall_s)
     coalesced_updates = max(0, len(update_times) - native_updates)
 
@@ -313,6 +410,8 @@ def run_dragongui_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         "backend": "dragongui",
         "status": "ok",
         "update_mode": args.dragongui_update_mode,
+        "producer_mode": args.producer_mode,
+        "handoff": args.dragongui_handoff,
         "workload": args.dragongui_workload,
         "payload_format": args.dragongui_payload_format,
         "prebuild_count": int(args.prebuild_count),
@@ -330,6 +429,9 @@ def run_dragongui_benchmark(args: argparse.Namespace) -> dict[str, Any]:
         "producer_pack_ms": _summary(pack_values),
         "ui_update_ms": _summary(update_values),
         "producer_late_ms": _summary(late_values),
+        "paced_ack_update_hz": paced_ack_update_hz,
+        "paced_ack_wait_ms": _summary(ack_wait_values),
+        "paced_timeouts": ack_timeouts,
         "present_fps": float(runtime.get("wall_fps") or 0.0) if isinstance(runtime, dict) else 0.0,
         "frame_work_ms": float(runtime.get("frame_work_ms") or 0.0) if isinstance(runtime, dict) else 0.0,
         "frame_total_ms": float(runtime.get("last_frame_ms") or 0.0) if isinstance(runtime, dict) else 0.0,
@@ -469,8 +571,14 @@ def print_result(result: dict[str, Any]) -> None:
     if result["backend"] == "dragongui":
         native = result.get("native", {})
         print(f"  update_mode         : {result.get('update_mode', 'set-points')}")
+        print(f"  producer_mode       : {result.get('producer_mode', 'flood')}")
+        print(f"  handoff             : {result.get('handoff', 'callback')}")
         print(f"  workload            : {result.get('workload', 'generate')}")
         print(f"  payload_format      : {result.get('payload_format', 'xyz')}")
+        if result.get("producer_mode") == "paced":
+            print(f"  paced_ack_hz        : {result.get('paced_ack_update_hz', 0.0):.1f}")
+            print(f"  paced_ack_wait avg  : {result.get('paced_ack_wait_ms', {}).get('avg', 0.0):.2f} ms")
+            print(f"  paced_timeouts      : {result.get('paced_timeouts', 0)}")
         print(f"  frame_work_ms       : {result.get('frame_work_ms', 0.0):.2f}")
         print(f"  command_queue_depth : {result.get('command_queue_depth', 0)}")
         print(f"  native_updates      : {native.get('updates', 0)}")
@@ -498,10 +606,37 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lod-factor", type=int, default=4)
     parser.add_argument("--render-scale", type=float, default=1.0)
     parser.add_argument(
+        "--producer-mode",
+        choices=("flood", "paced"),
+        default="flood",
+        help=(
+            "Frame producer pacing. 'flood' schedules at target-hz and lets native "
+            "coalesce stale frames. 'paced' waits for the native scatter update "
+            "counter to advance before scheduling the next frame."
+        ),
+    )
+    parser.add_argument(
+        "--paced-timeout-ms",
+        type=float,
+        default=1000.0,
+        help="Timeout while waiting for a native scatter update in paced producer mode.",
+    )
+    parser.add_argument(
         "--dragongui-update-mode",
         choices=("set-points", "live-frame"),
         default="set-points",
         help="DragonGUI update path: replace primary scene or retained live actor.",
+    )
+    parser.add_argument(
+        "--dragongui-handoff",
+        choices=("callback", "direct"),
+        default="callback",
+        help=(
+            "How DragonGUI live-frame payloads are handed to native. 'callback' "
+            "schedules a Python UI callback with app.call_soon_threadsafe. "
+            "'direct' calls ScatterLiveFrame.enqueue_prepared from the producer "
+            "thread and relies on native command queue coalescing."
+        ),
     )
     parser.add_argument(
         "--dragongui-workload",

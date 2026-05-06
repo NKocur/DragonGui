@@ -550,6 +550,14 @@ Current capabilities:
 - Emits `on_pick` with `ScatterPick(index, x, y, z)` for point clicks.
 - Renders inside the same native window/layout tree as the rest of the UI.
 
+For full-frame sensor streams, `Scatter3D.create_live_frame(mode="primary")`
+keeps the scatter node retained while replacing only its point payload. Use
+`live.replace_prepared(...)` when prepared frames should still flow through a GUI
+callback and update Python-side widget metadata. Use
+`live.enqueue_prepared(...)` directly from a producer thread when the feed is
+high-rate and latest-frame delivery matters more than rendering every
+intermediate frame.
+
 This is the core example of DragonGUI's intended moat: data widgets that are
 native GPU scene nodes, not embedded browser canvases.
 

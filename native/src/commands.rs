@@ -498,6 +498,7 @@ pub enum Command {
     },
     DrainPythonTasks,
     RequestRedraw,
+    RequestExit,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -2034,6 +2035,10 @@ impl NativeCommandSender {
 
     fn enqueue_request_redraw(&self) -> PyResult<()> {
         self.enqueue(Command::RequestRedraw)
+    }
+
+    fn enqueue_request_exit(&self) -> PyResult<()> {
+        self.enqueue(Command::RequestExit)
     }
 
     fn is_closed(&self) -> bool {

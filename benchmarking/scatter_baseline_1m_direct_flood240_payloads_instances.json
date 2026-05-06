@@ -1,0 +1,78 @@
+{
+  "results": [
+    {
+      "backend": "dragongui",
+      "status": "ok",
+      "update_mode": "live-frame",
+      "producer_mode": "flood",
+      "handoff": "direct",
+      "workload": "prebuilt-payloads",
+      "payload_format": "instances",
+      "prebuild_count": 8,
+      "points": 1000000,
+      "duration_s": 3.0,
+      "target_update_hz": 240.0,
+      "completed_updates": 312,
+      "achieved_update_hz": 103.65347503452011,
+      "accepted_update_hz": 103.65347503452011,
+      "native_update_hz": 69.12916265514585,
+      "coalesced_updates": 100,
+      "wall_s": 3.066723100026138,
+      "producer_build_ms": {
+        "avg": 0.03335897268605036,
+        "p50": 0.03190001007169485,
+        "p95": 0.047600013203918934,
+        "max": 0.0667999847792089
+      },
+      "producer_generate_ms": {
+        "avg": 0.0030413458984978018,
+        "p50": 0.002900007530115545,
+        "p95": 0.0047000066842883825,
+        "max": 0.008400005754083395
+      },
+      "producer_pack_ms": {
+        "avg": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "ui_update_ms": {
+        "avg": 9.582976282101113,
+        "p50": 9.431700003915466,
+        "p95": 11.926499981200323,
+        "max": 19.870999996783212
+      },
+      "producer_late_ms": {
+        "avg": 0.0032634621348757394,
+        "p50": 0.0027500063879415393,
+        "p95": 0.005499983672052622,
+        "max": 0.09439999121241271
+      },
+      "paced_ack_update_hz": 0.0,
+      "paced_ack_wait_ms": {
+        "avg": 0.0,
+        "p50": 0.0,
+        "p95": 0.0,
+        "max": 0.0
+      },
+      "paced_timeouts": 0,
+      "present_fps": 172.52381681260644,
+      "frame_work_ms": 0.246,
+      "frame_total_ms": 0.3455,
+      "command_queue_depth": 1,
+      "native": {
+        "updates": 212,
+        "pack_ms": 0.0,
+        "decode_ms": 0.0,
+        "bounds_ms": 0.0,
+        "upload_ms": 2.8634,
+        "grid_ms": 0.002,
+        "overlay_ms": 0.0,
+        "total_ms": 2.8739,
+        "render_encode_ms": 0.0044,
+        "effective_drawn": 1000000,
+        "point_scale": 0.3499999940395355
+      }
+    }
+  ]
+}

@@ -562,6 +562,7 @@ class AppHandle:
         self._click_callbacks: dict[str, Callable[[], None]] = {}
         self._change_callbacks: dict[str, Callable[[object], None]] = {}
         self._native_sender: Any | None = None
+        self._drain_requested = False
         self._toast_seq = 0
         self._closed = False
 
@@ -606,12 +607,15 @@ class AppHandle:
                 raise RuntimeError("DragonGUI app handle is closed")
             self._tasks.append(scheduled)
             sender = self._native_sender
+            should_request_drain = sender is not None and not self._drain_requested
+            if should_request_drain:
+                self._drain_requested = True
         if collector is not None:
             try:
                 scheduled.origin = collector.record_enqueue()
             except Exception:
                 pass
-        if sender is not None:
+        if should_request_drain:
             try:
                 sender.enqueue_drain_python_tasks()
             except RuntimeError as exc:
@@ -1201,6 +1205,10 @@ class AppHandle:
         """Request one native redraw without changing widget state."""
         self._send_or_queue_native("enqueue_request_redraw")
 
+    def request_exit(self) -> None:
+        """Request the native event loop to exit."""
+        self._send_or_queue_native("enqueue_request_exit")
+
     def debug_snapshot(self, timeout_ms: int = 1000) -> dict[str, Any]:
         """Return a JSON-safe snapshot of the live native runtime."""
         with self._lock:
@@ -1436,11 +1444,14 @@ class AppHandle:
                 raise RuntimeError("cannot bind native sender to a closed DragonGUI app handle")
             self._native_sender = sender
             has_tasks = bool(self._tasks)
+            should_request_drain = has_tasks and not self._drain_requested
+            if should_request_drain:
+                self._drain_requested = True
             pending = list(self._pending_native)
             self._pending_native.clear()
         for method, args in pending:
             getattr(sender, method)(*args)
-        if has_tasks:
+        if should_request_drain:
             sender.enqueue_drain_python_tasks()
 
     def _drain_python_tasks(self) -> None:
@@ -1448,6 +1459,7 @@ class AppHandle:
         while processed < _MAX_PYTHON_TASKS_PER_DRAIN:
             with self._lock:
                 if not self._tasks:
+                    self._drain_requested = False
                     return
                 scheduled = self._tasks.popleft()
             task = scheduled.fn
@@ -1464,6 +1476,7 @@ class AppHandle:
 
         with self._lock:
             sender = self._native_sender if self._tasks and not self._closed else None
+            self._drain_requested = sender is not None
         if sender is not None:
             try:
                 sender.enqueue_drain_python_tasks()
@@ -1504,6 +1517,7 @@ class AppHandle:
             self._closed = True
             sender = self._native_sender
             self._native_sender = None
+            self._drain_requested = False
             self._tasks.clear()
             self._pending_native.clear()
             self._click_callbacks.clear()

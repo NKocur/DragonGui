@@ -1446,7 +1446,8 @@ Mouse controls:
 Live methods:
 
 - `set_points(frame, x, y=None, z=None, *, color=None, colors=None, scalars=None, point_size=None, point_sizes=None, opacity=None, clim=None, log_scale=None, nan_color=None, size_range=None, fit=False)` — replace point data. Set `fit=True` when replacing the scene with a different coordinate frame so the camera target and orbit center refit to the new bounds.
-- `create_live_frame(frame=None, *, capacity=None, x=None, y=None, z=None, color=None, colors=None, scalars=None, point_size=None, point_sizes=None, opacity=None, colormap=None, clim=None, log_scale=None, nan_color=None, size_range=None, mode="primary", fit=False)` - create a retained replacement handle for sensors that publish complete frames. The default `mode="primary"` uses the fast primary packed update path without rebuilding the declarative widget tree; `mode="actor"` keeps an independent point actor layer. Call `live.replace(frame)` for simple use, or pack off the UI thread with `Scatter3D.prepare_points(...)` and call `live.replace_prepared(payload)` for high-rate streams.
+- `create_live_frame(frame=None, *, capacity=None, x=None, y=None, z=None, color=None, colors=None, scalars=None, point_size=None, point_sizes=None, opacity=None, colormap=None, clim=None, log_scale=None, nan_color=None, size_range=None, mode="primary", fit=False)` - create a retained replacement handle for sensors that publish complete frames. The default `mode="primary"` uses the fast primary packed update path without rebuilding the declarative widget tree; `mode="actor"` keeps an independent point actor layer. Call `live.replace(frame)` for simple use, pack off the UI thread with `Scatter3D.prepare_points(...)` and call `live.replace_prepared(payload)` from a GUI callback, or call `live.enqueue_prepared(payload)` directly from a producer thread for high-rate latest-frame streams.
+- `prepare_points(frame, *, x, y, z, ...)` - class method that packs a frame into a reusable `ScatterPayload` without mutating a live widget. This is the preferred packing step for background workers and benchmark streams.
 - `set_colormap(colormap)` — change colormap; repacks data if per-point colors are baked.
 - `reset_camera()` — reset camera to last fitted position.
 - `view_xy()`, `view_xz()`, `view_yz()`, `view_isometric()` — snap to a preset view direction.
@@ -1464,6 +1465,42 @@ Live methods:
 - `set_ticks(x=None, y=None, z=None)` — override per-axis tick counts; `None` uses auto ticks.
 - `parallel_projection` — read/write property; `True` for orthographic, `False` for perspective (default).
 - `colormap_names()` — class method returning sorted list of valid colormap names.
+
+Live-frame streaming paths:
+
+For complete-frame streams, first create a retained primary live frame:
+
+```python
+scatter = dg.Scatter3D(initial_frame, x="x", y="y", z="z")
+live = scatter.create_live_frame(mode="primary")
+```
+
+Use `live.replace(frame)` for simple, lower-rate updates when packing cost and
+Python callback scheduling are not the bottleneck.
+
+Use `live.replace_prepared(payload, update_metadata=True)` when the producer
+thread prepares data but the update is still part of normal GUI state handling.
+This path is called from a GUI callback, updates Python-side scatter metadata,
+and then enqueues the native upload:
+
+```python
+payload = dg.Scatter3D.prepare_points(frame, x="x", y="y", z="z")
+app.call_soon_threadsafe(lambda: live.replace_prepared(payload, fit=False))
+```
+
+Use `live.enqueue_prepared(payload, update_metadata=False, coalesce=True)` for
+high-rate sensors, simulations, or LiDAR-style feeds where the latest complete
+frame matters more than every intermediate frame. This path is thread-safe for
+producer threads, bypasses Python UI callback scheduling, and lets the native
+queue coalesce stale pending frames for the same scatter:
+
+```python
+payload = dg.Scatter3D.prepare_points(frame, x="x", y="y", z="z")
+live.enqueue_prepared(payload, update_metadata=False, coalesce=True)
+```
+
+In short: `replace_prepared(...)` is the stateful GUI-callback path;
+`enqueue_prepared(...)` is the direct producer-thread path.
 
 Callback data:
 

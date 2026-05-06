@@ -10800,6 +10800,10 @@ impl DragonApp {
             Command::RequestRedraw => {
                 self.record_runtime_command("RequestRedraw", None, None, None, "applied", true)
             }
+            Command::RequestExit => {
+                self.smoke_frames = Some(self.frames_rendered.saturating_add(1));
+                self.record_runtime_command("RequestExit", None, None, None, "applied", true)
+            }
             Command::Invalidate { id, dirty } => {
                 let (outcome, redraw) = {
                     let Some(gpu) = &mut self.gpu else {

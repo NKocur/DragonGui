@@ -1832,6 +1832,7 @@ demo_state = {
     "phase": 0.0,
     "theme": "midnight",
     "stream_interval_ms": 40.0,
+    "stream_handoff": "direct",
     "style": 0,
     "grid": True,
     "planes": True,
@@ -1952,11 +1953,14 @@ def update_scatter_stats(snapshot: dict[str, object], observed_fps: float | None
     observed_text = "--" if observed_fps is None else f"{observed_fps:.1f} fps"
     lod = scatter_metrics.get("lod", {})
     lod_active = bool(lod.get("active")) if isinstance(lod, dict) else False
+    with state_lock:
+        handoff = str(demo_state.get("stream_handoff", "direct"))
     scatter_stats_summary.set_value(
         "\n".join(
             (
                 f"Frame CPU avg: {fmt_ms(frame_ms_value)} ({frame_fps:.1f} fps)",
                 f"Observed redraws: {observed_text} / {fmt_count(runtime.get('frames_rendered'))} frames",
+                f"Stream handoff: {stream_handoff_label(handoff)}",
                 f"Scatter encode: {metric_ms(scatter_metrics, 'last_render_encode_ms')}",
                 "Payload: "
                 f"{fmt_count(scatter_metrics.get('last_point_count'))} pts / "
@@ -2315,15 +2319,46 @@ def record_stream_frame(
 ) -> None:
     demo_state["phase"] = phase
     progress.set_value((phase % math.tau) / math.tau)
+    with state_lock:
+        handoff = str(demo_state.get("stream_handoff", "direct"))
+    label = stream_handoff_label(handoff)
     if metrics is None:
-        set_status(f"Streaming {mode}: phase {phase:.2f}")
+        set_status(f"Streaming {mode} ({label}): phase {phase:.2f}")
     else:
-        set_status(f"Streaming {mode}: phase {phase:.2f}, submitted {metrics.submitted:,}")
+        set_status(
+            f"Streaming {mode} ({label}): phase {phase:.2f}, submitted {metrics.submitted:,}"
+        )
 
 
 def current_stream_interval_ms() -> float:
     with state_lock:
         return float(demo_state["stream_interval_ms"])
+
+
+def normalize_stream_handoff(value: str) -> str:
+    text = str(value).strip().lower().replace("-", "_")
+    if text in ("ui_callback", "callback"):
+        return "callback"
+    return "direct"
+
+
+def stream_handoff_label(value: str) -> str:
+    return "UI callback" if normalize_stream_handoff(value) == "callback" else "Direct"
+
+
+def set_stream_handoff(value: str) -> None:
+    handoff = normalize_stream_handoff(value)
+    was_running = stream_controller is not None and stream_controller.running
+    with state_lock:
+        previous = str(demo_state.get("stream_handoff", "direct"))
+        demo_state["stream_handoff"] = handoff
+    if handoff == normalize_stream_handoff(previous):
+        set_status(f"Scatter stream handoff: {stream_handoff_label(handoff)}")
+        return
+    if was_running:
+        stop_stream()
+        start_stream()
+    set_status(f"Scatter stream handoff: {stream_handoff_label(handoff)}")
 
 
 def start_stream() -> None:
@@ -2337,6 +2372,7 @@ def start_stream() -> None:
     def worker() -> None:
         with state_lock:
             mode = str(demo_state["mode"])
+            handoff = str(demo_state.get("stream_handoff", "direct"))
             colormap = scatter.colormap
         try:
             payloads = stream_payloads_for_mode(mode, colormap)
@@ -2367,9 +2403,10 @@ def start_stream() -> None:
                 loop=True,
                 on_frame=on_frame,
                 ui_interval_ms=500,
+                handoff=handoff,
             )
             stream_controller.start()
-            set_status("Scatter stream started")
+            set_status(f"Scatter stream started ({stream_handoff_label(handoff)})")
 
         try:
             app.call_soon_threadsafe(launch)
@@ -2835,6 +2872,7 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                                     (
                                         "Frame CPU avg: --",
                                         "Observed redraws: --",
+                                        "Stream handoff: Direct",
                                         "Scatter encode: --",
                                         "Payload: --",
                                         "Native update: --",
@@ -2878,6 +2916,7 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                             dg.Label("Point size")
                             dg.Slider(3.2, min=1.0, max=8.0, step=0.2, on_change=set_point_size)
                             dg.Label("Stream")
+                            dg.Dropdown(("Direct", "UI callback"), value="Direct", on_change=set_stream_handoff)
                             dg.Button("Start stream", on_click=start_stream)
                             dg.Button("Stop stream", on_click=stop_stream)
                             stream_interval_label = dg.Label("Stream interval: 40 ms")
