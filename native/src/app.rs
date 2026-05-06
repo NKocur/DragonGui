@@ -27,6 +27,7 @@ pub fn run_app_impl(
         serde_json::from_str(&json_str).map_err(|e| DragonError::ParseError(e.to_string()))?;
 
     let python_theme: Option<Theme> = document::parse_theme_from_doc(&raw);
+    let loading_screen = document::parse_loading_screen_from_doc(&raw);
     let effective_theme = python_theme.clone().unwrap_or_else(Theme::dark);
     let mut stylesheets = document::parse_stylesheets_from_doc(&raw);
     stylesheets.install_framework_defaults(&effective_theme);
@@ -98,6 +99,7 @@ pub fn run_app_impl(
         change_callbacks: change_cbs,
         command_bridge,
         python_runtime,
+        loading_screen,
     };
 
     let run_result = py.allow_threads(|| run_event_loop(spec))?;

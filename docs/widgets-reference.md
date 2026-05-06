@@ -249,7 +249,7 @@ Inline part names accept dashed or snake-case names. For example,
 Constructor:
 
 ```python
-dg.App(title="DragonGUI", theme=None, metadata={})
+dg.App(title="DragonGUI", theme=None, metadata={}, loading_screen=None)
 ```
 
 Options:
@@ -259,6 +259,7 @@ Options:
 | `title` | App document title. |
 | `theme` | Optional `dg.Theme`. |
 | `metadata` | JSON-safe metadata included in the app document. |
+| `loading_screen` | `None`/`True` uses the default native startup loading screen, `False` disables it, and `dg.LoadingScreen(...)` customizes copy, colors, spinner/progress, and minimum duration. |
 
 Methods:
 
@@ -269,6 +270,7 @@ Methods:
 | `load_stylesheet(path)` | Reads UTF-8 CSS from disk and applies it. |
 | `clear_stylesheets()` | Clears user stylesheets. |
 | `run(window)` | Starts the native event loop. Accepts `Window` or component instance. |
+| `run_with_loading(build_window, title=None, width=1024, height=768)` | Starts the native event loop with a placeholder window, shows the startup loading frame, then calls `build_window()` and swaps in the returned `Window` or component root before the first real redraw. |
 | `call_soon_threadsafe(fn)` | Schedules a callable on the live DragonGUI runtime. |
 | `toast(...)` | Shows a native toast while the app is running. |
 | `debug_snapshot(timeout_ms=1000)` | Returns live runtime diagnostics. |

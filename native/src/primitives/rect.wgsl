@@ -390,7 +390,23 @@ fn fs_main(in: VertOut) -> @location(0) vec4<f32> {
     let shape_half_size = max(in.half_size - vec2<f32>(shape_inset, shape_inset), vec2<f32>(0.5, 0.5));
     let p = in.local_px - in.half_size; // centered coords
     var sdf: f32;
-    if (in.params.w > 0.5 && in.params.w < 1.5) {
+    if (in.params.w > 1.5 && in.params.w < 2.5) {
+        let radius = min(shape_half_size.x, shape_half_size.y);
+        let dist = length(p);
+        let outer_sdf = dist - radius;
+        let inner_ratio = clamp(in.paint.w, 0.0, 0.9);
+        let inner_sdf = inner_ratio * radius - dist;
+        let angle = atan2(p.y, p.x);
+        let tau = 6.28318530718;
+        let start = in.paint.y;
+        let end = in.paint.z;
+        let sweep = max(end - start, 0.0001);
+        var rel = angle - start;
+        rel = rel - floor(rel / tau) * tau;
+        let angle_sdf = max(-rel, rel - sweep);
+        let angle_px = angle_sdf * radius;
+        sdf = max(max(outer_sdf, inner_sdf), angle_px);
+    } else if (in.params.w > 0.5 && in.params.w < 1.5) {
         let rounding = clamp(in.radii.x, 0.0, min(shape_half_size.x, shape_half_size.y) * 0.45);
         let tri_half = max(shape_half_size - vec2<f32>(rounding, rounding), vec2<f32>(0.5, 0.5));
         var a = vec2<f32>(0.0, 0.0);

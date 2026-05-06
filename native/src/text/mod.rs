@@ -481,6 +481,13 @@ impl TextRendererDg {
                     + ((label_clip.bottom - label_clip.top).max(1) as f32 - line_height).max(0.0)
                         * 0.5,
             ),
+            "box-center" => (
+                TextAlign::Center,
+                label_clip.left as f32,
+                label_clip.top as f32
+                    + ((label_clip.bottom - label_clip.top).max(1) as f32 - font_size).max(0.0)
+                        * 0.5,
+            ),
             "plot-x-tick" => {
                 let width = 40.0 * scale;
                 label_clip = intersect_text_bounds(
@@ -2170,6 +2177,7 @@ fn widget_kind_name(kind: WidgetKind) -> &'static str {
         WidgetKind::Page => "page",
         WidgetKind::Sidebar => "sidebar",
         WidgetKind::NavItem => "nav_item",
+        WidgetKind::PieChart => "pie_chart",
         WidgetKind::Histogram => "histogram",
         WidgetKind::LinePlot => "line_plot",
         WidgetKind::Scatter3D => "scatter_3d",

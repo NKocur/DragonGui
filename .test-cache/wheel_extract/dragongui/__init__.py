@@ -1,7 +1,7 @@
 """Python API for DragonGUI."""
 
 from ._backend import BackendUnavailableError, backend_info, native_backend_available
-from .app import App
+from .app import App, LoadingScreen, run_with_loading
 from .components import ComponentCtx, ComponentInstance, StateSlot, component
 from .dialogs import (
     FileDialog,
@@ -29,6 +29,7 @@ from .widgets import (
     HLayout,
     Histogram,
     HistogramBins,
+    HtmlReport,
     Image,
     LED,
     Label,
@@ -43,6 +44,7 @@ from .widgets import (
     Page,
     Pages,
     Panel,
+    PieChart,
     ProgressBar,
     Scatter3D,
     ScatterFrameStream,
@@ -107,10 +109,12 @@ __all__ = [
     "HLayout",
     "Histogram",
     "HistogramBins",
+    "HtmlReport",
     "Image",
     "LED",
     "Label",
     "LinePlot",
+    "LoadingScreen",
     "ContextMenu",
     "Menu",
     "MenuBar",
@@ -121,6 +125,7 @@ __all__ = [
     "Page",
     "Pages",
     "Panel",
+    "PieChart",
     "ProgressBar",
     "Scatter3D",
     "ScatterFrameStream",
@@ -156,6 +161,7 @@ __all__ = [
     "toast",
     "link_cameras",
     "unlink_cameras",
+    "run_with_loading",
     "ThreadMonitor",
     "register_thread_role",
     "thread_role",

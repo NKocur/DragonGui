@@ -712,7 +712,8 @@ fn style_for(
         }
 
         // ── plot / table: grow to fill remaining space ────────────────────
-        WidgetKind::Histogram
+        WidgetKind::PieChart
+        | WidgetKind::Histogram
         | WidgetKind::LinePlot
         | WidgetKind::Scatter3D
         | WidgetKind::DataFrameTable

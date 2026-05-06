@@ -1,10 +1,10 @@
 dragongui-0.1.0.dist-info/METADATA,sha256=jg5FYX3GchIN5kZOmqrzAaA5r7Aazdh602WW0yLIijw,14260
 dragongui-0.1.0.dist-info/WHEEL,sha256=QC3zdlgimDC1GtRrc0qfjqbzuc7G6nDvPrjaINbNOTw,95
 dragongui-0.1.0.dist-info/licenses/LICENSE,sha256=V-QYNfRwMi9yygrjlKEqCnymw0XUE9wyktoSSKqw8Eg,1102
-dragongui/__init__.py,sha256=ti_zGcV3eYRXFMZ38oQgL5WAxi0SWyUNVEavktnO2xA,3296
-dragongui/_backend.py,sha256=MvaaHWzITXEtFIXGMqzSiXt1n1XULgpzYG4oi2fuXh0,6330
-dragongui/_dragongui.pyd,sha256=7pwDeGCSpiQY2Gfj28o_PSFZ1AW94LkjahvpwBlig9E,18704384
-dragongui/app.py,sha256=jRTRE6c12s4liynj_Y1xssM65qLnRtdKkAYEd6Oeg54,7105
+dragongui/__init__.py,sha256=QnejR0_UC07482qXmcCGGe89EBGjSPleH1l7pk2v7Do,3439
+dragongui/_backend.py,sha256=dXZDUkdsrcHgWhAIMrjKqfqFyksb9g9Ayuf7ihGiThU,6886
+dragongui/_dragongui.pyd,sha256=ZMrNRhfp9VE8OuOLJdcGU4yKdzeVCwFqhUT8nDVsnQI,18981888
+dragongui/app.py,sha256=WZImXzUuEh1CrCqfAYoLSsvc6kNJOS4b102Ug3eZLec,14411
 dragongui/colormap.py,sha256=50XU3fvvCfjigFXN6-XbfIiyDmxlOex-YobkCxRwLNk,3869
 dragongui/components.py,sha256=GHTdDHWMzGCbDI4rWWg5z1GyhNQlPiauztVCmPN8Az4,10569
 dragongui/dataframe.py,sha256=MrSCpeibQlkQkOJl7MQU21BeVl-R8HIgv114JxAX1-A,8120
@@ -16,5 +16,5 @@ dragongui/runtime.py,sha256=kI6i_TbxOiefIdhjxxx9LoUsb6klWoBQlC58zxgeKj0,76170
 dragongui/theme.py,sha256=OVd4D9yeQT9-PdwXW-mg19xaeAqM4FAI0-Hd6FqxCzE,2702
 dragongui/thread_monitor.py,sha256=5aMefGwvUXC9kvqbMlvo1zBkEPZN0ZF4ZbBAYI7W_Yg,24184
 dragongui/vdom.py,sha256=0ZNqlWdHIjNVeXE6SvCTLUnuq5e0-XJAP-_DIDMyraA,16925
-dragongui/widgets.py,sha256=i5i9bdfUJKI5VGVHLJ5r5KFHT6VqKUVVVA5CwAsZfs0,235798
+dragongui/widgets.py,sha256=I_j6ivrgahbDkJzppNX0icKJu_dT1Z1684XTI_MqJMY,250681
 dragongui-0.1.0.dist-info/RECORD,,

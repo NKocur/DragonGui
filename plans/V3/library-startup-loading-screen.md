@@ -122,6 +122,23 @@ Suggested interpretation:
 - `True`: use default loading screen explicitly.
 - `LoadingScreen(...)`: enabled unless `enabled=False`.
 
+For Python-side startup work that happens before a full `Window` exists, add a
+builder API:
+
+```python
+def build_window() -> dg.Window:
+    load_data()
+    return make_window()
+
+app.run_with_loading(build_window, title="Dashboard", width=1200, height=800)
+```
+
+`run_with_loading()` starts a lightweight placeholder window first, lets the
+native loading screen present, calls `build_window()` as the first live Python
+task, then swaps the returned `Window` into the retained root before the first
+real app redraw. This does not replace `App.run(window)` for apps that already
+have a fully-built document.
+
 ## Serialized Document
 
 Add a top-level document field:
@@ -264,6 +281,16 @@ presented.
 - Drain live startup commands after the loading frame.
 - Add debug snapshot fields.
 - Add a focused probe that forces visible startup work.
+
+### Milestone 1B: Python Builder Startup Coverage
+
+- Add `App.run_with_loading(build_window, ...)`.
+- Add top-level `dg.run_with_loading(...)` convenience helper.
+- Start a placeholder root, then replace it with the real root from
+  `build_window()`.
+- Register callbacks and queue startup resources for the swapped-in widgets.
+- Update the startup loading probe to exercise Python document construction
+  delay instead of relying only on native startup delay.
 
 ### Milestone 2: Move Heavy Startup Payload Work After Loading Frame
 

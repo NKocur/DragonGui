@@ -587,6 +587,18 @@ class HistogramBins:
     finite_count: int
 
 
+@dataclass(frozen=True)
+class PieChartData:
+    """Immutable normalized pie chart payload."""
+
+    labels: tuple[str, ...]
+    values: tuple[float, ...]
+    colors: tuple[object, ...]
+    total: float
+    input_count: int
+    finite_count: int
+
+
 @dataclass
 class ScatterStreamMetrics:
     produced: int = 0
@@ -2977,6 +2989,130 @@ def _pack_xy_values(x_values: Any, y_values: Any | None = None) -> bytes | None:
         return None
 
 
+_PIE_DEFAULT_COLORS: tuple[str, ...] = (
+    "#5aa9ff",
+    "#74ddb0",
+    "#ffd36a",
+    "#f36b7f",
+    "#b388ff",
+    "#ff9f43",
+    "#4dd0e1",
+    "#a3e635",
+)
+
+
+def _pie_color_list(
+    labels: Sequence[str],
+    colors: Sequence[object] | Mapping[str, object] | None,
+) -> tuple[object, ...]:
+    if isinstance(colors, Mapping):
+        return tuple(colors.get(label, _PIE_DEFAULT_COLORS[i % len(_PIE_DEFAULT_COLORS)]) for i, label in enumerate(labels))
+    if colors is None:
+        return tuple(_PIE_DEFAULT_COLORS[i % len(_PIE_DEFAULT_COLORS)] for i in range(len(labels)))
+    color_items = list(colors)
+    if not color_items:
+        return tuple(_PIE_DEFAULT_COLORS[i % len(_PIE_DEFAULT_COLORS)] for i in range(len(labels)))
+    return tuple(color_items[i % len(color_items)] for i in range(len(labels)))
+
+
+def _normalize_pie_data(
+    labels: Sequence[object],
+    values: Sequence[object],
+    *,
+    colors: Sequence[object] | Mapping[str, object] | None = None,
+    top_n: int | None = None,
+    other_label: str = "Other",
+) -> PieChartData:
+    label_items = [str(label) for label in labels]
+    value_items = [float(value) for value in values]
+    if len(label_items) != len(value_items):
+        raise ValueError("PieChart labels and values must have the same length")
+    if not label_items:
+        raise ValueError("PieChart requires at least one slice")
+
+    pairs: list[tuple[str, float]] = []
+    finite_count = 0
+    for label, value in zip(label_items, value_items, strict=True):
+        if not math.isfinite(value):
+            continue
+        finite_count += 1
+        if value < 0:
+            raise ValueError("PieChart values must be non-negative")
+        if value > 0:
+            pairs.append((label, value))
+    if not pairs:
+        raise ValueError("PieChart requires at least one positive finite value")
+
+    pairs.sort(key=lambda item: item[1], reverse=True)
+    if top_n is not None:
+        limit = max(1, int(top_n))
+        if len(pairs) > limit:
+            kept = pairs[:limit]
+            other = sum(value for _, value in pairs[limit:])
+            if other > 0:
+                kept.append((str(other_label), other))
+            pairs = kept
+
+    out_labels = tuple(label for label, _ in pairs)
+    out_values = tuple(value for _, value in pairs)
+    total = float(sum(out_values))
+    return PieChartData(
+        labels=out_labels,
+        values=out_values,
+        colors=_pie_color_list(out_labels, colors),
+        total=total,
+        input_count=len(label_items),
+        finite_count=finite_count,
+    )
+
+
+def _pie_from_frame(
+    data: Any,
+    *,
+    category: str,
+    value: str | None = None,
+    aggregate: str = "count",
+    colors: Sequence[object] | Mapping[str, object] | None = None,
+    top_n: int | None = None,
+    other_label: str = "Other",
+) -> PieChartData:
+    aggregate = str(aggregate).strip().lower()
+    if aggregate not in {"count", "sum", "mean", "min", "max"}:
+        raise ValueError("PieChart aggregate must be one of: count, sum, mean, min, max")
+    categories = list(_get_frame_col(data, category))
+    if value is None:
+        values = [1.0] * len(categories)
+    else:
+        values = [float(item) for item in _get_frame_col(data, value)]
+    if len(categories) != len(values):
+        raise ValueError("PieChart category and value columns must have the same length")
+
+    grouped: dict[str, list[float]] = {}
+    for label, number in zip(categories, values, strict=True):
+        if not math.isfinite(number):
+            continue
+        if number < 0:
+            raise ValueError("PieChart values must be non-negative")
+        grouped.setdefault(str(label), []).append(number)
+
+    labels: list[str] = []
+    totals: list[float] = []
+    for label, items in grouped.items():
+        if aggregate == "count":
+            result = float(len(items))
+        elif aggregate == "sum":
+            result = float(sum(items))
+        elif aggregate == "mean":
+            result = float(sum(items) / len(items)) if items else 0.0
+        elif aggregate == "min":
+            result = float(min(items)) if items else 0.0
+        else:
+            result = float(max(items)) if items else 0.0
+        labels.append(label)
+        totals.append(result)
+    return _normalize_pie_data(labels, totals, colors=colors, top_n=top_n, other_label=other_label)
+
+
 def _histogram_column_values(data: Any, value: str | None) -> Any:
     if value is None:
         return data
@@ -3724,6 +3860,125 @@ class LinePlot(Widget):
             "window_size": self.window_size,
             "max_points": self.max_points,
             "series": series_items,
+        }
+
+
+class PieChart(Widget):
+    kind = "pie_chart"
+
+    def __init__(
+        self,
+        data: Any = None,
+        *,
+        labels: Sequence[object] | None = None,
+        values: Sequence[object] | None = None,
+        category: str | None = None,
+        value: str | None = None,
+        aggregate: str = "count",
+        top_n: int | None = None,
+        other_label: str = "Other",
+        donut: bool = False,
+        inner_radius: float = 0.52,
+        start_angle: float = -90.0,
+        clockwise: bool = True,
+        label_mode: str = "auto",
+        value_mode: str = "percent",
+        show_legend: bool = True,
+        legend_position: str = "right",
+        show_labels: bool = False,
+        selected: str | int | None = None,
+        colors: Sequence[object] | Mapping[str, object] | None = None,
+        title: str | None = None,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        if data is not None:
+            if category is None:
+                raise ValueError("PieChart frame data requires category=")
+            payload = _pie_from_frame(
+                data,
+                category=category,
+                value=value,
+                aggregate=aggregate,
+                colors=colors,
+                top_n=top_n,
+                other_label=other_label,
+            )
+        else:
+            if labels is None or values is None:
+                raise ValueError("PieChart requires labels/values or frame data with category=")
+            payload = _normalize_pie_data(
+                labels,
+                values,
+                colors=colors,
+                top_n=top_n,
+                other_label=other_label,
+            )
+        self.data = data
+        self.category = category
+        self.value = value
+        self.aggregate = aggregate
+        self.top_n = top_n
+        self.other_label = str(other_label)
+        self.donut = bool(donut)
+        self.inner_radius = max(0.18, min(0.82, float(inner_radius)))
+        self.start_angle = float(start_angle)
+        self.clockwise = bool(clockwise)
+        self.label_mode = str(label_mode).strip().lower()
+        if self.label_mode not in {"auto", "inside", "outside", "legend", "none"}:
+            raise ValueError("PieChart label_mode must be auto, inside, outside, legend, or none")
+        self.value_mode = str(value_mode).strip().lower()
+        if self.value_mode not in {"percent", "value", "both", "none"}:
+            raise ValueError("PieChart value_mode must be percent, value, both, or none")
+        self.show_legend = bool(show_legend)
+        self.legend_position = str(legend_position).strip().lower()
+        if self.legend_position not in {"right", "left", "bottom", "top", "none"}:
+            raise ValueError("PieChart legend_position must be right, left, bottom, top, or none")
+        self.show_labels = bool(show_labels)
+        self.selected = selected
+        self.title = None if title is None else str(title)
+        self._payload = payload
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def set_data(
+        self,
+        labels: Sequence[object],
+        values: Sequence[object],
+        *,
+        colors: Sequence[object] | Mapping[str, object] | None = None,
+    ) -> None:
+        self._payload = _normalize_pie_data(labels, values, colors=colors)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("pie_data_token", self._data_token())
+            handle.enqueue_replace_node(self.to_dict())
+
+    def _data_token(self) -> float:
+        return float(zlib.crc32(repr((self._payload.labels, self._payload.values)).encode("utf-8")))
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "labels": list(self._payload.labels),
+            "values": list(self._payload.values),
+            "colors": list(self._payload.colors),
+            "total": self._payload.total,
+            "input_count": self._payload.input_count,
+            "finite_count": self._payload.finite_count,
+            "donut": self.donut,
+            "inner_radius": self.inner_radius,
+            "start_angle": self.start_angle,
+            "clockwise": self.clockwise,
+            "label_mode": self.label_mode,
+            "value_mode": self.value_mode,
+            "show_legend": self.show_legend,
+            "legend_position": self.legend_position,
+            "show_labels": self.show_labels,
+            "selected": self.selected,
+            "title": self.title,
+            "_data_token": self._data_token(),
         }
 
 

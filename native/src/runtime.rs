@@ -24,7 +24,9 @@ use crate::css_style::{
     matched_rule_labels_for_tree_with_media, DgKeyframes, DgMediaColorGamut, DgMediaColorScheme,
     DgMediaEnvironment, DgMediaHover, DgMediaPointer, StylesheetOrigin, StylesheetStore,
 };
-use crate::document::{self, LinePlotHoverProp, NodeProps, WidgetKind, WidgetNode};
+use crate::document::{
+    self, LinePlotHoverProp, LoadingScreenSpec, NodeProps, WidgetKind, WidgetNode,
+};
 use crate::document::{LinePlotPayloadFormat, ScatterPayloadFormat};
 use crate::error::DragonError;
 use crate::events::{
@@ -40,8 +42,9 @@ use crate::overlays::{find_node, menu_popup_width};
 use crate::primitives::{
     histogram_plot_rect, histogram_resolved_bounds, histogram_text_labels, histogram_toolbar_hit,
     interpolate_visual_style, line_plot_plot_rect, line_plot_resolved_bounds,
-    line_plot_text_labels, line_plot_toolbar_hit, panel_scrollbar_geometry, LinePlotBounds,
-    PanelScrollbarAxis, PanelScrollbarAxisGeometry, PrimitivesRenderer,
+    line_plot_text_labels, line_plot_toolbar_hit, panel_scrollbar_geometry, pie_chart_text_labels,
+    LinePlotBounds, PanelScrollbarAxis, PanelScrollbarAxisGeometry, PrimitivesRenderer,
+    RectInstance,
 };
 use crate::resources::ResourceRegistry;
 use crate::scatter::{self, PointInstance, ScatterWidget};
@@ -81,6 +84,8 @@ pub struct AppSpec {
     pub command_bridge: Option<Arc<CommandBridge>>,
     /// Python AppHandle used only for draining `app.call_soon_threadsafe` tasks.
     pub python_runtime: Option<Py<PyAny>>,
+    /// Native startup loading screen configuration.
+    pub loading_screen: LoadingScreenSpec,
 }
 
 // ---------------------------------------------------------------------------
@@ -1163,6 +1168,7 @@ fn widget_kind_name(kind: &WidgetKind) -> &'static str {
         WidgetKind::Page => "page",
         WidgetKind::Sidebar => "sidebar",
         WidgetKind::NavItem => "nav_item",
+        WidgetKind::PieChart => "pie_chart",
         WidgetKind::Histogram => "histogram",
         WidgetKind::LinePlot => "line_plot",
         WidgetKind::Scatter3D => "scatter_3d",
@@ -3989,6 +3995,30 @@ struct WgpuState {
     deferred_dirty: Option<Dirty>,
     deferred_scatter_style_sync: bool,
     animation_epoch: Instant,
+    loading_screen: LoadingScreenRuntime,
+}
+
+#[derive(Debug, Clone)]
+struct LoadingScreenRuntime {
+    spec: LoadingScreenSpec,
+    shown: bool,
+    frames: u32,
+    present_ms: f64,
+    presented_at: Option<Instant>,
+    startup_resource_ms: f64,
+}
+
+impl LoadingScreenRuntime {
+    fn new(spec: LoadingScreenSpec) -> Self {
+        Self {
+            spec,
+            shown: false,
+            frames: 0,
+            present_ms: 0.0,
+            presented_at: None,
+            startup_resource_ms: 0.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -4031,6 +4061,26 @@ enum ScatterPayloadStatus {
 impl Default for ScatterPayloadStatus {
     fn default() -> Self {
         Self::Empty
+    }
+}
+
+fn loading_rect(rect: [f32; 4], color: [f32; 4], radius: f32) -> RectInstance {
+    RectInstance {
+        rect,
+        color,
+        radii: [radius; 4],
+        clip: [-1.0, -1.0, rect[2] + 1.0, rect[3] + 1.0],
+        params: [1.0, 0.0, 0.0, 0.0],
+        color2: color,
+        paint: [0.0, 0.0, 0.0, 0.0],
+        transform: [0.0, 0.0, 1.0, 1.0],
+        transform2: [0.0, 0.0, 0.0, 0.0],
+        color3: color,
+        color4: color,
+        gradient_stops: [0.0, 1.0, 1.0, 1.0],
+        color5: color,
+        color6: color,
+        gradient_stops2: [1.0, 1.0, 1.0, 1.0],
     }
 }
 
@@ -4708,7 +4758,10 @@ fn push_plot_overlay_labels(
     theme: &Theme,
     sf: f32,
 ) {
-    if matches!(node.kind, WidgetKind::Histogram | WidgetKind::LinePlot) {
+    if matches!(
+        node.kind,
+        WidgetKind::Histogram | WidgetKind::LinePlot | WidgetKind::PieChart
+    ) {
         if let Some(rect) = layout.visible_rect(&node.id) {
             let clip = glyphon::TextBounds {
                 left: rect.x as i32,
@@ -4716,10 +4769,14 @@ fn push_plot_overlay_labels(
                 right: (rect.x + rect.w) as i32,
                 bottom: (rect.y + rect.h) as i32,
             };
-            let labels = if node.kind == WidgetKind::Histogram {
-                histogram_text_labels(node, theme, sf, [rect.x, rect.y, rect.w, rect.h])
-            } else {
-                line_plot_text_labels(node, theme, sf, [rect.x, rect.y, rect.w, rect.h])
+            let labels = match node.kind {
+                WidgetKind::Histogram => {
+                    histogram_text_labels(node, theme, sf, [rect.x, rect.y, rect.w, rect.h])
+                }
+                WidgetKind::PieChart => {
+                    pie_chart_text_labels(node, theme, sf, [rect.x, rect.y, rect.w, rect.h])
+                }
+                _ => line_plot_text_labels(node, theme, sf, [rect.x, rect.y, rect.w, rect.h]),
             };
             for label in labels {
                 let label_clip = label
@@ -4751,6 +4808,180 @@ fn push_plot_overlay_labels(
 }
 
 impl WgpuState {
+    fn render_startup_loading_frame(
+        surface: &wgpu::Surface<'static>,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        config: &wgpu::SurfaceConfiguration,
+        depth_view: &wgpu::TextureView,
+        theme: &Theme,
+        spec: &LoadingScreenSpec,
+    ) -> Result<(bool, f64), DragonError> {
+        if !spec.enabled {
+            return Ok((false, 0.0));
+        }
+        let t0 = Instant::now();
+        let background = spec
+            .background
+            .as_ref()
+            .map(|color| color.resolve(theme))
+            .unwrap_or_else(|| theme.background);
+        let text_color = spec
+            .text
+            .as_ref()
+            .map(|color| color.resolve(theme))
+            .unwrap_or_else(|| theme.text);
+        let accent = spec
+            .accent
+            .as_ref()
+            .map(|color| color.resolve(theme))
+            .unwrap_or_else(|| theme.accent);
+        let texture = match surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(t)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                surface.configure(device, config);
+                return Ok((false, 0.0));
+            }
+            wgpu::CurrentSurfaceTexture::Timeout
+            | wgpu::CurrentSurfaceTexture::Occluded
+            | wgpu::CurrentSurfaceTexture::Validation => return Ok((false, 0.0)),
+        };
+        let view = texture
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+
+        let width = config.width as f32;
+        let height = config.height as f32;
+        let card_w = width.min(380.0).max(220.0);
+        let card_h = if spec.message.is_some() { 128.0 } else { 104.0 };
+        let card = [
+            (width - card_w) * 0.5,
+            (height - card_h) * 0.5,
+            card_w,
+            card_h,
+        ];
+        let mut card_fill = theme.surface;
+        card_fill[3] = 0.94;
+        let mut prims =
+            PrimitivesRenderer::new(device, queue, config.format, config.width, config.height);
+        let mut instances = vec![loading_rect(card, card_fill, 14.0)];
+        if spec.show_progress {
+            let mut track = theme.border;
+            track[3] = 0.45;
+            let progress = [
+                card[0] + 24.0,
+                card[1] + card[3] - 30.0,
+                card[2] - 48.0,
+                5.0,
+            ];
+            instances.push(loading_rect(progress, track, 999.0));
+            instances.push(loading_rect(
+                [progress[0], progress[1], progress[2] * 0.44, progress[3]],
+                accent,
+                999.0,
+            ));
+        }
+        if spec.show_spinner {
+            let dot = 8.0;
+            let cy = card[1] + 28.0;
+            let start_x = card[0] + card[2] - 54.0;
+            let mut faded = accent;
+            faded[3] = 0.32;
+            instances.push(loading_rect([start_x, cy, dot, dot], faded, dot * 0.5));
+            instances.push(loading_rect(
+                [start_x + 16.0, cy, dot, dot],
+                accent,
+                dot * 0.5,
+            ));
+            instances.push(loading_rect(
+                [start_x + 32.0, cy, dot, dot],
+                faded,
+                dot * 0.5,
+            ));
+        }
+        prims.upload_static_instances(device, queue, instances, u32::MAX);
+
+        let mut text = TextRendererDg::new(device, queue, config.format);
+        text.update_screen(queue, config.width, config.height);
+        let clip = glyphon::TextBounds {
+            left: card[0].floor() as i32,
+            top: card[1].floor() as i32,
+            right: (card[0] + card[2]).ceil() as i32,
+            bottom: (card[1] + card[3]).ceil() as i32,
+        };
+        let text_rgb = Some([text_color[0], text_color[1], text_color[2]]);
+        text.push_scatter_label(
+            &spec.title,
+            card[0] + 24.0,
+            card[1] + 22.0,
+            true,
+            clip,
+            1.0,
+            text_rgb,
+            Some(14.0),
+            "top-left",
+        );
+        if let Some(message) = spec.message.as_deref() {
+            let mut muted = text_color;
+            muted[3] = 0.78;
+            text.push_scatter_label(
+                message,
+                card[0] + 24.0,
+                card[1] + 52.0,
+                false,
+                clip,
+                1.0,
+                Some([muted[0], muted[1], muted[2]]),
+                Some(11.0),
+                "top-left",
+            );
+        }
+        text.prepare(device, queue);
+
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("dragongui-loading-frame"),
+        });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("dragongui-loading"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: background[0] as f64,
+                            g: background[1] as f64,
+                            b: background[2] as f64,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            prims.render_base(&mut pass);
+            text.render_overlays(&mut pass);
+        }
+        queue.submit(std::iter::once(encoder.finish()));
+        texture.present();
+        Ok((true, t0.elapsed().as_secs_f64() * 1000.0))
+    }
+
     async fn new(window: Arc<Window>, spec: AppSpec) -> Result<(Self, f64), DragonError> {
         let size = window.inner_size();
         let width = size.width.max(1);
@@ -4791,6 +5022,50 @@ impl WgpuState {
 
         let (depth_texture, depth_view) = create_depth_texture(&device, width, height);
         let theme = spec.theme.unwrap_or_else(Theme::dark);
+        let mut loading_screen = LoadingScreenRuntime::new(spec.loading_screen.clone());
+        let (loading_shown, loading_present_ms) = Self::render_startup_loading_frame(
+            &surface,
+            &device,
+            &queue,
+            &config,
+            &depth_view,
+            &theme,
+            &loading_screen.spec,
+        )?;
+        if loading_screen.spec.enabled && !loading_shown {
+            window.set_visible(true);
+        }
+        let (loading_shown, loading_present_ms) = if loading_screen.spec.enabled && !loading_shown {
+            Self::render_startup_loading_frame(
+                &surface,
+                &device,
+                &queue,
+                &config,
+                &depth_view,
+                &theme,
+                &loading_screen.spec,
+            )?
+        } else {
+            (loading_shown, loading_present_ms)
+        };
+        if loading_shown {
+            loading_screen.shown = true;
+            loading_screen.frames = 1;
+            loading_screen.present_ms = loading_present_ms;
+            loading_screen.presented_at = Some(Instant::now());
+        }
+        if loading_screen.spec.enabled {
+            window.set_visible(true);
+        }
+        if loading_shown {
+            if let Some(delay_ms) = std::env::var("DRAGONGUI_STARTUP_DELAY_MS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .filter(|value| *value > 0)
+            {
+                std::thread::sleep(Duration::from_millis(delay_ms.min(5_000)));
+            }
+        }
 
         // Build one ScatterRuntime per Scatter3D node in the tree.
         let mut scatters: HashMap<String, ScatterRuntime> = HashMap::new();
@@ -4897,6 +5172,7 @@ impl WgpuState {
             }
         }
         let upload_ms = total_upload_ms;
+        loading_screen.startup_resource_ms = upload_ms;
 
         let primitives = spec
             .widget_tree
@@ -4991,6 +5267,7 @@ impl WgpuState {
             deferred_dirty: None,
             deferred_scatter_style_sync: false,
             animation_epoch: Instant::now(),
+            loading_screen,
         };
 
         state.apply_layout();
@@ -9326,6 +9603,7 @@ struct DragonApp {
     scatter_upload_redraw_pending: bool,
     command_seq: u64,
     command_history: VecDeque<RuntimeCommandRecord>,
+    startup_real_redraw_deadline: Option<Instant>,
 }
 
 impl DragonApp {
@@ -9366,6 +9644,7 @@ impl DragonApp {
             scatter_upload_redraw_pending: false,
             command_seq: 0,
             command_history: VecDeque::with_capacity(COMMAND_HISTORY_LIMIT),
+            startup_real_redraw_deadline: None,
         }
     }
 
@@ -9465,6 +9744,24 @@ impl DragonApp {
                 "upload_ms": self.upload_ms,
                 "frame_ms": frame_ms,
                 "command_queue_depth": queue_depth,
+                "loading_screen": self.gpu.as_ref().map(|gpu| {
+                    let loading = &gpu.loading_screen;
+                    json!({
+                        "enabled": loading.spec.enabled,
+                        "shown": loading.shown,
+                        "frames": loading.frames,
+                        "present_ms": loading.present_ms,
+                        "startup_resource_ms": loading.startup_resource_ms,
+                        "min_duration_ms": loading.spec.min_duration_ms,
+                    })
+                }).unwrap_or_else(|| json!({
+                    "enabled": false,
+                    "shown": false,
+                    "frames": 0,
+                    "present_ms": 0.0,
+                    "startup_resource_ms": 0.0,
+                    "min_duration_ms": 0,
+                })),
                 "smoke_frames": self.smoke_frames,
                 "orbit_active": self.orbit_active,
                 "pan_active": self.pan_active,
@@ -13013,9 +13310,11 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
         self.click_cbs = std::mem::take(&mut spec.click_callbacks);
         self.change_cbs = std::mem::take(&mut spec.change_callbacks);
 
+        let hide_until_loading_frame = spec.loading_screen.enabled;
         let attrs = Window::default_attributes()
             .with_title(&spec.title)
-            .with_inner_size(LogicalSize::new(spec.width, spec.height));
+            .with_inner_size(LogicalSize::new(spec.width, spec.height))
+            .with_visible(!hide_until_loading_frame);
 
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
@@ -13032,7 +13331,22 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                 self.gpu = Some(gpu);
                 self.window = Some(window);
                 self.drain_runtime_commands();
-                self.request_redraw();
+                let delay = self.gpu.as_ref().and_then(|gpu| {
+                    let loading = &gpu.loading_screen;
+                    let shown_at = loading.presented_at?;
+                    if !loading.shown || loading.spec.min_duration_ms == 0 {
+                        return None;
+                    }
+                    let min_duration = Duration::from_millis(loading.spec.min_duration_ms);
+                    let elapsed = shown_at.elapsed();
+                    (elapsed < min_duration).then_some(shown_at + min_duration)
+                });
+                if let Some(deadline) = delay {
+                    self.startup_real_redraw_deadline = Some(deadline);
+                    event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+                } else {
+                    self.request_redraw();
+                }
             }
             Err(e) => {
                 self.error = Some(e);
@@ -13048,6 +13362,17 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if let Some(deadline) = self.startup_real_redraw_deadline {
+            let now = Instant::now();
+            if now >= deadline {
+                self.startup_real_redraw_deadline = None;
+                event_loop.set_control_flow(ControlFlow::Wait);
+                self.request_redraw();
+            } else {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(deadline));
+            }
+            return;
+        }
         let mut request_redraw = self.flush_deferred_popup_commands();
         let mut next_deadline = None;
         if let Some(gpu) = &mut self.gpu {

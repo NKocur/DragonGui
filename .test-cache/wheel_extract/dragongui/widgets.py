@@ -9,10 +9,13 @@ from dataclasses import dataclass
 from itertools import count
 import math
 import numbers
+from pathlib import Path
 import re
+import tempfile
 import threading
 import time
 from typing import Any, ClassVar, Self
+import webbrowser
 
 from .dataframe import (
     DEFAULT_TABLE_SAMPLE_ROWS,
@@ -580,6 +583,18 @@ class HistogramBins:
 
     edges: tuple[float, ...]
     counts: tuple[float, ...]
+    input_count: int
+    finite_count: int
+
+
+@dataclass(frozen=True)
+class PieChartData:
+    """Immutable normalized pie chart payload."""
+
+    labels: tuple[str, ...]
+    values: tuple[float, ...]
+    colors: tuple[object, ...]
+    total: float
     input_count: int
     finite_count: int
 
@@ -2697,6 +2712,145 @@ class Image(Widget):
         }
 
 
+class HtmlReport(Widget):
+    """Display a local HTML report, with an external-browser fallback.
+
+    The native renderer currently shows a styled placeholder. The API is shaped
+    so the Windows WebView2 backend can consume the same serialized props later.
+    """
+
+    kind = "html_report"
+
+    def __init__(
+        self,
+        path: object | None = None,
+        *,
+        html: str | None = None,
+        base_dir: object | None = None,
+        allow_remote: bool = False,
+        allow_scripts: bool = True,
+        external_fallback: bool = True,
+        width: int | float | None = None,
+        height: int | float | None = 420,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        if path is None and html is None:
+            raise ValueError("HtmlReport requires either path or html")
+        if path is not None and html is not None:
+            raise ValueError("HtmlReport accepts path or html, not both")
+        self.path = None if path is None else self._normalize_path(path)
+        self.html = None if html is None else self._normalize_html(html)
+        self.base_dir = None if base_dir is None else self._normalize_path(base_dir)
+        self.allow_remote = bool(allow_remote)
+        self.allow_scripts = bool(allow_scripts)
+        self.external_fallback = bool(external_fallback)
+        self.width = None if width is None else float(width)
+        self.height = None if height is None else float(height)
+        if self.width is not None and self.width <= 0:
+            raise ValueError("HtmlReport width must be greater than zero")
+        if self.height is not None and self.height <= 0:
+            raise ValueError("HtmlReport height must be greater than zero")
+        self._external_temp_path: str | None = None
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    @classmethod
+    def from_html(
+        cls,
+        html: str,
+        *,
+        base_dir: object | None = None,
+        **kwargs: Any,
+    ) -> Self:
+        return cls(html=html, base_dir=base_dir, **kwargs)
+
+    @staticmethod
+    def _normalize_path(path: object) -> str:
+        text = str(path)
+        if not text:
+            raise ValueError("HtmlReport path must be a non-empty path")
+        return text
+
+    @staticmethod
+    def _normalize_html(html: str) -> str:
+        text = str(html)
+        if not text.strip():
+            raise ValueError("HtmlReport html must be non-empty")
+        return text
+
+    def _placeholder_text(self) -> str:
+        if self.path is not None:
+            name = Path(self.path).name or self.path
+            return f"HTML report: {name}\nOpen externally to view interactive content."
+        return "HTML report: inline document\nOpen externally to view interactive content."
+
+    def set_path(self, path: object) -> None:
+        self.path = self._normalize_path(path)
+        self.html = None
+        self.base_dir = None
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("path", self.path)
+            handle.enqueue_set_prop("html", None)
+            handle.enqueue_set_prop("base_dir", None)
+            handle.enqueue_set_prop("text", self._placeholder_text())
+
+    def set_html(self, html: str, *, base_dir: object | None = None) -> None:
+        self.html = self._normalize_html(html)
+        self.path = None
+        self.base_dir = None if base_dir is None else self._normalize_path(base_dir)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("html", self.html)
+            handle.enqueue_set_prop("path", None)
+            handle.enqueue_set_prop("base_dir", self.base_dir)
+            handle.enqueue_set_prop("text", self._placeholder_text())
+
+    def reload(self) -> None:
+        if (handle := self._live()) is None:
+            return
+        if self.path is not None:
+            handle.enqueue_set_prop("path", self.path)
+        else:
+            handle.enqueue_set_prop("html", self.html)
+
+    def open_external(self) -> bool:
+        if not self.external_fallback:
+            return False
+        if self.path is not None:
+            target = self.path
+            if not target.lower().startswith(("http://", "https://", "file://")):
+                target = Path(target).expanduser().resolve().as_uri()
+        else:
+            if self._external_temp_path is None:
+                with tempfile.NamedTemporaryFile(
+                    "w",
+                    suffix=".html",
+                    prefix="dragongui-html-report-",
+                    encoding="utf-8",
+                    delete=False,
+                ) as handle:
+                    handle.write(self.html or "")
+                    self._external_temp_path = handle.name
+            target = Path(self._external_temp_path).resolve().as_uri()
+        return bool(webbrowser.open(target))
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "html": self.html,
+            "base_dir": self.base_dir,
+            "allow_remote": self.allow_remote,
+            "allow_scripts": self.allow_scripts,
+            "external_fallback": self.external_fallback,
+            "width": self.width,
+            "height": self.height,
+            "text": self._placeholder_text(),
+        }
+
+
 def _scatter_needs_v1(
     color: Any,
     colors: Any,
@@ -2833,6 +2987,130 @@ def _pack_xy_values(x_values: Any, y_values: Any | None = None) -> bytes | None:
         return memoryview(out.view(np.uint8).reshape(-1)).tobytes()
     except (ImportError, TypeError, ValueError):
         return None
+
+
+_PIE_DEFAULT_COLORS: tuple[str, ...] = (
+    "#5aa9ff",
+    "#74ddb0",
+    "#ffd36a",
+    "#f36b7f",
+    "#b388ff",
+    "#ff9f43",
+    "#4dd0e1",
+    "#a3e635",
+)
+
+
+def _pie_color_list(
+    labels: Sequence[str],
+    colors: Sequence[object] | Mapping[str, object] | None,
+) -> tuple[object, ...]:
+    if isinstance(colors, Mapping):
+        return tuple(colors.get(label, _PIE_DEFAULT_COLORS[i % len(_PIE_DEFAULT_COLORS)]) for i, label in enumerate(labels))
+    if colors is None:
+        return tuple(_PIE_DEFAULT_COLORS[i % len(_PIE_DEFAULT_COLORS)] for i in range(len(labels)))
+    color_items = list(colors)
+    if not color_items:
+        return tuple(_PIE_DEFAULT_COLORS[i % len(_PIE_DEFAULT_COLORS)] for i in range(len(labels)))
+    return tuple(color_items[i % len(color_items)] for i in range(len(labels)))
+
+
+def _normalize_pie_data(
+    labels: Sequence[object],
+    values: Sequence[object],
+    *,
+    colors: Sequence[object] | Mapping[str, object] | None = None,
+    top_n: int | None = None,
+    other_label: str = "Other",
+) -> PieChartData:
+    label_items = [str(label) for label in labels]
+    value_items = [float(value) for value in values]
+    if len(label_items) != len(value_items):
+        raise ValueError("PieChart labels and values must have the same length")
+    if not label_items:
+        raise ValueError("PieChart requires at least one slice")
+
+    pairs: list[tuple[str, float]] = []
+    finite_count = 0
+    for label, value in zip(label_items, value_items, strict=True):
+        if not math.isfinite(value):
+            continue
+        finite_count += 1
+        if value < 0:
+            raise ValueError("PieChart values must be non-negative")
+        if value > 0:
+            pairs.append((label, value))
+    if not pairs:
+        raise ValueError("PieChart requires at least one positive finite value")
+
+    pairs.sort(key=lambda item: item[1], reverse=True)
+    if top_n is not None:
+        limit = max(1, int(top_n))
+        if len(pairs) > limit:
+            kept = pairs[:limit]
+            other = sum(value for _, value in pairs[limit:])
+            if other > 0:
+                kept.append((str(other_label), other))
+            pairs = kept
+
+    out_labels = tuple(label for label, _ in pairs)
+    out_values = tuple(value for _, value in pairs)
+    total = float(sum(out_values))
+    return PieChartData(
+        labels=out_labels,
+        values=out_values,
+        colors=_pie_color_list(out_labels, colors),
+        total=total,
+        input_count=len(label_items),
+        finite_count=finite_count,
+    )
+
+
+def _pie_from_frame(
+    data: Any,
+    *,
+    category: str,
+    value: str | None = None,
+    aggregate: str = "count",
+    colors: Sequence[object] | Mapping[str, object] | None = None,
+    top_n: int | None = None,
+    other_label: str = "Other",
+) -> PieChartData:
+    aggregate = str(aggregate).strip().lower()
+    if aggregate not in {"count", "sum", "mean", "min", "max"}:
+        raise ValueError("PieChart aggregate must be one of: count, sum, mean, min, max")
+    categories = list(_get_frame_col(data, category))
+    if value is None:
+        values = [1.0] * len(categories)
+    else:
+        values = [float(item) for item in _get_frame_col(data, value)]
+    if len(categories) != len(values):
+        raise ValueError("PieChart category and value columns must have the same length")
+
+    grouped: dict[str, list[float]] = {}
+    for label, number in zip(categories, values, strict=True):
+        if not math.isfinite(number):
+            continue
+        if number < 0:
+            raise ValueError("PieChart values must be non-negative")
+        grouped.setdefault(str(label), []).append(number)
+
+    labels: list[str] = []
+    totals: list[float] = []
+    for label, items in grouped.items():
+        if aggregate == "count":
+            result = float(len(items))
+        elif aggregate == "sum":
+            result = float(sum(items))
+        elif aggregate == "mean":
+            result = float(sum(items) / len(items)) if items else 0.0
+        elif aggregate == "min":
+            result = float(min(items)) if items else 0.0
+        else:
+            result = float(max(items)) if items else 0.0
+        labels.append(label)
+        totals.append(result)
+    return _normalize_pie_data(labels, totals, colors=colors, top_n=top_n, other_label=other_label)
 
 
 def _histogram_column_values(data: Any, value: str | None) -> Any:
@@ -3441,17 +3719,6 @@ class LinePlot(Widget):
         handle = self._live()
         if handle is None:
             return
-        handle.enqueue_set_prop("x_label", self.x_label)
-        handle.enqueue_set_prop("y_label", self.y_label)
-        handle.enqueue_set_prop("show_grid", self.show_grid)
-        handle.enqueue_set_prop("show_axes", self.show_axes)
-        handle.enqueue_set_prop("show_ticks", self.show_ticks)
-        handle.enqueue_set_prop("show_toolbar", self.show_toolbar)
-        handle.enqueue_set_prop("show_legend", self.show_legend)
-        handle.enqueue_set_prop("legend_position", self.legend_position)
-        handle.enqueue_set_prop("interaction", self.interaction)
-        handle.enqueue_set_prop("tick_count", self.tick_count)
-        handle.enqueue_set_prop("window_size", self.window_size)
         for index, y_column in enumerate(self.y_columns):
             payload = self._cached_payloads.get(y_column)
             if payload is None:
@@ -3593,6 +3860,125 @@ class LinePlot(Widget):
             "window_size": self.window_size,
             "max_points": self.max_points,
             "series": series_items,
+        }
+
+
+class PieChart(Widget):
+    kind = "pie_chart"
+
+    def __init__(
+        self,
+        data: Any = None,
+        *,
+        labels: Sequence[object] | None = None,
+        values: Sequence[object] | None = None,
+        category: str | None = None,
+        value: str | None = None,
+        aggregate: str = "count",
+        top_n: int | None = None,
+        other_label: str = "Other",
+        donut: bool = False,
+        inner_radius: float = 0.52,
+        start_angle: float = -90.0,
+        clockwise: bool = True,
+        label_mode: str = "auto",
+        value_mode: str = "percent",
+        show_legend: bool = True,
+        legend_position: str = "right",
+        show_labels: bool = False,
+        selected: str | int | None = None,
+        colors: Sequence[object] | Mapping[str, object] | None = None,
+        title: str | None = None,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        if data is not None:
+            if category is None:
+                raise ValueError("PieChart frame data requires category=")
+            payload = _pie_from_frame(
+                data,
+                category=category,
+                value=value,
+                aggregate=aggregate,
+                colors=colors,
+                top_n=top_n,
+                other_label=other_label,
+            )
+        else:
+            if labels is None or values is None:
+                raise ValueError("PieChart requires labels/values or frame data with category=")
+            payload = _normalize_pie_data(
+                labels,
+                values,
+                colors=colors,
+                top_n=top_n,
+                other_label=other_label,
+            )
+        self.data = data
+        self.category = category
+        self.value = value
+        self.aggregate = aggregate
+        self.top_n = top_n
+        self.other_label = str(other_label)
+        self.donut = bool(donut)
+        self.inner_radius = max(0.18, min(0.82, float(inner_radius)))
+        self.start_angle = float(start_angle)
+        self.clockwise = bool(clockwise)
+        self.label_mode = str(label_mode).strip().lower()
+        if self.label_mode not in {"auto", "inside", "outside", "legend", "none"}:
+            raise ValueError("PieChart label_mode must be auto, inside, outside, legend, or none")
+        self.value_mode = str(value_mode).strip().lower()
+        if self.value_mode not in {"percent", "value", "both", "none"}:
+            raise ValueError("PieChart value_mode must be percent, value, both, or none")
+        self.show_legend = bool(show_legend)
+        self.legend_position = str(legend_position).strip().lower()
+        if self.legend_position not in {"right", "left", "bottom", "top", "none"}:
+            raise ValueError("PieChart legend_position must be right, left, bottom, top, or none")
+        self.show_labels = bool(show_labels)
+        self.selected = selected
+        self.title = None if title is None else str(title)
+        self._payload = payload
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def set_data(
+        self,
+        labels: Sequence[object],
+        values: Sequence[object],
+        *,
+        colors: Sequence[object] | Mapping[str, object] | None = None,
+    ) -> None:
+        self._payload = _normalize_pie_data(labels, values, colors=colors)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("pie_data_token", self._data_token())
+            handle.enqueue_replace_node(self.to_dict())
+
+    def _data_token(self) -> float:
+        return float(zlib.crc32(repr((self._payload.labels, self._payload.values)).encode("utf-8")))
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "labels": list(self._payload.labels),
+            "values": list(self._payload.values),
+            "colors": list(self._payload.colors),
+            "total": self._payload.total,
+            "input_count": self._payload.input_count,
+            "finite_count": self._payload.finite_count,
+            "donut": self.donut,
+            "inner_radius": self.inner_radius,
+            "start_angle": self.start_angle,
+            "clockwise": self.clockwise,
+            "label_mode": self.label_mode,
+            "value_mode": self.value_mode,
+            "show_legend": self.show_legend,
+            "legend_position": self.legend_position,
+            "show_labels": self.show_labels,
+            "selected": self.selected,
+            "title": self.title,
+            "_data_token": self._data_token(),
         }
 
 

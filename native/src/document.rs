@@ -29,6 +29,35 @@ pub struct WindowProps {
     pub height: u32,
 }
 
+#[derive(Debug, Clone)]
+pub struct LoadingScreenSpec {
+    pub enabled: bool,
+    pub title: String,
+    pub message: Option<String>,
+    pub background: Option<ColorRef>,
+    pub text: Option<ColorRef>,
+    pub accent: Option<ColorRef>,
+    pub show_spinner: bool,
+    pub show_progress: bool,
+    pub min_duration_ms: u64,
+}
+
+impl Default for LoadingScreenSpec {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            title: "Loading".to_string(),
+            message: None,
+            background: None,
+            text: None,
+            accent: None,
+            show_spinner: true,
+            show_progress: false,
+            min_duration_ms: 120,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Scatter payload format
 // ---------------------------------------------------------------------------
@@ -124,6 +153,50 @@ pub struct HistogramProp {
     pub bar_gap: f32,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct PieChartSliceProp {
+    pub label: String,
+    pub value: f32,
+    pub color: Option<ColorRef>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PieChartProp {
+    pub slices: Vec<PieChartSliceProp>,
+    pub total: f32,
+    pub donut: bool,
+    pub inner_radius: f32,
+    pub start_angle: f32,
+    pub clockwise: bool,
+    pub label_mode: String,
+    pub value_mode: String,
+    pub show_legend: bool,
+    pub legend_position: String,
+    pub show_labels: bool,
+    pub selected: Option<String>,
+    pub title: Option<String>,
+}
+
+impl Default for PieChartProp {
+    fn default() -> Self {
+        Self {
+            slices: Vec::new(),
+            total: 0.0,
+            donut: false,
+            inner_radius: 0.52,
+            start_angle: -90.0,
+            clockwise: true,
+            label_mode: "auto".to_string(),
+            value_mode: "percent".to_string(),
+            show_legend: true,
+            legend_position: "right".to_string(),
+            show_labels: false,
+            selected: None,
+            title: None,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Python theme parsing
 // ---------------------------------------------------------------------------
@@ -189,6 +262,45 @@ fn parse_color_ref(v: Option<&serde_json::Value>) -> Option<ColorRef> {
             ]))
         }
         _ => None,
+    }
+}
+
+pub fn parse_loading_screen_from_doc(doc: &serde_json::Value) -> LoadingScreenSpec {
+    let Some(value) = doc.get("loading_screen") else {
+        return LoadingScreenSpec::default();
+    };
+    let Some(obj) = value.as_object() else {
+        return LoadingScreenSpec::default();
+    };
+    LoadingScreenSpec {
+        enabled: obj.get("enabled").and_then(Value::as_bool).unwrap_or(true),
+        title: obj
+            .get("title")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("Loading")
+            .to_string(),
+        message: obj
+            .get("message")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        background: parse_color_ref(obj.get("background")),
+        text: parse_color_ref(obj.get("text")),
+        accent: parse_color_ref(obj.get("accent")),
+        show_spinner: obj
+            .get("show_spinner")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        show_progress: obj
+            .get("show_progress")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        min_duration_ms: obj
+            .get("min_duration_ms")
+            .and_then(Value::as_u64)
+            .unwrap_or(120)
+            .min(5_000),
     }
 }
 
@@ -389,6 +501,114 @@ fn parse_histogram_props(props: &serde_json::Value) -> HistogramProp {
     }
 }
 
+fn parse_string_vec(v: Option<&serde_json::Value>) -> Vec<String> {
+    v.and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(|value| {
+                    value
+                        .as_str()
+                        .map(str::to_string)
+                        .unwrap_or_else(|| value.to_string())
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn parse_color_vec(v: Option<&serde_json::Value>) -> Vec<Option<ColorRef>> {
+    v.and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| parse_color_ref(Some(item)))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn parse_pie_chart_props(props: &serde_json::Value) -> PieChartProp {
+    let labels = parse_string_vec(props.get("labels"));
+    let values = parse_f32_vec(props.get("values"));
+    let colors = parse_color_vec(props.get("colors"));
+    let mut slices = Vec::new();
+    for (index, (label, value)) in labels.iter().zip(values.iter()).enumerate() {
+        if label.is_empty() || !value.is_finite() || *value <= 0.0 {
+            continue;
+        }
+        slices.push(PieChartSliceProp {
+            label: label.clone(),
+            value: *value,
+            color: colors.get(index).cloned().flatten(),
+        });
+    }
+    let total = slices
+        .iter()
+        .map(|slice| slice.value)
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .sum::<f32>();
+    let selected = props.get("selected").and_then(|value| match value {
+        Value::String(s) if !s.is_empty() => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        _ => None,
+    });
+    let label_mode = props
+        .get("label_mode")
+        .and_then(Value::as_str)
+        .filter(|value| matches!(*value, "auto" | "inside" | "outside" | "legend" | "none"))
+        .unwrap_or("auto")
+        .to_string();
+    let value_mode = props
+        .get("value_mode")
+        .and_then(Value::as_str)
+        .filter(|value| matches!(*value, "percent" | "value" | "both" | "none"))
+        .unwrap_or("percent")
+        .to_string();
+    let legend_position = props
+        .get("legend_position")
+        .and_then(Value::as_str)
+        .filter(|value| matches!(*value, "right" | "left" | "bottom" | "top" | "none"))
+        .unwrap_or("right")
+        .to_string();
+    PieChartProp {
+        slices,
+        total,
+        donut: props.get("donut").and_then(Value::as_bool).unwrap_or(false),
+        inner_radius: props
+            .get("inner_radius")
+            .and_then(Value::as_f64)
+            .map(|value| (value as f32).clamp(0.18, 0.82))
+            .unwrap_or(0.52),
+        start_angle: props
+            .get("start_angle")
+            .and_then(Value::as_f64)
+            .map(|value| value as f32)
+            .unwrap_or(-90.0),
+        clockwise: props
+            .get("clockwise")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        label_mode,
+        value_mode,
+        show_legend: props
+            .get("show_legend")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        legend_position,
+        show_labels: props
+            .get("show_labels")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        selected,
+        title: props
+            .get("title")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+    }
+}
+
 pub(crate) fn parse_line_plot_line_style(value: Option<&str>) -> String {
     let normalized = value
         .unwrap_or("solid")
@@ -500,6 +720,7 @@ pub enum WidgetKind {
     Page,
     Sidebar,
     NavItem,
+    PieChart,
     Histogram,
     LinePlot,
     Scatter3D,
@@ -548,6 +769,7 @@ impl WidgetKind {
             "page" => WidgetKind::Page,
             "sidebar" => WidgetKind::Sidebar,
             "nav_item" => WidgetKind::NavItem,
+            "pie_chart" => WidgetKind::PieChart,
             "histogram" => WidgetKind::Histogram,
             "line_plot" => WidgetKind::LinePlot,
             "scatter_3d" => WidgetKind::Scatter3D,
@@ -675,6 +897,8 @@ pub struct NodeProps {
     pub line_plot_interaction: String,
     pub line_plot_selection_rect: Option<[f32; 4]>,
     pub line_plot_hover: Option<LinePlotHoverProp>,
+    /// PieChart normalized slice data and chrome props.
+    pub pie_chart: PieChartProp,
     /// Histogram pre-binned startup data and chrome props.
     pub histogram: HistogramProp,
     /// Scatter3D colormap name.
@@ -1127,6 +1351,11 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
             None,
         )
     };
+    let pie_chart = if matches!(kind, WidgetKind::PieChart) {
+        parse_pie_chart_props(props)
+    } else {
+        PieChartProp::default()
+    };
     let histogram = if matches!(kind, WidgetKind::Histogram) {
         parse_histogram_props(props)
     } else {
@@ -1457,6 +1686,7 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         line_plot_interaction,
         line_plot_selection_rect,
         line_plot_hover,
+        pie_chart,
         histogram,
         scatter_colormap,
         scatter_data_b64,
@@ -1701,6 +1931,67 @@ mod tests {
         assert_eq!(node.props.histogram.interaction, "zoom");
         assert_eq!(node.props.histogram.tick_count, 7);
         assert_eq!(node.props.histogram.bar_gap, 2.0);
+    }
+
+    #[test]
+    fn parse_pie_chart_widget_props() {
+        let doc = json!({
+            "id": "pie",
+            "type": "pie_chart",
+            "props": {
+                "labels": ["A", "B", "Zero"],
+                "values": [3.0, 2.0, 0.0],
+                "colors": ["#ff0000", "#00ff00"],
+                "donut": true,
+                "inner_radius": 0.6,
+                "title": "Mix",
+                "show_legend": true,
+                "legend_position": "bottom"
+            }
+        });
+        let node = parse_widget_node(&doc).unwrap();
+        assert_eq!(node.kind, WidgetKind::PieChart);
+        assert_eq!(node.props.pie_chart.slices.len(), 2);
+        assert_eq!(node.props.pie_chart.slices[0].label, "A");
+        assert_eq!(node.props.pie_chart.slices[0].value, 3.0);
+        assert_eq!(node.props.pie_chart.total, 5.0);
+        assert!(node.props.pie_chart.donut);
+        assert_eq!(node.props.pie_chart.inner_radius, 0.6);
+        assert_eq!(node.props.pie_chart.title.as_deref(), Some("Mix"));
+        assert_eq!(node.props.pie_chart.legend_position, "bottom");
+    }
+
+    #[test]
+    fn parse_loading_screen_config_from_doc() {
+        let spec = parse_loading_screen_from_doc(&json!({
+            "loading_screen": {
+                "enabled": true,
+                "title": "Preparing",
+                "message": "Loading resources",
+                "background": "#0b1020",
+                "text": "#f8fafc",
+                "accent": "#42a5ff",
+                "show_spinner": false,
+                "show_progress": true,
+                "min_duration_ms": 160
+            }
+        }));
+
+        assert!(spec.enabled);
+        assert_eq!(spec.title, "Preparing");
+        assert_eq!(spec.message.as_deref(), Some("Loading resources"));
+        assert!(spec.background.is_some());
+        assert!(spec.text.is_some());
+        assert!(spec.accent.is_some());
+        assert!(!spec.show_spinner);
+        assert!(spec.show_progress);
+        assert_eq!(spec.min_duration_ms, 160);
+
+        let disabled = parse_loading_screen_from_doc(&json!({
+            "loading_screen": {"enabled": false}
+        }));
+        assert!(!disabled.enabled);
+        assert_eq!(disabled.title, "Loading");
     }
 
     fn assert_color_close(actual: [f32; 4], expected: [f32; 4]) {

@@ -43,6 +43,45 @@ def test_declarative_tree_serializes() -> None:
     assert scatter.to_dict()["props"]["frame"]["dtypes"] == ["", "", ""]
 
 
+def test_app_loading_screen_serializes_defaults_and_custom_values() -> None:
+    default_doc = dg.App().document(dg.Window("Default"))
+    assert default_doc["loading_screen"]["enabled"] is True
+    assert default_doc["loading_screen"]["title"] == "Loading"
+    assert default_doc["loading_screen"]["show_spinner"] is True
+
+    disabled_doc = dg.App(loading_screen=False).document(dg.Window("Disabled"))
+    assert disabled_doc["loading_screen"]["enabled"] is False
+
+    app = dg.App(
+        loading_screen=dg.LoadingScreen(
+            title="Loading dashboard",
+            message="Preparing plots...",
+            background="#0b1020",
+            text=(248, 250, 252, 1),
+            accent="#42a5ff",
+            show_progress=True,
+            min_duration_ms=160,
+        )
+    )
+    loading = app.document(dg.Window("Custom"))["loading_screen"]
+
+    assert loading["enabled"] is True
+    assert loading["title"] == "Loading dashboard"
+    assert loading["message"] == "Preparing plots..."
+    assert loading["background"] == "#0b1020"
+    assert loading["text"] == (248.0, 250.0, 252.0, 1.0)
+    assert loading["accent"] == "#42a5ff"
+    assert loading["show_progress"] is True
+    assert loading["min_duration_ms"] == 160
+
+
+def test_loading_screen_validates_color_tuples() -> None:
+    with pytest.raises(ValueError, match="tuple"):
+        dg.LoadingScreen(background=(1, 2))
+    with pytest.raises(TypeError, match="color"):
+        dg.LoadingScreen(accent=object())  # type: ignore[arg-type]
+
+
 def test_button_callback_can_be_invoked_from_python() -> None:
     calls = []
     button = dg.Button("Plot", on_click=lambda: calls.append("clicked"), parent=None)
@@ -1677,6 +1716,48 @@ def test_histogram_serializes_binned_data() -> None:
     assert props["color"] == "#42a5ff"
 
 
+def test_pie_chart_serializes_direct_and_frame_data() -> None:
+    chart = dg.PieChart(
+        labels=["A", "B", "C"],
+        values=[3, 2, 1],
+        colors=["#111111", "#222222", "#333333"],
+        donut=True,
+        title="Mix",
+        parent=None,
+    )
+    data = chart.to_dict()
+    props = data["props"]
+
+    assert data["type"] == "pie_chart"
+    assert props["labels"] == ["A", "B", "C"]
+    assert props["values"] == [3.0, 2.0, 1.0]
+    assert props["colors"] == ["#111111", "#222222", "#333333"]
+    assert props["total"] == 6.0
+    assert props["donut"] is True
+    assert props["title"] == "Mix"
+
+    class SegmentFrame:
+        segment = ["Team", "Free", "Team", "Enterprise"]
+        revenue = [10.0, 1.0, 12.0, 30.0]
+
+        def __getitem__(self, column: str) -> object:
+            return getattr(self, column)
+
+    frame_chart = dg.PieChart(
+        SegmentFrame(),
+        category="segment",
+        value="revenue",
+        aggregate="sum",
+        top_n=2,
+        parent=None,
+    )
+    frame_props = frame_chart.to_dict()["props"]
+
+    assert frame_props["labels"] == ["Enterprise", "Team", "Other"]
+    assert frame_props["values"] == [30.0, 22.0, 1.0]
+    assert frame_props["total"] == 53.0
+
+
 def test_line_plot_y_only_uses_sample_index() -> None:
     np = pytest.importorskip("numpy")
 
@@ -2516,6 +2597,95 @@ def test_app_run_binds_live_handles_only_for_native_event_loop(monkeypatch) -> N
     assert seen["app_handle"] is not None
     assert app._handle is None
     assert button.is_live is False
+
+
+def test_run_with_loading_builds_after_native_handle_is_bound(monkeypatch) -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.replace_nodes: list[tuple[str, dict[str, object]]] = []
+            self.drain_requests = 0
+            self.closed = False
+
+        def enqueue_drain_python_tasks(self) -> None:
+            self.drain_requests += 1
+
+        def enqueue_replace_node(self, widget_id: str, node_json: str) -> None:
+            self.replace_nodes.append((widget_id, json.loads(node_json)))
+
+        def close(self) -> None:
+            self.closed = True
+
+    sender = Sender()
+    app = dg.App(loading_screen=dg.LoadingScreen(title="Starting"))
+    built: dict[str, object] = {}
+    seen: dict[str, object] = {}
+
+    def build_window() -> dg.Window:
+        assert app._handle is not None
+        win = dg.Window("Built", width=800, height=600)
+        button = dg.Button("Ready", on_click=lambda: None, parent=win)
+        built["button"] = button
+        return win
+
+    def fake_run_document(document, click_callbacks, change_callbacks, app_handle=None):
+        seen["document"] = document
+        seen["click_callbacks"] = click_callbacks
+        seen["change_callbacks"] = change_callbacks
+        assert app_handle is app._handle
+        app_handle._bind_native_sender(sender)
+        app_handle._drain_python_tasks()
+        assert sender.replace_nodes
+        assert built["button"].is_live is True
+        return {"status": "ok"}
+
+    monkeypatch.setattr(app_module, "native_event_loop_available", lambda: True)
+    monkeypatch.setattr(app_module, "run_document", fake_run_document)
+
+    result = app.run_with_loading(build_window, title="Probe", width=640, height=480)
+
+    assert result == {"status": "ok"}
+    assert seen["click_callbacks"] == {}
+    assert seen["change_callbacks"] == {}
+    placeholder_doc = seen["document"]["window"]
+    assert placeholder_doc["id"] == "__dg_startup_root"
+    assert placeholder_doc["props"]["title"] == "Probe"
+    assert placeholder_doc["props"]["width"] == 640
+    widget_id, replacement = sender.replace_nodes[0]
+    assert widget_id == "__dg_startup_root"
+    assert replacement["type"] == "window"
+    assert replacement["props"]["title"] == "Built"
+    assert replacement["children"][0]["type"] == "button"
+    assert built["button"].is_live is False
+    assert app._handle is None
+    assert sender.closed is True
+
+
+def test_module_run_with_loading_creates_app(monkeypatch) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_run_with_loading(self, build_window, *, title=None, width=1024, height=768):
+        seen["app"] = self
+        seen["title"] = title
+        seen["width"] = width
+        seen["height"] = height
+        return {"status": "ok"}
+
+    monkeypatch.setattr(app_module.App, "run_with_loading", fake_run_with_loading)
+
+    result = dg.run_with_loading(
+        lambda: dg.Window("Built"),
+        title="Created",
+        loading_screen=False,
+        width=320,
+        height=240,
+    )
+
+    assert result == {"status": "ok"}
+    assert isinstance(seen["app"], dg.App)
+    assert seen["app"].loading_screen is False
+    assert seen["title"] == "Created"
+    assert seen["width"] == 320
+    assert seen["height"] == 240
 
 
 def test_app_run_queues_startup_table_column_resources(monkeypatch) -> None:

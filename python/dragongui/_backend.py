@@ -104,6 +104,18 @@ def run_document(
                     "upload_ms": 0.0,
                     "frame_ms": 0.0,
                     "command_queue_depth": 0,
+                    "loading_screen": {
+                        "enabled": bool(
+                            (document.get("loading_screen") or {}).get("enabled", True)
+                        ),
+                        "shown": False,
+                        "frames": 0,
+                        "present_ms": 0.0,
+                        "startup_resource_ms": 0.0,
+                        "min_duration_ms": int(
+                            (document.get("loading_screen") or {}).get("min_duration_ms", 0)
+                        ),
+                    },
                 },
                 "document": document,
             },

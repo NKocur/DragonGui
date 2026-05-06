@@ -56,3 +56,5 @@ Suggested order:
 25. `form_controls_probe.py` - TextInput, TextArea, Checkbox, Dropdown, Button badges, Slider, NumberInput, ProgressBar, disabled states, and form-control parts.
 26. `overlay_stack_probe.py` - modal, toast, tooltip, dropdown, context menu, MenuBar, scrim styling, edge clamping, and overlay theme stress.
 27. `histogram_probe.py` - first-slice Histogram rendering, count/density/percent/cumulative modes, explicit bin edges, and native bar chrome.
+28. `startup_loading_probe.py` - native startup loading screen display, custom copy/colors, minimum duration, and delayed startup handoff.
+29. `pie_chart_probe.py` - PieChart direct values, donut mode, frame aggregation, top-N grouping, colors, legends, and slice labels.

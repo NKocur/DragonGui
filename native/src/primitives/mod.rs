@@ -303,6 +303,37 @@ impl PrimitivesRenderer {
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
     }
 
+    pub fn upload_static_instances(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        instances: Vec<RectInstance>,
+        overlay_start: u32,
+    ) {
+        self.instances = instances;
+        self.rect_count = self.instances.len() as u32;
+        self.overlay_start = overlay_start.min(self.rect_count);
+        if self.instances.is_empty() {
+            return;
+        }
+        let size = (self.instances.len() * std::mem::size_of::<RectInstance>()) as u64;
+        if size > self.vertex_cap {
+            let cap = (size * 2).max(4096);
+            self.vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("prim-vb-static"),
+                size: cap,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.vertex_cap = cap;
+        }
+        queue.write_buffer(
+            &self.vertex_buffer,
+            0,
+            bytemuck::cast_slice(&self.instances),
+        );
+    }
+
     /// Rebuild the instance list from layout, theme, and interactive state.
     pub fn rebuild(
         &mut self,
@@ -503,6 +534,19 @@ fn inst_rounded_triangle_clipped(
         color6: color,
         gradient_stops2: [1.0, 1.0, 1.0, 1.0],
     }
+}
+
+fn inst_pie_slice(
+    rect: [f32; 4],
+    color: [f32; 4],
+    start_rad: f32,
+    end_rad: f32,
+    inner_ratio: f32,
+) -> RectInstance {
+    let mut instance = inst_radii(rect, color, [0.0; 4]);
+    instance.params = [1.0, 0.0, 0.0, 2.0];
+    instance.paint = [0.0, start_rad, end_rad, inner_ratio.clamp(0.0, 0.9)];
+    instance
 }
 
 fn inst_outline_ring_clipped(
@@ -1668,6 +1712,297 @@ fn histogram_data_bounds(node: &WidgetNode) -> Option<LinePlotBounds> {
         y_min: 0.0,
         y_max,
     })
+}
+
+fn pie_chart_chart_rect(node: &WidgetNode, sf: f32, rect: [f32; 4]) -> [f32; 4] {
+    let pad = 14.0 * sf;
+    let title_h = if node.props.pie_chart.title.is_some() {
+        24.0 * sf
+    } else {
+        0.0
+    };
+    let legend = node.props.pie_chart.show_legend
+        && node.props.pie_chart.legend_position != "none"
+        && !node.props.pie_chart.slices.is_empty();
+    let mut x = rect[0] + pad;
+    let mut y = rect[1] + pad + title_h;
+    let mut w = (rect[2] - pad * 2.0).max(1.0);
+    let mut h = (rect[3] - pad * 2.0 - title_h).max(1.0);
+    if legend {
+        match node.props.pie_chart.legend_position.as_str() {
+            "right" if w > 320.0 * sf => w -= (150.0 * sf).min(w * 0.36),
+            "left" if w > 320.0 * sf => {
+                let legend_w = (150.0 * sf).min(w * 0.36);
+                x += legend_w;
+                w -= legend_w;
+            }
+            "bottom" if h > 260.0 * sf => h -= (70.0 * sf).min(h * 0.28),
+            "top" if h > 260.0 * sf => {
+                let legend_h = (70.0 * sf).min(h * 0.28);
+                y += legend_h;
+                h -= legend_h;
+            }
+            _ => {}
+        }
+    }
+    [x, y, w, h]
+}
+
+fn pie_chart_legend_rect(node: &WidgetNode, sf: f32, rect: [f32; 4], chart: [f32; 4]) -> [f32; 4] {
+    let pad = 14.0 * sf;
+    match node.props.pie_chart.legend_position.as_str() {
+        "left" => [
+            rect[0] + pad,
+            chart[1],
+            (chart[0] - rect[0] - pad * 1.5).max(1.0),
+            chart[3],
+        ],
+        "bottom" => [
+            chart[0],
+            chart[1] + chart[3] + 8.0 * sf,
+            chart[2],
+            (rect[1] + rect[3] - chart[1] - chart[3] - pad * 1.5).max(1.0),
+        ],
+        "top" => [
+            chart[0],
+            rect[1] + pad,
+            chart[2],
+            (chart[1] - rect[1] - pad * 1.5).max(1.0),
+        ],
+        _ => [
+            chart[0] + chart[2] + 10.0 * sf,
+            chart[1],
+            (rect[0] + rect[2] - chart[0] - chart[2] - pad * 1.5).max(1.0),
+            chart[3],
+        ],
+    }
+}
+
+fn pie_slice_angles(start_cursor: f32, sweep: f32, clockwise: bool) -> (f32, f32, f32, f32) {
+    if clockwise {
+        let start = start_cursor;
+        let end = start_cursor + sweep;
+        (start, end, start + sweep * 0.5, end)
+    } else {
+        let start = start_cursor - sweep;
+        let end = start_cursor;
+        (start, end, start_cursor - sweep * 0.5, start)
+    }
+}
+
+struct PieChartLabelLayout {
+    text: String,
+    screen_x: f32,
+    screen_y: f32,
+    rect: [f32; 4],
+}
+
+fn pie_chart_slice_label_text(
+    slice: &crate::document::PieChartSliceProp,
+    percent: f32,
+    value_mode: &str,
+) -> String {
+    let value_text = match value_mode {
+        "value" => format!("{:.0}", slice.value),
+        "both" => format!("{:.0} ({:.0}%)", slice.value, percent * 100.0),
+        "none" => slice.label.clone(),
+        _ => format!("{:.0}%", percent * 100.0),
+    };
+    if value_mode == "none" {
+        slice.label.clone()
+    } else {
+        format!("{} {}", slice.label, value_text)
+    }
+}
+
+fn pie_chart_slice_label_layouts(
+    node: &WidgetNode,
+    sf: f32,
+    plot: [f32; 4],
+) -> Vec<PieChartLabelLayout> {
+    let mut labels = Vec::new();
+    if !node.props.pie_chart.show_labels || node.props.pie_chart.label_mode == "none" {
+        return labels;
+    }
+
+    let total = node.props.pie_chart.total.max(f32::EPSILON);
+    let size = plot[2].min(plot[3]).max(1.0);
+    let mut cursor = node.props.pie_chart.start_angle.to_radians();
+    for slice in &node.props.pie_chart.slices {
+        let percent = slice.value / total;
+        let sweep = percent * std::f32::consts::TAU;
+        let (_, _, mid, next_cursor) =
+            pie_slice_angles(cursor, sweep, node.props.pie_chart.clockwise);
+        if percent < 0.075 && node.props.pie_chart.label_mode == "auto" {
+            cursor = next_cursor;
+            continue;
+        }
+
+        let outer = size * 0.5;
+        let inner = if node.props.pie_chart.donut {
+            outer * node.props.pie_chart.inner_radius
+        } else {
+            0.0
+        };
+        let r = inner + (outer - inner) * 0.58;
+        let text = pie_chart_slice_label_text(slice, percent, &node.props.pie_chart.value_mode);
+        let screen_x = plot[0] + plot[2] * 0.5 + mid.cos() * r;
+        let screen_y = plot[1] + plot[3] * 0.5 + mid.sin() * r;
+        let font_size = 10.0 * sf;
+        let text_w = text.chars().count() as f32 * 5.8 * sf + 14.0 * sf;
+        let label_w = text_w.min(plot[2] * 0.62).max(42.0 * sf);
+        let label_h = font_size * 1.55;
+        let label_left = (screen_x - label_w * 0.5)
+            .max(plot[0])
+            .min((plot[0] + plot[2] - label_w).max(plot[0]));
+        let label_top = (screen_y - label_h * 0.5)
+            .max(plot[1])
+            .min((plot[1] + plot[3] - label_h).max(plot[1]));
+        labels.push(PieChartLabelLayout {
+            text,
+            screen_x,
+            screen_y,
+            rect: [label_left, label_top, label_w, label_h],
+        });
+        cursor = next_cursor;
+    }
+    labels
+}
+
+fn emit_pie_chart(
+    out: &mut Vec<RectInstance>,
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    rect: [f32; 4],
+    styled_bg: Option<[f32; 4]>,
+    styled_border: Option<[f32; 4]>,
+    radii: [f32; 4],
+    border_w: f32,
+) {
+    emit_bordered_rect_radii(
+        out,
+        rect,
+        styled_border.unwrap_or(theme.border),
+        styled_bg.unwrap_or(theme.surface),
+        radii,
+        border_w,
+    );
+    let chart_area = pie_chart_chart_rect(node, sf, rect);
+    let size = chart_area[2].min(chart_area[3]).max(1.0);
+    let plot = [
+        chart_area[0] + (chart_area[2] - size) * 0.5,
+        chart_area[1] + (chart_area[3] - size) * 0.5,
+        size,
+        size,
+    ];
+    let plot_fill = mix(styled_bg.unwrap_or(theme.surface), theme.background, 0.16);
+    out.push(inst_radii(plot, plot_fill, [size * 0.5; 4]));
+    let total = node.props.pie_chart.total;
+    if total <= 0.0 || node.props.pie_chart.slices.is_empty() {
+        return;
+    }
+    let tau = std::f32::consts::TAU;
+    let mut cursor = node.props.pie_chart.start_angle.to_radians();
+    let selected = node.props.pie_chart.selected.as_deref();
+    for (index, slice) in node.props.pie_chart.slices.iter().enumerate() {
+        let sweep = (slice.value / total).clamp(0.0, 1.0) * tau;
+        if sweep <= 0.0001 {
+            continue;
+        }
+        let (start, end, _, next_cursor) =
+            pie_slice_angles(cursor, sweep, node.props.pie_chart.clockwise);
+        let is_selected = selected.is_some_and(|value| {
+            value == slice.label || value.parse::<usize>().ok() == Some(index)
+        });
+        let mut color = slice
+            .color
+            .as_ref()
+            .map(|color| color.resolve(theme))
+            .unwrap_or_else(|| palette_color(index, theme));
+        if is_selected {
+            color = mix(color, theme.text, 0.16);
+        }
+        out.push(inst_pie_slice(
+            plot,
+            color,
+            start,
+            end,
+            if node.props.pie_chart.donut {
+                node.props.pie_chart.inner_radius
+            } else {
+                0.0
+            },
+        ));
+        cursor = next_cursor;
+    }
+    let border = styled_border.unwrap_or(theme.border);
+    out.push(inst_outline_ring_clipped(
+        plot,
+        [border[0], border[1], border[2], 0.55],
+        [size * 0.5; 4],
+        1.0 * sf,
+        [-1.0, -1.0, plot[2] + 1.0, plot[3] + 1.0],
+    ));
+    if node.props.pie_chart.donut {
+        let inner = size * node.props.pie_chart.inner_radius;
+        let hole = [
+            plot[0] + (size - inner) * 0.5,
+            plot[1] + (size - inner) * 0.5,
+            inner,
+            inner,
+        ];
+        out.push(inst_radii(
+            hole,
+            styled_bg.unwrap_or(theme.surface),
+            [inner * 0.5; 4],
+        ));
+    }
+    for label in pie_chart_slice_label_layouts(node, sf, plot) {
+        let chip = mix(theme.background, theme.surface, 0.18);
+        out.push(inst_radii(
+            label.rect,
+            [chip[0], chip[1], chip[2], 0.62],
+            [label.rect[3] * 0.5; 4],
+        ));
+    }
+    if node.props.pie_chart.show_legend && node.props.pie_chart.legend_position != "none" {
+        let legend = pie_chart_legend_rect(node, sf, rect, chart_area);
+        let row_h = 18.0 * sf;
+        for (index, slice) in node.props.pie_chart.slices.iter().enumerate() {
+            let y = legend[1] + 6.0 * sf + index as f32 * row_h;
+            if y + row_h > legend[1] + legend[3] {
+                break;
+            }
+            let color = slice
+                .color
+                .as_ref()
+                .map(|color| color.resolve(theme))
+                .unwrap_or_else(|| palette_color(index, theme));
+            out.push(inst_radii(
+                [legend[0] + 2.0 * sf, y + 3.0 * sf, 10.0 * sf, 10.0 * sf],
+                color,
+                [3.0 * sf; 4],
+            ));
+        }
+    }
+}
+
+fn palette_color(index: usize, theme: &Theme) -> [f32; 4] {
+    const COLORS: [[f32; 4]; 8] = [
+        [0.35, 0.66, 1.0, 1.0],
+        [0.45, 0.86, 0.69, 1.0],
+        [1.0, 0.82, 0.42, 1.0],
+        [0.95, 0.42, 0.50, 1.0],
+        [0.70, 0.53, 1.0, 1.0],
+        [1.0, 0.62, 0.26, 1.0],
+        [0.30, 0.82, 0.88, 1.0],
+        [0.64, 0.90, 0.20, 1.0],
+    ];
+    COLORS
+        .get(index % COLORS.len())
+        .copied()
+        .unwrap_or(theme.accent)
 }
 
 fn emit_histogram(
@@ -2999,6 +3334,73 @@ pub(crate) fn line_plot_text_labels(
         }
     }
 
+    labels
+}
+
+pub(crate) fn pie_chart_text_labels(
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    rect: [f32; 4],
+) -> Vec<LinePlotTextLabel> {
+    let mut labels = Vec::new();
+    let color = mix(theme.muted_text, theme.text, 0.5);
+    let color = Some([color[0], color[1], color[2]]);
+    if let Some(title) = node.props.pie_chart.title.as_deref() {
+        labels.push(LinePlotTextLabel {
+            text: title.to_string(),
+            screen_x: rect[0] + 14.0 * sf,
+            screen_y: rect[1] + 10.0 * sf,
+            is_title: true,
+            anchor: "top-left",
+            color,
+            font_size: Some(13.0),
+            clip_rect: Some(rect),
+        });
+    }
+    let chart = pie_chart_chart_rect(node, sf, rect);
+    let size = chart[2].min(chart[3]).max(1.0);
+    let plot = [
+        chart[0] + (chart[2] - size) * 0.5,
+        chart[1] + (chart[3] - size) * 0.5,
+        size,
+        size,
+    ];
+    let total = node.props.pie_chart.total.max(f32::EPSILON);
+    if node.props.pie_chart.show_labels && node.props.pie_chart.label_mode != "none" {
+        for label in pie_chart_slice_label_layouts(node, sf, plot) {
+            labels.push(LinePlotTextLabel {
+                text: label.text,
+                screen_x: label.screen_x,
+                screen_y: label.screen_y,
+                is_title: false,
+                anchor: "box-center",
+                color: Some([0.98, 0.99, 1.0]),
+                font_size: Some(10.0),
+                clip_rect: Some(label.rect),
+            });
+        }
+    }
+    if node.props.pie_chart.show_legend && node.props.pie_chart.legend_position != "none" {
+        let legend = pie_chart_legend_rect(node, sf, rect, chart);
+        let row_h = 18.0 * sf;
+        for (index, slice) in node.props.pie_chart.slices.iter().enumerate() {
+            let y = legend[1] + 4.0 * sf + index as f32 * row_h;
+            if y + row_h > legend[1] + legend[3] {
+                break;
+            }
+            labels.push(LinePlotTextLabel {
+                text: format!("{}  {:.0}%", slice.label, slice.value / total * 100.0),
+                screen_x: legend[0] + 20.0 * sf,
+                screen_y: y,
+                is_title: false,
+                anchor: "top-left",
+                color,
+                font_size: Some(10.5),
+                clip_rect: Some(legend),
+            });
+        }
+    }
     labels
 }
 
@@ -5953,6 +6355,18 @@ fn emit_rects_inner(
                 styled_bg,
                 styled_border,
                 styled_accent,
+                radii,
+                border_w,
+            ),
+
+            WidgetKind::PieChart => emit_pie_chart(
+                out,
+                node,
+                theme,
+                sf,
+                [x, y, w, h],
+                styled_bg,
+                styled_border,
                 radii,
                 border_w,
             ),

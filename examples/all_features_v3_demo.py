@@ -1806,7 +1806,18 @@ CSS_THEMES = {
 }
 
 
-app = dg.App(theme=dg.Theme.dark(accent="#5aa9ff", radius=8, focus="#ffd36a"))
+app = dg.App(
+    theme=dg.Theme.dark(accent="#5aa9ff", radius=8, focus="#ffd36a"),
+    loading_screen=dg.LoadingScreen(
+        title="Loading DragonGUI V3",
+        message="Preparing plots, tables, reports, and controls...",
+        background="#07111f",
+        text="#f8fafc",
+        accent="#5aa9ff",
+        show_progress=True,
+        min_duration_ms=350,
+    ),
+)
 app.stylesheet(CSS_THEMES["midnight"])
 stream_controller: dg.ScatterFrameStream | None = None
 stream_build_thread: threading.Thread | None = None
@@ -1847,6 +1858,19 @@ demo_state = {
 initial_frame = DemoFrame(mode="lidar")
 line_frame = LineFrame()
 histogram_frame = HistogramFrame()
+pie_segment_frame = type(
+    "PieSegmentFrame",
+    (),
+    {
+        "columns": ("segment", "revenue", "accounts"),
+        "dtypes": ("object", "float32", "int32"),
+        "shape": (9, 3),
+        "segment": ["Enterprise", "Team", "Free", "Team", "Partner", "Enterprise", "Trial", "Free", "Team"],
+        "revenue": [42.0, 18.0, 3.0, 22.0, 14.0, 48.0, 6.0, 4.0, 21.0],
+        "accounts": [11, 7, 24, 8, 5, 10, 3, 18, 6],
+        "__getitem__": lambda self, column: getattr(self, column),
+    },
+)()
 demo_image_path = make_demo_image()
 report_overview_path, report_detail_path, report_inline_path = write_demo_reports()
 stream_payload_cache: dict[tuple[str, str], list[tuple[float, dg.ScatterPayload]]] = {}
@@ -2736,6 +2760,7 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
             dg.NavItem("Scatter", page="scatter")
             dg.NavItem("Line plots", page="lineplots")
             dg.NavItem("Histograms", page="histograms")
+            dg.NavItem("Pie charts", page="piecharts")
             dg.NavItem("Controls", page="controls")
             dg.NavItem("Data", page="data")
             dg.NavItem("Runtime", page="runtime")
@@ -3135,6 +3160,54 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                                     key="v3-hist-residual",
                                 )
 
+            with dg.Page("piecharts", title="Pie charts"):
+                with dg.GridLayout(columns=2, min_column_width=380, gap=GRID_GAP, style=GRID_STYLE):
+                    with dg.Panel("Direct pie values", style=CARD_STYLE):
+                        dg.Label("Static share-of-total data with custom slice colors and labels.", class_="subtle")
+                        dg.PieChart(
+                            labels=["Compute", "Storage", "Network", "Support"],
+                            values=[42, 27, 18, 13],
+                            title="Cloud Spend",
+                            colors=["#69b7ff", "#76e0b1", "#ffd36a", "#f36b7f"],
+                            show_labels=True,
+                            key="v3-pie-spend",
+                        )
+                    with dg.Panel("Donut summary", style=CARD_STYLE):
+                        dg.Label("Donut mode uses the same native wedge renderer with a center hole.", class_="subtle")
+                        dg.PieChart(
+                            labels=["North", "South", "East", "West"],
+                            values=[31, 26, 22, 21],
+                            title="Regional Mix",
+                            donut=True,
+                            inner_radius=0.58,
+                            key="v3-pie-regions",
+                        )
+                    with dg.Panel("Frame count aggregation", style=CARD_STYLE):
+                        dg.Label("Counts category rows and groups the long tail into Other.", class_="subtle")
+                        dg.PieChart(
+                            pie_segment_frame,
+                            category="segment",
+                            aggregate="count",
+                            title="Accounts By Segment",
+                            top_n=4,
+                            other_label="Other",
+                            key="v3-pie-accounts",
+                        )
+                    with dg.Panel("Frame sum aggregation", style=CARD_STYLE):
+                        dg.Label("Sums a numeric value column by category.", class_="subtle")
+                        dg.PieChart(
+                            pie_segment_frame,
+                            category="segment",
+                            value="revenue",
+                            aggregate="sum",
+                            title="Revenue By Segment",
+                            top_n=3,
+                            donut=True,
+                            show_labels=True,
+                            colors=["#7ab8ff", "#8be7bd", "#ffe083", "#ff8aa1"],
+                            key="v3-pie-revenue",
+                        )
+
             with dg.Page("controls", title="Controls"):
                 with dg.GridLayout(columns=2, min_column_width=360, gap=GRID_GAP, style=GRID_STYLE):
                     with dg.Panel("Form controls", style=CARD_STYLE):
@@ -3324,7 +3397,7 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
 
     about_modal = dg.alert(
         "About DragonGUI",
-        "This V3 demo uses responsive grids, CSS themes, Scatter3D, LinePlot, Histogram, HtmlReport, DataFrameTable, modals, menus, context menus, toasts, resources, and live runtime updates.",
+        "This V3 demo uses responsive grids, CSS themes, Scatter3D, LinePlot, Histogram, PieChart, HtmlReport, DataFrameTable, modals, menus, context menus, toasts, resources, and live runtime updates.",
         open=False,
         parent=win,
     )
@@ -3342,7 +3415,12 @@ stats_thread = threading.Thread(target=scatter_stats_worker, daemon=True)
 stats_thread.start()
 
 try:
-    result = app.run(AllFeaturesV3())
+    result = app.run_with_loading(
+        AllFeaturesV3,
+        title="DragonGUI All Features V3 Demo",
+        width=1440,
+        height=900,
+    )
 except dg.BackendUnavailableError:
     print("DragonGUI source import works.")
     print("Native backend is not built, so this run prints the UI document.")
