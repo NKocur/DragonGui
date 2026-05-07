@@ -29,23 +29,81 @@ Unsupported for the first release:
 For a developer source build on Pi OS:
 
 ```bash
+sudo apt update
 sudo apt install build-essential cmake pkg-config libvulkan1 \
                  mesa-vulkan-drivers mesa-utils vulkan-tools \
                  libxkbcommon-dev libwayland-dev libxcb1-dev \
                  xdg-desktop-portal xdg-desktop-portal-gtk \
-                 python3.11-dev python3-pip python3-venv
+                 python3-dev python3-pip python3-venv curl
 ```
 
 For 4 GB Pi hardware, prefer a prebuilt wheel once published. Building the Rust
 extension and `lightningcss` stack from source may be memory constrained.
 
+## Setup Helper
+
+For a repo checked out on a USB drive, the helper keeps Rust, Cargo build
+artifacts, and the pip cache on that drive. It also copies the installed native
+extension into `python/dragongui/`, which is required when running examples from
+the source tree.
+
+From the DragonGUI repo root:
+
+```bash
+bash rpi_setup_and_run.sh deps
+bash rpi_setup_and_run.sh build-smoke
+```
+
+Then run the V3 demo normally:
+
+```bash
+bash rpi_setup_and_run.sh run
+```
+
+If startup fails before a window appears, capture a full display/GPU report:
+
+```bash
+bash rpi_setup_and_run.sh diag
+```
+
+The helper defaults to `DRAGONGUI_WGPU_BACKEND=gl` and
+`DRAGONGUI_WINDOW_BACKEND=x11`. On Wayland desktops this uses XWayland for the
+window because wgpu's GL backend may not be compatible with a native Wayland
+surface on Pi.
+
+The script infers the USB root from a path like
+`/media/xymbu/DragonUSB/DragonGui-RPi`. If needed, force it explicitly:
+
+```bash
+DRAGONGUI_USB_ROOT=/media/xymbu/DragonUSB bash rpi_setup_and_run.sh build-smoke
+```
+
 ## Build From Source
 
 ```bash
-python -m pip install maturin
+sudo apt install curl
+export DRAGONGUI_USB_ROOT=/media/$USER/DragonUSB
+mkdir -p "$DRAGONGUI_USB_ROOT/rustup" \
+         "$DRAGONGUI_USB_ROOT/cargo" \
+         "$DRAGONGUI_USB_ROOT/cargo-target" \
+         "$DRAGONGUI_USB_ROOT/pip-cache"
+export RUSTUP_HOME="$DRAGONGUI_USB_ROOT/rustup"
+export CARGO_HOME="$DRAGONGUI_USB_ROOT/cargo"
+export CARGO_TARGET_DIR="$DRAGONGUI_USB_ROOT/cargo-target"
+export PIP_CACHE_DIR="$DRAGONGUI_USB_ROOT/pip-cache"
+export PATH="$CARGO_HOME/bin:$PATH"
+
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+  sh -s -- -y --no-modify-path --default-toolchain stable
+rustup default stable
+
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install --upgrade pip maturin numpy plotly
 maturin build --release --manifest-path native/Cargo.toml \
   --features pyo3/extension-module,pi
-python -m pip install target/wheels/dragongui-*.whl
+python -m pip install "$CARGO_TARGET_DIR"/wheels/dragongui-*.whl
+cp "$(find .venv -name '_dragongui*.so' -print -quit)" python/dragongui/
 ```
 
 For local diagnostics without building a wheel:
@@ -71,7 +129,7 @@ The runtime profile is selected by `DRAGONGUI_PROFILE`:
 
 The Pi profile currently applies:
 
-- wgpu Vulkan-or-GL backend selection.
+- wgpu GL/GLES backend selection by default.
 - low-power adapter preference.
 - downlevel wgpu limits.
 - scatter point cap: 100,000 points.
@@ -84,17 +142,22 @@ The Pi profile currently applies:
 
 Backend triage can force wgpu backend selection:
 
-- `DRAGONGUI_WGPU_BACKEND=auto`: use DragonGUI/wgpu defaults.
-- `DRAGONGUI_WGPU_BACKEND=vulkan`: force Vulkan.
+- `DRAGONGUI_WGPU_BACKEND=auto`: use the DragonGUI Pi default, currently GL/GLES.
+- `DRAGONGUI_WGPU_BACKEND=vulkan`: force Vulkan for driver comparison.
 - `DRAGONGUI_WGPU_BACKEND=gl`: force OpenGL/GLES.
 - `DRAGONGUI_WGPU_BACKEND=vulkan,gl`: allow only Vulkan or GL.
 
 The active request appears in `backend_info()["platform"]["wgpu_backend_override"]`
 and in `app.debug_snapshot()["runtime"]["platform"]`.
 
+The Pi helper also supports `DRAGONGUI_WINDOW_BACKEND=auto|x11|wayland`. Use
+`x11` with `DRAGONGUI_WGPU_BACKEND=gl`, and use `wayland` when explicitly
+testing the Vulkan path.
+
 For startup diagnostics, set `DRAGONGUI_LOG=debug`. This prints the selected
-profile, requested wgpu backends, adapter name/backend, driver, and required
-buffer limit to stderr during native startup.
+profile, requested wgpu backends, adapter name/backend, driver, available
+adapter features, downlevel capabilities, and required buffer limit to stderr
+during native startup.
 
 ## Smoke Test
 
@@ -138,6 +201,7 @@ print(snapshot["runtime"]["platform"])
 Useful system commands for support reports:
 
 ```bash
+bash rpi_setup_and_run.sh diag
 uname -a
 python --version
 vulkaninfo --summary
@@ -148,8 +212,10 @@ vcgencmd measure_temp
 If the window opens black or device creation fails:
 
 - Verify `mesa-vulkan-drivers`, `libvulkan1`, and `vulkan-tools` are installed.
-- Try `DRAGONGUI_WGPU_BACKEND=gl` before launch. If GL fails, try
-  `DRAGONGUI_WGPU_BACKEND=vulkan`.
+- Run through `bash rpi_setup_and_run.sh run`, which defaults to
+  `DRAGONGUI_WGPU_BACKEND=gl` and `DRAGONGUI_WINDOW_BACKEND=x11`.
+- If GL fails, try `DRAGONGUI_WGPU_BACKEND=vulkan bash rpi_setup_and_run.sh run`
+  to check the Vulkan path separately.
 - Run once with `DRAGONGUI_LOG=debug` and include stderr in the support report.
 - Capture `backend_info()` and `app.debug_snapshot()` output.
 

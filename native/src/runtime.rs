@@ -13,7 +13,9 @@ use winit::dpi::LogicalSize;
 use winit::dpi::PhysicalPosition;
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopBuilder};
+#[cfg(target_os = "linux")]
+use winit::platform::{wayland::EventLoopBuilderExtWayland, x11::EventLoopBuilderExtX11};
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 use winit::window::{Theme as WinitTheme, Window, WindowId};
 
@@ -191,6 +193,31 @@ fn select_required_wgpu_limits(
     } else {
         (wgpu::Limits::default(), false)
     }
+}
+
+fn select_default_wgpu_backends(profile: &RuntimeProfileSelection) -> wgpu::Backends {
+    if profile.use_pi_gpu_defaults() {
+        // The Raspberry Pi Vulkan driver can expose an adapter but fail logical
+        // device creation for wgpu's baseline Vulkan feature chain. Prefer
+        // GL/GLES for the Pi profile, while still allowing explicit Vulkan
+        // testing through DRAGONGUI_WGPU_BACKEND=vulkan.
+        wgpu::Backends::GL
+    } else {
+        wgpu::InstanceDescriptor::new_without_display_handle().backends
+    }
+}
+
+fn select_effective_wgpu_backends(
+    profile: &RuntimeProfileSelection,
+) -> Result<(wgpu::Backends, Option<String>), String> {
+    let backend_override = wgpu_backend_override_from_env()?;
+    let backend_override_requested = backend_override
+        .as_ref()
+        .map(|(requested, _)| requested.clone());
+    let backends = backend_override
+        .map(|(_, backends)| backends)
+        .unwrap_or_else(|| select_default_wgpu_backends(profile));
+    Ok((backends, backend_override_requested))
 }
 
 fn debug_log(message: impl AsRef<str>) {
@@ -3532,6 +3559,41 @@ mod style_patch_tests {
     }
 
     #[test]
+    fn pi_profile_defaults_to_gl_backend() {
+        let profile = test_profile(runtime_profile::RuntimeProfile::Pi);
+
+        assert_eq!(select_default_wgpu_backends(&profile), wgpu::Backends::GL);
+    }
+
+    #[test]
+    fn desktop_profile_keeps_wgpu_default_backends() {
+        let profile = test_profile(runtime_profile::RuntimeProfile::Desktop);
+        let expected = wgpu::InstanceDescriptor::new_without_display_handle().backends;
+
+        assert_eq!(select_default_wgpu_backends(&profile), expected);
+    }
+
+    #[test]
+    fn pi_gl_backend_defaults_window_to_x11() {
+        let profile = test_profile(runtime_profile::RuntimeProfile::Pi);
+
+        assert_eq!(
+            default_window_backend_for_profile(&profile, wgpu::Backends::GL),
+            Some(WindowBackend::X11)
+        );
+    }
+
+    #[test]
+    fn pi_vulkan_backend_keeps_window_auto() {
+        let profile = test_profile(runtime_profile::RuntimeProfile::Pi);
+
+        assert_eq!(
+            default_window_backend_for_profile(&profile, wgpu::Backends::VULKAN),
+            None
+        );
+    }
+
+    #[test]
     fn required_wgpu_limits_use_downlevel_for_pi_profile() {
         let profile = test_profile(runtime_profile::RuntimeProfile::Pi);
         let adapter_limits = wgpu::Limits {
@@ -5879,17 +5941,10 @@ impl WgpuState {
 
         let runtime_profile = RuntimeProfileSelection::current();
         let mut instance_desc = wgpu::InstanceDescriptor::new_without_display_handle();
-        if runtime_profile.use_pi_gpu_defaults() {
-            instance_desc.backends = wgpu::Backends::VULKAN | wgpu::Backends::GL;
-        }
         instance_desc = instance_desc.with_env();
-        let backend_override = wgpu_backend_override_from_env().map_err(DragonError::GpuInit)?;
-        let backend_override_requested = backend_override
-            .as_ref()
-            .map(|(requested, _)| requested.clone());
-        if let Some((_, backends)) = backend_override {
-            instance_desc.backends = backends;
-        }
+        let (effective_backends, backend_override_requested) =
+            select_effective_wgpu_backends(&runtime_profile).map_err(DragonError::GpuInit)?;
+        instance_desc.backends = effective_backends;
         let requested_backends = instance_desc.backends;
         debug_log(format!(
             "profile={} requested_backends={:?} backend_override={:?}",
@@ -5917,16 +5972,20 @@ impl WgpuState {
             .map_err(|e| DragonError::GpuInit(format!("adapter: {e}")))?;
 
         let adapter_info = adapter.get_info();
+        let adapter_features = adapter.features();
+        let adapter_downlevel = adapter.get_downlevel_capabilities();
         let adapter_limits = adapter.limits();
         let (required_limits, downlevel_limits) =
             select_required_wgpu_limits(&runtime_profile, &adapter_limits);
         debug_log(format!(
-            "adapter={} backend={} driver={} downlevel_limits={} max_buffer_size={}",
+            "adapter={} backend={} driver={} downlevel_limits={} max_buffer_size={} features={:?} downlevel={:?}",
             adapter_info.name,
             adapter_info.backend,
             adapter_info.driver,
             downlevel_limits,
-            required_limits.max_buffer_size
+            required_limits.max_buffer_size,
+            adapter_features,
+            adapter_downlevel
         ));
 
         let (device, queue) = adapter
@@ -16191,12 +16250,97 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
 // Public entry point
 // ---------------------------------------------------------------------------
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WindowBackend {
+    X11,
+    Wayland,
+}
+
+fn window_backend_override_from_env() -> Result<Option<WindowBackend>, DragonError> {
+    let value = match std::env::var("DRAGONGUI_WINDOW_BACKEND") {
+        Ok(value) => value,
+        Err(std::env::VarError::NotPresent) => return Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            return Err(DragonError::GpuInit(
+                "invalid DRAGONGUI_WINDOW_BACKEND value; environment value is not Unicode"
+                    .to_string(),
+            ));
+        }
+    };
+
+    match value.trim().to_ascii_lowercase().as_str() {
+        "" | "auto" => Ok(None),
+        "x" | "x11" => Ok(Some(WindowBackend::X11)),
+        "wayland" | "wl" => Ok(Some(WindowBackend::Wayland)),
+        _ => Err(DragonError::GpuInit(format!(
+            "invalid DRAGONGUI_WINDOW_BACKEND value {value:?}; expected auto, x11, or wayland"
+        ))),
+    }
+}
+
+fn default_window_backend_for_profile(
+    profile: &RuntimeProfileSelection,
+    backends: wgpu::Backends,
+) -> Option<WindowBackend> {
+    if profile.use_pi_gpu_defaults()
+        && backends.contains(wgpu::Backends::GL)
+        && !backends.contains(wgpu::Backends::VULKAN)
+    {
+        Some(WindowBackend::X11)
+    } else {
+        None
+    }
+}
+
+fn select_window_backend(
+    profile: &RuntimeProfileSelection,
+    backends: wgpu::Backends,
+) -> Result<Option<WindowBackend>, DragonError> {
+    Ok(window_backend_override_from_env()?
+        .or_else(|| default_window_backend_for_profile(profile, backends)))
+}
+
+fn apply_window_backend<T: 'static>(
+    builder: &mut EventLoopBuilder<T>,
+    backend: Option<WindowBackend>,
+) {
+    #[cfg(target_os = "linux")]
+    match backend {
+        Some(WindowBackend::X11) => {
+            builder.with_x11();
+        }
+        Some(WindowBackend::Wayland) => {
+            builder.with_wayland();
+        }
+        None => {}
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (builder, backend);
+    }
+}
+
 pub fn run_event_loop(spec: AppSpec) -> Result<RunResult, DragonError> {
     let smoke_frames = std::env::var("DRAGONGUI_SMOKE_FRAMES")
         .ok()
         .and_then(|v| v.parse::<u32>().ok());
 
-    let event_loop = EventLoop::<RuntimeEvent>::with_user_event()
+    let runtime_profile = RuntimeProfileSelection::current();
+    let (effective_backends, _) =
+        select_effective_wgpu_backends(&runtime_profile).map_err(DragonError::GpuInit)?;
+    let window_backend = select_window_backend(&runtime_profile, effective_backends)?;
+    debug_log(format!(
+        "window_backend={:?} session_type={:?} display={:?} wayland_display={:?}",
+        window_backend,
+        std::env::var("XDG_SESSION_TYPE").ok(),
+        std::env::var("DISPLAY").ok(),
+        std::env::var("WAYLAND_DISPLAY").ok()
+    ));
+
+    let mut event_loop_builder = EventLoop::<RuntimeEvent>::with_user_event();
+    apply_window_backend(&mut event_loop_builder, window_backend);
+    let event_loop = event_loop_builder
         .build()
         .map_err(|e| DragonError::GpuInit(format!("event loop: {e}")))?;
     event_loop.set_control_flow(ControlFlow::Wait);

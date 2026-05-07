@@ -79,8 +79,8 @@ Audited against the current tree on 2026-05-06:
 - Windows-specific WebView2 dependencies are already behind
   `cfg(windows)`, so they should not be pulled into an aarch64 Linux build.
 - [native/src/runtime.rs](../../native/src/runtime.rs) creates the wgpu
-  instance/device in `WgpuState::new`; Pi profile selection now uses
-  Vulkan-or-GL backends, `PowerPreference::LowPower`, and downlevel limits.
+  instance/device in `WgpuState::new`; Pi profile selection now uses GL/GLES by
+  default, `PowerPreference::LowPower`, and downlevel limits.
 - The startup loading screen is already implemented and rendered before
   startup scatter resources are decoded/uploaded. The Pi work is validation,
   defaults, and diagnostics, not first implementation.
@@ -109,10 +109,12 @@ Implemented so far:
 - `backend_info()` and `app.debug_snapshot()` platform diagnostics include OS,
   architecture, profile selection, WebView availability, adapter info, wgpu
   limits, and effective heavy-widget caps.
-- `DRAGONGUI_LOG=debug` prints native startup profile/backend/adapter/limit
-  diagnostics to stderr.
-- Pi profile device selection uses Vulkan-or-GL backend selection, low-power
-  adapter preference, and downlevel limits.
+- `DRAGONGUI_LOG=debug` prints native startup profile/backend/adapter/features/
+  downlevel/limit diagnostics to stderr.
+- `rpi_setup_and_run.sh diag` captures the display session, GL/EGL/Vulkan
+  summaries, DragonGUI backend info, and one-frame backend probes.
+- Pi profile device selection uses GL/GLES backend selection by default,
+  low-power adapter preference, and downlevel limits.
 - Scatter startup/live/actor/stream payloads validate point counts against the
   Pi profile cap and device max buffer size before allocating GPU buffers.
 - Scatter stream ring uploads use contiguous span writes instead of one
@@ -168,8 +170,13 @@ Implemented so far:
 
 Implemented in `WgpuState::new`:
 
-- Pi profile uses `InstanceDescriptor { backends: Backends::VULKAN | Backends::GL, .. }`
-  so wgpu can fall back to GL when V3D's Vulkan path misbehaves.
+- Pi profile uses `InstanceDescriptor { backends: Backends::GL, .. }`
+  because V3D's Vulkan path can expose an adapter but fail logical device
+  creation on required baseline features. Vulkan remains available for explicit
+  comparison with `DRAGONGUI_WGPU_BACKEND=vulkan`.
+- When Pi GL is active, the runtime defaults the winit window backend to X11 so
+  wgpu GL can attach to an X11/XWayland surface instead of an incompatible
+  native Wayland surface. Override with `DRAGONGUI_WINDOW_BACKEND=auto|x11|wayland`.
 - Pi profile uses `power_preference: LowPower`.
 - Pi profile replaces `Limits::default()` with
   `Limits::downlevel_defaults().using_resolution(adapter.limits())`.
@@ -427,16 +434,39 @@ trace logging is needed.
 Pi OS bookworm, 8 GB+ RAM:
 
 ```
+sudo apt update
 sudo apt install build-essential cmake pkg-config libvulkan1 \
                  mesa-vulkan-drivers mesa-utils vulkan-tools \
                  libxkbcommon-dev libwayland-dev libxcb1-dev \
                  xdg-desktop-portal xdg-desktop-portal-gtk \
-                 python3.11-dev python3-pip python3-venv
-curl https://sh.rustup.rs -sSf | sh
-pip install maturin
-maturin build --release --features pyo3/extension-module,pi
-pip install target/wheels/dragongui-*.whl
+                 python3-dev python3-pip python3-venv curl
+
+export DRAGONGUI_USB_ROOT=/media/$USER/DragonUSB
+mkdir -p "$DRAGONGUI_USB_ROOT/rustup" "$DRAGONGUI_USB_ROOT/cargo" \
+         "$DRAGONGUI_USB_ROOT/cargo-target" "$DRAGONGUI_USB_ROOT/pip-cache"
+export RUSTUP_HOME="$DRAGONGUI_USB_ROOT/rustup"
+export CARGO_HOME="$DRAGONGUI_USB_ROOT/cargo"
+export CARGO_TARGET_DIR="$DRAGONGUI_USB_ROOT/cargo-target"
+export PIP_CACHE_DIR="$DRAGONGUI_USB_ROOT/pip-cache"
+export PATH="$CARGO_HOME/bin:$PATH"
+
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+  sh -s -- -y --no-modify-path --default-toolchain stable
+rustup default stable
+
+python3 -m venv .venv
+. .venv/bin/activate
+pip install --upgrade pip maturin numpy plotly
+maturin build --release --manifest-path native/Cargo.toml --features pyo3/extension-module,pi
+pip install "$CARGO_TARGET_DIR"/wheels/dragongui-*.whl
+cp "$(find .venv -name '_dragongui*.so' -print -quit)" python/dragongui/
 ```
+
+Implemented convenience path: `bash rpi_setup_and_run.sh full` wraps the package
+install, USB-backed Rust setup, wheel build/install, native extension copy, and
+short smoke run. The script defaults `DRAGONGUI_WGPU_BACKEND=gl` so an otherwise
+valid Pi Vulkan adapter cannot crash startup before the GL/GLES path is tested,
+and defaults `DRAGONGUI_WINDOW_BACKEND=x11` so GL uses an X11/XWayland surface.
 
 For 4 GB Pi hardware, source builds are not a supported first path. Use the
 prebuilt wheel.

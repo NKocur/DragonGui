@@ -21,7 +21,8 @@ The next meaningful step is running the release checklist on real Raspberry Pi
 - Pi profile auto-selection for `linux/aarch64` and for native builds compiled
   with the `pi` Cargo feature.
 - Pi GPU defaults:
-  - Vulkan-or-GL backend set for the Pi profile.
+  - GL/GLES backend set for the Pi profile by default.
+  - X11/XWayland window backend for Pi GL by default.
   - low-power adapter preference.
   - downlevel wgpu limits resolved against adapter limits.
 - Explicit backend triage override:
@@ -29,8 +30,15 @@ The next meaningful step is running the release checklist on real Raspberry Pi
   - `DRAGONGUI_WGPU_BACKEND=vulkan`
   - `DRAGONGUI_WGPU_BACKEND=gl`
   - comma/plus/pipe separated backend lists.
+- Explicit window backend triage override:
+  - `DRAGONGUI_WINDOW_BACKEND=auto`
+  - `DRAGONGUI_WINDOW_BACKEND=x11`
+  - `DRAGONGUI_WINDOW_BACKEND=wayland`
 - `DRAGONGUI_LOG=debug` startup diagnostics for selected profile, requested
-  backends, adapter, driver, downlevel mode, and required buffer limit.
+  backends, adapter, driver, adapter features, downlevel capabilities, downlevel
+  mode, and required buffer limit.
+- `rpi_setup_and_run.sh diag` support report command for display session,
+  GL/EGL/Vulkan summaries, DragonGUI backend info, and one-frame backend probes.
 - `backend_info()` and `app.debug_snapshot()` platform diagnostics:
   - OS and architecture.
   - selected/requested profile.
@@ -158,19 +166,21 @@ tracking.
   - context menu
   - scatter rotate/pan/zoom
 - Backend comparison:
-  - default backend selection
+  - default GL/GLES backend selection
   - `DRAGONGUI_WGPU_BACKEND=gl`
   - `DRAGONGUI_WGPU_BACKEND=vulkan`
 - Capture:
   - `backend_info()`
   - `app.debug_snapshot()`
   - `DRAGONGUI_LOG=debug` stderr
+  - `bash rpi_setup_and_run.sh diag` output
   - kernel, Mesa, Vulkan/GL renderer, Python, temperature, and power/cooling
     details.
 
 ## Decisions Deferred Until Hardware Data
 
-- Whether Vulkan or GL should be the documented default path.
+- Whether Vulkan should become the default later if hardware validation proves
+  it is stable across supported Mesa/kernel versions. Current default is GL/GLES.
 - Whether Wayland and X11 are both first-release supported, or one is the
   validated path and the other is best-effort.
 - Whether MSAA must be disabled globally on Pi.
