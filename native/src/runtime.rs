@@ -13,7 +13,9 @@ use winit::dpi::LogicalSize;
 use winit::dpi::PhysicalPosition;
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopBuilder};
+use winit::event_loop::{
+    ActiveEventLoop, ControlFlow, EventLoop, EventLoopBuilder, OwnedDisplayHandle,
+};
 #[cfg(target_os = "linux")]
 use winit::platform::{wayland::EventLoopBuilderExtWayland, x11::EventLoopBuilderExtX11};
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
@@ -5933,18 +5935,29 @@ impl WgpuState {
         Ok((true, t0.elapsed().as_secs_f64() * 1000.0))
     }
 
-    async fn new(window: Arc<Window>, spec: AppSpec) -> Result<(Self, f64), DragonError> {
+    async fn new(
+        window: Arc<Window>,
+        display_handle: OwnedDisplayHandle,
+        spec: AppSpec,
+    ) -> Result<(Self, f64), DragonError> {
         let size = window.inner_size();
         let width = size.width.max(1);
         let height = size.height.max(1);
         let scale_factor = window.scale_factor() as f32;
 
         let runtime_profile = RuntimeProfileSelection::current();
-        let mut instance_desc = wgpu::InstanceDescriptor::new_without_display_handle();
+        let mut instance_desc =
+            wgpu::InstanceDescriptor::new_with_display_handle(Box::new(display_handle));
         instance_desc = instance_desc.with_env();
         let (effective_backends, backend_override_requested) =
             select_effective_wgpu_backends(&runtime_profile).map_err(DragonError::GpuInit)?;
         instance_desc.backends = effective_backends;
+        if runtime_profile.use_pi_gpu_defaults()
+            && effective_backends.contains(wgpu::Backends::GL)
+            && std::env::var_os("WGPU_GLES_MINOR_VERSION").is_none()
+        {
+            instance_desc.backend_options.gl.gles_minor_version = wgpu::Gles3MinorVersion::Version1;
+        }
         let requested_backends = instance_desc.backends;
         debug_log(format!(
             "profile={} requested_backends={:?} backend_override={:?}",
@@ -15041,7 +15054,8 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
             }
         };
 
-        match pollster::block_on(WgpuState::new(Arc::clone(&window), spec)) {
+        let display_handle = event_loop.owned_display_handle();
+        match pollster::block_on(WgpuState::new(Arc::clone(&window), display_handle, spec)) {
             Ok((gpu, upload_ms)) => {
                 self.upload_ms = upload_ms;
                 self.gpu = Some(gpu);
