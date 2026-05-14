@@ -13,6 +13,9 @@ use lightningcss::media_query::{
 };
 use lightningcss::properties::font::FontFamily as CssFontFamily;
 use lightningcss::properties::Property;
+use lightningcss::rules::container::{
+    ContainerCondition, ContainerRule, ContainerSizeFeature, ContainerSizeFeatureId,
+};
 use lightningcss::rules::font_face::{FontFaceProperty, FontFaceRule, Source as FontFaceSource};
 use lightningcss::rules::keyframes::{KeyframeSelector, KeyframesName, KeyframesRule};
 use lightningcss::rules::{supports::SupportsCondition, CssRule, CssRuleList};
@@ -24,14 +27,15 @@ use crate::document::{WidgetKind, WidgetNode};
 use crate::style::{
     visual_style_is_empty, AnimationDirection, AnimationFillMode, AnimationIterationCount,
     AnimationPlayState, AnimationStyle, BackdropFilterStyle, BackgroundPaint, BlobGradient,
-    BlobGradientStop, BoxShadow, CalcLength, ColorRef, DisplayStyle, FlexDirectionStyle,
-    FontFamily, FontStyle, FontVariantNumeric, GeneratedContent, GradientInterpolation,
-    GradientStop, GridAutoFlowStyle, GridLineStyle, GridPlacementStyle, GridTemplateArea,
-    GridTemplateAreas, GridTrackFitContentSize, GridTrackMaxSize, GridTrackMinSize,
-    GridTrackRepeatKind, GridTrackSize, LayoutLength, LayoutStyle, LineHeight, LinearGradient,
-    MeshGradient, NodePartStyles, NodeStyle, OverflowStyle, PartLayoutStyle, PartStyle,
-    PositionStyle, RadialGradient, TextAlign, TextOverflow, TextSpacing, TextStyle, TextTransform,
-    TransformStyle, TransitionProperty, TransitionStyle, TransitionTimingFunction, VisualStyle,
+    BlobGradientStop, BoxShadow, CalcLength, ColorRef, ContainerTypeStyle, DisplayStyle,
+    FlexDirectionStyle, FontFamily, FontStyle, FontVariantNumeric, GeneratedContent,
+    GradientInterpolation, GradientStop, GridAutoFlowStyle, GridLineStyle, GridPlacementStyle,
+    GridTemplateArea, GridTemplateAreas, GridTrackFitContentSize, GridTrackMaxSize,
+    GridTrackMinSize, GridTrackRepeatKind, GridTrackSize, LayoutLength, LayoutStyle, LineHeight,
+    LinearGradient, MeshGradient, NodePartStyles, NodeStyle, OverflowStyle, PartLayoutStyle,
+    PartStyle, PositionStyle, RadialGradient, TextAlign, TextOverflow, TextSpacing, TextStyle,
+    TextTransform, TransformStyle, TransitionProperty, TransitionStyle, TransitionTimingFunction,
+    VisualStyle,
 };
 use crate::theme::{parse_web_color, Color, Theme};
 
@@ -619,12 +623,47 @@ pub enum DgMediaNavControls {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DgMediaComparison {
+pub enum DgMediaComparison {
     Equal,
     GreaterThan,
     GreaterThanEqual,
     LessThan,
     LessThanEqual,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DgContainerRuleCondition {
+    pub name: Option<String>,
+    pub expression: DgContainerExpression,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum DgContainerExpression {
+    Width(DgMediaComparison, f32),
+    And(Vec<DgContainerExpression>),
+    Or(Vec<DgContainerExpression>),
+    Not(Box<DgContainerExpression>),
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct DgContainerQueryContext {
+    widths: BTreeMap<String, f32>,
+}
+
+impl DgContainerQueryContext {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn insert_width(&mut self, id: impl Into<String>, width: f32) {
+        if width.is_finite() {
+            self.widths.insert(id.into(), width.max(0.0));
+        }
+    }
+
+    fn width(&self, id: &str) -> Option<f32> {
+        self.widths.get(id).copied()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -635,6 +674,7 @@ pub struct DgStyleRule {
     pub origin: StylesheetOrigin,
     pub source_order: u32,
     pub media: Option<DgMediaCondition>,
+    pub container: Option<DgContainerRuleCondition>,
 }
 
 impl DgStyleRule {
@@ -654,6 +694,17 @@ impl DgStyleRule {
         source_order: u32,
         media: Option<DgMediaCondition>,
     ) -> Self {
+        Self::with_conditions(selector, declarations, origin, source_order, media, None)
+    }
+
+    pub fn with_conditions(
+        selector: DgSelector,
+        declarations: Vec<DgStyleDeclaration>,
+        origin: StylesheetOrigin,
+        source_order: u32,
+        media: Option<DgMediaCondition>,
+        container: Option<DgContainerRuleCondition>,
+    ) -> Self {
         let specificity = selector.specificity();
         Self {
             selector,
@@ -662,6 +713,7 @@ impl DgStyleRule {
             origin,
             source_order,
             media,
+            container,
         }
     }
 
@@ -742,6 +794,8 @@ pub enum DgLayoutDeclaration {
     GridArea(String),
     GridColumn(DgGridPlacement),
     GridRow(DgGridPlacement),
+    ContainerName(Vec<String>),
+    ContainerType(ContainerTypeStyle),
     Overflow(DgCssKeyword),
     OverflowX(DgCssKeyword),
     OverflowY(DgCssKeyword),
@@ -807,6 +861,10 @@ pub enum DgWidgetDeclaration {
     TextAreaRows(DgCssNumber),
     ScatterPointSize(DgCssLength),
     ScatterPointStyle(DgCssKeyword),
+    ScatterGridVisible(bool),
+    ScatterGridPlanes(bool, bool),
+    ScatterLegendPosition(DgCssKeyword),
+    ScatterOrientationAxes(bool),
     TableRowHeight(DgCssLength),
     TableHeaderHeight(DgCssLength),
     TableColumnWidth(DgCssLength),
@@ -2515,6 +2573,8 @@ pub enum DgLayoutPropertyName {
     GridArea,
     GridColumn,
     GridRow,
+    ContainerName,
+    ContainerType,
     Overflow,
     OverflowX,
     OverflowY,
@@ -2578,6 +2638,10 @@ pub enum DgWidgetPropertyName {
     TextAreaRows,
     ScatterPointSize,
     ScatterPointStyle,
+    ScatterGridVisible,
+    ScatterGridPlanes,
+    ScatterLegendPosition,
+    ScatterOrientationAxes,
     TableRowHeight,
     TableHeaderHeight,
     TableColumnWidth,
@@ -2634,8 +2698,8 @@ impl DgStylePropertyName {
     /// padding-left, padding-right, padding-top, padding-bottom, margin,
     /// margin-left, margin-right, margin-top, margin-bottom, gap,
     /// grid-template-columns, grid-template-rows, grid-template-areas,
-    /// grid-auto-flow, grid-area, grid-column, grid-row, overflow, position, top, right,
-    /// bottom, left.
+    /// grid-auto-flow, grid-area, grid-column, grid-row, container-name,
+    /// container-type, overflow, position, top, right, bottom, left.
     ///
     /// Visual: background, background-color, background-image, foreground,
     /// border-color, border-width, border-style, outline, outline-color,
@@ -2648,8 +2712,10 @@ impl DgStylePropertyName {
     /// text-transform, letter-spacing, line-height, font-style,
     /// font-variant-numeric, text-overflow.
     ///
-    /// Widget: text-area-rows, scatter-point-size, table-row-height,
-    /// table-header-height, table-column-width, table-index-width.
+    /// Widget: text-area-rows, scatter-point-size, scatter-point-style,
+    /// scatter-grid-visible, scatter-grid-planes, scatter-legend-position,
+    /// scatter-orientation-axes, table-row-height, table-header-height,
+    /// table-column-width, table-index-width.
     pub fn from_css_name(name: &str) -> Result<Self, DgStyleWarning> {
         let normalized = name.trim().to_ascii_lowercase();
         if normalized.starts_with("--") && normalized.len() > 2 {
@@ -2687,6 +2753,8 @@ impl DgStylePropertyName {
             "grid-area" => Ok(Self::Layout(DgLayoutPropertyName::GridArea)),
             "grid-column" => Ok(Self::Layout(DgLayoutPropertyName::GridColumn)),
             "grid-row" => Ok(Self::Layout(DgLayoutPropertyName::GridRow)),
+            "container-name" => Ok(Self::Layout(DgLayoutPropertyName::ContainerName)),
+            "container-type" => Ok(Self::Layout(DgLayoutPropertyName::ContainerType)),
             "overflow" => Ok(Self::Layout(DgLayoutPropertyName::Overflow)),
             "overflow-x" => Ok(Self::Layout(DgLayoutPropertyName::OverflowX)),
             "overflow-y" => Ok(Self::Layout(DgLayoutPropertyName::OverflowY)),
@@ -2768,6 +2836,14 @@ impl DgStylePropertyName {
             "text-area-rows" => Ok(Self::Widget(DgWidgetPropertyName::TextAreaRows)),
             "scatter-point-size" => Ok(Self::Widget(DgWidgetPropertyName::ScatterPointSize)),
             "scatter-point-style" => Ok(Self::Widget(DgWidgetPropertyName::ScatterPointStyle)),
+            "scatter-grid-visible" => Ok(Self::Widget(DgWidgetPropertyName::ScatterGridVisible)),
+            "scatter-grid-planes" => Ok(Self::Widget(DgWidgetPropertyName::ScatterGridPlanes)),
+            "scatter-legend-position" => {
+                Ok(Self::Widget(DgWidgetPropertyName::ScatterLegendPosition))
+            }
+            "scatter-orientation-axes" => {
+                Ok(Self::Widget(DgWidgetPropertyName::ScatterOrientationAxes))
+            }
             "table-row-height" => Ok(Self::Widget(DgWidgetPropertyName::TableRowHeight)),
             "table-header-height" => Ok(Self::Widget(DgWidgetPropertyName::TableHeaderHeight)),
             "table-column-width" => Ok(Self::Widget(DgWidgetPropertyName::TableColumnWidth)),
@@ -2911,6 +2987,8 @@ struct AncestorSnapshot {
     classes: Vec<String>,
     attributes: Vec<StyleAttribute>,
     kind: WidgetKind,
+    container_names: Vec<String>,
+    container_type: Option<ContainerTypeStyle>,
 }
 
 impl AncestorSnapshot {
@@ -2924,6 +3002,13 @@ impl AncestorSnapshot {
                 .collect(),
             attributes: node_style_attributes(node),
             kind: node.kind,
+            container_names: node
+                .style
+                .layout
+                .container_names
+                .clone()
+                .unwrap_or_default(),
+            container_type: node.style.layout.container_type,
         }
     }
 }
@@ -3155,10 +3240,28 @@ pub fn apply_stylesheets_to_tree_for_media(
     apply_stylesheets_to_tree_with_media(root, store, Some(media));
 }
 
+pub fn apply_stylesheets_to_tree_for_media_and_containers(
+    root: &mut WidgetNode,
+    store: &mut StylesheetStore,
+    media: DgMediaEnvironment,
+    containers: Option<&DgContainerQueryContext>,
+) {
+    apply_stylesheets_to_tree_with_media_and_containers(root, store, Some(media), containers);
+}
+
 fn apply_stylesheets_to_tree_with_media(
     root: &mut WidgetNode,
     store: &mut StylesheetStore,
     media: Option<DgMediaEnvironment>,
+) {
+    apply_stylesheets_to_tree_with_media_and_containers(root, store, media, None);
+}
+
+fn apply_stylesheets_to_tree_with_media_and_containers(
+    root: &mut WidgetNode,
+    store: &mut StylesheetStore,
+    media: Option<DgMediaEnvironment>,
+    containers: Option<&DgContainerQueryContext>,
 ) {
     let mut ancestors = Vec::new();
     let mut validation_warnings = Vec::new();
@@ -3176,6 +3279,7 @@ fn apply_stylesheets_to_tree_with_media(
             None,
             None,
             media,
+            containers,
         );
     }
     store.validation_warnings = validation_warnings;
@@ -3205,6 +3309,7 @@ pub fn matched_rule_labels_for_tree_with_media(
         None,
         None,
         media,
+        None,
     );
     out
 }
@@ -3233,6 +3338,7 @@ pub fn matched_part_rule_labels_for_tree_with_media(
         None,
         None,
         media,
+        None,
     );
     out
 }
@@ -3269,7 +3375,7 @@ pub fn computed_style_for_virtual_element_with_media(
     };
     let mut matched = Vec::new();
     for rule in rules.iter() {
-        if !rule_matches_media(rule, media) {
+        if !rule_matches_conditions(rule, media, &[], None) {
             continue;
         }
         let slots = selector_match_slots(&rule.selector, &element);
@@ -3300,6 +3406,71 @@ fn rule_matches_media(rule: &DgStyleRule, media: Option<DgMediaEnvironment>) -> 
         .unwrap_or(true)
 }
 
+fn rule_matches_conditions(
+    rule: &DgStyleRule,
+    media: Option<DgMediaEnvironment>,
+    ancestors: &[AncestorSnapshot],
+    containers: Option<&DgContainerQueryContext>,
+) -> bool {
+    rule_matches_media(rule, media) && rule_matches_container(rule, ancestors, containers)
+}
+
+fn rule_matches_container(
+    rule: &DgStyleRule,
+    ancestors: &[AncestorSnapshot],
+    containers: Option<&DgContainerQueryContext>,
+) -> bool {
+    let Some(condition) = &rule.container else {
+        return true;
+    };
+    let Some(containers) = containers else {
+        return false;
+    };
+    let Some(width) = nearest_container_width(condition, ancestors, containers) else {
+        return false;
+    };
+    container_expression_matches(&condition.expression, width)
+}
+
+fn nearest_container_width(
+    condition: &DgContainerRuleCondition,
+    ancestors: &[AncestorSnapshot],
+    containers: &DgContainerQueryContext,
+) -> Option<f32> {
+    ancestors
+        .iter()
+        .rev()
+        .find(|ancestor| {
+            ancestor.container_type == Some(ContainerTypeStyle::InlineSize)
+                && condition.name.as_ref().is_none_or(|name| {
+                    ancestor
+                        .container_names
+                        .iter()
+                        .any(|container_name| container_name == name)
+                })
+        })
+        .and_then(|ancestor| containers.width(&ancestor.id))
+}
+
+fn container_expression_matches(expression: &DgContainerExpression, width: f32) -> bool {
+    match expression {
+        DgContainerExpression::Width(comparison, value) => match comparison {
+            DgMediaComparison::Equal => (width - value).abs() <= f32::EPSILON,
+            DgMediaComparison::GreaterThan => width > *value,
+            DgMediaComparison::GreaterThanEqual => width >= *value,
+            DgMediaComparison::LessThan => width < *value,
+            DgMediaComparison::LessThanEqual => width <= *value,
+        },
+        DgContainerExpression::And(expressions) => expressions
+            .iter()
+            .all(|expression| container_expression_matches(expression, width)),
+        DgContainerExpression::Or(expressions) => expressions
+            .iter()
+            .any(|expression| container_expression_matches(expression, width)),
+        DgContainerExpression::Not(expression) => !container_expression_matches(expression, width),
+    }
+}
+
 fn collect_matched_part_rule_labels(
     node: &WidgetNode,
     rules: &StylesheetRuleRefs<'_>,
@@ -3309,6 +3480,7 @@ fn collect_matched_part_rule_labels(
     sibling_count: Option<usize>,
     siblings: Option<&[StyleSibling]>,
     media: Option<DgMediaEnvironment>,
+    containers: Option<&DgContainerQueryContext>,
 ) {
     let labels = matched_part_rule_labels_for_node(
         node,
@@ -3318,6 +3490,7 @@ fn collect_matched_part_rule_labels(
         sibling_count,
         siblings,
         media,
+        containers,
     );
     if !labels.is_empty() {
         out.insert(node.id.clone(), labels);
@@ -3336,6 +3509,7 @@ fn collect_matched_part_rule_labels(
             Some(child_count),
             Some(&child_siblings),
             media,
+            containers,
         );
     }
     ancestors.pop();
@@ -3349,6 +3523,7 @@ fn matched_part_rule_labels_for_node(
     sibling_count: Option<usize>,
     siblings: Option<&[StyleSibling]>,
     media: Option<DgMediaEnvironment>,
+    containers: Option<&DgContainerQueryContext>,
 ) -> BTreeMap<String, Vec<String>> {
     let classes = node_css_classes(node);
     let ancestor_classes: Vec<Vec<&str>> = ancestors
@@ -3386,7 +3561,7 @@ fn matched_part_rule_labels_for_node(
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for rule in rules
         .iter()
-        .filter(|rule| rule_matches_media(rule, media))
+        .filter(|rule| rule_matches_conditions(rule, media, ancestors, containers))
         .filter(|rule| !selector_match_slots(&rule.selector, &element).is_empty())
     {
         let Some(part) = rule.selector.target_part() else {
@@ -3413,6 +3588,7 @@ fn collect_matched_rule_labels(
     sibling_count: Option<usize>,
     siblings: Option<&[StyleSibling]>,
     media: Option<DgMediaEnvironment>,
+    containers: Option<&DgContainerQueryContext>,
 ) {
     let labels = matched_rule_labels_for_node(
         node,
@@ -3422,6 +3598,7 @@ fn collect_matched_rule_labels(
         sibling_count,
         siblings,
         media,
+        containers,
     );
     if !labels.is_empty() {
         out.insert(node.id.clone(), labels);
@@ -3440,6 +3617,7 @@ fn collect_matched_rule_labels(
             Some(child_count),
             Some(&child_siblings),
             media,
+            containers,
         );
     }
     ancestors.pop();
@@ -3453,6 +3631,7 @@ fn matched_rule_labels_for_node(
     sibling_count: Option<usize>,
     siblings: Option<&[StyleSibling]>,
     media: Option<DgMediaEnvironment>,
+    containers: Option<&DgContainerQueryContext>,
 ) -> Vec<String> {
     let classes = node_css_classes(node);
     let ancestor_classes: Vec<Vec<&str>> = ancestors
@@ -3489,7 +3668,7 @@ fn matched_rule_labels_for_node(
     };
     rules
         .iter()
-        .filter(|rule| rule_matches_media(rule, media))
+        .filter(|rule| rule_matches_conditions(rule, media, ancestors, containers))
         .filter(|rule| !selector_match_slots(&rule.selector, &element).is_empty())
         .map(|rule| format!("{}: {}", rule.origin.label(), rule.selector.label()))
         .collect()
@@ -3506,6 +3685,7 @@ fn apply_stylesheets_to_node(
     sibling_count: Option<usize>,
     siblings: Option<&[StyleSibling]>,
     media: Option<DgMediaEnvironment>,
+    containers: Option<&DgContainerQueryContext>,
 ) {
     let classes = node_css_classes(node);
     let ancestor_classes: Vec<Vec<&str>> = ancestors
@@ -3546,7 +3726,7 @@ fn apply_stylesheets_to_node(
     // style slots, and live widget state decides which slot is active.
     let mut matched = Vec::new();
     for rule in rules.iter() {
-        if !rule_matches_media(rule, media) {
+        if !rule_matches_conditions(rule, media, ancestors, containers) {
             continue;
         }
         let slots = selector_match_slots(&rule.selector, &element);
@@ -3624,6 +3804,7 @@ fn apply_stylesheets_to_node(
             Some(child_count),
             Some(&child_siblings),
             media,
+            containers,
         );
     }
     ancestors.pop();
@@ -3887,6 +4068,11 @@ fn merge_layout_style(base: &mut LayoutStyle, overlay: &LayoutStyle) {
     base.grid_area = overlay.grid_area.clone().or_else(|| base.grid_area.clone());
     base.grid_column = overlay.grid_column.or(base.grid_column);
     base.grid_row = overlay.grid_row.or(base.grid_row);
+    base.container_names = overlay
+        .container_names
+        .clone()
+        .or_else(|| base.container_names.clone());
+    base.container_type = overlay.container_type.or(base.container_type);
 }
 
 fn merge_visual_style(base: &mut VisualStyle, overlay: &VisualStyle) {
@@ -3917,6 +4103,15 @@ fn merge_widget_style(base: &mut crate::style::WidgetStyle, overlay: &crate::sty
         .scatter_point_style
         .clone()
         .or_else(|| base.scatter_point_style.clone());
+    base.scatter_grid_visible = overlay.scatter_grid_visible.or(base.scatter_grid_visible);
+    base.scatter_grid_planes = overlay.scatter_grid_planes.or(base.scatter_grid_planes);
+    base.scatter_legend_position = overlay
+        .scatter_legend_position
+        .clone()
+        .or_else(|| base.scatter_legend_position.clone());
+    base.scatter_orientation_axes_visible = overlay
+        .scatter_orientation_axes_visible
+        .or(base.scatter_orientation_axes_visible);
     base.table_row_height = overlay.table_row_height.or(base.table_row_height);
     base.table_header_height = overlay.table_header_height.or(base.table_header_height);
     base.table_column_width = overlay.table_column_width.or(base.table_column_width);
@@ -4242,6 +4437,8 @@ fn apply_layout_declaration(style: &mut LayoutStyle, declaration: &DgLayoutDecla
         DgLayoutDeclaration::GridRow(value) => {
             style.grid_row = Some(grid_placement_from_css(value))
         }
+        DgLayoutDeclaration::ContainerName(value) => style.container_names = Some(value.clone()),
+        DgLayoutDeclaration::ContainerType(value) => style.container_type = Some(*value),
         DgLayoutDeclaration::Overflow(value) => style.overflow = overflow_from_keyword(value),
         DgLayoutDeclaration::OverflowX(value) => style.overflow_x = overflow_from_keyword(value),
         DgLayoutDeclaration::OverflowY(value) => style.overflow_y = overflow_from_keyword(value),
@@ -4515,6 +4712,18 @@ fn apply_widget_declaration(
                 style.scatter_point_style = Some(kw.0.clone());
             }
         }
+        DgWidgetDeclaration::ScatterGridVisible(value) => {
+            style.scatter_grid_visible = Some(*value);
+        }
+        DgWidgetDeclaration::ScatterGridPlanes(major, minor) => {
+            style.scatter_grid_planes = Some((*major, *minor));
+        }
+        DgWidgetDeclaration::ScatterLegendPosition(kw) => {
+            style.scatter_legend_position = Some(kw.0.clone());
+        }
+        DgWidgetDeclaration::ScatterOrientationAxes(value) => {
+            style.scatter_orientation_axes_visible = Some(*value);
+        }
         DgWidgetDeclaration::TableRowHeight(value) => style.table_row_height = length_px(value),
         DgWidgetDeclaration::TableHeaderHeight(value) => {
             style.table_header_height = length_px(value)
@@ -4590,6 +4799,56 @@ fn parse_overflow_value(
     overflow_from_keyword(&keyword)
         .map(|_| keyword)
         .ok_or_else(|| parse_warning(name, value, "overflow value"))
+}
+
+fn parse_container_name_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<Vec<String>, DgStyleWarning> {
+    let resolved = resolve_keyword(value, variables);
+    let trimmed = resolved.trim();
+    if trimmed.eq_ignore_ascii_case("none") {
+        return Ok(Vec::new());
+    }
+    let names: Vec<String> = trimmed
+        .split_whitespace()
+        .filter(|name| !container_name_is_reserved(name))
+        .map(str::to_string)
+        .collect();
+    if names.is_empty() || names.len() != trimmed.split_whitespace().count() {
+        return Err(parse_warning(
+            name,
+            value,
+            "one or more container identifiers, or none",
+        ));
+    }
+    Ok(names)
+}
+
+fn parse_container_type_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<ContainerTypeStyle, DgStyleWarning> {
+    let resolved = resolve_keyword(value, variables);
+    match resolved
+        .trim()
+        .to_ascii_lowercase()
+        .replace('_', "-")
+        .as_str()
+    {
+        "normal" => Ok(ContainerTypeStyle::Normal),
+        "inline-size" => Ok(ContainerTypeStyle::InlineSize),
+        _ => Err(parse_warning(name, value, "normal or inline-size")),
+    }
+}
+
+fn container_name_is_reserved(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "none" | "and" | "or" | "not"
+    )
 }
 
 fn position_from_keyword(value: &DgCssKeyword) -> Option<PositionStyle> {
@@ -4958,6 +5217,10 @@ impl StylesheetStore {
         }
     }
 
+    pub fn has_container_rules(&self) -> bool {
+        self.all_rules().iter().any(|rule| rule.container.is_some())
+    }
+
     pub fn variables(&self) -> BTreeMap<String, DgCssValue> {
         let mut variables = BTreeMap::new();
         variables.extend(self.framework.variables.clone());
@@ -5040,6 +5303,7 @@ pub fn parse_stylesheet(
         &mut font_faces,
         &mut source_order,
         None,
+        None,
     )?;
 
     Ok(ParsedStylesheet {
@@ -5061,6 +5325,7 @@ fn collect_style_rules<R>(
     font_faces: &mut Vec<DgFontFace>,
     source_order: &mut u32,
     media: Option<DgMediaCondition>,
+    container: Option<DgContainerRuleCondition>,
 ) -> Result<(), DgCssParseError> {
     for rule in rules_list.0.iter() {
         match rule {
@@ -5090,12 +5355,13 @@ fn collect_style_rules<R>(
                             important,
                         })
                         .collect();
-                    rules.push(DgStyleRule::with_media(
+                    rules.push(DgStyleRule::with_conditions(
                         selector,
                         declarations,
                         origin,
                         *source_order,
                         media.clone(),
+                        container.clone(),
                     ));
                     *source_order += 1;
                 }
@@ -5130,6 +5396,45 @@ fn collect_style_rules<R>(
                     font_faces,
                     source_order,
                     Some(nested_media),
+                    container.clone(),
+                )?;
+            }
+            CssRule::Container(container_rule) => {
+                if container.is_some() {
+                    warnings.push(DgStyleWarning {
+                        property: "@container".to_string(),
+                        message: "nested @container rules are not supported by DragonGUI yet"
+                            .to_string(),
+                    });
+                    continue;
+                }
+                let nested_container = match container_rule_condition(container_rule) {
+                    Ok(condition) => condition,
+                    Err(message) => {
+                        warnings.push(DgStyleWarning {
+                            property: "@container".to_string(),
+                            message,
+                        });
+                        continue;
+                    }
+                };
+                let mut scoped_variables = variables.clone();
+                collect_immediate_root_variables(
+                    &container_rule.rules,
+                    &mut scoped_variables,
+                    warnings,
+                )?;
+                collect_style_rules(
+                    &container_rule.rules,
+                    origin,
+                    &scoped_variables,
+                    warnings,
+                    rules,
+                    keyframes,
+                    font_faces,
+                    source_order,
+                    media.clone(),
+                    Some(nested_container),
                 )?;
             }
             CssRule::Supports(supports_rule) => {
@@ -5150,6 +5455,7 @@ fn collect_style_rules<R>(
                         font_faces,
                         source_order,
                         media.clone(),
+                        container.clone(),
                     )?;
                 }
             }
@@ -5353,7 +5659,7 @@ fn supports_unknown_condition_matches(value: &str) -> bool {
         let at_rule = argument.trim().trim_start_matches('@').to_ascii_lowercase();
         return matches!(
             at_rule.as_str(),
-            "media" | "supports" | "keyframes" | "font-face"
+            "media" | "supports" | "container" | "keyframes" | "font-face"
         );
     }
     if let Some(argument) = supports_function_argument(value, "font-tech") {
@@ -5374,6 +5680,113 @@ fn supports_function_argument<'a>(value: &'a str, name: &str) -> Option<&'a str>
         return None;
     }
     Some(&value[prefix_len + 1..value.len() - 1])
+}
+
+fn container_rule_condition<R>(
+    rule: &ContainerRule<'_, R>,
+) -> Result<DgContainerRuleCondition, String> {
+    let Some(condition) = &rule.condition else {
+        return Err("unsupported @container rule without a size condition".to_string());
+    };
+    let expression = container_condition_expression(condition)?;
+    let name = rule.name.as_ref().map(|name| name.0 .0.to_string());
+    Ok(DgContainerRuleCondition { name, expression })
+}
+
+fn container_condition_expression(
+    condition: &ContainerCondition<'_>,
+) -> Result<DgContainerExpression, String> {
+    match condition {
+        ContainerCondition::Feature(feature) => container_feature_expression(feature),
+        ContainerCondition::Not(condition) => Ok(DgContainerExpression::Not(Box::new(
+            container_condition_expression(condition)?,
+        ))),
+        ContainerCondition::Operation {
+            operator,
+            conditions,
+        } => {
+            let expressions = conditions
+                .iter()
+                .map(container_condition_expression)
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(match operator {
+                Operator::And => DgContainerExpression::And(expressions),
+                Operator::Or => DgContainerExpression::Or(expressions),
+            })
+        }
+        ContainerCondition::Style(_)
+        | ContainerCondition::ScrollState(_)
+        | ContainerCondition::Unknown(_) => Err(
+            "unsupported @container condition; only width and inline-size length queries are supported"
+                .to_string(),
+        ),
+    }
+}
+
+fn container_feature_expression(
+    feature: &ContainerSizeFeature<'_>,
+) -> Result<DgContainerExpression, String> {
+    match feature {
+        QueryFeature::Plain { name, value } => container_width_constraint(
+            name,
+            DgMediaComparison::Equal,
+            value,
+            "unsupported @container value; only width and inline-size length values are supported",
+        ),
+        QueryFeature::Range {
+            name,
+            operator,
+            value,
+        } => container_width_constraint(
+            name,
+            media_comparison(*operator),
+            value,
+            "unsupported @container range; only width and inline-size length ranges are supported",
+        ),
+        QueryFeature::Interval {
+            name,
+            start,
+            start_operator,
+            end,
+            end_operator,
+        } => Ok(DgContainerExpression::And(vec![
+            container_width_constraint(
+                name,
+                media_comparison_for_interval_start(*start_operator),
+                start,
+                "unsupported @container interval; only width and inline-size length intervals are supported",
+            )?,
+            container_width_constraint(
+                name,
+                media_comparison(*end_operator),
+                end,
+                "unsupported @container interval; only width and inline-size length intervals are supported",
+            )?,
+        ])),
+        QueryFeature::Boolean { .. } => Err(
+            "unsupported @container boolean feature; use width or inline-size length comparisons"
+                .to_string(),
+        ),
+    }
+}
+
+fn container_width_constraint(
+    name: &MediaFeatureName<'_, ContainerSizeFeatureId>,
+    comparison: DgMediaComparison,
+    value: &MediaFeatureValue<'_>,
+    message: &str,
+) -> Result<DgContainerExpression, String> {
+    if !matches!(
+        name,
+        MediaFeatureName::Standard(ContainerSizeFeatureId::Width)
+            | MediaFeatureName::Standard(ContainerSizeFeatureId::InlineSize)
+    ) {
+        return Err(message.to_string());
+    }
+    let Some(width) = media_feature_length_px(value) else {
+        return Err(message.to_string());
+    };
+    Ok(DgContainerExpression::Width(comparison, width))
 }
 
 fn media_condition_from_list(media_list: &MediaList<'_>) -> Result<DgMediaCondition, String> {
@@ -6754,6 +7167,12 @@ fn lower_layout(
         DgLayoutPropertyName::GridRow => {
             DgLayoutDeclaration::GridRow(parse_grid_placement_value(name, value)?)
         }
+        DgLayoutPropertyName::ContainerName => {
+            DgLayoutDeclaration::ContainerName(parse_container_name_value(name, value, variables)?)
+        }
+        DgLayoutPropertyName::ContainerType => {
+            DgLayoutDeclaration::ContainerType(parse_container_type_value(name, value, variables)?)
+        }
         DgLayoutPropertyName::Overflow => {
             DgLayoutDeclaration::Overflow(parse_overflow_value(name, value, variables)?)
         }
@@ -6960,6 +7379,21 @@ fn lower_widget(
         DgWidgetPropertyName::ScatterPointStyle => DgWidgetDeclaration::ScatterPointStyle(
             parse_scatter_point_style_value(name, value, variables)?,
         ),
+        DgWidgetPropertyName::ScatterGridVisible => DgWidgetDeclaration::ScatterGridVisible(
+            parse_bool_keyword_value(name, value, variables)?,
+        ),
+        DgWidgetPropertyName::ScatterGridPlanes => {
+            let (major, minor) = parse_scatter_grid_planes_value(name, value, variables)?;
+            DgWidgetDeclaration::ScatterGridPlanes(major, minor)
+        }
+        DgWidgetPropertyName::ScatterLegendPosition => DgWidgetDeclaration::ScatterLegendPosition(
+            parse_scatter_legend_position_value(name, value, variables)?,
+        ),
+        DgWidgetPropertyName::ScatterOrientationAxes => {
+            DgWidgetDeclaration::ScatterOrientationAxes(parse_bool_keyword_value(
+                name, value, variables,
+            )?)
+        }
         DgWidgetPropertyName::TableRowHeight => {
             DgWidgetDeclaration::TableRowHeight(parse_px_length_value(name, value, variables)?)
         }
@@ -8869,6 +9303,56 @@ fn parse_scatter_point_style_value(
     }
 }
 
+fn parse_bool_keyword_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<bool, DgStyleWarning> {
+    match resolve_keyword(value, variables).as_str() {
+        "true" | "yes" | "on" => Ok(true),
+        "false" | "no" | "off" => Ok(false),
+        _ => Err(parse_warning(name, value, "true | false")),
+    }
+}
+
+fn parse_scatter_grid_planes_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<(bool, bool), DgStyleWarning> {
+    match resolve_keyword(value, variables).as_str() {
+        "none" => Ok((false, false)),
+        "major" => Ok((true, false)),
+        "minor" => Ok((false, true)),
+        "all" | "both" => Ok((true, true)),
+        _ => Err(parse_warning(
+            name,
+            value,
+            "scatter-grid-planes (none | major | minor | all)",
+        )),
+    }
+}
+
+fn parse_scatter_legend_position_value(
+    name: &str,
+    value: &str,
+    variables: &BTreeMap<String, DgCssValue>,
+) -> Result<DgCssKeyword, DgStyleWarning> {
+    let kw = DgCssKeyword(resolve_keyword(value, variables));
+    if matches!(
+        kw.0.as_str(),
+        "top-right" | "top-left" | "bottom-right" | "bottom-left"
+    ) {
+        Ok(kw)
+    } else {
+        Err(parse_warning(
+            name,
+            value,
+            "scatter-legend-position (top-right | top-left | bottom-right | bottom-left)",
+        ))
+    }
+}
+
 fn parse_grid_template_value(
     name: &str,
     value: &str,
@@ -10567,6 +11051,22 @@ mod tests {
             (
                 "scatter-point-style",
                 DgStylePropertyName::Widget(DgWidgetPropertyName::ScatterPointStyle),
+            ),
+            (
+                "scatter-grid-visible",
+                DgStylePropertyName::Widget(DgWidgetPropertyName::ScatterGridVisible),
+            ),
+            (
+                "scatter-grid-planes",
+                DgStylePropertyName::Widget(DgWidgetPropertyName::ScatterGridPlanes),
+            ),
+            (
+                "scatter-legend-position",
+                DgStylePropertyName::Widget(DgWidgetPropertyName::ScatterLegendPosition),
+            ),
+            (
+                "scatter-orientation-axes",
+                DgStylePropertyName::Widget(DgWidgetPropertyName::ScatterOrientationAxes),
             ),
             (
                 "table-row-height",
@@ -12649,7 +13149,16 @@ mod tests {
         store
             .set_stylesheet(
                 StylesheetOrigin::User,
-                "Scatter3D { scatter-point-size: 7px; }",
+                r#"
+                Scatter3D {
+                    scatter-point-size: 7px;
+                    scatter-point-style: square;
+                    scatter-grid-visible: true;
+                    scatter-grid-planes: all;
+                    scatter-legend-position: bottom-left;
+                    scatter-orientation-axes: true;
+                }
+                "#,
             )
             .unwrap();
 
@@ -12657,6 +13166,20 @@ mod tests {
         let scatter = &tree.children[0];
 
         assert_eq!(scatter.style.widget.scatter_point_size, Some(7.0));
+        assert_eq!(
+            scatter.style.widget.scatter_point_style.as_deref(),
+            Some("square")
+        );
+        assert_eq!(scatter.style.widget.scatter_grid_visible, Some(true));
+        assert_eq!(scatter.style.widget.scatter_grid_planes, Some((true, true)));
+        assert_eq!(
+            scatter.style.widget.scatter_legend_position.as_deref(),
+            Some("bottom-left")
+        );
+        assert_eq!(
+            scatter.style.widget.scatter_orientation_axes_visible,
+            Some(true)
+        );
     }
 
     #[test]
@@ -15211,6 +15734,68 @@ mod tests {
     }
 
     #[test]
+    fn container_rules_match_named_inline_size_ancestor_width() {
+        let css = r#"
+            Panel.card {
+                container-name: card;
+                container-type: inline-size;
+            }
+            Label.item { width: 100px; }
+            @container card (min-width: 300px) {
+                Label.item { width: 180px; }
+            }
+        "#;
+        let media = DgMediaEnvironment::new(800.0, 600.0);
+        let mut store = StylesheetStore::default();
+        store.set_stylesheet(StylesheetOrigin::User, css).unwrap();
+
+        let build_tree = || {
+            crate::document::parse_widget_node(&serde_json::json!({
+                "id": "root",
+                "type": "window",
+                "children": [{
+                    "id": "card",
+                    "type": "panel",
+                    "class": "card",
+                    "children": [{
+                        "id": "item",
+                        "type": "label",
+                        "class": "item",
+                        "props": {"text": "Container query"}
+                    }]
+                }]
+            }))
+            .unwrap()
+        };
+
+        let mut tree = build_tree();
+        apply_stylesheets_to_tree_for_media_and_containers(&mut tree, &mut store, media, None);
+        assert_eq!(tree.children[0].children[0].style.layout.width, Some(100.0));
+
+        let mut wide_context = DgContainerQueryContext::new();
+        wide_context.insert_width("card", 320.0);
+        let mut tree = build_tree();
+        apply_stylesheets_to_tree_for_media_and_containers(
+            &mut tree,
+            &mut store,
+            media,
+            Some(&wide_context),
+        );
+        assert_eq!(tree.children[0].children[0].style.layout.width, Some(180.0));
+
+        let mut narrow_context = DgContainerQueryContext::new();
+        narrow_context.insert_width("card", 260.0);
+        let mut tree = build_tree();
+        apply_stylesheets_to_tree_for_media_and_containers(
+            &mut tree,
+            &mut store,
+            media,
+            Some(&narrow_context),
+        );
+        assert_eq!(tree.children[0].children[0].style.layout.width, Some(100.0));
+    }
+
+    #[test]
     fn media_rules_support_height_ranges_and_or_lists() {
         let mut tree = crate::document::parse_widget_node(&serde_json::json!({
             "id": "root",
@@ -16586,7 +17171,7 @@ mod tests {
             Some(ColorRef::Token("danger".to_string()))
         );
         assert_eq!(button.style.visual.outline_offset, Some(3.0));
-        assert_ne!(button.style.layout.min_width, Some(240.0));
+        assert_eq!(button.style.layout.min_width, Some(240.0));
         assert_eq!(button.style.layout.max_width, Some(320.0));
         assert_ne!(button.style.layout.height, Some(80.0));
         assert_ne!(button.style.visual.border_width, Some(7.0));

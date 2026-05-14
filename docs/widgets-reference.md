@@ -1512,8 +1512,11 @@ CSS:
 
 - Type selector: `Scatter3D`.
 - No widget parts.
-- Widget-specific properties: `scatter-point-size` (logical pixels), `scatter-point-style` (`circle` | `square` | `gaussian`).
+- Widget-specific properties: `scatter-point-size` (logical pixels), `scatter-point-style` (`circle` | `square` | `gaussian`), `scatter-grid-visible` (`true` | `false`), `scatter-grid-planes` (`none` | `major` | `minor` | `all`), `scatter-legend-position` (`top-right` | `top-left` | `bottom-right` | `bottom-left`), and `scatter-orientation-axes` (`true` | `false`).
 - CSS `scatter-point-size` overrides the packed per-point sizes.
+- CSS scatter chrome is limited to static presentation defaults. Axis label
+  text, scalar bars, colormaps, point data, and legend entries are controlled
+  through the Python API.
 - CSS can style the container surface. `border-radius` and per-corner radii clip the 3D viewport and the picking region.
 - `opacity`, `transform`, `translate`, `scale`, and `rotate` affect the border/background primitive only; the actual 3D viewport is layout-rect anchored and is not transformed or faded in this release.
 - `Scatter3D` does not currently accept a `disabled` option; `on_pick` remains active whenever picking is enabled.

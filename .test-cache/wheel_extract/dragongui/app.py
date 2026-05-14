@@ -299,6 +299,12 @@ class App:
             raise RuntimeError("DragonGUI app is not running")
         self._handle.request_redraw()
 
+    def request_exit(self) -> None:
+        """Request the native event loop to exit."""
+        if self._handle is None:
+            raise RuntimeError("DragonGUI app is not running")
+        self._handle.request_exit()
+
     def set_buffer_resource(
         self,
         resource_id: str,

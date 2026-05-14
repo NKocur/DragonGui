@@ -1,5 +1,8 @@
 # Scatter3D Completion Plan
 
+> Historical V2 plan. Current CSS and Scatter3D styling follow-up work is
+> tracked in `plans/V3/css-and-scatter-followup-plan.md`.
+
 Status: Draft for implementation
 Owner: DragonGUI V2
 Source audit date: 2026-05-01

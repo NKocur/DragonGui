@@ -1,5 +1,8 @@
 # CSS Styling System Part 2: Widget Parts Plan
 
+> Historical V2 plan. Current CSS follow-up work is tracked in
+> `plans/V3/css-and-scatter-followup-plan.md`.
+
 ## Objective
 
 Extend DragonGUI CSS so users can style named internal parts of composite

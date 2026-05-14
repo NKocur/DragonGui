@@ -57,6 +57,7 @@ include = [
   { path = "examples/*.py", format = "sdist" },
   { path = "plans/*.md", format = "sdist" },
   { path = "plans/V2/*.md", format = "sdist" },
+  { path = "plans/V3/*.md", format = "sdist" },
   { path = "tools/*.py", format = "sdist" },
   { path = "tests/*.py", format = "sdist" },
   { path = "benches/*.py", format = "sdist" },

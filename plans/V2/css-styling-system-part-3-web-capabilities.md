@@ -1,5 +1,8 @@
 # CSS Styling System Part 3: Web UI Capabilities Plan
 
+> Historical V2 plan. Current CSS follow-up work is tracked in
+> `plans/V3/css-and-scatter-followup-plan.md`.
+
 Status: Draft for implementation
 Owner: DragonGUI V2
 Depends on:

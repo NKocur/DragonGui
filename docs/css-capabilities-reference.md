@@ -56,6 +56,8 @@ Supported top-level CSS:
   reduced-transparency/reduced-data queries.
 - First-slice `@supports` blocks for DragonGUI declaration and selector
   feature queries.
+- First-slice `@container` blocks for explicit inline-size containers and
+  width/inline-size length queries.
 - First-slice `@keyframes` blocks for visual animation keyframes.
 - First-slice `@font-face` blocks for installed local family names, local
   `.ttf`, `.otf`, `.ttc`, and `.woff` path or `file://` files, and base64
@@ -229,7 +231,8 @@ Limitations:
   added.
 - Reduced-data values are `reduce` and `no-preference`; DragonGUI currently
   defaults to `no-preference` until OS/network preference integration is added.
-- Container queries and broader media features remain unsupported.
+- Broader media features remain unsupported. Container queries are limited to
+  the first-slice width model described below.
 - Custom properties are collected from top-level `:root`, with a first slice of
   directly nested `:root` variables inside matching `@media` or static true
   `@supports` blocks.
@@ -790,6 +793,10 @@ Supported widget-specific CSS:
 | `text-area-rows` | `TextArea` | Preferred visible row count. Rounded to an integer and clamped to at least 1. |
 | `scatter-point-size` | `Scatter3D` | Uniform screen-space point size in logical pixels. |
 | `scatter-point-style` | `Scatter3D` | Point shape: `circle` (default), `square`, or `gaussian`. |
+| `scatter-grid-visible` | `Scatter3D` | Static grid visibility default: `true` or `false`. |
+| `scatter-grid-planes` | `Scatter3D` | Static grid plane default: `none`, `major`, `minor`, or `all`. |
+| `scatter-legend-position` | `Scatter3D` | Static legend anchor: `top-right`, `top-left`, `bottom-right`, or `bottom-left`. Does not make the legend visible by itself. |
+| `scatter-orientation-axes` | `Scatter3D` | Static orientation axes visibility default: `true` or `false`. |
 | `table-row-height` | `DataFrameTable` | Row height in logical pixels. |
 | `table-header-height` | `DataFrameTable` | Header height in logical pixels. |
 | `table-column-width` | `DataFrameTable` | Uniform body/header column width in logical pixels. |
@@ -799,8 +806,8 @@ Unsupported widget-specific needs:
 
 - `TextArea` supports DragonGUI's `text-area-rows` property; CSS `height`
   still forces an exact rendered size.
-- There is no scatter colormap CSS property; use the `Scatter3D` constructor or
-  `set_colormap()`.
+- There is no scatter colormap, axis-label text, scalar-bar, or point-data CSS
+  property; use the `Scatter3D` constructor or live Python API.
 
 ## Transitions
 
@@ -1385,6 +1392,12 @@ Property limitations:
 - Positioning is first-slice only: no global stacking contexts or transformed
   hit testing yet. `absolute` and `fixed` currently expect explicit or intrinsic
   widget size.
+- Container queries are first-slice only: widgets can opt in with
+  `container-type: inline-size` and optional `container-name`, and `@container`
+  supports `width`/`inline-size` length comparisons against the nearest eligible
+  ancestor's previous layout width. Height, block-size, aspect-ratio,
+  orientation, style queries, scroll-state queries, nested `@container`, and
+  container query units are not supported.
 - Media queries are first-slice only: viewport `width`/`height`,
   `aspect-ratio`, `resolution`, `-webkit-device-pixel-ratio`,
   `-moz-device-pixel-ratio`, `device-width`, `device-height`,
@@ -1397,12 +1410,15 @@ Property limitations:
   `prefers-contrast`, `inverted-colors`, `dynamic-range`,
   `video-dynamic-range`, `display-mode`, `prefers-color-scheme`,
   `prefers-reduced-motion`, `prefers-reduced-transparency`, and
-  `prefers-reduced-data` conditions are supported, but container queries and
-  other media features are not.
+  `prefers-reduced-data` conditions are supported, but other media features are
+  not.
 - No per-side border shorthand.
 - No per-column table width controls; `DataFrameTable` supports uniform
   `table-column-width` and `table-index-width`.
-- Scatter-specific CSS is limited to `scatter-point-size` and `scatter-point-style`.
+- Scatter-specific CSS is limited to static presentation defaults: point size,
+  point style, grid visibility, grid planes, legend position, and orientation
+  axes. Data, colormaps, scalar bars, and axis label text remain Python/API
+  driven.
 
 Variable limitations:
 

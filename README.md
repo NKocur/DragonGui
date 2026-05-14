@@ -368,8 +368,8 @@ Optional: `pandas` or `polars` for DataFrame integration. `numpy` for
 
 ## License
 
-MIT. Third-party dependency notices are included in
-[THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
+MIT. Third-party dependency notice policy and release-generation instructions
+are included in [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
 ## Documentation
 

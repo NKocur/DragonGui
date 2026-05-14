@@ -74,7 +74,7 @@ struct Uniforms {
 // ---------------------------------------------------------------------------
 
 /// One entry in the categorical legend (label + swatch color).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct LegendEntry {
     pub label: String,
     pub color: [f32; 3],
@@ -101,7 +101,7 @@ impl LegendPosition {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct LegendState {
     pub visible: bool,
     pub position: LegendPosition,
@@ -109,7 +109,7 @@ pub struct LegendState {
     pub title: Option<String>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ScalarBarState {
     pub visible: bool,
     pub vmin: f32,
@@ -172,6 +172,7 @@ pub fn scalar_bar_tick_values(vmin: f32, vmax: f32, log_scale: bool, count: usiz
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct ScatterChromeState {
     pub grid_visible: bool,
     pub major_planes: bool,
@@ -2768,7 +2769,13 @@ impl ScatterWidget {
                 }
                 LegendPosition::TopLeft => (margin, margin),
                 LegendPosition::BottomRight => (w - margin - swatch_w - 80.0, h - margin - total_h),
-                LegendPosition::BottomLeft => (margin, h - margin - total_h),
+                LegendPosition::BottomLeft => {
+                    let orientation_reserved = if has_orient { 62.0 } else { 0.0 };
+                    (
+                        margin,
+                        (h - margin - total_h - orientation_reserved).max(margin),
+                    )
+                }
             };
             if let Some(title) = &self.chrome.legend.title {
                 self.pending_labels.push(ProjectedLabel {

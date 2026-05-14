@@ -1,5 +1,8 @@
 # CSS Styling System Plan
 
+> Historical V2 plan. Current CSS follow-up work is tracked in
+> `plans/V3/css-and-scatter-followup-plan.md`.
+
 ## Objective
 
 Add a CSS-like styling system to DragonGUI so applications can look and feel

@@ -58,3 +58,5 @@ Suggested order:
 27. `histogram_probe.py` - first-slice Histogram rendering, count/density/percent/cumulative modes, explicit bin edges, and native bar chrome.
 28. `startup_loading_probe.py` - native startup loading screen display, custom copy/colors, minimum duration, and delayed startup handoff.
 29. `pie_chart_probe.py` - PieChart direct values, donut mode, frame aggregation, top-N grouping, colors, legends, and slice labels.
+30. `scatter3d_css_chrome_probe.py` - Scatter3D CSS grid visibility, grid planes, legend position, orientation axes, point size, and point style.
+31. `container_queries_probe.py` - first-slice named `@container` width queries with `container-type: inline-size`.

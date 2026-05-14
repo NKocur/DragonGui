@@ -452,6 +452,14 @@ pub struct LayoutStyle {
     pub grid_area: Option<String>,
     pub grid_column: Option<GridPlacementStyle>,
     pub grid_row: Option<GridPlacementStyle>,
+    pub container_names: Option<Vec<String>>,
+    pub container_type: Option<ContainerTypeStyle>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContainerTypeStyle {
+    Normal,
+    InlineSize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -814,6 +822,10 @@ pub struct WidgetStyle {
     pub text_area_rows: Option<f32>,
     pub scatter_point_size: Option<f32>,
     pub scatter_point_style: Option<String>,
+    pub scatter_grid_visible: Option<bool>,
+    pub scatter_grid_planes: Option<(bool, bool)>,
+    pub scatter_legend_position: Option<String>,
+    pub scatter_orientation_axes_visible: Option<bool>,
     pub table_row_height: Option<f32>,
     pub table_header_height: Option<f32>,
     pub table_column_width: Option<f32>,
@@ -1191,6 +1203,10 @@ fn parse_layout(map: &serde_json::Map<String, Value>, out: &mut LayoutStyle) {
         let value = value.trim();
         (!value.is_empty()).then(|| value.to_string())
     });
+    out.container_names =
+        text_value(map, "container_name", "container-name").map(parse_container_names);
+    out.container_type =
+        text_value(map, "container_type", "container-type").and_then(parse_container_type);
     out.top = number(map.get("top"));
     out.right = number(map.get("right"));
     out.bottom = number(map.get("bottom"));
@@ -1200,6 +1216,33 @@ fn parse_layout(map: &serde_json::Map<String, Value>, out: &mut LayoutStyle) {
         .map(|value| value.round() as i32);
     out.flex_grow = number(map.get("flex_grow")).or_else(|| number(map.get("flex")));
     out.flex_shrink = number(map.get("flex_shrink"));
+}
+
+fn parse_container_names(value: &str) -> Vec<String> {
+    let value = value.trim();
+    if value.eq_ignore_ascii_case("none") {
+        return Vec::new();
+    }
+    value
+        .split_whitespace()
+        .filter(|name| !container_name_is_reserved(name))
+        .map(str::to_string)
+        .collect()
+}
+
+fn parse_container_type(value: &str) -> Option<ContainerTypeStyle> {
+    match value.trim().to_ascii_lowercase().replace('_', "-").as_str() {
+        "normal" => Some(ContainerTypeStyle::Normal),
+        "inline-size" => Some(ContainerTypeStyle::InlineSize),
+        _ => None,
+    }
+}
+
+fn container_name_is_reserved(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "none" | "and" | "or" | "not"
+    )
 }
 
 fn parse_visual(map: &serde_json::Map<String, Value>, out: &mut VisualStyle) {
@@ -1271,6 +1314,16 @@ fn parse_widget(map: &serde_json::Map<String, Value>, out: &mut WidgetStyle) {
     out.scatter_point_style = keyword(map.get("scatter_point_style"))
         .or_else(|| keyword(map.get("scatter-point-style")))
         .and_then(|s| parse_scatter_point_style(&s));
+    out.scatter_grid_visible = boolean(map.get("scatter_grid_visible"))
+        .or_else(|| boolean(map.get("scatter-grid-visible")));
+    out.scatter_grid_planes = keyword(map.get("scatter_grid_planes"))
+        .or_else(|| keyword(map.get("scatter-grid-planes")))
+        .and_then(|s| parse_scatter_grid_planes(&s));
+    out.scatter_legend_position = keyword(map.get("scatter_legend_position"))
+        .or_else(|| keyword(map.get("scatter-legend-position")))
+        .and_then(|s| parse_scatter_legend_position(&s));
+    out.scatter_orientation_axes_visible = boolean(map.get("scatter_orientation_axes"))
+        .or_else(|| boolean(map.get("scatter-orientation-axes")));
     out.table_row_height =
         number(map.get("table_row_height")).or_else(|| number(map.get("table-row-height")));
     out.table_header_height =
@@ -2326,6 +2379,18 @@ fn number(value: Option<&Value>) -> Option<f32> {
     value.and_then(Value::as_f64).map(|v| v as f32)
 }
 
+fn boolean(value: Option<&Value>) -> Option<bool> {
+    match value? {
+        Value::Bool(v) => Some(*v),
+        Value::String(s) => match s.trim().to_ascii_lowercase().as_str() {
+            "true" | "yes" | "on" => Some(true),
+            "false" | "no" | "off" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 fn keyword(value: Option<&Value>) -> Option<String> {
     value?.as_str().map(|s| s.trim().to_lowercase())
 }
@@ -2333,6 +2398,23 @@ fn keyword(value: Option<&Value>) -> Option<String> {
 fn parse_scatter_point_style(s: &str) -> Option<String> {
     match s {
         "circle" | "square" | "gaussian" => Some(s.to_string()),
+        _ => None,
+    }
+}
+
+fn parse_scatter_grid_planes(s: &str) -> Option<(bool, bool)> {
+    match s {
+        "none" => Some((false, false)),
+        "major" => Some((true, false)),
+        "minor" => Some((false, true)),
+        "all" | "both" => Some((true, true)),
+        _ => None,
+    }
+}
+
+fn parse_scatter_legend_position(s: &str) -> Option<String> {
+    match s {
+        "top-right" | "top-left" | "bottom-right" | "bottom-left" => Some(s.to_string()),
         _ => None,
     }
 }
@@ -2436,6 +2518,11 @@ mod tests {
             "table-index-width": 56,
             "text-area-rows": 5,
             "scatter-point-size": 7,
+            "scatter-point-style": "square",
+            "scatter-grid-visible": true,
+            "scatter-grid-planes": "all",
+            "scatter-legend-position": "bottom-left",
+            "scatter-orientation-axes": true,
             "transform": "translateY(-2px) scale(1.02) rotate(1deg)",
             "backdrop-filter": "blur(8px) brightness(120%) saturate(0.75)",
             "hover": {"background": "accent_mix_20", "color": "success"}
@@ -2529,6 +2616,14 @@ mod tests {
         assert_eq!(style.widget.table_index_width, Some(56.0));
         assert_eq!(style.widget.text_area_rows, Some(5.0));
         assert_eq!(style.widget.scatter_point_size, Some(7.0));
+        assert_eq!(style.widget.scatter_point_style.as_deref(), Some("square"));
+        assert_eq!(style.widget.scatter_grid_visible, Some(true));
+        assert_eq!(style.widget.scatter_grid_planes, Some((true, true)));
+        assert_eq!(
+            style.widget.scatter_legend_position.as_deref(),
+            Some("bottom-left")
+        );
+        assert_eq!(style.widget.scatter_orientation_axes_visible, Some(true));
         let transform = style.visual.transform.expect("parsed transform");
         assert_eq!(transform.translate_y, -2.0);
         assert_eq!(transform.scale_x, 1.02);

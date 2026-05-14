@@ -644,15 +644,22 @@ class ScatterFrameStream:
         loop: bool = True,
         on_frame: Callable[[ScatterPayload, int, ScatterStreamMetrics], None] | None = None,
         ui_interval_ms: float = 250.0,
+        handoff: str = "direct",
     ) -> None:
         self.scatter = scatter
         self.frames = tuple(frames)
         if not self.frames:
             raise ValueError("ScatterFrameStream requires at least one prepared frame")
+        normalized_handoff = str(handoff).strip().lower().replace("-", "_")
+        if normalized_handoff == "ui_callback":
+            normalized_handoff = "callback"
+        if normalized_handoff not in ("direct", "callback"):
+            raise ValueError("ScatterFrameStream handoff must be 'direct' or 'callback'")
         self.interval_ms = interval_ms
         self.loop = bool(loop)
         self.on_frame = on_frame
         self.ui_interval_ms = max(0.0, float(ui_interval_ms))
+        self.handoff = normalized_handoff
         self.metrics = ScatterStreamMetrics()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -698,27 +705,44 @@ class ScatterFrameStream:
             with self._metrics_lock:
                 self.metrics.produced += 1
             try:
-                self.scatter.enqueue_prepared_points(
-                    payload,
-                    coalesce=True,
-                    include_metadata=index == 0,
-                )
-                with self._metrics_lock:
-                    self.metrics.submitted += 1
                 now_ms = time.perf_counter() * 1000.0
-                if (
+                notify_frame = (
                     self.on_frame is not None
                     and now_ms - last_ui_ms >= self.ui_interval_ms
-                ):
+                )
+                if notify_frame:
                     last_ui_ms = now_ms
+                if self.handoff == "callback":
                     handle = self.scatter._live()
                     if handle is not None:
-                        with self._metrics_lock:
-                            self.metrics.ui_callbacks += 1
-                            snapshot = ScatterStreamMetrics(**self.metrics.__dict__)
                         handle.app.call_soon_threadsafe(
-                            lambda p=payload, i=index, m=snapshot: self.on_frame(p, i, m)
+                            lambda p=payload,
+                            i=index,
+                            include_metadata=index == 0,
+                            notify=notify_frame: self._apply_callback_frame(
+                                p,
+                                i,
+                                include_metadata=include_metadata,
+                                notify_frame=notify,
+                            )
                         )
+                else:
+                    self.scatter.enqueue_prepared_points(
+                        payload,
+                        coalesce=True,
+                        include_metadata=index == 0,
+                    )
+                    with self._metrics_lock:
+                        self.metrics.submitted += 1
+                    if notify_frame:
+                        handle = self.scatter._live()
+                        if handle is not None:
+                            with self._metrics_lock:
+                                self.metrics.ui_callbacks += 1
+                                snapshot = ScatterStreamMetrics(**self.metrics.__dict__)
+                            handle.app.call_soon_threadsafe(
+                                lambda p=payload, i=index, m=snapshot: self.on_frame(p, i, m)
+                            )
                 index += 1
             except RuntimeError:
                 break
@@ -731,6 +755,36 @@ class ScatterFrameStream:
             interval_ms = self._current_interval_ms()
             if self._stop.wait(interval_ms / 1000.0):
                 break
+
+    def _apply_callback_frame(
+        self,
+        payload: ScatterPayload,
+        index: int,
+        *,
+        include_metadata: bool,
+        notify_frame: bool,
+    ) -> None:
+        if self._stop.is_set():
+            return
+        try:
+            self.scatter.enqueue_prepared_points(
+                payload,
+                coalesce=True,
+                include_metadata=include_metadata,
+            )
+            with self._metrics_lock:
+                self.metrics.submitted += 1
+                if notify_frame and self.on_frame is not None:
+                    self.metrics.ui_callbacks += 1
+                    snapshot = ScatterStreamMetrics(**self.metrics.__dict__)
+                else:
+                    snapshot = None
+            if snapshot is not None and self.on_frame is not None:
+                self.on_frame(payload, index, snapshot)
+        except Exception as exc:  # pragma: no cover - defensive stream diagnostics
+            with self._metrics_lock:
+                self.metrics.errors += 1
+                self.metrics.last_error = str(exc)
 
 
 ScatterPickCallback = Callable[[ScatterPick], None]
@@ -791,6 +845,7 @@ class ScatterLiveFrame:
         self.nan_color = nan_color
         self.size_range = size_range
         self.replaces = 0
+        self._replace_lock = threading.Lock()
 
     @property
     def handle(self) -> int | None:
@@ -917,6 +972,34 @@ class ScatterLiveFrame:
         raise NotImplementedError(
             "ScatterLiveFrame.replace_prepared() is currently supported only for mode='primary'"
         )
+
+    def enqueue_prepared(
+        self,
+        payload: ScatterPayload,
+        *,
+        fit: bool = False,
+        update_metadata: bool = False,
+        coalesce: bool = True,
+    ) -> None:
+        """Thread-safe enqueue for an already-packed primary scatter frame.
+
+        Use this from producer threads that already have a
+        ``ScatterPayload``. It bypasses Python UI callback scheduling and sends
+        the payload straight to the native command queue, where stale pending
+        frames for the same scatter are coalesced when ``coalesce=True``.
+        """
+        if self.mode != "primary":
+            raise NotImplementedError(
+                "ScatterLiveFrame.enqueue_prepared() is currently supported only for mode='primary'"
+            )
+        self.scatter.enqueue_prepared_points(
+            payload,
+            coalesce=coalesce,
+            include_metadata=update_metadata,
+            fit=fit,
+        )
+        with self._replace_lock:
+            self.replaces += 1
 
     def remove(self) -> None:
         """Remove this live layer from the scatter."""
@@ -4642,8 +4725,14 @@ class Scatter3D(Widget):
         loop: bool = True,
         on_frame: Callable[[ScatterPayload, int, ScatterStreamMetrics], None] | None = None,
         ui_interval_ms: float = 250.0,
+        handoff: str = "direct",
     ) -> ScatterFrameStream:
-        """Create a latest-frame stream for already-prepared scatter payloads."""
+        """Create a latest-frame stream for already-prepared scatter payloads.
+
+        ``handoff="direct"`` enqueues prepared payloads from the stream thread.
+        ``handoff="callback"`` schedules a Python UI callback for each payload,
+        which is useful for comparing the older callback handoff path.
+        """
         return ScatterFrameStream(
             self,
             frames,
@@ -4651,6 +4740,7 @@ class Scatter3D(Widget):
             loop=loop,
             on_frame=on_frame,
             ui_interval_ms=ui_interval_ms,
+            handoff=handoff,
         )
 
     def set_points(

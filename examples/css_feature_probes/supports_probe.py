@@ -150,9 +150,15 @@ app.stylesheet(
     }
 
     @supports at-rule(@container) {
-        Panel.at-rule-fail {
-            background: var(--fail-bg);
-            border-color: #ff6584;
+        Panel.container-at-rule-pass {
+            border-color: var(--pass);
+            background: var(--pass-bg);
+        }
+
+        Label.container-at-rule-pass::before {
+            content: "PASS ";
+            color: var(--pass);
+            font-weight: 800;
         }
     }
 
@@ -226,9 +232,9 @@ with dg.VLayout(style={"gap": 12}):
             dg.Label("At-rule", class_="case-title at-rule-pass")
             dg.Label("at-rule(@media) should match.", class_="caption")
 
-        with dg.Panel(class_="case expected-false at-rule-fail"):
-            dg.Label("Unsupported at-rule", class_="case-title")
-            dg.Label("at-rule(@container) should not match yet.", class_="caption")
+        with dg.Panel(class_="case container-at-rule-pass"):
+            dg.Label("Container at-rule", class_="case-title container-at-rule-pass")
+            dg.Label("at-rule(@container) should match.", class_="caption")
 
     with dg.HLayout(style={"gap": 12}):
         with dg.Panel(class_="case font-tech-pass"):

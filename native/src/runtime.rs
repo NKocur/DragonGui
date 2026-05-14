@@ -21,8 +21,9 @@ use crate::commands::{
     Command, CommandBridge, CommandValue, Dirty, RuntimeEvent, ScatterTelemetry, TableColumnPacket,
 };
 use crate::css_style::{
-    apply_stylesheets_to_tree_for_media, matched_part_rule_labels_for_tree_with_media,
-    matched_rule_labels_for_tree_with_media, DgKeyframes, DgMediaColorGamut, DgMediaColorScheme,
+    apply_stylesheets_to_tree_for_media_and_containers,
+    matched_part_rule_labels_for_tree_with_media, matched_rule_labels_for_tree_with_media,
+    DgContainerQueryContext, DgKeyframes, DgMediaColorGamut, DgMediaColorScheme,
     DgMediaEnvironment, DgMediaHover, DgMediaPointer, StylesheetOrigin, StylesheetStore,
 };
 use crate::document::{
@@ -758,6 +759,28 @@ fn scatter_chrome_from_props(props: &document::NodeProps) -> scatter::ScatterChr
             title: props.scatter_scalar_bar_title.clone(),
         },
         orientation_axes_visible: props.scatter_orientation_axes_visible,
+    }
+}
+
+fn scatter_chrome_from_node(node: &WidgetNode) -> scatter::ScatterChromeState {
+    let mut chrome = scatter_chrome_from_props(&node.props);
+    apply_scatter_chrome_style(&mut chrome, &node.style.widget);
+    chrome
+}
+
+fn apply_scatter_chrome_style(chrome: &mut scatter::ScatterChromeState, style: &WidgetStyle) {
+    if let Some(visible) = style.scatter_grid_visible {
+        chrome.grid_visible = visible;
+    }
+    if let Some((major, minor)) = style.scatter_grid_planes {
+        chrome.major_planes = major;
+        chrome.minor_planes = minor;
+    }
+    if let Some(position) = style.scatter_legend_position.as_deref() {
+        chrome.legend.position = scatter::LegendPosition::from_str(position);
+    }
+    if let Some(visible) = style.scatter_orientation_axes_visible {
+        chrome.orientation_axes_visible = visible;
     }
 }
 
@@ -1607,6 +1630,12 @@ fn insert_number(map: &mut Map<String, Value>, key: &str, value: Option<f32>) {
     }
 }
 
+fn insert_bool(map: &mut Map<String, Value>, key: &str, value: Option<bool>) {
+    if let Some(value) = value {
+        map.insert(key.to_string(), json!(value));
+    }
+}
+
 fn insert_layout_length(
     map: &mut Map<String, Value>,
     key: &str,
@@ -1892,7 +1921,32 @@ fn layout_style_snapshot(style: &LayoutStyle) -> Value {
     if let Some(value) = style.grid_row {
         map.insert("grid_row".to_string(), grid_placement_json(value));
     }
+    if let Some(value) = &style.container_names {
+        map.insert("container_name".to_string(), json!(value));
+    }
+    if let Some(value) = style.container_type {
+        map.insert(
+            "container_type".to_string(),
+            json!(match value {
+                crate::style::ContainerTypeStyle::Normal => "normal",
+                crate::style::ContainerTypeStyle::InlineSize => "inline-size",
+            }),
+        );
+    }
     Value::Object(map)
+}
+
+fn container_query_context_from_layout(
+    layout: Option<&crate::layout::LayoutResult>,
+    scale_factor: f32,
+) -> Option<DgContainerQueryContext> {
+    let layout = layout?;
+    let scale_factor = scale_factor.max(0.001);
+    let mut context = DgContainerQueryContext::new();
+    for (id, rect) in &layout.rects {
+        context.insert_width(id.clone(), rect.w / scale_factor);
+    }
+    Some(context)
 }
 
 fn visual_style_snapshot(style: &VisualStyle) -> Value {
@@ -2221,6 +2275,30 @@ fn widget_style_snapshot(style: &WidgetStyle) -> Value {
             Value::String(sty.clone()),
         );
     }
+    insert_bool(&mut map, "scatter_grid_visible", style.scatter_grid_visible);
+    if let Some((major, minor)) = style.scatter_grid_planes {
+        let value = match (major, minor) {
+            (false, false) => "none",
+            (true, false) => "major",
+            (false, true) => "minor",
+            (true, true) => "all",
+        };
+        map.insert(
+            "scatter_grid_planes".to_string(),
+            Value::String(value.to_string()),
+        );
+    }
+    if let Some(ref position) = style.scatter_legend_position {
+        map.insert(
+            "scatter_legend_position".to_string(),
+            Value::String(position.clone()),
+        );
+    }
+    insert_bool(
+        &mut map,
+        "scatter_orientation_axes",
+        style.scatter_orientation_axes_visible,
+    );
     insert_number(&mut map, "table_row_height", style.table_row_height);
     insert_number(&mut map, "table_header_height", style.table_header_height);
     insert_number(&mut map, "table_column_width", style.table_column_width);
@@ -3018,6 +3096,10 @@ fn is_layout_style_key(key: &str) -> bool {
             | "gap"
             | "grid_auto_flow"
             | "grid-auto-flow"
+            | "container_name"
+            | "container-name"
+            | "container_type"
+            | "container-type"
             | "text_area_rows"
             | "text-area-rows"
             | "table_row_height"
@@ -5428,7 +5510,7 @@ impl WgpuState {
                 let node = find_widget(tree, &scatter_id);
                 let (colormap, data_b64, data_format, startup_chrome) = node
                     .map(|n| {
-                        let chrome = scatter_chrome_from_props(&n.props);
+                        let chrome = scatter_chrome_from_node(n);
                         (
                             n.props
                                 .scatter_colormap
@@ -5647,13 +5729,26 @@ impl WgpuState {
         )
     }
 
+    fn container_query_context(&self) -> Option<DgContainerQueryContext> {
+        container_query_context_from_layout(self.current_layout.as_ref(), self.scale_factor)
+    }
+
     fn reapply_stylesheets_for_current_viewport(&mut self) {
         let media = self.media_environment();
-        if !self.styles_dirty && self.last_style_media == Some(media) {
+        if !self.styles_dirty
+            && self.last_style_media == Some(media)
+            && !self.stylesheets.has_container_rules()
+        {
             return;
         }
+        let containers = self.container_query_context();
         if let Some(tree) = &mut self.widget_tree {
-            apply_stylesheets_to_tree_for_media(tree, &mut self.stylesheets, media);
+            apply_stylesheets_to_tree_for_media_and_containers(
+                tree,
+                &mut self.stylesheets,
+                media,
+                containers.as_ref(),
+            );
         }
         self.styles_dirty = false;
         self.last_style_media = Some(media);
@@ -5705,6 +5800,32 @@ impl WgpuState {
             ..
         } = self;
 
+        let w = config.width as f32;
+        let h = config.height as f32;
+        let mut layout = {
+            let tree = match widget_tree.as_ref() {
+                Some(t) => t,
+                None => {
+                    html_reports.hide_all();
+                    return;
+                }
+            };
+            compute_layout(tree, w, h, *scale_factor, theme, widget_state.as_ref())
+        };
+
+        if current_layout.is_none() && stylesheets.has_container_rules() {
+            let containers = container_query_context_from_layout(Some(&layout), *scale_factor);
+            if let (Some(tree), Some(containers)) = (widget_tree.as_mut(), containers.as_ref()) {
+                apply_stylesheets_to_tree_for_media_and_containers(
+                    tree,
+                    stylesheets,
+                    media,
+                    Some(containers),
+                );
+                layout = compute_layout(tree, w, h, *scale_factor, theme, widget_state.as_ref());
+            }
+        }
+
         let tree = match widget_tree.as_ref() {
             Some(t) => t,
             None => {
@@ -5712,10 +5833,6 @@ impl WgpuState {
                 return;
             }
         };
-
-        let w = config.width as f32;
-        let h = config.height as f32;
-        let layout = compute_layout(tree, w, h, *scale_factor, theme, widget_state.as_ref());
 
         // Collect visible scatter order and update each widget's layout rect.
         let mut new_visible_order: Vec<String> = Vec::new();
@@ -5737,6 +5854,7 @@ impl WgpuState {
                     .map(|size| size * *scale_factor);
                 let point_style =
                     scatter_node.and_then(|node| node.style.widget.scatter_point_style.as_deref());
+                let chrome = scatter_node.map(scatter_chrome_from_node);
                 let clip_radii = scatter_node
                     .map(|node| scatter_clip_radii(node, theme.radius, *scale_factor))
                     .unwrap_or([0.0; 4]);
@@ -5745,6 +5863,11 @@ impl WgpuState {
                     .unwrap_or(0.0);
                 runtime.widget.set_point_size_override(point_size, queue);
                 runtime.widget.set_point_style(point_style, queue);
+                if let Some(chrome) = chrome {
+                    if runtime.widget.chrome != chrome {
+                        runtime.widget.set_chrome(chrome);
+                    }
+                }
                 if let (Some(r), Some(visible)) = (
                     layout.rects.get(scatter_id.as_str()).copied(),
                     layout.visible_rect(scatter_id),
@@ -7468,6 +7591,20 @@ impl WgpuState {
         true
     }
 
+    fn update_inline_widget_style<F>(&mut self, id: &str, key: &str, value: Value, apply: F)
+    where
+        F: FnOnce(&mut WidgetStyle),
+    {
+        if let Some(tree) = self.widget_tree.as_mut() {
+            if let Some(node) = find_widget_mut(tree, id) {
+                node.style_json.insert(key.to_string(), value);
+                node.inline_style =
+                    NodeStyle::from_json(Some(&Value::Object(node.style_json.clone())));
+                apply(&mut node.style.widget);
+            }
+        }
+    }
+
     fn set_scatter_point_style_live(&mut self, id: &str, style: &str) -> bool {
         if let Some(tree) = self.widget_tree.as_mut() {
             if let Some(node) = find_widget_mut(tree, id) {
@@ -7675,7 +7812,7 @@ impl WgpuState {
                     .and_then(|tree| find_widget(tree, id));
                 let (colormap, data_b64, data_format, startup_chrome) = node
                     .map(|n| {
-                        let chrome = scatter_chrome_from_props(&n.props);
+                        let chrome = scatter_chrome_from_node(n);
                         (
                             n.props
                                 .scatter_colormap
@@ -8991,7 +9128,12 @@ impl WgpuState {
         let Some(tree) = self.widget_tree.as_ref() else {
             return;
         };
-        let overrides: Vec<(String, Option<f32>, Option<String>)> = self
+        let overrides: Vec<(
+            String,
+            Option<f32>,
+            Option<String>,
+            Option<scatter::ScatterChromeState>,
+        )> = self
             .visible_scatter_order
             .iter()
             .map(|id| {
@@ -9001,10 +9143,11 @@ impl WgpuState {
                     node.and_then(|node| node.style.widget.scatter_point_size)
                         .map(|size| size * self.scale_factor),
                     node.and_then(|node| node.style.widget.scatter_point_style.clone()),
+                    node.map(scatter_chrome_from_node),
                 )
             })
             .collect();
-        for (id, point_size, point_style) in overrides {
+        for (id, point_size, point_style, chrome) in overrides {
             let Some(runtime) = self.scatters.get_mut(&id) else {
                 continue;
             };
@@ -9021,6 +9164,16 @@ impl WgpuState {
             runtime
                 .widget
                 .set_point_style(point_style.as_deref(), &self.queue);
+            if let Some(chrome) = chrome {
+                if runtime.widget.chrome != chrome {
+                    runtime.widget.set_chrome(chrome);
+                    let (data_min, data_max) = runtime.merged_bounds();
+                    runtime
+                        .widget
+                        .refresh_grid(data_min, data_max, &self.device, &self.queue);
+                    runtime.widget.refresh_overlays(&self.device, &self.queue);
+                }
+            }
         }
     }
 
@@ -11411,6 +11564,14 @@ impl DragonApp {
             }
             Command::SetScatterGridVisible { id, visible } => {
                 let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    gpu.update_inline_widget_style(
+                        &id,
+                        "scatter_grid_visible",
+                        json!(visible),
+                        |style| {
+                            style.scatter_grid_visible = Some(visible);
+                        },
+                    );
                     let Some(rt) = gpu.scatters.get_mut(&id) else {
                         return false;
                     };
@@ -11439,6 +11600,20 @@ impl DragonApp {
             }
             Command::SetScatterGridPlanes { id, major, minor } => {
                 let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    let plane_style = match (major, minor) {
+                        (false, false) => "none",
+                        (true, false) => "major",
+                        (false, true) => "minor",
+                        (true, true) => "all",
+                    };
+                    gpu.update_inline_widget_style(
+                        &id,
+                        "scatter_grid_planes",
+                        json!(plane_style),
+                        |style| {
+                            style.scatter_grid_planes = Some((major, minor));
+                        },
+                    );
                     let Some(rt) = gpu.scatters.get_mut(&id) else {
                         return false;
                     };
@@ -11616,6 +11791,14 @@ impl DragonApp {
                 title,
             } => {
                 let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    gpu.update_inline_widget_style(
+                        &id,
+                        "scatter_legend_position",
+                        json!(position.clone()),
+                        |style| {
+                            style.scatter_legend_position = Some(position.clone());
+                        },
+                    );
                     let Some(rt) = gpu.scatters.get_mut(&id) else {
                         return false;
                     };
@@ -11682,6 +11865,14 @@ impl DragonApp {
             }
             Command::SetScatterOrientationAxes { id, visible } => {
                 let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    gpu.update_inline_widget_style(
+                        &id,
+                        "scatter_orientation_axes",
+                        json!(visible),
+                        |style| {
+                            style.scatter_orientation_axes_visible = Some(visible);
+                        },
+                    );
                     let Some(rt) = gpu.scatters.get_mut(&id) else {
                         return false;
                     };

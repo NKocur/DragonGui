@@ -7,6 +7,27 @@ compiled into the same `NodeStyle` model used by inline `style={...}` maps.
 The goal is familiar styling for DragonGUI widgets, not browser compatibility.
 There is no DOM, no HTML, no JavaScript, and no general browser layout engine.
 
+## Current CSS Limits
+
+DragonGUI CSS intentionally keeps a native-widget scope. These browser features
+are not part of the current public subset:
+
+- Full browser container queries. DragonGUI supports only the first-slice
+  width model described below.
+- Remote font URLs, WOFF2 loading, and packaged font asset resolution.
+- `background-image: url(...)`.
+- True sampled-framebuffer backdrop blur.
+- Full browser stacking contexts.
+- Multiple simultaneous animations, animation composition, timelines, and
+  layout/text animation.
+- CSS grid `subgrid` and nested auto-repeat.
+- Arbitrary browser pseudo-elements, user-defined renderer parts, CSS-generated
+  nested widgets, and CSS-created hit-test regions.
+- Scatter3D data-bearing plot controls such as axis label text, colormaps,
+  scalar bars, and point data remain Python/API driven.
+
+For the full inventory, see `docs/css-capabilities-reference.md`.
+
 ## Loading Stylesheets
 
 Stylesheets can be attached before `app.run(...)`:
@@ -231,6 +252,44 @@ scale factor, and stylesheets are reapplied on window resize.
 }
 ```
 
+## Container Queries
+
+DragonGUI supports a first slice of named width container queries. A widget must
+opt in as a query container with `container-type: inline-size`; optional
+`container-name` identifiers let `@container` target a named ancestor. Queries
+match against the nearest eligible ancestor using the previous layout pass, with
+one bounded extra layout pass on startup so static documents settle
+deterministically.
+
+Supported forms:
+
+```css
+Panel.card {
+    container-name: card;
+    container-type: inline-size;
+}
+
+@container card (min-width: 360px) {
+    Label.metric {
+        font-size: 18px;
+    }
+}
+
+@container (inline-size >= 520px) {
+    Panel.summary {
+        grid-template-columns: 1fr 1fr;
+    }
+}
+```
+
+Limitations:
+
+- Only `width` and `inline-size` length comparisons are supported.
+- Query values must be absolute lengths convertible to pixels.
+- Height, block-size, aspect-ratio, orientation, style queries, scroll-state
+  queries, nested `@container`, and container query units such as `cqw` are not
+  supported yet.
+
 Animation shorthand and longhand comma lists use the first item in DragonGUI's
 one-animation slice. Finite fractional `animation-iteration-count` values are
 preserved. Negative `animation-delay` values are accepted and start animations
@@ -269,7 +328,8 @@ rendering model. DragonGUI currently defaults `prefers-contrast`,
 `prefers-reduced-data` to `no-preference`, `inverted-colors` to `none`, and
 both dynamic-range features to `standard`; `display-mode` defaults to
 `standalone` for DragonGUI's native app window, until platform mode hooks are added.
-Container queries and broader media features are still unsupported.
+Broader media features remain unsupported. Container queries are limited to the
+first-slice width model above.
 
 ## Font Faces
 
@@ -670,6 +730,10 @@ Supported widget-specific properties:
 | `text-area-rows` | `TextArea` |
 | `scatter-point-size` | `Scatter3D` |
 | `scatter-point-style` | `Scatter3D` |
+| `scatter-grid-visible` | `Scatter3D` |
+| `scatter-grid-planes` | `Scatter3D` |
+| `scatter-legend-position` | `Scatter3D` |
+| `scatter-orientation-axes` | `Scatter3D` |
 | `table-row-height` | `DataFrameTable` |
 | `table-header-height` | `DataFrameTable` |
 | `table-column-width` | `DataFrameTable` |
