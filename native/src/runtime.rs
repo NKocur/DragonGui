@@ -18,7 +18,8 @@ use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 use winit::window::{Theme as WinitTheme, Window, WindowId};
 
 use crate::commands::{
-    Command, CommandBridge, CommandValue, Dirty, RuntimeEvent, ScatterTelemetry, TableColumnPacket,
+    Command, CommandBridge, CommandValue, Dirty, RuntimeEvent, ScatterHoverColumnPacket,
+    ScatterTelemetry, TableColumnPacket,
 };
 use crate::css_style::{
     apply_stylesheets_to_tree_for_media_and_containers,
@@ -45,8 +46,8 @@ use crate::primitives::{
     histogram_plot_rect, histogram_resolved_bounds, histogram_text_labels, histogram_toolbar_hit,
     interpolate_visual_style, line_plot_plot_rect, line_plot_resolved_bounds,
     line_plot_text_labels, line_plot_toolbar_hit, panel_scrollbar_geometry, pie_chart_text_labels,
-    LinePlotBounds, PanelScrollbarAxis, PanelScrollbarAxisGeometry, PrimitivesRenderer,
-    RectInstance,
+    LinePlotBounds, LinePlotRenderer, PanelScrollbarAxis, PanelScrollbarAxisGeometry,
+    PrimitivesRenderer, RectInstance,
 };
 use crate::resources::ResourceRegistry;
 use crate::scatter::{self, PointInstance, ScatterWidget};
@@ -392,6 +393,187 @@ fn decode_line_plot_points_bytes(
     }
 }
 
+fn decode_hover_meta_lines(meta: &str) -> Option<Vec<String>> {
+    if let Some(packed) = meta.strip_prefix('\0') {
+        return Some(if packed.is_empty() {
+            Vec::new()
+        } else {
+            packed.split('\0').map(str::to_string).collect()
+        });
+    }
+    serde_json::from_str::<Vec<String>>(meta).ok().or_else(|| {
+        serde_json::from_str::<Vec<serde_json::Value>>(meta)
+            .ok()
+            .map(|values| {
+                values
+                    .iter()
+                    .map(|value| value.as_str().unwrap_or("").to_string())
+                    .collect()
+            })
+    })
+}
+
+#[derive(Debug, Clone)]
+struct ScatterHoverColumn {
+    name: String,
+    values: ScatterHoverColumnValues,
+}
+
+#[derive(Debug, Clone)]
+enum ScatterHoverColumnValues {
+    F32(Vec<f32>),
+    F64(Vec<f64>),
+    I64(Vec<i64>),
+    U64(Vec<u64>),
+    Bool(Vec<u8>),
+    Utf8(Vec<String>),
+}
+
+impl ScatterHoverColumn {
+    fn row_text(&self, row: usize) -> Option<String> {
+        let value = match &self.values {
+            ScatterHoverColumnValues::F32(values) => values.get(row).map(|value| format_4g(*value)),
+            ScatterHoverColumnValues::F64(values) => {
+                values.get(row).map(|value| format_4g(*value as f32))
+            }
+            ScatterHoverColumnValues::I64(values) => values.get(row).map(i64::to_string),
+            ScatterHoverColumnValues::U64(values) => values.get(row).map(u64::to_string),
+            ScatterHoverColumnValues::Bool(values) => values.get(row).map(|value| {
+                if *value == 0 {
+                    "false".to_string()
+                } else {
+                    "true".to_string()
+                }
+            }),
+            ScatterHoverColumnValues::Utf8(values) => values.get(row).cloned(),
+        }?;
+        Some(format!("{}: {}", self.name, value))
+    }
+}
+
+fn decode_scatter_hover_columns(
+    packets: Vec<ScatterHoverColumnPacket>,
+) -> Result<Vec<ScatterHoverColumn>, DragonError> {
+    packets
+        .into_iter()
+        .map(decode_scatter_hover_column)
+        .collect()
+}
+
+fn decode_scatter_hover_column(
+    packet: ScatterHoverColumnPacket,
+) -> Result<ScatterHoverColumn, DragonError> {
+    let values = match packet.dtype.as_str() {
+        "f32" => {
+            ensure_hover_column_bytes(&packet, 4)?;
+            ScatterHoverColumnValues::F32(
+                packet
+                    .bytes
+                    .chunks_exact(4)
+                    .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
+                    .collect(),
+            )
+        }
+        "f64" => {
+            ensure_hover_column_bytes(&packet, 8)?;
+            ScatterHoverColumnValues::F64(
+                packet
+                    .bytes
+                    .chunks_exact(8)
+                    .map(|chunk| f64::from_le_bytes(chunk.try_into().unwrap()))
+                    .collect(),
+            )
+        }
+        "i64" => {
+            ensure_hover_column_bytes(&packet, 8)?;
+            ScatterHoverColumnValues::I64(
+                packet
+                    .bytes
+                    .chunks_exact(8)
+                    .map(|chunk| i64::from_le_bytes(chunk.try_into().unwrap()))
+                    .collect(),
+            )
+        }
+        "u64" => {
+            ensure_hover_column_bytes(&packet, 8)?;
+            ScatterHoverColumnValues::U64(
+                packet
+                    .bytes
+                    .chunks_exact(8)
+                    .map(|chunk| u64::from_le_bytes(chunk.try_into().unwrap()))
+                    .collect(),
+            )
+        }
+        "bool" => {
+            ensure_hover_column_bytes(&packet, 1)?;
+            ScatterHoverColumnValues::Bool(packet.bytes)
+        }
+        "utf8" => {
+            let text = String::from_utf8(packet.bytes).map_err(|e| {
+                DragonError::ParseError(format!(
+                    "scatter hover column {:?} is not valid utf-8: {e}",
+                    packet.name
+                ))
+            })?;
+            let values = if packet.len == 0 && text.is_empty() {
+                Vec::new()
+            } else {
+                text.split('\0').map(str::to_string).collect::<Vec<_>>()
+            };
+            if values.len() != packet.len {
+                return Err(DragonError::ParseError(format!(
+                    "scatter hover column {:?} expected {} rows, found {}",
+                    packet.name,
+                    packet.len,
+                    values.len()
+                )));
+            }
+            ScatterHoverColumnValues::Utf8(values)
+        }
+        other => {
+            return Err(DragonError::ParseError(format!(
+                "unsupported scatter hover column dtype {other:?}"
+            )));
+        }
+    };
+    Ok(ScatterHoverColumn {
+        name: packet.name,
+        values,
+    })
+}
+
+fn ensure_hover_column_bytes(
+    packet: &ScatterHoverColumnPacket,
+    bytes_per_value: usize,
+) -> Result<(), DragonError> {
+    let expected = packet.len.checked_mul(bytes_per_value).ok_or_else(|| {
+        DragonError::ParseError(format!(
+            "scatter hover column {:?} byte length overflow",
+            packet.name
+        ))
+    })?;
+    if packet.bytes.len() != expected {
+        return Err(DragonError::ParseError(format!(
+            "scatter hover column {:?} expected {} bytes, found {}",
+            packet.name,
+            expected,
+            packet.bytes.len()
+        )));
+    }
+    Ok(())
+}
+
+fn format_scatter_hover_columns(columns: &[ScatterHoverColumn], row: usize) -> Option<String> {
+    if columns.is_empty() {
+        return None;
+    }
+    let lines = columns
+        .iter()
+        .filter_map(|column| column.row_text(row))
+        .collect::<Vec<_>>();
+    (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
 fn parse_line_plot_color(value: Option<String>) -> Option<ColorRef> {
     let text = value?;
     if text.trim().is_empty() {
@@ -422,16 +604,96 @@ fn parse_line_plot_color(value: Option<String>) -> Option<ColorRef> {
     Some(ColorRef::Token(text))
 }
 
-fn limit_line_plot_points(points: &mut Vec<[f32; 2]>, max_points: Option<usize>) -> bool {
+fn limit_line_plot_points(points: &mut Vec<[f32; 2]>, max_points: Option<usize>) -> usize {
     let Some(max_points) = max_points.filter(|value| *value > 0) else {
-        return false;
+        return 0;
     };
     if points.len() <= max_points {
-        return false;
+        return 0;
     }
     let drain = points.len() - max_points;
     points.drain(0..drain);
-    true
+    drain
+}
+
+fn line_plot_front_trim_count(len: usize, max_points: Option<usize>) -> usize {
+    let Some(max_points) = max_points.filter(|value| *value > 0) else {
+        return 0;
+    };
+    len.saturating_sub(max_points)
+}
+
+fn line_plot_first_finite_x(points: &[[f32; 2]]) -> Option<f32> {
+    points
+        .iter()
+        .find(|[x, y]| x.is_finite() && y.is_finite())
+        .map(|[x, _]| *x)
+}
+
+fn line_plot_last_finite_x(points: &[[f32; 2]]) -> Option<f32> {
+    points
+        .iter()
+        .rev()
+        .find(|[x, y]| x.is_finite() && y.is_finite())
+        .map(|[x, _]| *x)
+}
+
+fn line_plot_first_finite_raw_x(points: &[[f32; 2]]) -> Option<f32> {
+    points.iter().find(|[x, _]| x.is_finite()).map(|[x, _]| *x)
+}
+
+fn line_plot_last_finite_raw_x(points: &[[f32; 2]]) -> Option<f32> {
+    points
+        .iter()
+        .rev()
+        .find(|[x, _]| x.is_finite())
+        .map(|[x, _]| *x)
+}
+
+fn line_plot_append_preserves_x_order(existing: &[[f32; 2]], appended: &[[f32; 2]]) -> bool {
+    match (
+        line_plot_last_finite_raw_x(existing),
+        line_plot_first_finite_raw_x(appended),
+    ) {
+        (Some(last), Some(first)) => last <= first,
+        _ => true,
+    }
+}
+
+fn line_plot_bounds_after_front_trim(
+    points: &[[f32; 2]],
+    trim: usize,
+    combined_bounds: Option<[f32; 4]>,
+    x_sorted: bool,
+) -> Option<[f32; 4]> {
+    if trim == 0 {
+        return combined_bounds;
+    }
+    if trim >= points.len() {
+        return None;
+    }
+    let retained = &points[trim..];
+    if trim > retained.len() {
+        return document::line_plot_points_bounds(retained);
+    }
+    let Some([x_min, x_max, y_min, y_max]) = combined_bounds else {
+        return document::line_plot_points_bounds(retained);
+    };
+    let removed_touches_bound = points[..trim].iter().any(|[x, y]| {
+        x.is_finite()
+            && y.is_finite()
+            && ((!x_sorted && (*x <= x_min || *x >= x_max)) || *y <= y_min || *y >= y_max)
+    });
+    if removed_touches_bound {
+        return document::line_plot_points_bounds(retained);
+    }
+    if x_sorted {
+        let x_min = line_plot_first_finite_x(retained)?;
+        let x_max = line_plot_last_finite_x(retained)?;
+        Some([x_min, x_max, y_min, y_max])
+    } else {
+        combined_bounds
+    }
 }
 
 fn merge_line_plot_bounds(current: Option<[f32; 4]>, next: Option<[f32; 4]>) -> Option<[f32; 4]> {
@@ -499,6 +761,32 @@ fn line_plot_hover_x_range(
     (start, end)
 }
 
+fn line_plot_visible_y_bounds(
+    series: &document::LinePlotSeriesProp,
+    start: usize,
+    end: usize,
+) -> Option<[f32; 2]> {
+    if series.x_sorted {
+        if let Some(bounds) = series.logical_y_bounds(start, end) {
+            return Some(bounds);
+        }
+    }
+    let points = series.logical_points();
+    let end = end.min(points.len());
+    if start >= end {
+        return None;
+    }
+    let mut y_min = f32::INFINITY;
+    let mut y_max = f32::NEG_INFINITY;
+    for [x, y] in &points[start..end] {
+        if x.is_finite() && y.is_finite() {
+            y_min = y_min.min(*y);
+            y_max = y_max.max(*y);
+        }
+    }
+    y_min.is_finite().then_some([y_min, y_max])
+}
+
 fn apply_line_plot_window_to_node(node: &mut WidgetNode) -> bool {
     let Some(window) = node
         .props
@@ -518,7 +806,7 @@ fn apply_line_plot_window_to_node(node: &mut WidgetNode) -> bool {
                 .filter(|x| x.is_finite())
                 .or_else(|| {
                     series
-                        .points
+                        .logical_points()
                         .iter()
                         .rev()
                         .find(|[x, _]| x.is_finite())
@@ -534,12 +822,11 @@ fn apply_line_plot_window_to_node(node: &mut WidgetNode) -> bool {
     let mut y_min = f32::INFINITY;
     let mut y_max = f32::NEG_INFINITY;
     for series in &node.props.line_plot_series {
-        let (start, end) = line_plot_visible_x_range(&series.points, x_min, x_max);
-        for [x, y] in &series.points[start..end] {
-            if x.is_finite() && y.is_finite() {
-                y_min = y_min.min(*y);
-                y_max = y_max.max(*y);
-            }
+        let points = series.logical_points();
+        let (start, end) = line_plot_visible_x_range(points, x_min, x_max);
+        if let Some([series_y_min, series_y_max]) = line_plot_visible_y_bounds(series, start, end) {
+            y_min = y_min.min(series_y_min);
+            y_max = y_max.max(series_y_max);
         }
     }
     if !y_min.is_finite() || !y_max.is_finite() {
@@ -551,7 +838,7 @@ fn apply_line_plot_window_to_node(node: &mut WidgetNode) -> bool {
                     continue;
                 }
             }
-            for [_, y] in &series.points {
+            for [_, y] in series.logical_points() {
                 if y.is_finite() {
                     y_min = y_min.min(*y);
                     y_max = y_max.max(*y);
@@ -577,6 +864,33 @@ fn apply_line_plot_window_to_node(node: &mut WidgetNode) -> bool {
     node.props.line_plot_y_min = Some(y_min);
     node.props.line_plot_y_max = Some(y_max);
     true
+}
+
+fn line_plot_point_counts(node: &WidgetNode) -> (usize, usize, usize) {
+    let series_count = node.props.line_plot_series.len();
+    let total_points = node
+        .props
+        .line_plot_series
+        .iter()
+        .map(|series| series.logical_len())
+        .sum();
+    let visible_points = line_plot_resolved_bounds(node)
+        .map(|bounds| {
+            node.props
+                .line_plot_series
+                .iter()
+                .map(|series| {
+                    let (start, end) = line_plot_visible_x_range(
+                        series.logical_points(),
+                        bounds.x_min,
+                        bounds.x_max,
+                    );
+                    end.saturating_sub(start)
+                })
+                .sum()
+        })
+        .unwrap_or(0);
+    (series_count, total_points, visible_points)
 }
 
 fn decode_scatter_points_bytes_into_colormap(
@@ -1061,6 +1375,85 @@ struct FrameRenderTimings {
 impl FrameRenderTimings {
     fn work_ms(self) -> f64 {
         self.prepare_ms + self.encode_ms + self.submit_ms
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct StageTimingStats {
+    count: u64,
+    last_ms: f64,
+    total_ms: f64,
+}
+
+impl StageTimingStats {
+    fn record(&mut self, ms: f64) {
+        self.count += 1;
+        self.last_ms = ms;
+        self.total_ms += ms;
+    }
+
+    fn avg_ms(self) -> f64 {
+        if self.count == 0 {
+            0.0
+        } else {
+            self.total_ms / self.count as f64
+        }
+    }
+
+    fn json_value(self) -> Value {
+        json!({
+            "count": self.count,
+            "last_ms": self.last_ms,
+            "avg_ms": self.avg_ms(),
+            "total_ms": self.total_ms,
+        })
+    }
+}
+
+fn surface_present_mode_name(mode: wgpu::PresentMode) -> &'static str {
+    match mode {
+        wgpu::PresentMode::AutoVsync => "auto-vsync",
+        wgpu::PresentMode::AutoNoVsync => "auto-no-vsync",
+        wgpu::PresentMode::Fifo => "fifo",
+        wgpu::PresentMode::FifoRelaxed => "fifo-relaxed",
+        wgpu::PresentMode::Immediate => "immediate",
+        wgpu::PresentMode::Mailbox => "mailbox",
+    }
+}
+
+fn surface_present_mode_from_name(value: &str) -> Option<wgpu::PresentMode> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "auto-vsync" | "autovsync" | "vsync" => Some(wgpu::PresentMode::AutoVsync),
+        "auto-no-vsync" | "autonovsync" | "no-vsync" | "novsync" | "uncapped" => {
+            Some(wgpu::PresentMode::AutoNoVsync)
+        }
+        "fifo" => Some(wgpu::PresentMode::Fifo),
+        "fifo-relaxed" | "fiforelaxed" => Some(wgpu::PresentMode::FifoRelaxed),
+        "immediate" => Some(wgpu::PresentMode::Immediate),
+        "mailbox" => Some(wgpu::PresentMode::Mailbox),
+        _ => None,
+    }
+}
+
+fn choose_surface_present_mode(
+    requested: Option<&str>,
+    fallback: wgpu::PresentMode,
+    supported: &[wgpu::PresentMode],
+) -> wgpu::PresentMode {
+    let Some(requested) = requested.and_then(surface_present_mode_from_name) else {
+        return fallback;
+    };
+    if matches!(
+        requested,
+        wgpu::PresentMode::AutoVsync | wgpu::PresentMode::AutoNoVsync
+    ) || supported.contains(&requested)
+    {
+        return requested;
+    }
+    match requested {
+        wgpu::PresentMode::Immediate | wgpu::PresentMode::Mailbox => wgpu::PresentMode::AutoNoVsync,
+        wgpu::PresentMode::FifoRelaxed => wgpu::PresentMode::AutoVsync,
+        _ => fallback,
     }
 }
 
@@ -2576,7 +2969,10 @@ fn props_snapshot(node: &WidgetNode) -> Value {
                 json!({
                     "label": series.label.as_deref(),
                     "line_style": series.line_style,
-                    "points": series.points.len(),
+                    "points": series.logical_len(),
+                    "stored_points": series.points.len(),
+                    "front_offset": series.front_offset,
+                    "y_blocks": series.y_blocks.len(),
                     "declared_points": series.declared_point_count,
                 })
             })
@@ -3180,6 +3576,102 @@ mod style_patch_tests {
     }
 
     #[test]
+    fn hover_meta_decodes_packed_and_json_lines() {
+        assert_eq!(
+            decode_hover_meta_lines("\0row: 1\0row: 2"),
+            Some(vec!["row: 1".to_string(), "row: 2".to_string()])
+        );
+        assert_eq!(
+            decode_hover_meta_lines(r#"["row: 1","row: 2"]"#),
+            Some(vec!["row: 1".to_string(), "row: 2".to_string()])
+        );
+    }
+
+    #[test]
+    fn scatter_hover_columns_format_picked_row() {
+        let columns = decode_scatter_hover_columns(vec![
+            ScatterHoverColumnPacket {
+                name: "row_id".to_string(),
+                dtype: "i64".to_string(),
+                len: 2,
+                bytes: [10_i64.to_le_bytes(), 11_i64.to_le_bytes()].concat(),
+            },
+            ScatterHoverColumnPacket {
+                name: "signal".to_string(),
+                dtype: "f32".to_string(),
+                len: 2,
+                bytes: [0.125_f32.to_le_bytes(), 1.5_f32.to_le_bytes()].concat(),
+            },
+            ScatterHoverColumnPacket {
+                name: "group".to_string(),
+                dtype: "utf8".to_string(),
+                len: 2,
+                bytes: b"low\0high".to_vec(),
+            },
+        ])
+        .unwrap();
+
+        assert_eq!(
+            format_scatter_hover_columns(&columns, 1),
+            Some("row_id: 11\nsignal: 1.5\ngroup: high".to_string())
+        );
+    }
+
+    #[test]
+    fn line_plot_front_trim_bounds_reuses_y_range_when_extrema_remain() {
+        let points = vec![[0.0, 1.0], [1.0, 2.0], [2.0, -5.0], [3.0, 8.0], [4.0, 3.0]];
+
+        let bounds =
+            line_plot_bounds_after_front_trim(&points, 2, Some([0.0, 4.0, -5.0, 8.0]), true);
+
+        assert_eq!(bounds, Some([2.0, 4.0, -5.0, 8.0]));
+    }
+
+    #[test]
+    fn line_plot_front_trim_bounds_recomputes_when_removed_point_was_extreme() {
+        let points = vec![[0.0, -5.0], [1.0, 2.0], [2.0, 1.0], [3.0, 8.0], [4.0, 3.0]];
+
+        let bounds =
+            line_plot_bounds_after_front_trim(&points, 2, Some([0.0, 4.0, -5.0, 8.0]), true);
+
+        assert_eq!(bounds, Some([2.0, 4.0, 1.0, 8.0]));
+    }
+
+    #[test]
+    fn line_plot_front_trim_bounds_recomputes_unsorted_x_extrema() {
+        let points = vec![[0.0, 1.0], [10.0, 2.0], [5.0, 3.0], [7.0, 4.0]];
+
+        let bounds =
+            line_plot_bounds_after_front_trim(&points, 1, Some([0.0, 10.0, 1.0, 4.0]), false);
+
+        assert_eq!(bounds, Some([5.0, 10.0, 2.0, 4.0]));
+    }
+
+    #[test]
+    fn surface_present_mode_env_uses_safe_fallbacks() {
+        assert_eq!(
+            choose_surface_present_mode(
+                Some("immediate"),
+                wgpu::PresentMode::Fifo,
+                &[wgpu::PresentMode::Fifo]
+            ),
+            wgpu::PresentMode::AutoNoVsync
+        );
+        assert_eq!(
+            choose_surface_present_mode(
+                Some("mailbox"),
+                wgpu::PresentMode::Fifo,
+                &[wgpu::PresentMode::Fifo, wgpu::PresentMode::Mailbox]
+            ),
+            wgpu::PresentMode::Mailbox
+        );
+        assert_eq!(
+            choose_surface_present_mode(Some("uncapped"), wgpu::PresentMode::Fifo, &[]),
+            wgpu::PresentMode::AutoNoVsync
+        );
+    }
+
+    #[test]
     fn command_batch_coalesces_scatter_updates() {
         let mut commands = vec![
             Command::SetScatterPointsPacked {
@@ -3440,6 +3932,7 @@ mod style_patch_tests {
             command: "SetStyle".to_string(),
             target: Some("button".to_string()),
             detail: Some("patch_bytes=42".to_string()),
+            elapsed_ms: Some(1.25),
             dirty: Some(Dirty::Visual),
             outcome: "applied".to_string(),
             requested_redraw: true,
@@ -3452,6 +3945,7 @@ mod style_patch_tests {
         assert_eq!(value["command"], "SetStyle");
         assert_eq!(value["target"], "button");
         assert_eq!(value["detail"], "patch_bytes=42");
+        assert_eq!(value["elapsed_ms"], 1.25);
         assert_eq!(value["dirty"], "visual");
         assert_eq!(value["outcome"], "applied");
         assert_eq!(value["requested_redraw"], true);
@@ -4327,6 +4821,8 @@ struct WgpuState {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    present_mode_env: Option<String>,
+    supported_present_modes: Vec<String>,
     _depth_texture: wgpu::Texture,
     depth_view: wgpu::TextureView,
     theme: Theme,
@@ -4337,9 +4833,14 @@ struct WgpuState {
     platform_color_scheme: Option<DgMediaColorScheme>,
     /// Per-widget scatter state keyed by widget id.
     scatters: HashMap<String, ScatterRuntime>,
+    /// Blank Scatter3D widgets prebuilt while the loading screen is visible.
+    scatter_widget_pool: Vec<ScatterWidget>,
+    /// Per-widget line plot streaming/update metrics keyed by widget id.
+    line_plot_metrics: HashMap<String, LinePlotMetrics>,
     /// Visible scatter widget ids in paint order (updated each apply_layout).
     visible_scatter_order: Vec<String>,
     primitives: Option<PrimitivesRenderer>,
+    line_plots: Option<LinePlotRenderer>,
     images: Option<ImageRenderer>,
     scatter_compositor: ScatterCompositeRenderer,
     html_reports: HtmlReportWebViewManager,
@@ -4371,6 +4872,42 @@ struct WgpuState {
     defer_rebuilds: bool,
     deferred_dirty: Option<Dirty>,
     deferred_scatter_style_sync: bool,
+    apply_layout_timing: StageTimingStats,
+    style_reapply_timing: StageTimingStats,
+    transition_sync_timing: StageTimingStats,
+    layout_compute_timing: StageTimingStats,
+    container_style_timing: StageTimingStats,
+    scatter_layout_timing: StageTimingStats,
+    image_rebuild_timing: StageTimingStats,
+    text_rebuild_timing: StageTimingStats,
+    primitive_rebuild_timing: StageTimingStats,
+    line_plot_rebuild_timing: StageTimingStats,
+    rebuild_text_timing: StageTimingStats,
+    rebuild_primitives_timing: StageTimingStats,
+    rebuild_visuals_timing: StageTimingStats,
+    replace_node_parse_timing: StageTimingStats,
+    replace_node_swap_timing: StageTimingStats,
+    replace_node_maps_timing: StageTimingStats,
+    replace_children_parse_timing: StageTimingStats,
+    replace_children_swap_timing: StageTimingStats,
+    replace_children_maps_timing: StageTimingStats,
+    retained_maps_timing: StageTimingStats,
+    retained_widget_kinds_timing: StageTimingStats,
+    retained_resources_timing: StageTimingStats,
+    retained_widget_state_timing: StageTimingStats,
+    retained_state_preserve_timing: StageTimingStats,
+    retained_scatter_sync_timing: StageTimingStats,
+    retained_scatter_collect_timing: StageTimingStats,
+    retained_scatter_retain_timing: StageTimingStats,
+    retained_scatter_new_widget_timing: StageTimingStats,
+    retained_scatter_decode_timing: StageTimingStats,
+    retained_scatter_upload_timing: StageTimingStats,
+    retained_scatter_chrome_timing: StageTimingStats,
+    prewarm_scatter_widget_timing: StageTimingStats,
+    retained_line_plot_sync_timing: StageTimingStats,
+    last_primitive_base_encode_ms: f64,
+    last_primitive_overlay_encode_ms: f64,
+    last_line_plot_encode_ms: f64,
     animation_epoch: Instant,
     loading_screen: LoadingScreenRuntime,
 }
@@ -4426,6 +4963,27 @@ struct ScatterMetrics {
     last_render_encode_ms: f64,
 }
 
+#[derive(Debug, Clone, Default)]
+struct LinePlotMetrics {
+    updates: u64,
+    appends: u64,
+    sets: u64,
+    last_operation: &'static str,
+    last_series: Option<String>,
+    last_series_count: usize,
+    last_point_count: usize,
+    last_visible_point_count: usize,
+    last_appended_points: usize,
+    last_trimmed_points: usize,
+    last_payload_bytes: usize,
+    last_decode_ms: f64,
+    last_bounds_ms: f64,
+    last_trim_ms: f64,
+    last_window_ms: f64,
+    last_count_ms: f64,
+    last_total_native_ms: f64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ScatterPayloadStatus {
     Empty,
@@ -4477,6 +5035,8 @@ struct ScatterRuntime {
     payload_status: ScatterPayloadStatus,
     /// Per-point tooltip text for the primary buffer (actor_id == 0).
     primary_hover_meta: Vec<String>,
+    /// Compact per-column hover data formatted only for the picked row.
+    primary_hover_columns: Vec<ScatterHoverColumn>,
     /// Column names used as coordinate row labels in hover tooltips (x, y, z order).
     tooltip_axis_labels: [String; 3],
     /// When true, hover movement triggers a point-pick and a tooltip overlay.
@@ -5448,9 +6008,31 @@ impl WgpuState {
             .await
             .map_err(|e| DragonError::GpuInit(format!("device: {e}")))?;
 
-        let config = surface
+        let mut config = surface
             .get_default_config(&adapter, width, height)
             .ok_or_else(|| DragonError::GpuInit("unsupported surface format".into()))?;
+        let surface_capabilities = surface.get_capabilities(&adapter);
+        let supported_present_modes = surface_capabilities
+            .present_modes
+            .iter()
+            .map(|mode| surface_present_mode_name(*mode).to_string())
+            .collect::<Vec<_>>();
+        let present_mode_env = std::env::var("DRAGONGUI_PRESENT_MODE")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        config.present_mode = choose_surface_present_mode(
+            present_mode_env.as_deref(),
+            config.present_mode,
+            &surface_capabilities.present_modes,
+        );
+        if let Ok(value) = std::env::var("DRAGONGUI_SURFACE_FRAME_LATENCY") {
+            if let Ok(latency) = value.trim().parse::<u32>() {
+                if latency > 0 {
+                    config.desired_maximum_frame_latency = latency;
+                }
+            }
+        }
         surface.configure(&device, &config);
 
         let (depth_texture, depth_view) = create_depth_texture(&device, width, height);
@@ -5598,6 +6180,7 @@ impl WgpuState {
                         payload_format: data_format,
                         payload_status: status,
                         primary_hover_meta: Vec::new(),
+                        primary_hover_columns: Vec::new(),
                         tooltip_axis_labels: ["x".to_string(), "y".to_string(), "z".to_string()],
                         hover_tooltip_enabled: true,
                         primary_pick_cache: None,
@@ -5613,6 +6196,11 @@ impl WgpuState {
             .widget_tree
             .as_ref()
             .map(|_| PrimitivesRenderer::new(&device, &queue, config.format, width, height));
+
+        let line_plots = spec
+            .widget_tree
+            .as_ref()
+            .map(|_| LinePlotRenderer::new(&device, &queue, config.format, width, height));
 
         let images = spec
             .widget_tree
@@ -5664,6 +6252,8 @@ impl WgpuState {
             device,
             queue,
             config,
+            present_mode_env,
+            supported_present_modes,
             _depth_texture: depth_texture,
             depth_view,
             theme,
@@ -5673,8 +6263,11 @@ impl WgpuState {
             scale_factor,
             platform_color_scheme: window.theme().map(winit_theme_color_scheme),
             scatters,
+            scatter_widget_pool: Vec::new(),
+            line_plot_metrics: HashMap::new(),
             visible_scatter_order: Vec::new(),
             primitives,
+            line_plots,
             images,
             scatter_compositor,
             html_reports: HtmlReportWebViewManager::new(window.as_ref()),
@@ -5703,6 +6296,42 @@ impl WgpuState {
             defer_rebuilds: false,
             deferred_dirty: None,
             deferred_scatter_style_sync: false,
+            apply_layout_timing: StageTimingStats::default(),
+            style_reapply_timing: StageTimingStats::default(),
+            transition_sync_timing: StageTimingStats::default(),
+            layout_compute_timing: StageTimingStats::default(),
+            container_style_timing: StageTimingStats::default(),
+            scatter_layout_timing: StageTimingStats::default(),
+            image_rebuild_timing: StageTimingStats::default(),
+            text_rebuild_timing: StageTimingStats::default(),
+            primitive_rebuild_timing: StageTimingStats::default(),
+            line_plot_rebuild_timing: StageTimingStats::default(),
+            rebuild_text_timing: StageTimingStats::default(),
+            rebuild_primitives_timing: StageTimingStats::default(),
+            rebuild_visuals_timing: StageTimingStats::default(),
+            replace_node_parse_timing: StageTimingStats::default(),
+            replace_node_swap_timing: StageTimingStats::default(),
+            replace_node_maps_timing: StageTimingStats::default(),
+            replace_children_parse_timing: StageTimingStats::default(),
+            replace_children_swap_timing: StageTimingStats::default(),
+            replace_children_maps_timing: StageTimingStats::default(),
+            retained_maps_timing: StageTimingStats::default(),
+            retained_widget_kinds_timing: StageTimingStats::default(),
+            retained_resources_timing: StageTimingStats::default(),
+            retained_widget_state_timing: StageTimingStats::default(),
+            retained_state_preserve_timing: StageTimingStats::default(),
+            retained_scatter_sync_timing: StageTimingStats::default(),
+            retained_scatter_collect_timing: StageTimingStats::default(),
+            retained_scatter_retain_timing: StageTimingStats::default(),
+            retained_scatter_new_widget_timing: StageTimingStats::default(),
+            retained_scatter_decode_timing: StageTimingStats::default(),
+            retained_scatter_upload_timing: StageTimingStats::default(),
+            retained_scatter_chrome_timing: StageTimingStats::default(),
+            prewarm_scatter_widget_timing: StageTimingStats::default(),
+            retained_line_plot_sync_timing: StageTimingStats::default(),
+            last_primitive_base_encode_ms: 0.0,
+            last_primitive_overlay_encode_ms: 0.0,
+            last_line_plot_encode_ms: 0.0,
             animation_epoch: Instant::now(),
             loading_screen,
         };
@@ -5769,13 +6398,18 @@ impl WgpuState {
 
     /// Recompute layout and push scatter viewport + primitives + text to GPU.
     fn apply_layout(&mut self) {
+        let total_t0 = Instant::now();
+        let style_t0 = Instant::now();
         self.reapply_stylesheets_for_current_viewport();
+        let style_ms = style_t0.elapsed().as_secs_f64() * 1000.0;
+        let transition_t0 = Instant::now();
         self.sync_focus_transitions();
         self.sync_checked_transitions();
         self.sync_active_transitions();
         self.sync_open_transitions();
         self.sync_selected_transitions();
         self.sync_expanded_transitions();
+        let transition_ms = transition_t0.elapsed().as_secs_f64() * 1000.0;
         let media = self.media_environment();
         // Destructure to get separate borrows of each field.
         let WgpuState {
@@ -5797,11 +6431,23 @@ impl WgpuState {
             theme,
             scale_factor,
             stylesheets,
+            line_plots,
+            apply_layout_timing,
+            style_reapply_timing,
+            transition_sync_timing,
+            layout_compute_timing,
+            container_style_timing,
+            scatter_layout_timing,
+            image_rebuild_timing,
+            text_rebuild_timing,
+            primitive_rebuild_timing,
+            line_plot_rebuild_timing,
             ..
         } = self;
 
         let w = config.width as f32;
         let h = config.height as f32;
+        let layout_t0 = Instant::now();
         let mut layout = {
             let tree = match widget_tree.as_ref() {
                 Some(t) => t,
@@ -5812,7 +6458,9 @@ impl WgpuState {
             };
             compute_layout(tree, w, h, *scale_factor, theme, widget_state.as_ref())
         };
+        let layout_compute_ms = layout_t0.elapsed().as_secs_f64() * 1000.0;
 
+        let container_t0 = Instant::now();
         if current_layout.is_none() && stylesheets.has_container_rules() {
             let containers = container_query_context_from_layout(Some(&layout), *scale_factor);
             if let (Some(tree), Some(containers)) = (widget_tree.as_mut(), containers.as_ref()) {
@@ -5825,6 +6473,7 @@ impl WgpuState {
                 layout = compute_layout(tree, w, h, *scale_factor, theme, widget_state.as_ref());
             }
         }
+        let container_style_ms = container_t0.elapsed().as_secs_f64() * 1000.0;
 
         let tree = match widget_tree.as_ref() {
             Some(t) => t,
@@ -5835,6 +6484,7 @@ impl WgpuState {
         };
 
         // Collect visible scatter order and update each widget's layout rect.
+        let scatter_t0 = Instant::now();
         let mut new_visible_order: Vec<String> = Vec::new();
         collect_visible_scatter_ids(tree, &layout, &mut new_visible_order);
         *visible_scatter_order = new_visible_order.clone();
@@ -5899,7 +6549,9 @@ impl WgpuState {
                 }
             }
         }
+        let scatter_layout_ms = scatter_t0.elapsed().as_secs_f64() * 1000.0;
 
+        let image_t0 = Instant::now();
         if let Some(images) = images.as_mut() {
             images.update_screen_size(queue, config.width, config.height);
             images.rebuild(
@@ -5912,6 +6564,7 @@ impl WgpuState {
                 widget_state.as_ref(),
             );
         }
+        let image_rebuild_ms = image_t0.elapsed().as_secs_f64() * 1000.0;
 
         if let Some(state) = widget_state.as_mut() {
             if state
@@ -5923,6 +6576,7 @@ impl WgpuState {
             }
         }
 
+        let text_t0 = Instant::now();
         let new_caret_positions =
             if let (Some(t), Some(state)) = (text.as_mut(), widget_state.as_ref()) {
                 t.update_screen(queue, config.width, config.height);
@@ -5941,7 +6595,9 @@ impl WgpuState {
                 HashMap::new()
             };
         *caret_positions = new_caret_positions;
+        let text_rebuild_ms = text_t0.elapsed().as_secs_f64() * 1000.0;
 
+        let primitive_t0 = Instant::now();
         if let (Some(prims), Some(state)) = (primitives.as_mut(), widget_state.as_ref()) {
             prims.update_screen_size(queue, config.width, config.height);
             prims.rebuild(
@@ -5958,8 +6614,26 @@ impl WgpuState {
                 media,
             );
         }
+        let primitive_rebuild_ms = primitive_t0.elapsed().as_secs_f64() * 1000.0;
+
+        let line_plot_t0 = Instant::now();
+        if let Some(line_plots) = line_plots.as_mut() {
+            line_plots.update_screen_size(queue, config.width, config.height);
+            line_plots.rebuild(device, queue, tree, &layout, theme, *scale_factor);
+        }
+        let line_plot_rebuild_ms = line_plot_t0.elapsed().as_secs_f64() * 1000.0;
 
         *current_layout = Some(layout);
+        style_reapply_timing.record(style_ms);
+        transition_sync_timing.record(transition_ms);
+        layout_compute_timing.record(layout_compute_ms);
+        container_style_timing.record(container_style_ms);
+        scatter_layout_timing.record(scatter_layout_ms);
+        image_rebuild_timing.record(image_rebuild_ms);
+        text_rebuild_timing.record(text_rebuild_ms);
+        primitive_rebuild_timing.record(primitive_rebuild_ms);
+        line_plot_rebuild_timing.record(line_plot_rebuild_ms);
+        apply_layout_timing.record(total_t0.elapsed().as_secs_f64() * 1000.0);
     }
 
     fn sync_html_reports(&mut self) {
@@ -5968,12 +6642,14 @@ impl WgpuState {
     }
 
     fn rebuild_primitives(&mut self) {
+        let total_t0 = Instant::now();
         let media = self.media_environment();
         let WgpuState {
             widget_tree,
             current_layout,
             widget_state,
             primitives,
+            line_plots,
             device,
             queue,
             theme,
@@ -5981,9 +6657,13 @@ impl WgpuState {
             caret_positions,
             toast_overlays,
             stylesheets,
+            primitive_rebuild_timing,
+            line_plot_rebuild_timing,
+            rebuild_primitives_timing,
             ..
         } = self;
 
+        let primitive_t0 = Instant::now();
         if let (Some(tree), Some(layout), Some(state), Some(prims)) = (
             widget_tree.as_ref(),
             current_layout.as_ref(),
@@ -6004,9 +6684,21 @@ impl WgpuState {
                 media,
             );
         }
+        primitive_rebuild_timing.record(primitive_t0.elapsed().as_secs_f64() * 1000.0);
+        let line_plot_t0 = Instant::now();
+        if let (Some(tree), Some(layout), Some(line_plots)) = (
+            widget_tree.as_ref(),
+            current_layout.as_ref(),
+            line_plots.as_mut(),
+        ) {
+            line_plots.rebuild(device, queue, tree, layout, theme, *scale_factor);
+        }
+        line_plot_rebuild_timing.record(line_plot_t0.elapsed().as_secs_f64() * 1000.0);
+        rebuild_primitives_timing.record(total_t0.elapsed().as_secs_f64() * 1000.0);
     }
 
     fn rebuild_text(&mut self) {
+        let total_t0 = Instant::now();
         let media = self.media_environment();
         let WgpuState {
             widget_tree,
@@ -6019,6 +6711,8 @@ impl WgpuState {
             resources,
             toast_overlays,
             stylesheets,
+            text_rebuild_timing,
+            rebuild_text_timing,
             ..
         } = self;
 
@@ -6042,10 +6736,14 @@ impl WgpuState {
         } else {
             caret_positions.clear();
         }
+        let total_ms = total_t0.elapsed().as_secs_f64() * 1000.0;
+        text_rebuild_timing.record(total_ms);
+        rebuild_text_timing.record(total_ms);
     }
 
     /// Rebuild state-dependent primitive and text buffers without recomputing layout.
     fn rebuild_visuals(&mut self) {
+        let total_t0 = Instant::now();
         self.sync_focus_transitions();
         self.sync_checked_transitions();
         self.sync_active_transitions();
@@ -6054,6 +6752,8 @@ impl WgpuState {
         self.sync_expanded_transitions();
         self.rebuild_text();
         self.rebuild_primitives();
+        self.rebuild_visuals_timing
+            .record(total_t0.elapsed().as_secs_f64() * 1000.0);
     }
 
     fn current_focused_widget_ids(&self) -> HashSet<String> {
@@ -7781,28 +8481,83 @@ impl WgpuState {
         true
     }
 
+    fn prewarm_scatter_widgets(&mut self, count: usize) -> usize {
+        let target = count.min(64);
+        let missing = target.saturating_sub(self.scatter_widget_pool.len());
+        if missing == 0 {
+            self.prewarm_scatter_widget_timing.record(0.0);
+            return 0;
+        }
+        let t0 = Instant::now();
+        for _ in 0..missing {
+            self.scatter_widget_pool.push(ScatterWidget::new(
+                &self.device,
+                self.config.format,
+                self.config.width.max(1),
+                self.config.height.max(1),
+            ));
+        }
+        self.prewarm_scatter_widget_timing
+            .record(t0.elapsed().as_secs_f64() * 1000.0);
+        missing
+    }
+
+    fn take_scatter_widget(&mut self) -> ScatterWidget {
+        self.scatter_widget_pool.pop().unwrap_or_else(|| {
+            ScatterWidget::new(
+                &self.device,
+                self.config.format,
+                self.config.width.max(1),
+                self.config.height.max(1),
+            )
+        })
+    }
+
     fn rebuild_retained_maps(&mut self) {
+        let total_t0 = Instant::now();
         let mut widget_kinds = HashMap::new();
         let previous_state = self.widget_state.as_ref();
-        let mut widget_state = self.widget_tree.as_ref().map(|tree| {
+        let mut widget_state = None;
+        if let Some(tree) = self.widget_tree.as_ref() {
+            let kinds_t0 = Instant::now();
             collect_widget_kinds(tree, &mut widget_kinds);
+            self.retained_widget_kinds_timing
+                .record(kinds_t0.elapsed().as_secs_f64() * 1000.0);
+
+            let resources_t0 = Instant::now();
             self.resources.sync_from_tree(tree);
-            WidgetState::from_tree(tree)
-        });
+            self.retained_resources_timing
+                .record(resources_t0.elapsed().as_secs_f64() * 1000.0);
+
+            let state_t0 = Instant::now();
+            widget_state = Some(WidgetState::from_tree(tree));
+            self.retained_widget_state_timing
+                .record(state_t0.elapsed().as_secs_f64() * 1000.0);
+        }
+        let preserve_t0 = Instant::now();
         if let (Some(previous), Some(current)) = (previous_state, widget_state.as_mut()) {
             current.preserve_rebuild_state_from(previous);
         }
+        self.retained_state_preserve_timing
+            .record(preserve_t0.elapsed().as_secs_f64() * 1000.0);
         if self.widget_tree.is_none() {
             self.resources = ResourceRegistry::default();
         }
 
         // Sync scatter runtime map: add new widgets, drop removed ones.
+        let scatter_t0 = Instant::now();
+        let collect_t0 = Instant::now();
         let mut current_ids: Vec<String> = Vec::new();
         if let Some(tree) = &self.widget_tree {
             collect_all_scatter_ids(tree, &mut current_ids);
         }
+        self.retained_scatter_collect_timing
+            .record(collect_t0.elapsed().as_secs_f64() * 1000.0);
         // Drop runtimes for ids no longer in the tree.
+        let retain_t0 = Instant::now();
         self.scatters.retain(|id, _| current_ids.contains(id));
+        self.retained_scatter_retain_timing
+            .record(retain_t0.elapsed().as_secs_f64() * 1000.0);
         // Add runtimes for newly appeared scatter nodes.
         for id in &current_ids {
             if !self.scatters.contains_key(id) {
@@ -7832,12 +8587,11 @@ impl WgpuState {
                         )
                     });
 
-                let mut widget = ScatterWidget::new(
-                    &self.device,
-                    self.config.format,
-                    self.config.width.max(1),
-                    self.config.height.max(1),
-                );
+                let widget_t0 = Instant::now();
+                let mut widget = self.take_scatter_widget();
+                self.retained_scatter_new_widget_timing
+                    .record(widget_t0.elapsed().as_secs_f64() * 1000.0);
+                let decode_t0 = Instant::now();
                 let (mut pts, mut status) = if let Some(b64) = data_b64 {
                     let decoded_bytes = BASE64.decode(&b64);
                     match decoded_bytes {
@@ -7871,7 +8625,10 @@ impl WgpuState {
                 } else {
                     (Vec::new(), ScatterPayloadStatus::Empty)
                 };
+                self.retained_scatter_decode_timing
+                    .record(decode_t0.elapsed().as_secs_f64() * 1000.0);
 
+                let upload_t0 = Instant::now();
                 let maybe_bounds = compute_scatter_bounds(&pts);
                 if maybe_bounds.is_none() && !pts.is_empty() {
                     status = ScatterPayloadStatus::AllNonFinite;
@@ -7885,9 +8642,14 @@ impl WgpuState {
                 } else {
                     widget.update_camera(&self.queue);
                 }
+                self.retained_scatter_upload_timing
+                    .record(upload_t0.elapsed().as_secs_f64() * 1000.0);
+                let chrome_t0 = Instant::now();
                 widget.set_chrome(startup_chrome);
                 widget.refresh_grid(data_min, data_max, &self.device, &self.queue);
                 widget.refresh_overlays(&self.device, &self.queue);
+                self.retained_scatter_chrome_timing
+                    .record(chrome_t0.elapsed().as_secs_f64() * 1000.0);
 
                 self.scatters.insert(
                     id.clone(),
@@ -7903,6 +8665,7 @@ impl WgpuState {
                         payload_format: data_format,
                         payload_status: status,
                         primary_hover_meta: Vec::new(),
+                        primary_hover_columns: Vec::new(),
                         tooltip_axis_labels: ["x".to_string(), "y".to_string(), "z".to_string()],
                         hover_tooltip_enabled: true,
                         primary_pick_cache: None,
@@ -7911,9 +8674,18 @@ impl WgpuState {
                 );
             }
         }
+        self.retained_scatter_sync_timing
+            .record(scatter_t0.elapsed().as_secs_f64() * 1000.0);
 
+        let line_plot_t0 = Instant::now();
+        self.line_plot_metrics
+            .retain(|id, _| widget_kinds.get(id) == Some(&WidgetKind::LinePlot));
+        self.retained_line_plot_sync_timing
+            .record(line_plot_t0.elapsed().as_secs_f64() * 1000.0);
         self.widget_kinds = widget_kinds;
         self.widget_state = widget_state;
+        self.retained_maps_timing
+            .record(total_t0.elapsed().as_secs_f64() * 1000.0);
     }
 
     fn apply_replace_children(
@@ -7924,15 +8696,24 @@ impl WgpuState {
         if !self.has_widget(id) {
             return Ok(false);
         }
+        let parse_t0 = Instant::now();
         let children = parse_widget_children_json(children_json)?;
+        self.replace_children_parse_timing
+            .record(parse_t0.elapsed().as_secs_f64() * 1000.0);
         let Some(tree) = self.widget_tree.as_mut() else {
             return Ok(false);
         };
+        let swap_t0 = Instant::now();
         if !replace_widget_children(tree, id, children) {
             return Ok(false);
         }
+        self.replace_children_swap_timing
+            .record(swap_t0.elapsed().as_secs_f64() * 1000.0);
 
+        let maps_t0 = Instant::now();
         self.rebuild_retained_maps();
+        self.replace_children_maps_timing
+            .record(maps_t0.elapsed().as_secs_f64() * 1000.0);
         Ok(true)
     }
 
@@ -7940,15 +8721,24 @@ impl WgpuState {
         if !self.has_widget(id) {
             return Ok(false);
         }
+        let parse_t0 = Instant::now();
         let replacement = parse_widget_node_json(node_json)?;
+        self.replace_node_parse_timing
+            .record(parse_t0.elapsed().as_secs_f64() * 1000.0);
         let Some(tree) = self.widget_tree.as_mut() else {
             return Ok(false);
         };
+        let swap_t0 = Instant::now();
         if !replace_widget_node(tree, id, replacement) {
             return Ok(false);
         }
+        self.replace_node_swap_timing
+            .record(swap_t0.elapsed().as_secs_f64() * 1000.0);
 
+        let maps_t0 = Instant::now();
         self.rebuild_retained_maps();
+        self.replace_node_maps_timing
+            .record(maps_t0.elapsed().as_secs_f64() * 1000.0);
         Ok(true)
     }
 
@@ -8039,61 +8829,110 @@ impl WgpuState {
         if self.widget_kind(id) != Some(WidgetKind::LinePlot) {
             return Ok(false);
         }
+        let total_t0 = Instant::now();
+        let payload_bytes = xy.len();
+        let series_for_metrics = series.clone();
+        let decode_t0 = Instant::now();
         let mut points = decode_line_plot_points_bytes(&xy, payload_format)?;
-        limit_line_plot_points(&mut points, max_points);
+        let decode_ms = decode_t0.elapsed().as_secs_f64() * 1000.0;
+        let trim_t0 = Instant::now();
+        let trimmed_points = limit_line_plot_points(&mut points, max_points);
+        let trim_ms = trim_t0.elapsed().as_secs_f64() * 1000.0;
+        let bounds_t0 = Instant::now();
         let bounds = document::line_plot_points_bounds(&points);
-        let Some(tree) = self.widget_tree.as_mut() else {
-            return Ok(false);
-        };
-        let Some(node) = find_widget_mut(tree, id) else {
-            return Ok(false);
-        };
-        if let Some(width) = line_width {
-            node.props.line_plot_line_width = width.max(0.5);
-        }
-        if let Some(show_grid) = show_grid {
-            node.props.line_plot_show_grid = show_grid;
-        }
-        if let Some(auto_fit) = auto_fit {
-            node.props.line_plot_auto_fit = auto_fit;
-        }
-        let label = label
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| series.clone());
-        let color = parse_line_plot_color(color);
-        let line_style = line_style.map(|value| document::parse_line_plot_line_style(Some(&value)));
-        let point_count = points.len();
-        if let Some(existing) = node
-            .props
-            .line_plot_series
-            .iter_mut()
-            .find(|item| item.label.as_deref() == Some(series.as_str()))
-        {
-            existing.label = Some(label);
-            if color.is_some() {
-                existing.color = color;
+        let x_sorted = document::line_plot_points_x_sorted(&points);
+        let bounds_ms = bounds_t0.elapsed().as_secs_f64() * 1000.0;
+        let (series_count, total_points, visible_points, window_ms, count_ms) = {
+            let Some(tree) = self.widget_tree.as_mut() else {
+                return Ok(false);
+            };
+            let Some(node) = find_widget_mut(tree, id) else {
+                return Ok(false);
+            };
+            if let Some(width) = line_width {
+                node.props.line_plot_line_width = width.max(0.5);
             }
-            if let Some(line_style) = line_style.clone() {
-                existing.line_style = line_style;
+            if let Some(show_grid) = show_grid {
+                node.props.line_plot_show_grid = show_grid;
             }
-            existing.points = points;
-            existing.bounds = bounds;
-            existing.payload_format = payload_format;
-            existing.declared_point_count = Some(point_count);
-        } else {
-            node.props
+            if let Some(auto_fit) = auto_fit {
+                node.props.line_plot_auto_fit = auto_fit;
+            }
+            let label = label
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or_else(|| series.clone());
+            let color = parse_line_plot_color(color);
+            let line_style =
+                line_style.map(|value| document::parse_line_plot_line_style(Some(&value)));
+            let point_count = points.len();
+            if let Some(existing) = node
+                .props
                 .line_plot_series
-                .push(document::LinePlotSeriesProp {
-                    label: Some(label),
-                    color,
-                    line_style: line_style.unwrap_or_else(|| "solid".to_string()),
-                    points,
-                    bounds,
-                    payload_format,
-                    declared_point_count: Some(point_count),
-                });
-        }
-        apply_line_plot_window_to_node(node);
+                .iter_mut()
+                .find(|item| item.label.as_deref() == Some(series.as_str()))
+            {
+                existing.label = Some(label);
+                if color.is_some() {
+                    existing.color = color;
+                }
+                if let Some(line_style) = line_style.clone() {
+                    existing.line_style = line_style;
+                }
+                existing.points = points;
+                existing.front_offset = 0;
+                existing.rebuild_y_blocks();
+                existing.bounds = bounds;
+                existing.x_sorted = x_sorted;
+                existing.payload_format = payload_format;
+                existing.declared_point_count = Some(point_count);
+            } else {
+                let y_blocks = document::line_plot_y_blocks(&points);
+                node.props
+                    .line_plot_series
+                    .push(document::LinePlotSeriesProp {
+                        label: Some(label),
+                        color,
+                        line_style: line_style.unwrap_or_else(|| "solid".to_string()),
+                        points,
+                        front_offset: 0,
+                        y_blocks,
+                        bounds,
+                        x_sorted,
+                        payload_format,
+                        declared_point_count: Some(point_count),
+                    });
+            }
+            let window_t0 = Instant::now();
+            apply_line_plot_window_to_node(node);
+            let window_ms = window_t0.elapsed().as_secs_f64() * 1000.0;
+            let count_t0 = Instant::now();
+            let (series_count, total_points, visible_points) = line_plot_point_counts(node);
+            let count_ms = count_t0.elapsed().as_secs_f64() * 1000.0;
+            (
+                series_count,
+                total_points,
+                visible_points,
+                window_ms,
+                count_ms,
+            )
+        };
+        let metrics = self.line_plot_metrics.entry(id.to_string()).or_default();
+        metrics.updates += 1;
+        metrics.sets += 1;
+        metrics.last_operation = "set";
+        metrics.last_series = Some(series_for_metrics);
+        metrics.last_series_count = series_count;
+        metrics.last_point_count = total_points;
+        metrics.last_visible_point_count = visible_points;
+        metrics.last_appended_points = 0;
+        metrics.last_trimmed_points = trimmed_points;
+        metrics.last_payload_bytes = payload_bytes;
+        metrics.last_decode_ms = decode_ms;
+        metrics.last_bounds_ms = bounds_ms;
+        metrics.last_trim_ms = trim_ms;
+        metrics.last_window_ms = window_ms;
+        metrics.last_count_ms = count_ms;
+        metrics.last_total_native_ms = total_t0.elapsed().as_secs_f64() * 1000.0;
         Ok(true)
     }
 
@@ -8108,46 +8947,130 @@ impl WgpuState {
         if self.widget_kind(id) != Some(WidgetKind::LinePlot) {
             return Ok(false);
         }
+        let total_t0 = Instant::now();
+        let payload_bytes = xy.len();
+        let series_for_metrics = series.clone();
+        let decode_t0 = Instant::now();
         let mut points = decode_line_plot_points_bytes(&xy, payload_format)?;
+        let decode_ms = decode_t0.elapsed().as_secs_f64() * 1000.0;
+        let appended_points = points.len();
+        let bounds_t0 = Instant::now();
         let appended_bounds = document::line_plot_points_bounds(&points);
-        let Some(tree) = self.widget_tree.as_mut() else {
-            return Ok(false);
-        };
-        let Some(node) = find_widget_mut(tree, id) else {
-            return Ok(false);
-        };
-        if let Some(existing) = node
-            .props
-            .line_plot_series
-            .iter_mut()
-            .find(|item| item.label.as_deref() == Some(series.as_str()))
-        {
-            let prior_bounds = existing.bounds;
-            existing.points.append(&mut points);
-            let trimmed = limit_line_plot_points(&mut existing.points, max_points);
-            existing.bounds = if trimmed {
-                document::line_plot_points_bounds(&existing.points)
-            } else {
-                merge_line_plot_bounds(prior_bounds, appended_bounds)
+        let appended_x_sorted = document::line_plot_points_x_sorted(&points);
+        let mut bounds_ms = bounds_t0.elapsed().as_secs_f64() * 1000.0;
+        let mut trim_ms = 0.0;
+        let (series_count, total_points, visible_points, trimmed_points, window_ms, count_ms) = {
+            let Some(tree) = self.widget_tree.as_mut() else {
+                return Ok(false);
             };
-            existing.declared_point_count = Some(existing.points.len());
-        } else {
-            limit_line_plot_points(&mut points, max_points);
-            let bounds = document::line_plot_points_bounds(&points);
-            let point_count = points.len();
-            node.props
+            let Some(node) = find_widget_mut(tree, id) else {
+                return Ok(false);
+            };
+            let trimmed_points = if let Some(existing) = node
+                .props
                 .line_plot_series
-                .push(document::LinePlotSeriesProp {
-                    label: Some(series),
-                    color: None,
-                    line_style: "solid".to_string(),
-                    points,
-                    bounds,
-                    payload_format,
-                    declared_point_count: Some(point_count),
-                });
-        }
-        apply_line_plot_window_to_node(node);
+                .iter_mut()
+                .find(|item| item.label.as_deref() == Some(series.as_str()))
+            {
+                let prior_bounds = existing.bounds;
+                let combined_bounds = merge_line_plot_bounds(prior_bounds, appended_bounds);
+                let existing_logical_len = existing.logical_len();
+                let x_sorted = existing.x_sorted
+                    && appended_x_sorted
+                    && line_plot_append_preserves_x_order(existing.logical_points(), &points);
+                let old_physical_len = existing.points.len();
+                existing.points.append(&mut points);
+                existing.rebuild_y_blocks_from(old_physical_len);
+                let trimmed =
+                    line_plot_front_trim_count(existing_logical_len + appended_points, max_points);
+                existing.bounds = if trimmed > 0 {
+                    let bounds_t0 = Instant::now();
+                    let bounds = line_plot_bounds_after_front_trim(
+                        existing.logical_points(),
+                        trimmed,
+                        combined_bounds,
+                        x_sorted,
+                    );
+                    bounds_ms += bounds_t0.elapsed().as_secs_f64() * 1000.0;
+                    let trim_t0 = Instant::now();
+                    existing.front_offset = existing
+                        .front_offset
+                        .saturating_add(trimmed)
+                        .min(existing.points.len());
+                    existing.maybe_compact_front_offset();
+                    trim_ms += trim_t0.elapsed().as_secs_f64() * 1000.0;
+                    bounds
+                } else {
+                    combined_bounds
+                };
+                existing.x_sorted = x_sorted;
+                existing.declared_point_count = Some(existing.logical_len());
+                trimmed
+            } else {
+                let trimmed = line_plot_front_trim_count(points.len(), max_points);
+                let bounds = if trimmed > 0 {
+                    let bounds_t0 = Instant::now();
+                    let bounds = line_plot_bounds_after_front_trim(
+                        &points,
+                        trimmed,
+                        appended_bounds,
+                        appended_x_sorted,
+                    );
+                    bounds_ms += bounds_t0.elapsed().as_secs_f64() * 1000.0;
+                    bounds
+                } else {
+                    appended_bounds
+                };
+                let point_count = points.len().saturating_sub(trimmed);
+                let y_blocks = document::line_plot_y_blocks(&points);
+                node.props
+                    .line_plot_series
+                    .push(document::LinePlotSeriesProp {
+                        label: Some(series),
+                        color: None,
+                        line_style: "solid".to_string(),
+                        points,
+                        front_offset: trimmed,
+                        y_blocks,
+                        bounds,
+                        x_sorted: appended_x_sorted,
+                        payload_format,
+                        declared_point_count: Some(point_count),
+                    });
+                trimmed
+            };
+            let window_t0 = Instant::now();
+            apply_line_plot_window_to_node(node);
+            let window_ms = window_t0.elapsed().as_secs_f64() * 1000.0;
+            let count_t0 = Instant::now();
+            let (series_count, total_points, visible_points) = line_plot_point_counts(node);
+            let count_ms = count_t0.elapsed().as_secs_f64() * 1000.0;
+            (
+                series_count,
+                total_points,
+                visible_points,
+                trimmed_points,
+                window_ms,
+                count_ms,
+            )
+        };
+        let metrics = self.line_plot_metrics.entry(id.to_string()).or_default();
+        metrics.updates += 1;
+        metrics.appends += 1;
+        metrics.last_operation = "append";
+        metrics.last_series = Some(series_for_metrics);
+        metrics.last_series_count = series_count;
+        metrics.last_point_count = total_points;
+        metrics.last_visible_point_count = visible_points;
+        metrics.last_appended_points = appended_points;
+        metrics.last_trimmed_points = trimmed_points;
+        metrics.last_payload_bytes = payload_bytes;
+        metrics.last_decode_ms = decode_ms;
+        metrics.last_bounds_ms = bounds_ms;
+        metrics.last_trim_ms = trim_ms;
+        metrics.last_window_ms = window_ms;
+        metrics.last_count_ms = count_ms;
+        metrics.last_total_native_ms = total_t0.elapsed().as_secs_f64() * 1000.0;
         Ok(true)
     }
 
@@ -8165,14 +9088,20 @@ impl WgpuState {
             for item in &mut node.props.line_plot_series {
                 if item.label.as_deref() == Some(series.as_str()) {
                     item.points.clear();
+                    item.front_offset = 0;
+                    item.y_blocks.clear();
                     item.bounds = None;
+                    item.x_sorted = true;
                     item.declared_point_count = Some(0);
                 }
             }
         } else {
             for item in &mut node.props.line_plot_series {
                 item.points.clear();
+                item.front_offset = 0;
+                item.y_blocks.clear();
                 item.bounds = None;
+                item.x_sorted = true;
                 item.declared_point_count = Some(0);
             }
         }
@@ -8755,8 +9684,9 @@ impl WgpuState {
         let mut best: Option<(f32, LinePlotHoverProp)> = None;
         let radius = 18.0_f32;
         for series in &node.props.line_plot_series {
-            let (start, end) = line_plot_hover_x_range(&series.points, bounds, plot, pos, radius);
-            for point in &series.points[start..end] {
+            let points = series.logical_points();
+            let (start, end) = line_plot_hover_x_range(points, bounds, plot, pos, radius);
+            for point in &points[start..end] {
                 let Some(screen) = map_line_plot_point_to_screen(*point, plot, bounds) else {
                     continue;
                 };
@@ -8850,6 +9780,7 @@ impl WgpuState {
                 runtime.primary_pick_cache = None;
                 runtime.payload_status = ScatterPayloadStatus::AllNonFinite;
                 runtime.primary_hover_meta = Vec::new();
+                runtime.primary_hover_columns = Vec::new();
                 let cleared_hover_label = runtime.widget.hover_label.take().is_some();
                 runtime.data_min = glam::Vec3::ZERO;
                 runtime.data_max = glam::Vec3::ZERO;
@@ -8906,6 +9837,7 @@ impl WgpuState {
                 runtime.points.clear();
                 runtime.primary_pick_cache = None;
                 runtime.primary_hover_meta = Vec::new();
+                runtime.primary_hover_columns = Vec::new();
                 let cleared_hover_label = runtime.widget.hover_label.take().is_some();
                 runtime.data_min = data_min;
                 runtime.data_max = data_max;
@@ -8998,6 +9930,7 @@ impl WgpuState {
             runtime.primary_pick_cache = None;
             runtime.payload_status = ScatterPayloadStatus::AllNonFinite;
             runtime.primary_hover_meta = Vec::new();
+            runtime.primary_hover_columns = Vec::new();
             let cleared_hover_label = runtime.widget.hover_label.take().is_some();
             runtime.data_min = glam::Vec3::ZERO;
             runtime.data_max = glam::Vec3::ZERO;
@@ -9049,6 +9982,7 @@ impl WgpuState {
         runtime.points = decoded;
         runtime.primary_pick_cache = None;
         runtime.primary_hover_meta = Vec::new();
+        runtime.primary_hover_columns = Vec::new();
         let cleared_hover_label = runtime.widget.hover_label.take().is_some();
         runtime.data_min = data_min;
         runtime.data_max = data_max;
@@ -9448,6 +10382,55 @@ impl WgpuState {
         Value::Object(map)
     }
 
+    fn line_plot_metrics_snapshot(id: Option<&str>, metrics: &LinePlotMetrics) -> Value {
+        let mut map = Map::new();
+        if let Some(id) = id {
+            map.insert("id".to_string(), json!(id));
+        }
+        map.insert("updates".to_string(), json!(metrics.updates));
+        map.insert("appends".to_string(), json!(metrics.appends));
+        map.insert("sets".to_string(), json!(metrics.sets));
+        map.insert("last_operation".to_string(), json!(metrics.last_operation));
+        map.insert(
+            "last_series".to_string(),
+            json!(metrics.last_series.as_deref()),
+        );
+        map.insert(
+            "last_series_count".to_string(),
+            json!(metrics.last_series_count),
+        );
+        map.insert(
+            "last_point_count".to_string(),
+            json!(metrics.last_point_count),
+        );
+        map.insert(
+            "last_visible_point_count".to_string(),
+            json!(metrics.last_visible_point_count),
+        );
+        map.insert(
+            "last_appended_points".to_string(),
+            json!(metrics.last_appended_points),
+        );
+        map.insert(
+            "last_trimmed_points".to_string(),
+            json!(metrics.last_trimmed_points),
+        );
+        map.insert(
+            "last_payload_bytes".to_string(),
+            json!(metrics.last_payload_bytes),
+        );
+        map.insert("last_decode_ms".to_string(), json!(metrics.last_decode_ms));
+        map.insert("last_bounds_ms".to_string(), json!(metrics.last_bounds_ms));
+        map.insert("last_trim_ms".to_string(), json!(metrics.last_trim_ms));
+        map.insert("last_window_ms".to_string(), json!(metrics.last_window_ms));
+        map.insert("last_count_ms".to_string(), json!(metrics.last_count_ms));
+        map.insert(
+            "last_total_native_ms".to_string(),
+            json!(metrics.last_total_native_ms),
+        );
+        Value::Object(map)
+    }
+
     fn debug_snapshot_value(&self) -> Value {
         let scatter = self.visible_scatter_order.first().and_then(|id| {
             self.scatters
@@ -9459,6 +10442,51 @@ impl WgpuState {
             .iter()
             .map(|(id, rt)| (id.clone(), Self::scatter_runtime_snapshot(None, rt, true)))
             .collect::<serde_json::Map<_, _>>();
+        let line_plot = self
+            .line_plot_metrics
+            .iter()
+            .next()
+            .map(|(id, metrics)| Self::line_plot_metrics_snapshot(Some(id), metrics));
+        let line_plots = self
+            .line_plot_metrics
+            .iter()
+            .map(|(id, metrics)| (id.clone(), Self::line_plot_metrics_snapshot(None, metrics)))
+            .collect::<serde_json::Map<_, _>>();
+        let framework = json!({
+            "apply_layout": self.apply_layout_timing.json_value(),
+            "style_reapply": self.style_reapply_timing.json_value(),
+            "transition_sync": self.transition_sync_timing.json_value(),
+            "layout_compute": self.layout_compute_timing.json_value(),
+            "container_style": self.container_style_timing.json_value(),
+            "scatter_layout": self.scatter_layout_timing.json_value(),
+            "image_rebuild": self.image_rebuild_timing.json_value(),
+            "text_rebuild": self.text_rebuild_timing.json_value(),
+            "primitive_rebuild": self.primitive_rebuild_timing.json_value(),
+            "line_plot_rebuild": self.line_plot_rebuild_timing.json_value(),
+            "rebuild_text": self.rebuild_text_timing.json_value(),
+            "rebuild_primitives": self.rebuild_primitives_timing.json_value(),
+            "rebuild_visuals": self.rebuild_visuals_timing.json_value(),
+            "replace_node_parse": self.replace_node_parse_timing.json_value(),
+            "replace_node_swap": self.replace_node_swap_timing.json_value(),
+            "replace_node_maps": self.replace_node_maps_timing.json_value(),
+            "replace_children_parse": self.replace_children_parse_timing.json_value(),
+            "replace_children_swap": self.replace_children_swap_timing.json_value(),
+            "replace_children_maps": self.replace_children_maps_timing.json_value(),
+            "retained_maps": self.retained_maps_timing.json_value(),
+            "retained_widget_kinds": self.retained_widget_kinds_timing.json_value(),
+            "retained_resources": self.retained_resources_timing.json_value(),
+            "retained_widget_state": self.retained_widget_state_timing.json_value(),
+            "retained_state_preserve": self.retained_state_preserve_timing.json_value(),
+            "retained_scatter_sync": self.retained_scatter_sync_timing.json_value(),
+            "retained_scatter_collect": self.retained_scatter_collect_timing.json_value(),
+            "retained_scatter_retain": self.retained_scatter_retain_timing.json_value(),
+            "retained_scatter_new_widget": self.retained_scatter_new_widget_timing.json_value(),
+            "retained_scatter_decode": self.retained_scatter_decode_timing.json_value(),
+            "retained_scatter_upload": self.retained_scatter_upload_timing.json_value(),
+            "retained_scatter_chrome": self.retained_scatter_chrome_timing.json_value(),
+            "prewarm_scatter_widgets": self.prewarm_scatter_widget_timing.json_value(),
+            "retained_line_plot_sync": self.retained_line_plot_sync_timing.json_value(),
+        });
         json!({
             "window": {
                 "width": self.config.width,
@@ -9484,19 +10512,79 @@ impl WgpuState {
             "toasts": self.toast_snapshot(),
             "renderer": {
                 "surface_format": format!("{:?}", self.config.format),
+                "present_mode": surface_present_mode_name(self.config.present_mode),
+                "present_mode_env": self.present_mode_env.as_deref(),
+                "supported_present_modes": &self.supported_present_modes,
+                "desired_maximum_frame_latency": self.config.desired_maximum_frame_latency,
                 "has_primitives": self.primitives.is_some(),
+                "primitives": self.primitives.as_ref().map(|prims| {
+                    let stats = prims.stats();
+                    json!({
+                        "split_enabled": stats.split_enabled,
+                        "split_collapsed": stats.split_collapsed,
+                        "rect_count": stats.rect_count,
+                        "simple_count": stats.simple_count,
+                        "line_count": stats.line_count,
+                        "complex_count": stats.complex_count,
+                        "base_batches": stats.base_batches,
+                        "overlay_batches": stats.overlay_batches,
+                        "simple_batches": stats.simple_batches,
+                        "line_batches": stats.line_batches,
+                        "complex_batches": stats.complex_batches,
+                        "source_bytes": stats.source_bytes,
+                        "simple_bytes": stats.simple_bytes,
+                        "line_bytes": stats.line_bytes,
+                        "complex_bytes": stats.complex_bytes,
+                        "buffer_bytes": stats.buffer_bytes,
+                        "last_emit_ms": stats.last_emit_ms,
+                        "last_split_ms": stats.last_split_ms,
+                        "last_upload_ms": stats.last_upload_ms,
+                        "last_base_encode_ms": self.last_primitive_base_encode_ms,
+                        "last_overlay_encode_ms": self.last_primitive_overlay_encode_ms,
+                    })
+                }),
+                "line_plot_renderer": self.line_plots.as_ref().map(|line_plots| {
+                    let stats = line_plots.stats();
+                    let decimation_mode = match stats.decimation_mode {
+                        1 => "auto",
+                        2 => "extrema",
+                        _ => "off",
+                    };
+                    json!({
+                        "enabled": stats.enabled,
+                        "aa_width": stats.aa_width,
+                        "max_segments_per_series": stats.max_segments_per_series,
+                        "decimation_mode": decimation_mode,
+                        "series_count": stats.series_count,
+                        "source_point_count": stats.source_point_count,
+                        "decimated_series_count": stats.decimated_series_count,
+                        "point_count": stats.point_count,
+                        "segment_count": stats.segment_count,
+                        "point_bytes": stats.point_bytes,
+                        "series_bytes": stats.series_bytes,
+                        "buffer_bytes": stats.buffer_bytes,
+                        "last_decimate_ms": stats.last_decimate_ms,
+                        "last_emit_ms": stats.last_emit_ms,
+                        "last_upload_ms": stats.last_upload_ms,
+                        "last_encode_ms": self.last_line_plot_encode_ms,
+                    })
+                }),
                 "has_text": self.text.is_some(),
                 "html_reports": self.html_reports.snapshot(),
                 "font_warnings": self.text.as_ref().map(|text| text.font_warnings()).unwrap_or(&[]),
                 "has_scatter": !self.scatters.is_empty(),
                 "scatter_widget_id": self.visible_scatter_order.first().map(|s| s.as_str()),
                 "scatter_count": self.scatters.len(),
+                "scatter_widget_pool": self.scatter_widget_pool.len(),
                 "widget_count": self.widget_kinds.len(),
                 "caret_positions": &self.caret_positions,
             },
+            "framework": framework,
             "resources": {
                 "scatter": scatter,
                 "scatters": scatters,
+                "line_plot": line_plot,
+                "line_plots": line_plots,
                 "registry": self.resources.snapshot(),
                 "tables": {
                     "widgets": self.widget_state.as_ref().map(|state| state.tables.len()).unwrap_or(0),
@@ -10050,6 +11138,9 @@ impl WgpuState {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("dragongui-frame"),
             });
+        let mut primitive_base_encode_ms = 0.0;
+        let mut primitive_overlay_encode_ms = 0.0;
+        let mut line_plot_encode_ms = 0.0;
 
         // Pass 1: base primitives and images — clear color and depth.
         {
@@ -10086,7 +11177,14 @@ impl WgpuState {
                 multiview_mask: None,
             });
             if let Some(prims) = &self.primitives {
+                let prim_t0 = Instant::now();
                 prims.render_base(&mut pass);
+                primitive_base_encode_ms = prim_t0.elapsed().as_secs_f64() * 1000.0;
+            }
+            if let Some(line_plots) = &self.line_plots {
+                let line_t0 = Instant::now();
+                line_plots.render(&mut pass);
+                line_plot_encode_ms = line_t0.elapsed().as_secs_f64() * 1000.0;
             }
             if let Some(images) = &self.images {
                 images.render(&mut pass);
@@ -10265,12 +11363,17 @@ impl WgpuState {
                 t.render_base(&mut pass);
             }
             if let Some(prims) = &self.primitives {
+                let prim_t0 = Instant::now();
                 prims.render_overlays(&mut pass);
+                primitive_overlay_encode_ms = prim_t0.elapsed().as_secs_f64() * 1000.0;
             }
             if let Some(t) = &self.text {
                 t.render_overlays(&mut pass);
             }
         }
+        self.last_primitive_base_encode_ms = primitive_base_encode_ms;
+        self.last_primitive_overlay_encode_ms = primitive_overlay_encode_ms;
+        self.last_line_plot_encode_ms = line_plot_encode_ms;
         timings.encode_ms = encode_t0.elapsed().as_secs_f64() * 1000.0;
 
         let submit_t0 = Instant::now();
@@ -10419,6 +11522,7 @@ struct RuntimeCommandRecord {
     command: String,
     target: Option<String>,
     detail: Option<String>,
+    elapsed_ms: Option<f64>,
     dirty: Option<Dirty>,
     outcome: String,
     requested_redraw: bool,
@@ -10432,6 +11536,7 @@ impl RuntimeCommandRecord {
             "command": self.command,
             "target": self.target,
             "detail": self.detail,
+            "elapsed_ms": self.elapsed_ms,
             "dirty": self.dirty.map(dirty_name),
             "outcome": self.outcome,
             "requested_redraw": self.requested_redraw,
@@ -10483,6 +11588,12 @@ struct DragonApp {
     frames_rendered: u32,
     upload_ms: f64,
     frame_ms_total: f64,
+    frame_work_ms_total: f64,
+    frame_prepare_ms_total: f64,
+    frame_acquire_ms_total: f64,
+    frame_encode_ms_total: f64,
+    frame_submit_ms_total: f64,
+    frame_present_ms_total: f64,
     last_frame_ms: f64,
     last_frame_work_ms: f64,
     last_frame_prepare_ms: f64,
@@ -10530,6 +11641,16 @@ struct DragonApp {
     scatter_upload_redraw_pending: bool,
     command_seq: u64,
     command_history: VecDeque<RuntimeCommandRecord>,
+    command_timings: HashMap<String, StageTimingStats>,
+    active_command_start: Option<Instant>,
+    command_drain_timing: StageTimingStats,
+    command_drain_fetch_timing: StageTimingStats,
+    command_drain_coalesce_timing: StageTimingStats,
+    command_drain_apply_timing: StageTimingStats,
+    command_drain_flush_timing: StageTimingStats,
+    last_command_drain_batches: u64,
+    last_command_drain_commands: u64,
+    last_command_drain_pending: u64,
     startup_real_redraw_deadline: Option<Instant>,
 }
 
@@ -10548,6 +11669,12 @@ impl DragonApp {
             frames_rendered: 0,
             upload_ms: 0.0,
             frame_ms_total: 0.0,
+            frame_work_ms_total: 0.0,
+            frame_prepare_ms_total: 0.0,
+            frame_acquire_ms_total: 0.0,
+            frame_encode_ms_total: 0.0,
+            frame_submit_ms_total: 0.0,
+            frame_present_ms_total: 0.0,
             last_frame_ms: 0.0,
             last_frame_work_ms: 0.0,
             last_frame_prepare_ms: 0.0,
@@ -10579,6 +11706,16 @@ impl DragonApp {
             scatter_upload_redraw_pending: false,
             command_seq: 0,
             command_history: VecDeque::with_capacity(COMMAND_HISTORY_LIMIT),
+            command_timings: HashMap::new(),
+            active_command_start: None,
+            command_drain_timing: StageTimingStats::default(),
+            command_drain_fetch_timing: StageTimingStats::default(),
+            command_drain_coalesce_timing: StageTimingStats::default(),
+            command_drain_apply_timing: StageTimingStats::default(),
+            command_drain_flush_timing: StageTimingStats::default(),
+            last_command_drain_batches: 0,
+            last_command_drain_commands: 0,
+            last_command_drain_pending: 0,
             startup_real_redraw_deadline: None,
         }
     }
@@ -10601,14 +11738,21 @@ impl DragonApp {
     }
 
     fn record_frame_telemetry(&mut self, timings: FrameRenderTimings) {
+        let work_ms = timings.work_ms();
         self.last_frame_ms = timings.total_ms;
-        self.last_frame_work_ms = timings.work_ms();
+        self.last_frame_work_ms = work_ms;
         self.last_frame_prepare_ms = timings.prepare_ms;
         self.last_frame_acquire_ms = timings.acquire_ms;
         self.last_frame_encode_ms = timings.encode_ms;
         self.last_frame_submit_ms = timings.submit_ms;
         self.last_frame_present_ms = timings.present_ms;
         self.frame_ms_total += timings.total_ms;
+        self.frame_work_ms_total += work_ms;
+        self.frame_prepare_ms_total += timings.prepare_ms;
+        self.frame_acquire_ms_total += timings.acquire_ms;
+        self.frame_encode_ms_total += timings.encode_ms;
+        self.frame_submit_ms_total += timings.submit_ms;
+        self.frame_present_ms_total += timings.present_ms;
         self.frames_rendered += 1;
 
         let now = Instant::now();
@@ -10662,6 +11806,16 @@ impl DragonApp {
         outcome: &str,
         requested_redraw: bool,
     ) -> bool {
+        let elapsed_ms = self
+            .active_command_start
+            .take()
+            .map(|start| start.elapsed().as_secs_f64() * 1000.0);
+        if let Some(elapsed_ms) = elapsed_ms {
+            self.command_timings
+                .entry(command.to_string())
+                .or_default()
+                .record(elapsed_ms);
+        }
         self.command_seq += 1;
         if self.command_history.len() == COMMAND_HISTORY_LIMIT {
             self.command_history.pop_front();
@@ -10672,6 +11826,7 @@ impl DragonApp {
             command: command.to_string(),
             target,
             detail,
+            elapsed_ms,
             dirty,
             outcome: outcome.to_string(),
             requested_redraw,
@@ -10707,8 +11862,16 @@ impl DragonApp {
     }
 
     fn debug_snapshot_value(&self) -> Value {
+        let frame_count = self.frames_rendered as f64;
+        let avg = |total: f64| {
+            if frame_count > 0.0 {
+                total / frame_count
+            } else {
+                0.0
+            }
+        };
         let frame_ms = if self.frames_rendered > 0 {
-            self.frame_ms_total / self.frames_rendered as f64
+            avg(self.frame_ms_total)
         } else {
             0.0
         };
@@ -10717,6 +11880,11 @@ impl DragonApp {
             .as_ref()
             .map(|bridge| bridge.len())
             .unwrap_or(0);
+        let command_timings = self
+            .command_timings
+            .iter()
+            .map(|(command, stats)| (command.clone(), stats.json_value()))
+            .collect::<Map<_, _>>();
         json!({
             "schema": 1,
             "runtime": {
@@ -10729,14 +11897,31 @@ impl DragonApp {
                 "last_frame_ms": self.last_frame_ms,
                 "cpu_frame_ms": self.last_frame_ms,
                 "frame_work_ms": self.last_frame_work_ms,
+                "frame_work_ms_avg": avg(self.frame_work_ms_total),
                 "frame_prepare_ms": self.last_frame_prepare_ms,
+                "frame_prepare_ms_avg": avg(self.frame_prepare_ms_total),
                 "frame_acquire_ms": self.last_frame_acquire_ms,
+                "frame_acquire_ms_avg": avg(self.frame_acquire_ms_total),
                 "frame_encode_ms": self.last_frame_encode_ms,
+                "frame_encode_ms_avg": avg(self.frame_encode_ms_total),
                 "frame_submit_ms": self.last_frame_submit_ms,
+                "frame_submit_ms_avg": avg(self.frame_submit_ms_total),
                 "frame_present_ms": self.last_frame_present_ms,
+                "frame_present_ms_avg": avg(self.frame_present_ms_total),
                 "wall_fps": self.wall_fps(),
                 "frame_window_count": self.frame_timestamps.len(),
                 "command_queue_depth": queue_depth,
+                "command_drain": {
+                    "timing": self.command_drain_timing.json_value(),
+                    "fetch": self.command_drain_fetch_timing.json_value(),
+                    "coalesce": self.command_drain_coalesce_timing.json_value(),
+                    "apply": self.command_drain_apply_timing.json_value(),
+                    "flush_rebuilds": self.command_drain_flush_timing.json_value(),
+                    "last_batches": self.last_command_drain_batches,
+                    "last_commands": self.last_command_drain_commands,
+                    "last_pending": self.last_command_drain_pending,
+                },
+                "command_timings": command_timings,
                 "loading_screen": self.gpu.as_ref().map(|gpu| {
                     let loading = &gpu.loading_screen;
                     json!({
@@ -10879,25 +12064,39 @@ impl DragonApp {
         let mut request_redraw = false;
         let mut commands = Vec::new();
         let mut batches = 0_usize;
+        let mut command_count = 0_usize;
+        let mut fetch_ms = 0.0;
+        let mut coalesce_ms = 0.0;
+        let mut apply_ms = 0.0;
+        let mut flush_ms = 0.0;
         let drain_start = Instant::now();
         loop {
             commands.clear();
+            let fetch_t0 = Instant::now();
             bridge.drain_limited_into(&mut commands, MAX_COMMANDS_PER_DRAIN_BATCH);
+            fetch_ms += fetch_t0.elapsed().as_secs_f64() * 1000.0;
+            let coalesce_t0 = Instant::now();
             coalesce_runtime_command_batch(&mut commands);
+            coalesce_ms += coalesce_t0.elapsed().as_secs_f64() * 1000.0;
             if commands.is_empty() {
                 break;
             }
+            command_count += commands.len();
             let batch_had_scatter_points = commands.iter().any(command_is_coalesced_scatter_points);
             batches += 1;
             if let Some(gpu) = self.gpu.as_mut() {
                 gpu.begin_deferred_rebuilds();
             }
+            let apply_t0 = Instant::now();
             for command in commands.drain(..) {
                 request_redraw |= self.apply_runtime_command(command);
             }
+            apply_ms += apply_t0.elapsed().as_secs_f64() * 1000.0;
+            let flush_t0 = Instant::now();
             if let Some(gpu) = self.gpu.as_mut() {
                 request_redraw |= gpu.flush_deferred_rebuilds();
             }
+            flush_ms += flush_t0.elapsed().as_secs_f64() * 1000.0;
             if batch_had_scatter_points {
                 if request_redraw {
                     self.scatter_upload_redraw_pending = true;
@@ -10924,6 +12123,15 @@ impl DragonApp {
         }
 
         request_redraw |= self.flush_deferred_popup_commands();
+        self.command_drain_timing
+            .record(drain_start.elapsed().as_secs_f64() * 1000.0);
+        self.command_drain_fetch_timing.record(fetch_ms);
+        self.command_drain_coalesce_timing.record(coalesce_ms);
+        self.command_drain_apply_timing.record(apply_ms);
+        self.command_drain_flush_timing.record(flush_ms);
+        self.last_command_drain_batches = batches as u64;
+        self.last_command_drain_commands = command_count as u64;
+        self.last_command_drain_pending = bridge.len() as u64;
 
         if request_redraw {
             self.request_redraw();
@@ -10935,6 +12143,7 @@ impl DragonApp {
             Ok(deferred) => return deferred,
             Err(command) => command,
         };
+        self.active_command_start = Some(Instant::now());
         match command {
             Command::DrainPythonTasks => {
                 let mut outcome = "applied";
@@ -11069,7 +12278,8 @@ impl DragonApp {
                     };
                     match gpu.apply_replace_children(&id, &children_json) {
                         Ok(true) => {
-                            gpu.reapply_stylesheets();
+                            gpu.cancel_hover_transitions();
+                            gpu.mark_styles_dirty();
                             gpu.apply_layout();
                             (Some(Dirty::Full), "applied".to_string(), true)
                         }
@@ -11109,7 +12319,8 @@ impl DragonApp {
                     };
                     match gpu.apply_replace_node(&id, &node_json) {
                         Ok(true) => {
-                            gpu.reapply_stylesheets();
+                            gpu.cancel_hover_transitions();
+                            gpu.mark_styles_dirty();
                             gpu.apply_layout();
                             (Some(Dirty::Full), "applied".to_string(), true)
                         }
@@ -11132,6 +12343,31 @@ impl DragonApp {
                     dirty,
                     &outcome,
                     redraw,
+                )
+            }
+            Command::PrewarmScatterWidgets { count } => {
+                let detail = Some(format!("count={count}"));
+                let outcome = {
+                    let Some(gpu) = &mut self.gpu else {
+                        return self.record_runtime_command(
+                            "PrewarmScatterWidgets",
+                            None,
+                            detail,
+                            None,
+                            "gpu_not_ready",
+                            false,
+                        );
+                    };
+                    let created = gpu.prewarm_scatter_widgets(count);
+                    format!("created={created}, pool={}", gpu.scatter_widget_pool.len())
+                };
+                self.record_runtime_command(
+                    "PrewarmScatterWidgets",
+                    None,
+                    detail,
+                    None,
+                    &outcome,
+                    false,
                 )
             }
             Command::SetScatterPointsPacked {
@@ -11345,11 +12581,9 @@ impl DragonApp {
                     let Some(rt) = gpu.scatters.get_mut(&id) else {
                         return false;
                     };
-                    if let Ok(values) = serde_json::from_str::<Vec<serde_json::Value>>(&meta) {
-                        rt.primary_hover_meta = values
-                            .iter()
-                            .map(|v| v.as_str().unwrap_or("").to_string())
-                            .collect();
+                    if let Some(values) = decode_hover_meta_lines(&meta) {
+                        rt.primary_hover_meta = values;
+                        rt.primary_hover_columns.clear();
                     }
                     true
                 });
@@ -11359,6 +12593,30 @@ impl DragonApp {
                     None,
                     None,
                     if ok { "ok" } else { "no-op: scatter not found" },
+                    false,
+                )
+            }
+            Command::SetScatterPrimaryHoverColumns { id, columns } => {
+                let outcome = match self.gpu.as_mut() {
+                    Some(gpu) => match gpu.scatters.get_mut(&id) {
+                        Some(rt) => match decode_scatter_hover_columns(columns) {
+                            Ok(decoded) => {
+                                rt.primary_hover_columns = decoded;
+                                rt.primary_hover_meta.clear();
+                                "ok".to_string()
+                            }
+                            Err(err) => format!("error: {err}"),
+                        },
+                        None => "no-op: scatter not found".to_string(),
+                    },
+                    None => "gpu_not_ready".to_string(),
+                };
+                self.record_runtime_command(
+                    "SetScatterPrimaryHoverColumns",
+                    Some(id),
+                    None,
+                    None,
+                    &outcome,
                     false,
                 )
             }
@@ -12514,6 +13772,7 @@ impl DragonApp {
                     // Clear hover state.
                     rt.widget.hover_label = None;
                     rt.primary_hover_meta.clear();
+                    rt.primary_hover_columns.clear();
                     rt.primary_pick_cache = None;
                     rt.fitted_once = false;
                     // Clear transient selection/LOD state.
@@ -15374,19 +16633,26 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                             lz,
                                             format_4g(pt.position[2]),
                                         );
-                                        let meta_text = if actor_id == 0 {
-                                            rt.primary_hover_meta
-                                                .get(idx)
-                                                .filter(|s| !s.is_empty())
-                                                .cloned()
-                                        } else {
-                                            rt.widget
-                                                .extra_actors
-                                                .get(&actor_id)
-                                                .and_then(|a| a.hover_meta.get(idx))
-                                                .filter(|s| !s.is_empty())
-                                                .cloned()
-                                        };
+                                        let meta_text =
+                                            if actor_id == 0 {
+                                                format_scatter_hover_columns(
+                                                    &rt.primary_hover_columns,
+                                                    idx,
+                                                )
+                                                .or_else(|| {
+                                                    rt.primary_hover_meta
+                                                        .get(idx)
+                                                        .filter(|s| !s.is_empty())
+                                                        .cloned()
+                                                })
+                                            } else {
+                                                rt.widget
+                                                    .extra_actors
+                                                    .get(&actor_id)
+                                                    .and_then(|a| a.hover_meta.get(idx))
+                                                    .filter(|s| !s.is_empty())
+                                                    .cloned()
+                                            };
                                         let text = match meta_text {
                                             Some(fields) => format!("{coord_line}\n{fields}"),
                                             None => coord_line,

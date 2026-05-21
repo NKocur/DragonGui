@@ -60,3 +60,5 @@ Suggested order:
 29. `pie_chart_probe.py` - PieChart direct values, donut mode, frame aggregation, top-N grouping, colors, legends, and slice labels.
 30. `scatter3d_css_chrome_probe.py` - Scatter3D CSS grid visibility, grid planes, legend position, orientation axes, point size, and point style.
 31. `container_queries_probe.py` - first-slice named `@container` width queries with `container-type: inline-size`.
+32. `primitive_benchmark_probe.py` - dense primitive rect rendering benchmark with split-path diagnostics.
+33. `line_plot_stream_benchmark_probe.py` - LinePlot append streaming benchmark with native, primitive, decimation, and dedicated line renderer diagnostics.

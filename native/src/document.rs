@@ -115,9 +115,69 @@ pub struct LinePlotSeriesProp {
     pub color: Option<ColorRef>,
     pub line_style: String,
     pub points: Vec<[f32; 2]>,
+    pub front_offset: usize,
+    pub y_blocks: Vec<LinePlotYBlock>,
     pub bounds: Option<[f32; 4]>,
+    pub x_sorted: bool,
     pub payload_format: LinePlotPayloadFormat,
     pub declared_point_count: Option<usize>,
+}
+
+pub(crate) const LINE_PLOT_Y_BLOCK_SIZE: usize = 512;
+
+#[derive(Debug, Clone, Copy)]
+pub struct LinePlotYBlock {
+    pub y_min: f32,
+    pub y_max: f32,
+}
+
+impl LinePlotSeriesProp {
+    pub(crate) fn logical_points(&self) -> &[[f32; 2]] {
+        let start = self.front_offset.min(self.points.len());
+        &self.points[start..]
+    }
+
+    pub(crate) fn logical_len(&self) -> usize {
+        self.points
+            .len()
+            .saturating_sub(self.front_offset.min(self.points.len()))
+    }
+
+    pub(crate) fn maybe_compact_front_offset(&mut self) -> usize {
+        let logical_len = self.logical_len();
+        let threshold = logical_len.max(4096);
+        if self.front_offset < threshold {
+            return 0;
+        }
+        let drained = self.front_offset.min(self.points.len());
+        self.points.drain(0..drained);
+        self.front_offset = 0;
+        self.rebuild_y_blocks();
+        drained
+    }
+
+    pub(crate) fn rebuild_y_blocks(&mut self) {
+        self.y_blocks = line_plot_y_blocks(&self.points);
+    }
+
+    pub(crate) fn rebuild_y_blocks_from(&mut self, physical_start: usize) {
+        let first_dirty_block = physical_start.min(self.points.len()) / LINE_PLOT_Y_BLOCK_SIZE;
+        self.y_blocks.truncate(first_dirty_block);
+        let start = first_dirty_block * LINE_PLOT_Y_BLOCK_SIZE;
+        for chunk in self.points[start..].chunks(LINE_PLOT_Y_BLOCK_SIZE) {
+            self.y_blocks.push(line_plot_y_block(chunk));
+        }
+    }
+
+    pub(crate) fn logical_y_bounds(&self, start: usize, end: usize) -> Option<[f32; 2]> {
+        if start >= end {
+            return None;
+        }
+        let base = self.front_offset.min(self.points.len());
+        let physical_start = base.saturating_add(start).min(self.points.len());
+        let physical_end = base.saturating_add(end).min(self.points.len());
+        line_plot_y_range_bounds(&self.points, &self.y_blocks, physical_start, physical_end)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -345,6 +405,8 @@ fn parse_line_plot_series_item(value: &serde_json::Value) -> Option<LinePlotSeri
         })
         .unwrap_or_default();
     let bounds = line_plot_points_bounds(&points);
+    let x_sorted = line_plot_points_x_sorted(&points);
+    let y_blocks = line_plot_y_blocks(&points);
     Some(LinePlotSeriesProp {
         label: obj
             .get("label")
@@ -354,7 +416,10 @@ fn parse_line_plot_series_item(value: &serde_json::Value) -> Option<LinePlotSeri
         color: parse_color_ref(obj.get("color")),
         line_style: parse_line_plot_line_style(obj.get("line_style").and_then(Value::as_str)),
         points,
+        front_offset: 0,
+        y_blocks,
         bounds,
+        x_sorted,
         payload_format,
         declared_point_count: obj
             .get("points")
@@ -380,6 +445,89 @@ pub(crate) fn line_plot_points_bounds(points: &[[f32; 2]]) -> Option<[f32; 4]> {
         has_point = true;
     }
     has_point.then_some([x_min, x_max, y_min, y_max])
+}
+
+pub(crate) fn line_plot_y_blocks(points: &[[f32; 2]]) -> Vec<LinePlotYBlock> {
+    points
+        .chunks(LINE_PLOT_Y_BLOCK_SIZE)
+        .map(line_plot_y_block)
+        .collect()
+}
+
+fn line_plot_y_block(points: &[[f32; 2]]) -> LinePlotYBlock {
+    let mut y_min = f32::INFINITY;
+    let mut y_max = f32::NEG_INFINITY;
+    for [_, y] in points {
+        if y.is_finite() {
+            y_min = y_min.min(*y);
+            y_max = y_max.max(*y);
+        }
+    }
+    LinePlotYBlock { y_min, y_max }
+}
+
+pub(crate) fn line_plot_y_range_bounds(
+    points: &[[f32; 2]],
+    y_blocks: &[LinePlotYBlock],
+    start: usize,
+    end: usize,
+) -> Option<[f32; 2]> {
+    if start >= end || start >= points.len() {
+        return None;
+    }
+    let end = end.min(points.len());
+    let mut cursor = start;
+    let mut y_min = f32::INFINITY;
+    let mut y_max = f32::NEG_INFINITY;
+
+    while cursor < end && cursor % LINE_PLOT_Y_BLOCK_SIZE != 0 {
+        let [_, y] = points[cursor];
+        if y.is_finite() {
+            y_min = y_min.min(y);
+            y_max = y_max.max(y);
+        }
+        cursor += 1;
+    }
+
+    while cursor + LINE_PLOT_Y_BLOCK_SIZE <= end {
+        let block_index = cursor / LINE_PLOT_Y_BLOCK_SIZE;
+        if let Some(block) = y_blocks.get(block_index) {
+            if block.y_min.is_finite() && block.y_max.is_finite() {
+                y_min = y_min.min(block.y_min);
+                y_max = y_max.max(block.y_max);
+            }
+            cursor += LINE_PLOT_Y_BLOCK_SIZE;
+        } else {
+            break;
+        }
+    }
+
+    while cursor < end {
+        let [_, y] = points[cursor];
+        if y.is_finite() {
+            y_min = y_min.min(y);
+            y_max = y_max.max(y);
+        }
+        cursor += 1;
+    }
+
+    y_min.is_finite().then_some([y_min, y_max])
+}
+
+pub(crate) fn line_plot_points_x_sorted(points: &[[f32; 2]]) -> bool {
+    let mut previous = None;
+    for [x, _] in points {
+        if !x.is_finite() {
+            return false;
+        }
+        if let Some(previous) = previous {
+            if *x < previous {
+                return false;
+            }
+        }
+        previous = Some(*x);
+    }
+    true
 }
 
 fn parse_f32_vec(v: Option<&serde_json::Value>) -> Vec<f32> {
@@ -1788,6 +1936,43 @@ mod tests {
         assert_eq!(tree.style_json.get("background").unwrap(), "surface");
         assert_eq!(tree.style.layout.width, Some(320.0));
         assert!(tree.style.hover.background.is_some());
+    }
+
+    #[test]
+    fn line_plot_y_range_bounds_uses_cached_full_blocks_and_edge_scans() {
+        let mut points: Vec<[f32; 2]> = (0..1500).map(|i| [i as f32, (i % 17) as f32]).collect();
+        points[20][1] = -9.0;
+        points[777][1] = 42.0;
+        points[1200][1] = f32::NAN;
+        let y_blocks = line_plot_y_blocks(&points);
+
+        assert_eq!(
+            line_plot_y_range_bounds(&points, &y_blocks, 10, 1300),
+            Some([-9.0, 42.0])
+        );
+    }
+
+    #[test]
+    fn line_plot_series_logical_y_bounds_respects_front_offset() {
+        let points: Vec<[f32; 2]> = (0..1400)
+            .map(|i| [i as f32, if i == 720 { -12.0 } else { 1.0 }])
+            .collect();
+        let mut series = LinePlotSeriesProp {
+            label: Some("value".to_string()),
+            color: None,
+            line_style: "solid".to_string(),
+            y_blocks: line_plot_y_blocks(&points),
+            points,
+            front_offset: 600,
+            bounds: None,
+            x_sorted: true,
+            payload_format: LinePlotPayloadFormat::default(),
+            declared_point_count: None,
+        };
+
+        assert_eq!(series.logical_y_bounds(0, 200), Some([-12.0, 1.0]));
+        series.front_offset = 800;
+        assert_eq!(series.logical_y_bounds(0, 200), Some([1.0, 1.0]));
     }
 
     #[test]

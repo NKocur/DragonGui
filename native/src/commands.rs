@@ -74,6 +74,9 @@ pub enum Command {
         id: String,
         node_json: String,
     },
+    PrewarmScatterWidgets {
+        count: usize,
+    },
     SetScatterPointsPacked {
         id: String,
         xyz: Vec<u8>,
@@ -116,6 +119,10 @@ pub enum Command {
         id: String,
         /// JSON array of per-point tooltip strings for the primary buffer.
         meta: String,
+    },
+    SetScatterPrimaryHoverColumns {
+        id: String,
+        columns: Vec<ScatterHoverColumnPacket>,
     },
     SetScatterTooltipAxisLabels {
         id: String,
@@ -514,6 +521,14 @@ pub struct ScatterTelemetry {
 pub struct TableColumnPacket {
     pub name: String,
     pub dtype: String,
+    pub bytes: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScatterHoverColumnPacket {
+    pub name: String,
+    pub dtype: String,
+    pub len: usize,
     pub bytes: Vec<u8>,
 }
 
@@ -975,6 +990,12 @@ impl NativeCommandSender {
             ));
         }
         self.enqueue(Command::ReplaceNode { id, node_json })
+    }
+
+    fn enqueue_prewarm_scatter_widgets(&self, count: usize) -> PyResult<()> {
+        self.enqueue(Command::PrewarmScatterWidgets {
+            count: count.min(64),
+        })
     }
 
     fn enqueue_invalidate(&self, id: String, dirty: String) -> PyResult<()> {
@@ -1713,6 +1734,45 @@ impl NativeCommandSender {
     #[pyo3(signature = (id, meta))]
     fn enqueue_set_scatter_primary_hover_meta(&self, id: String, meta: String) -> PyResult<()> {
         self.enqueue(Command::SetScatterPrimaryHoverMeta { id, meta })
+    }
+
+    fn enqueue_set_scatter_primary_hover_columns(
+        &self,
+        id: String,
+        columns_json: String,
+        buffers: &Bound<'_, PyAny>,
+    ) -> PyResult<()> {
+        let metadata: serde_json::Value = serde_json::from_str(&columns_json).map_err(|e| {
+            PyValueError::new_err(format!("invalid scatter hover columns JSON: {e}"))
+        })?;
+        let metadata = metadata.as_array().ok_or_else(|| {
+            PyTypeError::new_err("scatter hover column metadata must serialize to a JSON array")
+        })?;
+        let buffers = byte_buffers_from_py_iterable(buffers, "scatter hover column buffer")?;
+        if metadata.len() != buffers.len() {
+            return Err(PyValueError::new_err(
+                "scatter hover column metadata and buffer counts must match",
+            ));
+        }
+        let mut columns = Vec::with_capacity(metadata.len());
+        for (meta, bytes) in metadata.iter().zip(buffers) {
+            let name = meta.get("name").and_then(|v| v.as_str()).ok_or_else(|| {
+                PyValueError::new_err("scatter hover column metadata requires name")
+            })?;
+            let dtype = meta.get("dtype").and_then(|v| v.as_str()).ok_or_else(|| {
+                PyValueError::new_err("scatter hover column metadata requires dtype")
+            })?;
+            let len = meta.get("len").and_then(|v| v.as_u64()).ok_or_else(|| {
+                PyValueError::new_err("scatter hover column metadata requires len")
+            })? as usize;
+            columns.push(ScatterHoverColumnPacket {
+                name: name.to_string(),
+                dtype: dtype.to_string(),
+                len,
+                bytes,
+            });
+        }
+        self.enqueue(Command::SetScatterPrimaryHoverColumns { id, columns })
     }
 
     #[pyo3(signature = (id, x, y, z))]

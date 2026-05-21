@@ -22,6 +22,24 @@ _active_app_handle: AppHandle | None = None
 _active_app_lock = RLock()
 
 
+def _callable_label(fn: Callable[[], None]) -> str:
+    name = getattr(fn, "__qualname__", None) or getattr(fn, "__name__", None)
+    if name:
+        module = getattr(fn, "__module__", None)
+        return f"{module}.{name}" if module and module != "__main__" else str(name)
+    return type(fn).__name__
+
+
+def _record_timing_stat(bucket: dict[str, Any], elapsed_ms: float) -> None:
+    count = int(bucket.get("count", 0)) + 1
+    total = float(bucket.get("total_ms", 0.0)) + elapsed_ms
+    bucket["count"] = count
+    bucket["last_ms"] = elapsed_ms
+    bucket["total_ms"] = total
+    bucket["avg_ms"] = total / count
+    bucket["max_ms"] = max(float(bucket.get("max_ms", 0.0)), elapsed_ms)
+
+
 class _ScheduledPythonTask:
     __slots__ = ("fn", "origin", "diagnostics")
 
@@ -478,6 +496,14 @@ class LiveWidgetHandle:
         self.ensure_open()
         self.app.enqueue_set_scatter_primary_hover_meta(self.id, meta)
 
+    def enqueue_set_scatter_primary_hover_columns(
+        self,
+        columns_json: str,
+        buffers: object,
+    ) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_scatter_primary_hover_columns(self.id, columns_json, buffers)
+
     def enqueue_set_scatter_tooltip_axis_labels(self, x: str, y: str, z: str) -> None:
         self.ensure_open()
         self.app.enqueue_set_scatter_tooltip_axis_labels(self.id, x, y, z)
@@ -565,6 +591,11 @@ class AppHandle:
         self._drain_requested = False
         self._toast_seq = 0
         self._closed = False
+        self._python_task_timings: dict[str, dict[str, Any]] = {}
+        self._python_task_drain_timing: dict[str, Any] = {}
+        self._last_python_task: dict[str, Any] | None = None
+        self._last_python_task_drain: dict[str, Any] | None = None
+        self._startup_timings: dict[str, Any] = {}
 
     @property
     def closed(self) -> bool:
@@ -641,6 +672,11 @@ class AppHandle:
 
     def enqueue_replace_node(self, widget_id: str, node: object) -> None:
         self._send_or_queue_native("enqueue_replace_node", widget_id, _node_json(node))
+
+    def enqueue_prewarm_scatter_widgets(self, count: int) -> None:
+        if count <= 0 or not self._native_method_available("enqueue_prewarm_scatter_widgets"):
+            return
+        self._send_or_queue_native("enqueue_prewarm_scatter_widgets", int(count))
 
     def enqueue_set_scatter_points_packed(
         self,
@@ -1040,6 +1076,19 @@ class AppHandle:
     def enqueue_set_scatter_primary_hover_meta(self, widget_id: str, meta: str) -> None:
         self._send_or_queue_native("enqueue_set_scatter_primary_hover_meta", widget_id, meta)
 
+    def enqueue_set_scatter_primary_hover_columns(
+        self,
+        widget_id: str,
+        columns_json: str,
+        buffers: object,
+    ) -> None:
+        self._send_or_queue_native(
+            "enqueue_set_scatter_primary_hover_columns",
+            widget_id,
+            columns_json,
+            buffers,
+        )
+
     def enqueue_set_scatter_tooltip_axis_labels(self, widget_id: str, x: str, y: str, z: str) -> None:
         self._send_or_queue_native("enqueue_set_scatter_tooltip_axis_labels", widget_id, x, y, z)
 
@@ -1209,6 +1258,39 @@ class AppHandle:
         """Request the native event loop to exit."""
         self._send_or_queue_native("enqueue_request_exit")
 
+    def _set_startup_timings(self, timings: Mapping[str, Any]) -> None:
+        with self._lock:
+            self._startup_timings = {str(key): value for key, value in timings.items()}
+
+    def _python_debug_snapshot(
+        self,
+        queued_tasks: int | None = None,
+        pending_native: int | None = None,
+    ) -> dict[str, Any]:
+        with self._lock:
+            if queued_tasks is None:
+                queued_tasks = len(self._tasks)
+            if pending_native is None:
+                pending_native = len(self._pending_native)
+            return {
+                "queued_tasks": queued_tasks,
+                "pending_native_commands": pending_native,
+                "drain_requested": self._drain_requested,
+                "task_drain_timing": dict(self._python_task_drain_timing),
+                "last_task_drain": (
+                    dict(self._last_python_task_drain)
+                    if self._last_python_task_drain is not None
+                    else None
+                ),
+                "task_timings": {
+                    name: dict(stats) for name, stats in self._python_task_timings.items()
+                },
+                "last_task": (
+                    dict(self._last_python_task) if self._last_python_task is not None else None
+                ),
+                "startup": dict(self._startup_timings),
+            }
+
     def debug_snapshot(self, timeout_ms: int = 1000) -> dict[str, Any]:
         """Return a JSON-safe snapshot of the live native runtime."""
         with self._lock:
@@ -1217,6 +1299,7 @@ class AppHandle:
             sender = self._native_sender
             queued_tasks = len(self._tasks)
             pending_native = len(self._pending_native)
+        python_snapshot = self._python_debug_snapshot(queued_tasks, pending_native)
         if sender is None:
             return {
                 "schema": 1,
@@ -1224,6 +1307,7 @@ class AppHandle:
                     "native_bound": False,
                     "queued_python_tasks": queued_tasks,
                     "pending_native_commands": pending_native,
+                    "python": python_snapshot,
                     "closed": False,
                 },
             }
@@ -1231,6 +1315,11 @@ class AppHandle:
         snapshot = json.loads(snapshot_json)
         if not isinstance(snapshot, dict):
             raise RuntimeError("DragonGUI native debug snapshot was not a JSON object")
+        runtime = snapshot.setdefault("runtime", {})
+        if isinstance(runtime, dict):
+            runtime["python"] = python_snapshot
+        else:
+            snapshot["python_runtime"] = python_snapshot
         return snapshot
 
     def apply_patch(self, patch: object) -> None:
@@ -1456,37 +1545,61 @@ class AppHandle:
 
     def _drain_python_tasks(self) -> None:
         processed = 0
-        while processed < _MAX_PYTHON_TASKS_PER_DRAIN:
-            with self._lock:
-                if not self._tasks:
-                    self._drain_requested = False
-                    return
-                scheduled = self._tasks.popleft()
-            task = scheduled.fn
-            try:
-                task()
-            except Exception as _exc:  # pragma: no cover - diagnostic path
-                traceback.print_exc()
-                if scheduled.diagnostics:
-                    try:
-                        _record_task_failure(task, _exc, scheduled.origin)
-                    except Exception:
-                        pass
-            processed += 1
-
-        with self._lock:
-            sender = self._native_sender if self._tasks and not self._closed else None
-            self._drain_requested = sender is not None
-        if sender is not None:
-            try:
-                sender.enqueue_drain_python_tasks()
-            except RuntimeError:  # pragma: no cover - close race diagnostic path
+        drain_t0 = time.perf_counter()
+        try:
+            while processed < _MAX_PYTHON_TASKS_PER_DRAIN:
                 with self._lock:
-                    closed = self._closed
-                is_closed = getattr(sender, "is_closed", False)
-                sender_closed = bool(is_closed() if callable(is_closed) else is_closed)
-                if not (closed or sender_closed):
+                    if not self._tasks:
+                        self._drain_requested = False
+                        return
+                    scheduled = self._tasks.popleft()
+                task = scheduled.fn
+                task_label = _callable_label(task)
+                task_t0 = time.perf_counter()
+                outcome = "ok"
+                try:
+                    task()
+                except Exception as _exc:  # pragma: no cover - diagnostic path
+                    outcome = "error"
                     traceback.print_exc()
+                    if scheduled.diagnostics:
+                        try:
+                            _record_task_failure(task, _exc, scheduled.origin)
+                        except Exception:
+                            pass
+                finally:
+                    task_ms = (time.perf_counter() - task_t0) * 1000.0
+                    with self._lock:
+                        stats = self._python_task_timings.setdefault(task_label, {})
+                        _record_timing_stat(stats, task_ms)
+                        self._last_python_task = {
+                            "name": task_label,
+                            "elapsed_ms": task_ms,
+                            "outcome": outcome,
+                        }
+                processed += 1
+
+            with self._lock:
+                sender = self._native_sender if self._tasks and not self._closed else None
+                self._drain_requested = sender is not None
+            if sender is not None:
+                try:
+                    sender.enqueue_drain_python_tasks()
+                except RuntimeError:  # pragma: no cover - close race diagnostic path
+                    with self._lock:
+                        closed = self._closed
+                    is_closed = getattr(sender, "is_closed", False)
+                    sender_closed = bool(is_closed() if callable(is_closed) else is_closed)
+                    if not (closed or sender_closed):
+                        traceback.print_exc()
+        finally:
+            drain_ms = (time.perf_counter() - drain_t0) * 1000.0
+            with self._lock:
+                _record_timing_stat(self._python_task_drain_timing, drain_ms)
+                self._last_python_task_drain = {
+                    "processed": processed,
+                    "elapsed_ms": drain_ms,
+                }
 
     def _invoke_click_callback(self, widget_id: str) -> bool:
         with self._lock:

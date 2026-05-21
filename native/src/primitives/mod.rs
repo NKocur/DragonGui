@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashMap};
+use std::{borrow::Cow, collections::HashMap, time::Instant};
 
 use bytemuck::{Pod, Zeroable};
 
@@ -74,6 +74,65 @@ pub struct RectInstance {
     pub color6: [f32; 4],
     /// Additional gradient stop positions for color5 and color6.
     pub gradient_stops2: [f32; 4],
+}
+
+/// Compact instance for solid, axis-aligned rect fills.
+///
+/// This covers the common widget surface path without carrying the full
+/// gradient/shadow/transform payload used by `RectInstance`.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct SimpleRectInstance {
+    /// Pixel-space rect: x, y (top-left), w, h.
+    rect: [f32; 4],
+    /// RGBA linear colour.
+    color: [f32; 4],
+    /// Corner radii in pixels: top-left, top-right, bottom-right, bottom-left.
+    radii: [f32; 4],
+    /// Local clip bounds: left, top, right, bottom in rect-local pixels.
+    clip: [f32; 4],
+}
+
+/// Compact instance for solid transformed line/capsule segments.
+///
+/// `rect` is the unrotated local capsule bounds and `params.x` is the rotation
+/// angle around the rect center. This covers LinePlot's segment path without
+/// carrying the full gradient/shadow rectangle payload.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct LineSegmentInstance {
+    /// Pixel-space rect before rotation: x, y (top-left), length, width.
+    rect: [f32; 4],
+    /// RGBA linear colour.
+    color: [f32; 4],
+    /// x: rotation radians around rect center.
+    params: [f32; 4],
+}
+
+/// Raw line plot point stored in a compact GPU storage buffer.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct LinePlotPointGpu {
+    /// x/y: data point, z: cumulative screen-space path distance.
+    data: [f32; 4],
+}
+
+/// Per-series draw metadata for the dedicated LinePlot renderer.
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct LinePlotSeriesInstance {
+    /// Full plot rect used to map data coordinates to screen coordinates.
+    plot: [f32; 4],
+    /// Final paint clip rect in screen pixels.
+    clip: [f32; 4],
+    /// x_min, x_max, y_min, y_max.
+    bounds: [f32; 4],
+    /// RGBA line colour.
+    color: [f32; 4],
+    /// x: width px, y: point offset, z: point count.
+    params: [f32; 4],
+    /// x: line style code (0 solid, 1 dashed, 2 dotted, 3 dashdot).
+    style: [f32; 4],
 }
 
 static RECT_ATTRS: [wgpu::VertexAttribute; 15] = [
@@ -154,11 +213,109 @@ static RECT_ATTRS: [wgpu::VertexAttribute; 15] = [
     },
 ];
 
+static SIMPLE_RECT_ATTRS: [wgpu::VertexAttribute; 4] = [
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 0,
+        shader_location: 0,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 16,
+        shader_location: 1,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 32,
+        shader_location: 2,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 48,
+        shader_location: 3,
+    },
+];
+
+static LINE_SEGMENT_ATTRS: [wgpu::VertexAttribute; 3] = [
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 0,
+        shader_location: 0,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 16,
+        shader_location: 1,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 32,
+        shader_location: 2,
+    },
+];
+
+static LINE_PLOT_SERIES_ATTRS: [wgpu::VertexAttribute; 6] = [
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 0,
+        shader_location: 0,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 16,
+        shader_location: 1,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 32,
+        shader_location: 2,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 48,
+        shader_location: 3,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 64,
+        shader_location: 4,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 80,
+        shader_location: 5,
+    },
+];
+
 fn rect_instance_layout() -> wgpu::VertexBufferLayout<'static> {
     wgpu::VertexBufferLayout {
         array_stride: std::mem::size_of::<RectInstance>() as u64,
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: &RECT_ATTRS,
+    }
+}
+
+fn simple_rect_instance_layout() -> wgpu::VertexBufferLayout<'static> {
+    wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<SimpleRectInstance>() as u64,
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &SIMPLE_RECT_ATTRS,
+    }
+}
+
+fn line_segment_instance_layout() -> wgpu::VertexBufferLayout<'static> {
+    wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<LineSegmentInstance>() as u64,
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &LINE_SEGMENT_ATTRS,
+    }
+}
+
+fn line_plot_series_instance_layout() -> wgpu::VertexBufferLayout<'static> {
+    wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<LinePlotSeriesInstance>() as u64,
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &LINE_PLOT_SERIES_ATTRS,
     }
 }
 
@@ -177,13 +334,63 @@ struct Uniforms {
 // PrimitivesRenderer
 // ---------------------------------------------------------------------------
 
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PrimitiveRendererStats {
+    pub split_enabled: bool,
+    pub split_collapsed: bool,
+    pub rect_count: u32,
+    pub simple_count: u32,
+    pub line_count: u32,
+    pub complex_count: u32,
+    pub base_batches: u32,
+    pub overlay_batches: u32,
+    pub simple_batches: u32,
+    pub line_batches: u32,
+    pub complex_batches: u32,
+    pub source_bytes: u64,
+    pub simple_bytes: u64,
+    pub line_bytes: u64,
+    pub complex_bytes: u64,
+    pub buffer_bytes: u64,
+    pub last_emit_ms: f64,
+    pub last_split_ms: f64,
+    pub last_upload_ms: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PrimitivePipelineKind {
+    Simple,
+    Line,
+    Complex,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PrimitiveBatch {
+    kind: PrimitivePipelineKind,
+    start: u32,
+    count: u32,
+}
+
 pub struct PrimitivesRenderer {
-    pipeline: wgpu::RenderPipeline,
-    vertex_buffer: wgpu::Buffer,
-    vertex_cap: u64,
+    simple_pipeline: wgpu::RenderPipeline,
+    line_pipeline: wgpu::RenderPipeline,
+    complex_pipeline: wgpu::RenderPipeline,
+    simple_vertex_buffer: wgpu::Buffer,
+    simple_vertex_cap: u64,
+    line_vertex_buffer: wgpu::Buffer,
+    line_vertex_cap: u64,
+    complex_vertex_buffer: wgpu::Buffer,
+    complex_vertex_cap: u64,
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     instances: Vec<RectInstance>,
+    simple_instances: Vec<SimpleRectInstance>,
+    line_instances: Vec<LineSegmentInstance>,
+    complex_instances: Vec<RectInstance>,
+    base_batches: Vec<PrimitiveBatch>,
+    overlay_batches: Vec<PrimitiveBatch>,
+    split_enabled: bool,
+    stats: PrimitiveRendererStats,
     pub rect_count: u32,
     overlay_start: u32,
 }
@@ -196,9 +403,17 @@ impl PrimitivesRenderer {
         width: u32,
         height: u32,
     ) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let complex_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("prim-rect"),
             source: wgpu::ShaderSource::Wgsl(include_str!("rect.wgsl").into()),
+        });
+        let simple_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("prim-simple-rect"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("simple_rect.wgsl").into()),
+        });
+        let line_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("prim-line-segment"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("line_segment.wgsl").into()),
         });
 
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -221,17 +436,87 @@ impl PrimitivesRenderer {
             immediate_size: 0,
         });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let simple_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("prim-simple-rect-pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &simple_shader,
+                entry_point: Some("vs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[simple_rect_instance_layout()],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &simple_shader,
+                entry_point: Some("fs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: crate::DEPTH_STENCIL_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
+        let line_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("prim-line-segment-pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &line_shader,
+                entry_point: Some("vs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[line_segment_instance_layout()],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &line_shader,
+                entry_point: Some("fs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: crate::DEPTH_STENCIL_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
+        let complex_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("prim-rect-pipeline"),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
-                module: &shader,
+                module: &complex_shader,
                 entry_point: Some("vs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 buffers: &[rect_instance_layout()],
             },
             fragment: Some(wgpu::FragmentState {
-                module: &shader,
+                module: &complex_shader,
                 entry_point: Some("fs_main"),
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
                 targets: &[Some(wgpu::ColorTargetState {
@@ -272,21 +557,57 @@ impl PrimitivesRenderer {
             }],
         });
 
-        let initial_cap = (64 * std::mem::size_of::<RectInstance>()) as u64;
-        let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("prim-vb"),
-            size: initial_cap,
+        let simple_initial_cap = (64 * std::mem::size_of::<SimpleRectInstance>()) as u64;
+        let simple_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("prim-simple-vb"),
+            size: simple_initial_cap,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
+        let line_initial_cap = (64 * std::mem::size_of::<LineSegmentInstance>()) as u64;
+        let line_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("prim-line-vb"),
+            size: line_initial_cap,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let complex_initial_cap = (64 * std::mem::size_of::<RectInstance>()) as u64;
+        let complex_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("prim-complex-vb"),
+            size: complex_initial_cap,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let split_enabled = std::env::var("DRAGONGUI_PRIMITIVE_SPLIT")
+            .map(|value| {
+                let value = value.trim().to_ascii_lowercase();
+                !matches!(value.as_str(), "0" | "false" | "off" | "no")
+            })
+            .unwrap_or(true);
+
         let renderer = Self {
-            pipeline,
-            vertex_buffer,
-            vertex_cap: initial_cap,
+            simple_pipeline,
+            line_pipeline,
+            complex_pipeline,
+            simple_vertex_buffer,
+            simple_vertex_cap: simple_initial_cap,
+            line_vertex_buffer,
+            line_vertex_cap: line_initial_cap,
+            complex_vertex_buffer,
+            complex_vertex_cap: complex_initial_cap,
             uniform_buffer,
             bind_group,
             instances: Vec::with_capacity(64),
+            simple_instances: Vec::with_capacity(64),
+            line_instances: Vec::with_capacity(64),
+            complex_instances: Vec::with_capacity(64),
+            base_batches: Vec::with_capacity(16),
+            overlay_batches: Vec::with_capacity(4),
+            split_enabled,
+            stats: PrimitiveRendererStats::default(),
             rect_count: 0,
             overlay_start: 0,
         };
@@ -313,25 +634,7 @@ impl PrimitivesRenderer {
         self.instances = instances;
         self.rect_count = self.instances.len() as u32;
         self.overlay_start = overlay_start.min(self.rect_count);
-        if self.instances.is_empty() {
-            return;
-        }
-        let size = (self.instances.len() * std::mem::size_of::<RectInstance>()) as u64;
-        if size > self.vertex_cap {
-            let cap = (size * 2).max(4096);
-            self.vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("prim-vb-static"),
-                size: cap,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            self.vertex_cap = cap;
-        }
-        queue.write_buffer(
-            &self.vertex_buffer,
-            0,
-            bytemuck::cast_slice(&self.instances),
-        );
+        self.split_and_upload(device, queue, 0.0);
     }
 
     /// Rebuild the instance list from layout, theme, and interactive state.
@@ -352,6 +655,7 @@ impl PrimitivesRenderer {
         let window_w = media.width * scale_factor;
         let window_h = media.height * scale_factor;
         self.instances.clear();
+        let emit_t0 = Instant::now();
         emit_rects_inner(
             tree,
             layout,
@@ -411,26 +715,184 @@ impl PrimitivesRenderer {
         );
 
         self.rect_count = self.instances.len() as u32;
-        if self.instances.is_empty() {
-            return;
-        }
+        let emit_ms = emit_t0.elapsed().as_secs_f64() * 1000.0;
+        self.split_and_upload(device, queue, emit_ms);
+    }
 
-        let size = (self.instances.len() * std::mem::size_of::<RectInstance>()) as u64;
-        if size > self.vertex_cap {
-            let cap = (size * 2).max(4096);
-            self.vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("prim-vb"),
+    fn split_and_upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, emit_ms: f64) {
+        let split_t0 = Instant::now();
+        self.simple_instances.clear();
+        self.line_instances.clear();
+        self.complex_instances.clear();
+        self.base_batches.clear();
+        self.overlay_batches.clear();
+
+        for (index, instance) in self.instances.iter().copied().enumerate() {
+            let overlay = index >= self.overlay_start as usize;
+            let batches = if overlay {
+                &mut self.overlay_batches
+            } else {
+                &mut self.base_batches
+            };
+            if self.split_enabled && is_line_segment_instance(&instance) {
+                let start = self.line_instances.len() as u32;
+                self.line_instances.push(LineSegmentInstance {
+                    rect: instance.rect,
+                    color: instance.color,
+                    params: [instance.transform2[0], 0.0, 0.0, 0.0],
+                });
+                push_primitive_batch(batches, PrimitivePipelineKind::Line, start, 1);
+            } else if self.split_enabled && is_simple_rect_instance(&instance) {
+                let start = self.simple_instances.len() as u32;
+                self.simple_instances.push(SimpleRectInstance {
+                    rect: instance.rect,
+                    color: instance.color,
+                    radii: instance.radii,
+                    clip: instance.clip,
+                });
+                push_primitive_batch(batches, PrimitivePipelineKind::Simple, start, 1);
+            } else {
+                let start = self.complex_instances.len() as u32;
+                self.complex_instances.push(instance);
+                push_primitive_batch(batches, PrimitivePipelineKind::Complex, start, 1);
+            }
+        }
+        let mut split_collapsed = false;
+        if self.split_enabled
+            && should_collapse_split_batches(
+                self.instances.len(),
+                self.batch_count(),
+                self.line_instances.len(),
+            )
+        {
+            split_collapsed = true;
+            self.rebuild_as_complex_batches();
+        }
+        let split_ms = split_t0.elapsed().as_secs_f64() * 1000.0;
+
+        let upload_t0 = Instant::now();
+        let simple_size =
+            (self.simple_instances.len() * std::mem::size_of::<SimpleRectInstance>()) as u64;
+        if simple_size > self.simple_vertex_cap {
+            let cap = (simple_size * 2).max(4096);
+            self.simple_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("prim-simple-vb"),
                 size: cap,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            self.vertex_cap = cap;
+            self.simple_vertex_cap = cap;
         }
-        queue.write_buffer(
-            &self.vertex_buffer,
-            0,
-            bytemuck::cast_slice(&self.instances),
-        );
+        if !self.simple_instances.is_empty() {
+            queue.write_buffer(
+                &self.simple_vertex_buffer,
+                0,
+                bytemuck::cast_slice(&self.simple_instances),
+            );
+        }
+
+        let line_size =
+            (self.line_instances.len() * std::mem::size_of::<LineSegmentInstance>()) as u64;
+        if line_size > self.line_vertex_cap {
+            let cap = (line_size * 2).max(4096);
+            self.line_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("prim-line-vb"),
+                size: cap,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.line_vertex_cap = cap;
+        }
+        if !self.line_instances.is_empty() {
+            queue.write_buffer(
+                &self.line_vertex_buffer,
+                0,
+                bytemuck::cast_slice(&self.line_instances),
+            );
+        }
+
+        let complex_size =
+            (self.complex_instances.len() * std::mem::size_of::<RectInstance>()) as u64;
+        if complex_size > self.complex_vertex_cap {
+            let cap = (complex_size * 2).max(4096);
+            self.complex_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("prim-complex-vb"),
+                size: cap,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.complex_vertex_cap = cap;
+        }
+        if !self.complex_instances.is_empty() {
+            queue.write_buffer(
+                &self.complex_vertex_buffer,
+                0,
+                bytemuck::cast_slice(&self.complex_instances),
+            );
+        }
+        let upload_ms = upload_t0.elapsed().as_secs_f64() * 1000.0;
+
+        let simple_batches = self
+            .base_batches
+            .iter()
+            .chain(self.overlay_batches.iter())
+            .filter(|batch| batch.kind == PrimitivePipelineKind::Simple)
+            .count() as u32;
+        let line_batches = self
+            .base_batches
+            .iter()
+            .chain(self.overlay_batches.iter())
+            .filter(|batch| batch.kind == PrimitivePipelineKind::Line)
+            .count() as u32;
+        let complex_batches = self
+            .base_batches
+            .iter()
+            .chain(self.overlay_batches.iter())
+            .filter(|batch| batch.kind == PrimitivePipelineKind::Complex)
+            .count() as u32;
+        self.stats = PrimitiveRendererStats {
+            split_enabled: self.split_enabled,
+            split_collapsed,
+            rect_count: self.instances.len() as u32,
+            simple_count: self.simple_instances.len() as u32,
+            line_count: self.line_instances.len() as u32,
+            complex_count: self.complex_instances.len() as u32,
+            base_batches: self.base_batches.len() as u32,
+            overlay_batches: self.overlay_batches.len() as u32,
+            simple_batches,
+            line_batches,
+            complex_batches,
+            source_bytes: (self.instances.len() * std::mem::size_of::<RectInstance>()) as u64,
+            simple_bytes: simple_size,
+            line_bytes: line_size,
+            complex_bytes: complex_size,
+            buffer_bytes: simple_size + line_size + complex_size,
+            last_emit_ms: emit_ms,
+            last_split_ms: split_ms,
+            last_upload_ms: upload_ms,
+        };
+    }
+
+    fn batch_count(&self) -> usize {
+        self.base_batches.len() + self.overlay_batches.len()
+    }
+
+    fn rebuild_as_complex_batches(&mut self) {
+        self.simple_instances.clear();
+        self.line_instances.clear();
+        self.complex_instances.clear();
+        self.base_batches.clear();
+        self.overlay_batches.clear();
+        for (index, instance) in self.instances.iter().copied().enumerate() {
+            let start = self.complex_instances.len() as u32;
+            self.complex_instances.push(instance);
+            let batches = if index >= self.overlay_start as usize {
+                &mut self.overlay_batches
+            } else {
+                &mut self.base_batches
+            };
+            push_primitive_batch(batches, PrimitivePipelineKind::Complex, start, 1);
+        }
     }
 
     pub fn render_base(&self, pass: &mut wgpu::RenderPass<'_>) {
@@ -441,21 +903,497 @@ impl PrimitivesRenderer {
         if count == 0 {
             return;
         }
-        pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        pass.draw(0..6, 0..count);
+        self.render_batches(pass, &self.base_batches);
     }
 
     pub fn render_overlays(&self, pass: &mut wgpu::RenderPass<'_>) {
         if self.rect_count == 0 || self.overlay_start >= self.rect_count {
             return;
         }
+        self.render_batches(pass, &self.overlay_batches);
+    }
+
+    fn render_batches(&self, pass: &mut wgpu::RenderPass<'_>, batches: &[PrimitiveBatch]) {
+        let mut current_kind = None;
+        for batch in batches {
+            if batch.count == 0 {
+                continue;
+            }
+            if current_kind != Some(batch.kind) {
+                match batch.kind {
+                    PrimitivePipelineKind::Simple => {
+                        pass.set_pipeline(&self.simple_pipeline);
+                        pass.set_bind_group(0, &self.bind_group, &[]);
+                        pass.set_vertex_buffer(0, self.simple_vertex_buffer.slice(..));
+                    }
+                    PrimitivePipelineKind::Line => {
+                        pass.set_pipeline(&self.line_pipeline);
+                        pass.set_bind_group(0, &self.bind_group, &[]);
+                        pass.set_vertex_buffer(0, self.line_vertex_buffer.slice(..));
+                    }
+                    PrimitivePipelineKind::Complex => {
+                        pass.set_pipeline(&self.complex_pipeline);
+                        pass.set_bind_group(0, &self.bind_group, &[]);
+                        pass.set_vertex_buffer(0, self.complex_vertex_buffer.slice(..));
+                    }
+                }
+                current_kind = Some(batch.kind);
+            }
+            pass.draw(0..6, batch.start..batch.start + batch.count);
+        }
+    }
+
+    pub fn stats(&self) -> PrimitiveRendererStats {
+        self.stats
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LinePlotRendererStats {
+    pub enabled: bool,
+    pub aa_width: f32,
+    pub max_segments_per_series: u32,
+    pub decimation_mode: u32,
+    pub series_count: u32,
+    pub source_point_count: u32,
+    pub decimated_series_count: u32,
+    pub point_count: u32,
+    pub segment_count: u32,
+    pub point_bytes: u64,
+    pub series_bytes: u64,
+    pub buffer_bytes: u64,
+    pub last_decimate_ms: f64,
+    pub last_emit_ms: f64,
+    pub last_upload_ms: f64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LinePlotDecimationMode {
+    Off,
+    Auto,
+    Extrema,
+}
+
+impl LinePlotDecimationMode {
+    fn metric_code(self) -> u32 {
+        match self {
+            Self::Off => 0,
+            Self::Auto => 1,
+            Self::Extrema => 2,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct LinePlotRenderBuildStats {
+    source_point_count: usize,
+    decimated_series_count: u32,
+    decimate_ms: f64,
+}
+
+pub struct LinePlotRenderer {
+    pipeline: wgpu::RenderPipeline,
+    bind_group_layout: wgpu::BindGroupLayout,
+    bind_group: wgpu::BindGroup,
+    uniform_buffer: wgpu::Buffer,
+    point_buffer: wgpu::Buffer,
+    point_buffer_cap: u64,
+    series_buffer: wgpu::Buffer,
+    series_buffer_cap: u64,
+    points: Vec<LinePlotPointGpu>,
+    series_instances: Vec<LinePlotSeriesInstance>,
+    enabled: bool,
+    stats: LinePlotRendererStats,
+}
+
+impl LinePlotRenderer {
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        surface_format: wgpu::TextureFormat,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("line-plot-renderer"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("line_plot.wgsl").into()),
+        });
+
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("line-plot-bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("line-plot-pl"),
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
+        });
+
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("line-plot-pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[line_plot_series_instance_layout()],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: crate::DEPTH_STENCIL_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
+        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("line-plot-uniforms"),
+            size: std::mem::size_of::<Uniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let point_buffer_cap = 4096;
+        let point_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("line-plot-points"),
+            size: point_buffer_cap,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let series_buffer_cap = 1024;
+        let series_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("line-plot-series"),
+            size: series_buffer_cap,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let bind_group =
+            Self::make_bind_group(device, &bind_group_layout, &uniform_buffer, &point_buffer);
+
+        let renderer = Self {
+            pipeline,
+            bind_group_layout,
+            bind_group,
+            uniform_buffer,
+            point_buffer,
+            point_buffer_cap,
+            series_buffer,
+            series_buffer_cap,
+            points: Vec::with_capacity(4096),
+            series_instances: Vec::with_capacity(8),
+            enabled: line_plot_gpu_renderer_enabled(),
+            stats: LinePlotRendererStats::default(),
+        };
+        renderer.update_screen_size(queue, width, height);
+        renderer
+    }
+
+    fn make_bind_group(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        uniform_buffer: &wgpu::Buffer,
+        point_buffer: &wgpu::Buffer,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("line-plot-bg"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: uniform_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: point_buffer.as_entire_binding(),
+                },
+            ],
+        })
+    }
+
+    pub fn update_screen_size(&self, queue: &wgpu::Queue, width: u32, height: u32) {
+        let uniforms = Uniforms {
+            screen_size: [width as f32, height as f32],
+            _pad: [0.0; 2],
+        };
+        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+    }
+
+    pub fn rebuild(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        tree: &WidgetNode,
+        layout: &LayoutResult,
+        theme: &Theme,
+        scale_factor: f32,
+    ) {
+        self.enabled = line_plot_gpu_renderer_enabled();
+        self.points.clear();
+        self.series_instances.clear();
+
+        let aa_width = line_plot_aa_width();
+        let max_segments_per_series = line_plot_renderer_max_segments_per_series();
+        let decimation_mode = line_plot_decimation_mode();
+        let mut build_stats = LinePlotRenderBuildStats::default();
+        let emit_t0 = Instant::now();
+        if self.enabled {
+            collect_line_plot_render_data(
+                tree,
+                layout,
+                theme,
+                scale_factor,
+                aa_width,
+                max_segments_per_series,
+                decimation_mode,
+                None,
+                &mut self.points,
+                &mut self.series_instances,
+                &mut build_stats,
+            );
+        }
+        let emit_ms = emit_t0.elapsed().as_secs_f64() * 1000.0;
+
+        let upload_t0 = Instant::now();
+        let point_size = (self.points.len() * std::mem::size_of::<LinePlotPointGpu>()) as u64;
+        if point_size > self.point_buffer_cap {
+            let cap = (point_size * 2).max(4096);
+            self.point_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("line-plot-points"),
+                size: cap,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.point_buffer_cap = cap;
+            self.bind_group = Self::make_bind_group(
+                device,
+                &self.bind_group_layout,
+                &self.uniform_buffer,
+                &self.point_buffer,
+            );
+        }
+        if !self.points.is_empty() {
+            queue.write_buffer(&self.point_buffer, 0, bytemuck::cast_slice(&self.points));
+        }
+
+        let series_size =
+            (self.series_instances.len() * std::mem::size_of::<LinePlotSeriesInstance>()) as u64;
+        if series_size > self.series_buffer_cap {
+            let cap = (series_size * 2).max(1024);
+            self.series_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("line-plot-series"),
+                size: cap,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.series_buffer_cap = cap;
+        }
+        if !self.series_instances.is_empty() {
+            queue.write_buffer(
+                &self.series_buffer,
+                0,
+                bytemuck::cast_slice(&self.series_instances),
+            );
+        }
+        let upload_ms = upload_t0.elapsed().as_secs_f64() * 1000.0;
+
+        let segment_count = self
+            .series_instances
+            .iter()
+            .map(|series| (series.params[2].round().max(0.0) as u32).saturating_sub(1))
+            .sum();
+        self.stats = LinePlotRendererStats {
+            enabled: self.enabled,
+            aa_width,
+            max_segments_per_series: max_segments_per_series as u32,
+            decimation_mode: decimation_mode.metric_code(),
+            series_count: self.series_instances.len() as u32,
+            source_point_count: build_stats.source_point_count as u32,
+            decimated_series_count: build_stats.decimated_series_count,
+            point_count: self.points.len() as u32,
+            segment_count,
+            point_bytes: point_size,
+            series_bytes: series_size,
+            buffer_bytes: point_size + series_size,
+            last_decimate_ms: build_stats.decimate_ms,
+            last_emit_ms: emit_ms,
+            last_upload_ms: upload_ms,
+        };
+    }
+
+    pub fn render(&self, pass: &mut wgpu::RenderPass<'_>) {
+        if !self.enabled || self.series_instances.is_empty() {
+            return;
+        }
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        pass.draw(0..6, self.overlay_start..self.rect_count);
+        pass.set_vertex_buffer(0, self.series_buffer.slice(..));
+        for (index, series) in self.series_instances.iter().enumerate() {
+            let point_count = series.params[2].round().max(0.0) as u32;
+            let vertex_count = point_count.saturating_sub(1) * 6;
+            if vertex_count == 0 {
+                continue;
+            }
+            let instance = index as u32;
+            pass.draw(0..vertex_count, instance..instance + 1);
+        }
     }
+
+    pub fn stats(&self) -> LinePlotRendererStats {
+        self.stats
+    }
+}
+
+pub(crate) fn line_plot_gpu_renderer_enabled() -> bool {
+    std::env::var("DRAGONGUI_LINE_PLOT_RENDERER")
+        .map(|value| {
+            let value = value.trim().to_ascii_lowercase();
+            !matches!(value.as_str(), "0" | "false" | "off" | "no")
+        })
+        .unwrap_or(true)
+}
+
+pub(crate) fn line_plot_aa_width() -> f32 {
+    std::env::var("DRAGONGUI_LINE_PLOT_AA_WIDTH")
+        .ok()
+        .and_then(|value| value.trim().parse::<f32>().ok())
+        .filter(|value| value.is_finite())
+        .unwrap_or(1.0)
+        .clamp(0.5, 2.5)
+}
+
+pub(crate) fn line_plot_renderer_max_segments_per_series() -> usize {
+    std::env::var("DRAGONGUI_LINE_PLOT_MAX_SEGMENTS")
+        .ok()
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .unwrap_or(8192)
+        .clamp(1024, 65_536)
+}
+
+fn line_plot_decimation_mode() -> LinePlotDecimationMode {
+    std::env::var("DRAGONGUI_LINE_PLOT_DECIMATION")
+        .map(|value| match value.trim().to_ascii_lowercase().as_str() {
+            "0" | "false" | "off" | "no" | "exact" | "none" => LinePlotDecimationMode::Off,
+            "extrema" | "minmax" | "m4" | "preserve-extrema" | "preserve_extrema" => {
+                LinePlotDecimationMode::Extrema
+            }
+            _ => LinePlotDecimationMode::Auto,
+        })
+        .unwrap_or(LinePlotDecimationMode::Auto)
+}
+
+fn line_plot_renderer_style_code(line_style: &str) -> Option<f32> {
+    match line_style {
+        "" | "solid" => Some(0.0),
+        "dashed" => Some(1.0),
+        "dotted" => Some(2.0),
+        "dashdot" => Some(3.0),
+        _ => None,
+    }
+}
+
+fn push_primitive_batch(
+    batches: &mut Vec<PrimitiveBatch>,
+    kind: PrimitivePipelineKind,
+    start: u32,
+    count: u32,
+) {
+    if let Some(last) = batches.last_mut() {
+        if last.kind == kind && last.start + last.count == start {
+            last.count += count;
+            return;
+        }
+    }
+    batches.push(PrimitiveBatch { kind, start, count });
+}
+
+fn is_simple_rect_instance(instance: &RectInstance) -> bool {
+    const EPS: f32 = 1.0e-5;
+    instance.rect[2] > 0.0
+        && instance.rect[3] > 0.0
+        && (instance.params[0] - 1.0).abs() <= EPS
+        && instance.params[1].abs() <= EPS
+        && instance.params[2].abs() <= EPS
+        && instance.params[3].abs() <= EPS
+        && instance.paint[0].abs() <= EPS
+        && instance.transform[0].abs() <= EPS
+        && instance.transform[1].abs() <= EPS
+        && (instance.transform[2] - 1.0).abs() <= EPS
+        && (instance.transform[3] - 1.0).abs() <= EPS
+        && instance.transform2[0].abs() <= EPS
+        && instance.transform2[1].abs() <= EPS
+        && instance.transform2[2].abs() <= EPS
+}
+
+fn is_line_segment_instance(instance: &RectInstance) -> bool {
+    const EPS: f32 = 1.0e-5;
+    if instance.rect[2] <= 0.0
+        || instance.rect[3] <= 0.0
+        || (instance.transform2[3] - 1.0).abs() > EPS
+    {
+        return false;
+    }
+    instance.params[0].is_finite()
+        && instance.rect.iter().all(|value| value.is_finite())
+        && instance.color.iter().all(|value| value.is_finite())
+        && (instance.params[0] - 1.0).abs() <= EPS
+        && instance.params[1].abs() <= EPS
+        && instance.params[2].abs() <= EPS
+        && instance.params[3].abs() <= EPS
+        && instance.paint[0].abs() <= EPS
+        && instance.transform[0].abs() <= EPS
+        && instance.transform[1].abs() <= EPS
+        && (instance.transform[2] - 1.0).abs() <= EPS
+        && (instance.transform[3] - 1.0).abs() <= EPS
+        && instance.transform2[1].abs() <= EPS
+        && instance.transform2[2].abs() <= EPS
+}
+
+fn should_collapse_split_batches(rect_count: usize, batch_count: usize, line_count: usize) -> bool {
+    if line_count > 0 && line_count * 2 >= rect_count {
+        return false;
+    }
+    batch_count > 512 && batch_count > (rect_count / 4).max(64)
 }
 
 // ---------------------------------------------------------------------------
@@ -1477,6 +2415,7 @@ fn apply_opacity(mut color: [f32; 4], opacity: Option<f32>) -> [f32; 4] {
 }
 
 const LINE_PLOT_MAX_SEGMENTS_PER_SERIES: usize = 4096;
+const LINE_PLOT_JOIN_DOT_COS_THRESHOLD: f32 = 0.985;
 const LINE_PLOT_AXIS_LABEL_FONT_SIZE_LP: f32 = 14.0;
 const LINE_PLOT_AXIS_LABEL_GUTTER_LP: f32 = 18.0;
 const LINE_PLOT_PALETTE: [[f32; 4]; 6] = [
@@ -1522,6 +2461,689 @@ fn format_line_plot_hover_value(value: f32) -> String {
     } else {
         format!("{value:.3}")
     }
+}
+
+fn collect_line_plot_render_data(
+    node: &WidgetNode,
+    layout: &LayoutResult,
+    theme: &Theme,
+    sf: f32,
+    aa_width: f32,
+    max_segments_per_series: usize,
+    decimation_mode: LinePlotDecimationMode,
+    inherited_clip: Option<Rect>,
+    points: &mut Vec<LinePlotPointGpu>,
+    series_instances: &mut Vec<LinePlotSeriesInstance>,
+    build_stats: &mut LinePlotRenderBuildStats,
+) {
+    if node.kind == WidgetKind::Tooltip {
+        return;
+    }
+    if node.kind == WidgetKind::Modal && !node.props.open.unwrap_or(false) {
+        return;
+    }
+
+    let current_clip = match (inherited_clip, layout.paint_clip_rect(&node.id)) {
+        (Some(a), Some(b)) => a.intersect(b),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    };
+
+    if node.kind == WidgetKind::LinePlot && layout.visible_rect(&node.id).is_some() {
+        if let Some(rect) = layout.rects.get(&node.id).copied() {
+            collect_line_plot_node_render_data(
+                node,
+                layout,
+                theme,
+                sf,
+                rect,
+                aa_width,
+                max_segments_per_series,
+                decimation_mode,
+                current_clip,
+                points,
+                series_instances,
+                build_stats,
+            );
+        }
+    }
+
+    for (_, child) in stacking_children(node) {
+        collect_line_plot_render_data(
+            child,
+            layout,
+            theme,
+            sf,
+            aa_width,
+            max_segments_per_series,
+            decimation_mode,
+            current_clip,
+            points,
+            series_instances,
+            build_stats,
+        );
+    }
+}
+
+fn collect_line_plot_node_render_data(
+    node: &WidgetNode,
+    layout: &LayoutResult,
+    theme: &Theme,
+    sf: f32,
+    rect: Rect,
+    aa_width: f32,
+    max_segments_per_series: usize,
+    decimation_mode: LinePlotDecimationMode,
+    inherited_clip: Option<Rect>,
+    points: &mut Vec<LinePlotPointGpu>,
+    series_instances: &mut Vec<LinePlotSeriesInstance>,
+    build_stats: &mut LinePlotRenderBuildStats,
+) {
+    if rect.w <= 2.0 || rect.h <= 2.0 {
+        return;
+    }
+    let Some(bounds) = line_plot_resolved_bounds(node) else {
+        return;
+    };
+    let plot = line_plot_plot_rect(node, sf, [rect.x, rect.y, rect.w, rect.h]);
+    let mut clip = Rect {
+        x: plot[0],
+        y: plot[1],
+        w: plot[2],
+        h: plot[3],
+    };
+    if let Some(visible) = layout.visible_rect(&node.id) {
+        let Some(next) = clip.intersect(visible) else {
+            return;
+        };
+        clip = next;
+    }
+    if let Some(inherited_clip) = inherited_clip {
+        let Some(next) = clip.intersect(inherited_clip) else {
+            return;
+        };
+        clip = next;
+    }
+    if clip.w <= 1.0 || clip.h <= 1.0 {
+        return;
+    }
+
+    let line_width = (node.props.line_plot_line_width.max(0.5) * sf)
+        .max(1.0)
+        .min(plot[3].max(1.0) * 0.10);
+    let clip_rect = [clip.x, clip.y, clip.w, clip.h];
+    for (series_index, series) in node.props.line_plot_series.iter().enumerate() {
+        let Some(style_code) = line_plot_renderer_style_code(&series.line_style) else {
+            continue;
+        };
+        let series_points = series.logical_points();
+        if series_points.len() < 2 {
+            continue;
+        }
+        let color = series
+            .color
+            .as_ref()
+            .map(|color| color.resolve(theme))
+            .unwrap_or(LINE_PLOT_PALETTE[series_index % LINE_PLOT_PALETTE.len()]);
+        push_line_plot_renderer_series(
+            points,
+            series_instances,
+            series_points,
+            plot,
+            clip_rect,
+            bounds,
+            line_width,
+            color,
+            aa_width,
+            max_segments_per_series,
+            decimation_mode,
+            style_code,
+            series.x_sorted,
+            build_stats,
+        );
+    }
+}
+
+fn push_line_plot_renderer_series(
+    points: &mut Vec<LinePlotPointGpu>,
+    series_instances: &mut Vec<LinePlotSeriesInstance>,
+    source: &[[f32; 2]],
+    plot: [f32; 4],
+    clip: [f32; 4],
+    bounds: LinePlotBounds,
+    line_width: f32,
+    color: [f32; 4],
+    aa_width: f32,
+    max_segments_per_series: usize,
+    decimation_mode: LinePlotDecimationMode,
+    style_code: f32,
+    x_sorted: bool,
+    build_stats: &mut LinePlotRenderBuildStats,
+) {
+    let (start, end) = line_plot_visible_point_bounds(source, bounds);
+    if end.saturating_sub(start) < 2 {
+        return;
+    }
+    let visible = &source[start..end];
+    build_stats.source_point_count += visible.len();
+    let mut run_offset = points.len();
+    let mut run_len = 0usize;
+    let mut last_mapped = None;
+    let mut path_distance = 0.0_f32;
+
+    let decimate_t0 = Instant::now();
+    let decimated = push_decimated_line_plot_renderer_series(
+        points,
+        series_instances,
+        visible,
+        plot,
+        clip,
+        bounds,
+        line_width,
+        color,
+        aa_width,
+        max_segments_per_series,
+        decimation_mode,
+        style_code,
+        x_sorted,
+        &mut run_offset,
+        &mut run_len,
+        &mut last_mapped,
+        &mut path_distance,
+    );
+    if decimated {
+        build_stats.decimated_series_count += 1;
+        build_stats.decimate_ms += decimate_t0.elapsed().as_secs_f64() * 1000.0;
+    } else {
+        let segment_count = visible.len().saturating_sub(1).max(1);
+        let stride =
+            ((segment_count + max_segments_per_series - 1) / max_segments_per_series).max(1);
+        let mut last_index = 0usize;
+        for idx in (0..visible.len()).step_by(stride) {
+            push_line_plot_renderer_point(
+                points,
+                series_instances,
+                visible[idx],
+                &mut run_offset,
+                &mut run_len,
+                plot,
+                clip,
+                bounds,
+                line_width,
+                color,
+                aa_width,
+                style_code,
+                &mut last_mapped,
+                &mut path_distance,
+            );
+            last_index = idx;
+        }
+        if last_index != visible.len() - 1 {
+            push_line_plot_renderer_point(
+                points,
+                series_instances,
+                visible[visible.len() - 1],
+                &mut run_offset,
+                &mut run_len,
+                plot,
+                clip,
+                bounds,
+                line_width,
+                color,
+                aa_width,
+                style_code,
+                &mut last_mapped,
+                &mut path_distance,
+            );
+        }
+    }
+    flush_line_plot_renderer_run(
+        points,
+        series_instances,
+        &mut run_offset,
+        &mut run_len,
+        plot,
+        clip,
+        bounds,
+        line_width,
+        color,
+        aa_width,
+        style_code,
+    );
+}
+
+fn push_decimated_line_plot_renderer_series(
+    points: &mut Vec<LinePlotPointGpu>,
+    series_instances: &mut Vec<LinePlotSeriesInstance>,
+    visible: &[[f32; 2]],
+    plot: [f32; 4],
+    clip: [f32; 4],
+    bounds: LinePlotBounds,
+    line_width: f32,
+    color: [f32; 4],
+    aa_width: f32,
+    max_segments_per_series: usize,
+    decimation_mode: LinePlotDecimationMode,
+    style_code: f32,
+    x_sorted: bool,
+    run_offset: &mut usize,
+    run_len: &mut usize,
+    last_mapped: &mut Option<[f32; 2]>,
+    path_distance: &mut f32,
+) -> bool {
+    if decimation_mode == LinePlotDecimationMode::Off || !x_sorted {
+        return false;
+    }
+    if decimation_mode == LinePlotDecimationMode::Auto {
+        return push_strided_line_plot_renderer_series(
+            points,
+            series_instances,
+            visible,
+            plot,
+            clip,
+            bounds,
+            line_width,
+            color,
+            aa_width,
+            max_segments_per_series,
+            style_code,
+            run_offset,
+            run_len,
+            last_mapped,
+            path_distance,
+        );
+    }
+
+    let bucket_count = line_plot_decimation_bucket_count(plot, max_segments_per_series);
+    if bucket_count == 0 || visible.len() <= bucket_count.saturating_mul(4) {
+        return false;
+    }
+
+    let mut bucket: Option<LinePlotDecimationBucket> = None;
+    let mut emitted = 0usize;
+    for (index, point) in visible.iter().copied().enumerate() {
+        let Some(bucket_index) = line_plot_decimation_bucket_index(point, bounds, bucket_count)
+        else {
+            emitted += flush_line_plot_decimation_bucket(
+                bucket.take(),
+                points,
+                series_instances,
+                run_offset,
+                run_len,
+                plot,
+                clip,
+                bounds,
+                line_width,
+                color,
+                aa_width,
+                style_code,
+                last_mapped,
+                path_distance,
+            );
+            push_line_plot_renderer_point(
+                points,
+                series_instances,
+                point,
+                run_offset,
+                run_len,
+                plot,
+                clip,
+                bounds,
+                line_width,
+                color,
+                aa_width,
+                style_code,
+                last_mapped,
+                path_distance,
+            );
+            continue;
+        };
+
+        match bucket.as_mut() {
+            Some(current) if current.bucket == bucket_index => current.push(index, point),
+            Some(_) => {
+                emitted += flush_line_plot_decimation_bucket(
+                    bucket.take(),
+                    points,
+                    series_instances,
+                    run_offset,
+                    run_len,
+                    plot,
+                    clip,
+                    bounds,
+                    line_width,
+                    color,
+                    aa_width,
+                    style_code,
+                    last_mapped,
+                    path_distance,
+                );
+                bucket = Some(LinePlotDecimationBucket::new(bucket_index, index, point));
+            }
+            None => {
+                bucket = Some(LinePlotDecimationBucket::new(bucket_index, index, point));
+            }
+        }
+    }
+    emitted += flush_line_plot_decimation_bucket(
+        bucket,
+        points,
+        series_instances,
+        run_offset,
+        run_len,
+        plot,
+        clip,
+        bounds,
+        line_width,
+        color,
+        aa_width,
+        style_code,
+        last_mapped,
+        path_distance,
+    );
+    emitted < visible.len()
+}
+
+fn push_strided_line_plot_renderer_series(
+    points: &mut Vec<LinePlotPointGpu>,
+    series_instances: &mut Vec<LinePlotSeriesInstance>,
+    visible: &[[f32; 2]],
+    plot: [f32; 4],
+    clip: [f32; 4],
+    bounds: LinePlotBounds,
+    line_width: f32,
+    color: [f32; 4],
+    aa_width: f32,
+    max_segments_per_series: usize,
+    style_code: f32,
+    run_offset: &mut usize,
+    run_len: &mut usize,
+    last_mapped: &mut Option<[f32; 2]>,
+    path_distance: &mut f32,
+) -> bool {
+    let target_points = line_plot_fast_decimation_target_points(plot, max_segments_per_series);
+    if visible.len() <= target_points {
+        return false;
+    }
+    let target_segments = target_points.saturating_sub(1).max(1);
+    let source_segments = visible.len().saturating_sub(1).max(1);
+    let stride = ((source_segments + target_segments - 1) / target_segments).max(1);
+    if stride <= 1 {
+        return false;
+    }
+
+    let mut last_index = 0usize;
+    for idx in (0..visible.len()).step_by(stride) {
+        push_line_plot_renderer_point(
+            points,
+            series_instances,
+            visible[idx],
+            run_offset,
+            run_len,
+            plot,
+            clip,
+            bounds,
+            line_width,
+            color,
+            aa_width,
+            style_code,
+            last_mapped,
+            path_distance,
+        );
+        last_index = idx;
+    }
+    if last_index != visible.len() - 1 {
+        push_line_plot_renderer_point(
+            points,
+            series_instances,
+            visible[visible.len() - 1],
+            run_offset,
+            run_len,
+            plot,
+            clip,
+            bounds,
+            line_width,
+            color,
+            aa_width,
+            style_code,
+            last_mapped,
+            path_distance,
+        );
+    }
+    true
+}
+
+fn line_plot_fast_decimation_target_points(
+    plot: [f32; 4],
+    max_segments_per_series: usize,
+) -> usize {
+    let pixel_columns = plot[2].ceil().max(0.0) as usize;
+    if pixel_columns == 0 {
+        return 0;
+    }
+    let pixel_target = pixel_columns.saturating_mul(2).saturating_add(2);
+    pixel_target.clamp(2, max_segments_per_series.saturating_add(1).max(2))
+}
+
+fn line_plot_decimation_bucket_count(plot: [f32; 4], max_segments_per_series: usize) -> usize {
+    let pixel_columns = plot[2].ceil().max(0.0) as usize;
+    if pixel_columns == 0 {
+        return 0;
+    }
+    let max_buckets = max_segments_per_series.saturating_sub(1).max(1) / 4;
+    pixel_columns.min(max_buckets.max(1))
+}
+
+fn line_plot_decimation_bucket_index(
+    point: [f32; 2],
+    bounds: LinePlotBounds,
+    bucket_count: usize,
+) -> Option<usize> {
+    if bucket_count == 0 || !point[0].is_finite() || !point[1].is_finite() {
+        return None;
+    }
+    let x_range = (bounds.x_max - bounds.x_min).max(f32::EPSILON);
+    let tx = ((point[0] - bounds.x_min) / x_range).clamp(0.0, 1.0);
+    Some(((tx * bucket_count as f32).floor() as usize).min(bucket_count - 1))
+}
+
+#[derive(Clone, Copy, Debug)]
+struct LinePlotDecimationBucket {
+    bucket: usize,
+    first: (usize, [f32; 2]),
+    min_y: (usize, [f32; 2]),
+    max_y: (usize, [f32; 2]),
+    last: (usize, [f32; 2]),
+}
+
+impl LinePlotDecimationBucket {
+    fn new(bucket: usize, index: usize, point: [f32; 2]) -> Self {
+        Self {
+            bucket,
+            first: (index, point),
+            min_y: (index, point),
+            max_y: (index, point),
+            last: (index, point),
+        }
+    }
+
+    fn push(&mut self, index: usize, point: [f32; 2]) {
+        if point[1] < self.min_y.1[1] {
+            self.min_y = (index, point);
+        }
+        if point[1] > self.max_y.1[1] {
+            self.max_y = (index, point);
+        }
+        self.last = (index, point);
+    }
+
+    fn ordered_points(self) -> [Option<[f32; 2]>; 4] {
+        let mut candidates = [self.first, self.min_y, self.max_y, self.last];
+        candidates.sort_by_key(|(index, _)| *index);
+        let mut out = [None; 4];
+        let mut out_len = 0usize;
+        let mut previous_index = None;
+        for (index, point) in candidates {
+            if previous_index == Some(index) {
+                continue;
+            }
+            out[out_len] = Some(point);
+            out_len += 1;
+            previous_index = Some(index);
+        }
+        out
+    }
+}
+
+fn flush_line_plot_decimation_bucket(
+    bucket: Option<LinePlotDecimationBucket>,
+    points: &mut Vec<LinePlotPointGpu>,
+    series_instances: &mut Vec<LinePlotSeriesInstance>,
+    run_offset: &mut usize,
+    run_len: &mut usize,
+    plot: [f32; 4],
+    clip: [f32; 4],
+    bounds: LinePlotBounds,
+    line_width: f32,
+    color: [f32; 4],
+    aa_width: f32,
+    style_code: f32,
+    last_mapped: &mut Option<[f32; 2]>,
+    path_distance: &mut f32,
+) -> usize {
+    let Some(bucket) = bucket else {
+        return 0;
+    };
+    let mut emitted = 0usize;
+    for point in bucket.ordered_points().into_iter().flatten() {
+        push_line_plot_renderer_point(
+            points,
+            series_instances,
+            point,
+            run_offset,
+            run_len,
+            plot,
+            clip,
+            bounds,
+            line_width,
+            color,
+            aa_width,
+            style_code,
+            last_mapped,
+            path_distance,
+        );
+        emitted += 1;
+    }
+    emitted
+}
+
+fn push_line_plot_renderer_point(
+    points: &mut Vec<LinePlotPointGpu>,
+    series_instances: &mut Vec<LinePlotSeriesInstance>,
+    point: [f32; 2],
+    run_offset: &mut usize,
+    run_len: &mut usize,
+    plot: [f32; 4],
+    clip: [f32; 4],
+    bounds: LinePlotBounds,
+    line_width: f32,
+    color: [f32; 4],
+    aa_width: f32,
+    style_code: f32,
+    last_mapped: &mut Option<[f32; 2]>,
+    path_distance: &mut f32,
+) {
+    if style_code < 0.5 {
+        if !point[0].is_finite() || !point[1].is_finite() {
+            flush_line_plot_renderer_run(
+                points,
+                series_instances,
+                run_offset,
+                run_len,
+                plot,
+                clip,
+                bounds,
+                line_width,
+                color,
+                aa_width,
+                style_code,
+            );
+            *last_mapped = None;
+            *path_distance = 0.0;
+            return;
+        }
+        if *run_len == 0 {
+            *run_offset = points.len();
+        }
+        points.push(LinePlotPointGpu {
+            data: [point[0], point[1], 0.0, 0.0],
+        });
+        *run_len += 1;
+        return;
+    }
+
+    let mapped = map_line_plot_point(point, plot, bounds);
+    let Some(mapped) = mapped else {
+        flush_line_plot_renderer_run(
+            points,
+            series_instances,
+            run_offset,
+            run_len,
+            plot,
+            clip,
+            bounds,
+            line_width,
+            color,
+            aa_width,
+            style_code,
+        );
+        *last_mapped = None;
+        *path_distance = 0.0;
+        return;
+    };
+    if *run_len == 0 {
+        *run_offset = points.len();
+        *path_distance = 0.0;
+    } else if let Some(previous) = *last_mapped {
+        let dx = mapped[0] - previous[0];
+        let dy = mapped[1] - previous[1];
+        *path_distance += (dx * dx + dy * dy).sqrt();
+    }
+    points.push(LinePlotPointGpu {
+        data: [point[0], point[1], *path_distance, 0.0],
+    });
+    *run_len += 1;
+    *last_mapped = Some(mapped);
+}
+
+fn flush_line_plot_renderer_run(
+    points: &mut Vec<LinePlotPointGpu>,
+    series_instances: &mut Vec<LinePlotSeriesInstance>,
+    run_offset: &mut usize,
+    run_len: &mut usize,
+    plot: [f32; 4],
+    clip: [f32; 4],
+    bounds: LinePlotBounds,
+    line_width: f32,
+    color: [f32; 4],
+    aa_width: f32,
+    style_code: f32,
+) {
+    if *run_len >= 2 {
+        series_instances.push(LinePlotSeriesInstance {
+            plot,
+            clip,
+            bounds: [bounds.x_min, bounds.x_max, bounds.y_min, bounds.y_max],
+            color,
+            params: [line_width, *run_offset as f32, *run_len as f32, aa_width],
+            style: [style_code, 0.0, 0.0, 0.0],
+        });
+    } else {
+        points.truncate(*run_offset);
+    }
+    *run_offset = points.len();
+    *run_len = 0;
 }
 
 fn emit_line_plot(
@@ -1591,8 +3213,13 @@ fn emit_line_plot(
     let line_width = (node.props.line_plot_line_width.max(0.5) * sf)
         .max(1.0)
         .min(plot[3].max(1.0) * 0.10);
+    let use_line_plot_renderer = line_plot_gpu_renderer_enabled();
     for (series_index, series) in node.props.line_plot_series.iter().enumerate() {
-        if series.points.len() < 2 {
+        let series_points = series.logical_points();
+        if series_points.len() < 2 {
+            continue;
+        }
+        if use_line_plot_renderer && line_plot_renderer_style_code(&series.line_style).is_some() {
             continue;
         }
         let color = series
@@ -1602,7 +3229,7 @@ fn emit_line_plot(
             .unwrap_or(LINE_PLOT_PALETTE[series_index % LINE_PLOT_PALETTE.len()]);
         emit_line_plot_series(
             out,
-            &series.points,
+            series_points,
             plot,
             bounds,
             line_width,
@@ -2358,7 +3985,7 @@ fn line_plot_data_bounds(node: &WidgetNode) -> Option<LinePlotBounds> {
                 continue;
             }
         }
-        for [px, py] in &series.points {
+        for [px, py] in series.logical_points() {
             if px.is_finite() && py.is_finite() {
                 bounds.x_min = bounds.x_min.min(*px);
                 bounds.x_max = bounds.x_max.max(*px);
@@ -3422,7 +5049,7 @@ fn emit_line_plot_series(
     let stride = ((segment_count + LINE_PLOT_MAX_SEGMENTS_PER_SERIES - 1)
         / LINE_PLOT_MAX_SEGMENTS_PER_SERIES)
         .max(1);
-    let mut prev: Option<[f32; 2]> = None;
+    let mut state = LinePlotEmitState::default();
     let mut last_index = 0usize;
     for idx in (0..visible.len()).step_by(stride) {
         emit_line_plot_point(
@@ -3433,7 +5060,7 @@ fn emit_line_plot_series(
             line_width,
             color,
             line_style,
-            &mut prev,
+            &mut state,
         );
         last_index = idx;
     }
@@ -3446,9 +5073,15 @@ fn emit_line_plot_series(
             line_width,
             color,
             line_style,
-            &mut prev,
+            &mut state,
         );
     }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct LinePlotEmitState {
+    before_previous: Option<[f32; 2]>,
+    previous: Option<[f32; 2]>,
 }
 
 fn emit_line_plot_point(
@@ -3459,19 +5092,31 @@ fn emit_line_plot_point(
     line_width: f32,
     color: [f32; 4],
     line_style: &str,
-    prev: &mut Option<[f32; 2]>,
+    state: &mut LinePlotEmitState,
 ) {
     let mapped = map_line_plot_point(point, plot, bounds);
     let Some(mapped) = mapped else {
-        *prev = None;
+        *state = LinePlotEmitState::default();
         return;
     };
-    if let Some(previous) = *prev {
+    if let Some(previous) = state.previous {
         if let Some((start, end)) = clip_line_segment_to_rect(previous, mapped, plot) {
             push_styled_line_segment(out, start, end, line_width, color, line_style);
+            if matches!(line_style, "solid" | "") {
+                push_line_join_if_needed(
+                    out,
+                    state.before_previous,
+                    previous,
+                    mapped,
+                    plot,
+                    line_width,
+                    color,
+                );
+            }
         }
     }
-    *prev = Some(mapped);
+    state.before_previous = state.previous;
+    state.previous = Some(mapped);
 }
 
 fn map_line_plot_point(
@@ -3547,13 +5192,15 @@ fn push_line_segment(
     let dx = end[0] - start[0];
     let dy = end[1] - start[1];
     let len = (dx * dx + dy * dy).sqrt();
-    if len <= 0.25 {
+    if len <= 0.001 {
         let radius = width * 0.5;
-        out.push(inst_radii(
+        let mut dot = inst_radii(
             [start[0] - radius, start[1] - radius, width, width],
             color,
             [radius; 4],
-        ));
+        );
+        dot.transform2[3] = 1.0;
+        out.push(dot);
         return;
     }
     let cx = (start[0] + end[0]) * 0.5;
@@ -3564,7 +5211,48 @@ fn push_line_segment(
         [width * 0.5; 4],
     );
     segment.transform2[0] = dy.atan2(dx);
+    segment.transform2[3] = 1.0;
     out.push(segment);
+}
+
+fn push_line_join_if_needed(
+    out: &mut Vec<RectInstance>,
+    before: Option<[f32; 2]>,
+    joint: [f32; 2],
+    after: [f32; 2],
+    plot: [f32; 4],
+    width: f32,
+    color: [f32; 4],
+) {
+    let Some(before) = before else {
+        return;
+    };
+    if joint[0] < plot[0]
+        || joint[0] > plot[0] + plot[2]
+        || joint[1] < plot[1]
+        || joint[1] > plot[1] + plot[3]
+    {
+        return;
+    }
+    let v0 = [joint[0] - before[0], joint[1] - before[1]];
+    let v1 = [after[0] - joint[0], after[1] - joint[1]];
+    let len0 = (v0[0] * v0[0] + v0[1] * v0[1]).sqrt();
+    let len1 = (v1[0] * v1[0] + v1[1] * v1[1]).sqrt();
+    if len0 <= 0.25 || len1 <= 0.25 {
+        return;
+    }
+    let dot = ((v0[0] * v1[0] + v0[1] * v1[1]) / (len0 * len1)).clamp(-1.0, 1.0);
+    if dot >= LINE_PLOT_JOIN_DOT_COS_THRESHOLD {
+        return;
+    }
+    let radius = width * 0.5;
+    let mut join = inst_radii(
+        [joint[0] - radius, joint[1] - radius, width, width],
+        color,
+        [radius; 4],
+    );
+    join.transform2[3] = 1.0;
+    out.push(join);
 }
 
 fn push_styled_line_segment(
@@ -4798,16 +6486,22 @@ fn emit_focus_ring_radii(
     out: &mut Vec<RectInstance>,
 ) {
     if state.focused.as_deref() == Some(node.id.as_str()) && !state.is_disabled(&node.id) {
-        let ring = FOCUS_RING_LP * sf;
-        out.push(inst_radii(
-            [
-                rect[0] - ring,
-                rect[1] - ring,
-                rect[2] + ring * 2.0,
-                rect[3] + ring * 2.0,
-            ],
+        let width = FOCUS_RING_LP * sf;
+        if width <= 0.0 {
+            return;
+        }
+        let outer = [
+            rect[0] - width,
+            rect[1] - width,
+            rect[2] + width * 2.0,
+            rect[3] + width * 2.0,
+        ];
+        out.push(inst_outline_ring_clipped(
+            outer,
             with_alpha(theme.focus, 0.60),
-            outset_radii(radii, ring),
+            outset_radii(radii, width),
+            width,
+            default_local_clip(outer),
         ));
     }
 }
@@ -5643,7 +7337,6 @@ fn emit_rects_inner(
                 let item_visual = part_visual_for(node, state, "item");
                 let accent_visual = part_visual_for(node, state, "accent");
                 let item_radii = visual_radii_with_fallback(&item_visual, radii, sf);
-                emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], item_radii, out);
                 let fill = if active {
                     resolve_color(&item_visual.background, theme)
                         .or(styled_bg)
@@ -5698,26 +7391,36 @@ fn emit_rects_inner(
                     .unwrap_or(0.0);
 
                 if bar_w > 0.0 {
-                    // Side-by-side layout: accent bar on the left edge, item background
-                    // immediately to its right. They share no pixels so the bar looks
-                    // like an integrated part of the item rather than an overlay.
+                    if item_border_w > 0.0 {
+                        emit_bordered_rect_radii(
+                            out,
+                            [x, y, w, h],
+                            resolve_color(&item_visual.border_color, theme).unwrap_or(theme.border),
+                            item_fill,
+                            item_radii,
+                            item_border_w,
+                        );
+                    } else {
+                        out.push(inst_radii([x, y, w, h], item_fill, item_radii));
+                    }
+
                     let accent_fill = apply_opacity(
                         resolve_color(&accent_visual.background, theme)
                             .or(resolve_color(&accent_visual.foreground, theme))
                             .unwrap_or_else(|| styled_accent.unwrap_or(theme.accent)),
                         accent_visual.opacity,
                     );
-                    // Bar inherits the item's outer left corners; right corners are square
-                    // so it flush-joins the item background.
-                    let accent_radii = visual_radii_with_fallback(
-                        &accent_visual,
-                        [item_radii[0], 0.0, 0.0, item_radii[3]],
-                        sf,
-                    );
+                    let accent_x_inset = (2.0 * sf).min((w - bar_w).max(0.0));
+                    let accent_y_inset = (6.0 * sf).min(h * 0.25).max(0.0);
+                    let accent_h = (h - accent_y_inset * 2.0).max(0.0);
+                    let accent_rect = [x + accent_x_inset, y + accent_y_inset, bar_w, accent_h];
+                    let accent_radius = (bar_w.min(accent_h) * 0.5).max(0.0);
+                    let accent_radii =
+                        visual_radii_with_fallback(&accent_visual, [accent_radius; 4], sf);
                     if accent_border_w > 0.0 {
                         emit_bordered_rect_radii(
                             out,
-                            [x, y, bar_w, h],
+                            accent_rect,
                             resolve_color(&accent_visual.border_color, theme)
                                 .unwrap_or(accent_fill),
                             accent_fill,
@@ -5725,22 +7428,7 @@ fn emit_rects_inner(
                             accent_border_w,
                         );
                     } else {
-                        out.push(inst_radii([x, y, bar_w, h], accent_fill, accent_radii));
-                    }
-                    // Item starts right of the bar; left corners are square to match the bar.
-                    let item_rect = [x + bar_w, y, (w - bar_w).max(0.0), h];
-                    let item_rect_radii = [0.0, item_radii[1], item_radii[2], 0.0];
-                    if item_border_w > 0.0 {
-                        emit_bordered_rect_radii(
-                            out,
-                            item_rect,
-                            resolve_color(&item_visual.border_color, theme).unwrap_or(theme.border),
-                            item_fill,
-                            item_rect_radii,
-                            item_border_w,
-                        );
-                    } else {
-                        out.push(inst_radii(item_rect, item_fill, item_rect_radii));
+                        out.push(inst_radii(accent_rect, accent_fill, accent_radii));
                     }
                 } else {
                     // No bar (inactive, or width: 0px): full-width item.
@@ -5760,6 +7448,7 @@ fn emit_rects_inner(
                 if let Some(rect) = badge_rect(node, [x, y, w, h], theme, sf, theme.spacing * sf) {
                     emit_badge_pill(node, theme, sf, state, rect, out);
                 }
+                emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], item_radii, out);
             }
 
             WidgetKind::TextInput | WidgetKind::TextArea => {
@@ -7250,6 +8939,227 @@ mod tests {
     fn has_rect(out: &[RectInstance], color: [f32; 4], rect: [f32; 4]) -> bool {
         out.iter()
             .any(|inst| inst.color == color && inst.rect == rect)
+    }
+
+    #[test]
+    fn simple_path_accepts_solid_rounded_rect_instances() {
+        let instance = inst_radii([4.0, 5.0, 120.0, 36.0], [0.1, 0.2, 0.3, 0.8], [8.0; 4]);
+
+        assert!(is_simple_rect_instance(&instance));
+    }
+
+    #[test]
+    fn simple_path_rejects_featureful_rect_instances() {
+        let solid = inst_radii([4.0, 5.0, 120.0, 36.0], [0.1, 0.2, 0.3, 1.0], [8.0; 4]);
+        let mut transformed = solid;
+        transformed.transform[0] = 2.0;
+        let shadow = inst_shadow_clipped(
+            [4.0, 5.0, 120.0, 36.0],
+            [0.0, 0.0, 0.0, 0.4],
+            [8.0; 4],
+            8.0,
+            default_local_clip([4.0, 5.0, 120.0, 36.0]),
+        );
+        let gradient = inst_linear_gradient(
+            [4.0, 5.0, 120.0, 36.0],
+            [
+                [1.0, 0.0, 0.0, 1.0],
+                [0.0, 1.0, 0.0, 1.0],
+                [0.0; 4],
+                [0.0; 4],
+                [0.0; 4],
+                [0.0; 4],
+            ],
+            [0.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+            2.0,
+            0.0,
+            [8.0; 4],
+            90.0,
+        );
+
+        assert!(!is_simple_rect_instance(&transformed));
+        assert!(!is_simple_rect_instance(&shadow));
+        assert!(!is_simple_rect_instance(&gradient));
+    }
+
+    #[test]
+    fn line_path_accepts_rotated_solid_capsules() {
+        let mut line = inst_radii([10.0, 20.0, 160.0, 3.0], [0.2, 0.4, 0.8, 1.0], [1.5; 4]);
+        line.transform2[0] = 0.42;
+        line.transform2[3] = 1.0;
+        let mut short_line = inst_radii([10.0, 20.0, 1.2, 3.0], [0.2, 0.4, 0.8, 1.0], [1.5; 4]);
+        short_line.transform2[0] = 0.42;
+        short_line.transform2[3] = 1.0;
+
+        assert!(is_line_segment_instance(&line));
+        assert!(is_line_segment_instance(&short_line));
+        assert!(!is_simple_rect_instance(&line));
+    }
+
+    #[test]
+    fn line_path_rejects_featureful_capsules() {
+        let mut axis_aligned = inst_radii([10.0, 20.0, 160.0, 3.0], [0.2, 0.4, 0.8, 1.0], [1.5; 4]);
+        axis_aligned.transform2[3] = 1.0;
+        let mut gradient = axis_aligned;
+        gradient.transform2[0] = 0.42;
+        gradient.paint[0] = 1.0;
+        let mut scaled = axis_aligned;
+        scaled.transform2[0] = 0.42;
+        scaled.transform[2] = 1.2;
+
+        assert!(is_line_segment_instance(&axis_aligned));
+        assert!(!is_line_segment_instance(&gradient));
+        assert!(!is_line_segment_instance(&scaled));
+    }
+
+    #[test]
+    fn line_join_dots_only_emit_for_visible_turns() {
+        let plot = [0.0, 0.0, 100.0, 80.0];
+        let color = [0.2, 0.4, 0.8, 1.0];
+        let mut out = Vec::new();
+
+        push_line_join_if_needed(
+            &mut out,
+            Some([0.0, 40.0]),
+            [20.0, 40.0],
+            [40.0, 40.5],
+            plot,
+            2.0,
+            color,
+        );
+        assert!(out.is_empty());
+
+        push_line_join_if_needed(
+            &mut out,
+            Some([0.0, 40.0]),
+            [20.0, 40.0],
+            [20.0, 60.0],
+            plot,
+            2.0,
+            color,
+        );
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].transform2[3], 1.0);
+        assert!(is_line_segment_instance(&out[0]));
+    }
+
+    #[test]
+    fn line_plot_decimation_preserves_bucket_extrema() {
+        let visible: Vec<[f32; 2]> = (0..100)
+            .map(|i| {
+                let y = match i {
+                    17 => 10.0,
+                    72 => -8.0,
+                    _ => (i as f32 * 0.1).sin(),
+                };
+                [i as f32, y]
+            })
+            .collect();
+        let bounds = LinePlotBounds {
+            x_min: 0.0,
+            x_max: 99.0,
+            y_min: -8.0,
+            y_max: 10.0,
+        };
+        let mut points = Vec::new();
+        let mut series_instances = Vec::new();
+        let mut run_offset = 0usize;
+        let mut run_len = 0usize;
+        let mut last_mapped = None;
+        let mut path_distance = 0.0;
+
+        let decimated = push_decimated_line_plot_renderer_series(
+            &mut points,
+            &mut series_instances,
+            &visible,
+            [0.0, 0.0, 10.0, 80.0],
+            [0.0, 0.0, 10.0, 80.0],
+            bounds,
+            2.0,
+            [0.2, 0.4, 0.8, 1.0],
+            1.0,
+            64,
+            LinePlotDecimationMode::Extrema,
+            0.0,
+            true,
+            &mut run_offset,
+            &mut run_len,
+            &mut last_mapped,
+            &mut path_distance,
+        );
+        flush_line_plot_renderer_run(
+            &mut points,
+            &mut series_instances,
+            &mut run_offset,
+            &mut run_len,
+            [0.0, 0.0, 10.0, 80.0],
+            [0.0, 0.0, 10.0, 80.0],
+            bounds,
+            2.0,
+            [0.2, 0.4, 0.8, 1.0],
+            1.0,
+            0.0,
+        );
+
+        let ys: Vec<f32> = points.iter().map(|point| point.data[1]).collect();
+        assert!(decimated);
+        assert!(points.len() < visible.len());
+        assert!(series_instances.len() == 1);
+        assert!(ys.contains(&10.0));
+        assert!(ys.contains(&-8.0));
+    }
+
+    #[test]
+    fn line_plot_auto_decimation_uses_pixel_stride() {
+        let visible: Vec<[f32; 2]> = (0..100).map(|i| [i as f32, i as f32]).collect();
+        let bounds = LinePlotBounds {
+            x_min: 0.0,
+            x_max: 99.0,
+            y_min: 0.0,
+            y_max: 99.0,
+        };
+        let mut points = Vec::new();
+        let mut series_instances = Vec::new();
+        let mut run_offset = 0usize;
+        let mut run_len = 0usize;
+        let mut last_mapped = None;
+        let mut path_distance = 0.0;
+
+        let decimated = push_decimated_line_plot_renderer_series(
+            &mut points,
+            &mut series_instances,
+            &visible,
+            [0.0, 0.0, 10.0, 80.0],
+            [0.0, 0.0, 10.0, 80.0],
+            bounds,
+            2.0,
+            [0.2, 0.4, 0.8, 1.0],
+            1.0,
+            64,
+            LinePlotDecimationMode::Auto,
+            0.0,
+            true,
+            &mut run_offset,
+            &mut run_len,
+            &mut last_mapped,
+            &mut path_distance,
+        );
+
+        assert!(decimated);
+        assert!(points.len() < visible.len());
+        assert_eq!(points.first().map(|point| point.data[0]), Some(0.0));
+        assert_eq!(points.last().map(|point| point.data[0]), Some(99.0));
+        assert!(
+            points.len() <= line_plot_fast_decimation_target_points([0.0, 0.0, 10.0, 80.0], 64)
+        );
+    }
+
+    #[test]
+    fn split_batch_pressure_guard_only_trips_on_many_runs() {
+        assert!(!should_collapse_split_batches(3_000, 1, 0));
+        assert!(!should_collapse_split_batches(3_000, 512, 0));
+        assert!(should_collapse_split_batches(5_643, 5_016, 0));
+        assert!(!should_collapse_split_batches(2_000, 1_600, 1_200));
     }
 
     #[test]
@@ -10085,7 +11995,7 @@ mod tests {
     }
 
     #[test]
-    fn active_nav_item_accent_uses_item_left_radii() {
+    fn active_nav_item_accent_is_inset_from_item_perimeter() {
         let mut nav = node("nav-overview", WidgetKind::NavItem);
         nav.style.parts.parts.insert(
             "item".to_string(),
@@ -10148,8 +12058,108 @@ mod tests {
             .iter()
             .find(|inst| inst.color == [0.11, 0.22, 0.33, 1.0])
             .expect("active nav item accent should be emitted");
-        assert_eq!(accent.rect, [0.0, 0.0, 5.0, 36.0]);
-        assert_eq!(accent.radii, [8.0, 0.0, 0.0, 8.0]);
+        assert_eq!(accent.rect, [2.0, 6.0, 5.0, 24.0]);
+        assert_eq!(accent.radii, [2.5; 4]);
+
+        let item_surface = out
+            .iter()
+            .find(|inst| inst.rect == [0.0, 0.0, 180.0, 36.0])
+            .expect("active nav item surface should use the full item perimeter");
+        assert_eq!(item_surface.radii, [8.0; 4]);
+    }
+
+    #[test]
+    fn focused_active_nav_item_uses_outline_focus_ring() {
+        let mut nav = node("nav-overview", WidgetKind::NavItem);
+        nav.style.parts.parts.insert(
+            "item".to_string(),
+            PartStyle {
+                visual: VisualStyle {
+                    border_radius: Some(8.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        nav.style.parts.parts.insert(
+            "accent".to_string(),
+            PartStyle {
+                layout: PartLayoutStyle {
+                    width: Some(5.0),
+                    ..Default::default()
+                },
+                visual: VisualStyle {
+                    background: Some(rgba(0.11, 0.22, 0.33)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "nav-overview".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 180.0,
+                h: 36.0,
+            },
+        );
+        let mut state = WidgetState::default();
+        state.focused = Some("nav-overview".to_string());
+        state
+            .nav_targets
+            .insert("nav-overview".to_string(), "overview".to_string());
+        state
+            .page_owner
+            .insert("overview".to_string(), "pages".to_string());
+        state
+            .active_pages
+            .insert("pages".to_string(), "overview".to_string());
+        let theme = Theme::dark();
+        let focus_color = with_alpha(theme.focus, 0.60);
+        let mut out = Vec::new();
+
+        emit_rects(
+            &nav,
+            &layout,
+            &theme,
+            1.0,
+            &state,
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let accent_index = out
+            .iter()
+            .position(|inst| inst.color == [0.11, 0.22, 0.33, 1.0])
+            .expect("active nav item accent should be emitted");
+        let focus_index = out
+            .iter()
+            .position(|inst| inst.color == focus_color)
+            .expect("focused nav item should emit a focus ring");
+        assert!(
+            focus_index > accent_index,
+            "focus ring should paint above the selected accent bar"
+        );
+        let focus = &out[focus_index];
+        assert_eq!(focus.rect, [-2.0, -2.0, 184.0, 40.0]);
+        assert_eq!(focus.radii, [10.0; 4]);
+        assert_eq!(focus.params[2], 3.0);
+        assert_eq!(focus.paint[3], 2.0);
+
+        let accent = out
+            .iter()
+            .find(|inst| inst.color == [0.11, 0.22, 0.33, 1.0])
+            .expect("active nav item accent should be emitted");
+        assert_eq!(accent.rect, [2.0, 6.0, 5.0, 24.0]);
+
+        assert!(!out.iter().any(|inst| {
+            inst.color == focus_color
+                && inst.params[2] == 0.0
+                && inst.rect == [-2.0, -2.0, 184.0, 40.0]
+        }));
     }
 
     #[test]
