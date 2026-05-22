@@ -27,7 +27,9 @@ Baseline results on this machine:
 | Area | Scenario | Result |
 | --- | --- | --- |
 | Layout | 2,000 mixed controls in a flow layout | 2,908 ns/widget |
-| CSS cascade | 2,000 mixed widgets with type, class, part, and child selectors | 10,874 ns/widget after target filtering and snapshot gating; original baseline was 15,148 ns/widget |
+| CSS cascade | 2,000 mixed widgets with type, class, part, and child selectors | 3,803 ns/widget pure cascade; 10,602 ns/widget clone + cascade in the latest run; original clone + cascade baseline was 15,148 ns/widget |
+| CSS cascade, simple stylesheet | 2,000 widgets without ancestor selectors | 2,534 ns/widget with ancestor snapshot gating versus 3,347 ns/widget with forced ancestor snapshots |
+| CSS cascade, large stylesheet | 2,000 widgets with 400 extra non-matching rules | 3,233 ns/widget with compiled rule buckets and scratch reuse versus 6,641 ns/widget with forced linear scan |
 | Text | 2,000 labels | 963 ns/label |
 | ProgressBar primitives | 10,000 progress bars | 547 ns/bar |
 | DataFrameTable primitives | 270 visible cells | 0.862 us/frame, 3.2 ns/visible cell |
@@ -75,10 +77,20 @@ Baseline and follow-up results:
    Follow-up benchmark split:
 
    ```text
-   clone only:       6,389 ns/widget
-   pure cascade:     4,004 ns/widget
-   clone + cascade: 10,976 ns/widget
+   pure cascade:     3,803 ns/widget
+   clone + cascade: 10,602 ns/widget
    ```
+
+   A first compiled-style layer now builds rule buckets after parsing and uses
+   them for larger stylesheets. In a synthetic stylesheet with 400 extra
+   non-matching rules, pure cascade dropped from 6,641 ns/widget with forced
+   linear scanning to 3,233 ns/widget with bucketed candidates and reused
+   cascade scratch buffers.
+
+   For stylesheets without child/descendant ancestor selectors, cascade now
+   skips ancestor snapshot and `StyleAncestor` view construction. The simple
+   stylesheet benchmark dropped from 3,347 ns/widget with forced ancestor
+   snapshots to 2,534 ns/widget with the gated path.
 
 2. Dense primitive scenes are dominated by CPU primitive emission, not upload or
    command encoding. In the 3,600-panel windowed probe, primitive emit was about
@@ -119,9 +131,9 @@ Existing focused benchmarks now cover:
 
 ## Next Optimization Targets
 
-1. CSS cascade: cache selector matching work by widget kind/class/part where
-   possible, and add a second benchmark that separates tree cloning from pure
-   cascade application.
+1. CSS cascade: keep the current parser, continue expanding the compiled
+   runtime layer, and target per-node scratch allocation plus declaration
+   application costs now that large-rule candidate filtering is in place.
 
 2. Primitive emission: profile `emit_rects_inner` on dense simple-panel scenes,
    then target style lookup and per-node traversal overhead before touching GPU

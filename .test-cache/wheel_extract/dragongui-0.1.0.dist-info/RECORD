@@ -3,7 +3,7 @@ dragongui-0.1.0.dist-info/WHEEL,sha256=QC3zdlgimDC1GtRrc0qfjqbzuc7G6nDvPrjaINbNO
 dragongui-0.1.0.dist-info/licenses/LICENSE,sha256=V-QYNfRwMi9yygrjlKEqCnymw0XUE9wyktoSSKqw8Eg,1102
 dragongui/__init__.py,sha256=f_wtJu0BCQHCov-d3g_-lrm9uF4Xa29lPvLR1Ud0kn4,3476
 dragongui/_backend.py,sha256=dXZDUkdsrcHgWhAIMrjKqfqFyksb9g9Ayuf7ihGiThU,6886
-dragongui/_dragongui.pyd,sha256=ee4ikCK69D80dNGuoxOZI_HAdmFWXj9eHeEuxrB91B0,19396096
+dragongui/_dragongui.pyd,sha256=HZPdjI3TUjmJC7CDxyVwfRQ1_0cjCf0cjII1ZWHilpI,19416576
 dragongui/app.py,sha256=dAS6s7rYL9-R9HIvxPgpYcStkIwVLBBH8YCZKu8DGLU,19060
 dragongui/colormap.py,sha256=50XU3fvvCfjigFXN6-XbfIiyDmxlOex-YobkCxRwLNk,3869
 dragongui/components.py,sha256=GHTdDHWMzGCbDI4rWWg5z1GyhNQlPiauztVCmPN8Az4,10569
@@ -16,5 +16,5 @@ dragongui/runtime.py,sha256=FLuFiwdqjx9d46wXOIGa8NKsEIiW95j8JYvJnaYAVBg,83887
 dragongui/theme.py,sha256=OVd4D9yeQT9-PdwXW-mg19xaeAqM4FAI0-Hd6FqxCzE,2702
 dragongui/thread_monitor.py,sha256=5aMefGwvUXC9kvqbMlvo1zBkEPZN0ZF4ZbBAYI7W_Yg,24184
 dragongui/vdom.py,sha256=0ZNqlWdHIjNVeXE6SvCTLUnuq5e0-XJAP-_DIDMyraA,16925
-dragongui/widgets.py,sha256=W2uIlNoTUjko94IiEnc245lQe0WmTqTV-7Nq-G_wEio,275374
+dragongui/widgets.py,sha256=bau2IMLvOdSkeY9lYTeCIzKJHaKyWUNkj49YqnxQX4Y,280204
 dragongui-0.1.0.dist-info/RECORD,,

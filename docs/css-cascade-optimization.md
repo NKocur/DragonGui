@@ -37,7 +37,7 @@ more complex selectors.
 
 ## Fix
 
-Two fast paths were added.
+Three fast paths were added.
 
 ### 1. Rule Target Filtering
 
@@ -78,6 +78,24 @@ snapshots while walking the widget tree.
 This keeps simple stylesheets on a cheaper path while preserving support for
 complex selectors when they are present.
 
+### 3. Compiled Rule Buckets
+
+`ParsedStylesheet` now builds runtime rule buckets after parsing. The parser is
+unchanged; parsed rules are lowered into DragonGUI-owned `DgStyleRule` values
+and then indexed by the target selector's most selective cheap key:
+
+- id
+- key
+- first required class
+- widget kind
+- universal fallback
+
+For stylesheets above the small-rule threshold, cascade asks the buckets for
+candidate rules for the current widget and then still runs the normal
+`target_may_match` and full selector matcher. Small stylesheets keep the linear
+scan path because benchmarking showed bucket setup/lookup overhead was not worth
+paying for the common small mixed stylesheet.
+
 ## Files Changed
 
 - `native/src/css_style.rs`
@@ -87,10 +105,13 @@ Key implementation changes:
 
 - Added `DgSelectorTargetFilter`.
 - Added `DgStyleRule::target_may_match`.
+- Added `StylesheetRuleBuckets` beside parsed rules.
 - Added selector feature detection helpers:
   - `contains_attribute_selector`
   - `requires_sibling_snapshots`
 - Added `StylesheetMatchFeatures`.
+- Routed cascade and matched-rule label traversal through bucketed candidate
+  collection when stylesheets are large enough.
 - Passed match features through cascade and matched-rule label traversal.
 - Avoided attribute and sibling snapshot construction unless required.
 - Updated the benchmark audit with the new CSS cascade result.
@@ -162,6 +183,56 @@ Both regressed the benchmark on this workload. The likely reason is that their
 extra branch/rule-scan or allocation behavior outweighed the small work they
 avoided.
 
+## Compiled Bucket Follow-Up
+
+A first compiled-style layer was added without replacing the CSS parser. The
+parsed rules now keep precomputed rule buckets, and cascade uses those buckets
+only for larger stylesheets.
+
+Small mixed stylesheet benchmark after adding the guarded bucket path:
+
+```text
+pure cascade:     3,803 ns/widget
+clone + cascade: 10,602 ns/widget
+```
+
+The pure cascade result is effectively flat with the previous `4,004 ns/widget`
+measurement, and slightly faster after reusing cascade scratch buffers.
+
+Large stylesheet benchmark with 400 extra non-matching rules:
+
+```text
+linear scan:       6,641 ns/widget
+bucketed cascade: 3,233 ns/widget
+```
+
+That is about a 50% reduction for a larger stylesheet where skipping irrelevant
+rules outweighs the candidate bucket lookup cost. Reusing the matched-declaration
+and candidate-rule scratch buffers shaved the bucketed path from `3,503
+ns/widget` to `3,233 ns/widget` in the measured large-rule benchmark.
+
+## Ancestor Snapshot Gating Follow-Up
+
+Cascade now also detects whether any active selector needs ancestor matching.
+For stylesheets without child, descendant, or ancestor-dependent selector
+functions, runtime style application skips:
+
+- ancestor snapshot pushes
+- ancestor class view construction
+- `StyleAncestor` view construction
+
+This does not change behavior for stylesheets with selectors such as
+`Panel.content > Button`; those still use the full ancestor path.
+
+Simple no-ancestor stylesheet benchmark:
+
+```text
+forced ancestor path: 3,347 ns/widget
+gated ancestor path:  2,534 ns/widget
+```
+
+That is about a 24% reduction for simple target-only stylesheets.
+
 ## Verification
 
 Focused CSS tests:
@@ -179,12 +250,12 @@ cargo test --manifest-path native\Cargo.toml --lib
 Result:
 
 ```text
-483 passed; 7 ignored
+484 passed; 11 ignored
 ```
 
 ## Remaining Work
 
-The cascade is still worth optimizing, but the next pass should target pure
-cascade work directly. Good candidates are reducing per-node ancestor/class
-scratch allocations and narrowing candidate rules without building large cache
-keys or cloning full `NodeStyle` values.
+The cascade is still worth optimizing, but the next pass should target
+declaration/property work directly. Good candidates are property masks and
+selector shape-specific fast paths so matching simple type/class/id selectors
+does less generic selector-engine work.

@@ -6,7 +6,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 import zlib
 from contextlib import AbstractContextManager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import count
 import math
 import numbers
@@ -665,6 +665,9 @@ class ScatterFrameStream:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._metrics_lock = threading.Lock()
+        self._state_lock = threading.Lock()
+        self._colormap_override: str | None = None
+        self._last_metadata_colormap: str | None = None
 
     @property
     def running(self) -> bool:
@@ -673,6 +676,12 @@ class ScatterFrameStream:
 
     def start(self) -> None:
         if self.running:
+            return
+        active_stream = getattr(self.scatter, "_active_frame_stream", None)
+        if active_stream is None:
+            setattr(self.scatter, "_active_frame_stream", self)
+        elif active_stream is not self:
+            self._stop.set()
             return
         self._stop.clear()
         self._thread = threading.Thread(
@@ -684,9 +693,44 @@ class ScatterFrameStream:
 
     def stop(self, timeout: float | None = None) -> None:
         self._stop.set()
+        if getattr(self.scatter, "_active_frame_stream", None) is self:
+            setattr(self.scatter, "_active_frame_stream", None)
         thread = self._thread
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=timeout)
+
+    def _is_active_stream(self) -> bool:
+        return getattr(self.scatter, "_active_frame_stream", self) is self
+
+    def set_colormap(self, colormap: str | None) -> None:
+        """Override compact stream rendering with the current widget colormap."""
+        next_colormap = None if colormap is None else _scatter_colormap(colormap)
+        with self._state_lock:
+            self._colormap_override = next_colormap
+            self._last_metadata_colormap = None
+            if next_colormap is not None:
+                self.frames = tuple(
+                    replace(payload, colormap=next_colormap)
+                    if payload.payload_format == "xyz_f32_v0"
+                    else payload
+                    for payload in self.frames
+                )
+
+    def _current_payload_colormap(self, payload: ScatterPayload) -> str:
+        with self._state_lock:
+            override = self._colormap_override
+        if payload.payload_format == "xyz_f32_v0":
+            current_colormap = (
+                override
+                if override is not None
+                else getattr(self.scatter, "colormap", payload.colormap)
+            )
+        else:
+            current_colormap = payload.colormap
+        try:
+            return _scatter_colormap(current_colormap)
+        except (TypeError, ValueError):
+            return _scatter_colormap(payload.colormap)
 
     def _current_interval_ms(self) -> float:
         value = self.interval_ms() if callable(self.interval_ms) else self.interval_ms
@@ -699,6 +743,8 @@ class ScatterFrameStream:
         index = 0
         last_ui_ms = 0.0
         while not self._stop.is_set():
+            if not self._is_active_stream():
+                break
             if index >= len(self.frames) and not self.loop:
                 break
             frame_index = index % len(self.frames)
@@ -706,6 +752,10 @@ class ScatterFrameStream:
             with self._metrics_lock:
                 self.metrics.produced += 1
             try:
+                current_colormap = self._current_payload_colormap(payload)
+                include_metadata = index == 0 or current_colormap != self._last_metadata_colormap
+                if include_metadata:
+                    self._last_metadata_colormap = current_colormap
                 now_ms = time.perf_counter() * 1000.0
                 notify_frame = (
                     self.on_frame is not None
@@ -719,7 +769,7 @@ class ScatterFrameStream:
                         handle.app.call_soon_threadsafe(
                             lambda p=payload,
                             i=index,
-                            include_metadata=index == 0,
+                            include_metadata=include_metadata,
                             notify=notify_frame: self._apply_callback_frame(
                                 p,
                                 i,
@@ -728,10 +778,13 @@ class ScatterFrameStream:
                             )
                         )
                 else:
+                    if not self._is_active_stream():
+                        break
                     self.scatter.enqueue_prepared_points(
                         payload,
                         coalesce=True,
-                        include_metadata=index == 0,
+                        include_metadata=include_metadata,
+                        colormap_override=current_colormap,
                     )
                     with self._metrics_lock:
                         self.metrics.submitted += 1
@@ -765,13 +818,15 @@ class ScatterFrameStream:
         include_metadata: bool,
         notify_frame: bool,
     ) -> None:
-        if self._stop.is_set():
+        if self._stop.is_set() or not self._is_active_stream():
             return
         try:
+            current_colormap = self._current_payload_colormap(payload)
             self.scatter.enqueue_prepared_points(
                 payload,
                 coalesce=True,
                 include_metadata=include_metadata,
+                colormap_override=current_colormap,
             )
             with self._metrics_lock:
                 self.metrics.submitted += 1
@@ -4718,16 +4773,25 @@ class Scatter3D(Widget):
         coalesce: bool = True,
         include_metadata: bool = True,
         fit: bool = False,
+        colormap_override: str | None = None,
     ) -> None:
         """Thread-safe native enqueue for an already-packed primary scatter frame."""
         handle = self._live()
         if handle is None:
             return
+        payload_colormap = _scatter_colormap(payload.colormap)
+        render_colormap = (
+            _scatter_colormap(
+                self.colormap if colormap_override is None else colormap_override
+            )
+            if payload.payload_format == "xyz_f32_v0"
+            else payload_colormap
+        )
         handle.enqueue_set_scatter_points_packed(
             payload.data,
             pack_ms=payload.pack_ms,
             enqueue_epoch_ms=time.time() * 1000.0,
-            colormap=payload.colormap,
+            colormap=render_colormap,
             payload_format=payload.payload_format,
             coalesce=coalesce,
             fit=fit,
@@ -4735,9 +4799,33 @@ class Scatter3D(Widget):
             bounds_max=payload.bounds[1] if payload.bounds is not None else None,
         )
         if include_metadata:
+            previous_colormap = self.colormap
+            scalar_bar_tracks_colormap = not self._scalar_colormap_explicit or (
+                self._scalar_bar_colormap == previous_colormap
+            )
+            if payload.payload_format != "xyz_f32_v0":
+                self.colormap = payload_colormap
+            elif colormap_override is not None:
+                self.colormap = render_colormap
+                if self._scalar_bar_visible:
+                    self._scalar_bar_colormap = render_colormap
+                    self._auto_scalar_colormap = render_colormap
+            if payload.bounds is not None and not self._scalar_range_explicit:
+                self._auto_scalar_vmin = float(payload.bounds[0][2])
+                self._auto_scalar_vmax = float(payload.bounds[1][2])
+            if scalar_bar_tracks_colormap:
+                self._scalar_bar_colormap = render_colormap
+                self._auto_scalar_colormap = render_colormap
+            if not self._scalar_title_explicit:
+                self._auto_legend_title = payload.axis_labels[2]
             handle.enqueue_set_scatter_tooltip_axis_labels(*payload.axis_labels)
             if payload.hover_meta is not None:
                 handle.enqueue_set_scatter_primary_hover_meta(payload.hover_meta)
+            if self._scalar_bar_visible:
+                eff_vmin, eff_vmax, eff_log, eff_cm, eff_title = self._effective_scalar_bar_state()
+                handle.enqueue_set_scatter_scalar_bar(
+                    True, eff_vmin, eff_vmax, eff_log, eff_cm, eff_title
+                )
 
     def stream_prepared_frames(
         self,
@@ -4755,7 +4843,7 @@ class Scatter3D(Widget):
         ``handoff="callback"`` schedules a Python UI callback for each payload,
         which is useful for comparing the older callback handoff path.
         """
-        return ScatterFrameStream(
+        stream = ScatterFrameStream(
             self,
             frames,
             interval_ms=interval_ms,
@@ -4764,6 +4852,8 @@ class Scatter3D(Widget):
             ui_interval_ms=ui_interval_ms,
             handoff=handoff,
         )
+        setattr(self, "_active_frame_stream", stream)
+        return stream
 
     def set_points(
         self,
@@ -4864,7 +4954,18 @@ class Scatter3D(Widget):
                 )
 
     def set_colormap(self, colormap: str) -> None:
-        self.colormap = _scatter_colormap(colormap)
+        previous_colormap = self.colormap
+        next_colormap = _scatter_colormap(colormap)
+        active_stream = getattr(self, "_active_frame_stream", None)
+        if active_stream is not None and hasattr(active_stream, "set_colormap"):
+            active_stream.set_colormap(next_colormap)
+        scalar_bar_tracks_colormap = (
+            not self._scalar_colormap_explicit
+            or self._scalar_bar_colormap == previous_colormap
+        )
+        self.colormap = next_colormap
+        if scalar_bar_tracks_colormap:
+            self._scalar_bar_colormap = next_colormap
         # v1 packets bake colors, so a colormap change requires a repack.
         if self.data_format == "point_instance_v1":
             self._cached_payload = None
@@ -5121,7 +5222,7 @@ class Scatter3D(Widget):
             self._scalar_bar_log_scale = bool(log_scale)
             self._scalar_log_explicit = True
         if colormap is not None:
-            self._scalar_bar_colormap = str(colormap)
+            self._scalar_bar_colormap = _scatter_colormap(colormap)
             self._scalar_colormap_explicit = True
         if title is not None:
             self._scalar_bar_title = title

@@ -1833,6 +1833,7 @@ demo_state = {
     "theme": "midnight",
     "stream_interval_ms": 40.0,
     "stream_handoff": "direct",
+    "stream_generation": 0,
     "style": 0,
     "grid": True,
     "planes": True,
@@ -1874,7 +1875,7 @@ pie_segment_frame = type(
 )()
 demo_image_path = make_demo_image()
 report_overview_path, report_detail_path, report_inline_path = write_demo_reports()
-stream_payload_cache: dict[tuple[str, str], list[tuple[float, dg.ScatterPayload]]] = {}
+stream_payload_cache: dict[str, list[tuple[float, dg.ScatterPayload]]] = {}
 line_plot_top: dg.LinePlot | None = None
 line_plot_mid: dg.LinePlot | None = None
 line_plot_bottom: dg.LinePlot | None = None
@@ -1955,6 +1956,31 @@ def update_scatter_stats(snapshot: dict[str, object], observed_fps: float | None
     observed_text = "--" if observed_fps is None else f"{observed_fps:.1f} fps"
     lod = scatter_metrics.get("lod", {})
     lod_active = bool(lod.get("active")) if isinstance(lod, dict) else False
+    scalar_bar = scatter_metrics.get("scalar_bar", {})
+    scalar_bar_colormap = (
+        scalar_bar.get("colormap", "--") if isinstance(scalar_bar, dict) else "--"
+    )
+    commands = runtime.get("commands", {})
+    recent_scatter_commands: list[str] = []
+    if isinstance(commands, dict):
+        recent = commands.get("recent", [])
+        if isinstance(recent, list):
+            for record in reversed(recent):
+                if not isinstance(record, dict):
+                    continue
+                command = str(record.get("command", ""))
+                target = str(record.get("target", ""))
+                if target != scatter.id or command not in {
+                    "SetScatterPointsPacked",
+                    "SetScatterScalarBar",
+                }:
+                    continue
+                detail = str(record.get("detail", ""))
+                if "colormap" not in detail:
+                    continue
+                recent_scatter_commands.append(f"{command}: {detail}")
+                if len(recent_scatter_commands) >= 3:
+                    break
     with state_lock:
         handoff = str(demo_state.get("stream_handoff", "direct"))
     scatter_stats_summary.set_value(
@@ -1975,6 +2001,12 @@ def update_scatter_stats(snapshot: dict[str, object], observed_fps: float | None
                 f"{metric_ms(scatter_metrics, 'last_decode_ms')} / "
                 f"{metric_ms(scatter_metrics, 'last_grid_ms')} / "
                 f"{metric_ms(scatter_metrics, 'last_overlay_ms')}",
+                "Colormaps: "
+                f"widget {scatter.colormap}, "
+                f"native bar {scalar_bar_colormap}, "
+                f"native compact {scatter_metrics.get('primary_compact_colormap', '--')}",
+                "Recent cmap cmds: "
+                + (" | ".join(recent_scatter_commands) if recent_scatter_commands else "--"),
                 "Updates: "
                 f"{fmt_count(scatter_metrics.get('updates'))}, "
                 f"LOD {'active' if lod_active else 'idle'}, "
@@ -2145,11 +2177,13 @@ def push_scatter(mode: str | None = None) -> None:
 
 
 def set_colormap(name: str) -> None:
+    normalized_name = name.strip().lower()
+    if stream_controller is not None:
+        stream_controller.set_colormap(normalized_name)
     scatter.set_colormap(name)
-    scatter.show_scalar_bar(True, colormap=name.lower(), title="z")
-    if stream_controller is not None and stream_controller.running:
-        stop_stream()
-        start_stream()
+    scatter.show_scalar_bar(True, colormap=scatter.colormap, title="z")
+    with state_lock:
+        stream_payload_cache.clear()
     set_status(f"Colormap: {name}")
 
 
@@ -2286,11 +2320,30 @@ def pick_scatter_point(point: dg.ScatterPick) -> None:
 
 
 def stream_payloads_for_mode(mode: str, colormap: str) -> list[tuple[float, dg.ScatterPayload]]:
-    cache_key = (mode, colormap)
+    normalized_colormap = str(colormap).strip().lower()
+    cache_key = mode
     with state_lock:
         cached = stream_payload_cache.get(cache_key)
     if cached is not None:
-        return cached
+        return [
+            (
+                phase,
+                dg.ScatterPayload(
+                    data=payload.data,
+                    payload_format=payload.payload_format,
+                    colormap=normalized_colormap,
+                    point_count=payload.point_count,
+                    pack_ms=payload.pack_ms,
+                    axis_labels=payload.axis_labels,
+                    bounds=payload.bounds,
+                    hover_meta=payload.hover_meta,
+                    frame_summary=payload.frame_summary,
+                )
+                if payload.payload_format == "xyz_f32_v0"
+                else payload
+            )
+            for phase, payload in cached
+        ]
 
     try:
         app.call_soon_threadsafe(lambda m=mode: set_status(f"Prebuilding {m} stream frames"))
@@ -2305,7 +2358,7 @@ def stream_payloads_for_mode(mode: str, colormap: str) -> list[tuple[float, dg.S
                 x="x",
                 y="y",
                 z="z",
-                colormap=colormap,
+                colormap=normalized_colormap,
             ),
         )
         for index in range(STREAM_FRAME_COUNT)
@@ -2371,8 +2424,11 @@ def start_stream() -> None:
     if stream_build_thread is not None and stream_build_thread.is_alive():
         return
     stream_cancel.clear()
+    with state_lock:
+        generation = int(demo_state["stream_generation"])
 
     def worker() -> None:
+        global stream_build_thread
         with state_lock:
             mode = str(demo_state["mode"])
             handoff = str(demo_state.get("stream_handoff", "direct"))
@@ -2381,12 +2437,16 @@ def start_stream() -> None:
             payloads = stream_payloads_for_mode(mode, colormap)
         except RuntimeError:
             return
-        if stream_cancel.is_set():
+        with state_lock:
+            current_generation = int(demo_state["stream_generation"])
+        if stream_cancel.is_set() or current_generation != generation:
             return
 
         def launch() -> None:
             global stream_controller
-            if stream_cancel.is_set():
+            with state_lock:
+                current_generation = int(demo_state["stream_generation"])
+            if stream_cancel.is_set() or current_generation != generation:
                 return
             if stream_controller is not None and stream_controller.running:
                 return
@@ -2408,6 +2468,7 @@ def start_stream() -> None:
                 ui_interval_ms=500,
                 handoff=handoff,
             )
+            stream_controller.set_colormap(scatter.colormap)
             stream_controller.start()
             set_status(f"Scatter stream started ({stream_handoff_label(handoff)})")
 
@@ -2415,6 +2476,9 @@ def start_stream() -> None:
             app.call_soon_threadsafe(launch)
         except RuntimeError:
             return
+        finally:
+            if threading.current_thread() is stream_build_thread:
+                stream_build_thread = None
 
     stream_build_thread = threading.Thread(target=worker, daemon=True)
     stream_build_thread.start()
@@ -2422,9 +2486,17 @@ def start_stream() -> None:
 
 
 def stop_stream() -> None:
+    global stream_controller, stream_build_thread
+    with state_lock:
+        demo_state["stream_generation"] = int(demo_state["stream_generation"]) + 1
     stream_cancel.set()
     if stream_controller is not None:
         stream_controller.stop(timeout=0.25)
+        stream_controller = None
+    if stream_build_thread is not None and stream_build_thread is not threading.current_thread():
+        stream_build_thread.join(timeout=0.25)
+        if not stream_build_thread.is_alive():
+            stream_build_thread = None
     set_status("Scatter stream stopped")
 
 

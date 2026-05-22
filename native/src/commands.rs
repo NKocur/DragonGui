@@ -619,6 +619,20 @@ impl CommandQueue {
             }
             *fit = fit_after_upload;
         }
+        if let Command::SetScatterScalarBar { id, .. } = &command {
+            let target_id = id.clone();
+            let mut index = inner.items.len();
+            while index > 0 {
+                index -= 1;
+                let remove = matches!(
+                    &inner.items[index],
+                    Command::SetScatterScalarBar { id: queued_id, .. } if queued_id == &target_id
+                );
+                if remove {
+                    inner.items.remove(index);
+                }
+            }
+        }
         if let Command::UpdateScatterActorPacked { id, actor_id, .. } = &command {
             let target_id = id.clone();
             let target_actor_id = *actor_id;
@@ -2512,6 +2526,51 @@ mod tests {
                 fit: true,
                 coalesce: true,
             }]
+        );
+    }
+
+    #[test]
+    fn queue_coalesces_pending_scatter_scalar_bars_by_widget() {
+        let queue = CommandQueue::default();
+
+        queue
+            .push(Command::SetScatterScalarBar {
+                id: "scatter".to_string(),
+                visible: true,
+                vmin: 0.0,
+                vmax: 1.0,
+                log_scale: false,
+                colormap: "turbo".to_string(),
+                title: Some("z".to_string()),
+            })
+            .unwrap();
+        queue.push(Command::DrainPythonTasks).unwrap();
+        queue
+            .push(Command::SetScatterScalarBar {
+                id: "scatter".to_string(),
+                visible: true,
+                vmin: -1.0,
+                vmax: 2.0,
+                log_scale: false,
+                colormap: "viridis".to_string(),
+                title: Some("z".to_string()),
+            })
+            .unwrap();
+
+        assert_eq!(
+            queue.drain(),
+            vec![
+                Command::DrainPythonTasks,
+                Command::SetScatterScalarBar {
+                    id: "scatter".to_string(),
+                    visible: true,
+                    vmin: -1.0,
+                    vmax: 2.0,
+                    log_scale: false,
+                    colormap: "viridis".to_string(),
+                    title: Some("z".to_string()),
+                },
+            ]
         );
     }
 

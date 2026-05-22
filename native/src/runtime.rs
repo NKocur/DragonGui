@@ -115,6 +115,7 @@ fn coalesce_runtime_command_batch(commands: &mut Vec<Command>) {
     }
     let mut seen_scatter_updates = HashMap::new();
     let mut seen_scatter_actor_updates = HashMap::new();
+    let mut seen_scatter_scalar_bars = HashMap::new();
     let mut seen_line_plot_updates = HashMap::new();
     let mut filtered = Vec::with_capacity(commands.len());
     while let Some(command) = commands.pop() {
@@ -167,6 +168,14 @@ fn coalesce_runtime_command_batch(commands: &mut Vec<Command>) {
                     false
                 } else {
                     seen_scatter_actor_updates.insert(key, filtered.len());
+                    true
+                }
+            }
+            Command::SetScatterScalarBar { id, .. } => {
+                if seen_scatter_scalar_bars.contains_key(id) {
+                    false
+                } else {
+                    seen_scatter_scalar_bars.insert(id.clone(), filtered.len());
                     true
                 }
             }
@@ -1776,6 +1785,59 @@ fn find_widget_mut<'a>(node: &'a mut WidgetNode, id: &str) -> Option<&'a mut Wid
         }
     }
     None
+}
+
+fn set_scatter_scalar_bar_props(
+    node: &mut WidgetNode,
+    id: &str,
+    visible: bool,
+    vmin: f32,
+    vmax: f32,
+    log_scale: bool,
+    colormap: &str,
+    title: Option<String>,
+) -> bool {
+    let Some(target) = find_widget_mut(node, id) else {
+        return false;
+    };
+    target.props.scatter_scalar_bar_visible = visible;
+    target.props.scatter_scalar_bar_vmin = vmin;
+    target.props.scatter_scalar_bar_vmax = vmax;
+    target.props.scatter_scalar_bar_log_scale = log_scale;
+    target.props.scatter_scalar_bar_colormap = colormap.to_string();
+    target.props.scatter_scalar_bar_title = title.clone();
+    target
+        .props
+        .raw_props
+        .insert("scalar_bar_visible".to_string(), json!(visible));
+    target
+        .props
+        .raw_props
+        .insert("scalar_bar_vmin".to_string(), json!(vmin));
+    target
+        .props
+        .raw_props
+        .insert("scalar_bar_vmax".to_string(), json!(vmax));
+    target
+        .props
+        .raw_props
+        .insert("scalar_bar_log_scale".to_string(), json!(log_scale));
+    target
+        .props
+        .raw_props
+        .insert("scalar_bar_colormap".to_string(), json!(colormap));
+    match title {
+        Some(title) => {
+            target
+                .props
+                .raw_props
+                .insert("scalar_bar_title".to_string(), json!(title));
+        }
+        None => {
+            target.props.raw_props.remove("scalar_bar_title");
+        }
+    }
+    true
 }
 
 fn close_active_modal(node: &mut WidgetNode) -> Option<String> {
@@ -3770,6 +3832,97 @@ mod style_patch_tests {
             }
             other => panic!("expected latest scatter update, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn command_batch_coalesces_scatter_scalar_bars() {
+        let mut commands = vec![
+            Command::SetScatterScalarBar {
+                id: "scatter".to_string(),
+                visible: true,
+                vmin: 0.0,
+                vmax: 1.0,
+                log_scale: false,
+                colormap: "turbo".to_string(),
+                title: Some("z".to_string()),
+            },
+            Command::DebugSnapshot { request_id: 1 },
+            Command::SetScatterScalarBar {
+                id: "scatter".to_string(),
+                visible: true,
+                vmin: -1.0,
+                vmax: 2.0,
+                log_scale: false,
+                colormap: "viridis".to_string(),
+                title: Some("z".to_string()),
+            },
+        ];
+
+        coalesce_runtime_command_batch(&mut commands);
+
+        assert_eq!(commands.len(), 2);
+        assert!(matches!(
+            commands[0],
+            Command::DebugSnapshot { request_id: 1 }
+        ));
+        match &commands[1] {
+            Command::SetScatterScalarBar {
+                vmin,
+                vmax,
+                colormap,
+                ..
+            } => {
+                assert_eq!(*vmin, -1.0);
+                assert_eq!(*vmax, 2.0);
+                assert_eq!(colormap, "viridis");
+            }
+            other => panic!("expected scalar bar command, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn scatter_scalar_bar_props_survive_chrome_sync() {
+        let mut root = document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "kind": "panel",
+            "children": [
+                {
+                    "id": "scatter",
+                    "kind": "scatter_3d",
+                    "props": {
+                        "scalar_bar_visible": true,
+                        "scalar_bar_colormap": "turbo",
+                        "scalar_bar_title": "z"
+                    }
+                }
+            ]
+        }))
+        .unwrap();
+
+        assert!(set_scatter_scalar_bar_props(
+            &mut root,
+            "scatter",
+            true,
+            -1.0,
+            2.0,
+            false,
+            "plasma",
+            Some("z".to_string()),
+        ));
+
+        let scatter = find_widget(&root, "scatter").unwrap();
+        assert_eq!(
+            scatter_chrome_from_node(scatter).scalar_bar.colormap,
+            "plasma"
+        );
+        assert_eq!(
+            scatter
+                .props
+                .raw_props
+                .get("scalar_bar_colormap")
+                .and_then(|value| value.as_str()),
+            Some("plasma")
+        );
     }
 
     #[test]
@@ -10066,19 +10219,24 @@ impl WgpuState {
             if point_count == 0 || telemetry_bounds.is_some() {
                 let (data_min, data_max) =
                     telemetry_bounds.unwrap_or((glam::Vec3::ZERO, glam::Vec3::ZERO));
+                let effective_colormap = if runtime.widget.chrome.scalar_bar.visible {
+                    runtime.widget.chrome.scalar_bar.colormap.clone()
+                } else {
+                    colormap.clone()
+                };
                 if let Some(upload_timings) = runtime.widget.set_xyz_points_raw(
                     &self.device,
                     &self.queue,
                     &xyz,
                     data_min,
                     data_max,
-                    &colormap,
+                    &effective_colormap,
                 ) {
                     let payload_bytes = xyz.len();
                     runtime.payload_format = data_format;
                     runtime.points.clear();
                     runtime.primary_compact_xyz = xyz;
-                    runtime.primary_compact_colormap = colormap.clone();
+                    runtime.primary_compact_colormap = effective_colormap;
                     runtime.primary_pick_cache = None;
                     runtime.primary_hover_meta = Vec::new();
                     runtime.primary_hover_columns = Vec::new();
@@ -10154,10 +10312,15 @@ impl WgpuState {
                     .as_ref()
                     .and_then(|t| t.bounds)
                     .map(|(min, max)| (glam::Vec3::from_array(min), glam::Vec3::from_array(max)));
+                let effective_colormap = if runtime.widget.chrome.scalar_bar.visible {
+                    runtime.widget.chrome.scalar_bar.colormap.as_str()
+                } else {
+                    colormap.as_str()
+                };
                 decode_scatter_points_bytes_into_colormap_with_bounds(
                     &xyz,
                     &mut decoded,
-                    &colormap,
+                    effective_colormap,
                     telemetry_bounds,
                 )
             }
@@ -10235,7 +10398,16 @@ impl WgpuState {
         let (data_min, data_max) = maybe_bounds.unwrap_or((glam::Vec3::ZERO, glam::Vec3::ZERO));
         runtime.payload_format = data_format;
         runtime.points = decoded;
-        runtime.primary_compact_xyz.clear();
+        if data_format == ScatterPayloadFormat::XyzF32V0 {
+            runtime.primary_compact_xyz = xyz.clone();
+            runtime.primary_compact_colormap = if runtime.widget.chrome.scalar_bar.visible {
+                runtime.widget.chrome.scalar_bar.colormap.clone()
+            } else {
+                colormap.clone()
+            };
+        } else {
+            runtime.primary_compact_xyz.clear();
+        }
         runtime.primary_pick_cache = None;
         runtime.primary_hover_meta = Vec::new();
         runtime.primary_hover_columns = Vec::new();
@@ -10605,6 +10777,21 @@ impl WgpuState {
         map.insert(
             "quality_target_frame_ms".to_string(),
             json!(rt.widget.quality_target_frame_ms),
+        );
+        map.insert(
+            "scalar_bar".to_string(),
+            json!({
+                "visible": rt.widget.chrome.scalar_bar.visible,
+                "vmin": rt.widget.chrome.scalar_bar.vmin,
+                "vmax": rt.widget.chrome.scalar_bar.vmax,
+                "log_scale": rt.widget.chrome.scalar_bar.log_scale,
+                "colormap": rt.widget.chrome.scalar_bar.colormap.as_str(),
+                "title": rt.widget.chrome.scalar_bar.title.as_deref(),
+            }),
+        );
+        map.insert(
+            "primary_compact_colormap".to_string(),
+            json!(rt.primary_compact_colormap.as_str()),
         );
 
         if include_detail {
@@ -13351,23 +13538,72 @@ impl DragonApp {
                 colormap,
                 title,
             } => {
+                let detail = Some(format!(
+                    "visible={visible}, range=({vmin:.3},{vmax:.3}), log={log_scale}, requested_colormap={colormap}"
+                ));
                 let redraw = self.gpu.as_mut().is_some_and(|gpu| {
+                    if let Some(tree) = gpu.widget_tree.as_mut() {
+                        set_scatter_scalar_bar_props(
+                            tree,
+                            &id,
+                            visible,
+                            vmin,
+                            vmax,
+                            log_scale,
+                            &colormap,
+                            title.clone(),
+                        );
+                    }
                     let Some(rt) = gpu.scatters.get_mut(&id) else {
                         return false;
                     };
+                    let effective_colormap = colormap.clone();
                     rt.widget.chrome.scalar_bar.visible = visible;
                     rt.widget.chrome.scalar_bar.vmin = vmin;
                     rt.widget.chrome.scalar_bar.vmax = vmax;
                     rt.widget.chrome.scalar_bar.log_scale = log_scale;
-                    rt.widget.chrome.scalar_bar.colormap = colormap;
+                    rt.widget.chrome.scalar_bar.colormap = effective_colormap.clone();
                     rt.widget.chrome.scalar_bar.title = title;
+                    let compact_uniform_updated = rt
+                        .widget
+                        .set_compact_colormap(&effective_colormap, &gpu.queue);
+                    let compact_colormap_changed = rt.payload_format
+                        == ScatterPayloadFormat::XyzF32V0
+                        && rt.primary_compact_colormap != effective_colormap;
+                    if compact_colormap_changed {
+                        rt.primary_compact_colormap = effective_colormap.clone();
+                    }
+                    if !compact_uniform_updated
+                        && compact_colormap_changed
+                        && !rt.primary_compact_xyz.is_empty()
+                    {
+                        let mut recolored = std::mem::take(&mut rt.points);
+                        match decode_scatter_points_bytes_into_colormap_with_bounds(
+                            &rt.primary_compact_xyz,
+                            &mut recolored,
+                            &effective_colormap,
+                            Some((rt.data_min, rt.data_max)),
+                        ) {
+                            Ok(_) => {
+                                rt.points = recolored;
+                                rt.primary_pick_cache = None;
+                                rt.widget.set_points(&gpu.device, &gpu.queue, &rt.points);
+                            }
+                            Err(err) => {
+                                eprintln!(
+                                    "DragonGUI: failed to recolor compact scatter cache: {err}"
+                                );
+                                rt.points = recolored;
+                            }
+                        }
+                    }
                     rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
                     true
                 });
                 self.record_runtime_command(
                     "SetScatterScalarBar",
                     Some(id),
-                    None,
+                    detail,
                     None,
                     if redraw {
                         "ok"

@@ -8,30 +8,36 @@ a single global frame-time breakdown because the benchmark units differ by area.
 ## Per-Widget CPU Prep
 
 This compares normalized per-item native microbenchmarks. The CSS slice uses the
-optimized cascade result.
+latest pure cascade result, excluding the tree clone/allocation cost from the
+older clone-inclusive benchmark.
 
 ```mermaid
 pie showData
-    title Per-widget CPU prep after CSS cascade optimization
-    "CSS cascade: 10,874 ns/widget" : 10874
+    title Per-widget CPU prep after CSS cascade optimizations
+    "CSS cascade: 3,803 ns/widget" : 3803
     "Layout: 2,908 ns/widget" : 2908
     "Label text collection: 963 ns/label" : 963
     "ProgressBar primitive emit: 547 ns/bar" : 547
 ```
 
-Before the CSS cascade optimization:
+The original CSS benchmark included tree cloning, so the older pie below is
+kept only as historical context:
 
 ```mermaid
 pie showData
-    title Per-widget CPU prep before CSS cascade optimization
+    title Historical clone-inclusive CSS comparison
     "CSS cascade: 15,148 ns/widget" : 15148
     "Layout: 2,908 ns/widget" : 2908
     "Label text collection: 963 ns/label" : 963
     "ProgressBar primitive emit: 547 ns/bar" : 547
 ```
 
-CSS cascade changed from `15,148 ns/widget` to `10,874 ns/widget`, reducing the
-CSS slice from about `77%` of this comparison group to about `71%`.
+For small mixed stylesheets, the compiled bucket layer keeps the linear scan
+path and pure cascade is effectively flat at about `3.80 us/widget`. For simple
+stylesheets without ancestor selectors, ancestor snapshot gating measured
+`2.53 us/widget` versus `3.35 us/widget` with the ancestor path forced. For larger
+stylesheets, bucketed candidate rules reduced the tested pure cascade workload
+from `6,641 ns/widget` to `3,233 ns/widget`.
 
 ## DataFrameTable Frame Work
 

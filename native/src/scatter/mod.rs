@@ -1988,6 +1988,17 @@ impl ScatterWidget {
         self.lod_active && self.should_build_lod(point_count)
     }
 
+    pub fn set_compact_colormap(&mut self, colormap: &str, queue: &wgpu::Queue) -> bool {
+        if self.primary_storage != PrimaryPointStorage::XyzF32 {
+            return false;
+        }
+        let (gpu_colormap, gpu_colormap_len) = gpu_colormap_uniform(colormap);
+        self.compact_colormap = gpu_colormap;
+        self.compact_colormap_len = gpu_colormap_len;
+        self.update_camera(queue);
+        true
+    }
+
     pub fn refresh_lod_buffers(
         &mut self,
         primary_points: &[PointInstance],

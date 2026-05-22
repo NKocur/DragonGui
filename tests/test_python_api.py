@@ -22,6 +22,10 @@ class DemoFrame:
     shape = (1_000_000, 3)
 
 
+def _decode_hover_meta(meta: str) -> list[str]:
+    return meta[1:].split("\0") if meta.startswith("\0") else json.loads(meta)
+
+
 def test_declarative_tree_serializes() -> None:
     app = dg.App()
     win = dg.Window("Tool", width=1200, height=800)
@@ -1429,6 +1433,8 @@ def test_live_widget_setters_enqueue_native_props() -> None:
             payload_format: str = "xyz_f32_v0",
             coalesce: bool = True,
             fit: bool = False,
+            bounds_min=None,
+            bounds_max=None,
         ) -> None:
             self.scatter_payloads.append((widget_id, xyz, pack_ms, enqueue_epoch_ms, colormap, fit))
 
@@ -1563,6 +1569,8 @@ def test_scatter_colormap_serializes_and_live_update_reuploads_points(monkeypatc
             payload_format: str = "xyz_f32_v0",
             coalesce: bool = True,
             fit: bool = False,
+            bounds_min=None,
+            bounds_max=None,
         ) -> None:
             self.scatter_payloads.append((widget_id, xyz, colormap))
 
@@ -4996,7 +5004,7 @@ def test_scatter_add_points_hover_meta_passed_to_enqueue(monkeypatch) -> None:
     assert len(sender.calls) == 1
     _wid, _aid, meta_json = sender.calls[0]
     assert _wid == "sa"
-    assert _json.loads(meta_json) == ["label: pt0", "label: pt1"]
+    assert _decode_hover_meta(meta_json) == ["label: pt0", "label: pt1"]
 
 
 def test_scatter_add_points_no_hover_passes_none(monkeypatch) -> None:
@@ -5079,7 +5087,7 @@ def test_scatter_constructor_hover_sends_primary_meta_on_startup() -> None:
     assert len(sender.primary_meta_calls) == 1
     wid, meta_json = sender.primary_meta_calls[0]
     assert wid == "sp"
-    assert _json.loads(meta_json) == ["label: alpha", "label: beta"]
+    assert _decode_hover_meta(meta_json) == ["label: alpha", "label: beta"]
 
 
 def test_scatter_set_points_hover_sends_primary_meta_live(monkeypatch) -> None:
@@ -5132,7 +5140,7 @@ def test_scatter_set_points_hover_sends_primary_meta_live(monkeypatch) -> None:
     assert len(sender.meta_calls) == 1
     wid, meta_json = sender.meta_calls[0]
     assert wid == "sq"
-    assert _json.loads(meta_json) == ["cat: A"]
+    assert _decode_hover_meta(meta_json) == ["cat: A"]
 
 
 def test_scatter_extract_hover_meta_raises_on_missing_column() -> None:
@@ -5755,7 +5763,91 @@ def test_scatter_set_colormap_resends_hover_meta(monkeypatch) -> None:
     assert sender.meta_calls
     wid, meta_json = sender.meta_calls[0]
     assert wid == "cm1"
-    assert _json.loads(meta_json) == ["tag: A", "tag: B"]
+    assert _decode_hover_meta(meta_json) == ["tag: A", "tag: B"]
+
+
+def test_scatter_set_colormap_updates_tracking_scalar_bar(monkeypatch) -> None:
+    """set_colormap() must keep the scalar bar in sync when it was tracking the plot colormap."""
+    import numpy as np
+
+    class NpFrame:
+        def __init__(self) -> None:
+            self.x = np.zeros(4, dtype=np.float32)
+            self.y = np.zeros(4, dtype=np.float32)
+            self.z = np.linspace(0.0, 1.0, 4, dtype=np.float32)
+
+        @property
+        def columns(self) -> tuple:
+            return ("x", "y", "z")
+
+    monkeypatch.setattr(
+        widgets_module.Scatter3D, "_build_payload", lambda self: b"\x00" * 48
+    )
+
+    class Sender:
+        def __init__(self) -> None:
+            self.scalar_calls: list[tuple] = []
+
+        def enqueue_set_scatter_points_packed(self, *a, **kw) -> None:
+            pass
+
+        def enqueue_set_scatter_tooltip_axis_labels(self, *a) -> None:
+            pass
+
+        def enqueue_set_scatter_scalar_bar(
+            self, widget_id: str, visible: bool, vmin: float, vmax: float,
+            log_scale: bool, colormap: str, title: "str | None",
+        ) -> None:
+            self.scalar_calls.append((widget_id, visible, vmin, vmax, log_scale, colormap, title))
+
+        def close(self) -> None:
+            pass
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+
+    scatter = dg.Scatter3D(
+        NpFrame(),
+        x="x",
+        y="y",
+        z="z",
+        colormap="turbo",
+        scalar_bar=True,
+        id="cm-sync",
+        parent=None,
+    )
+    scatter.show_scalar_bar(True, colormap="turbo", title="z")
+    scatter._bind_live(handle.widget_handle(scatter.id))
+
+    scatter.set_colormap("plasma")
+
+    assert sender.scalar_calls
+    assert sender.scalar_calls[-1][5] == "plasma"
+    assert scatter.props()["scalar_bar_colormap"] == "plasma"
+
+
+def test_scatter_set_colormap_preserves_different_explicit_scalar_bar(monkeypatch) -> None:
+    """An intentionally different scalar bar colormap remains pinned across plot colormap changes."""
+    monkeypatch.setattr(
+        widgets_module.Scatter3D, "_build_payload", lambda self: b"\x00" * 48
+    )
+
+    scatter = dg.Scatter3D(
+        DemoFrame(),
+        x="x",
+        y="y",
+        z="z",
+        colormap="turbo",
+        scalar_bar=True,
+        id="cm-pin",
+        parent=None,
+    )
+    scatter.show_scalar_bar(True, colormap="viridis", title="z")
+
+    scatter.set_colormap("plasma")
+
+    assert scatter.props()["scalar_bar_colormap"] == "viridis"
 
 
 # ── add_stream() new positional API ──────────────────────────────────────────
@@ -6501,6 +6593,205 @@ def test_scatter_live_frame_enqueue_prepared_uses_primary_direct_path() -> None:
     assert sender.axis_calls == [("direct-live", "x", "y", "z")]
 
 
+def test_scatter_enqueue_prepared_metadata_updates_scalar_bar_colormap() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.primary_calls: list[tuple] = []
+            self.scalar_calls: list[tuple] = []
+
+        def enqueue_set_scatter_points_packed(self, *args) -> None:
+            self.primary_calls.append(args)
+
+        def enqueue_set_scatter_tooltip_axis_labels(self, *args) -> None:
+            pass
+
+        def enqueue_set_scatter_scalar_bar(self, *args) -> None:
+            self.scalar_calls.append(args)
+
+        def close(self) -> None:
+            pass
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+
+    scatter = dg.Scatter3D(
+        DemoFrame(),
+        x="x",
+        y="y",
+        z="z",
+        colormap="turbo",
+        scalar_bar=True,
+        id="prepared-bar",
+        parent=None,
+    )
+    scatter._bind_live(handle.widget_handle(scatter.id))
+    payload = dg.ScatterPayload(
+        data=b"prepared-frame",
+        payload_format="point_instance_v1",
+        colormap="plasma",
+        point_count=3,
+        axis_labels=("x", "y", "z"),
+        bounds=((0.0, 0.0, -2.0), (1.0, 1.0, 8.0)),
+    )
+
+    scatter.enqueue_prepared_points(payload, include_metadata=True)
+
+    assert sender.scalar_calls
+    widget_id, visible, vmin, vmax, _log, colormap, title = sender.scalar_calls[-1]
+    assert widget_id == "prepared-bar"
+    assert visible is True
+    assert vmin == pytest.approx(-2.0)
+    assert vmax == pytest.approx(8.0)
+    assert colormap == "plasma"
+    assert title == "z"
+
+
+def test_scatter_enqueue_compact_prepared_metadata_uses_widget_colormap() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.primary_calls: list[tuple] = []
+            self.scalar_calls: list[tuple] = []
+
+        def enqueue_set_scatter_points_packed(self, *args) -> None:
+            self.primary_calls.append(args)
+
+        def enqueue_set_scatter_tooltip_axis_labels(self, *args) -> None:
+            pass
+
+        def enqueue_set_scatter_scalar_bar(self, *args) -> None:
+            self.scalar_calls.append(args)
+
+        def close(self) -> None:
+            pass
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+
+    scatter = dg.Scatter3D(
+        DemoFrame(),
+        x="x",
+        y="y",
+        z="z",
+        colormap="plasma",
+        scalar_bar=True,
+        id="prepared-compact-bar",
+        parent=None,
+    )
+    scatter._bind_live(handle.widget_handle(scatter.id))
+    payload = dg.ScatterPayload(
+        data=b"prepared-frame",
+        payload_format="xyz_f32_v0",
+        colormap="turbo",
+        point_count=3,
+        axis_labels=("x", "y", "z"),
+        bounds=((0.0, 0.0, -2.0), (1.0, 1.0, 8.0)),
+    )
+
+    scatter.enqueue_prepared_points(payload, include_metadata=True)
+
+    assert sender.primary_calls
+    assert sender.primary_calls[-1][4] == "plasma"
+    assert sender.scalar_calls
+    assert sender.scalar_calls[-1][5] == "plasma"
+    assert scatter.colormap == "plasma"
+
+
+def test_scatter_enqueue_compact_prepared_override_updates_scalar_bar_colormap() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.primary_calls: list[tuple] = []
+            self.scalar_calls: list[tuple] = []
+
+        def enqueue_set_scatter_points_packed(self, *args) -> None:
+            self.primary_calls.append(args)
+
+        def enqueue_set_scatter_tooltip_axis_labels(self, *args) -> None:
+            pass
+
+        def enqueue_set_scatter_scalar_bar(self, *args) -> None:
+            self.scalar_calls.append(args)
+
+        def close(self) -> None:
+            pass
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+
+    scatter = dg.Scatter3D(
+        DemoFrame(),
+        x="x",
+        y="y",
+        z="z",
+        colormap="turbo",
+        scalar_bar=True,
+        id="prepared-compact-override-bar",
+        parent=None,
+    )
+    scatter.show_scalar_bar(True, colormap="turbo", title="z")
+    scatter._bind_live(handle.widget_handle(scatter.id))
+    payload = dg.ScatterPayload(
+        data=b"prepared-frame",
+        payload_format="xyz_f32_v0",
+        colormap="turbo",
+        point_count=3,
+        axis_labels=("x", "y", "z"),
+        bounds=((0.0, 0.0, -2.0), (1.0, 1.0, 8.0)),
+    )
+
+    scatter.enqueue_prepared_points(
+        payload,
+        include_metadata=True,
+        colormap_override="viridis",
+    )
+
+    assert sender.primary_calls
+    assert sender.primary_calls[-1][4] == "viridis"
+    assert sender.scalar_calls
+    assert sender.scalar_calls[-1][5] == "viridis"
+    assert scatter.colormap == "viridis"
+
+
+def test_scatter_enqueue_compact_prepared_without_metadata_uses_widget_colormap() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.primary_calls: list[tuple] = []
+
+        def enqueue_set_scatter_points_packed(self, *args) -> None:
+            self.primary_calls.append(args)
+
+        def close(self) -> None:
+            pass
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+
+    scatter = dg.Scatter3D(
+        DemoFrame(),
+        x="x",
+        y="y",
+        z="z",
+        colormap="plasma",
+        id="prepared-current-cmap",
+        parent=None,
+    )
+    scatter._bind_live(handle.widget_handle(scatter.id))
+    payload = dg.ScatterPayload(
+        data=b"prepared-frame",
+        payload_format="xyz_f32_v0",
+        colormap="turbo",
+        point_count=3,
+    )
+
+    scatter.enqueue_prepared_points(payload, include_metadata=False)
+
+    assert sender.primary_calls
+    assert sender.primary_calls[-1][4] == "plasma"
+
+
 def test_scatter_prepared_stream_accepts_handoff_modes() -> None:
     scatter = dg.Scatter3D(DemoFrame(), x="x", y="y", z="z", id="stream-handoff", parent=None)
     payload = dg.ScatterPayload(
@@ -6571,10 +6862,183 @@ def test_scatter_frame_stream_callback_handoff_schedules_ui_callback() -> None:
     assert len(scatter.enqueued) == 1
     assert scatter.enqueued[0][0] is payload
     assert scatter.enqueued[0][1]["include_metadata"] is True
+    assert scatter.enqueued[0][1]["colormap_override"] == "turbo"
     assert stream.metrics.produced == 1
     assert stream.metrics.submitted == 1
     assert len(notifications) == 1
     assert notifications[0][2].submitted == 1
+
+
+def test_scatter_frame_stream_resends_metadata_when_compact_colormap_changes() -> None:
+    payload = dg.ScatterPayload(
+        data=b"prepared-frame",
+        payload_format="xyz_f32_v0",
+        colormap="turbo",
+        point_count=3,
+    )
+
+    class Scatter:
+        id = "fake-scatter"
+
+        def __init__(self) -> None:
+            self.colormap = "turbo"
+            self.enqueued: list[dict[str, object]] = []
+
+        def enqueue_prepared_points(self, payload, **kwargs) -> None:
+            self.enqueued.append(kwargs)
+            if len(self.enqueued) == 1:
+                self.colormap = "plasma"
+
+    scatter = Scatter()
+    stream = dg.ScatterFrameStream(
+        scatter,
+        [payload, payload],
+        interval_ms=0.0,
+        loop=False,
+        handoff="direct",
+    )
+
+    stream.start()
+    assert stream._thread is not None
+    stream._thread.join(timeout=1.0)
+
+    assert len(scatter.enqueued) == 2
+    assert scatter.enqueued[0]["include_metadata"] is True
+    assert scatter.enqueued[0]["colormap_override"] == "turbo"
+    assert scatter.enqueued[1]["include_metadata"] is True
+    assert scatter.enqueued[1]["colormap_override"] == "plasma"
+
+
+def test_scatter_frame_stream_uses_explicit_compact_colormap_override() -> None:
+    payload = dg.ScatterPayload(
+        data=b"prepared-frame",
+        payload_format="xyz_f32_v0",
+        colormap="turbo",
+        point_count=3,
+    )
+
+    class Scatter:
+        id = "fake-scatter"
+        colormap = "turbo"
+
+        def __init__(self) -> None:
+            self.enqueued: list[dict[str, object]] = []
+
+        def enqueue_prepared_points(self, payload, **kwargs) -> None:
+            self.enqueued.append(kwargs)
+
+    scatter = Scatter()
+    stream = dg.ScatterFrameStream(
+        scatter,
+        [payload, payload],
+        interval_ms=0.0,
+        loop=False,
+        handoff="direct",
+    )
+
+    stream.set_colormap("viridis")
+    stream.start()
+    assert stream._thread is not None
+    stream._thread.join(timeout=1.0)
+
+    assert len(scatter.enqueued) == 2
+    assert scatter.enqueued[0]["colormap_override"] == "viridis"
+    assert scatter.enqueued[0]["include_metadata"] is True
+    assert scatter.enqueued[1]["colormap_override"] == "viridis"
+    assert scatter.enqueued[1]["include_metadata"] is False
+    assert all(payload.colormap == "viridis" for payload in stream.frames)
+
+
+def test_scatter_frame_stream_callback_uses_latest_compact_colormap() -> None:
+    payload = dg.ScatterPayload(
+        data=b"prepared-frame",
+        payload_format="xyz_f32_v0",
+        colormap="turbo",
+        point_count=3,
+    )
+
+    scheduled: list[object] = []
+
+    class App:
+        def call_soon_threadsafe(self, fn) -> None:
+            scheduled.append(fn)
+
+    class Handle:
+        app = App()
+
+    class Scatter:
+        id = "fake-scatter"
+        colormap = "turbo"
+
+        def __init__(self) -> None:
+            self.handle = Handle()
+            self.enqueued: list[dict[str, object]] = []
+
+        def _live(self):
+            return self.handle
+
+        def enqueue_prepared_points(self, payload, **kwargs) -> None:
+            self.enqueued.append(kwargs)
+
+    scatter = Scatter()
+    stream = dg.ScatterFrameStream(
+        scatter,
+        [payload],
+        interval_ms=0.0,
+        loop=False,
+        handoff="callback",
+    )
+
+    stream.start()
+    assert stream._thread is not None
+    stream._thread.join(timeout=1.0)
+    assert len(scheduled) == 1
+
+    stream.set_colormap("plasma")
+    scheduled[0]()
+
+    assert scatter.enqueued[-1]["colormap_override"] == "plasma"
+
+
+def test_scatter_frame_stream_replaced_stream_stops_enqueuing() -> None:
+    payload = dg.ScatterPayload(
+        data=b"prepared-frame",
+        payload_format="xyz_f32_v0",
+        colormap="turbo",
+        point_count=3,
+    )
+
+    class Scatter:
+        id = "fake-scatter"
+        colormap = "turbo"
+
+        def __init__(self) -> None:
+            self.enqueued: list[dict[str, object]] = []
+
+        def enqueue_prepared_points(self, payload, **kwargs) -> None:
+            self.enqueued.append(kwargs)
+
+    scatter = Scatter()
+    old_stream = dg.ScatterFrameStream(
+        scatter,
+        [payload],
+        interval_ms=0.0,
+        loop=True,
+        handoff="direct",
+    )
+    new_stream = dg.ScatterFrameStream(
+        scatter,
+        [payload],
+        interval_ms=0.0,
+        loop=False,
+        handoff="direct",
+    )
+    scatter._active_frame_stream = new_stream
+
+    old_stream.start()
+    assert not old_stream.running
+    assert old_stream._thread is None
+    assert scatter.enqueued == []
 
 
 def test_scatter_clear_prelive_suppresses_hover_meta_on_startup() -> None:
