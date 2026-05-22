@@ -105,7 +105,6 @@ pub struct RunResult {
 // Point cloud sources
 // ---------------------------------------------------------------------------
 
-const DEMO_POINT_COUNT: usize = 500_000;
 const MAX_COMMAND_DRAIN_BATCHES: usize = 16;
 const MAX_COMMANDS_PER_DRAIN_BATCH: usize = 32;
 const COMMAND_DRAIN_BUDGET: Duration = Duration::from_millis(6);
@@ -235,32 +234,6 @@ fn command_is_coalesced_scatter_points(command: &Command) -> bool {
     )
 }
 
-fn gen_demo_points_with_colormap(colormap: &str) -> Vec<PointInstance> {
-    let cmap = scatter::colormap::resolve(colormap);
-    let mut pts = Vec::with_capacity(DEMO_POINT_COUNT);
-    let mut seed: u64 = 0xDEAD_BEEF_1234_5678;
-    let mut lcg = move || -> f32 {
-        seed = seed
-            .wrapping_mul(6_364_136_223_846_793_005)
-            .wrapping_add(1_442_695_040_888_963_407);
-        (seed >> 32) as u32 as f32 / u32::MAX as f32
-    };
-    for i in 0..DEMO_POINT_COUNT {
-        let t = i as f32 / DEMO_POINT_COUNT as f32;
-        let x = lcg() * 10.0 - 5.0;
-        let y = lcg() * 10.0 - 5.0;
-        let z = lcg() * 10.0 - 5.0;
-        let [r, g, b] = scatter::colormap::sample(cmap, t);
-        pts.push(PointInstance {
-            position: [x, y, z],
-            size: 3.0,
-            color: [r, g, b],
-            alpha: 0.85,
-        });
-    }
-    pts
-}
-
 fn decode_mesh_positions(b64: &str) -> Result<Vec<[f32; 3]>, DragonError> {
     let bytes = BASE64
         .decode(b64)
@@ -303,15 +276,6 @@ fn decode_mesh_indices(b64: &str) -> Result<Vec<[u32; 3]>, DragonError> {
             ]
         })
         .collect())
-}
-
-fn decode_scatter_points(b64: &str, colormap: &str) -> Result<Vec<PointInstance>, DragonError> {
-    let bytes = BASE64
-        .decode(b64)
-        .map_err(|e| DragonError::ParseError(format!("scatter data base64: {e}")))?;
-    let mut pts = Vec::new();
-    decode_scatter_points_bytes_into_colormap(&bytes, &mut pts, colormap)?;
-    Ok(pts)
 }
 
 /// Format a scalar like Python's :.4g — 4 significant figures, scientific when |exp| ≥ 4.
@@ -898,6 +862,15 @@ fn decode_scatter_points_bytes_into_colormap(
     pts: &mut Vec<PointInstance>,
     colormap: &str,
 ) -> Result<Option<(glam::Vec3, glam::Vec3)>, DragonError> {
+    decode_scatter_points_bytes_into_colormap_with_bounds(bytes, pts, colormap, None)
+}
+
+fn decode_scatter_points_bytes_into_colormap_with_bounds(
+    bytes: &[u8],
+    pts: &mut Vec<PointInstance>,
+    colormap: &str,
+    bounds_hint: Option<(glam::Vec3, glam::Vec3)>,
+) -> Result<Option<(glam::Vec3, glam::Vec3)>, DragonError> {
     if bytes.len() % 12 != 0 {
         return Err(DragonError::ParseError(format!(
             "scatter data length {} is not a multiple of 12 (xyz float32)",
@@ -909,17 +882,41 @@ fn decode_scatter_points_bytes_into_colormap(
     pts.clear();
     pts.reserve(n);
 
+    if n == 0 {
+        return Ok(None);
+    }
+
+    if let Some((min, max)) = valid_scatter_bounds_hint(bounds_hint) {
+        let z_min = min.z;
+        let z_max = max.z;
+        let z_range = if z_max > z_min { z_max - z_min } else { 1.0 };
+        let cmap = scatter::colormap::resolve(colormap);
+        for chunk in bytes.chunks_exact(12) {
+            let [x, y, z] = read_xyz_f32_v0(chunk);
+            let t = if z.is_finite() {
+                ((z - z_min) / z_range).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let [r, g, b] = scatter::colormap::sample(cmap, t);
+            pts.push(PointInstance {
+                position: [x, y, z],
+                size: 3.0,
+                color: [r, g, b],
+                alpha: 1.0,
+            });
+        }
+        return Ok(Some((min, max)));
+    }
+
     // Decode once while computing z range and data bounds. Color is filled after
     // the final z range is known so xyz_f32_v0 keeps exact auto-colormap behavior.
     let mut z_min = f32::INFINITY;
     let mut z_max = f32::NEG_INFINITY;
     let mut min = glam::Vec3::splat(f32::INFINITY);
     let mut max = glam::Vec3::splat(f32::NEG_INFINITY);
-    for i in 0..n {
-        let off = i * 12;
-        let x = f32::from_le_bytes(bytes[off..off + 4].try_into().unwrap());
-        let y = f32::from_le_bytes(bytes[off + 4..off + 8].try_into().unwrap());
-        let z = f32::from_le_bytes(bytes[off + 8..off + 12].try_into().unwrap());
+    for chunk in bytes.chunks_exact(12) {
+        let [x, y, z] = read_xyz_f32_v0(chunk);
         if z.is_finite() {
             z_min = z_min.min(z);
             z_max = z_max.max(z);
@@ -933,7 +930,7 @@ fn decode_scatter_points_bytes_into_colormap(
             position: [x, y, z],
             size: 3.0,
             color: [0.0, 0.0, 0.0],
-            alpha: 0.85,
+            alpha: 1.0,
         });
     }
     let z_range = if z_max > z_min { z_max - z_min } else { 1.0 };
@@ -957,6 +954,23 @@ fn decode_scatter_points_bytes_into_colormap(
     }
 
     Ok(bounds)
+}
+
+#[inline]
+fn read_xyz_f32_v0(chunk: &[u8]) -> [f32; 3] {
+    [
+        f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]),
+        f32::from_le_bytes([chunk[4], chunk[5], chunk[6], chunk[7]]),
+        f32::from_le_bytes([chunk[8], chunk[9], chunk[10], chunk[11]]),
+    ]
+}
+
+fn valid_scatter_bounds_hint(
+    bounds_hint: Option<(glam::Vec3, glam::Vec3)>,
+) -> Option<(glam::Vec3, glam::Vec3)> {
+    bounds_hint.filter(|(min, max)| {
+        min.is_finite() && max.is_finite() && min.x <= max.x && min.y <= max.y && min.z <= max.z
+    })
 }
 
 fn decode_scatter_points_v1(
@@ -1523,6 +1537,7 @@ fn inset_scatter_clip_radii(radii: [f32; 4], inset: f32) -> [f32; 4] {
     radii.map(|radius| (radius - inset).max(0.0))
 }
 
+#[cfg(test)]
 fn find_first_widget_kind_id<'a>(node: &'a WidgetNode, kind: &WidgetKind) -> Option<&'a str> {
     if &node.kind == kind {
         return Some(&node.id);
@@ -4694,6 +4709,32 @@ mod style_patch_tests {
         assert!(out.capacity() >= 8);
         assert_eq!(out[0].position, [1.0, 2.0, 3.0]);
         assert_eq!(out[1].position, [4.0, 5.0, 6.0]);
+        assert_eq!(out[0].alpha, 1.0);
+        assert_eq!(out[1].alpha, 1.0);
+    }
+
+    #[test]
+    fn decode_scatter_points_uses_bounds_hint_for_colormap_range() {
+        let mut out = Vec::new();
+        let mut bytes = Vec::new();
+        for value in [1.0_f32, 2.0, 10.0, 4.0, 5.0, 20.0] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        let hint = Some((
+            glam::Vec3::new(0.0, 0.0, 0.0),
+            glam::Vec3::new(4.0, 5.0, 20.0),
+        ));
+
+        let bounds = decode_scatter_points_bytes_into_colormap_with_bounds(
+            &bytes, &mut out, "viridis", hint,
+        )
+        .unwrap();
+
+        assert_eq!(bounds, hint);
+        assert_eq!(out.len(), 2);
+        let cmap = scatter::colormap::resolve("viridis");
+        assert_eq!(out[0].color, scatter::colormap::sample(cmap, 0.5));
+        assert_eq!(out[1].color, scatter::colormap::sample(cmap, 1.0));
     }
 
     #[test]
@@ -4721,6 +4762,81 @@ mod style_patch_tests {
             "old points must be preserved on decode error"
         );
         assert_eq!(old_pts[0].position, [9.0, 9.0, 9.0]);
+    }
+
+    fn runtime_bench_usize(name: &str, default: usize) -> usize {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(default)
+    }
+
+    fn scatter_xyz_decode_bench_payload(points: usize) -> (Vec<u8>, (glam::Vec3, glam::Vec3)) {
+        let mut bytes = Vec::with_capacity(points * 12);
+        let mut min = glam::Vec3::splat(f32::INFINITY);
+        let mut max = glam::Vec3::splat(f32::NEG_INFINITY);
+        for i in 0..points {
+            let x = ((i % 10_000) as f32) * 0.001;
+            let y = ((i / 10_000) as f32) * 0.01;
+            let z = (((i.wrapping_mul(17)) % 8192) as f32) * 0.001 - 4.0;
+            let p = glam::Vec3::new(x, y, z);
+            min = min.min(p);
+            max = max.max(p);
+            bytes.extend_from_slice(&x.to_le_bytes());
+            bytes.extend_from_slice(&y.to_le_bytes());
+            bytes.extend_from_slice(&z.to_le_bytes());
+        }
+        (bytes, (min, max))
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_scatter_xyz_decode_colormap() {
+        let points = runtime_bench_usize("DRAGONGUI_SCATTER_DECODE_BENCH_POINTS", 500_000);
+        let iterations = runtime_bench_usize("DRAGONGUI_SCATTER_DECODE_BENCH_ITERS", 20);
+        let (bytes, bounds) = scatter_xyz_decode_bench_payload(points);
+
+        let mut out = Vec::new();
+        decode_scatter_points_bytes_into_colormap(&bytes, &mut out, "turbo").unwrap();
+        let start = Instant::now();
+        for _ in 0..iterations {
+            decode_scatter_points_bytes_into_colormap(&bytes, &mut out, "turbo").unwrap();
+            std::hint::black_box(out.len());
+        }
+        let no_hint_ms = start.elapsed().as_secs_f64() * 1000.0 / iterations as f64;
+
+        let mut out_with_hint = Vec::new();
+        decode_scatter_points_bytes_into_colormap_with_bounds(
+            &bytes,
+            &mut out_with_hint,
+            "turbo",
+            Some(bounds),
+        )
+        .unwrap();
+        let start = Instant::now();
+        for _ in 0..iterations {
+            decode_scatter_points_bytes_into_colormap_with_bounds(
+                &bytes,
+                &mut out_with_hint,
+                "turbo",
+                Some(bounds),
+            )
+            .unwrap();
+            std::hint::black_box(out_with_hint.len());
+        }
+        let hint_ms = start.elapsed().as_secs_f64() * 1000.0 / iterations as f64;
+
+        eprintln!(
+            "scatter xyz decode colormap: points={} iters={} no_hint_ms={:.3} hint_ms={:.3} no_hint_ns_point={:.1} hint_ns_point={:.1} speedup={:.2}x",
+            points,
+            iterations,
+            no_hint_ms,
+            hint_ms,
+            no_hint_ms * 1_000_000.0 / points as f64,
+            hint_ms * 1_000_000.0 / points as f64,
+            no_hint_ms / hint_ms.max(f64::EPSILON),
+        );
     }
 
     #[test]
@@ -5026,6 +5142,9 @@ struct ScatterRuntime {
     quality_last_change: Instant,
     /// CPU copy of point instances used for picking.
     points: Vec<PointInstance>,
+    /// Last compact primary xyz payload, used to lazily rebuild `points` for picking/LOD.
+    primary_compact_xyz: Vec<u8>,
+    primary_compact_colormap: String,
     metrics: ScatterMetrics,
     /// True after the first successful data load; prevents auto-fit on live updates.
     fitted_once: bool,
@@ -5071,6 +5190,11 @@ impl ScatterRuntime {
     ) {
         if active {
             self.widget.lod_active = true;
+            if self.widget.lod_enabled {
+                if let Err(e) = self.ensure_primary_points_from_compact() {
+                    eprintln!("DragonGUI: scatter compact LOD cache decode failed: {e}");
+                }
+            }
             self.metrics.last_lod_ms = if self.widget.lod_enabled {
                 self.widget.refresh_lod_buffers(&self.points, device, queue)
             } else {
@@ -5117,6 +5241,20 @@ impl ScatterRuntime {
         }
     }
 
+    fn ensure_primary_points_from_compact(&mut self) -> Result<(), DragonError> {
+        if !self.points.is_empty() || self.primary_compact_xyz.is_empty() {
+            return Ok(());
+        }
+        decode_scatter_points_bytes_into_colormap_with_bounds(
+            &self.primary_compact_xyz,
+            &mut self.points,
+            &self.primary_compact_colormap,
+            Some((self.data_min, self.data_max)),
+        )?;
+        self.primary_pick_cache = None;
+        Ok(())
+    }
+
     /// Pick the closest point across the primary buffer and all visible extra actors,
     /// using lazily-built per-actor screen-space grid caches to avoid O(N) scans.
     ///
@@ -5131,6 +5269,10 @@ impl ScatterRuntime {
         y: f32,
         radius_px: f32,
     ) -> Option<(u32, usize, PointInstance)> {
+        if let Err(e) = self.ensure_primary_points_from_compact() {
+            eprintln!("DragonGUI: scatter compact point cache decode failed: {e}");
+            return None;
+        }
         if !self.widget.contains_point(x, y) || self.widget.width == 0 || self.widget.height == 0 {
             return None;
         }
@@ -6173,6 +6315,8 @@ impl WgpuState {
                         render_target: None,
                         quality_last_change: Instant::now(),
                         points: pts,
+                        primary_compact_xyz: Vec::new(),
+                        primary_compact_colormap: colormap.clone(),
                         metrics: ScatterMetrics::default(),
                         fitted_once: matches!(status, ScatterPayloadStatus::Ok),
                         data_min,
@@ -7635,8 +7779,12 @@ impl WgpuState {
     }
 
     /// Perform polygon (lasso) selection hit test and return a JSON payload with selected indices.
-    fn scatter_polygon_select_payload(&self, id: &str, poly: &[[f32; 2]]) -> Option<String> {
-        let runtime = self.scatters.get(id)?;
+    fn scatter_polygon_select_payload(&mut self, id: &str, poly: &[[f32; 2]]) -> Option<String> {
+        let runtime = self.scatters.get_mut(id)?;
+        if let Err(e) = runtime.ensure_primary_points_from_compact() {
+            eprintln!("DragonGUI: scatter compact point cache decode failed: {e}");
+            return None;
+        }
         let mut actor_results = serde_json::Map::new();
         let indices = runtime
             .widget
@@ -7661,8 +7809,12 @@ impl WgpuState {
 
     /// Perform rectangle selection hit test and return a JSON payload with selected indices.
     /// `rect` is in physical pixels relative to the scatter viewport.
-    fn scatter_select_payload(&self, id: &str, rect: [f32; 4]) -> Option<String> {
-        let runtime = self.scatters.get(id)?;
+    fn scatter_select_payload(&mut self, id: &str, rect: [f32; 4]) -> Option<String> {
+        let runtime = self.scatters.get_mut(id)?;
+        if let Err(e) = runtime.ensure_primary_points_from_compact() {
+            eprintln!("DragonGUI: scatter compact point cache decode failed: {e}");
+            return None;
+        }
         let mut actor_results = serde_json::Map::new();
         // Actor 0 (primary buffer)
         let indices = runtime.widget.select_points_in_rect(&runtime.points, rect);
@@ -8658,6 +8810,8 @@ impl WgpuState {
                         render_target: None,
                         quality_last_change: Instant::now(),
                         points: pts,
+                        primary_compact_xyz: Vec::new(),
+                        primary_compact_colormap: colormap.clone(),
                         metrics: ScatterMetrics::default(),
                         fitted_once: matches!(status, ScatterPayloadStatus::Ok),
                         data_min,
@@ -9777,6 +9931,7 @@ impl WgpuState {
             if maybe_bounds.is_none() && point_count > 0 {
                 runtime.payload_format = data_format;
                 runtime.points.clear();
+                runtime.primary_compact_xyz.clear();
                 runtime.primary_pick_cache = None;
                 runtime.payload_status = ScatterPayloadStatus::AllNonFinite;
                 runtime.primary_hover_meta = Vec::new();
@@ -9835,6 +9990,7 @@ impl WgpuState {
                     maybe_bounds.unwrap_or((glam::Vec3::ZERO, glam::Vec3::ZERO));
                 runtime.payload_format = data_format;
                 runtime.points.clear();
+                runtime.primary_compact_xyz.clear();
                 runtime.primary_pick_cache = None;
                 runtime.primary_hover_meta = Vec::new();
                 runtime.primary_hover_columns = Vec::new();
@@ -9901,11 +10057,109 @@ impl WgpuState {
             }
         }
 
+        if data_format == ScatterPayloadFormat::XyzF32V0 {
+            let point_count = xyz.len() / 12;
+            let telemetry_bounds = telemetry
+                .as_ref()
+                .and_then(|t| t.bounds)
+                .map(|(min, max)| (glam::Vec3::from_array(min), glam::Vec3::from_array(max)));
+            if point_count == 0 || telemetry_bounds.is_some() {
+                let (data_min, data_max) =
+                    telemetry_bounds.unwrap_or((glam::Vec3::ZERO, glam::Vec3::ZERO));
+                if let Some(upload_timings) = runtime.widget.set_xyz_points_raw(
+                    &self.device,
+                    &self.queue,
+                    &xyz,
+                    data_min,
+                    data_max,
+                    &colormap,
+                ) {
+                    let payload_bytes = xyz.len();
+                    runtime.payload_format = data_format;
+                    runtime.points.clear();
+                    runtime.primary_compact_xyz = xyz;
+                    runtime.primary_compact_colormap = colormap.clone();
+                    runtime.primary_pick_cache = None;
+                    runtime.primary_hover_meta = Vec::new();
+                    runtime.primary_hover_columns = Vec::new();
+                    let cleared_hover_label = runtime.widget.hover_label.take().is_some();
+                    runtime.data_min = data_min;
+                    runtime.data_max = data_max;
+                    runtime.payload_status = ScatterPayloadStatus::Ok;
+
+                    let mut camera_fitted = false;
+                    if (fit || !runtime.fitted_once)
+                        && point_count > 0
+                        && runtime.widget.has_visible_viewport()
+                    {
+                        runtime
+                            .widget
+                            .fit_to_bounds(data_min, data_max, &self.queue);
+                        runtime.fitted_once = true;
+                        camera_fitted = true;
+                    } else if fit {
+                        runtime.fitted_once = false;
+                    }
+                    let grid_t0 = Instant::now();
+                    runtime
+                        .widget
+                        .refresh_grid(data_min, data_max, &self.device, &self.queue);
+                    let grid_ms = grid_t0.elapsed().as_secs_f64() * 1000.0;
+                    let overlay_t0 = Instant::now();
+                    let overlay_ms = if camera_fitted || cleared_hover_label {
+                        runtime.widget.refresh_overlays(&self.device, &self.queue);
+                        overlay_t0.elapsed().as_secs_f64() * 1000.0
+                    } else {
+                        0.0
+                    };
+
+                    let pack_ms = telemetry.as_ref().map(|t| t.pack_ms).unwrap_or(0.0);
+                    let reported_point_count = telemetry
+                        .as_ref()
+                        .map(|t| t.point_count)
+                        .unwrap_or(point_count);
+                    let reported_payload_bytes = telemetry
+                        .as_ref()
+                        .map(|t| t.payload_bytes)
+                        .unwrap_or(payload_bytes);
+                    runtime.metrics = ScatterMetrics {
+                        updates: runtime.metrics.updates + 1,
+                        last_point_count: reported_point_count,
+                        last_payload_bytes: reported_payload_bytes,
+                        last_pack_ms: pack_ms,
+                        last_queue_latency_ms: queue_latency_ms,
+                        last_decode_ms: 0.0,
+                        last_bounds_ms: 0.0,
+                        last_upload_ms: upload_timings.primary_ms
+                            + upload_timings.lod_ms
+                            + grid_ms
+                            + overlay_ms,
+                        last_primary_upload_ms: upload_timings.primary_ms,
+                        last_lod_ms: upload_timings.lod_ms,
+                        last_grid_ms: grid_ms,
+                        last_overlay_ms: overlay_ms,
+                        last_total_native_ms: total_t0.elapsed().as_secs_f64() * 1000.0,
+                        last_render_encode_ms: runtime.metrics.last_render_encode_ms,
+                    };
+                    return Ok(true);
+                }
+            }
+        }
+
         let decode_t0 = Instant::now();
         let mut decoded = std::mem::take(&mut runtime.points);
         let result = match data_format {
             ScatterPayloadFormat::XyzF32V0 => {
-                decode_scatter_points_bytes_into_colormap(&xyz, &mut decoded, &colormap)
+                let telemetry_bounds = telemetry
+                    .as_ref()
+                    .and_then(|t| t.bounds)
+                    .map(|(min, max)| (glam::Vec3::from_array(min), glam::Vec3::from_array(max)));
+                decode_scatter_points_bytes_into_colormap_with_bounds(
+                    &xyz,
+                    &mut decoded,
+                    &colormap,
+                    telemetry_bounds,
+                )
             }
             ScatterPayloadFormat::PointInstanceV1 => decode_scatter_points_v1(&xyz, &mut decoded),
         };
@@ -9927,6 +10181,7 @@ impl WgpuState {
             runtime.payload_format = data_format;
             decoded.clear();
             runtime.points = decoded;
+            runtime.primary_compact_xyz.clear();
             runtime.primary_pick_cache = None;
             runtime.payload_status = ScatterPayloadStatus::AllNonFinite;
             runtime.primary_hover_meta = Vec::new();
@@ -9980,6 +10235,7 @@ impl WgpuState {
         let (data_min, data_max) = maybe_bounds.unwrap_or((glam::Vec3::ZERO, glam::Vec3::ZERO));
         runtime.payload_format = data_format;
         runtime.points = decoded;
+        runtime.primary_compact_xyz.clear();
         runtime.primary_pick_cache = None;
         runtime.primary_hover_meta = Vec::new();
         runtime.primary_hover_columns = Vec::new();
@@ -13758,6 +14014,7 @@ impl DragonApp {
                     };
                     // Clear primary buffer.
                     rt.points.clear();
+                    rt.primary_compact_xyz.clear();
                     rt.data_min = glam::Vec3::ZERO;
                     rt.data_max = glam::Vec3::ZERO;
                     rt.widget.set_points(&gpu.device, &gpu.queue, &[]);
@@ -13950,6 +14207,9 @@ impl DragonApp {
                     rt.widget.lod_threshold = threshold;
                     rt.widget.lod_factor = factor;
                     if rt.widget.lod_active {
+                        if let Err(e) = rt.ensure_primary_points_from_compact() {
+                            eprintln!("DragonGUI: scatter compact LOD cache decode failed: {e}");
+                        }
                         rt.metrics.last_lod_ms =
                             rt.widget.refresh_lod_buffers(&rt.points, device, queue);
                     } else if !rt.widget.lod_enabled {
@@ -15928,7 +16188,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                             .and_then(|g| g.scatters.get(&scatter_id))
                                             .and_then(|rt| rt.widget.selection_polygon.clone());
                                         if let Some(p) = poly {
-                                            if let Some(payload) = self.gpu.as_ref().and_then(|g| {
+                                            if let Some(payload) = self.gpu.as_mut().and_then(|g| {
                                                 g.scatter_polygon_select_payload(&scatter_id, &p)
                                             }) {
                                                 self.emit_change(
@@ -15951,7 +16211,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                             .and_then(|g| g.scatters.get(&scatter_id))
                                             .and_then(|rt| rt.widget.selection_rect);
                                         if let Some(r) = rect {
-                                            if let Some(payload) = self.gpu.as_ref().and_then(|g| {
+                                            if let Some(payload) = self.gpu.as_mut().and_then(|g| {
                                                 g.scatter_select_payload(&scatter_id, r)
                                             }) {
                                                 self.emit_change(

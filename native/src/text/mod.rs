@@ -130,6 +130,9 @@ fn text_options_from_styles(
 
 fn text_options_for_parts(node: &WidgetNode, parts: &[&str]) -> TextRenderOptions {
     let mut options = text_options_from_style(&node.style.text);
+    if node.style.parts.is_empty() {
+        return options;
+    }
     for part in parts {
         if let Some(style) = base_part_style(&node.style, part) {
             options.font_style = style.text.font_style.or(options.font_style);
@@ -1888,7 +1891,7 @@ fn collect_text(
         );
     }
 
-    for (_, child) in stacking_children(node) {
+    visit_stacking_children(node, |child| {
         collect_text(
             child,
             layout,
@@ -1908,7 +1911,7 @@ fn collect_text(
             caret_positions,
             out,
         );
-    }
+    });
     if let Some(r) = layout.rects.get(&node.id) {
         apply_transform_to_text_entries(
             &mut out[subtree_text_start..],
@@ -2607,10 +2610,24 @@ fn paint_transform_for_text(
     (!transform.is_identity()).then_some(transform)
 }
 
-fn stacking_children(node: &WidgetNode) -> Vec<(usize, &WidgetNode)> {
+fn visit_stacking_children<'a>(node: &'a WidgetNode, mut visit: impl FnMut(&'a WidgetNode)) {
+    if node.children.len() <= 1
+        || node
+            .children
+            .iter()
+            .all(|child| child.style.layout.z_index.unwrap_or(0) == 0)
+    {
+        for child in &node.children {
+            visit(child);
+        }
+        return;
+    }
+
     let mut children: Vec<_> = node.children.iter().enumerate().collect();
     children.sort_by_key(|(index, child)| (child.style.layout.z_index.unwrap_or(0), *index));
-    children
+    for (_, child) in children {
+        visit(child);
+    }
 }
 
 fn apply_transform_to_text_entries(
@@ -2754,6 +2771,9 @@ fn part_text_color(
     } else {
         default
     };
+    if node.style.parts.is_empty() {
+        return fallback;
+    }
     for part in parts {
         if let Some(color) = state_part_style_for_state(&node.style, &node.id, state, *part)
             .and_then(|style| part_style_text_color(style, theme))
@@ -2810,6 +2830,9 @@ fn part_text_style<'a>(
     node: &'a WidgetNode,
     parts: &[&str],
 ) -> Option<&'a crate::style::TextStyle> {
+    if node.style.parts.is_empty() {
+        return None;
+    }
     parts
         .iter()
         .find_map(|part| base_part_style(&node.style, *part).map(|style| &style.text))
@@ -3065,7 +3088,7 @@ fn collect_dropdown_overlay_text(
         }
     }
 
-    for (_, child) in stacking_children(node) {
+    visit_stacking_children(node, |child| {
         collect_dropdown_overlay_text(
             child,
             layout,
@@ -3079,7 +3102,7 @@ fn collect_dropdown_overlay_text(
             caret_positions,
             out,
         );
-    }
+    });
 }
 
 fn collect_menu_overlay_text(
@@ -3280,7 +3303,7 @@ fn collect_rich_tooltip_text(
     let Some((node, _rect)) = rich_tooltip_target(tree, layout, state) else {
         return;
     };
-    for (_, child) in stacking_children(node) {
+    visit_stacking_children(node, |child| {
         collect_text(
             child,
             layout,
@@ -3300,7 +3323,7 @@ fn collect_rich_tooltip_text(
             caret_positions,
             out,
         );
-    }
+    });
 }
 
 fn collect_toast_text(
@@ -3660,7 +3683,7 @@ fn collect_table_text(
         }
     }
 
-    for (_, child) in stacking_children(node) {
+    visit_stacking_children(node, |child| {
         collect_table_text(
             child,
             layout,
@@ -3681,7 +3704,7 @@ fn collect_table_text(
             caret_positions,
             out,
         );
-    }
+    });
     if let Some(r) = layout.rects.get(&node.id) {
         apply_transform_to_text_entries(
             &mut out[subtree_text_start..],
@@ -4293,6 +4316,253 @@ mod tests {
             style: Default::default(),
             children: Vec::new(),
         }
+    }
+
+    fn env_usize(name: &str, default: usize) -> usize {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(default)
+    }
+
+    fn table_text_bench_fixture() -> (
+        WidgetNode,
+        LayoutResult,
+        WidgetState,
+        ResourceRegistry,
+        usize,
+    ) {
+        let rows = env_usize("DRAGONGUI_TABLE_BENCH_ROWS", 100_000);
+        let cols = env_usize("DRAGONGUI_TABLE_BENCH_COLS", 64);
+        let width = env_usize("DRAGONGUI_TABLE_BENCH_WIDTH", 1200) as f32;
+        let height = env_usize("DRAGONGUI_TABLE_BENCH_HEIGHT", 800) as f32;
+
+        let mut table = node("table", WidgetKind::DataFrameTable);
+        table.props.table_rows = Some(rows);
+        table.props.page_size = Some(rows);
+        table.props.table_columns = (0..cols).map(|index| format!("col_{index}")).collect();
+        table.props.table_dtypes = (0..cols).map(|_| "f64".to_string()).collect();
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            table.id.clone(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: width,
+                h: height,
+            },
+        );
+
+        let state = WidgetState::from_tree(&table);
+        let visible_cells = state
+            .table("table")
+            .map(|state| {
+                let metrics = table::metrics_for_node(&table, &Theme::dark(), 1.0);
+                let rect = layout.rects.get("table").copied().unwrap();
+                let visible = table::visible(state, &rect, metrics);
+                visible.row_count * visible.col_count
+            })
+            .unwrap_or(0);
+        (
+            table,
+            layout,
+            state,
+            ResourceRegistry::default(),
+            visible_cells,
+        )
+    }
+
+    fn many_labels_text_bench_fixture(count: usize) -> (WidgetNode, LayoutResult) {
+        let mut root = node("root", WidgetKind::FlowLayout);
+        root.children.reserve(count);
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            root.id.clone(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 1200.0,
+                h: (count as f32 * 22.0).max(1.0),
+            },
+        );
+        for index in 0..count {
+            let mut label = node(&format!("label-{index}"), WidgetKind::Label);
+            label.props.text = Some(format!("Metric {index}: {}", index % 997));
+            layout.rects.insert(
+                label.id.clone(),
+                Rect {
+                    x: 0.0,
+                    y: index as f32 * 22.0,
+                    w: 360.0,
+                    h: 20.0,
+                },
+            );
+            root.children.push(label);
+        }
+        (root, layout)
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_table_text_collect() {
+        let iterations = env_usize("DRAGONGUI_TABLE_BENCH_TEXT_ITERS", 200);
+        let warmup = env_usize("DRAGONGUI_TABLE_BENCH_TEXT_WARMUP", 20);
+        let (tree, layout, state, resources, visible_cells) = table_text_bench_fixture();
+        let theme = Theme::dark();
+        let mut font_system = FontSystem::new();
+        let font_aliases = FontFamilyAliases::default();
+        let mut caret_positions = HashMap::new();
+        let mut cache = TextBufferCache::default();
+        let mut out = Vec::new();
+
+        for _ in 0..warmup {
+            out.clear();
+            collect_table_text(
+                &tree,
+                &layout,
+                &state,
+                &resources,
+                &theme,
+                None,
+                None,
+                [None, None],
+                None,
+                &[],
+                true,
+                &mut font_system,
+                &font_aliases,
+                1.0,
+                theme.spacing,
+                &mut cache,
+                &mut caret_positions,
+                &mut out,
+            );
+            for entry in out.drain(..) {
+                cache.entry(entry.key).or_default().push(entry.buffer);
+            }
+        }
+
+        let start = std::time::Instant::now();
+        let mut emitted = 0usize;
+        for _ in 0..iterations {
+            collect_table_text(
+                &tree,
+                &layout,
+                &state,
+                &resources,
+                &theme,
+                None,
+                None,
+                [None, None],
+                None,
+                &[],
+                true,
+                &mut font_system,
+                &font_aliases,
+                1.0,
+                theme.spacing,
+                &mut cache,
+                &mut caret_positions,
+                &mut out,
+            );
+            emitted += out.len();
+            for entry in out.drain(..) {
+                cache.entry(entry.key).or_default().push(entry.buffer);
+            }
+        }
+        let elapsed = start.elapsed();
+        let ns_per_iter = elapsed.as_nanos() as f64 / iterations as f64;
+        let ns_per_visible_cell = if visible_cells == 0 {
+            0.0
+        } else {
+            elapsed.as_nanos() as f64 / (iterations * visible_cells) as f64
+        };
+        eprintln!(
+            "table text collect: iterations={iterations} visible_cells={visible_cells} total_ms={:.3} ns_per_iter={:.1} ns_per_visible_cell={:.1} entries_per_iter={:.2}",
+            elapsed.as_secs_f64() * 1000.0,
+            ns_per_iter,
+            ns_per_visible_cell,
+            emitted as f64 / iterations as f64
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_text_collect_many_labels() {
+        let count = env_usize("DRAGONGUI_BENCH_TEXT_LABELS", 2_000);
+        let iterations = env_usize("DRAGONGUI_BENCH_TEXT_ITERS", 200);
+        let warmup = env_usize("DRAGONGUI_BENCH_TEXT_WARMUP", 20);
+        let (tree, layout) = many_labels_text_bench_fixture(count);
+        let state = WidgetState::from_tree(&tree);
+        let theme = Theme::dark();
+        let mut font_system = FontSystem::new();
+        let font_aliases = FontFamilyAliases::default();
+        let mut caret_positions = HashMap::new();
+        let mut cache = TextBufferCache::default();
+        let mut out = Vec::new();
+
+        for _ in 0..warmup {
+            out.clear();
+            collect_text(
+                &tree,
+                &layout,
+                &state,
+                &theme,
+                None,
+                None,
+                [None, None],
+                None,
+                &[],
+                true,
+                &mut font_system,
+                &font_aliases,
+                1.0,
+                theme.spacing,
+                &mut cache,
+                &mut caret_positions,
+                &mut out,
+            );
+            for entry in out.drain(..) {
+                cache.entry(entry.key).or_default().push(entry.buffer);
+            }
+        }
+
+        let start = std::time::Instant::now();
+        let mut emitted = 0usize;
+        for _ in 0..iterations {
+            collect_text(
+                &tree,
+                &layout,
+                &state,
+                &theme,
+                None,
+                None,
+                [None, None],
+                None,
+                &[],
+                true,
+                &mut font_system,
+                &font_aliases,
+                1.0,
+                theme.spacing,
+                &mut cache,
+                &mut caret_positions,
+                &mut out,
+            );
+            emitted += out.len();
+            for entry in out.drain(..) {
+                cache.entry(entry.key).or_default().push(entry.buffer);
+            }
+        }
+        let elapsed = start.elapsed();
+        eprintln!(
+            "text collect many labels: labels={count} iterations={iterations} total_ms={:.3} ns_per_label={:.1} entries_per_iter={:.1}",
+            elapsed.as_secs_f64() * 1000.0,
+            elapsed.as_nanos() as f64 / (iterations * count) as f64,
+            emitted as f64 / iterations as f64
+        );
     }
 
     #[test]

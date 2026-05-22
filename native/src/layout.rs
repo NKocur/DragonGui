@@ -2882,6 +2882,89 @@ mod tests {
         }
     }
 
+    fn env_usize(name: &str, default: usize) -> usize {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(default)
+    }
+
+    fn many_controls_layout_tree(count: usize) -> WidgetNode {
+        let mut children = Vec::with_capacity(count);
+        for index in 0..count {
+            let kind = match index % 8 {
+                0 => WidgetKind::Label,
+                1 => WidgetKind::Button,
+                2 => WidgetKind::Checkbox,
+                3 => WidgetKind::Slider,
+                4 => WidgetKind::ProgressBar,
+                5 => WidgetKind::TextInput,
+                6 => WidgetKind::Badge,
+                _ => WidgetKind::Tag,
+            };
+            let mut props = NodeProps {
+                text: Some(format!("Item {index}")),
+                fixed_width: Some(180.0),
+                ..NodeProps::default()
+            };
+            if matches!(kind, WidgetKind::Slider | WidgetKind::ProgressBar) {
+                props.value = Some((index % 100) as f32 / 100.0);
+                props.min = Some(0.0);
+                props.max = Some(1.0);
+            }
+            if kind == WidgetKind::TextInput {
+                props.placeholder = Some("Search".to_string());
+            }
+            children.push(node(&format!("w{index}"), kind, props, vec![]));
+        }
+
+        let mut flow = node(
+            "flow",
+            WidgetKind::FlowLayout,
+            NodeProps::default(),
+            children,
+        );
+        flow.style.layout.gap = Some(6.0);
+        flow.style.layout.row_gap = Some(6.0);
+        node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![flow],
+        )
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_layout_many_controls() {
+        let count = env_usize("DRAGONGUI_BENCH_LAYOUT_WIDGETS", 2_000);
+        let iterations = env_usize("DRAGONGUI_BENCH_LAYOUT_ITERS", 300);
+        let warmup = env_usize("DRAGONGUI_BENCH_LAYOUT_WARMUP", 20);
+        let root = many_controls_layout_tree(count);
+        let theme = Theme::dark();
+
+        for _ in 0..warmup {
+            let layout = compute_layout(&root, 1280.0, 900.0, 1.0, &theme, None);
+            std::hint::black_box(layout.rects.len());
+        }
+
+        let start = std::time::Instant::now();
+        let mut rects = 0usize;
+        for _ in 0..iterations {
+            let layout = compute_layout(&root, 1280.0, 900.0, 1.0, &theme, None);
+            rects += layout.rects.len();
+            std::hint::black_box(&layout);
+        }
+        let elapsed = start.elapsed();
+        eprintln!(
+            "layout many controls: widgets={count} iterations={iterations} total_ms={:.3} ns_per_widget={:.1} rects_per_iter={:.1}",
+            elapsed.as_secs_f64() * 1000.0,
+            elapsed.as_nanos() as f64 / (iterations * count) as f64,
+            rects as f64 / iterations as f64
+        );
+    }
+
     #[test]
     fn top_level_hlayout_fills_window_height() {
         let root = node(

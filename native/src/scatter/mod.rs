@@ -22,6 +22,8 @@ pub struct PointInstance {
     pub alpha: f32,         // @location(3)
 }
 
+const MAX_GPU_COLORMAP_POINTS: usize = 9;
+
 static POINT_ATTRS: [wgpu::VertexAttribute; 4] = [
     wgpu::VertexAttribute {
         format: wgpu::VertexFormat::Float32x3,
@@ -53,6 +55,49 @@ fn point_instance_layout() -> wgpu::VertexBufferLayout<'static> {
     }
 }
 
+static XYZ_POINT_ATTRS: [wgpu::VertexAttribute; 1] = [wgpu::VertexAttribute {
+    format: wgpu::VertexFormat::Float32x3,
+    offset: 0,
+    shader_location: 0,
+}];
+
+fn xyz_point_layout() -> wgpu::VertexBufferLayout<'static> {
+    wgpu::VertexBufferLayout {
+        array_stride: 12,
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &XYZ_POINT_ATTRS,
+    }
+}
+
+fn points_are_opaque(points: &[PointInstance]) -> bool {
+    points.iter().all(|point| point.alpha >= 0.999)
+}
+
+fn point_instance_bytes_are_opaque(bytes: &[u8]) -> bool {
+    const ALPHA_OFFSET: usize = 28;
+    const STRIDE: usize = std::mem::size_of::<PointInstance>();
+    bytes.chunks_exact(STRIDE).all(|chunk| {
+        let alpha = f32::from_le_bytes([
+            chunk[ALPHA_OFFSET],
+            chunk[ALPHA_OFFSET + 1],
+            chunk[ALPHA_OFFSET + 2],
+            chunk[ALPHA_OFFSET + 3],
+        ]);
+        alpha >= 0.999
+    })
+}
+
+fn gpu_colormap_uniform(name: &str) -> ([[f32; 4]; MAX_GPU_COLORMAP_POINTS], u32) {
+    let points = colormap::resolve(name);
+    let mut out = [[0.0; 4]; MAX_GPU_COLORMAP_POINTS];
+    let len = points.len().min(MAX_GPU_COLORMAP_POINTS).max(2);
+    for i in 0..MAX_GPU_COLORMAP_POINTS {
+        let source = points[i.min(points.len().saturating_sub(1))];
+        out[i] = [source[0], source[1], source[2], 1.0];
+    }
+    (out, len as u32)
+}
+
 // ---------------------------------------------------------------------------
 // Uniform block — matches Uniforms struct in points.wgsl
 // ---------------------------------------------------------------------------
@@ -67,6 +112,16 @@ struct Uniforms {
     point_size_scale: f32,
     _pad0: [f32; 3],
     clip_radii: [f32; 4],
+    compact_z_range: [f32; 2],
+    compact_colormap_len: u32,
+    _pad1: u32,
+    compact_colormap: [[f32; 4]; MAX_GPU_COLORMAP_POINTS],
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PrimaryPointStorage {
+    PointInstance,
+    XyzF32,
 }
 
 // ---------------------------------------------------------------------------
@@ -290,7 +345,7 @@ pub struct ScreenPickCache {
     grid_rows: u32,
     /// Projected viewport-local `[sx, sy]` for each source point.
     /// `[NaN, NaN]` means the point is clipped / behind the camera.
-    screen_xy: Vec<[f32; 2]>,
+    _screen_xy: Vec<[f32; 2]>,
     /// CSR prefix sums: `cell_starts[c]..cell_starts[c+1]` indexes
     /// `sorted_indices` for grid cell `c`.
     cell_starts: Vec<u32>,
@@ -371,7 +426,7 @@ impl ScreenPickCache {
             cell_size,
             grid_cols,
             grid_rows,
-            screen_xy,
+            _screen_xy: screen_xy,
             cell_starts,
             sorted_indices,
             max_point_size,
@@ -418,6 +473,7 @@ impl ScreenPickCache {
         }
     }
 
+    #[cfg(test)]
     pub fn candidates(&self, local_x: f32, local_y: f32, radius_px: f32) -> Vec<u32> {
         let mut out = Vec::new();
         self.candidates_into(local_x, local_y, radius_px, &mut out);
@@ -431,7 +487,7 @@ impl ScreenPickCache {
 
 /// One independently managed point set within a scatter scene.
 pub struct PointActor {
-    pub id: u32,
+    _id: u32,
     vertex_buffer: Option<wgpu::Buffer>,
     vertex_cap: u64,
     /// Hash-sorted copy for representative LOD sampling; None for stream actors.
@@ -441,6 +497,7 @@ pub struct PointActor {
     lod_bucket_keys_scratch: Vec<u32>,
     lod_occupied_scratch: Vec<bool>,
     pub point_count: u32,
+    points_opaque: bool,
     pub points: Vec<PointInstance>,
     pub visible: bool,
     pub data_min: glam::Vec3,
@@ -460,7 +517,7 @@ pub struct PointActor {
 impl PointActor {
     fn new(id: u32) -> Self {
         Self {
-            id,
+            _id: id,
             vertex_buffer: None,
             vertex_cap: 0,
             lod_vertex_buffer: None,
@@ -469,6 +526,7 @@ impl PointActor {
             lod_bucket_keys_scratch: Vec::new(),
             lod_occupied_scratch: Vec::new(),
             point_count: 0,
+            points_opaque: true,
             points: Vec::new(),
             visible: true,
             data_min: glam::Vec3::splat(f32::MAX),
@@ -495,6 +553,7 @@ impl PointActor {
         let size = (pts.len() * std::mem::size_of::<PointInstance>()) as u64;
         if size == 0 {
             self.point_count = 0;
+            self.points_opaque = true;
             self.lod_vertex_buffer = None;
             self.lod_vertex_cap = 0;
             return ScatterUploadTimings::default();
@@ -517,6 +576,7 @@ impl PointActor {
         );
         let primary_ms = primary_t0.elapsed().as_secs_f64() * 1000.0;
         self.point_count = pts.len() as u32;
+        self.points_opaque = points_are_opaque(pts);
         let mut lod_ms = 0.0;
         if self.stream_mode.is_none() && build_lod {
             let lod_t0 = Instant::now();
@@ -707,7 +767,7 @@ static MESH_VERTEX_ATTRS: [wgpu::VertexAttribute; 2] = [
 
 /// An independently managed mesh overlay (convex hull, ellipsoid, etc.).
 pub struct MeshActor {
-    pub id: u32,
+    _id: u32,
     pub visible: bool,
     pub wireframe: bool,
     pub color: [f32; 4],
@@ -732,7 +792,7 @@ impl MeshActor {
         device: &wgpu::Device,
     ) -> Self {
         let mut actor = Self {
-            id,
+            _id: id,
             visible: true,
             wireframe,
             color,
@@ -979,6 +1039,32 @@ fn adaptive_point_size_scale(point_count: u32, width: u32, height: u32) -> f32 {
     }
 }
 
+fn fitted_camera_distance(radius: f32, aspect: f32, fov_y: f32) -> f32 {
+    if !radius.is_finite() || !aspect.is_finite() || !fov_y.is_finite() || radius <= 0.0 {
+        return 1.0;
+    }
+    let safe_aspect = aspect.max(0.001);
+    let vertical_fit = radius / (fov_y * 0.5).tan().max(0.001);
+    let horizontal_fit = vertical_fit / safe_aspect;
+    vertical_fit.max(horizontal_fit) * 1.035
+}
+
+fn zoom_out_point_size_scale(camera_distance: f32, fit_distance: f32) -> f32 {
+    if !camera_distance.is_finite() || !fit_distance.is_finite() || fit_distance <= 0.0 {
+        return 1.0;
+    }
+    let ratio = (camera_distance / fit_distance).max(0.0);
+    if ratio <= 1.25 {
+        return 1.0;
+    }
+    if ratio >= 8.0 {
+        return 0.45;
+    }
+    let t = ((ratio - 1.25) / (8.0 - 1.25)).clamp(0.0, 1.0);
+    let smooth = t * t * (3.0 - 2.0 * t);
+    1.0 + (0.45 - 1.0) * smooth
+}
+
 fn clamp_interactive_render_scale(scale: f32) -> f32 {
     if scale.is_finite() {
         scale.clamp(0.25, 1.0)
@@ -1032,6 +1118,8 @@ fn scatter_layout_rect(
 
 pub struct ScatterWidget {
     pipeline: wgpu::RenderPipeline,
+    opaque_pipeline: wgpu::RenderPipeline,
+    compact_opaque_pipeline: wgpu::RenderPipeline,
     clip_mask_pipeline: wgpu::RenderPipeline,
     vertex_buffer: Option<wgpu::Buffer>,
     vertex_cap: u64,
@@ -1039,6 +1127,8 @@ pub struct ScatterWidget {
     bind_group_layout: wgpu::BindGroupLayout,
     bind_group: wgpu::BindGroup,
     pub point_count: u32,
+    primary_points_opaque: bool,
+    primary_storage: PrimaryPointStorage,
     pub camera: Camera,
     /// Viewport offset within the window (pixels, top-left origin).
     pub offset: [f32; 2],
@@ -1058,6 +1148,9 @@ pub struct ScatterWidget {
     pub quality_level: u32,
     point_style: u32,
     clip_radii: [f32; 4],
+    compact_z_range: [f32; 2],
+    compact_colormap_len: u32,
+    compact_colormap: [[f32; 4]; MAX_GPU_COLORMAP_POINTS],
     // ── Grid / chrome ────────────────────────────────────────────────────────
     line_pipeline: wgpu::RenderPipeline,
     line_vertex_buffer: Option<wgpu::Buffer>,
@@ -1142,7 +1235,7 @@ struct ScreenshotCache {
     h: u32,
     color_tex: wgpu::Texture,
     color_view: wgpu::TextureView,
-    depth_tex: wgpu::Texture,
+    _depth_tex: wgpu::Texture,
     depth_view: wgpu::TextureView,
     readback: wgpu::Buffer,
     padded_row: u32,
@@ -1312,6 +1405,10 @@ impl ScatterWidget {
             label: Some("scatter-points"),
             source: wgpu::ShaderSource::Wgsl(include_str!("points.wgsl").into()),
         });
+        let compact_points_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("scatter-compact-points"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("compact_points.wgsl").into()),
+        });
         let lines_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("scatter-lines"),
             source: wgpu::ShaderSource::Wgsl(include_str!("lines.wgsl").into()),
@@ -1358,6 +1455,13 @@ impl ScatterWidget {
             // surfaces. Writing every anti-aliased point sprite into depth makes
             // dense coils/clouds look like a screen-side LOD fade.
             depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::Less),
+            stencil: scatter_scene_stencil_state(),
+            bias: wgpu::DepthBiasState::default(),
+        };
+        let opaque_point_depth_stencil = wgpu::DepthStencilState {
+            format: crate::DEPTH_STENCIL_FORMAT,
+            depth_write_enabled: Some(true),
             depth_compare: Some(wgpu::CompareFunction::Less),
             stencil: scatter_scene_stencil_state(),
             bias: wgpu::DepthBiasState::default(),
@@ -1426,6 +1530,65 @@ impl ScatterWidget {
             multiview_mask: None,
             cache: None,
         });
+
+        let opaque_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("scatter-opaque"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &points_shader,
+                entry_point: Some("vs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                buffers: &[point_instance_layout()],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &points_shader,
+                entry_point: Some("fs_main"),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: surface_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleStrip,
+                ..Default::default()
+            },
+            depth_stencil: Some(opaque_point_depth_stencil.clone()),
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
+        let compact_opaque_pipeline =
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("scatter-compact-opaque"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &compact_points_shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[xyz_point_layout()],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &compact_points_shader,
+                    entry_point: Some("fs_main"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: surface_format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleStrip,
+                    ..Default::default()
+                },
+                depth_stencil: Some(opaque_point_depth_stencil),
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            });
 
         let line_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("scatter-lines"),
@@ -1550,6 +1713,8 @@ impl ScatterWidget {
 
         Self {
             pipeline,
+            opaque_pipeline,
+            compact_opaque_pipeline,
             clip_mask_pipeline,
             vertex_buffer: None,
             vertex_cap: 0,
@@ -1557,6 +1722,8 @@ impl ScatterWidget {
             bind_group_layout,
             bind_group,
             point_count: 0,
+            primary_points_opaque: true,
+            primary_storage: PrimaryPointStorage::PointInstance,
             camera,
             offset: [0.0, 0.0],
             width,
@@ -1574,6 +1741,9 @@ impl ScatterWidget {
             quality_level: 0,
             point_style: 0,
             clip_radii: [0.0; 4],
+            compact_z_range: [0.0, 1.0],
+            compact_colormap_len: gpu_colormap_uniform("viridis").1,
+            compact_colormap: gpu_colormap_uniform("viridis").0,
             line_pipeline,
             line_vertex_buffer: None,
             line_vertex_cap: 0,
@@ -1640,6 +1810,8 @@ impl ScatterWidget {
         let size = (points.len() * std::mem::size_of::<PointInstance>()) as u64;
         if size == 0 {
             self.point_count = 0;
+            self.primary_points_opaque = true;
+            self.primary_storage = PrimaryPointStorage::PointInstance;
             self.lod_vertex_buffer = None;
             self.lod_vertex_cap = 0;
             self.recompute_point_size_scale();
@@ -1665,6 +1837,8 @@ impl ScatterWidget {
         );
         let primary_ms = primary_t0.elapsed().as_secs_f64() * 1000.0;
         self.point_count = points.len() as u32;
+        self.primary_points_opaque = points_are_opaque(points);
+        self.primary_storage = PrimaryPointStorage::PointInstance;
         let lod_ms = if self.should_build_active_lod(self.point_count) {
             let lod_t0 = Instant::now();
             upload_lod_buffer(
@@ -1711,6 +1885,8 @@ impl ScatterWidget {
         let size = bytes.len() as u64;
         if size == 0 {
             self.point_count = 0;
+            self.primary_points_opaque = true;
+            self.primary_storage = PrimaryPointStorage::PointInstance;
             self.lod_vertex_buffer = None;
             self.lod_vertex_cap = 0;
             self.recompute_point_size_scale();
@@ -1731,6 +1907,69 @@ impl ScatterWidget {
         queue.write_buffer(self.vertex_buffer.as_ref().unwrap(), 0, bytes);
         let primary_ms = primary_t0.elapsed().as_secs_f64() * 1000.0;
         self.point_count = point_count as u32;
+        self.primary_points_opaque = point_instance_bytes_are_opaque(bytes);
+        self.primary_storage = PrimaryPointStorage::PointInstance;
+        self.lod_vertex_buffer = None;
+        self.lod_vertex_cap = 0;
+        self.recompute_point_size_scale();
+        self.update_camera(queue);
+        Some(ScatterUploadTimings {
+            primary_ms,
+            lod_ms: 0.0,
+        })
+    }
+
+    /// Upload a compact xyz_f32_v0 payload directly and color it in the point shader.
+    ///
+    /// The path is limited to opaque default-size z-colormapped points. It declines
+    /// while active interaction LOD needs a sampled full PointInstance buffer.
+    pub fn set_xyz_points_raw(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        bytes: &[u8],
+        data_min: glam::Vec3,
+        data_max: glam::Vec3,
+        colormap: &str,
+    ) -> Option<ScatterUploadTimings> {
+        if bytes.len() % 12 != 0 || !data_min.is_finite() || !data_max.is_finite() {
+            return None;
+        }
+        let point_count = bytes.len() / 12;
+        if self.should_build_active_lod(point_count as u32) {
+            return None;
+        }
+        let size = bytes.len() as u64;
+        if size == 0 {
+            self.point_count = 0;
+            self.primary_points_opaque = true;
+            self.primary_storage = PrimaryPointStorage::XyzF32;
+            self.lod_vertex_buffer = None;
+            self.lod_vertex_cap = 0;
+            self.recompute_point_size_scale();
+            self.update_camera(queue);
+            return Some(ScatterUploadTimings::default());
+        }
+        if self.vertex_buffer.is_none() || size > self.vertex_cap {
+            let cap = (size * 2).max(4 * 1024 * 1024);
+            self.vertex_buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("scatter-compact-xyz-vb"),
+                size: cap,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+            self.vertex_cap = cap;
+        }
+        let primary_t0 = Instant::now();
+        queue.write_buffer(self.vertex_buffer.as_ref().unwrap(), 0, bytes);
+        let primary_ms = primary_t0.elapsed().as_secs_f64() * 1000.0;
+        let (gpu_colormap, gpu_colormap_len) = gpu_colormap_uniform(colormap);
+        self.compact_colormap = gpu_colormap;
+        self.compact_colormap_len = gpu_colormap_len;
+        self.compact_z_range = [data_min.z, data_max.z];
+        self.point_count = point_count as u32;
+        self.primary_points_opaque = true;
+        self.primary_storage = PrimaryPointStorage::XyzF32;
         self.lod_vertex_buffer = None;
         self.lod_vertex_cap = 0;
         self.recompute_point_size_scale();
@@ -1802,23 +2041,38 @@ impl ScatterWidget {
     }
 
     /// Write current camera state into the uniform buffer.
-    pub fn update_camera(&self, queue: &wgpu::Queue) {
-        let vp = self.camera.view_proj();
-        let uniforms = Uniforms {
-            view_proj: vp.to_cols_array_2d(),
-            screen_size: [self.width as f32, self.height as f32],
+    pub fn update_camera(&mut self, queue: &wgpu::Queue) {
+        self.recompute_point_size_scale();
+        let uniforms = self.uniforms_for_size(self.width, self.height);
+        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+    }
+
+    fn uniforms_for_size(&self, width: u32, height: u32) -> Uniforms {
+        Uniforms {
+            view_proj: self.camera.view_proj().to_cols_array_2d(),
+            screen_size: [width as f32, height as f32],
             style: self.point_style,
             point_size: self.point_size_override,
             point_size_scale: self.point_size_scale,
             _pad0: [0.0; 3],
             clip_radii: self.clip_radii,
-        };
-        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+            compact_z_range: self.compact_z_range,
+            compact_colormap_len: self.compact_colormap_len,
+            _pad1: 0,
+            compact_colormap: self.compact_colormap,
+        }
     }
 
     fn recompute_point_size_scale(&mut self) {
         self.point_size_scale = if self.auto_point_size {
-            adaptive_point_size_scale(self.effective_draw_point_count(), self.width, self.height)
+            let density_scale = adaptive_point_size_scale(
+                self.effective_draw_point_count(),
+                self.width,
+                self.height,
+            );
+            let fit_distance =
+                fitted_camera_distance(self.fit_radius, self.camera.aspect, self.camera.fov_y);
+            density_scale * zoom_out_point_size_scale(self.camera.distance, fit_distance)
         } else {
             1.0
         };
@@ -2084,7 +2338,7 @@ impl ScatterWidget {
                 h,
                 color_tex,
                 color_view,
-                depth_tex,
+                _depth_tex: depth_tex,
                 depth_view,
                 readback,
                 padded_row,
@@ -2094,15 +2348,7 @@ impl ScatterWidget {
         let cache = self.screenshot_cache.take().unwrap();
 
         // Update uniforms exactly as in update_camera, but against the offscreen dims.
-        let uniforms = Uniforms {
-            view_proj: self.camera.view_proj().to_cols_array_2d(),
-            screen_size: [w as f32, h as f32],
-            style: self.point_style,
-            point_size: self.point_size_override,
-            point_size_scale: self.point_size_scale,
-            _pad0: [0.0; 3],
-            clip_radii: self.clip_radii,
-        };
+        let uniforms = self.uniforms_for_size(w, h);
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         // Override window-global coords so render() uses offscreen dims.
@@ -3170,6 +3416,7 @@ impl ScatterWidget {
         actor.vertex_buffer = vertex_buffer;
         actor.vertex_cap = size;
         actor.stream_mode = Some(mode);
+        actor.points_opaque = true;
         actor.stream_capacity = max_points;
         actor.stream_write_offset = 0;
         actor.points = vec![
@@ -3230,6 +3477,7 @@ impl ScatterWidget {
         let (mn, mx) = PointActor::compute_bounds(&actor.points[..actor.point_count as usize]);
         actor.data_min = mn;
         actor.data_max = mx;
+        actor.points_opaque = points_are_opaque(&actor.points[..actor.point_count as usize]);
         self.recompute_point_size_scale();
         self.update_camera(queue);
     }
@@ -3237,6 +3485,7 @@ impl ScatterWidget {
     pub fn clear_stream_actor(&mut self, id: u32, queue: &wgpu::Queue) {
         if let Some(actor) = self.extra_actors.get_mut(&id) {
             actor.point_count = 0;
+            actor.points_opaque = true;
             actor.stream_write_offset = 0;
             actor.data_min = glam::Vec3::splat(f32::MAX);
             actor.data_max = glam::Vec3::splat(f32::MIN);
@@ -3770,34 +4019,46 @@ impl ScatterWidget {
             pass.draw(0..self.user_line_vertex_count, 0..1);
         }
 
-        if has_points {
-            pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
+        let mut draw_point_buffer =
+            |opaque: bool, compact: bool, vb: &wgpu::Buffer, draw_count: u32| {
+                let pipeline = if compact {
+                    &self.compact_opaque_pipeline
+                } else if opaque {
+                    &self.opaque_pipeline
+                } else {
+                    &self.pipeline
+                };
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, &self.bind_group, &[]);
+                pass.set_vertex_buffer(0, vb.slice(..));
+                pass.draw(0..4, 0..draw_count);
+            };
+
+        if has_points && self.primary_points_opaque {
             let is_lod =
                 self.lod_enabled && self.lod_active && self.point_count > self.lod_threshold;
             // Use the pre-shuffled LOD buffer when active so the first N instances
             // are a representative spatial sample rather than a positional prefix.
             let draw_vb = if is_lod {
-                self.lod_vertex_buffer
-                    .as_ref()
-                    .or(self.vertex_buffer.as_ref())
+                self.lod_vertex_buffer.as_ref()
             } else {
                 self.vertex_buffer.as_ref()
             };
             if let Some(vb) = draw_vb {
-                pass.set_vertex_buffer(0, vb.slice(..));
                 let draw_count = if is_lod {
                     lod_sample_count(self.point_count as usize, self.lod_factor) as u32
                 } else {
                     self.point_count
                 };
-                pass.draw(0..4, 0..draw_count);
+                let compact = self.primary_storage == PrimaryPointStorage::XyzF32 && !is_lod;
+                draw_point_buffer(true, compact, vb, draw_count);
             }
         }
 
-        // Extra actors (Phase 4)
+        // Draw opaque actors before translucent point sets so their depth can
+        // occlude later transparent billboard fragments correctly.
         for actor in self.extra_actors.values() {
-            if actor.visible && actor.point_count > 0 {
+            if actor.visible && actor.point_count > 0 && actor.points_opaque {
                 let is_lod =
                     self.lod_enabled && self.lod_active && actor.point_count > self.lod_threshold;
                 let draw_vb = if is_lod {
@@ -3809,15 +4070,55 @@ impl ScatterWidget {
                     actor.vertex_buffer.as_ref()
                 };
                 if let Some(vb) = draw_vb {
-                    pass.set_pipeline(&self.pipeline);
-                    pass.set_bind_group(0, &self.bind_group, &[]);
-                    pass.set_vertex_buffer(0, vb.slice(..));
                     let draw_count = if is_lod {
                         lod_sample_count(actor.point_count as usize, self.lod_factor) as u32
                     } else {
                         actor.point_count
                     };
-                    pass.draw(0..4, 0..draw_count);
+                    draw_point_buffer(true, false, vb, draw_count);
+                }
+            }
+        }
+
+        if has_points && !self.primary_points_opaque {
+            let is_lod =
+                self.lod_enabled && self.lod_active && self.point_count > self.lod_threshold;
+            let draw_vb = if is_lod {
+                self.lod_vertex_buffer
+                    .as_ref()
+                    .or(self.vertex_buffer.as_ref())
+            } else {
+                self.vertex_buffer.as_ref()
+            };
+            if let Some(vb) = draw_vb {
+                let draw_count = if is_lod {
+                    lod_sample_count(self.point_count as usize, self.lod_factor) as u32
+                } else {
+                    self.point_count
+                };
+                draw_point_buffer(false, false, vb, draw_count);
+            }
+        }
+
+        for actor in self.extra_actors.values() {
+            if actor.visible && actor.point_count > 0 && !actor.points_opaque {
+                let is_lod =
+                    self.lod_enabled && self.lod_active && actor.point_count > self.lod_threshold;
+                let draw_vb = if is_lod {
+                    actor
+                        .lod_vertex_buffer
+                        .as_ref()
+                        .or(actor.vertex_buffer.as_ref())
+                } else {
+                    actor.vertex_buffer.as_ref()
+                };
+                if let Some(vb) = draw_vb {
+                    let draw_count = if is_lod {
+                        lod_sample_count(actor.point_count as usize, self.lod_factor) as u32
+                    } else {
+                        actor.point_count
+                    };
+                    draw_point_buffer(false, false, vb, draw_count);
                 }
             }
         }
@@ -3908,11 +4209,43 @@ mod tests {
     }
 
     #[test]
+    fn point_opacity_detection_treats_default_alpha_as_opaque() {
+        let opaque = [make_pt(0.0, 0.0, 0.0), make_pt(1.0, 1.0, 1.0)];
+        assert!(points_are_opaque(&opaque));
+
+        let mut transparent = opaque;
+        transparent[1].alpha = 0.998;
+        assert!(!points_are_opaque(&transparent));
+    }
+
+    #[test]
+    fn point_instance_bytes_opacity_detection_reads_alpha_slot() {
+        let mut opaque = [make_pt(0.0, 0.0, 0.0), make_pt(1.0, 1.0, 1.0)];
+        assert!(point_instance_bytes_are_opaque(bytemuck::cast_slice(
+            &opaque
+        )));
+
+        opaque[0].alpha = 0.5;
+        assert!(!point_instance_bytes_are_opaque(bytemuck::cast_slice(
+            &opaque
+        )));
+    }
+
+    #[test]
     fn adaptive_point_size_scale_shrinks_dense_views() {
         assert_eq!(adaptive_point_size_scale(0, 800, 600), 1.0);
         assert_eq!(adaptive_point_size_scale(10_000, 800, 600), 1.0);
         assert!(adaptive_point_size_scale(125_000, 800, 600) < 1.0);
         assert!(adaptive_point_size_scale(1_000_000, 800, 600) <= 0.35);
+    }
+
+    #[test]
+    fn zoom_out_point_size_scale_shrinks_far_views() {
+        let fit = fitted_camera_distance(10.0, 1.0, 45_f32.to_radians());
+        assert!(fit > 0.0);
+        assert_eq!(zoom_out_point_size_scale(fit, fit), 1.0);
+        assert!(zoom_out_point_size_scale(fit * 3.0, fit) < 1.0);
+        assert!(zoom_out_point_size_scale(fit * 8.0, fit) <= 0.45);
     }
 
     #[test]
@@ -3928,7 +4261,7 @@ mod tests {
 
     #[test]
     fn scatter_uniform_layout_stays_wgpu_aligned() {
-        assert_eq!(std::mem::size_of::<Uniforms>(), 112);
+        assert_eq!(std::mem::size_of::<Uniforms>(), 272);
     }
 
     #[test]
@@ -4023,8 +4356,8 @@ mod tests {
         let vp = glam::Mat4::IDENTITY;
         let pt = make_pt(0.0, 0.0, 0.5);
         let cache = build_cache(&[pt], vp, 100, 100);
-        assert!((cache.screen_xy[0][0] - 50.0).abs() < 0.01);
-        assert!((cache.screen_xy[0][1] - 50.0).abs() < 0.01);
+        assert!((cache._screen_xy[0][0] - 50.0).abs() < 0.01);
+        assert!((cache._screen_xy[0][1] - 50.0).abs() < 0.01);
         // Query should include this point.
         let cands = cache.candidates(50.0, 50.0, 5.0);
         assert!(
@@ -4040,7 +4373,7 @@ mod tests {
         let pt = make_pt(0.0, 0.0, -2.0);
         let cache = build_cache(&[pt], vp, 100, 100);
         assert!(
-            cache.screen_xy[0][0].is_nan(),
+            cache._screen_xy[0][0].is_nan(),
             "clipped point must have NaN screen_x"
         );
         assert_eq!(cache.sorted_indices.len(), 0, "no visible points in index");

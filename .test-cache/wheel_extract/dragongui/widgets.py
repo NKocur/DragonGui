@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 from collections.abc import Callable, Iterable, Mapping, Sequence
 import zlib
 from contextlib import AbstractContextManager
@@ -4435,7 +4436,7 @@ class Scatter3D(Widget):
             if _scatter_needs_v1(color, colors, scalars, point_sizes, opacity, nan_color, clim, log_scale)
             else "xyz_f32_v0"
         )
-        self._refresh_cached_payload_b64()
+        self._refresh_cached_payload()
         if scalar_bar_vmin is not None or scalar_bar_vmax is not None:
             self._scalar_range_explicit = True
         if scalar_bar_log_scale:
@@ -4466,15 +4467,21 @@ class Scatter3D(Widget):
             )
         return _pack_xyz_bytes(self.frame, self.x, self.y, self.z)
 
-    def _refresh_cached_payload_b64(self) -> None:
+    def _refresh_cached_payload(self) -> None:
         buf = self._build_payload()
         self._cached_payload = buf
-        self._cached_payload_b64 = base64.b64encode(buf).decode("ascii") if buf is not None else None
-        # Full-payload CRC used by _scatter_props_equal to detect any data change.
-        self._payload_token: int = (
+        self._cached_payload_b64 = None
+        self._payload_token = (
             zlib.crc32(buf) if buf is not None and len(buf) > 0 else 0
         )
         self._compute_auto_color_meta()
+
+    def _refresh_cached_payload_b64(self) -> None:
+        buf = self._cached_payload
+        if buf is None:
+            self._refresh_cached_payload()
+            buf = self._cached_payload
+        self._cached_payload_b64 = base64.b64encode(buf).decode("ascii") if buf is not None else None
 
     def _compute_auto_color_meta(self) -> None:
         """Derive legend entries and scalar range from the current color/scalars settings."""
@@ -4580,6 +4587,21 @@ class Scatter3D(Widget):
             else (self._scalar_bar_title or self._auto_legend_title)
         )
         return vmin, vmax, log_scale, colormap, title
+
+    def _primary_hover_columns_payload(self, handle: Any) -> "tuple[str, list[object]] | None":
+        if not handle.app._native_method_available("enqueue_set_scatter_primary_hover_columns"):
+            return None
+        return self._extract_hover_columns(self.frame, self._hover)
+
+    def _enqueue_primary_hover_metadata(self, handle: Any) -> None:
+        columns_payload = self._primary_hover_columns_payload(handle)
+        if columns_payload is not None:
+            columns_json, buffers = columns_payload
+            handle.enqueue_set_scatter_primary_hover_columns(columns_json, buffers)
+            return
+        meta = self._extract_hover_meta(self.frame, self._hover)
+        if meta is not None:
+            handle.enqueue_set_scatter_primary_hover_meta(meta)
 
     @classmethod
     def colormap_names(cls) -> list[str]:
@@ -4828,9 +4850,7 @@ class Scatter3D(Widget):
                 fit=fit,
             )
             handle.enqueue_set_scatter_tooltip_axis_labels(self.x, self.y, self.z)
-            meta = self._extract_hover_meta(self.frame, self._hover)
-            if meta is not None:
-                handle.enqueue_set_scatter_primary_hover_meta(meta)
+            self._enqueue_primary_hover_metadata(handle)
             if self._legend_visible:
                 handle.enqueue_set_scatter_legend(
                     True, self._legend_position,
@@ -4872,9 +4892,7 @@ class Scatter3D(Widget):
                 payload_format=self.data_format,
             )
             # Native clears primary_hover_meta on SetScatterPointsPacked; re-send it.
-            meta = self._extract_hover_meta(self.frame, self._hover)
-            if meta is not None:
-                handle.enqueue_set_scatter_primary_hover_meta(meta)
+            self._enqueue_primary_hover_metadata(handle)
             if self._scalar_bar_visible:
                 eff_vmin, eff_vmax, eff_log, eff_cm, eff_title = self._effective_scalar_bar_state()
                 handle.enqueue_set_scatter_scalar_bar(
@@ -6021,10 +6039,73 @@ class Scatter3D(Widget):
             return None
 
     @staticmethod
-    def _extract_hover_meta(frame: Any, hover: "str | list[str] | None") -> "str | None":
-        """Extract per-point hover lines from frame column(s). Returns JSON string or None.
+    def _extract_hover_columns(
+        frame: Any,
+        hover: "str | list[str] | None",
+    ) -> "tuple[str, list[object]] | None":
+        if hover is None or frame is None:
+            return None
+        try:
+            import numpy as _np
+        except ImportError:
+            return None
 
-        Each element of the returned JSON array is one multi-line tooltip suffix string
+        cols = [hover] if isinstance(hover, str) else list(hover)
+        metadata: list[dict[str, object]] = []
+        buffers: list[object] = []
+        expected_len: int | None = None
+        for col in cols:
+            try:
+                vals = frame[col] if hasattr(frame, "__getitem__") else getattr(frame, col)
+            except (KeyError, AttributeError) as exc:
+                raise ValueError(f"Scatter3D: hover column {col!r} not found in frame") from exc
+            arr = _np.asarray(vals)
+            if arr.ndim != 1:
+                return None
+            row_count = int(arr.shape[0])
+            if expected_len is None:
+                expected_len = row_count
+            elif row_count != expected_len:
+                raise ValueError("Scatter3D: hover columns must have the same length")
+
+            kind = arr.dtype.kind
+            if kind == "f":
+                dtype = "f32" if arr.dtype.itemsize <= 4 else "f64"
+                target = _np.float32 if dtype == "f32" else _np.float64
+                packed = _np.ascontiguousarray(arr.astype(target, copy=False))
+                buffer: object = memoryview(packed).cast("B")
+            elif kind == "i":
+                dtype = "i64"
+                packed = _np.ascontiguousarray(arr.astype(_np.int64, copy=False))
+                buffer = memoryview(packed).cast("B")
+            elif kind == "u":
+                dtype = "u64"
+                packed = _np.ascontiguousarray(arr.astype(_np.uint64, copy=False))
+                buffer = memoryview(packed).cast("B")
+            elif kind == "b":
+                dtype = "bool"
+                packed = _np.ascontiguousarray(arr.astype(_np.uint8, copy=False))
+                buffer = memoryview(packed).cast("B")
+            elif kind in "OSU":
+                dtype = "utf8"
+                strings = [str(value) for value in arr.astype(str, copy=False).tolist()]
+                if any("\0" in value for value in strings):
+                    return None
+                buffer = "\0".join(strings).encode("utf-8")
+            else:
+                return None
+            metadata.append({"name": str(col), "dtype": dtype, "len": row_count})
+            buffers.append(buffer)
+
+        if not metadata:
+            return None
+        return json.dumps(metadata, separators=(",", ":")), buffers
+
+    @staticmethod
+    def _extract_hover_meta(frame: Any, hover: "str | list[str] | None") -> "str | None":
+        """Extract per-point hover lines from frame column(s). Returns encoded lines or None.
+
+        Each encoded element is one multi-line tooltip suffix string
         for the corresponding point, formatted as "col: value" (one line per column).
         Native prepends the coordinates line, so the final tooltip reads:
             (x.xxx, y.yyy, z.zzz)
@@ -6041,18 +6122,60 @@ class Scatter3D(Widget):
                 return str(v)
 
         cols = [hover] if isinstance(hover, str) else list(hover)
-        extracted: list[tuple[str, list[str]]] = []
+        raw_cols: list[tuple[str, Any]] = []
         for col in cols:
             try:
-                if hasattr(frame, "__getitem__"):
-                    vals = frame[col]
-                else:
-                    vals = getattr(frame, col)
-                extracted.append((col, [_fmt(v) for v in vals]))
+                vals = frame[col] if hasattr(frame, "__getitem__") else getattr(frame, col)
+                raw_cols.append((col, vals))
             except (KeyError, AttributeError) as exc:
                 raise ValueError(
                     f"Scatter3D: hover column {col!r} not found in frame"
                 ) from exc
+        if not raw_cols:
+            return None
+
+        try:
+            import numpy as _np
+
+            formatted_arrays = []
+            expected_len: int | None = None
+            for col, vals in raw_cols:
+                arr = _np.asarray(vals)
+                if arr.ndim != 1:
+                    raise TypeError
+                if expected_len is None:
+                    expected_len = int(arr.shape[0])
+                elif int(arr.shape[0]) != expected_len:
+                    raise ValueError("hover columns must have the same length")
+                if arr.dtype.kind in "biuf":
+                    formatted = _np.char.mod("%.4g", arr.astype(_np.float64, copy=False))
+                elif arr.dtype.kind == "c":
+                    raise TypeError
+                elif arr.dtype.kind == "?":
+                    formatted = _np.char.mod("%.4g", arr.astype(_np.float64, copy=False))
+                elif arr.dtype.kind in "SU":
+                    formatted = arr.astype(str, copy=False)
+                else:
+                    raise TypeError
+                formatted_arrays.append((col, formatted))
+
+            lines = None
+            for col, values in formatted_arrays:
+                part = _np.char.add(f"{col}: ", values)
+                lines = part if lines is None else _np.char.add(_np.char.add(lines, "\n"), part)
+            if lines is not None:
+                row_lines = lines.tolist()
+                if not any("\0" in line for line in row_lines):
+                    return "\0" + "\0".join(row_lines)
+                return _json.dumps(row_lines)
+        except ValueError:
+            raise
+        except Exception:
+            pass
+
+        extracted: list[tuple[str, list[str]]] = []
+        for col, vals in raw_cols:
+            extracted.append((col, [_fmt(v) for v in vals]))
         if not extracted:
             return None
         n = len(extracted[0][1])
@@ -6060,6 +6183,8 @@ class Scatter3D(Widget):
             "\n".join(f"{col}: {col_vals[i]}" for col, col_vals in extracted)
             for i in range(n)
         ]
+        if not any("\0" in row for row in rows):
+            return "\0" + "\0".join(rows)
         return _json.dumps(rows)
 
     @staticmethod
@@ -6418,7 +6543,14 @@ class Scatter3D(Widget):
         handle = self._live()
         if handle is None:
             return
+        total_t0 = time.perf_counter()
+        timings: dict[str, Any] = {}
+
+        def record_phase(name: str, start: float) -> None:
+            timings[name] = (time.perf_counter() - start) * 1000.0
+
         can_send_primary = handle.app._native_method_available("enqueue_set_scatter_points_packed")
+        phase_t0 = time.perf_counter()
         if not self._primary_cleared and can_send_primary:
             payload = self._cached_payload
             pack_ms = 0.0
@@ -6433,6 +6565,7 @@ class Scatter3D(Widget):
                 )
                 self._compute_auto_color_meta()
             if payload is not None:
+                enqueue_t0 = time.perf_counter()
                 handle.enqueue_set_scatter_points_packed(
                     payload,
                     pack_ms=pack_ms,
@@ -6441,28 +6574,61 @@ class Scatter3D(Widget):
                     payload_format=self.data_format,
                     coalesce=False,
                 )
+                record_phase("enqueue_points_ms", enqueue_t0)
+                timings["payload_bytes"] = len(payload)
+            timings["build_payload_ms"] = pack_ms
+        record_phase("primary_points_ms", phase_t0)
         # Always sync hover_tooltip to native on startup (default is True on both sides,
         # but a user may have set it to False before the widget went live).
+        phase_t0 = time.perf_counter()
         handle.enqueue_set_scatter_hover_tooltip(self._hover_tooltip)
+        record_phase("hover_tooltip_ms", phase_t0)
         if not self._primary_cleared:
             # Sync column names so native tooltip shows the right axis labels.
+            phase_t0 = time.perf_counter()
             handle.enqueue_set_scatter_tooltip_axis_labels(self.x, self.y, self.z)
+            record_phase("tooltip_axis_labels_ms", phase_t0)
+            phase_t0 = time.perf_counter()
             # Sync primary hover metadata (column names → per-point strings).
-            meta = self._extract_hover_meta(self.frame, self._hover)
-            if meta is not None:
-                handle.enqueue_set_scatter_primary_hover_meta(meta)
+            columns_payload = self._primary_hover_columns_payload(handle)
+            record_phase("hover_columns_extract_ms", phase_t0)
+            if columns_payload is not None:
+                columns_json, buffers = columns_payload
+                timings["hover_columns_bytes"] = sum(
+                    int(getattr(buffer, "nbytes", len(buffer))) for buffer in buffers
+                )
+                timings["hover_columns_count"] = len(buffers)
+                phase_t0 = time.perf_counter()
+                handle.enqueue_set_scatter_primary_hover_columns(columns_json, buffers)
+                record_phase("hover_columns_enqueue_ms", phase_t0)
+            else:
+                phase_t0 = time.perf_counter()
+                meta = self._extract_hover_meta(self.frame, self._hover)
+                record_phase("hover_meta_extract_ms", phase_t0)
+                if meta is not None:
+                    timings["hover_meta_bytes"] = len(meta)
+                    phase_t0 = time.perf_counter()
+                    handle.enqueue_set_scatter_primary_hover_meta(meta)
+                    record_phase("hover_meta_enqueue_ms", phase_t0)
         # Sync LOD config (may have been changed before going live).
+        phase_t0 = time.perf_counter()
         handle.enqueue_set_scatter_lod(self._lod_enabled, self._lod_threshold, self._lod_factor)
         handle.enqueue_set_scatter_auto_point_size(self.auto_point_size)
         handle.enqueue_set_scatter_interactive_render_scale(self._interactive_render_scale)
         handle.enqueue_set_scatter_auto_quality(self._auto_quality, self._quality_target_fps)
         # Sync picking mode.
         handle.enqueue_set_scatter_picking_mode(self._picking_mode)
+        record_phase("scatter_options_ms", phase_t0)
         # Sync point style override if set before going live.
         if hasattr(self, "_point_style"):
+            phase_t0 = time.perf_counter()
             handle.enqueue_set_scatter_point_style(self._point_style)
+            record_phase("point_style_ms", phase_t0)
+        timings["total_ms"] = (time.perf_counter() - total_t0) * 1000.0
+        self._last_startup_resource_timings = timings
         if not self._pending_scene_ops:
             return
+        scene_t0 = time.perf_counter()
         for op, args in self._pending_scene_ops:
             if op == "add_label":
                 lid, px, py, pz, text, r, g, b, size, anchor = args
@@ -6524,6 +6690,9 @@ class Scatter3D(Widget):
                 aid, visible = args
                 handle.enqueue_set_scatter_actor_visible(aid, visible)
         self._pending_scene_ops.clear()
+        timings["scene_ops_ms"] = (time.perf_counter() - scene_t0) * 1000.0
+        timings["total_ms"] = (time.perf_counter() - total_t0) * 1000.0
+        self._last_startup_resource_timings = timings
 
     def screenshot(self) -> "Any":
         """Capture the scatter viewport as an (H, W, 4) uint8 NumPy array, or None."""

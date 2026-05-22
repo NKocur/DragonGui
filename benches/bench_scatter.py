@@ -15,12 +15,12 @@ Environment:
 Output example:
     points            = 500000
     payload_mb        = 6.00
-    python_pack_ms    = 3.12
-    native_decode_ms  = 5.44
-    native_upload_ms  = 1.67
-    native_total_ms   = 7.25
-    frame_ms          = 26.11  (avg over 100 frames)
-    fps               = 38
+    python_pack_ms    = 2.69
+    native_decode_ms  = 0.00
+    native_upload_ms  = 0.88
+    native_total_ms   = 0.90
+    frame_ms          = 15.14  (avg over 100 frames)
+    fps               = 66
 """
 from __future__ import annotations
 
@@ -77,6 +77,8 @@ payload[:, 1] = frame.y
 payload[:, 2] = frame.z
 payload_bytes = payload.nbytes
 payload_u8 = payload.view(np.uint8).reshape(-1)
+bounds_min = (float(np.min(frame.x)), float(np.min(frame.y)), float(np.min(frame.z)))
+bounds_max = (float(np.max(frame.x)), float(np.max(frame.y)), float(np.max(frame.z)))
 python_pack_ms = (time.perf_counter() - pack_start) * 1000.0
 
 app = dg.App()
@@ -96,6 +98,8 @@ def submit_payload() -> None:
         colormap=scatter.colormap,
         payload_format="xyz_f32_v0",
         coalesce=False,
+        bounds_min=bounds_min,
+        bounds_max=bounds_max,
     )
 
 

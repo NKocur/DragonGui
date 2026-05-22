@@ -1182,10 +1182,11 @@ fn collect_state(node: &WidgetNode, s: &mut WidgetState, parent: Option<&WidgetN
         WidgetKind::ProgressBar => {
             s.float_val
                 .insert(node.id.clone(), node.props.value.unwrap_or(0.0));
-            s.float_range.insert(
-                node.id.clone(),
-                (node.props.min.unwrap_or(0.0), node.props.max.unwrap_or(1.0)),
-            );
+            let min = node.props.min.unwrap_or(0.0);
+            let max = node.props.max.unwrap_or(1.0);
+            if min != 0.0 || max != 1.0 {
+                s.float_range.insert(node.id.clone(), (min, max));
+            }
         }
         WidgetKind::TextInput | WidgetKind::TextArea => {
             let value = node.props.text.clone().unwrap_or_default();

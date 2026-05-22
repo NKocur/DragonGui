@@ -868,6 +868,21 @@ pub struct NodePartStyles {
     pub selected: BTreeMap<String, PartStyle>,
 }
 
+impl NodePartStyles {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.parts.is_empty()
+            && self.hover.is_empty()
+            && self.active.is_empty()
+            && self.focus.is_empty()
+            && self.disabled.is_empty()
+            && self.checked.is_empty()
+            && self.open.is_empty()
+            && self.expanded.is_empty()
+            && self.collapsed.is_empty()
+            && self.selected.is_empty()
+    }
+}
+
 pub(crate) fn base_part_style<'a>(style: &'a NodeStyle, part: &str) -> Option<&'a PartStyle> {
     style.parts.parts.get(part)
 }
@@ -962,6 +977,9 @@ pub(crate) fn part_style_active_for_state(
     state: &WidgetState,
     part: &str,
 ) -> bool {
+    if style.parts.is_empty() {
+        return false;
+    }
     base_part_style(style, part).is_some()
         || checked_part_style_for_state(style, widget_id, state, part).is_some()
         || open_part_style_for_state(style, widget_id, state, part).is_some()
@@ -977,6 +995,9 @@ pub(crate) fn part_visual_for_state(
     state: &WidgetState,
     part: &str,
 ) -> VisualStyle {
+    if style.parts.is_empty() {
+        return VisualStyle::default();
+    }
     let mut visual = base_part_style(style, part)
         .map(|style| style.visual.clone())
         .unwrap_or_default();

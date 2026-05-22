@@ -1945,6 +1945,8 @@ def update_scatter_stats(snapshot: dict[str, object], observed_fps: float | None
             scatter_metrics = selected
 
     frame_ms_value = runtime.get("frame_ms")
+    frame_work_ms_value = runtime.get("frame_work_ms_avg")
+    frame_present_ms_value = runtime.get("frame_present_ms_avg")
     try:
         frame_ms = float(frame_ms_value)
     except (TypeError, ValueError):
@@ -1958,7 +1960,8 @@ def update_scatter_stats(snapshot: dict[str, object], observed_fps: float | None
     scatter_stats_summary.set_value(
         "\n".join(
             (
-                f"Frame CPU avg: {fmt_ms(frame_ms_value)} ({frame_fps:.1f} fps)",
+                f"Frame avg: {fmt_ms(frame_ms_value)} ({frame_fps:.1f} fps)",
+                f"CPU work / present: {fmt_ms(frame_work_ms_value)} / {fmt_ms(frame_present_ms_value)}",
                 f"Observed redraws: {observed_text} / {fmt_count(runtime.get('frames_rendered'))} frames",
                 f"Stream handoff: {stream_handoff_label(handoff)}",
                 f"Scatter encode: {metric_ms(scatter_metrics, 'last_render_encode_ms')}",
@@ -2870,7 +2873,8 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                             scatter_stats_summary = dg.Label(
                                 "\n".join(
                                     (
-                                        "Frame CPU avg: --",
+                                        "Frame avg: --",
+                                        "CPU work / present: --",
                                         "Observed redraws: --",
                                         "Stream handoff: Direct",
                                         "Scatter encode: --",

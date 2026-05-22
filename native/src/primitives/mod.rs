@@ -1878,10 +1878,24 @@ fn paint_transform_for_node(
     (!transform.is_identity()).then_some(transform)
 }
 
-fn stacking_children(node: &WidgetNode) -> Vec<(usize, &WidgetNode)> {
+fn visit_stacking_children<'a>(node: &'a WidgetNode, mut visit: impl FnMut(&'a WidgetNode)) {
+    if node.children.len() <= 1
+        || node
+            .children
+            .iter()
+            .all(|child| child.style.layout.z_index.unwrap_or(0) == 0)
+    {
+        for child in &node.children {
+            visit(child);
+        }
+        return;
+    }
+
     let mut children: Vec<_> = node.children.iter().enumerate().collect();
     children.sort_by_key(|(index, child)| (child.style.layout.z_index.unwrap_or(0), *index));
-    children
+    for (_, child) in children {
+        visit(child);
+    }
 }
 
 fn inset_radii(radii: [f32; 4], inset: f32) -> [f32; 4] {
@@ -2509,7 +2523,7 @@ fn collect_line_plot_render_data(
         }
     }
 
-    for (_, child) in stacking_children(node) {
+    visit_stacking_children(node, |child| {
         collect_line_plot_render_data(
             child,
             layout,
@@ -2523,7 +2537,7 @@ fn collect_line_plot_render_data(
             series_instances,
             build_stats,
         );
-    }
+    });
 }
 
 fn collect_line_plot_node_render_data(
@@ -8340,7 +8354,7 @@ fn emit_rects_inner(
         );
     }
 
-    for (_, child) in stacking_children(node) {
+    visit_stacking_children(node, |child| {
         emit_rects_inner(
             child,
             layout,
@@ -8351,7 +8365,7 @@ fn emit_rects_inner(
             skip_open_modals,
             out,
         );
-    }
+    });
     if is_scroll_container_node(node) {
         if let Some(r) = layout.rects.get(&node.id).copied() {
             emit_panel_scrollbar(node, layout, state, theme, sf, [r.x, r.y, r.w, r.h], out);
@@ -8911,7 +8925,7 @@ fn emit_toast_overlays(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::document::NodeProps;
+    use crate::document::{LinePlotPayloadFormat, LinePlotSeriesProp, NodeProps};
     use crate::style::{
         BackdropFilterStyle, BackgroundPaint, BlobGradient, BlobGradientStop, BoxShadow, ColorRef,
         GradientStop, LinearGradient, MeshGradient, OverflowStyle, PartLayoutStyle, PartStyle,
@@ -8932,6 +8946,146 @@ mod tests {
         }
     }
 
+    fn progress_bar_primitive_bench_fixture(
+        count: usize,
+    ) -> (WidgetNode, LayoutResult, WidgetState) {
+        let mut root = node("root", WidgetKind::FlowLayout);
+        root.children.reserve(count);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            root.id.clone(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 420.0,
+                h: (count as f32 * 24.0).max(1.0),
+            },
+        );
+
+        for index in 0..count {
+            let id = format!("progress-{index}");
+            let mut bar = node(&id, WidgetKind::ProgressBar);
+            let t = (index % 101) as f32 / 100.0;
+            bar.props.value = Some(t);
+            bar.props.min = Some(0.0);
+            bar.props.max = Some(1.0);
+            layout.rects.insert(
+                id,
+                Rect {
+                    x: 0.0,
+                    y: index as f32 * 24.0,
+                    w: 360.0,
+                    h: 18.0,
+                },
+            );
+            root.children.push(bar);
+        }
+
+        let state = WidgetState::from_tree(&root);
+        (root, layout, state)
+    }
+
+    fn table_primitive_bench_fixture() -> (WidgetNode, LayoutResult, WidgetState, usize) {
+        let rows = env_usize("DRAGONGUI_TABLE_BENCH_ROWS", 100_000);
+        let cols = env_usize("DRAGONGUI_TABLE_BENCH_COLS", 64);
+        let width = env_usize("DRAGONGUI_TABLE_BENCH_WIDTH", 1200) as f32;
+        let height = env_usize("DRAGONGUI_TABLE_BENCH_HEIGHT", 800) as f32;
+
+        let mut table = node("table", WidgetKind::DataFrameTable);
+        table.props.table_rows = Some(rows);
+        table.props.page_size = Some(rows);
+        table.props.table_columns = (0..cols).map(|index| format!("col_{index}")).collect();
+        table.props.table_dtypes = (0..cols).map(|_| "f64".to_string()).collect();
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            table.id.clone(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: width,
+                h: height,
+            },
+        );
+
+        let state = WidgetState::from_tree(&table);
+        let visible = state
+            .table("table")
+            .map(|state| {
+                let metrics = table::metrics_for_node(&table, &Theme::dark(), 1.0);
+                let rect = layout.rects.get("table").copied().unwrap();
+                let visible = table::visible(state, &rect, metrics);
+                visible.row_count * visible.col_count
+            })
+            .unwrap_or(0);
+        (table, layout, state, visible)
+    }
+
+    fn line_plot_bench_fixture(
+        series_count: usize,
+        points_per_series: usize,
+    ) -> (WidgetNode, LayoutResult) {
+        let mut plot = node("line-plot", WidgetKind::LinePlot);
+        plot.props.line_plot_line_width = 2.0;
+        plot.props.line_plot_auto_fit = false;
+        plot.props.line_plot_series.reserve(series_count);
+        for series_index in 0..series_count {
+            let mut points = Vec::with_capacity(points_per_series);
+            for index in 0..points_per_series {
+                let x = index as f32;
+                let phase = series_index as f32 * 0.37;
+                let y = ((index as f32 * 0.006) + phase).sin()
+                    + ((index as f32 * 0.0017) + phase * 0.5).cos() * 0.35;
+                points.push([x, y]);
+            }
+            plot.props.line_plot_series.push(LinePlotSeriesProp {
+                label: Some(format!("series {series_index}")),
+                color: None,
+                line_style: "solid".to_string(),
+                points,
+                front_offset: 0,
+                y_blocks: Vec::new(),
+                bounds: Some([0.0, points_per_series.saturating_sub(1) as f32, -1.5, 1.5]),
+                x_sorted: true,
+                payload_format: LinePlotPayloadFormat::XyF32V0,
+                declared_point_count: Some(points_per_series),
+            });
+        }
+
+        let mut root = node("root", WidgetKind::Panel);
+        root.children.push(plot);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "root".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 1280.0,
+                h: 720.0,
+            },
+        );
+        layout.rects.insert(
+            "line-plot".to_string(),
+            Rect {
+                x: 24.0,
+                y: 24.0,
+                w: 1200.0,
+                h: 640.0,
+            },
+        );
+        (root, layout)
+    }
+
+    fn env_usize(name: &str, default: usize) -> usize {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(default)
+    }
+
     fn rgba(r: f32, g: f32, b: f32) -> ColorRef {
         ColorRef::Rgba([r, g, b, 1.0])
     }
@@ -8946,6 +9100,188 @@ mod tests {
         let instance = inst_radii([4.0, 5.0, 120.0, 36.0], [0.1, 0.2, 0.3, 0.8], [8.0; 4]);
 
         assert!(is_simple_rect_instance(&instance));
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_progress_bar_primitive_emit() {
+        let count = env_usize("DRAGONGUI_PROGRESS_BENCH_COUNT", 10_000);
+        let iterations = env_usize("DRAGONGUI_PROGRESS_BENCH_ITERS", 200);
+        let warmup = env_usize("DRAGONGUI_PROGRESS_BENCH_WARMUP", 20);
+        let (tree, layout, state) = progress_bar_primitive_bench_fixture(count);
+        let theme = Theme::dark();
+        let caret_positions = HashMap::new();
+        let mut out = Vec::with_capacity(count * 3);
+
+        for _ in 0..warmup {
+            out.clear();
+            emit_rects(
+                &tree,
+                &layout,
+                &theme,
+                1.0,
+                &state,
+                &caret_positions,
+                &mut out,
+            );
+        }
+
+        let start = Instant::now();
+        let mut emitted = 0usize;
+        for _ in 0..iterations {
+            out.clear();
+            emit_rects(
+                &tree,
+                &layout,
+                &theme,
+                1.0,
+                &state,
+                &caret_positions,
+                &mut out,
+            );
+            emitted += out.len();
+        }
+        let elapsed = start.elapsed();
+        let bars = count * iterations;
+        let ns_per_bar = elapsed.as_nanos() as f64 / bars as f64;
+        let emitted_per_bar = emitted as f64 / bars as f64;
+        eprintln!(
+            "progress primitive emit: count={count} iterations={iterations} total_ms={:.3} ns_per_bar={:.1} emitted_per_bar={:.2}",
+            elapsed.as_secs_f64() * 1000.0,
+            ns_per_bar,
+            emitted_per_bar
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_table_primitive_emit() {
+        let iterations = env_usize("DRAGONGUI_TABLE_BENCH_ITERS", 1_000);
+        let warmup = env_usize("DRAGONGUI_TABLE_BENCH_WARMUP", 50);
+        let (tree, layout, state, visible_cells) = table_primitive_bench_fixture();
+        let theme = Theme::dark();
+        let caret_positions = HashMap::new();
+        let mut out = Vec::with_capacity(256);
+
+        for _ in 0..warmup {
+            out.clear();
+            emit_rects(
+                &tree,
+                &layout,
+                &theme,
+                1.0,
+                &state,
+                &caret_positions,
+                &mut out,
+            );
+        }
+
+        let start = Instant::now();
+        let mut emitted = 0usize;
+        for _ in 0..iterations {
+            out.clear();
+            emit_rects(
+                &tree,
+                &layout,
+                &theme,
+                1.0,
+                &state,
+                &caret_positions,
+                &mut out,
+            );
+            emitted += out.len();
+        }
+        let elapsed = start.elapsed();
+        let ns_per_iter = elapsed.as_nanos() as f64 / iterations as f64;
+        let ns_per_visible_cell = if visible_cells == 0 {
+            0.0
+        } else {
+            elapsed.as_nanos() as f64 / (iterations * visible_cells) as f64
+        };
+        eprintln!(
+            "table primitive emit: iterations={iterations} visible_cells={visible_cells} total_ms={:.3} ns_per_iter={:.1} ns_per_visible_cell={:.1} emitted_per_iter={:.2}",
+            elapsed.as_secs_f64() * 1000.0,
+            ns_per_iter,
+            ns_per_visible_cell,
+            emitted as f64 / iterations as f64
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_line_plot_render_data_collect() {
+        let series_count = env_usize("DRAGONGUI_LINE_PLOT_BENCH_SERIES", 4);
+        let points_per_series = env_usize("DRAGONGUI_LINE_PLOT_BENCH_POINTS", 100_000);
+        let iterations = env_usize("DRAGONGUI_LINE_PLOT_BENCH_ITERS", 100);
+        let warmup = env_usize("DRAGONGUI_LINE_PLOT_BENCH_WARMUP", 10);
+        let max_segments = env_usize("DRAGONGUI_LINE_PLOT_BENCH_MAX_SEGMENTS", 8_192);
+        let (tree, layout) = line_plot_bench_fixture(series_count, points_per_series);
+        let theme = Theme::dark();
+        let mut points = Vec::new();
+        let mut series_instances = Vec::new();
+
+        for _ in 0..warmup {
+            points.clear();
+            series_instances.clear();
+            let mut build_stats = LinePlotRenderBuildStats::default();
+            collect_line_plot_render_data(
+                &tree,
+                &layout,
+                &theme,
+                1.0,
+                1.0,
+                max_segments,
+                LinePlotDecimationMode::Auto,
+                None,
+                &mut points,
+                &mut series_instances,
+                &mut build_stats,
+            );
+            std::hint::black_box((&points, &series_instances, build_stats));
+        }
+
+        let start = Instant::now();
+        let mut emitted_points = 0usize;
+        let mut emitted_series = 0usize;
+        let mut source_points = 0usize;
+        let mut decimated_series = 0u32;
+        let mut decimate_ms = 0.0f64;
+        for _ in 0..iterations {
+            points.clear();
+            series_instances.clear();
+            let mut build_stats = LinePlotRenderBuildStats::default();
+            collect_line_plot_render_data(
+                &tree,
+                &layout,
+                &theme,
+                1.0,
+                1.0,
+                max_segments,
+                LinePlotDecimationMode::Auto,
+                None,
+                &mut points,
+                &mut series_instances,
+                &mut build_stats,
+            );
+            emitted_points += points.len();
+            emitted_series += series_instances.len();
+            source_points += build_stats.source_point_count;
+            decimated_series += build_stats.decimated_series_count;
+            decimate_ms += build_stats.decimate_ms;
+            std::hint::black_box((&points, &series_instances));
+        }
+        let elapsed = start.elapsed();
+        let total_source_points = iterations * series_count * points_per_series;
+        eprintln!(
+            "line plot render data collect: series={series_count} points_per_series={points_per_series} iterations={iterations} total_ms={:.3} ns_per_source_point={:.2} emitted_points_per_iter={:.1} series_runs_per_iter={:.1} source_points_per_iter={:.1} decimated_series_per_iter={:.1} measured_decimate_ms={:.3}",
+            elapsed.as_secs_f64() * 1000.0,
+            elapsed.as_nanos() as f64 / total_source_points as f64,
+            emitted_points as f64 / iterations as f64,
+            emitted_series as f64 / iterations as f64,
+            source_points as f64 / iterations as f64,
+            decimated_series as f64 / iterations as f64,
+            decimate_ms
+        );
     }
 
     #[test]

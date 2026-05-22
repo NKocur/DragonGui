@@ -675,6 +675,7 @@ pub struct DgStyleRule {
     pub source_order: u32,
     pub media: Option<DgMediaCondition>,
     pub container: Option<DgContainerRuleCondition>,
+    target_filter: DgSelectorTargetFilter,
 }
 
 impl DgStyleRule {
@@ -706,6 +707,7 @@ impl DgStyleRule {
         container: Option<DgContainerRuleCondition>,
     ) -> Self {
         let specificity = selector.specificity();
+        let target_filter = DgSelectorTargetFilter::from_selector(&selector);
         Self {
             selector,
             declarations,
@@ -714,6 +716,7 @@ impl DgStyleRule {
             source_order,
             media,
             container,
+            target_filter,
         }
     }
 
@@ -724,6 +727,55 @@ impl DgStyleRule {
             specificity: self.specificity,
             source_order: self.source_order,
         }
+    }
+
+    fn target_may_match(&self, element: &StyleElement<'_>) -> bool {
+        self.target_filter.matches(element)
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct DgSelectorTargetFilter {
+    kind: Option<WidgetKind>,
+    id: Option<String>,
+    key: Option<String>,
+    classes: Vec<String>,
+}
+
+impl DgSelectorTargetFilter {
+    fn from_selector(selector: &DgSelector) -> Self {
+        let Some(target) = selector.target_compound() else {
+            return Self::default();
+        };
+        Self {
+            kind: target.type_selector,
+            id: target.id.clone(),
+            key: target.key.clone(),
+            classes: target.classes.clone(),
+        }
+    }
+
+    fn matches(&self, element: &StyleElement<'_>) -> bool {
+        if self.kind.is_some_and(|expected| expected != element.kind) {
+            return false;
+        }
+        if self
+            .id
+            .as_deref()
+            .is_some_and(|expected| expected != element.id)
+        {
+            return false;
+        }
+        if self
+            .key
+            .as_deref()
+            .is_some_and(|expected| element.key != Some(expected))
+        {
+            return false;
+        }
+        self.classes
+            .iter()
+            .all(|expected| element.classes.iter().any(|class| class == expected))
     }
 }
 
@@ -1227,6 +1279,49 @@ impl DgSelector {
         }
     }
 
+    fn target_compound(&self) -> Option<&DgCompoundSelector> {
+        match self {
+            DgSelector::Root => None,
+            DgSelector::Compound(selector) => Some(selector),
+            DgSelector::Child { child, .. } => Some(child),
+            DgSelector::Chain(chain) => Some(&chain.target),
+        }
+    }
+
+    fn contains_attribute_selector(&self) -> bool {
+        match self {
+            DgSelector::Root => false,
+            DgSelector::Compound(selector) => selector.contains_attribute_selector(),
+            DgSelector::Child { parent, child } => {
+                parent.contains_attribute_selector() || child.contains_attribute_selector()
+            }
+            DgSelector::Chain(chain) => {
+                chain
+                    .ancestors
+                    .iter()
+                    .any(|(_, selector)| selector.contains_attribute_selector())
+                    || chain.target.contains_attribute_selector()
+            }
+        }
+    }
+
+    fn requires_sibling_snapshots(&self) -> bool {
+        match self {
+            DgSelector::Root => false,
+            DgSelector::Compound(selector) => selector.requires_sibling_snapshots(),
+            DgSelector::Child { parent, child } => {
+                parent.requires_sibling_snapshots() || child.requires_sibling_snapshots()
+            }
+            DgSelector::Chain(chain) => {
+                chain
+                    .ancestors
+                    .iter()
+                    .any(|(_, selector)| selector.requires_sibling_snapshots())
+                    || chain.target.requires_sibling_snapshots()
+            }
+        }
+    }
+
     pub fn label(&self) -> String {
         match self {
             DgSelector::Root => ":root".to_string(),
@@ -1677,6 +1772,22 @@ impl DgCompoundSelector {
             .any(DgSelectorFunction::contains_has_sibling_relation)
     }
 
+    fn contains_attribute_selector(&self) -> bool {
+        !self.attributes.is_empty()
+            || self
+                .functions
+                .iter()
+                .any(DgSelectorFunction::contains_attribute_selector)
+    }
+
+    fn requires_sibling_snapshots(&self) -> bool {
+        !self.structural.is_empty()
+            || self.functions.iter().any(|function| {
+                function.kind == DgSelectorFunctionKind::Has
+                    || function.requires_sibling_snapshots()
+            })
+    }
+
     fn label(&self) -> String {
         let mut label = String::new();
         if let Some(kind) = self.type_selector {
@@ -1866,6 +1977,18 @@ impl DgSelectorFunction {
                 .selectors
                 .iter()
                 .any(|selector| selector.selector.contains_has_sibling_relation())
+    }
+
+    fn contains_attribute_selector(&self) -> bool {
+        self.selectors
+            .iter()
+            .any(|selector| selector.selector.contains_attribute_selector())
+    }
+
+    fn requires_sibling_snapshots(&self) -> bool {
+        self.selectors
+            .iter()
+            .any(|selector| selector.selector.requires_sibling_snapshots())
     }
 
     fn label(&self) -> String {
@@ -2992,7 +3115,7 @@ struct AncestorSnapshot {
 }
 
 impl AncestorSnapshot {
-    fn from_node(node: &WidgetNode) -> Self {
+    fn from_node(node: &WidgetNode, features: StylesheetMatchFeatures) -> Self {
         Self {
             id: node.id.clone(),
             key: node.key.clone(),
@@ -3000,7 +3123,11 @@ impl AncestorSnapshot {
                 .into_iter()
                 .map(str::to_string)
                 .collect(),
-            attributes: node_style_attributes(node),
+            attributes: if features.attributes {
+                node_style_attributes(node)
+            } else {
+                Vec::new()
+            },
             kind: node.kind,
             container_names: node
                 .style
@@ -3014,7 +3141,7 @@ impl AncestorSnapshot {
 }
 
 impl StyleSibling {
-    fn from_node(node: &WidgetNode) -> Self {
+    fn from_node(node: &WidgetNode, features: StylesheetMatchFeatures) -> Self {
         Self {
             id: node.id.clone(),
             key: node.key.clone(),
@@ -3022,10 +3149,21 @@ impl StyleSibling {
                 .into_iter()
                 .map(str::to_string)
                 .collect(),
-            attributes: node_style_attributes(node),
+            attributes: if features.attributes {
+                node_style_attributes(node)
+            } else {
+                Vec::new()
+            },
             pseudo: node_snapshot_pseudo_classes(node),
             kind: node.kind,
-            children: node.children.iter().map(StyleSibling::from_node).collect(),
+            children: if features.sibling_snapshots {
+                node.children
+                    .iter()
+                    .map(|child| StyleSibling::from_node(child, features))
+                    .collect()
+            } else {
+                Vec::new()
+            },
         }
     }
 }
@@ -3268,9 +3406,11 @@ fn apply_stylesheets_to_tree_with_media_and_containers(
     let mut seen_validation_warnings = BTreeSet::new();
     {
         let rules = store.all_rules();
+        let features = rules.match_features();
         apply_stylesheets_to_node(
             root,
             &rules,
+            features,
             &mut ancestors,
             None,
             &mut validation_warnings,
@@ -3298,11 +3438,13 @@ pub fn matched_rule_labels_for_tree_with_media(
     media: Option<DgMediaEnvironment>,
 ) -> BTreeMap<String, Vec<String>> {
     let rules = store.all_rules();
+    let features = rules.match_features();
     let mut ancestors = Vec::new();
     let mut out = BTreeMap::new();
     collect_matched_rule_labels(
         root,
         &rules,
+        features,
         &mut ancestors,
         &mut out,
         None,
@@ -3327,11 +3469,13 @@ pub fn matched_part_rule_labels_for_tree_with_media(
     media: Option<DgMediaEnvironment>,
 ) -> BTreeMap<String, BTreeMap<String, Vec<String>>> {
     let rules = store.all_rules();
+    let features = rules.match_features();
     let mut ancestors = Vec::new();
     let mut out = BTreeMap::new();
     collect_matched_part_rule_labels(
         root,
         &rules,
+        features,
         &mut ancestors,
         &mut out,
         None,
@@ -3375,16 +3519,28 @@ pub fn computed_style_for_virtual_element_with_media(
     };
     let mut matched = Vec::new();
     for rule in rules.iter() {
+        if !rule.target_may_match(&element) {
+            continue;
+        }
         if !rule_matches_conditions(rule, media, &[], None) {
             continue;
         }
-        let slots = selector_match_slots(&rule.selector, &element);
-        if !slots.is_empty() && rule.selector.target_part().is_none() {
+        if rule.selector.target_part().is_some() {
+            continue;
+        }
+        if rule.selector.target_contains_style_slot_pseudo() {
+            let slots = selector_match_slots(&rule.selector, &element);
             for slot in slots {
                 matched.extend(rule.declarations.iter().map(|declaration| {
                     (rule.cascade_key(declaration), slot, &declaration.property)
                 }));
             }
+        } else if rule.selector.matches(&element) {
+            matched.extend(
+                rule.declarations.iter().map(|declaration| {
+                    (rule.cascade_key(declaration), None, &declaration.property)
+                }),
+            );
         }
     }
     matched.sort_by_key(|(key, _, _)| *key);
@@ -3474,6 +3630,7 @@ fn container_expression_matches(expression: &DgContainerExpression, width: f32) 
 fn collect_matched_part_rule_labels(
     node: &WidgetNode,
     rules: &StylesheetRuleRefs<'_>,
+    features: StylesheetMatchFeatures,
     ancestors: &mut Vec<AncestorSnapshot>,
     out: &mut BTreeMap<String, BTreeMap<String, Vec<String>>>,
     sibling_index: Option<usize>,
@@ -3485,6 +3642,7 @@ fn collect_matched_part_rule_labels(
     let labels = matched_part_rule_labels_for_node(
         node,
         rules,
+        features,
         ancestors,
         sibling_index,
         sibling_count,
@@ -3495,19 +3653,28 @@ fn collect_matched_part_rule_labels(
     if !labels.is_empty() {
         out.insert(node.id.clone(), labels);
     }
-    ancestors.push(AncestorSnapshot::from_node(node));
+    ancestors.push(AncestorSnapshot::from_node(node, features));
     let child_count = node.children.len();
-    let child_siblings: Vec<StyleSibling> =
-        node.children.iter().map(StyleSibling::from_node).collect();
+    let child_siblings: Vec<StyleSibling> = if features.sibling_snapshots {
+        node.children
+            .iter()
+            .map(|child| StyleSibling::from_node(child, features))
+            .collect()
+    } else {
+        Vec::new()
+    };
     for (index, child) in node.children.iter().enumerate() {
         collect_matched_part_rule_labels(
             child,
             rules,
+            features,
             ancestors,
             out,
             Some(index),
             Some(child_count),
-            Some(&child_siblings),
+            features
+                .sibling_snapshots
+                .then_some(child_siblings.as_slice()),
             media,
             containers,
         );
@@ -3518,6 +3685,7 @@ fn collect_matched_part_rule_labels(
 fn matched_part_rule_labels_for_node(
     node: &WidgetNode,
     rules: &StylesheetRuleRefs<'_>,
+    features: StylesheetMatchFeatures,
     ancestors: &[AncestorSnapshot],
     sibling_index: Option<usize>,
     sibling_count: Option<usize>,
@@ -3542,9 +3710,19 @@ fn matched_part_rule_labels_for_node(
             kind: ancestor.kind,
         })
         .collect();
-    let attributes = node_style_attributes(node);
-    let child_siblings: Vec<StyleSibling> =
-        node.children.iter().map(StyleSibling::from_node).collect();
+    let attributes = if features.attributes {
+        node_style_attributes(node)
+    } else {
+        Vec::new()
+    };
+    let child_siblings: Vec<StyleSibling> = if features.sibling_snapshots {
+        node.children
+            .iter()
+            .map(|child| StyleSibling::from_node(child, features))
+            .collect()
+    } else {
+        Vec::new()
+    };
     let element = StyleElement {
         id: node.id.as_str(),
         key: node.key.as_deref(),
@@ -3556,14 +3734,16 @@ fn matched_part_rule_labels_for_node(
         sibling_index,
         sibling_count,
         siblings,
-        children: Some(&child_siblings),
+        children: features
+            .sibling_snapshots
+            .then_some(child_siblings.as_slice()),
     };
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for rule in rules
-        .iter()
-        .filter(|rule| rule_matches_conditions(rule, media, ancestors, containers))
-        .filter(|rule| !selector_match_slots(&rule.selector, &element).is_empty())
-    {
+    for rule in rules.iter().filter(|rule| {
+        rule.target_may_match(&element)
+            && rule_matches_conditions(rule, media, ancestors, containers)
+            && rule_selector_matches_any_slot(rule, &element)
+    }) {
         let Some(part) = rule.selector.target_part() else {
             continue;
         };
@@ -3582,6 +3762,7 @@ fn matched_part_rule_labels_for_node(
 fn collect_matched_rule_labels(
     node: &WidgetNode,
     rules: &StylesheetRuleRefs<'_>,
+    features: StylesheetMatchFeatures,
     ancestors: &mut Vec<AncestorSnapshot>,
     out: &mut BTreeMap<String, Vec<String>>,
     sibling_index: Option<usize>,
@@ -3593,6 +3774,7 @@ fn collect_matched_rule_labels(
     let labels = matched_rule_labels_for_node(
         node,
         rules,
+        features,
         ancestors,
         sibling_index,
         sibling_count,
@@ -3603,19 +3785,28 @@ fn collect_matched_rule_labels(
     if !labels.is_empty() {
         out.insert(node.id.clone(), labels);
     }
-    ancestors.push(AncestorSnapshot::from_node(node));
+    ancestors.push(AncestorSnapshot::from_node(node, features));
     let child_count = node.children.len();
-    let child_siblings: Vec<StyleSibling> =
-        node.children.iter().map(StyleSibling::from_node).collect();
+    let child_siblings: Vec<StyleSibling> = if features.sibling_snapshots {
+        node.children
+            .iter()
+            .map(|child| StyleSibling::from_node(child, features))
+            .collect()
+    } else {
+        Vec::new()
+    };
     for (index, child) in node.children.iter().enumerate() {
         collect_matched_rule_labels(
             child,
             rules,
+            features,
             ancestors,
             out,
             Some(index),
             Some(child_count),
-            Some(&child_siblings),
+            features
+                .sibling_snapshots
+                .then_some(child_siblings.as_slice()),
             media,
             containers,
         );
@@ -3626,6 +3817,7 @@ fn collect_matched_rule_labels(
 fn matched_rule_labels_for_node(
     node: &WidgetNode,
     rules: &StylesheetRuleRefs<'_>,
+    features: StylesheetMatchFeatures,
     ancestors: &[AncestorSnapshot],
     sibling_index: Option<usize>,
     sibling_count: Option<usize>,
@@ -3650,9 +3842,19 @@ fn matched_rule_labels_for_node(
             kind: ancestor.kind,
         })
         .collect();
-    let attributes = node_style_attributes(node);
-    let child_siblings: Vec<StyleSibling> =
-        node.children.iter().map(StyleSibling::from_node).collect();
+    let attributes = if features.attributes {
+        node_style_attributes(node)
+    } else {
+        Vec::new()
+    };
+    let child_siblings: Vec<StyleSibling> = if features.sibling_snapshots {
+        node.children
+            .iter()
+            .map(|child| StyleSibling::from_node(child, features))
+            .collect()
+    } else {
+        Vec::new()
+    };
     let element = StyleElement {
         id: node.id.as_str(),
         key: node.key.as_deref(),
@@ -3664,19 +3866,142 @@ fn matched_rule_labels_for_node(
         sibling_index,
         sibling_count,
         siblings,
-        children: Some(&child_siblings),
+        children: features
+            .sibling_snapshots
+            .then_some(child_siblings.as_slice()),
     };
     rules
         .iter()
-        .filter(|rule| rule_matches_conditions(rule, media, ancestors, containers))
-        .filter(|rule| !selector_match_slots(&rule.selector, &element).is_empty())
+        .filter(|rule| {
+            rule.target_may_match(&element)
+                && rule_matches_conditions(rule, media, ancestors, containers)
+                && rule_selector_matches_any_slot(rule, &element)
+        })
         .map(|rule| format!("{}: {}", rule.origin.label(), rule.selector.label()))
         .collect()
+}
+
+fn rule_selector_matches_any_slot(rule: &DgStyleRule, element: &StyleElement<'_>) -> bool {
+    if rule.selector.target_contains_style_slot_pseudo() {
+        !selector_match_slots(&rule.selector, element).is_empty()
+    } else {
+        rule.selector.matches(element)
+    }
+}
+
+fn compute_stylesheet_node_style(
+    node: &WidgetNode,
+    rules: &StylesheetRuleRefs<'_>,
+    element: &StyleElement<'_>,
+    ancestors: &[AncestorSnapshot],
+    validation_warnings: &mut Vec<DgStyleWarning>,
+    seen_validation_warnings: &mut BTreeSet<String>,
+    media: Option<DgMediaEnvironment>,
+    containers: Option<&DgContainerQueryContext>,
+) -> NodeStyle {
+    // Pseudo-state selectors are matched against base and single-state contexts
+    // here. Their declarations are precomputed into hover/active/focus/disabled
+    // style slots, and live widget state decides which slot is active.
+    let mut matched = Vec::new();
+    for rule in rules.iter() {
+        if !rule.target_may_match(element) {
+            continue;
+        }
+        if !rule_matches_conditions(rule, media, ancestors, containers) {
+            continue;
+        }
+        if rule.selector.target_contains_style_slot_pseudo() {
+            let slots = selector_match_slots(&rule.selector, element);
+            if !slots.is_empty() {
+                if let Some(part) = rule.selector.target_part() {
+                    if !widget_kind_supports_part(node.kind, part) {
+                        record_unsupported_part_warning(
+                            validation_warnings,
+                            seen_validation_warnings,
+                            rule,
+                            node.kind,
+                            part,
+                        );
+                        continue;
+                    }
+                    record_stateful_part_layout_warnings(
+                        validation_warnings,
+                        seen_validation_warnings,
+                        rule,
+                        part,
+                    );
+                }
+                for slot in slots {
+                    matched.extend(rule.declarations.iter().map(|declaration| {
+                        (
+                            rule.cascade_key(declaration),
+                            slot,
+                            rule.selector.target_part(),
+                            &declaration.property,
+                        )
+                    }));
+                }
+            }
+        } else if rule.selector.matches(element) {
+            if let Some(part) = rule.selector.target_part() {
+                if !widget_kind_supports_part(node.kind, part) {
+                    record_unsupported_part_warning(
+                        validation_warnings,
+                        seen_validation_warnings,
+                        rule,
+                        node.kind,
+                        part,
+                    );
+                    continue;
+                }
+                record_stateful_part_layout_warnings(
+                    validation_warnings,
+                    seen_validation_warnings,
+                    rule,
+                    part,
+                );
+            }
+            matched.extend(rule.declarations.iter().map(|declaration| {
+                (
+                    rule.cascade_key(declaration),
+                    None,
+                    rule.selector.target_part(),
+                    &declaration.property,
+                )
+            }));
+        }
+    }
+    matched.sort_by_key(|(key, _, _, _)| *key);
+
+    let mut computed = NodeStyle::default();
+    for (_, slot, part, property) in matched {
+        if let Some(part) = part {
+            match slot {
+                Some(pseudo) => {
+                    apply_property_to_part_style(&mut computed, part, &[pseudo], property)
+                }
+                None => apply_property_to_part_style(&mut computed, part, &[], property),
+            }
+        } else if let Some(pseudo) = slot {
+            apply_property_to_pseudo_style(&mut computed, pseudo, property);
+        } else {
+            apply_property_to_style(&mut computed, property);
+        }
+    }
+    merge_node_style(&mut computed, &node.inline_style);
+    retain_supported_inline_parts(
+        node.kind,
+        &mut computed.parts,
+        validation_warnings,
+        seen_validation_warnings,
+    );
+    computed
 }
 
 fn apply_stylesheets_to_node(
     node: &mut WidgetNode,
     rules: &StylesheetRuleRefs<'_>,
+    features: StylesheetMatchFeatures,
     ancestors: &mut Vec<AncestorSnapshot>,
     inherited_text: Option<&TextStyle>,
     validation_warnings: &mut Vec<DgStyleWarning>,
@@ -3704,10 +4029,20 @@ fn apply_stylesheets_to_node(
             kind: ancestor.kind,
         })
         .collect();
-    let attributes = node_style_attributes(node);
+    let attributes = if features.attributes {
+        node_style_attributes(node)
+    } else {
+        Vec::new()
+    };
     let child_count = node.children.len();
-    let child_siblings: Vec<StyleSibling> =
-        node.children.iter().map(StyleSibling::from_node).collect();
+    let child_siblings: Vec<StyleSibling> = if features.sibling_snapshots {
+        node.children
+            .iter()
+            .map(|child| StyleSibling::from_node(child, features))
+            .collect()
+    } else {
+        Vec::new()
+    };
     let element = StyleElement {
         id: node.id.as_str(),
         key: node.key.as_deref(),
@@ -3719,90 +4054,41 @@ fn apply_stylesheets_to_node(
         sibling_index,
         sibling_count,
         siblings,
-        children: Some(&child_siblings),
+        children: features
+            .sibling_snapshots
+            .then_some(child_siblings.as_slice()),
     };
-    // Pseudo-state selectors are matched against base and single-state contexts
-    // here. Their declarations are precomputed into hover/active/focus/disabled
-    // style slots, and live widget state decides which slot is active.
-    let mut matched = Vec::new();
-    for rule in rules.iter() {
-        if !rule_matches_conditions(rule, media, ancestors, containers) {
-            continue;
-        }
-        let slots = selector_match_slots(&rule.selector, &element);
-        if !slots.is_empty() {
-            if let Some(part) = rule.selector.target_part() {
-                if !widget_kind_supports_part(node.kind, part) {
-                    record_unsupported_part_warning(
-                        validation_warnings,
-                        seen_validation_warnings,
-                        rule,
-                        node.kind,
-                        part,
-                    );
-                    continue;
-                }
-                record_stateful_part_layout_warnings(
-                    validation_warnings,
-                    seen_validation_warnings,
-                    rule,
-                    part,
-                );
-            }
-            for slot in slots {
-                matched.extend(rule.declarations.iter().map(|declaration| {
-                    (
-                        rule.cascade_key(declaration),
-                        slot,
-                        rule.selector.target_part(),
-                        &declaration.property,
-                    )
-                }));
-            }
-        }
-    }
-    matched.sort_by_key(|(key, _, _, _)| *key);
-
-    let mut computed = NodeStyle::default();
-    for (_, slot, part, property) in matched {
-        if let Some(part) = part {
-            match slot {
-                Some(pseudo) => {
-                    apply_property_to_part_style(&mut computed, part, &[pseudo], property)
-                }
-                None => apply_property_to_part_style(&mut computed, part, &[], property),
-            }
-        } else if let Some(pseudo) = slot {
-            apply_property_to_pseudo_style(&mut computed, pseudo, property);
-        } else {
-            apply_property_to_style(&mut computed, property);
-        }
-    }
-    merge_node_style(&mut computed, &node.inline_style);
-    retain_supported_inline_parts(
-        node.kind,
-        &mut computed.parts,
+    let mut computed = compute_stylesheet_node_style(
+        node,
+        rules,
+        &element,
+        ancestors,
         validation_warnings,
         seen_validation_warnings,
+        media,
+        containers,
     );
     if let Some(inherited_text) = inherited_text {
         inherit_text_style(&mut computed.text, inherited_text);
     }
     node.style = computed;
 
-    ancestors.push(AncestorSnapshot::from_node(node));
+    ancestors.push(AncestorSnapshot::from_node(node, features));
     let child_text = node.style.text.clone();
     for (index, child) in node.children.iter_mut().enumerate() {
         apply_stylesheets_to_node(
             child,
             rules,
+            features,
             ancestors,
             Some(&child_text),
             validation_warnings,
             seen_validation_warnings,
             Some(index),
             Some(child_count),
-            Some(&child_siblings),
+            features
+                .sibling_snapshots
+                .then_some(child_siblings.as_slice()),
             media,
             containers,
         );
@@ -5146,6 +5432,12 @@ pub struct StylesheetRuleRefs<'a> {
     user: &'a [DgStyleRule],
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct StylesheetMatchFeatures {
+    attributes: bool,
+    sibling_snapshots: bool,
+}
+
 impl<'a> StylesheetRuleRefs<'a> {
     fn iter(&'a self) -> impl Iterator<Item = &'a DgStyleRule> {
         self.framework
@@ -5160,6 +5452,18 @@ impl<'a> StylesheetRuleRefs<'a> {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    fn match_features(&self) -> StylesheetMatchFeatures {
+        let mut features = StylesheetMatchFeatures::default();
+        for rule in self.iter() {
+            features.attributes |= rule.selector.contains_attribute_selector();
+            features.sibling_snapshots |= rule.selector.requires_sibling_snapshots();
+            if features.attributes && features.sibling_snapshots {
+                break;
+            }
+        }
+        features
     }
 }
 
@@ -10886,7 +11190,189 @@ fn unquote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::document::NodeProps;
     use crate::style::StepPosition;
+
+    fn env_usize(name: &str, default: usize) -> usize {
+        std::env::var(name)
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(default)
+    }
+
+    fn css_bench_node(id: &str, kind: WidgetKind, class_name: Option<String>) -> WidgetNode {
+        WidgetNode {
+            id: id.to_string(),
+            key: None,
+            class_name,
+            kind,
+            props: NodeProps::default(),
+            style_json: Default::default(),
+            inline_style: Default::default(),
+            style: Default::default(),
+            children: Vec::new(),
+        }
+    }
+
+    fn css_bench_tree(count: usize) -> WidgetNode {
+        let mut root = css_bench_node("root", WidgetKind::Window, Some("app".to_string()));
+        let mut panel = css_bench_node("panel", WidgetKind::Panel, Some("content".to_string()));
+        panel.children.reserve(count);
+        for index in 0..count {
+            let kind = match index % 8 {
+                0 => WidgetKind::Label,
+                1 => WidgetKind::Button,
+                2 => WidgetKind::ProgressBar,
+                3 => WidgetKind::Slider,
+                4 => WidgetKind::DataFrameTable,
+                5 => WidgetKind::TextInput,
+                6 => WidgetKind::Badge,
+                _ => WidgetKind::Tag,
+            };
+            let class_name = match index % 5 {
+                0 => Some("primary dense".to_string()),
+                1 => Some("secondary".to_string()),
+                2 => Some("metric warning".to_string()),
+                3 => Some("quiet".to_string()),
+                _ => None,
+            };
+            panel
+                .children
+                .push(css_bench_node(&format!("w{index}"), kind, class_name));
+        }
+        root.children.push(panel);
+        root
+    }
+
+    fn css_bench_store() -> StylesheetStore {
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Window { background: #101318; color: #e8edf3; }
+                Panel.content { padding: 12px; gap: 8px; }
+                Label, Button, Slider, ProgressBar, TextInput, Badge, Tag {
+                    font-size: 13px;
+                    border-radius: 6px;
+                }
+                Button.primary, Badge.metric, Tag.warning { background: accent; color: white; }
+                .dense { width: 140px; height: 28px; }
+                .quiet { opacity: 0.86; }
+                ProgressBar::track { background: #1b2330; }
+                ProgressBar::fill { background: #69d2a2; }
+                DataFrameTable { table-row-height: 24px; table-column-width: 132px; }
+                DataFrameTable::header { background: #1d2836; font-weight: 700; }
+                Panel.content > Button { border-width: 1px; border-color: #34445a; }
+                "#,
+            )
+            .unwrap();
+        store
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_css_clone_many_widgets() {
+        let count = env_usize("DRAGONGUI_BENCH_CSS_WIDGETS", 2_000);
+        let iterations = env_usize("DRAGONGUI_BENCH_CSS_ITERS", 300);
+        let warmup = env_usize("DRAGONGUI_BENCH_CSS_WARMUP", 20);
+        let tree = css_bench_tree(count);
+
+        for _ in 0..warmup {
+            let next = tree.clone();
+            std::hint::black_box(next.children.len());
+        }
+
+        let start = std::time::Instant::now();
+        let mut touched = 0usize;
+        for _ in 0..iterations {
+            let next = tree.clone();
+            touched += next
+                .children
+                .first()
+                .map(|node| node.children.len())
+                .unwrap_or(0);
+            std::hint::black_box(&next);
+        }
+        let elapsed = start.elapsed();
+        eprintln!(
+            "css clone many widgets: widgets={count} iterations={iterations} total_ms={:.3} ns_per_widget={:.1} touched_per_iter={:.1}",
+            elapsed.as_secs_f64() * 1000.0,
+            elapsed.as_nanos() as f64 / (iterations * count) as f64,
+            touched as f64 / iterations as f64
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_css_cascade_many_widgets() {
+        let count = env_usize("DRAGONGUI_BENCH_CSS_WIDGETS", 2_000);
+        let iterations = env_usize("DRAGONGUI_BENCH_CSS_ITERS", 300);
+        let warmup = env_usize("DRAGONGUI_BENCH_CSS_WARMUP", 20);
+        let tree = css_bench_tree(count);
+        let mut store = css_bench_store();
+
+        for _ in 0..warmup {
+            let mut next = tree.clone();
+            apply_stylesheets_to_tree(&mut next, &mut store);
+            std::hint::black_box(next.children.len());
+        }
+
+        let start = std::time::Instant::now();
+        let mut touched = 0usize;
+        for _ in 0..iterations {
+            let mut next = tree.clone();
+            apply_stylesheets_to_tree(&mut next, &mut store);
+            touched += next
+                .children
+                .first()
+                .map(|node| node.children.len())
+                .unwrap_or(0);
+            std::hint::black_box(&next);
+        }
+        let elapsed = start.elapsed();
+        eprintln!(
+            "css cascade many widgets: widgets={count} iterations={iterations} total_ms={:.3} ns_per_widget={:.1} touched_per_iter={:.1}",
+            elapsed.as_secs_f64() * 1000.0,
+            elapsed.as_nanos() as f64 / (iterations * count) as f64,
+            touched as f64 / iterations as f64
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn bench_css_cascade_many_widgets_pure() {
+        let count = env_usize("DRAGONGUI_BENCH_CSS_WIDGETS", 2_000);
+        let iterations = env_usize("DRAGONGUI_BENCH_CSS_ITERS", 300);
+        let warmup = env_usize("DRAGONGUI_BENCH_CSS_WARMUP", 20);
+        let mut tree = css_bench_tree(count);
+        let mut store = css_bench_store();
+
+        for _ in 0..warmup {
+            apply_stylesheets_to_tree(&mut tree, &mut store);
+            std::hint::black_box(tree.children.len());
+        }
+
+        let start = std::time::Instant::now();
+        let mut touched = 0usize;
+        for _ in 0..iterations {
+            apply_stylesheets_to_tree(&mut tree, &mut store);
+            touched += tree
+                .children
+                .first()
+                .map(|node| node.children.len())
+                .unwrap_or(0);
+            std::hint::black_box(&tree);
+        }
+        let elapsed = start.elapsed();
+        eprintln!(
+            "css cascade many widgets pure: widgets={count} iterations={iterations} total_ms={:.3} ns_per_widget={:.1} touched_per_iter={:.1}",
+            elapsed.as_secs_f64() * 1000.0,
+            elapsed.as_nanos() as f64 / (iterations * count) as f64,
+            touched as f64 / iterations as f64
+        );
+    }
 
     #[test]
     fn property_matrix_maps_supported_names() {

@@ -90,6 +90,10 @@ class BenchmarkFrame:
         )
         self.z = range_surface.astype(np.float32)
         self.payload = pack_xyz_payload(self.x, self.y, self.z)
+        self.bounds = (
+            (float(np.min(self.x)), float(np.min(self.y)), float(np.min(self.z))),
+            (float(np.max(self.x)), float(np.max(self.y)), float(np.max(self.z))),
+        )
 
     def __getitem__(self, column: str) -> object:
         return getattr(self, column)
@@ -364,6 +368,8 @@ def submit_frame(frame: BenchmarkFrame, submitted_at: float, *, coalesce: bool =
         colormap=scatter.colormap,
         payload_format="xyz_f32_v0",
         coalesce=coalesce,
+        bounds_min=frame.bounds[0],
+        bounds_max=frame.bounds[1],
     )
     set_ms = (time.perf_counter() - start) * 1000.0
     submit_latency_ms = (time.perf_counter() - submitted_at) * 1000.0

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from collections.abc import Callable, Sequence
+import time
 from typing import Any
 
 from ._backend import native_event_loop_available, run_document
@@ -213,17 +214,88 @@ class App:
 
         def build_and_replace() -> None:
             nonlocal component_runtime
+            startup_t0 = time.perf_counter()
+            timings: dict[str, Any] = {}
+
+            def record_phase(name: str, start: float) -> None:
+                timings[name] = (time.perf_counter() - start) * 1000.0
+
             try:
-                real_window, component_runtime = _render_startup_root(build_window(), handle)
+                phase_t0 = time.perf_counter()
+                startup_root = build_window()
+                record_phase("build_window_ms", phase_t0)
+
+                phase_t0 = time.perf_counter()
+                real_window, component_runtime = _render_startup_root(startup_root, handle)
+                record_phase("render_startup_root_ms", phase_t0)
+
+                phase_t0 = time.perf_counter()
                 real_widgets = _walk_widget_tree(real_window)
+                record_phase("walk_widgets_ms", phase_t0)
+                scatter_widget_count = sum(
+                    1 for widget in real_widgets if getattr(widget, "kind", None) == "scatter_3d"
+                )
+
+                phase_t0 = time.perf_counter()
                 for widget in real_widgets:
                     widget._bind_live(handle.widget_handle(widget.id))
+                record_phase("bind_live_ms", phase_t0)
+
+                phase_t0 = time.perf_counter()
                 handle.register_widget_callbacks(real_window)
+                record_phase("register_callbacks_ms", phase_t0)
                 live_widgets[:] = list(real_widgets)
-                handle.enqueue_replace_node(placeholder.id, real_window.to_dict())
+
+                phase_t0 = time.perf_counter()
+                with _startup_resource_payload_scope(False):
+                    real_window_node = real_window.to_dict()
+                record_phase("to_dict_ms", phase_t0)
+
+                phase_t0 = time.perf_counter()
+                handle.enqueue_prewarm_scatter_widgets(scatter_widget_count)
+                record_phase("enqueue_prewarm_scatter_ms", phase_t0)
+
+                phase_t0 = time.perf_counter()
+                handle.enqueue_replace_node(placeholder.id, real_window_node)
+                record_phase("enqueue_replace_node_ms", phase_t0)
+
+                phase_t0 = time.perf_counter()
+                resource_by_kind: dict[str, dict[str, float | int]] = {}
+                resource_slowest: list[dict[str, Any]] = []
                 for widget in real_widgets:
+                    widget_t0 = time.perf_counter()
                     widget._queue_startup_resources()
+                    widget_ms = (time.perf_counter() - widget_t0) * 1000.0
+                    if widget_ms > 0.01:
+                        kind = str(getattr(widget, "kind", type(widget).__name__))
+                        bucket = resource_by_kind.setdefault(
+                            kind,
+                            {"count": 0, "total_ms": 0.0, "max_ms": 0.0},
+                        )
+                        bucket["count"] = int(bucket["count"]) + 1
+                        bucket["total_ms"] = float(bucket["total_ms"]) + widget_ms
+                        bucket["max_ms"] = max(float(bucket["max_ms"]), widget_ms)
+                        item = {
+                            "kind": kind,
+                            "id": str(getattr(widget, "id", "")),
+                            "elapsed_ms": widget_ms,
+                        }
+                        detail = getattr(widget, "_last_startup_resource_timings", None)
+                        if isinstance(detail, dict):
+                            item["detail"] = dict(detail)
+                        resource_slowest.append(item)
+                record_phase("queue_startup_resources_ms", phase_t0)
+                timings["startup_resources_by_kind"] = resource_by_kind
+                timings["startup_resources_slowest"] = sorted(
+                    resource_slowest,
+                    key=lambda item: float(item["elapsed_ms"]),
+                    reverse=True,
+                )[:12]
+                timings["total_ms"] = (time.perf_counter() - startup_t0) * 1000.0
+                handle._set_startup_timings(timings)
             except Exception as exc:
+                timings["total_ms"] = (time.perf_counter() - startup_t0) * 1000.0
+                handle._set_startup_timings(timings)
                 error_window = Window(
                     title or self.title,
                     width=width,
@@ -242,12 +314,19 @@ class App:
         self._handle = handle
         _set_active_app_handle(handle)
         try:
-            return run_document(
+            result = run_document(
                 self.document(placeholder, include_startup_resource_payloads=False),
                 {},
                 {},
                 app_handle=handle,
             )
+            if isinstance(result, dict):
+                snapshot = result.get("debug_snapshot")
+                if isinstance(snapshot, dict):
+                    runtime = snapshot.setdefault("runtime", {})
+                    if isinstance(runtime, dict):
+                        runtime["python"] = handle._python_debug_snapshot()
+            return result
         finally:
             if component_runtime is not None:
                 component_runtime.detach()
