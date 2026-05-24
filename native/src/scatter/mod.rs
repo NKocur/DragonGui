@@ -1118,9 +1118,9 @@ fn scatter_layout_rect(
 
 pub struct ScatterWidget {
     pipeline: wgpu::RenderPipeline,
-    opaque_pipeline: wgpu::RenderPipeline,
-    compact_opaque_pipeline: wgpu::RenderPipeline,
-    clip_mask_pipeline: wgpu::RenderPipeline,
+    opaque_pipeline: Option<wgpu::RenderPipeline>,
+    compact_opaque_pipeline: Option<wgpu::RenderPipeline>,
+    clip_mask_pipeline: Option<wgpu::RenderPipeline>,
     vertex_buffer: Option<wgpu::Buffer>,
     vertex_cap: u64,
     uniform_buffer: wgpu::Buffer,
@@ -1152,7 +1152,7 @@ pub struct ScatterWidget {
     compact_colormap_len: u32,
     compact_colormap: [[f32; 4]; MAX_GPU_COLORMAP_POINTS],
     // ── Grid / chrome ────────────────────────────────────────────────────────
-    line_pipeline: wgpu::RenderPipeline,
+    line_pipeline: Option<wgpu::RenderPipeline>,
     line_vertex_buffer: Option<wgpu::Buffer>,
     line_vertex_cap: u64,
     pub grid_vertex_count: u32,
@@ -1173,12 +1173,12 @@ pub struct ScatterWidget {
     last_grid_label_projection_key: Option<GridLabelProjectionCacheKey>,
     pub chrome_dirty: bool,
     // ── 2D screen-space overlays (legend, scalar bar, orientation axes) ──────
-    overlay_pipeline: wgpu::RenderPipeline,
+    overlay_pipeline: Option<wgpu::RenderPipeline>,
     overlay_vertex_buffer: Option<wgpu::Buffer>,
     overlay_vertex_cap: u64,
     pub overlay_vertex_count: u32,
     /// TriangleList pipeline for background fill quad — respects viewport/scissor.
-    bg_pipeline: wgpu::RenderPipeline,
+    bg_pipeline: Option<wgpu::RenderPipeline>,
     bg_vertex_buffer: Option<wgpu::Buffer>,
     bg_vertex_cap: u64,
     bg_vertex_count: u32,
@@ -1394,6 +1394,55 @@ fn scatter_clip_mask_stencil_state() -> wgpu::StencilState {
     }
 }
 
+fn scatter_point_depth_stencil(depth_write_enabled: bool) -> wgpu::DepthStencilState {
+    wgpu::DepthStencilState {
+        format: crate::DEPTH_STENCIL_FORMAT,
+        depth_write_enabled: Some(depth_write_enabled),
+        depth_compare: Some(wgpu::CompareFunction::Less),
+        stencil: scatter_scene_stencil_state(),
+        bias: wgpu::DepthBiasState::default(),
+    }
+}
+
+fn create_scatter_point_pipeline(
+    device: &wgpu::Device,
+    surface_format: wgpu::TextureFormat,
+    pipeline_layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    label: &'static str,
+    vertex_layout: wgpu::VertexBufferLayout<'static>,
+    depth_write_enabled: bool,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[vertex_layout],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: surface_format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleStrip,
+            ..Default::default()
+        },
+        depth_stencil: Some(scatter_point_depth_stencil(depth_write_enabled)),
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
 impl ScatterWidget {
     pub fn new(
         device: &wgpu::Device,
@@ -1404,22 +1453,6 @@ impl ScatterWidget {
         let points_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("scatter-points"),
             source: wgpu::ShaderSource::Wgsl(include_str!("points.wgsl").into()),
-        });
-        let compact_points_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("scatter-compact-points"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("compact_points.wgsl").into()),
-        });
-        let lines_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("scatter-lines"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("lines.wgsl").into()),
-        });
-        let overlay_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("scatter-overlay"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("overlay.wgsl").into()),
-        });
-        let rounded_mask_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("scatter-rounded-mask"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("rounded_mask.wgsl").into()),
         });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -1442,253 +1475,15 @@ impl ScatterWidget {
             immediate_size: 0,
         });
 
-        let depth_stencil = wgpu::DepthStencilState {
-            format: crate::DEPTH_STENCIL_FORMAT,
-            depth_write_enabled: Some(true),
-            depth_compare: Some(wgpu::CompareFunction::Less),
-            stencil: scatter_scene_stencil_state(),
-            bias: wgpu::DepthBiasState::default(),
-        };
-        let point_depth_stencil = wgpu::DepthStencilState {
-            format: crate::DEPTH_STENCIL_FORMAT,
-            // Scatter point clouds are visually sampled markers, not opaque
-            // surfaces. Writing every anti-aliased point sprite into depth makes
-            // dense coils/clouds look like a screen-side LOD fade.
-            depth_write_enabled: Some(false),
-            depth_compare: Some(wgpu::CompareFunction::Less),
-            stencil: scatter_scene_stencil_state(),
-            bias: wgpu::DepthBiasState::default(),
-        };
-        let opaque_point_depth_stencil = wgpu::DepthStencilState {
-            format: crate::DEPTH_STENCIL_FORMAT,
-            depth_write_enabled: Some(true),
-            depth_compare: Some(wgpu::CompareFunction::Less),
-            stencil: scatter_scene_stencil_state(),
-            bias: wgpu::DepthBiasState::default(),
-        };
-
-        let clip_mask_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("scatter-rounded-mask"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &rounded_mask_shader,
-                entry_point: Some("vs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &rounded_mask_shader,
-                entry_point: Some("fs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::empty(),
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleStrip,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: crate::DEPTH_STENCIL_FORMAT,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::Always),
-                stencil: scatter_clip_mask_stencil_state(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
-
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("scatter"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &points_shader,
-                entry_point: Some("vs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[point_instance_layout()],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &points_shader,
-                entry_point: Some("fs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleStrip,
-                ..Default::default()
-            },
-            depth_stencil: Some(point_depth_stencil),
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
-
-        let opaque_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("scatter-opaque"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &points_shader,
-                entry_point: Some("vs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[point_instance_layout()],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &points_shader,
-                entry_point: Some("fs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleStrip,
-                ..Default::default()
-            },
-            depth_stencil: Some(opaque_point_depth_stencil.clone()),
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
-
-        let compact_opaque_pipeline =
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("scatter-compact-opaque"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &compact_points_shader,
-                    entry_point: Some("vs_main"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    buffers: &[xyz_point_layout()],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &compact_points_shader,
-                    entry_point: Some("fs_main"),
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: surface_format,
-                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleStrip,
-                    ..Default::default()
-                },
-                depth_stencil: Some(opaque_point_depth_stencil),
-                multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
-                cache: None,
-            });
-
-        let line_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("scatter-lines"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &lines_shader,
-                entry_point: Some("vs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[line_vertex_layout()],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &lines_shader,
-                entry_point: Some("fs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::LineList,
-                ..Default::default()
-            },
-            depth_stencil: Some(depth_stencil),
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
-
-        let overlay_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("scatter-overlay-pl"),
-                bind_group_layouts: &[],
-                immediate_size: 0,
-            });
-        let overlay_depth_stencil = || wgpu::DepthStencilState {
-            format: crate::DEPTH_STENCIL_FORMAT,
-            depth_write_enabled: Some(false),
-            depth_compare: Some(wgpu::CompareFunction::Always),
-            stencil: scatter_scene_stencil_state(),
-            bias: wgpu::DepthBiasState::default(),
-        };
-        let overlay_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("scatter-overlay"),
-            layout: Some(&overlay_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &overlay_shader,
-                entry_point: Some("vs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[overlay_vertex_layout()],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &overlay_shader,
-                entry_point: Some("fs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::LineList,
-                ..Default::default()
-            },
-            depth_stencil: Some(overlay_depth_stencil()),
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
-
-        let bg_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("scatter-bg"),
-            layout: Some(&overlay_pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &overlay_shader,
-                entry_point: Some("vs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[overlay_vertex_layout()],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &overlay_shader,
-                entry_point: Some("fs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: Some(overlay_depth_stencil()),
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        let pipeline = create_scatter_point_pipeline(
+            device,
+            surface_format,
+            &pipeline_layout,
+            &points_shader,
+            "scatter",
+            point_instance_layout(),
+            false,
+        );
 
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("scatter-uniforms"),
@@ -1713,9 +1508,9 @@ impl ScatterWidget {
 
         Self {
             pipeline,
-            opaque_pipeline,
-            compact_opaque_pipeline,
-            clip_mask_pipeline,
+            opaque_pipeline: None,
+            compact_opaque_pipeline: None,
+            clip_mask_pipeline: None,
             vertex_buffer: None,
             vertex_cap: 0,
             uniform_buffer,
@@ -1744,7 +1539,7 @@ impl ScatterWidget {
             compact_z_range: [0.0, 1.0],
             compact_colormap_len: gpu_colormap_uniform("viridis").1,
             compact_colormap: gpu_colormap_uniform("viridis").0,
-            line_pipeline,
+            line_pipeline: None,
             line_vertex_buffer: None,
             line_vertex_cap: 0,
             grid_vertex_count: 0,
@@ -1761,11 +1556,11 @@ impl ScatterWidget {
             last_grid_ortho_scale: None,
             last_grid_label_projection_key: None,
             chrome_dirty: false,
-            overlay_pipeline,
+            overlay_pipeline: None,
             overlay_vertex_buffer: None,
             overlay_vertex_cap: 0,
             overlay_vertex_count: 0,
-            bg_pipeline,
+            bg_pipeline: None,
             bg_vertex_buffer: None,
             bg_vertex_cap: 0,
             bg_vertex_count: 0,
@@ -1797,6 +1592,262 @@ impl ScatterWidget {
             mesh_actors: std::collections::HashMap::new(),
             surface_format,
             screenshot_cache: None,
+        }
+    }
+
+    fn scatter_pipeline_layout(&self, device: &wgpu::Device) -> wgpu::PipelineLayout {
+        device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("scatter-pl"),
+            bind_group_layouts: &[Some(&self.bind_group_layout)],
+            immediate_size: 0,
+        })
+    }
+
+    fn ensure_base_render_pipelines(&mut self, device: &wgpu::Device) {
+        if self.clip_mask_pipeline.is_some()
+            && self.line_pipeline.is_some()
+            && self.overlay_pipeline.is_some()
+            && self.bg_pipeline.is_some()
+        {
+            return;
+        }
+
+        let pipeline_layout = self.scatter_pipeline_layout(device);
+        if self.clip_mask_pipeline.is_none() {
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("scatter-rounded-mask"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("rounded_mask.wgsl").into()),
+            });
+            self.clip_mask_pipeline = Some(device.create_render_pipeline(
+                &wgpu::RenderPipelineDescriptor {
+                    label: Some("scatter-rounded-mask"),
+                    layout: Some(&pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vs_main"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        buffers: &[],
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some("fs_main"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: self.surface_format,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::empty(),
+                        })],
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleStrip,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: crate::DEPTH_STENCIL_FORMAT,
+                        depth_write_enabled: Some(false),
+                        depth_compare: Some(wgpu::CompareFunction::Always),
+                        stencil: scatter_clip_mask_stencil_state(),
+                        bias: wgpu::DepthBiasState::default(),
+                    }),
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview_mask: None,
+                    cache: None,
+                },
+            ));
+        }
+
+        if self.line_pipeline.is_none() {
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("scatter-lines"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("lines.wgsl").into()),
+            });
+            self.line_pipeline = Some(device.create_render_pipeline(
+                &wgpu::RenderPipelineDescriptor {
+                    label: Some("scatter-lines"),
+                    layout: Some(&pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vs_main"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        buffers: &[line_vertex_layout()],
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some("fs_main"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: self.surface_format,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::LineList,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: crate::DEPTH_STENCIL_FORMAT,
+                        depth_write_enabled: Some(true),
+                        depth_compare: Some(wgpu::CompareFunction::Less),
+                        stencil: scatter_scene_stencil_state(),
+                        bias: wgpu::DepthBiasState::default(),
+                    }),
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview_mask: None,
+                    cache: None,
+                },
+            ));
+        }
+
+        if self.overlay_pipeline.is_some() && self.bg_pipeline.is_some() {
+            return;
+        }
+
+        let overlay_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("scatter-overlay"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("overlay.wgsl").into()),
+        });
+        let overlay_pipeline_layout =
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("scatter-overlay-pl"),
+                bind_group_layouts: &[],
+                immediate_size: 0,
+            });
+        let overlay_depth_stencil = || wgpu::DepthStencilState {
+            format: crate::DEPTH_STENCIL_FORMAT,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::Always),
+            stencil: scatter_scene_stencil_state(),
+            bias: wgpu::DepthBiasState::default(),
+        };
+        if self.overlay_pipeline.is_none() {
+            self.overlay_pipeline = Some(device.create_render_pipeline(
+                &wgpu::RenderPipelineDescriptor {
+                    label: Some("scatter-overlay"),
+                    layout: Some(&overlay_pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &overlay_shader,
+                        entry_point: Some("vs_main"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        buffers: &[overlay_vertex_layout()],
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &overlay_shader,
+                        entry_point: Some("fs_main"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: self.surface_format,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::LineList,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(overlay_depth_stencil()),
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview_mask: None,
+                    cache: None,
+                },
+            ));
+        }
+        if self.bg_pipeline.is_none() {
+            self.bg_pipeline = Some(device.create_render_pipeline(
+                &wgpu::RenderPipelineDescriptor {
+                    label: Some("scatter-bg"),
+                    layout: Some(&overlay_pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &overlay_shader,
+                        entry_point: Some("vs_main"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        buffers: &[overlay_vertex_layout()],
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &overlay_shader,
+                        entry_point: Some("fs_main"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: self.surface_format,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(overlay_depth_stencil()),
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview_mask: None,
+                    cache: None,
+                },
+            ));
+        }
+    }
+
+    fn ensure_opaque_point_pipeline(&mut self, device: &wgpu::Device) {
+        if self.opaque_pipeline.is_some() {
+            return;
+        }
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("scatter-points"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("points.wgsl").into()),
+        });
+        let pipeline_layout = self.scatter_pipeline_layout(device);
+        self.opaque_pipeline = Some(create_scatter_point_pipeline(
+            device,
+            self.surface_format,
+            &pipeline_layout,
+            &shader,
+            "scatter-opaque",
+            point_instance_layout(),
+            true,
+        ));
+    }
+
+    fn ensure_compact_opaque_point_pipeline(&mut self, device: &wgpu::Device) {
+        if self.compact_opaque_pipeline.is_some() {
+            return;
+        }
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("scatter-compact-points"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("compact_points.wgsl").into()),
+        });
+        let pipeline_layout = self.scatter_pipeline_layout(device);
+        self.compact_opaque_pipeline = Some(create_scatter_point_pipeline(
+            device,
+            self.surface_format,
+            &pipeline_layout,
+            &shader,
+            "scatter-compact-opaque",
+            xyz_point_layout(),
+            true,
+        ));
+    }
+
+    pub fn prepare_render_pipelines(&mut self, device: &wgpu::Device) {
+        self.ensure_base_render_pipelines(device);
+
+        let primary_is_lod =
+            self.lod_enabled && self.lod_active && self.point_count > self.lod_threshold;
+        let primary_visible = self.point_count > 0 && self.vertex_buffer.is_some();
+
+        if primary_visible && self.primary_points_opaque {
+            if self.primary_storage == PrimaryPointStorage::XyzF32 && !primary_is_lod {
+                self.ensure_compact_opaque_point_pipeline(device);
+            } else {
+                self.ensure_opaque_point_pipeline(device);
+            }
+        }
+
+        if self.extra_actors.values().any(|actor| {
+            actor.visible
+                && actor.point_count > 0
+                && actor.points_opaque
+                && actor.vertex_buffer.is_some()
+        }) {
+            self.ensure_opaque_point_pipeline(device);
         }
     }
 
@@ -2374,6 +2425,7 @@ impl ScatterWidget {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("scatter-screenshot"),
         });
+        self.prepare_render_pipelines(device);
         {
             let bg = self
                 .chrome
@@ -4005,37 +4057,60 @@ impl ScatterWidget {
             scissor_size[1],
         );
         pass.set_stencil_reference(1);
-        pass.set_pipeline(&self.clip_mask_pipeline);
+        let Some(clip_mask_pipeline) = self.clip_mask_pipeline.as_ref() else {
+            return;
+        };
+        pass.set_pipeline(clip_mask_pipeline);
         pass.set_bind_group(0, &self.bind_group, &[]);
         pass.draw(0..4, 0..1);
 
         // Background fill drawn first so everything else renders on top.
         if has_bg {
-            pass.set_pipeline(&self.bg_pipeline);
-            pass.set_vertex_buffer(0, self.bg_vertex_buffer.as_ref().unwrap().slice(..));
-            pass.draw(0..self.bg_vertex_count, 0..1);
+            if let (Some(pipeline), Some(buffer)) =
+                (self.bg_pipeline.as_ref(), self.bg_vertex_buffer.as_ref())
+            {
+                pass.set_pipeline(pipeline);
+                pass.set_vertex_buffer(0, buffer.slice(..));
+                pass.draw(0..self.bg_vertex_count, 0..1);
+            }
         }
 
         if has_grid {
-            pass.set_pipeline(&self.line_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.set_vertex_buffer(0, self.line_vertex_buffer.as_ref().unwrap().slice(..));
-            pass.draw(0..self.grid_vertex_count, 0..1);
+            if let (Some(pipeline), Some(buffer)) = (
+                self.line_pipeline.as_ref(),
+                self.line_vertex_buffer.as_ref(),
+            ) {
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, &self.bind_group, &[]);
+                pass.set_vertex_buffer(0, buffer.slice(..));
+                pass.draw(0..self.grid_vertex_count, 0..1);
+            }
         }
 
         if has_user_lines {
-            pass.set_pipeline(&self.line_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            pass.set_vertex_buffer(0, self.user_line_vertex_buffer.as_ref().unwrap().slice(..));
-            pass.draw(0..self.user_line_vertex_count, 0..1);
+            if let (Some(pipeline), Some(buffer)) = (
+                self.line_pipeline.as_ref(),
+                self.user_line_vertex_buffer.as_ref(),
+            ) {
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, &self.bind_group, &[]);
+                pass.set_vertex_buffer(0, buffer.slice(..));
+                pass.draw(0..self.user_line_vertex_count, 0..1);
+            }
         }
 
         let mut draw_point_buffer =
             |opaque: bool, compact: bool, vb: &wgpu::Buffer, draw_count: u32| {
                 let pipeline = if compact {
-                    &self.compact_opaque_pipeline
+                    let Some(pipeline) = self.compact_opaque_pipeline.as_ref() else {
+                        return;
+                    };
+                    pipeline
                 } else if opaque {
-                    &self.opaque_pipeline
+                    let Some(pipeline) = self.opaque_pipeline.as_ref() else {
+                        return;
+                    };
+                    pipeline
                 } else {
                     &self.pipeline
                 };
@@ -4201,9 +4276,14 @@ impl ScatterWidget {
         }
 
         if has_overlay {
-            pass.set_pipeline(&self.overlay_pipeline);
-            pass.set_vertex_buffer(0, self.overlay_vertex_buffer.as_ref().unwrap().slice(..));
-            pass.draw(0..self.overlay_vertex_count, 0..1);
+            if let (Some(pipeline), Some(buffer)) = (
+                self.overlay_pipeline.as_ref(),
+                self.overlay_vertex_buffer.as_ref(),
+            ) {
+                pass.set_pipeline(pipeline);
+                pass.set_vertex_buffer(0, buffer.slice(..));
+                pass.draw(0..self.overlay_vertex_count, 0..1);
+            }
         }
     }
 }

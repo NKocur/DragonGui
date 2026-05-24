@@ -5,9 +5,13 @@ pub(crate) const PANEL_ACCENT_WIDTH_LP: f32 = 3.0;
 pub(crate) const BORDER_WIDTH_LP: f32 = 1.0;
 
 pub(crate) const CARET_WIDTH_LP: f32 = 1.5;
+pub(crate) const CODE_EDITOR_GUTTER_WIDTH_LP: f32 = 48.0;
 
 pub(crate) const CHECKBOX_BOX_LP: f32 = 18.0;
 pub(crate) const CHECKBOX_LEFT_PAD_LP: f32 = 6.0;
+pub(crate) const TOGGLE_SWITCH_TRACK_WIDTH_LP: f32 = 42.0;
+pub(crate) const TOGGLE_SWITCH_TRACK_HEIGHT_LP: f32 = 22.0;
+pub(crate) const TOGGLE_SWITCH_THUMB_SIZE_LP: f32 = 18.0;
 
 pub(crate) const DROPDOWN_CHEVRON_WIDTH_LP: f32 = 8.0;
 
@@ -29,6 +33,17 @@ pub(crate) fn number_stepper_width_for_style(style: &NodeStyle, widget_width: f3
         .and_then(|part| part.layout.width)
         .unwrap_or(NUMBER_STEPPER_WIDTH_LP);
     (width_lp.max(1.0) * sf).min(widget_width * 0.45)
+}
+
+pub(crate) fn code_editor_gutter_width_for_style(style: &NodeStyle, sf: f32) -> f32 {
+    style
+        .parts
+        .parts
+        .get("gutter")
+        .and_then(|part| part.layout.width)
+        .unwrap_or(CODE_EDITOR_GUTTER_WIDTH_LP)
+        .max(28.0)
+        * sf
 }
 
 pub(crate) const TAB_GAP_LP: f32 = 8.0;
@@ -445,6 +460,8 @@ pub struct LayoutStyle {
     pub z_index: Option<i32>,
     pub flex_grow: Option<f32>,
     pub flex_shrink: Option<f32>,
+    pub flex_basis: Option<f32>,
+    pub flex_basis_value: Option<LayoutLength>,
     pub grid_template_columns: Option<Vec<GridTrackSize>>,
     pub grid_template_rows: Option<Vec<GridTrackSize>>,
     pub grid_template_areas: Option<GridTemplateAreas>,
@@ -1235,8 +1252,18 @@ fn parse_layout(map: &serde_json::Map<String, Value>, out: &mut LayoutStyle) {
     out.z_index = number(map.get("z_index"))
         .or_else(|| number(map.get("z-index")))
         .map(|value| value.round() as i32);
-    out.flex_grow = number(map.get("flex_grow")).or_else(|| number(map.get("flex")));
-    out.flex_shrink = number(map.get("flex_shrink"));
+    if let Some(flex) = number(map.get("flex")) {
+        out.flex_grow = Some(flex.max(0.0));
+        out.flex_shrink = Some(1.0);
+        out.flex_basis = Some(0.0);
+        out.flex_basis_value = Some(LayoutLength::LogicalPx(0.0));
+    }
+    out.flex_grow = number(value_for_keys(map, "flex_grow", "flex-grow")).or(out.flex_grow);
+    out.flex_shrink = number(value_for_keys(map, "flex_shrink", "flex-shrink")).or(out.flex_shrink);
+    out.flex_basis = number(value_for_keys(map, "flex_basis", "flex-basis")).or(out.flex_basis);
+    if out.flex_basis.is_some() {
+        out.flex_basis_value = out.flex_basis.map(LayoutLength::LogicalPx);
+    }
 }
 
 fn parse_container_names(value: &str) -> Vec<String> {
@@ -2512,6 +2539,7 @@ mod tests {
             "width": 240,
             "display": "flex",
             "flex_direction": "row",
+            "flex": 1,
             "grid_template_columns": [44, {"fr": 1}],
             "grid-template-rows": "18px auto",
             "grid-auto-flow": "column dense",
@@ -2552,6 +2580,12 @@ mod tests {
         assert_eq!(style.layout.width, Some(240.0));
         assert_eq!(style.layout.display, Some(DisplayStyle::Flex));
         assert_eq!(style.layout.flex_direction, Some(FlexDirectionStyle::Row));
+        assert_eq!(style.layout.flex_grow, Some(1.0));
+        assert_eq!(style.layout.flex_shrink, Some(1.0));
+        assert_eq!(
+            style.layout.flex_basis_value,
+            Some(LayoutLength::LogicalPx(0.0))
+        );
         assert_eq!(
             style.layout.grid_template_columns,
             Some(vec![

@@ -33,21 +33,22 @@ use crate::document::{
 use crate::document::{LinePlotPayloadFormat, ScatterPayloadFormat};
 use crate::error::DragonError;
 use crate::events::{
-    has_active_modal, hit_test, hit_test_hover, modal_blocks_point, ChangeValue, SliderDrag,
-    WidgetState,
+    has_active_modal, hit_test, hit_test_hover, modal_blocks_point, ChangeValue, DragNumberDrag,
+    RangeSliderDrag, SliderDrag, TableSortColumn, WidgetState,
 };
 use crate::html_report_webview::HtmlReportWebViewManager;
 use crate::image_widget::ImageRenderer;
 use crate::layout::{
-    compute_layout, is_scroll_container_node, scroll_container_max_x, scroll_container_max_y, Rect,
+    compute_layout, is_scroll_container_node, scroll_container_max_x, scroll_container_max_y,
+    tree_node_row_height_for_style, LayoutResult, Rect,
 };
 use crate::overlays::{find_node, menu_popup_width};
 use crate::primitives::{
     histogram_plot_rect, histogram_resolved_bounds, histogram_text_labels, histogram_toolbar_hit,
     interpolate_visual_style, line_plot_plot_rect, line_plot_resolved_bounds,
     line_plot_text_labels, line_plot_toolbar_hit, panel_scrollbar_geometry, pie_chart_text_labels,
-    LinePlotBounds, LinePlotRenderer, PanelScrollbarAxis, PanelScrollbarAxisGeometry,
-    PrimitivesRenderer, RectInstance,
+    table_scrollbar_geometry, LinePlotBounds, LinePlotRenderer, PanelScrollbarAxis,
+    PanelScrollbarAxisGeometry, PrimitivesRenderer, RectInstance,
 };
 use crate::resources::ResourceRegistry;
 use crate::scatter::{self, PointInstance, ScatterWidget};
@@ -1578,6 +1579,125 @@ fn find_widget<'a>(node: &'a WidgetNode, id: &str) -> Option<&'a WidgetNode> {
     None
 }
 
+fn radio_neighbor_id(
+    node: &WidgetNode,
+    current_id: &str,
+    direction: i32,
+    state: &WidgetState,
+) -> Option<String> {
+    let radios: Vec<&WidgetNode> = node
+        .children
+        .iter()
+        .filter(|child| child.kind == WidgetKind::RadioButton)
+        .collect();
+    if let Some(current) = radios.iter().position(|child| child.id == current_id) {
+        if radios.len() <= 1 {
+            return None;
+        }
+        let step_back = direction < 0;
+        for offset in 1..=radios.len() {
+            let idx = if step_back {
+                (current + radios.len() - offset) % radios.len()
+            } else {
+                (current + offset) % radios.len()
+            };
+            let candidate = radios[idx];
+            if !candidate.props.disabled && !state.is_disabled(&candidate.id) {
+                return Some(candidate.id.clone());
+            }
+        }
+        return None;
+    }
+    for child in &node.children {
+        if let Some(id) = radio_neighbor_id(child, current_id, direction, state) {
+            return Some(id);
+        }
+    }
+    None
+}
+
+fn collect_tree_node_ids(node: &WidgetNode, out: &mut Vec<String>) {
+    if node.kind == WidgetKind::TreeNode {
+        out.push(node.id.clone());
+    }
+    for child in &node.children {
+        collect_tree_node_ids(child, out);
+    }
+}
+
+fn tree_node_selection_scope_ids(node: &WidgetNode, current_id: &str) -> Option<Vec<String>> {
+    if node.kind == WidgetKind::TreeView {
+        let mut ids = Vec::new();
+        collect_tree_node_ids(node, &mut ids);
+        if ids.iter().any(|id| id == current_id) {
+            return Some(ids);
+        }
+    }
+    for child in &node.children {
+        if let Some(ids) = tree_node_selection_scope_ids(child, current_id) {
+            return Some(ids);
+        }
+    }
+    None
+}
+
+fn visible_tree_node_ids(
+    node: &WidgetNode,
+    layout: &crate::layout::LayoutResult,
+    state: &WidgetState,
+    out: &mut Vec<String>,
+) {
+    if node.kind == WidgetKind::TreeNode
+        && !state.is_disabled(&node.id)
+        && layout
+            .visible_rect(&node.id)
+            .is_some_and(|rect| rect.w > 0.0 && rect.h > 0.0)
+    {
+        out.push(node.id.clone());
+    }
+    for child in &node.children {
+        visible_tree_node_ids(child, layout, state, out);
+    }
+}
+
+fn tree_node_neighbor_id(
+    tree: &WidgetNode,
+    layout: &crate::layout::LayoutResult,
+    state: &WidgetState,
+    current_id: &str,
+    direction: i32,
+) -> Option<String> {
+    let mut ids = Vec::new();
+    visible_tree_node_ids(tree, layout, state, &mut ids);
+    let current = ids.iter().position(|id| id == current_id)?;
+    let next = if direction < 0 {
+        current.checked_sub(1)?
+    } else {
+        (current + 1 < ids.len()).then_some(current + 1)?
+    };
+    ids.get(next).cloned()
+}
+
+fn first_visible_child_tree_node_id(
+    node: &WidgetNode,
+    layout: &crate::layout::LayoutResult,
+    state: &WidgetState,
+    current_id: &str,
+) -> Option<String> {
+    let current = find_widget(node, current_id)?;
+    current
+        .children
+        .iter()
+        .find(|child| {
+            child.kind == WidgetKind::TreeNode
+                && !state.is_disabled(&child.id)
+                && layout
+                    .visible_rect(&child.id)
+                    .is_some_and(|rect| rect.w > 0.0 && rect.h > 0.0)
+        })
+        .map(|child| child.id.clone())
+}
+
 fn active_modal_ref(node: &WidgetNode) -> Option<&WidgetNode> {
     for child in node.children.iter().rev() {
         if let Some(modal) = active_modal_ref(child) {
@@ -1925,6 +2045,8 @@ fn widget_kind_name(kind: &WidgetKind) -> &'static str {
         WidgetKind::ScrollArea => "scroll_area",
         WidgetKind::GridLayout => "grid_layout",
         WidgetKind::FlowLayout => "flow_layout",
+        WidgetKind::Splitter => "splitter",
+        WidgetKind::Pane => "pane",
         WidgetKind::Panel => "panel",
         WidgetKind::Collapsible => "collapsible",
         WidgetKind::Modal => "modal",
@@ -1932,14 +2054,29 @@ fn widget_kind_name(kind: &WidgetKind) -> &'static str {
         WidgetKind::Tag => "tag",
         WidgetKind::Led => "led",
         WidgetKind::Button => "button",
+        WidgetKind::SmallButton => "small_button",
+        WidgetKind::IconButton => "icon_button",
+        WidgetKind::ImageButton => "image_button",
+        WidgetKind::ArrowButton => "arrow_button",
+        WidgetKind::Selectable => "selectable",
+        WidgetKind::RadioButton => "radio_button",
+        WidgetKind::TreeView => "tree_view",
+        WidgetKind::TreeNode => "tree_node",
+        WidgetKind::DragSource => "drag_source",
+        WidgetKind::DropTarget => "drop_target",
         WidgetKind::Checkbox => "checkbox",
+        WidgetKind::ToggleSwitch => "toggle_switch",
         WidgetKind::Dropdown => "dropdown",
         WidgetKind::Label => "label",
         WidgetKind::Slider => "slider",
+        WidgetKind::RangeSlider => "range_slider",
         WidgetKind::NumberInput => "number_input",
+        WidgetKind::DragNumber => "drag_number",
         WidgetKind::ProgressBar => "progress_bar",
         WidgetKind::TextInput => "text_input",
         WidgetKind::TextArea => "text_area",
+        WidgetKind::CodeEditor => "code_editor",
+        WidgetKind::LogView => "log_view",
         WidgetKind::Separator => "separator",
         WidgetKind::Spacer => "spacer",
         WidgetKind::StatusBar => "status_bar",
@@ -2358,6 +2495,12 @@ fn layout_style_snapshot(style: &LayoutStyle) -> Value {
     }
     insert_number(&mut map, "flex_grow", style.flex_grow);
     insert_number(&mut map, "flex_shrink", style.flex_shrink);
+    insert_layout_length(
+        &mut map,
+        "flex_basis",
+        style.flex_basis_value,
+        style.flex_basis,
+    );
     if let Some(value) = &style.grid_template_columns {
         map.insert(
             "grid_template_columns".to_string(),
@@ -2983,6 +3126,7 @@ fn props_snapshot(node: &WidgetNode) -> Value {
         "led_state": props.led_state.as_deref(),
         "led_size": props.led_size,
         "checked": props.checked,
+        "toggle": props.toggle,
         "value": props.value,
         "min": props.min,
         "max": props.max,
@@ -2999,8 +3143,21 @@ fn props_snapshot(node: &WidgetNode) -> Value {
             "resource_id": props.table_resource_id.as_deref(),
             "page_size": props.page_size,
             "sample_rows": props.table_sample_rows,
+            "sortable": props.table_sortable,
+            "resizable_columns": props.table_resizable_columns,
         },
     });
+    if let Value::Object(map) = &mut snapshot {
+        map.insert(
+            "orientation".to_string(),
+            json!(props.orientation.as_deref()),
+        );
+        map.insert("gutter_size".to_string(), json!(props.gutter_size));
+        map.insert("pane_size".to_string(), json!(props.pane_size));
+        map.insert("pane_min_size".to_string(), json!(props.pane_min_size));
+        map.insert("pane_max_size".to_string(), json!(props.pane_max_size));
+        map.insert("pane_flex".to_string(), json!(props.pane_flex));
+    }
     if node.kind == WidgetKind::HtmlReport {
         if let Value::Object(map) = &mut snapshot {
             map.insert(
@@ -3155,9 +3312,13 @@ fn widget_state_snapshot(state: Option<&WidgetState>) -> Value {
         .tables
         .iter()
         .map(|(id, table)| {
-            let sort = table.sort.map(|(col, direction)| {
+            let sort = table.sort.map(|(target, direction)| {
                 json!({
-                    "column": col,
+                    "target": match target {
+                        TableSortColumn::Index => "index",
+                        TableSortColumn::Data(_) => "column",
+                    },
+                    "column": target.data_index(),
                     "direction": match direction {
                         crate::events::SortDirection::Asc => "asc",
                         crate::events::SortDirection::Desc => "desc",
@@ -3180,14 +3341,18 @@ fn widget_state_snapshot(state: Option<&WidgetState>) -> Value {
                         "column": table.columns.get(col).map(String::as_str).unwrap_or(""),
                     })),
                     "sort": sort,
+                    "column_widths": &table.column_widths,
                 }),
             )
         })
         .collect();
     json!({
         "checked": &state.checked,
+        "selectable_selected": &state.selectable_selected,
         "expanded": &state.expanded,
         "float_val": &state.float_val,
+        "range_val": &state.range_val,
+        "pane_sizes": &state.pane_sizes,
         "float_range": &state.float_range,
         "text_val": &state.text_val,
         "text_cursor": &state.text_cursor,
@@ -3202,6 +3367,10 @@ fn widget_state_snapshot(state: Option<&WidgetState>) -> Value {
         "focus_t": &state.focus_t,
         "hovered": state.hovered.as_deref(),
         "hover_t": &state.hover_t,
+        "drag_source": state.drag_source.as_deref(),
+        "drag_hover_target": state.drag_hover_target.as_deref(),
+        "drag_kind": state.drag_kind.as_deref(),
+        "drag_pos": state.drag_pos,
         "checked_t": &state.checked_t,
         "active_t": &state.active_t,
         "open_t": &state.open_t,
@@ -3284,8 +3453,14 @@ fn set_widget_text_prop(node: &mut WidgetNode, id: &str, prop: &str, value: Stri
             | WidgetKind::Badge
             | WidgetKind::Tag
             | WidgetKind::Button
+            | WidgetKind::SmallButton
+            | WidgetKind::Selectable
+            | WidgetKind::RadioButton
+            | WidgetKind::TreeNode
             | WidgetKind::Checkbox
+            | WidgetKind::ToggleSwitch
             | WidgetKind::NumberInput
+            | WidgetKind::DragNumber
             | WidgetKind::ProgressBar,
             "text" | "label",
         ) => {
@@ -3380,7 +3555,7 @@ fn set_widget_expanded_prop(node: &mut WidgetNode, id: &str, expanded: bool) -> 
     let Some(target) = find_widget_mut(node, id) else {
         return false;
     };
-    if target.kind != WidgetKind::Collapsible {
+    if !matches!(target.kind, WidgetKind::Collapsible | WidgetKind::TreeNode) {
         return false;
     }
     target.props.expanded = Some(expanded);
@@ -3391,7 +3566,14 @@ fn set_widget_checked_prop(node: &mut WidgetNode, id: &str, checked: bool) -> bo
     let Some(target) = find_widget_mut(node, id) else {
         return false;
     };
-    if target.kind != WidgetKind::Checkbox {
+    if !matches!(
+        target.kind,
+        WidgetKind::Checkbox
+            | WidgetKind::ToggleSwitch
+            | WidgetKind::Selectable
+            | WidgetKind::RadioButton
+            | WidgetKind::TreeNode
+    ) {
         return false;
     }
     target.props.checked = Some(checked);
@@ -3409,6 +3591,17 @@ fn set_widget_route_value_prop(node: &mut WidgetNode, id: &str, value: String) -
     true
 }
 
+fn set_widget_pane_size_prop(node: &mut WidgetNode, id: &str, size: Option<f32>) -> bool {
+    let Some(target) = find_widget_mut(node, id) else {
+        return false;
+    };
+    if target.kind != WidgetKind::Pane {
+        return false;
+    }
+    target.props.pane_size = size.filter(|value| value.is_finite() && *value >= 0.0);
+    true
+}
+
 fn set_widget_class_prop(node: &mut WidgetNode, id: &str, value: Option<String>) -> bool {
     let Some(target) = find_widget_mut(node, id) else {
         return false;
@@ -3423,7 +3616,7 @@ fn set_widget_badge_prop(node: &mut WidgetNode, id: &str, badge: Option<String>)
     };
     if !matches!(
         target.kind,
-        WidgetKind::Button | WidgetKind::Tab | WidgetKind::NavItem
+        WidgetKind::Button | WidgetKind::SmallButton | WidgetKind::Tab | WidgetKind::NavItem
     ) {
         return false;
     }
@@ -3443,7 +3636,7 @@ fn set_widget_image_prop(node: &mut WidgetNode, id: &str, prop: &str, value: Str
     let Some(target) = find_widget_mut(node, id) else {
         return false;
     };
-    if target.kind != WidgetKind::Image {
+    if !matches!(target.kind, WidgetKind::Image | WidgetKind::ImageButton) {
         return false;
     }
     match prop {
@@ -3692,6 +3885,43 @@ mod style_patch_tests {
             format_scatter_hover_columns(&columns, 1),
             Some("row_id: 11\nsignal: 1.5\ngroup: high".to_string())
         );
+    }
+
+    #[test]
+    fn drag_drop_payload_kind_prefers_explicit_drag_kind() {
+        let source = document::parse_widget_node(&json!({
+            "id": "source",
+            "type": "drag_source",
+            "props": {
+                "drag_kind": "metric",
+                "payload": {"kind": "asset", "label": "Frame time"}
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(drag_payload_kind(&source).as_deref(), Some("metric"));
+    }
+
+    #[test]
+    fn drag_drop_accept_filter_allows_exact_match_and_wildcard() {
+        let asset_target = document::parse_widget_node(&json!({
+            "id": "asset-target",
+            "type": "drop_target",
+            "props": {"accept": ["asset"]}
+        }))
+        .unwrap();
+        let any_target = document::parse_widget_node(&json!({
+            "id": "any-target",
+            "type": "drop_target",
+            "props": {"accept": ["*"]}
+        }))
+        .unwrap();
+
+        assert!(drop_target_accepts(&asset_target, Some("asset")));
+        assert!(!drop_target_accepts(&asset_target, Some("metric")));
+        assert!(!drop_target_accepts(&asset_target, None));
+        assert!(drop_target_accepts(&any_target, Some("metric")));
+        assert!(drop_target_accepts(&any_target, None));
     }
 
     #[test]
@@ -8001,6 +8231,9 @@ impl WgpuState {
             .filter(|(id, kind)| {
                 kind != &WidgetKind::Collapsible || self.collapsible_header_contains(id, pos)
             })
+            .filter(|(id, kind)| {
+                kind != &WidgetKind::TreeNode || self.tree_node_row_contains(id, pos)
+            })
             .filter(|(id, _)| !state.is_disabled(id))
     }
 
@@ -8020,7 +8253,54 @@ impl WgpuState {
             .filter(|(id, kind)| {
                 kind != &WidgetKind::Collapsible || self.collapsible_header_contains(id, pos)
             })
+            .filter(|(id, kind)| {
+                kind != &WidgetKind::TreeNode || self.tree_node_row_contains(id, pos)
+            })
             .filter(|(id, _)| !state.is_disabled(id))
+    }
+
+    fn drag_source_at(&self, pos: [f32; 2]) -> Option<DragSourceHit> {
+        let tree = self.widget_tree.as_ref()?;
+        let layout = self.current_layout.as_ref()?;
+        let state = self.widget_state.as_ref()?;
+        let root = active_modal_ref(tree).unwrap_or(tree);
+        drag_source_at_node(root, layout, state, pos)
+    }
+
+    fn drop_target_at(&self, pos: [f32; 2], kind: Option<&str>) -> Option<String> {
+        let tree = self.widget_tree.as_ref()?;
+        let layout = self.current_layout.as_ref()?;
+        let state = self.widget_state.as_ref()?;
+        let root = active_modal_ref(tree).unwrap_or(tree);
+        drop_target_at_node(root, layout, state, pos, kind)
+    }
+
+    fn set_drag_drop_state(
+        &mut self,
+        source: Option<String>,
+        target: Option<String>,
+        kind: Option<String>,
+        pos: Option<[f32; 2]>,
+    ) -> bool {
+        let Some(state) = self.widget_state.as_mut() else {
+            return false;
+        };
+        let changed = state.drag_source != source
+            || state.drag_hover_target != target
+            || state.drag_kind != kind
+            || state.drag_pos != pos;
+        if changed {
+            state.drag_source = source;
+            state.drag_hover_target = target;
+            state.drag_kind = kind;
+            state.drag_pos = pos;
+            self.rebuild_visuals();
+        }
+        changed
+    }
+
+    fn clear_drag_drop_state(&mut self) -> bool {
+        self.set_drag_drop_state(None, None, None, None)
     }
 
     fn collapsible_header_contains(&self, id: &str, pos: [f32; 2]) -> bool {
@@ -8046,6 +8326,65 @@ impl WgpuState {
             && pos[0] < rect.x + rect.w
             && pos[1] >= rect.y
             && pos[1] < rect.y + header_h
+    }
+
+    fn tree_node_row_contains(&self, id: &str, pos: [f32; 2]) -> bool {
+        let Some(rect) = self
+            .current_layout
+            .as_ref()
+            .and_then(|layout| layout.rects.get(id))
+        else {
+            return false;
+        };
+        let row_h = self
+            .widget_tree
+            .as_ref()
+            .and_then(|tree| find_widget(tree, id))
+            .map(|node| {
+                tree_node_row_height_for_style(
+                    node,
+                    &self.theme,
+                    self.scale_factor,
+                    Some(rect.h.max(0.0)),
+                )
+            })
+            .unwrap_or_else(|| {
+                ((self.theme.font_size + self.theme.spacing * 2.0 + 4.0) * self.scale_factor)
+                    .max(28.0 * self.scale_factor)
+            })
+            .min(rect.h.max(0.0));
+        pos[0] >= rect.x && pos[0] < rect.x + rect.w && pos[1] >= rect.y && pos[1] < rect.y + row_h
+    }
+
+    fn tree_node_disclosure_contains(&self, id: &str, pos: [f32; 2]) -> bool {
+        let Some(tree) = self.widget_tree.as_ref() else {
+            return false;
+        };
+        let Some(node) = find_widget(tree, id) else {
+            return false;
+        };
+        if node.kind != WidgetKind::TreeNode || node.children.is_empty() {
+            return false;
+        }
+        let Some(rect) = self
+            .current_layout
+            .as_ref()
+            .and_then(|layout| layout.rects.get(id))
+        else {
+            return false;
+        };
+        let row_h = tree_node_row_height_for_style(
+            node,
+            &self.theme,
+            self.scale_factor,
+            Some(rect.h.max(0.0)),
+        )
+        .min(rect.h.max(0.0));
+        let indicator_w = 18.0 * self.scale_factor;
+        pos[0] >= rect.x
+            && pos[0] < rect.x + self.theme.spacing * self.scale_factor + indicator_w
+            && pos[1] >= rect.y
+            && pos[1] < rect.y + row_h
     }
 
     fn modal_blocks_point(&self, pos: [f32; 2]) -> bool {
@@ -8094,6 +8433,15 @@ impl WgpuState {
         self.widget_kinds.contains_key(id)
     }
 
+    fn log_view_follow(&self, id: &str) -> bool {
+        self.widget_tree
+            .as_ref()
+            .and_then(|tree| find_node(tree, id))
+            .and_then(|node| node.props.raw_props.get("follow"))
+            .and_then(|value| value.as_bool())
+            .unwrap_or(true)
+    }
+
     fn apply_set_prop(&mut self, id: &str, prop: &str, value: CommandValue) -> Option<Dirty> {
         let kind = self.widget_kind(id)?;
         if prop == "class" {
@@ -8122,10 +8470,15 @@ impl WgpuState {
                     | WidgetKind::Badge
                     | WidgetKind::Tag
                     | WidgetKind::Button
+                    | WidgetKind::SmallButton
+                    | WidgetKind::Selectable
+                    | WidgetKind::RadioButton
                     | WidgetKind::Panel
                     | WidgetKind::Sidebar
                     | WidgetKind::Checkbox
+                    | WidgetKind::ToggleSwitch
                     | WidgetKind::NumberInput
+                    | WidgetKind::DragNumber
                     | WidgetKind::ProgressBar
                     | WidgetKind::Collapsible
                     | WidgetKind::Modal
@@ -8206,7 +8559,7 @@ impl WgpuState {
             }
             return None;
         }
-        if kind == WidgetKind::Collapsible && prop == "expanded" {
+        if matches!(kind, WidgetKind::Collapsible | WidgetKind::TreeNode) && prop == "expanded" {
             let CommandValue::Bool(expanded) = value else {
                 eprintln!(
                     "DragonGUI: ignoring unsupported live SetProp for widget {id:?} ({kind:?}).{prop}"
@@ -8392,7 +8745,7 @@ impl WgpuState {
         }
         if matches!(
             kind,
-            WidgetKind::Button | WidgetKind::Tab | WidgetKind::NavItem
+            WidgetKind::Button | WidgetKind::SmallButton | WidgetKind::Tab | WidgetKind::NavItem
         ) && prop == "badge"
         {
             let badge = match value {
@@ -8413,7 +8766,9 @@ impl WgpuState {
             }
             return None;
         }
-        if kind == WidgetKind::Image && matches!(prop, "path" | "fit") {
+        if matches!(kind, WidgetKind::Image | WidgetKind::ImageButton)
+            && matches!(prop, "path" | "fit")
+        {
             let CommandValue::Text(text) = value else {
                 eprintln!(
                     "DragonGUI: ignoring unsupported live SetProp for widget {id:?} ({kind:?}).{prop}"
@@ -8477,6 +8832,8 @@ impl WgpuState {
                 }
             }
         }
+        let log_view_follow =
+            kind == WidgetKind::LogView && prop == "value" && self.log_view_follow(id);
         let state = self.widget_state.as_mut()?;
         if matches!(kind, WidgetKind::Tabs | WidgetKind::Pages) && prop == "value" {
             let CommandValue::Text(value) = value else {
@@ -8501,9 +8858,37 @@ impl WgpuState {
             }
             return Some(Dirty::Layout);
         }
+        if kind == WidgetKind::Pane && prop == "size" {
+            let size = match value {
+                CommandValue::Float(value) => Some(value),
+                CommandValue::None => None,
+                other => {
+                    eprintln!(
+                        "DragonGUI: ignoring unsupported live SetProp for widget {id:?} ({kind:?}).{prop}: {other:?}"
+                    );
+                    return None;
+                }
+            };
+            state.set_pane_size(id, size)?;
+            if let Some(tree) = self.widget_tree.as_mut() {
+                set_widget_pane_size_prop(tree, id, size);
+            }
+            return Some(Dirty::Layout);
+        }
         match (kind, prop, value) {
-            (WidgetKind::Checkbox, "checked", CommandValue::Bool(v)) => {
+            (WidgetKind::Checkbox | WidgetKind::ToggleSwitch, "checked", CommandValue::Bool(v)) => {
                 state.set_checked(id, v)?;
+                if let Some(tree) = self.widget_tree.as_mut() {
+                    set_widget_checked_prop(tree, id, v);
+                }
+                Some(Dirty::Full)
+            }
+            (
+                WidgetKind::Selectable | WidgetKind::RadioButton | WidgetKind::TreeNode,
+                "checked",
+                CommandValue::Bool(v),
+            ) => {
+                state.set_selectable_selected(id, v)?;
                 if let Some(tree) = self.widget_tree.as_mut() {
                     set_widget_checked_prop(tree, id, v);
                 }
@@ -8513,7 +8898,15 @@ impl WgpuState {
                 state.try_set_float(id, v)?;
                 Some(Dirty::Visual)
             }
-            (WidgetKind::NumberInput, "value", CommandValue::Float(v)) => {
+            (WidgetKind::RangeSlider, "value_min", CommandValue::Float(v)) => {
+                state.set_range_min_value(id, v)?;
+                Some(Dirty::Visual)
+            }
+            (WidgetKind::RangeSlider, "value_max", CommandValue::Float(v)) => {
+                state.set_range_max_value(id, v)?;
+                Some(Dirty::Visual)
+            }
+            (WidgetKind::NumberInput | WidgetKind::DragNumber, "value", CommandValue::Float(v)) => {
                 state.set_number_value(id, v)?;
                 Some(Dirty::Text)
             }
@@ -8525,8 +8918,18 @@ impl WgpuState {
                 state.set_dropdown_value(id, &v)?;
                 Some(Dirty::Text)
             }
-            (WidgetKind::TextInput | WidgetKind::TextArea, "value", CommandValue::Text(v)) => {
+            (
+                WidgetKind::TextInput
+                | WidgetKind::TextArea
+                | WidgetKind::CodeEditor
+                | WidgetKind::LogView,
+                "value",
+                CommandValue::Text(v),
+            ) => {
                 state.set_text_value(id, v)?;
+                if log_view_follow {
+                    state.text_scroll_y.insert(id.to_string(), f32::MAX);
+                }
                 Some(Dirty::Text)
             }
             (kind, prop, _) => {
@@ -10025,9 +10428,18 @@ impl WgpuState {
         else {
             return;
         };
-        let row_order = sort.and_then(|(col, direction)| {
-            self.resources
-                .sorted_table_rows(resource_id.as_deref(), col, rows, direction)
+        let row_order = sort.and_then(|(target, direction)| match target {
+            TableSortColumn::Index => {
+                let mut row_order: Vec<usize> = (0..rows).collect();
+                if matches!(direction, crate::events::SortDirection::Desc) {
+                    row_order.reverse();
+                }
+                Some(row_order)
+            }
+            TableSortColumn::Data(col) => {
+                self.resources
+                    .sorted_table_rows(resource_id.as_deref(), col, rows, direction)
+            }
         });
         if let Some(state) = &mut self.widget_state {
             state.set_table_row_order(id, row_order);
@@ -11055,6 +11467,50 @@ impl WgpuState {
         ))
     }
 
+    fn create_range_slider_drag(&self, id: &str, mouse_x: f32) -> Option<RangeSliderDrag> {
+        let layout = self.current_layout.as_ref()?;
+        let state = self.widget_state.as_ref()?;
+        let rect = layout.rects.get(id)?;
+        let (min, max) = state.float_range.get(id).copied()?;
+        let current = state.range_val.get(id).copied()?;
+        Some(RangeSliderDrag::new(
+            id.to_string(),
+            rect,
+            min,
+            max,
+            current,
+            mouse_x,
+            self.scale_factor,
+        ))
+    }
+
+    fn create_drag_number_drag(&self, id: &str, start_x: f32) -> Option<DragNumberDrag> {
+        let state = self.widget_state.as_ref()?;
+        let tree = self.widget_tree.as_ref()?;
+        let node = find_widget(tree, id)?;
+        if node.kind != WidgetKind::DragNumber || state.is_disabled(id) {
+            return None;
+        }
+        let start_value = state.float_val.get(id).copied()?;
+        let speed = node
+            .props
+            .raw_props
+            .get("speed")
+            .and_then(|value| value.as_f64())
+            .map(|value| value as f32)
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .or_else(|| state.float_step.get(id).copied())
+            .unwrap_or(1.0)
+            .abs()
+            / self.scale_factor.max(0.001);
+        Some(DragNumberDrag::new(
+            id.to_string(),
+            start_x,
+            start_value,
+            speed,
+        ))
+    }
+
     fn dropdown_option_at(&self, pos: [f32; 2]) -> Option<(String, usize)> {
         let layout = self.current_layout.as_ref()?;
         let state = self.widget_state.as_ref()?;
@@ -11201,9 +11657,103 @@ impl WgpuState {
             .and_then(|(id, kind)| (kind == WidgetKind::DataFrameTable).then_some(id))
     }
 
+    fn table_column_resize_at(&self, pos: [f32; 2]) -> Option<TableColumnResizeHit> {
+        let (id, kind) = self.hit_test_ui(pos)?;
+        if kind != WidgetKind::DataFrameTable {
+            return None;
+        }
+        let node = self
+            .widget_tree
+            .as_ref()
+            .and_then(|root| find_node(root, &id))?;
+        let resizable = node.props.table_resizable_columns.unwrap_or(true);
+        if !resizable || node.props.disabled {
+            return None;
+        }
+        let layout = self.current_layout.as_ref()?;
+        let state = self.widget_state.as_ref()?;
+        if state.is_disabled(&id) {
+            return None;
+        }
+        let table_state = state.table(&id)?;
+        let rect = layout.rects.get(&id)?;
+        let metrics = table::metrics_for_node(node, &self.theme, self.scale_factor);
+        if pos[1] < rect.y || pos[1] >= rect.y + metrics.header_h.min(rect.h) {
+            return None;
+        }
+        let visible = table::visible(table_state, rect, metrics);
+        let slop = (5.0 * self.scale_factor).max(4.0);
+        for col_offset in 0..visible.col_count {
+            let col = visible.first_col + col_offset;
+            let Some((col_x, col_right)) =
+                table::column_bounds(table_state, rect, metrics, col_offset)
+            else {
+                continue;
+            };
+            if col_right <= col_x || col_right >= rect.x + rect.w - 1.0 {
+                continue;
+            }
+            if (pos[0] - col_right).abs() <= slop {
+                return Some(TableColumnResizeHit {
+                    table_id: id,
+                    column: col,
+                    width: table::column_width(table_state, metrics, col),
+                    min_width: table::min_column_width(metrics),
+                });
+            }
+        }
+        None
+    }
+
+    fn table_scrollbar_at(&self, pos: [f32; 2]) -> Option<PanelScrollbarHit> {
+        let (id, kind) = self.hit_test_ui(pos)?;
+        if kind != WidgetKind::DataFrameTable {
+            return None;
+        }
+        let tree = self.widget_tree.as_ref()?;
+        let layout = self.current_layout.as_ref()?;
+        let state = self.widget_state.as_ref()?;
+        if state.is_disabled(&id) {
+            return None;
+        }
+        let node = find_node(tree, &id)?;
+        let rect = layout.rects.get(&id).copied()?;
+        let visible = layout.visible_rect(&id).unwrap_or(rect);
+        let pos_inside_visible = pos[0] >= visible.x
+            && pos[0] < visible.x + visible.w
+            && pos[1] >= visible.y
+            && pos[1] < visible.y + visible.h;
+        if !pos_inside_visible {
+            return None;
+        }
+        let geometry = table_scrollbar_geometry(node, state, &self.theme, self.scale_factor, rect)?;
+        let slop = (5.0 * self.scale_factor).max(4.0);
+        if let Some(hit) = panel_scrollbar_axis_hit(
+            &id,
+            PanelScrollbarAxis::Horizontal,
+            geometry.horizontal,
+            pos,
+            slop,
+        ) {
+            return Some(hit);
+        }
+        panel_scrollbar_axis_hit(
+            &id,
+            PanelScrollbarAxis::Vertical,
+            geometry.vertical,
+            pos,
+            slop,
+        )
+    }
+
     fn text_area_at(&self, pos: [f32; 2]) -> Option<String> {
-        self.hit_test_ui(pos)
-            .and_then(|(id, kind)| (kind == WidgetKind::TextArea).then_some(id))
+        self.hit_test_ui(pos).and_then(|(id, kind)| {
+            matches!(
+                kind,
+                WidgetKind::TextArea | WidgetKind::CodeEditor | WidgetKind::LogView
+            )
+            .then_some(id)
+        })
     }
 
     fn scroll_container_at(&self, pos: [f32; 2]) -> Option<String> {
@@ -11237,6 +11787,17 @@ impl WgpuState {
         let root = active_modal_ref(tree).unwrap_or(tree);
         let slop = (5.0 * self.scale_factor).max(4.0);
         self.panel_scrollbar_at_node(root, layout, state, pos, slop)
+    }
+
+    fn splitter_gutter_at(&self, pos: [f32; 2]) -> Option<SplitterGutterHit> {
+        let tree = self.widget_tree.as_ref()?;
+        let layout = self.current_layout.as_ref()?;
+        let state = self.widget_state.as_ref()?;
+        let root = active_modal_ref(tree).unwrap_or(tree);
+        if state.is_disabled(&root.id) {
+            return None;
+        }
+        splitter_gutter_hit_at_node(root, layout, pos, self.scale_factor)
     }
 
     fn panel_scrollbar_at_node(
@@ -11447,6 +12008,36 @@ impl WgpuState {
         )
     }
 
+    fn table_sort_payload(&self, id: &str) -> Option<String> {
+        let table_state = self.widget_state.as_ref()?.table(id)?;
+        let (target, direction) = table_state.sort?;
+        let descending = matches!(direction, crate::events::SortDirection::Desc);
+        let payload = match target {
+            TableSortColumn::Index => json!({
+                "event": "sort",
+                "target": "index",
+                "column_index": -1,
+                "column": "#",
+                "is_index": true,
+                "descending": descending,
+                "direction": if descending { "desc" } else { "asc" },
+            }),
+            TableSortColumn::Data(col) => {
+                let column = table_state.columns.get(col)?.clone();
+                json!({
+                    "event": "sort",
+                        "target": "column",
+                    "column_index": col,
+                    "column": column,
+                        "is_index": false,
+                    "descending": descending,
+                    "direction": if descending { "desc" } else { "asc" },
+                })
+            }
+        };
+        Some(payload.to_string())
+    }
+
     fn table_visible_counts(&self, id: &str) -> Option<(usize, usize)> {
         let layout = self.current_layout.as_ref()?;
         let state = self.widget_state.as_ref()?;
@@ -11468,7 +12059,10 @@ impl WgpuState {
             ws.focus_widget(id);
         }
         if let Some(id) = focused.as_deref() {
-            if self.widget_kind(id) == Some(WidgetKind::TextArea) {
+            if matches!(
+                self.widget_kind(id),
+                Some(WidgetKind::TextArea | WidgetKind::CodeEditor)
+            ) {
                 self.ensure_text_area_cursor_visible(id);
             }
         }
@@ -11485,7 +12079,10 @@ impl WgpuState {
         let (id, kind) = self.focused_kind()?;
         if !matches!(
             kind,
-            WidgetKind::TextInput | WidgetKind::TextArea | WidgetKind::NumberInput
+            WidgetKind::TextInput
+                | WidgetKind::TextArea
+                | WidgetKind::CodeEditor
+                | WidgetKind::NumberInput
         ) {
             return None;
         }
@@ -11640,6 +12237,7 @@ impl WgpuState {
         for scatter_id in &scatter_order {
             if let Some(runtime) = self.scatters.get_mut(scatter_id) {
                 let render_t0 = Instant::now();
+                runtime.widget.prepare_render_pipelines(&self.device);
                 let render_scale = runtime.widget.active_render_scale();
                 if render_scale < 0.999 && runtime.widget.width > 0 && runtime.widget.height > 0 {
                     let (target_width, target_height) =
@@ -11835,6 +12433,95 @@ fn rect_contains_pos(r: &crate::layout::Rect, pos: [f32; 2]) -> bool {
     pos[0] >= r.x && pos[0] < r.x + r.w && pos[1] >= r.y && pos[1] < r.y + r.h
 }
 
+fn drag_payload_kind(node: &WidgetNode) -> Option<String> {
+    node.props
+        .raw_props
+        .get("drag_kind")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            node.props
+                .raw_props
+                .get("payload")
+                .and_then(|payload| payload.get("kind"))
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        })
+}
+
+fn drop_target_accepts(node: &WidgetNode, kind: Option<&str>) -> bool {
+    let Some(accept) = node.props.raw_props.get("accept") else {
+        return true;
+    };
+    let Some(items) = accept.as_array() else {
+        return true;
+    };
+    if items.is_empty() || items.iter().any(|item| item.as_str() == Some("*")) {
+        return true;
+    }
+    let Some(kind) = kind else {
+        return false;
+    };
+    items.iter().any(|item| item.as_str() == Some(kind))
+}
+
+fn drag_source_at_node(
+    node: &WidgetNode,
+    layout: &LayoutResult,
+    state: &WidgetState,
+    pos: [f32; 2],
+) -> Option<DragSourceHit> {
+    if node.kind == WidgetKind::Tooltip || state.is_disabled(&node.id) {
+        return None;
+    }
+    for child in node.children.iter().rev() {
+        if let Some(hit) = drag_source_at_node(child, layout, state, pos) {
+            return Some(hit);
+        }
+    }
+    if node.kind != WidgetKind::DragSource {
+        return None;
+    }
+    let rect = layout.visible_rect(&node.id)?;
+    if !rect_contains_pos(&rect, pos) {
+        return None;
+    }
+    Some(DragSourceHit {
+        source_id: node.id.clone(),
+        kind: drag_payload_kind(node),
+        payload: node
+            .props
+            .raw_props
+            .get("payload")
+            .cloned()
+            .unwrap_or(Value::Null),
+    })
+}
+
+fn drop_target_at_node(
+    node: &WidgetNode,
+    layout: &LayoutResult,
+    state: &WidgetState,
+    pos: [f32; 2],
+    kind: Option<&str>,
+) -> Option<String> {
+    if node.kind == WidgetKind::Tooltip || state.is_disabled(&node.id) {
+        return None;
+    }
+    for child in node.children.iter().rev() {
+        if let Some(id) = drop_target_at_node(child, layout, state, pos, kind) {
+            return Some(id);
+        }
+    }
+    if node.kind != WidgetKind::DropTarget || !drop_target_accepts(node, kind) {
+        return None;
+    }
+    let rect = layout.visible_rect(&node.id)?;
+    rect_contains_pos(&rect, pos).then(|| node.id.clone())
+}
+
 fn scrollbar_rect_contains(
     axis: PanelScrollbarAxis,
     r: &crate::layout::Rect,
@@ -11872,6 +12559,119 @@ fn panel_scrollbar_axis_hit(
     }
 }
 
+fn splitter_orientation(node: &WidgetNode) -> SplitterOrientation {
+    if node.props.orientation.as_deref() == Some("vertical") {
+        SplitterOrientation::Vertical
+    } else {
+        SplitterOrientation::Horizontal
+    }
+}
+
+fn splitter_gutter_preferred_size_px(
+    node: &WidgetNode,
+    orientation: SplitterOrientation,
+    scale_factor: f32,
+) -> f32 {
+    let part_size = node.style.parts.parts.get("gutter").and_then(|part| {
+        if orientation == SplitterOrientation::Horizontal {
+            part.layout.width
+        } else {
+            part.layout.height
+        }
+    });
+    part_size.or(node.props.gutter_size).unwrap_or(6.0).max(1.0) * scale_factor
+}
+
+fn splitter_gutter_hit_at_node(
+    node: &WidgetNode,
+    layout: &LayoutResult,
+    pos: [f32; 2],
+    scale_factor: f32,
+) -> Option<SplitterGutterHit> {
+    for child in node.children.iter().rev() {
+        if let Some(hit) = splitter_gutter_hit_at_node(child, layout, pos, scale_factor) {
+            return Some(hit);
+        }
+    }
+    if node.kind != WidgetKind::Splitter {
+        return None;
+    }
+    let splitter_rect = layout.visible_rect(&node.id)?;
+    if !rect_contains_pos(&splitter_rect, pos) {
+        return None;
+    }
+    let orientation = splitter_orientation(node);
+    let preferred = splitter_gutter_preferred_size_px(node, orientation, scale_factor);
+    let panes: Vec<&WidgetNode> = node
+        .children
+        .iter()
+        .filter(|child| child.kind == WidgetKind::Pane && layout.rects.contains_key(&child.id))
+        .collect();
+    for pair in panes.windows(2) {
+        let before = pair[0];
+        let after = pair[1];
+        let before_rect = *layout.rects.get(&before.id)?;
+        let after_rect = *layout.rects.get(&after.id)?;
+        let gutter = match orientation {
+            SplitterOrientation::Horizontal => {
+                let before_end = before_rect.x + before_rect.w;
+                let after_start = after_rect.x;
+                let gap = after_start - before_end;
+                let gutter_w = if gap > 0.5 { gap } else { preferred };
+                Rect {
+                    x: if gap > 0.5 {
+                        before_end
+                    } else {
+                        before_end - gutter_w * 0.5
+                    },
+                    y: splitter_rect.y,
+                    w: gutter_w,
+                    h: splitter_rect.h,
+                }
+            }
+            SplitterOrientation::Vertical => {
+                let before_end = before_rect.y + before_rect.h;
+                let after_start = after_rect.y;
+                let gap = after_start - before_end;
+                let gutter_h = if gap > 0.5 { gap } else { preferred };
+                Rect {
+                    x: splitter_rect.x,
+                    y: if gap > 0.5 {
+                        before_end
+                    } else {
+                        before_end - gutter_h * 0.5
+                    },
+                    w: splitter_rect.w,
+                    h: gutter_h,
+                }
+            }
+        };
+        if rect_contains_pos(&gutter, pos) {
+            return Some(SplitterGutterHit {
+                splitter_id: node.id.clone(),
+                before_id: before.id.clone(),
+                after_id: after.id.clone(),
+                orientation,
+                before_size: if orientation == SplitterOrientation::Horizontal {
+                    before_rect.w
+                } else {
+                    before_rect.h
+                } / scale_factor.max(0.001),
+                after_size: if orientation == SplitterOrientation::Horizontal {
+                    after_rect.w
+                } else {
+                    after_rect.h
+                } / scale_factor.max(0.001),
+                before_min: before.props.pane_min_size.unwrap_or(0.0).max(0.0),
+                after_min: after.props.pane_min_size.unwrap_or(0.0).max(0.0),
+                before_max: before.props.pane_max_size.filter(|value| *value >= 0.0),
+                after_max: after.props.pane_max_size.filter(|value| *value >= 0.0),
+            });
+        }
+    }
+    None
+}
+
 // ---------------------------------------------------------------------------
 // winit ApplicationHandler
 // ---------------------------------------------------------------------------
@@ -11884,6 +12684,12 @@ const FRAME_TELEMETRY_WINDOW: Duration = Duration::from_secs(1);
 struct SliderChangeDispatch {
     widget_id: String,
     value: f32,
+    at: Instant,
+}
+
+struct RangeSliderChangeDispatch {
+    widget_id: String,
+    value: (f32, f32),
     at: Instant,
 }
 
@@ -11958,6 +12764,94 @@ fn scrollbar_axis_len(axis: PanelScrollbarAxis, rect: crate::layout::Rect) -> f3
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SplitterOrientation {
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Debug, Clone)]
+struct SplitterGutterHit {
+    splitter_id: String,
+    before_id: String,
+    after_id: String,
+    orientation: SplitterOrientation,
+    before_size: f32,
+    after_size: f32,
+    before_min: f32,
+    after_min: f32,
+    before_max: Option<f32>,
+    after_max: Option<f32>,
+}
+
+#[derive(Debug, Clone)]
+struct SplitterDrag {
+    hit: SplitterGutterHit,
+    start_axis_pos: f32,
+}
+
+impl SplitterDrag {
+    fn new(hit: SplitterGutterHit, pos: [f32; 2]) -> Self {
+        let start_axis_pos = match hit.orientation {
+            SplitterOrientation::Horizontal => pos[0],
+            SplitterOrientation::Vertical => pos[1],
+        };
+        Self {
+            hit,
+            start_axis_pos,
+        }
+    }
+
+    fn compute_sizes(&self, pos: [f32; 2], scale_factor: f32) -> (f32, f32) {
+        let axis_pos = match self.hit.orientation {
+            SplitterOrientation::Horizontal => pos[0],
+            SplitterOrientation::Vertical => pos[1],
+        };
+        let delta = (axis_pos - self.start_axis_pos) / scale_factor.max(0.001);
+        let total = (self.hit.before_size + self.hit.after_size).max(0.0);
+        let lower = self.hit.before_min.max(
+            self.hit
+                .after_max
+                .map(|max| total - max)
+                .unwrap_or(f32::NEG_INFINITY),
+        );
+        let upper = (total - self.hit.after_min).min(self.hit.before_max.unwrap_or(f32::INFINITY));
+        let before = if lower <= upper {
+            (self.hit.before_size + delta).clamp(lower, upper)
+        } else {
+            (total * 0.5).clamp(upper, lower)
+        };
+        (before.max(0.0), (total - before).max(0.0))
+    }
+}
+
+#[derive(Debug, Clone)]
+struct TableColumnResizeHit {
+    table_id: String,
+    column: usize,
+    width: f32,
+    min_width: f32,
+}
+
+#[derive(Debug, Clone)]
+struct TableColumnResizeDrag {
+    hit: TableColumnResizeHit,
+    start_x: f32,
+}
+
+impl TableColumnResizeDrag {
+    fn new(hit: TableColumnResizeHit, pos: [f32; 2]) -> Self {
+        Self {
+            hit,
+            start_x: pos[0],
+        }
+    }
+
+    fn compute_width(&self, pos: [f32; 2]) -> f32 {
+        (self.hit.width + pos[0] - self.start_x).max(self.hit.min_width)
+    }
+}
+
 #[derive(Debug, Clone)]
 struct RuntimeCommandRecord {
     seq: u64,
@@ -12020,6 +12914,36 @@ struct LinePlotBoxZoomDrag {
     start: [f32; 2],
 }
 
+#[derive(Debug, Clone)]
+struct DragSourceHit {
+    source_id: String,
+    kind: Option<String>,
+    payload: Value,
+}
+
+#[derive(Debug, Clone)]
+struct DragDropSession {
+    source_id: String,
+    kind: Option<String>,
+    payload: Value,
+    start: [f32; 2],
+    current: [f32; 2],
+    active: bool,
+}
+
+impl DragDropSession {
+    fn new(hit: DragSourceHit, start: [f32; 2]) -> Self {
+        Self {
+            source_id: hit.source_id,
+            kind: hit.kind,
+            payload: hit.payload,
+            start,
+            current: start,
+            active: false,
+        }
+    }
+}
+
 struct DragonApp {
     spec: Option<AppSpec>,
     command_bridge: Option<Arc<CommandBridge>>,
@@ -12057,6 +12981,10 @@ struct DragonApp {
     change_cbs: HashMap<String, Box<dyn Fn(ChangeValue) + Send>>,
     /// Active slider drag session (pointer-down on a Slider widget).
     slider_drag: Option<SliderDrag>,
+    /// Active range-slider drag session (pointer-down on a RangeSlider widget).
+    range_slider_drag: Option<RangeSliderDrag>,
+    /// Active drag-number session (relative horizontal drag).
+    drag_number_drag: Option<DragNumberDrag>,
     /// Active line plot pan drag session.
     line_plot_pan_drag: Option<String>,
     /// Active line plot box-zoom drag session.
@@ -12067,6 +12995,14 @@ struct DragonApp {
     histogram_box_zoom_drag: Option<LinePlotBoxZoomDrag>,
     /// Active panel scrollbar drag session.
     scrollbar_drag: Option<ScrollbarDrag>,
+    /// Active DataFrameTable scrollbar drag session.
+    table_scrollbar_drag: Option<ScrollbarDrag>,
+    /// Active splitter gutter drag session.
+    splitter_drag: Option<SplitterDrag>,
+    /// Active DataFrameTable column resize drag session.
+    table_column_resize_drag: Option<TableColumnResizeDrag>,
+    /// Pending or active app-local drag/drop session.
+    drag_drop_session: Option<DragDropSession>,
     scatter_press_pos: Option<[f32; 2]>,
     /// Scatter id that received the current pointer-down (for orbit/pan/pick).
     active_scatter_id: Option<String>,
@@ -12074,6 +13010,10 @@ struct DragonApp {
     last_slider_emit: Option<SliderChangeDispatch>,
     /// Most recent slider value waiting for a throttled callback slot.
     pending_slider_emit: Option<(String, f32)>,
+    /// Last range-slider value sent to Python during drag throttling.
+    last_range_slider_emit: Option<RangeSliderChangeDispatch>,
+    /// Most recent range-slider value waiting for a throttled callback slot.
+    pending_range_slider_emit: Option<(String, (f32, f32))>,
     /// Id of the UI widget that received the current pointer-down.
     pressed_id: Option<String>,
     /// Currently active keyboard modifiers.
@@ -12134,15 +13074,23 @@ impl DragonApp {
             click_cbs: HashMap::new(),
             change_cbs: HashMap::new(),
             slider_drag: None,
+            range_slider_drag: None,
+            drag_number_drag: None,
             line_plot_pan_drag: None,
             line_plot_box_zoom_drag: None,
             histogram_pan_drag: None,
             histogram_box_zoom_drag: None,
             scrollbar_drag: None,
+            table_scrollbar_drag: None,
+            splitter_drag: None,
+            table_column_resize_drag: None,
+            drag_drop_session: None,
             scatter_press_pos: None,
             active_scatter_id: None,
             last_slider_emit: None,
             pending_slider_emit: None,
+            last_range_slider_emit: None,
+            pending_range_slider_emit: None,
             pressed_id: None,
             modifiers: ModifiersState::empty(),
             deferred_python_task_drain: false,
@@ -12328,90 +13276,215 @@ impl DragonApp {
             .iter()
             .map(|(command, stats)| (command.clone(), stats.json_value()))
             .collect::<Map<_, _>>();
-        json!({
-            "schema": 1,
-            "runtime": {
-                "window_open": self.window.is_some(),
-                "gpu_ready": self.gpu.is_some(),
-                "frames_rendered": self.frames_rendered,
-                "upload_ms": self.upload_ms,
-                "frame_ms": frame_ms,
-                "frame_ms_avg": frame_ms,
-                "last_frame_ms": self.last_frame_ms,
-                "cpu_frame_ms": self.last_frame_ms,
-                "frame_work_ms": self.last_frame_work_ms,
-                "frame_work_ms_avg": avg(self.frame_work_ms_total),
-                "frame_prepare_ms": self.last_frame_prepare_ms,
-                "frame_prepare_ms_avg": avg(self.frame_prepare_ms_total),
-                "frame_acquire_ms": self.last_frame_acquire_ms,
-                "frame_acquire_ms_avg": avg(self.frame_acquire_ms_total),
-                "frame_encode_ms": self.last_frame_encode_ms,
-                "frame_encode_ms_avg": avg(self.frame_encode_ms_total),
-                "frame_submit_ms": self.last_frame_submit_ms,
-                "frame_submit_ms_avg": avg(self.frame_submit_ms_total),
-                "frame_present_ms": self.last_frame_present_ms,
-                "frame_present_ms_avg": avg(self.frame_present_ms_total),
-                "wall_fps": self.wall_fps(),
-                "frame_window_count": self.frame_timestamps.len(),
-                "command_queue_depth": queue_depth,
-                "command_drain": {
-                    "timing": self.command_drain_timing.json_value(),
-                    "fetch": self.command_drain_fetch_timing.json_value(),
-                    "coalesce": self.command_drain_coalesce_timing.json_value(),
-                    "apply": self.command_drain_apply_timing.json_value(),
-                    "flush_rebuilds": self.command_drain_flush_timing.json_value(),
-                    "last_batches": self.last_command_drain_batches,
-                    "last_commands": self.last_command_drain_commands,
-                    "last_pending": self.last_command_drain_pending,
-                },
-                "command_timings": command_timings,
-                "loading_screen": self.gpu.as_ref().map(|gpu| {
-                    let loading = &gpu.loading_screen;
-                    json!({
-                        "enabled": loading.spec.enabled,
-                        "shown": loading.shown,
-                        "frames": loading.frames,
-                        "present_ms": loading.present_ms,
-                        "startup_resource_ms": loading.startup_resource_ms,
-                        "min_duration_ms": loading.spec.min_duration_ms,
-                    })
-                }).unwrap_or_else(|| json!({
+        let splitter_drag_snapshot = self.splitter_drag.as_ref().map(|drag| {
+            let orientation = match drag.hit.orientation {
+                SplitterOrientation::Horizontal => "horizontal",
+                SplitterOrientation::Vertical => "vertical",
+            };
+            json!({
+                "splitter": drag.hit.splitter_id.as_str(),
+                "before": drag.hit.before_id.as_str(),
+                "after": drag.hit.after_id.as_str(),
+                "orientation": orientation,
+            })
+        });
+        let table_column_resize_drag_snapshot =
+            self.table_column_resize_drag.as_ref().map(|drag| {
+                json!({
+                    "id": drag.hit.table_id.as_str(),
+                    "column": drag.hit.column,
+                })
+            });
+        let scrollbar_drag_snapshot = self.scrollbar_drag.as_ref().map(|drag| {
+            let axis = match drag.axis {
+                PanelScrollbarAxis::Horizontal => "horizontal",
+                PanelScrollbarAxis::Vertical => "vertical",
+            };
+            json!({
+                "id": drag.widget_id.as_str(),
+                "axis": axis,
+            })
+        });
+        let table_scrollbar_drag_snapshot = self.table_scrollbar_drag.as_ref().map(|drag| {
+            let axis = match drag.axis {
+                PanelScrollbarAxis::Horizontal => "horizontal",
+                PanelScrollbarAxis::Vertical => "vertical",
+            };
+            json!({
+                "id": drag.widget_id.as_str(),
+                "axis": axis,
+            })
+        });
+        let drag_number_drag_snapshot = self.drag_number_drag.as_ref().map(|drag| {
+            json!({
+                "id": drag.widget_id.as_str(),
+            })
+        });
+        let drag_drop_session_snapshot = self.drag_drop_session.as_ref().map(|drag| {
+            json!({
+                "source_id": drag.source_id.as_str(),
+                "kind": drag.kind.as_deref(),
+                "active": drag.active,
+                "start": drag.start,
+                "current": drag.current,
+            })
+        });
+        let pending_slider_emit = self.pending_slider_emit.as_ref().map(|(id, value)| {
+            json!({
+                "id": id,
+                "value": value,
+            })
+        });
+        let command_drain_snapshot = json!({
+            "timing": self.command_drain_timing.json_value(),
+            "fetch": self.command_drain_fetch_timing.json_value(),
+            "coalesce": self.command_drain_coalesce_timing.json_value(),
+            "apply": self.command_drain_apply_timing.json_value(),
+            "flush_rebuilds": self.command_drain_flush_timing.json_value(),
+            "last_batches": self.last_command_drain_batches,
+            "last_commands": self.last_command_drain_commands,
+            "last_pending": self.last_command_drain_pending,
+        });
+        let loading_screen_snapshot = self
+            .gpu
+            .as_ref()
+            .map(|gpu| {
+                let loading = &gpu.loading_screen;
+                json!({
+                    "enabled": loading.spec.enabled,
+                    "shown": loading.shown,
+                    "frames": loading.frames,
+                    "present_ms": loading.present_ms,
+                    "startup_resource_ms": loading.startup_resource_ms,
+                    "min_duration_ms": loading.spec.min_duration_ms,
+                })
+            })
+            .unwrap_or_else(|| {
+                json!({
                     "enabled": false,
                     "shown": false,
                     "frames": 0,
                     "present_ms": 0.0,
                     "startup_resource_ms": 0.0,
                     "min_duration_ms": 0,
-                })),
-                "smoke_frames": self.smoke_frames,
-                "orbit_active": self.orbit_active,
-                "pan_active": self.pan_active,
-                "pan_button": self.pan_button.as_ref().map(|button| match button {
-                    MouseButton::Left => "left",
-                    MouseButton::Right => "right",
-                    MouseButton::Middle => "middle",
-                    MouseButton::Back => "back",
-                    MouseButton::Forward => "forward",
-                    MouseButton::Other(_) => "other",
-                }),
-                "pressed_id": self.pressed_id.as_deref(),
-                "last_mouse_pos": self.last_mouse_pos,
-                "scrollbar_drag": self.scrollbar_drag.as_ref().map(|drag| json!({
-                    "id": drag.widget_id,
-                    "axis": match drag.axis {
-                        PanelScrollbarAxis::Horizontal => "horizontal",
-                        PanelScrollbarAxis::Vertical => "vertical",
-                    },
-                })),
-                "pending_slider_emit": self.pending_slider_emit.as_ref().map(|(id, value)| json!({
-                    "id": id,
-                    "value": value,
-                })),
-                "dirty": self.dirty_history_snapshot(),
-                "commands": self.command_history_snapshot(),
-            },
-            "gpu": self.gpu.as_ref().map(WgpuState::debug_snapshot_value),
-        })
+                })
+            });
+        let pan_button_snapshot = self.pan_button.as_ref().map(|button| match button {
+            MouseButton::Left => "left",
+            MouseButton::Right => "right",
+            MouseButton::Middle => "middle",
+            MouseButton::Back => "back",
+            MouseButton::Forward => "forward",
+            MouseButton::Other(_) => "other",
+        });
+        let mut runtime = Map::new();
+        runtime.insert("window_open".to_string(), json!(self.window.is_some()));
+        runtime.insert("gpu_ready".to_string(), json!(self.gpu.is_some()));
+        runtime.insert("frames_rendered".to_string(), json!(self.frames_rendered));
+        runtime.insert("upload_ms".to_string(), json!(self.upload_ms));
+        runtime.insert("frame_ms".to_string(), json!(frame_ms));
+        runtime.insert("frame_ms_avg".to_string(), json!(frame_ms));
+        runtime.insert("last_frame_ms".to_string(), json!(self.last_frame_ms));
+        runtime.insert("cpu_frame_ms".to_string(), json!(self.last_frame_ms));
+        runtime.insert("frame_work_ms".to_string(), json!(self.last_frame_work_ms));
+        runtime.insert(
+            "frame_work_ms_avg".to_string(),
+            json!(avg(self.frame_work_ms_total)),
+        );
+        runtime.insert(
+            "frame_prepare_ms".to_string(),
+            json!(self.last_frame_prepare_ms),
+        );
+        runtime.insert(
+            "frame_prepare_ms_avg".to_string(),
+            json!(avg(self.frame_prepare_ms_total)),
+        );
+        runtime.insert(
+            "frame_acquire_ms".to_string(),
+            json!(self.last_frame_acquire_ms),
+        );
+        runtime.insert(
+            "frame_acquire_ms_avg".to_string(),
+            json!(avg(self.frame_acquire_ms_total)),
+        );
+        runtime.insert(
+            "frame_encode_ms".to_string(),
+            json!(self.last_frame_encode_ms),
+        );
+        runtime.insert(
+            "frame_encode_ms_avg".to_string(),
+            json!(avg(self.frame_encode_ms_total)),
+        );
+        runtime.insert(
+            "frame_submit_ms".to_string(),
+            json!(self.last_frame_submit_ms),
+        );
+        runtime.insert(
+            "frame_submit_ms_avg".to_string(),
+            json!(avg(self.frame_submit_ms_total)),
+        );
+        runtime.insert(
+            "frame_present_ms".to_string(),
+            json!(self.last_frame_present_ms),
+        );
+        runtime.insert(
+            "frame_present_ms_avg".to_string(),
+            json!(avg(self.frame_present_ms_total)),
+        );
+        runtime.insert("wall_fps".to_string(), json!(self.wall_fps()));
+        runtime.insert(
+            "frame_window_count".to_string(),
+            json!(self.frame_timestamps.len()),
+        );
+        runtime.insert("command_queue_depth".to_string(), json!(queue_depth));
+        runtime.insert("command_drain".to_string(), command_drain_snapshot);
+        runtime.insert(
+            "command_timings".to_string(),
+            Value::Object(command_timings),
+        );
+        runtime.insert("loading_screen".to_string(), loading_screen_snapshot);
+        runtime.insert("smoke_frames".to_string(), json!(self.smoke_frames));
+        runtime.insert("orbit_active".to_string(), json!(self.orbit_active));
+        runtime.insert("pan_active".to_string(), json!(self.pan_active));
+        runtime.insert("pan_button".to_string(), json!(pan_button_snapshot));
+        runtime.insert("pressed_id".to_string(), json!(self.pressed_id.as_deref()));
+        runtime.insert("last_mouse_pos".to_string(), json!(self.last_mouse_pos));
+        runtime.insert("scrollbar_drag".to_string(), json!(scrollbar_drag_snapshot));
+        runtime.insert(
+            "table_scrollbar_drag".to_string(),
+            json!(table_scrollbar_drag_snapshot),
+        );
+        runtime.insert(
+            "drag_number_drag".to_string(),
+            json!(drag_number_drag_snapshot),
+        );
+        runtime.insert(
+            "drag_drop_session".to_string(),
+            json!(drag_drop_session_snapshot),
+        );
+        runtime.insert("splitter_drag".to_string(), json!(splitter_drag_snapshot));
+        runtime.insert(
+            "table_column_resize_drag".to_string(),
+            json!(table_column_resize_drag_snapshot),
+        );
+        runtime.insert(
+            "pending_slider_emit".to_string(),
+            json!(pending_slider_emit),
+        );
+        runtime.insert("dirty".to_string(), self.dirty_history_snapshot());
+        runtime.insert("commands".to_string(), self.command_history_snapshot());
+
+        let mut root = Map::new();
+        root.insert("schema".to_string(), json!(1));
+        root.insert("runtime".to_string(), Value::Object(runtime));
+        root.insert(
+            "gpu".to_string(),
+            self.gpu
+                .as_ref()
+                .map(WgpuState::debug_snapshot_value)
+                .unwrap_or(Value::Null),
+        );
+        Value::Object(root)
     }
 
     fn request_redraw(&self) {
@@ -15193,6 +16266,13 @@ impl DragonApp {
             .and_then(|ws| ws.float_val.get(id).copied())
     }
 
+    fn current_range_slider_value(&self, id: &str) -> Option<(f32, f32)> {
+        self.gpu
+            .as_ref()
+            .and_then(|g| g.widget_state.as_ref())
+            .and_then(|ws| ws.range_val.get(id).copied())
+    }
+
     fn emit_slider_change(&mut self, id: &str, value: f32, force: bool) {
         let duplicate = match &self.last_slider_emit {
             Some(last) => {
@@ -15249,6 +16329,70 @@ impl DragonApp {
         }
     }
 
+    fn emit_range_slider_change(&mut self, id: &str, value: (f32, f32), force: bool) {
+        let duplicate = match &self.last_range_slider_emit {
+            Some(last) => {
+                last.widget_id == id
+                    && (last.value.0 - value.0).abs() <= SLIDER_CHANGE_EPSILON
+                    && (last.value.1 - value.1).abs() <= SLIDER_CHANGE_EPSILON
+            }
+            None => false,
+        };
+        if duplicate {
+            return;
+        }
+
+        let now = Instant::now();
+        let can_emit = force
+            || match &self.last_range_slider_emit {
+                Some(last) if last.widget_id == id => {
+                    now.duration_since(last.at) >= SLIDER_CALLBACK_INTERVAL
+                }
+                _ => true,
+            };
+
+        if can_emit {
+            if matches!(
+                self.pending_range_slider_emit.as_ref(),
+                Some((pending_id, _)) if pending_id == id
+            ) {
+                self.pending_range_slider_emit = None;
+            }
+            self.last_range_slider_emit = Some(RangeSliderChangeDispatch {
+                widget_id: id.to_string(),
+                value,
+                at: now,
+            });
+            self.emit_change(
+                id,
+                ChangeValue::Text(
+                    json!({"value": [value.0, value.1], "min": value.0, "max": value.1})
+                        .to_string(),
+                ),
+            );
+        } else {
+            self.pending_range_slider_emit = Some((id.to_string(), value));
+        }
+    }
+
+    fn flush_range_slider_change(&mut self, id: &str) {
+        let pending = self.pending_range_slider_emit.take();
+        let mut restore_pending = None;
+        let value = match pending {
+            Some((pending_id, pending_value)) if pending_id == id => Some(pending_value),
+            Some(other) => {
+                restore_pending = Some(other);
+                self.current_range_slider_value(id)
+            }
+            None => self.current_range_slider_value(id),
+        };
+        self.pending_range_slider_emit = restore_pending;
+
+        if let Some(value) = value {
+            self.emit_range_slider_change(id, value, true);
+        }
+    }
+
     fn update_slider_drag(&mut self, mouse_x: f32, force_emit: bool) {
         let (id, new_val) = match &self.slider_drag {
             Some(drag) => (drag.widget_id.clone(), drag.compute_value(mouse_x)),
@@ -15267,6 +16411,73 @@ impl DragonApp {
             }
             if changed {
                 gpu.rebuild_primitives();
+            }
+        }
+
+        if changed {
+            self.emit_slider_change(&id, changed_val, force_emit);
+            self.request_redraw();
+        }
+    }
+
+    fn update_range_slider_drag(&mut self, mouse_x: f32, force_emit: bool) {
+        let (id, new_pair) = match &self.range_slider_drag {
+            Some(drag) => {
+                let id = drag.widget_id.clone();
+                let Some(current) = self.current_range_slider_value(&id) else {
+                    return;
+                };
+                (id, drag.compute_values(mouse_x, current))
+            }
+            None => return,
+        };
+
+        let mut changed_pair = new_pair;
+        let mut changed = false;
+        if let Some(gpu) = &mut self.gpu {
+            if let Some(ws) = &mut gpu.widget_state {
+                let old = ws.range_val.get(&id).copied();
+                if let Some(value) = ws.set_range_values(&id, new_pair.0, new_pair.1) {
+                    changed_pair = value;
+                    changed = old
+                        .map(|old| {
+                            (old.0 - changed_pair.0).abs() > SLIDER_CHANGE_EPSILON
+                                || (old.1 - changed_pair.1).abs() > SLIDER_CHANGE_EPSILON
+                        })
+                        .unwrap_or(true);
+                }
+            }
+            if changed {
+                gpu.rebuild_primitives();
+            }
+        }
+
+        if changed {
+            self.emit_range_slider_change(&id, changed_pair, force_emit);
+            self.request_redraw();
+        }
+    }
+
+    fn update_drag_number_drag(&mut self, mouse_x: f32, force_emit: bool) {
+        let (id, new_val) = match &self.drag_number_drag {
+            Some(drag) => (drag.widget_id.clone(), drag.compute_value(mouse_x)),
+            None => return,
+        };
+
+        let mut changed_val = new_val;
+        let mut changed = false;
+        if let Some(gpu) = &mut self.gpu {
+            if let Some(ws) = &mut gpu.widget_state {
+                let old = ws.float_val.get(&id).copied();
+                if let Some(value) = ws.set_number_value(&id, new_val) {
+                    changed_val = value;
+                    changed = old
+                        .map(|old| (old - changed_val).abs() > SLIDER_CHANGE_EPSILON)
+                        .unwrap_or(true);
+                }
+            }
+            if changed {
+                gpu.rebuild_for_dirty(Dirty::Text);
             }
         }
 
@@ -15295,15 +16506,258 @@ impl DragonApp {
         }
     }
 
+    fn begin_table_scrollbar_drag(&mut self, hit: PanelScrollbarHit, pos: [f32; 2]) {
+        self.table_scrollbar_drag = Some(ScrollbarDrag::new(hit, pos));
+        self.update_table_scrollbar_drag(pos);
+    }
+
+    fn update_table_scrollbar_drag(&mut self, pos: [f32; 2]) {
+        let Some(drag) = self.table_scrollbar_drag.as_ref().cloned() else {
+            return;
+        };
+        let scroll = drag.compute_scroll(pos);
+        self.scroll_table_to_axis(&drag.widget_id, drag.axis, scroll);
+    }
+
+    fn begin_drag_drop(&mut self, hit: DragSourceHit, pos: [f32; 2]) {
+        self.drag_drop_session = Some(DragDropSession::new(hit, pos));
+    }
+
+    fn update_drag_drop(&mut self, pos: [f32; 2]) {
+        let Some(mut session) = self.drag_drop_session.take() else {
+            return;
+        };
+        session.current = pos;
+        let dx = pos[0] - session.start[0];
+        let dy = pos[1] - session.start[1];
+        let threshold = self
+            .gpu
+            .as_ref()
+            .map(|gpu| (4.0 * gpu.scale_factor).max(4.0))
+            .unwrap_or(4.0);
+        if !session.active && dx * dx + dy * dy >= threshold * threshold {
+            session.active = true;
+            self.pressed_id = None;
+            if let Some(gpu) = &mut self.gpu {
+                if let Some(state) = &mut gpu.widget_state {
+                    state.pressed = None;
+                }
+            }
+        }
+        if session.active {
+            let target = self
+                .gpu
+                .as_ref()
+                .and_then(|gpu| gpu.drop_target_at(pos, session.kind.as_deref()));
+            if self.gpu.as_mut().is_some_and(|gpu| {
+                gpu.set_drag_drop_state(
+                    Some(session.source_id.clone()),
+                    target,
+                    session.kind.clone(),
+                    Some(pos),
+                )
+            }) {
+                self.request_redraw();
+            }
+        }
+        self.drag_drop_session = Some(session);
+    }
+
+    fn finish_drag_drop(&mut self, pos: [f32; 2]) -> bool {
+        let Some(mut session) = self.drag_drop_session.take() else {
+            return false;
+        };
+        session.current = pos;
+        if !session.active {
+            return false;
+        }
+        let target = self
+            .gpu
+            .as_ref()
+            .and_then(|gpu| gpu.drop_target_at(pos, session.kind.as_deref()));
+        if let Some(gpu) = &mut self.gpu {
+            gpu.clear_drag_drop_state();
+        }
+        if let Some(target_id) = target {
+            let payload = json!({
+                "event": "drop",
+                "source_id": session.source_id,
+                "target_id": target_id.as_str(),
+                "kind": session.kind,
+                "payload": session.payload,
+                "x": pos[0],
+                "y": pos[1],
+            })
+            .to_string();
+            self.emit_change(&target_id, ChangeValue::Text(payload));
+        }
+        true
+    }
+
+    fn begin_splitter_drag(&mut self, hit: SplitterGutterHit, pos: [f32; 2]) {
+        self.splitter_drag = Some(SplitterDrag::new(hit, pos));
+        self.update_splitter_drag(pos);
+    }
+
+    fn update_splitter_drag(&mut self, pos: [f32; 2]) {
+        let Some(drag) = self.splitter_drag.as_ref().cloned() else {
+            return;
+        };
+        let scale_factor = self.gpu.as_ref().map(|gpu| gpu.scale_factor).unwrap_or(1.0);
+        let (before, after) = drag.compute_sizes(pos, scale_factor);
+        let mut changed = false;
+        if let Some(gpu) = &mut self.gpu {
+            if let Some(state) = gpu.widget_state.as_mut() {
+                let old_before = state.pane_size(&drag.hit.before_id);
+                let old_after = state.pane_size(&drag.hit.after_id);
+                let applied_before = state
+                    .set_pane_size(&drag.hit.before_id, Some(before))
+                    .flatten();
+                let applied_after = state
+                    .set_pane_size(&drag.hit.after_id, Some(after))
+                    .flatten();
+                if applied_before.is_some() && applied_after.is_some() {
+                    changed = old_before
+                        .map(|old| (old - before).abs() > SLIDER_CHANGE_EPSILON)
+                        .unwrap_or(true)
+                        || old_after
+                            .map(|old| (old - after).abs() > SLIDER_CHANGE_EPSILON)
+                            .unwrap_or(true);
+                }
+            }
+            if changed {
+                if let Some(tree) = gpu.widget_tree.as_mut() {
+                    set_widget_pane_size_prop(tree, &drag.hit.before_id, Some(before));
+                    set_widget_pane_size_prop(tree, &drag.hit.after_id, Some(after));
+                }
+                gpu.apply_layout();
+            }
+        }
+        if changed {
+            self.request_redraw();
+        }
+    }
+
+    fn begin_table_column_resize_drag(&mut self, hit: TableColumnResizeHit, pos: [f32; 2]) {
+        self.table_column_resize_drag = Some(TableColumnResizeDrag::new(hit, pos));
+        self.update_table_column_resize_drag(pos);
+    }
+
+    fn update_table_column_resize_drag(&mut self, pos: [f32; 2]) {
+        let Some(drag) = self.table_column_resize_drag.as_ref().cloned() else {
+            return;
+        };
+        let width = drag.compute_width(pos);
+        let mut changed = false;
+        if let Some(gpu) = &mut self.gpu {
+            if let Some(state) = gpu.widget_state.as_mut() {
+                let old_width = state
+                    .table(&drag.hit.table_id)
+                    .and_then(|table| table.column_widths.get(drag.hit.column).copied())
+                    .filter(|value| value.is_finite() && *value > 0.0)
+                    .unwrap_or(drag.hit.width);
+                if let Some(applied) = state.set_table_column_width(
+                    &drag.hit.table_id,
+                    drag.hit.column,
+                    width,
+                    drag.hit.min_width,
+                ) {
+                    changed = (old_width - applied).abs() > SLIDER_CHANGE_EPSILON;
+                }
+            }
+            if changed {
+                gpu.rebuild_for_dirty(Dirty::Text);
+            }
+        }
+        if changed {
+            self.request_redraw();
+        }
+    }
+
+    fn select_tree_node(&mut self, id: &str) {
+        let scope_ids = self
+            .gpu
+            .as_ref()
+            .and_then(|gpu| gpu.widget_tree.as_ref())
+            .and_then(|tree| tree_node_selection_scope_ids(tree, id))
+            .unwrap_or_else(|| vec![id.to_string()]);
+        if let Some(gpu) = &mut self.gpu {
+            if let Some(state) = gpu.widget_state.as_mut() {
+                for node_id in &scope_ids {
+                    let selected = node_id == id;
+                    let _ = state.set_selectable_selected(node_id, selected);
+                }
+            }
+            if let Some(tree) = gpu.widget_tree.as_mut() {
+                for node_id in &scope_ids {
+                    set_widget_checked_prop(tree, node_id, node_id == id);
+                }
+            }
+            gpu.rebuild_visuals();
+        }
+        self.emit_change(
+            id,
+            ChangeValue::Text(json!({"event": "select", "selected": true}).to_string()),
+        );
+        self.request_redraw();
+    }
+
+    fn set_tree_node_expanded(&mut self, id: &str, expanded: bool) {
+        let can_expand = self
+            .gpu
+            .as_ref()
+            .and_then(|gpu| gpu.widget_tree.as_ref())
+            .and_then(|tree| find_widget(tree, id))
+            .is_some_and(|node| node.kind == WidgetKind::TreeNode && !node.children.is_empty());
+        if !can_expand {
+            return;
+        }
+        let changed = self
+            .gpu
+            .as_mut()
+            .and_then(|gpu| {
+                if let Some(state) = gpu.widget_state.as_mut() {
+                    state.set_expanded(id, expanded)?;
+                }
+                if let Some(tree) = gpu.widget_tree.as_mut() {
+                    set_widget_expanded_prop(tree, id, expanded);
+                }
+                gpu.apply_layout();
+                Some(())
+            })
+            .is_some();
+        if changed {
+            self.emit_change(
+                id,
+                ChangeValue::Text(json!({"event": "expand", "expanded": expanded}).to_string()),
+            );
+            self.request_redraw();
+        }
+    }
+
+    fn toggle_tree_node_expanded(&mut self, id: &str) {
+        let expanded = self
+            .gpu
+            .as_ref()
+            .and_then(|gpu| gpu.widget_state.as_ref())
+            .map(|state| !state.is_expanded(id))
+            .unwrap_or(true);
+        self.set_tree_node_expanded(id, expanded);
+    }
+
     fn activate_widget(&mut self, id: &str, kind: WidgetKind) {
         let mut needs_text_rebuild = matches!(kind, WidgetKind::Dropdown | WidgetKind::Menu);
         let mut needs_layout_rebuild = false;
         let mut navigation_change: Option<(String, String)> = None;
         match kind {
-            WidgetKind::Button => {
+            WidgetKind::Button
+            | WidgetKind::SmallButton
+            | WidgetKind::IconButton
+            | WidgetKind::ImageButton
+            | WidgetKind::ArrowButton => {
                 self.emit_click(id);
             }
-            WidgetKind::Checkbox => {
+            WidgetKind::Checkbox | WidgetKind::ToggleSwitch => {
                 let new_val = self
                     .gpu
                     .as_mut()
@@ -15317,6 +16771,48 @@ impl DragonApp {
                 }
                 self.emit_change(id, ChangeValue::Bool(new_val));
                 needs_layout_rebuild = true;
+            }
+            WidgetKind::Selectable | WidgetKind::RadioButton => {
+                let toggle = self
+                    .gpu
+                    .as_ref()
+                    .and_then(|g| g.widget_tree.as_ref())
+                    .and_then(|tree| find_widget(tree, id))
+                    .and_then(|node| node.props.toggle)
+                    .unwrap_or(kind == WidgetKind::Selectable);
+                let new_val = self
+                    .gpu
+                    .as_mut()
+                    .and_then(|g| g.widget_state.as_mut())
+                    .and_then(|ws| ws.activate_selectable(id, toggle));
+                if let Some(selected) = new_val {
+                    if let Some(gpu) = &mut self.gpu {
+                        if let Some(tree) = gpu.widget_tree.as_mut() {
+                            set_widget_checked_prop(tree, id, selected);
+                        }
+                    }
+                    self.emit_change(id, ChangeValue::Bool(selected));
+                }
+            }
+            WidgetKind::TreeNode => {
+                let should_expand = self
+                    .gpu
+                    .as_ref()
+                    .and_then(|gpu| {
+                        let tree = gpu.widget_tree.as_ref()?;
+                        let state = gpu.widget_state.as_ref()?;
+                        find_widget(tree, id).map(|node| {
+                            node.kind == WidgetKind::TreeNode
+                                && !node.children.is_empty()
+                                && !state.is_expanded(id)
+                        })
+                    })
+                    .unwrap_or(false);
+                self.select_tree_node(id);
+                if should_expand {
+                    self.set_tree_node_expanded(id, true);
+                }
+                return;
             }
             WidgetKind::Collapsible => {
                 let new_val = self
@@ -15512,17 +17008,31 @@ impl DragonApp {
         }
     }
 
-    fn toggle_table_sort(&mut self, id: &str, col: usize) {
+    fn toggle_table_sort(&mut self, id: &str, target: TableSortColumn) {
+        let mut payload = None;
         if let Some(gpu) = &mut self.gpu {
+            let sortable = gpu
+                .widget_tree
+                .as_ref()
+                .and_then(|root| find_node(root, id))
+                .and_then(|node| node.props.table_sortable)
+                .unwrap_or(true);
+            if !sortable {
+                return;
+            }
             let changed = gpu
                 .widget_state
                 .as_mut()
-                .map(|ws| ws.toggle_table_sort(id, col))
+                .map(|ws| ws.toggle_table_sort(id, target))
                 .unwrap_or(false);
             if changed {
                 gpu.refresh_table_sort(id);
+                payload = gpu.table_sort_payload(id);
                 gpu.rebuild_visuals();
             }
+        }
+        if let Some(payload) = payload {
+            self.emit_change(id, ChangeValue::Text(payload));
         }
         self.request_redraw();
     }
@@ -15533,6 +17043,24 @@ impl DragonApp {
                 .widget_state
                 .as_mut()
                 .map(|ws| ws.scroll_table(id, row_delta, col_delta))
+                .unwrap_or(false);
+            if changed {
+                gpu.rebuild_visuals();
+                self.request_redraw();
+            }
+        }
+    }
+
+    fn scroll_table_to_axis(&mut self, id: &str, axis: PanelScrollbarAxis, scroll: f32) {
+        if let Some(gpu) = &mut self.gpu {
+            let target = scroll.round().max(0.0) as usize;
+            let changed = gpu
+                .widget_state
+                .as_mut()
+                .map(|ws| match axis {
+                    PanelScrollbarAxis::Horizontal => ws.scroll_table_to(id, None, Some(target)),
+                    PanelScrollbarAxis::Vertical => ws.scroll_table_to(id, Some(target), None),
+                })
                 .unwrap_or(false);
             if changed {
                 gpu.rebuild_visuals();
@@ -15632,13 +17160,28 @@ impl DragonApp {
                         return;
                     }
                 }
-                WidgetKind::TextArea => {
+                WidgetKind::TextArea | WidgetKind::CodeEditor => {
                     if self.handle_text_input_key(&id, &event, true) {
                         return;
                     }
                 }
                 WidgetKind::NumberInput => {
                     if self.handle_number_input_key(&id, &event) {
+                        return;
+                    }
+                }
+                WidgetKind::DragNumber => {
+                    let dir = match &event.logical_key {
+                        Key::Named(NamedKey::ArrowLeft) | Key::Named(NamedKey::ArrowDown) => {
+                            Some(-1.0)
+                        }
+                        Key::Named(NamedKey::ArrowRight) | Key::Named(NamedKey::ArrowUp) => {
+                            Some(1.0)
+                        }
+                        _ => None,
+                    };
+                    if let Some(dir) = dir {
+                        self.adjust_number_input(&id, dir);
                         return;
                     }
                 }
@@ -15660,6 +17203,32 @@ impl DragonApp {
                             .and_then(|ws| ws.adjust_float(&id, dir));
                         if let Some(value) = changed {
                             self.emit_change(&id, ChangeValue::Float(value));
+                        }
+                        if let Some(gpu) = &mut self.gpu {
+                            gpu.rebuild_primitives();
+                        }
+                        self.request_redraw();
+                        return;
+                    }
+                }
+                WidgetKind::RangeSlider => {
+                    let dir = match &event.logical_key {
+                        Key::Named(NamedKey::ArrowLeft) | Key::Named(NamedKey::ArrowDown) => {
+                            Some(-1.0)
+                        }
+                        Key::Named(NamedKey::ArrowRight) | Key::Named(NamedKey::ArrowUp) => {
+                            Some(1.0)
+                        }
+                        _ => None,
+                    };
+                    if let Some(dir) = dir {
+                        let changed = self
+                            .gpu
+                            .as_mut()
+                            .and_then(|g| g.widget_state.as_mut())
+                            .and_then(|ws| ws.adjust_range(&id, dir));
+                        if let Some(value) = changed {
+                            self.emit_range_slider_change(&id, value, true);
                         }
                         if let Some(gpu) = &mut self.gpu {
                             gpu.rebuild_primitives();
@@ -15724,7 +17293,15 @@ impl DragonApp {
                     }
                     _ => {}
                 },
-                WidgetKind::Button | WidgetKind::Checkbox | WidgetKind::Collapsible => {
+                WidgetKind::Button
+                | WidgetKind::SmallButton
+                | WidgetKind::IconButton
+                | WidgetKind::ImageButton
+                | WidgetKind::ArrowButton
+                | WidgetKind::Selectable
+                | WidgetKind::Checkbox
+                | WidgetKind::ToggleSwitch
+                | WidgetKind::Collapsible => {
                     if matches!(
                         &event.logical_key,
                         Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Space)
@@ -15733,6 +17310,97 @@ impl DragonApp {
                         return;
                     }
                 }
+                WidgetKind::RadioButton => match &event.logical_key {
+                    Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Space) => {
+                        self.activate_widget(&id, WidgetKind::RadioButton);
+                        return;
+                    }
+                    Key::Named(NamedKey::ArrowLeft)
+                    | Key::Named(NamedKey::ArrowUp)
+                    | Key::Named(NamedKey::ArrowRight)
+                    | Key::Named(NamedKey::ArrowDown) => {
+                        let direction = if matches!(
+                            &event.logical_key,
+                            Key::Named(NamedKey::ArrowLeft) | Key::Named(NamedKey::ArrowUp)
+                        ) {
+                            -1
+                        } else {
+                            1
+                        };
+                        let target = self.gpu.as_ref().and_then(|gpu| {
+                            let tree = gpu.widget_tree.as_ref()?;
+                            let state = gpu.widget_state.as_ref()?;
+                            radio_neighbor_id(tree, &id, direction, state)
+                        });
+                        if let Some(target) = target {
+                            if let Some(gpu) = &mut self.gpu {
+                                if let Some(state) = gpu.widget_state.as_mut() {
+                                    state.focus_widget(Some(target.clone()));
+                                }
+                            }
+                            self.activate_widget(&target, WidgetKind::RadioButton);
+                            return;
+                        }
+                    }
+                    _ => {}
+                },
+                WidgetKind::TreeNode => match &event.logical_key {
+                    Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Space) => {
+                        self.select_tree_node(&id);
+                        return;
+                    }
+                    Key::Named(NamedKey::ArrowLeft) => {
+                        let expanded = self
+                            .gpu
+                            .as_ref()
+                            .and_then(|gpu| gpu.widget_state.as_ref())
+                            .is_some_and(|state| state.is_expanded(&id));
+                        if expanded {
+                            self.set_tree_node_expanded(&id, false);
+                            return;
+                        }
+                    }
+                    Key::Named(NamedKey::ArrowRight) => {
+                        let expanded = self
+                            .gpu
+                            .as_ref()
+                            .and_then(|gpu| gpu.widget_state.as_ref())
+                            .is_some_and(|state| state.is_expanded(&id));
+                        if !expanded {
+                            self.set_tree_node_expanded(&id, true);
+                            return;
+                        }
+                        let target = self.gpu.as_ref().and_then(|gpu| {
+                            let tree = gpu.widget_tree.as_ref()?;
+                            let layout = gpu.current_layout.as_ref()?;
+                            let state = gpu.widget_state.as_ref()?;
+                            first_visible_child_tree_node_id(tree, layout, state, &id)
+                        });
+                        if let Some(target) = target {
+                            self.set_focus(Some(target));
+                            return;
+                        }
+                    }
+                    Key::Named(NamedKey::ArrowUp) | Key::Named(NamedKey::ArrowDown) => {
+                        let direction =
+                            if matches!(&event.logical_key, Key::Named(NamedKey::ArrowUp)) {
+                                -1
+                            } else {
+                                1
+                            };
+                        let target = self.gpu.as_ref().and_then(|gpu| {
+                            let tree = gpu.widget_tree.as_ref()?;
+                            let layout = gpu.current_layout.as_ref()?;
+                            let state = gpu.widget_state.as_ref()?;
+                            tree_node_neighbor_id(tree, layout, state, &id, direction)
+                        });
+                        if let Some(target) = target {
+                            self.set_focus(Some(target));
+                            return;
+                        }
+                    }
+                    _ => {}
+                },
                 WidgetKind::Tab => match &event.logical_key {
                     Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Space) => {
                         self.activate_widget(&id, WidgetKind::Tab);
@@ -16364,17 +18032,50 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                             self.orbit_active = false;
                             self.rect_select_active = false;
                             let released_scrollbar = self.scrollbar_drag.take().is_some();
+                            let released_table_scrollbar =
+                                self.table_scrollbar_drag.take().is_some();
+                            let released_splitter = self.splitter_drag.take().is_some();
+                            let released_table_column_resize =
+                                self.table_column_resize_drag.take().is_some();
                             let released_slider =
                                 self.slider_drag.as_ref().map(|drag| drag.widget_id.clone());
                             if let Some(id) = released_slider {
                                 self.flush_slider_change(&id);
                             }
                             self.slider_drag = None;
+                            let released_range_slider = self
+                                .range_slider_drag
+                                .as_ref()
+                                .map(|drag| drag.widget_id.clone());
+                            if let Some(id) = released_range_slider {
+                                self.flush_range_slider_change(&id);
+                            }
+                            self.range_slider_drag = None;
+                            let released_drag_number = self
+                                .drag_number_drag
+                                .as_ref()
+                                .map(|drag| drag.widget_id.clone());
+                            if let Some(id) = released_drag_number {
+                                self.flush_slider_change(&id);
+                            }
+                            self.drag_number_drag = None;
                             let released_line_plot_pan = self.line_plot_pan_drag.take().is_some();
                             let released_line_plot_box_zoom = self.line_plot_box_zoom_drag.take();
                             let released_histogram_pan = self.histogram_pan_drag.take().is_some();
                             let released_histogram_box_zoom = self.histogram_box_zoom_drag.take();
                             if released_scrollbar {
+                                self.request_redraw();
+                                return;
+                            }
+                            if released_table_scrollbar {
+                                self.request_redraw();
+                                return;
+                            }
+                            if released_splitter {
+                                self.request_redraw();
+                                return;
+                            }
+                            if released_table_column_resize {
                                 self.request_redraw();
                                 return;
                             }
@@ -16403,6 +18104,12 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                 return;
                             }
                             if released_scatter_pan {
+                                self.request_redraw();
+                                return;
+                            }
+                            let released_drag_drop =
+                                self.finish_drag_drop(self.last_mouse_pos.unwrap_or([0.0, 0.0]));
+                            if released_drag_drop {
                                 self.request_redraw();
                                 return;
                             }
@@ -16522,7 +18229,15 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                     if let Some(kind) =
                                         self.gpu.as_ref().and_then(|g| g.widget_kind(&pid))
                                     {
-                                        self.activate_widget(&pid, kind);
+                                        if kind == WidgetKind::TreeNode
+                                            && self.gpu.as_ref().is_some_and(|g| {
+                                                g.tree_node_disclosure_contains(&pid, pos)
+                                            })
+                                        {
+                                            self.toggle_tree_node_expanded(&pid);
+                                        } else {
+                                            self.activate_widget(&pid, kind);
+                                        }
                                     }
                                 }
                                 // Rebuild to clear pressed / update checkbox.
@@ -16605,6 +18320,49 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                     gpu.close_popups();
                                 }
                                 self.begin_scrollbar_drag(hit, pos);
+                                self.request_redraw();
+                                return;
+                            }
+
+                            if let Some(hit) = (!modal_active)
+                                .then(|| self.gpu.as_ref().and_then(|g| g.splitter_gutter_at(pos)))
+                                .flatten()
+                            {
+                                self.set_focus(None);
+                                if let Some(gpu) = &mut self.gpu {
+                                    gpu.close_popups();
+                                }
+                                self.begin_splitter_drag(hit, pos);
+                                self.request_redraw();
+                                return;
+                            }
+
+                            if let Some(hit) = (!modal_active)
+                                .then(|| self.gpu.as_ref().and_then(|g| g.table_scrollbar_at(pos)))
+                                .flatten()
+                            {
+                                self.set_focus(Some(hit.widget_id.clone()));
+                                if let Some(gpu) = &mut self.gpu {
+                                    gpu.close_popups();
+                                }
+                                self.begin_table_scrollbar_drag(hit, pos);
+                                self.request_redraw();
+                                return;
+                            }
+
+                            if let Some(hit) = (!modal_active)
+                                .then(|| {
+                                    self.gpu
+                                        .as_ref()
+                                        .and_then(|g| g.table_column_resize_at(pos))
+                                })
+                                .flatten()
+                            {
+                                self.set_focus(Some(hit.table_id.clone()));
+                                if let Some(gpu) = &mut self.gpu {
+                                    gpu.close_popups();
+                                }
+                                self.begin_table_column_resize_drag(hit, pos);
                                 self.request_redraw();
                                 return;
                             }
@@ -16704,6 +18462,13 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                 }
                             }
 
+                            if let Some(hit) = (!modal_active)
+                                .then(|| self.gpu.as_ref().and_then(|g| g.drag_source_at(pos)))
+                                .flatten()
+                            {
+                                self.begin_drag_drop(hit, pos);
+                            }
+
                             if let Some((id, kind)) =
                                 self.gpu.as_ref().and_then(|g| g.hit_test_ui(pos))
                             {
@@ -16716,10 +18481,21 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                     if kind == WidgetKind::Slider {
                                         self.slider_drag = gpu.create_slider_drag(&id);
                                     }
+                                    if kind == WidgetKind::RangeSlider {
+                                        self.range_slider_drag =
+                                            gpu.create_range_slider_drag(&id, pos[0]);
+                                    }
+                                    if kind == WidgetKind::DragNumber {
+                                        self.drag_number_drag =
+                                            gpu.create_drag_number_drag(&id, pos[0]);
+                                    }
                                     gpu.rebuild_visuals();
                                 }
                                 if kind == WidgetKind::Slider {
                                     self.update_slider_drag(pos[0], true);
+                                }
+                                if kind == WidgetKind::RangeSlider {
+                                    self.update_range_slider_drag(pos[0], true);
                                 }
                                 self.request_redraw();
                                 return;
@@ -16898,8 +18674,20 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                 // Drag interactions take priority.
                 if self.scrollbar_drag.is_some() {
                     self.update_scrollbar_drag(new_pos);
+                } else if self.table_scrollbar_drag.is_some() {
+                    self.update_table_scrollbar_drag(new_pos);
+                } else if self.splitter_drag.is_some() {
+                    self.update_splitter_drag(new_pos);
+                } else if self.table_column_resize_drag.is_some() {
+                    self.update_table_column_resize_drag(new_pos);
                 } else if self.slider_drag.is_some() {
                     self.update_slider_drag(new_pos[0], false);
+                } else if self.range_slider_drag.is_some() {
+                    self.update_range_slider_drag(new_pos[0], false);
+                } else if self.drag_number_drag.is_some() {
+                    self.update_drag_number_drag(new_pos[0], false);
+                } else if self.drag_drop_session.is_some() {
+                    self.update_drag_drop(new_pos);
                 } else if let Some(id) = self.line_plot_pan_drag.clone() {
                     if let Some(old) = self.last_mouse_pos {
                         let delta = [new_pos[0] - old[0], new_pos[1] - old[1]];
@@ -17002,7 +18790,13 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
 
                 // Update hover state when no button is held.
                 if self.scrollbar_drag.is_none()
+                    && self.table_scrollbar_drag.is_none()
+                    && self.splitter_drag.is_none()
+                    && self.table_column_resize_drag.is_none()
                     && self.slider_drag.is_none()
+                    && self.range_slider_drag.is_none()
+                    && self.drag_number_drag.is_none()
+                    && self.drag_drop_session.is_none()
                     && self.line_plot_pan_drag.is_none()
                     && self.line_plot_box_zoom_drag.is_none()
                     && self.histogram_pan_drag.is_none()
@@ -17363,7 +19157,10 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                 let focused = self.gpu.as_ref().and_then(|g| g.focused_kind());
                 if let Some((id, kind)) = focused {
                     let insertable = match kind {
-                        WidgetKind::TextArea => is_insert_multiline_text(&text),
+                        WidgetKind::TextArea | WidgetKind::CodeEditor => {
+                            is_insert_multiline_text(&text)
+                        }
+                        WidgetKind::LogView => false,
                         _ => is_insert_text(&text),
                     };
                     if insertable {
@@ -17382,7 +19179,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                 }
                                 self.request_redraw();
                             }
-                            WidgetKind::TextArea => {
+                            WidgetKind::TextArea | WidgetKind::CodeEditor => {
                                 if let Some(value) = changed {
                                     self.emit_change(&id, ChangeValue::Text(value));
                                 }

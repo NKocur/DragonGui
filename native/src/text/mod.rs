@@ -20,8 +20,8 @@ use crate::css_style::{
     StylesheetStore,
 };
 use crate::document::{WidgetKind, WidgetNode};
-use crate::events::WidgetState;
-use crate::layout::{LayoutResult, Rect};
+use crate::events::{TableSortColumn, WidgetState};
+use crate::layout::{tree_node_row_height_for_style, LayoutResult, Rect};
 use crate::overlays::{
     active_menu_overlay_rects, active_tooltip_overlay_rect, dropdown_overlay_rect, find_node,
     menu_popup_rect, rich_tooltip_target, tooltip_target,
@@ -29,14 +29,15 @@ use crate::overlays::{
 use crate::resources::ResourceRegistry;
 use crate::style::{
     badge_font_size_lp, badge_height_for_style, badge_width_for_text, base_part_style,
-    checked_part_style_for_state, collapsed_part_style_for_state,
-    collapsible_header_height_for_style, expanded_part_style_for_state,
-    number_stepper_width_for_style, open_part_style_for_state, selected_part_style_for_state,
-    standalone_badge_horizontal_padding_lp, state_part_style_for_state, uniform_layout_padding,
-    FontFamily, FontStyle, FontVariantNumeric, GeneratedContent, LineHeight, NodeStyle,
-    PartLayoutStyle, PartStyle, PositionStyle, TextAlign, TextOverflow, TextSpacing, TextStyle,
-    TextTransform, TransformStyle, VisualStyle, BADGE_GAP_LP, BORDER_WIDTH_LP, CHECKBOX_BOX_LP,
-    CHECKBOX_LEFT_PAD_LP, DROPDOWN_CHEVRON_WIDTH_LP, TAB_GAP_LP,
+    checked_part_style_for_state, code_editor_gutter_width_for_style,
+    collapsed_part_style_for_state, collapsible_header_height_for_style,
+    expanded_part_style_for_state, number_stepper_width_for_style, open_part_style_for_state,
+    selected_part_style_for_state, standalone_badge_horizontal_padding_lp,
+    state_part_style_for_state, uniform_layout_padding, FontFamily, FontStyle, FontVariantNumeric,
+    GeneratedContent, LineHeight, NodeStyle, PartLayoutStyle, PartStyle, PositionStyle, TextAlign,
+    TextOverflow, TextSpacing, TextStyle, TextTransform, TransformStyle, VisualStyle, BADGE_GAP_LP,
+    BORDER_WIDTH_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP, DROPDOWN_CHEVRON_WIDTH_LP, TAB_GAP_LP,
+    TOGGLE_SWITCH_TRACK_WIDTH_LP,
 };
 use crate::table;
 use crate::theme::Theme;
@@ -1389,6 +1390,11 @@ fn collect_text(
         WidgetKind::ProgressBar => base_part_style(&node.style, "label").map(|part| &part.text),
         WidgetKind::Tab => base_part_style(&node.style, "tab").map(|part| &part.text),
         WidgetKind::NavItem => base_part_style(&node.style, "item").map(|part| &part.text),
+        WidgetKind::Selectable => base_part_style(&node.style, "label").map(|part| &part.text),
+        WidgetKind::RadioButton => base_part_style(&node.style, "label").map(|part| &part.text),
+        WidgetKind::TreeNode => base_part_style(&node.style, "label").map(|part| &part.text),
+        WidgetKind::ToggleSwitch => base_part_style(&node.style, "label").map(|part| &part.text),
+        WidgetKind::DragNumber => base_part_style(&node.style, "value").map(|part| &part.text),
         WidgetKind::Collapsible => base_part_style(&node.style, "header").map(|part| &part.text),
         _ => None,
     };
@@ -1425,13 +1431,21 @@ fn collect_text(
             | WidgetKind::Tag
             | WidgetKind::Label
             | WidgetKind::Button
+            | WidgetKind::SmallButton
+            | WidgetKind::Selectable
+            | WidgetKind::RadioButton
+            | WidgetKind::TreeNode
             | WidgetKind::Checkbox
+            | WidgetKind::ToggleSwitch
             | WidgetKind::Collapsible
             | WidgetKind::Dropdown
             | WidgetKind::Menu
             | WidgetKind::TextInput
             | WidgetKind::TextArea
+            | WidgetKind::CodeEditor
+            | WidgetKind::LogView
             | WidgetKind::NumberInput
+            | WidgetKind::DragNumber
             | WidgetKind::ProgressBar
             | WidgetKind::Tab
             | WidgetKind::NavItem
@@ -1441,7 +1455,10 @@ fn collect_text(
         let mut caret = None;
         if matches!(
             node.kind,
-            WidgetKind::TextInput | WidgetKind::TextArea | WidgetKind::NumberInput
+            WidgetKind::TextInput
+                | WidgetKind::TextArea
+                | WidgetKind::CodeEditor
+                | WidgetKind::NumberInput
         ) {
             let value = state.text_for(&node.id).unwrap_or("");
             if value.is_empty() {
@@ -1529,7 +1546,7 @@ fn collect_text(
                             r.y + r.h,
                         )
                     }
-                    WidgetKind::Button => {
+                    WidgetKind::Button | WidgetKind::SmallButton => {
                         let reserved = badge_reserved_width(node, theme, sf);
                         let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
                         (
@@ -1540,6 +1557,71 @@ fn collect_text(
                             r.x + r.w - pad - reserved,
                             r.y + r.h,
                         )
+                    }
+                    WidgetKind::Selectable => {
+                        let row_pad = part_padding(node, &["row"], pad, sf);
+                        let indicator_slot = 14.0 * sf;
+                        let left = r.x + row_pad + indicator_slot;
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        (left, top, left, r.y, r.x + r.w - row_pad, r.y + r.h)
+                    }
+                    WidgetKind::RadioButton => {
+                        let indicator_w = node
+                            .style
+                            .parts
+                            .parts
+                            .get("indicator")
+                            .and_then(|part| part.layout.width)
+                            .unwrap_or(14.0)
+                            .max(1.0)
+                            * sf;
+                        let left = r.x + pad + indicator_w + pad * 0.9;
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        (left, top, left, r.y, r.x + r.w - pad, r.y + r.h)
+                    }
+                    WidgetKind::ToggleSwitch => {
+                        let track_w = node
+                            .style
+                            .parts
+                            .parts
+                            .get("track")
+                            .and_then(|part| part.layout.width)
+                            .map(|width| width.max(1.0) * sf)
+                            .unwrap_or(TOGGLE_SWITCH_TRACK_WIDTH_LP * sf)
+                            .min(r.w.max(1.0));
+                        let label_left = node
+                            .props
+                            .raw_props
+                            .get("label_position")
+                            .and_then(|value| value.as_str())
+                            .is_some_and(|value| value.eq_ignore_ascii_case("left"));
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        if label_left {
+                            let track_x = r.x + r.w - CHECKBOX_LEFT_PAD_LP * sf - track_w;
+                            let left = r.x + pad;
+                            (left, top, left, r.y, (track_x - pad).max(left), r.y + r.h)
+                        } else {
+                            let left = r.x + CHECKBOX_LEFT_PAD_LP * sf + track_w + pad;
+                            (left, top, left, r.y, r.x + r.w - pad, r.y + r.h)
+                        }
+                    }
+                    WidgetKind::TreeNode => {
+                        let indicator_w = node
+                            .style
+                            .parts
+                            .parts
+                            .get("indicator")
+                            .and_then(|part| part.layout.width)
+                            .unwrap_or(14.0)
+                            .max(1.0)
+                            * sf;
+                        let row_h = tree_node_row_height_for_style(node, theme, sf, Some(r.h))
+                            .min(r.h)
+                            .max(1.0);
+                        let row_pad = part_padding(node, &["row"], pad, sf);
+                        let left = r.x + row_pad + indicator_w + pad * 0.75;
+                        let top = r.y + ((row_h - line_height) * 0.5).max(0.0);
+                        (left, top, left, r.y, r.x + r.w - row_pad, r.y + row_h)
                     }
                     WidgetKind::Badge | WidgetKind::Tag => {
                         let (pad_left, pad_right) =
@@ -1569,7 +1651,47 @@ fn collect_text(
                             r.y + r.h,
                         )
                     }
-                    WidgetKind::TextArea => {
+                    WidgetKind::DragNumber => {
+                        let grip_w = node
+                            .style
+                            .parts
+                            .parts
+                            .get("grip")
+                            .and_then(|part| part.layout.width)
+                            .unwrap_or(16.0)
+                            .max(1.0)
+                            * sf;
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        let text_left = r.x + pad;
+                        (
+                            text_left,
+                            top,
+                            text_left,
+                            r.y,
+                            r.x + r.w - grip_w - pad * 0.5,
+                            r.y + r.h,
+                        )
+                    }
+                    WidgetKind::TextArea | WidgetKind::CodeEditor => {
+                        let visible_h = (r.h - pad * 2.0).max(1.0);
+                        let scroll_y = state.text_area_scroll_y(&node.id, visible_h, line_height);
+                        let gutter_w = if node.kind == WidgetKind::CodeEditor {
+                            code_editor_gutter_width_for_style(&node.style, sf)
+                                .min((r.w - pad * 2.0).max(1.0) * 0.5)
+                        } else {
+                            0.0
+                        };
+                        let top = r.y + pad;
+                        (
+                            r.x + pad + gutter_w,
+                            top - scroll_y,
+                            r.x + pad + gutter_w,
+                            r.y + pad,
+                            r.x + r.w - pad,
+                            r.y + r.h - pad,
+                        )
+                    }
+                    WidgetKind::LogView => {
                         let visible_h = (r.h - pad * 2.0).max(1.0);
                         let scroll_y = state.text_area_scroll_y(&node.id, visible_h, line_height);
                         let top = r.y + pad;
@@ -1658,7 +1780,57 @@ fn collect_text(
                         &["field"],
                         text_color(node, state, theme, placeholder),
                     )
-                } else if node.kind == WidgetKind::Checkbox && !placeholder {
+                } else if node.kind == WidgetKind::DragNumber && !placeholder {
+                    part_text_color(
+                        node,
+                        state,
+                        theme,
+                        &["value", "field"],
+                        text_color(node, state, theme, placeholder),
+                    )
+                } else if node.kind == WidgetKind::CodeEditor && !placeholder {
+                    part_text_color(
+                        node,
+                        state,
+                        theme,
+                        &["field"],
+                        text_color(node, state, theme, placeholder),
+                    )
+                } else if node.kind == WidgetKind::LogView && !placeholder {
+                    part_text_color(
+                        node,
+                        state,
+                        theme,
+                        &["line"],
+                        text_color(node, state, theme, placeholder),
+                    )
+                } else if matches!(node.kind, WidgetKind::Checkbox | WidgetKind::ToggleSwitch)
+                    && !placeholder
+                {
+                    part_text_color(
+                        node,
+                        state,
+                        theme,
+                        &["label"],
+                        text_color(node, state, theme, placeholder),
+                    )
+                } else if node.kind == WidgetKind::Selectable && !placeholder {
+                    part_text_color(
+                        node,
+                        state,
+                        theme,
+                        &["label"],
+                        text_color(node, state, theme, placeholder),
+                    )
+                } else if node.kind == WidgetKind::RadioButton && !placeholder {
+                    part_text_color(
+                        node,
+                        state,
+                        theme,
+                        &["label"],
+                        text_color(node, state, theme, placeholder),
+                    )
+                } else if node.kind == WidgetKind::TreeNode && !placeholder {
                     part_text_color(
                         node,
                         state,
@@ -1749,7 +1921,7 @@ fn collect_text(
                             right: (clip_rect.x + clip_rect.w) as i32,
                             bottom: (clip_rect.y + clip_rect.h) as i32,
                         };
-                        if node.kind == WidgetKind::TextArea {
+                        if node.kind == WidgetKind::LogView {
                             let scroll_y = layout
                                 .rects
                                 .get(&node.id)
@@ -1761,6 +1933,60 @@ fn collect_text(
                                     )
                                 })
                                 .unwrap_or(0.0);
+                            emit_log_view_lines(
+                                node,
+                                state,
+                                theme,
+                                *r,
+                                text,
+                                scroll_y,
+                                sf,
+                                font_size,
+                                line_height,
+                                font_family,
+                                font_weight,
+                                text_bounds,
+                                font_system,
+                                font_aliases,
+                                cache,
+                                caret_positions,
+                                out,
+                            );
+                        } else if matches!(node.kind, WidgetKind::TextArea | WidgetKind::CodeEditor)
+                        {
+                            let scroll_y = layout
+                                .rects
+                                .get(&node.id)
+                                .map(|r| {
+                                    state.text_area_scroll_y(
+                                        &node.id,
+                                        (r.h - pad * 2.0).max(1.0),
+                                        line_height,
+                                    )
+                                })
+                                .unwrap_or(0.0);
+                            if node.kind == WidgetKind::CodeEditor {
+                                let raw_text = state.text_for(&node.id).unwrap_or("");
+                                emit_code_editor_line_numbers(
+                                    node,
+                                    state,
+                                    theme,
+                                    *r,
+                                    pad,
+                                    sf,
+                                    raw_text,
+                                    line_height,
+                                    font_size,
+                                    font_family,
+                                    font_weight,
+                                    scroll_y,
+                                    font_system,
+                                    font_aliases,
+                                    cache,
+                                    caret_positions,
+                                    out,
+                                );
+                            }
                             push_text_entry_impl(
                                 font_system,
                                 font_aliases,
@@ -1831,7 +2057,7 @@ fn collect_text(
 
         if matches!(
             node.kind,
-            WidgetKind::Button | WidgetKind::Tab | WidgetKind::NavItem
+            WidgetKind::Button | WidgetKind::SmallButton | WidgetKind::Tab | WidgetKind::NavItem
         ) {
             emit_badge_text(
                 node,
@@ -2150,6 +2376,8 @@ fn widget_kind_name(kind: WidgetKind) -> &'static str {
         WidgetKind::ScrollArea => "scroll_area",
         WidgetKind::GridLayout => "grid_layout",
         WidgetKind::FlowLayout => "flow_layout",
+        WidgetKind::Splitter => "splitter",
+        WidgetKind::Pane => "pane",
         WidgetKind::Panel => "panel",
         WidgetKind::Collapsible => "collapsible",
         WidgetKind::Modal => "modal",
@@ -2157,14 +2385,29 @@ fn widget_kind_name(kind: WidgetKind) -> &'static str {
         WidgetKind::Tag => "tag",
         WidgetKind::Led => "led",
         WidgetKind::Button => "button",
+        WidgetKind::SmallButton => "small_button",
+        WidgetKind::IconButton => "icon_button",
+        WidgetKind::ImageButton => "image_button",
+        WidgetKind::ArrowButton => "arrow_button",
+        WidgetKind::Selectable => "selectable",
+        WidgetKind::RadioButton => "radio_button",
+        WidgetKind::TreeView => "tree_view",
+        WidgetKind::TreeNode => "tree_node",
+        WidgetKind::DragSource => "drag_source",
+        WidgetKind::DropTarget => "drop_target",
         WidgetKind::Checkbox => "checkbox",
+        WidgetKind::ToggleSwitch => "toggle_switch",
         WidgetKind::Dropdown => "dropdown",
         WidgetKind::Label => "label",
         WidgetKind::Slider => "slider",
+        WidgetKind::RangeSlider => "range_slider",
         WidgetKind::NumberInput => "number_input",
+        WidgetKind::DragNumber => "drag_number",
         WidgetKind::ProgressBar => "progress_bar",
         WidgetKind::TextInput => "text_input",
         WidgetKind::TextArea => "text_area",
+        WidgetKind::CodeEditor => "code_editor",
+        WidgetKind::LogView => "log_view",
         WidgetKind::Separator => "separator",
         WidgetKind::Spacer => "spacer",
         WidgetKind::StatusBar => "status_bar",
@@ -3458,7 +3701,7 @@ fn collect_table_text(
                 let header_color =
                     part_text_color(node, state, theme, header_parts, table_text_color);
                 let header_muted = part_text_color(node, state, theme, header_parts, muted);
-                let index_header_bounds = table_text_bounds(
+                let mut index_header_bounds = table_text_bounds(
                     r,
                     Rect {
                         x: r.x,
@@ -3469,6 +3712,14 @@ fn collect_table_text(
                     pad,
                     table_radii,
                 );
+                if table_state
+                    .sort
+                    .is_some_and(|(target, _)| target == TableSortColumn::Index)
+                {
+                    let reserve = (DROPDOWN_CHEVRON_WIDTH_LP * sf + pad).ceil() as i32;
+                    index_header_bounds.right =
+                        (index_header_bounds.right - reserve).max(index_header_bounds.left + 1);
+                }
                 let index_header_bounds =
                     clamp_text_bounds_bottom(index_header_bounds, header_bottom);
 
@@ -3504,7 +3755,8 @@ fn collect_table_text(
 
                 for col_offset in 0..visible.col_count {
                     let col = visible.first_col + col_offset;
-                    let Some((col_x, col_right)) = table::column_bounds(&r, metrics, col_offset)
+                    let Some((col_x, col_right)) =
+                        table::column_bounds(table_state, &r, metrics, col_offset)
                     else {
                         continue;
                     };
@@ -3526,7 +3778,7 @@ fn collect_table_text(
                     );
                     if table_state
                         .sort
-                        .is_some_and(|(sort_col, _)| sort_col == col)
+                        .is_some_and(|(target, _)| target == TableSortColumn::Data(col))
                     {
                         let reserve = (DROPDOWN_CHEVRON_WIDTH_LP * sf + pad).ceil() as i32;
                         bounds.right = (bounds.right - reserve).max(bounds.left + 1);
@@ -3632,7 +3884,7 @@ fn collect_table_text(
                     for col_offset in 0..visible.col_count {
                         let col = visible.first_col + col_offset;
                         let Some((col_x, col_right)) =
-                            table::column_bounds(&r, metrics, col_offset)
+                            table::column_bounds(table_state, &r, metrics, col_offset)
                         else {
                             continue;
                         };
@@ -3783,7 +4035,12 @@ fn table_text_bounds(table: Rect, cell: Rect, pad: f32, radii: [f32; 4]) -> Text
 
 fn display_text<'a>(node: &'a WidgetNode, state: &'a WidgetState) -> Option<(&'a str, bool)> {
     match node.kind {
-        WidgetKind::TextInput | WidgetKind::TextArea | WidgetKind::NumberInput => {
+        WidgetKind::TextInput
+        | WidgetKind::TextArea
+        | WidgetKind::CodeEditor
+        | WidgetKind::LogView
+        | WidgetKind::NumberInput
+        | WidgetKind::DragNumber => {
             let value = state.text_for(&node.id).unwrap_or("");
             if value.is_empty() {
                 state
@@ -3804,6 +4061,206 @@ fn display_text<'a>(node: &'a WidgetNode, state: &'a WidgetState) -> Option<(&'a
             .as_deref()
             .filter(|t| !t.is_empty())
             .map(|t| (t, false)),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_log_view_lines(
+    node: &WidgetNode,
+    state: &WidgetState,
+    theme: &Theme,
+    rect: Rect,
+    text: &str,
+    scroll_y: f32,
+    sf: f32,
+    font_size: f32,
+    line_height: f32,
+    font_family: Option<&FontFamily>,
+    font_weight: u16,
+    text_bounds: TextBounds,
+    font_system: &mut FontSystem,
+    font_aliases: &FontFamilyAliases,
+    cache: &mut TextBufferCache,
+    caret_positions: &mut HashMap<String, [f32; 2]>,
+    out: &mut Vec<TextEntry>,
+) {
+    if line_height <= 0.0 || text_bounds.right <= text_bounds.left {
+        return;
+    }
+    let bottom_bleed = (line_height * 0.30)
+        .max(2.0 * sf)
+        .min((rect.h * 0.08).max(0.0));
+    let bounds = TextBounds {
+        bottom: ((text_bounds.bottom as f32 + bottom_bleed).min(rect.y + rect.h)) as i32,
+        ..text_bounds
+    };
+    let total_lines = text.split('\n').count().max(1);
+    let first = (scroll_y / line_height).floor().max(0.0) as usize;
+    let visible_h = (bounds.bottom - bounds.top).max(1) as f32;
+    let count = ((visible_h / line_height).ceil() as usize).saturating_add(2);
+    let last = first.saturating_add(count).min(total_lines);
+    if first >= last {
+        return;
+    }
+    let line_font_size = part_font_size(node, &["line"], font_size, sf);
+    let line_font_family = part_font_family(node, &["line"], font_family);
+    let line_font_weight = part_font_weight(node, &["line"], font_weight);
+    let base_color = part_text_color(
+        node,
+        state,
+        theme,
+        &["line"],
+        text_color(node, state, theme, false),
+    );
+    let line_options = text_options_from_styles(part_text_style(node, &["line"]), &node.style.text);
+    let left = bounds.left as f32;
+    let top_base = text_bounds.top as f32 - scroll_y;
+    for (index, line) in text.split('\n').enumerate().skip(first).take(last - first) {
+        let top = top_base + index as f32 * line_height;
+        if top + line_height < bounds.top as f32 || top > bounds.bottom as f32 {
+            continue;
+        }
+        let part = log_line_level_part(line);
+        let color = if part == "line" {
+            base_color
+        } else {
+            part_text_color(node, state, theme, &[part, "line"], base_color)
+        };
+        let options = text_options_from_styles(
+            part_text_style(node, &[part, "line"]),
+            part_text_style(node, &["line"]).unwrap_or(&node.style.text),
+        );
+        push_text_entry(
+            font_system,
+            font_aliases,
+            out,
+            line,
+            line_font_size,
+            line_height,
+            line_font_family,
+            line_font_weight,
+            left,
+            top,
+            bounds,
+            color,
+            TextAlign::Left,
+            cache,
+            None,
+            caret_positions,
+            if part == "line" {
+                line_options
+            } else {
+                options
+            },
+        );
+    }
+}
+
+fn log_line_level_part(line: &str) -> &'static str {
+    let lower = line.trim_start().to_ascii_lowercase();
+    if lower.contains("error") || lower.contains("fatal") || lower.contains("[err]") {
+        "error"
+    } else if lower.contains("warn") {
+        "warning"
+    } else if lower.contains("debug") || lower.contains("trace") {
+        "debug"
+    } else if lower.contains("info") {
+        "info"
+    } else {
+        "line"
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_code_editor_line_numbers(
+    node: &WidgetNode,
+    state: &WidgetState,
+    theme: &Theme,
+    rect: Rect,
+    pad: f32,
+    sf: f32,
+    text: &str,
+    line_height: f32,
+    font_size: f32,
+    font_family: Option<&FontFamily>,
+    font_weight: u16,
+    scroll_y: f32,
+    font_system: &mut FontSystem,
+    font_aliases: &FontFamilyAliases,
+    cache: &mut TextBufferCache,
+    caret_positions: &mut HashMap<String, [f32; 2]>,
+    out: &mut Vec<TextEntry>,
+) {
+    let gutter_w = code_editor_gutter_width_for_style(&node.style, sf)
+        .min((rect.w - pad * 2.0).max(1.0) * 0.5);
+    if gutter_w <= 1.0 || line_height <= 0.0 {
+        return;
+    }
+    let left_inset = (pad * 0.5).max(4.0 * sf);
+    let right_inset = part_padding(node, &["line-number"], pad, sf).max(6.0 * sf);
+    let bottom_bleed = (line_height * 0.30).max(2.0 * sf).min(pad);
+    let clip_rect = Rect {
+        x: rect.x + left_inset,
+        y: rect.y + pad,
+        w: (gutter_w - left_inset - right_inset).max(1.0),
+        h: (rect.h - pad * 2.0 + bottom_bleed).max(1.0),
+    }
+    .intersect(rect);
+    let Some(clip_rect) = clip_rect else {
+        return;
+    };
+    let bounds = TextBounds {
+        left: clip_rect.x as i32,
+        top: clip_rect.y as i32,
+        right: (clip_rect.x + clip_rect.w) as i32,
+        bottom: (clip_rect.y + clip_rect.h) as i32,
+    };
+    let total_lines = text.split('\n').count().max(1);
+    let first = (scroll_y / line_height).floor().max(0.0) as usize;
+    let count = ((clip_rect.h / line_height).ceil() as usize).saturating_add(2);
+    let last = first.saturating_add(count).min(total_lines);
+    if first >= last {
+        return;
+    }
+    let line_font_size = part_font_size(node, &["line-number"], font_size, sf);
+    let line_font_family = part_font_family(node, &["line-number"], font_family);
+    let line_font_weight = part_font_weight(node, &["line-number"], font_weight);
+    let line_color = part_text_color(
+        node,
+        state,
+        theme,
+        &["line-number"],
+        glyph_color(theme.muted_text),
+    );
+    let options =
+        text_options_from_styles(part_text_style(node, &["line-number"]), &node.style.text);
+    let left = rect.x + left_inset;
+    let top_base = rect.y + pad - scroll_y;
+    for index in first..last {
+        let top = top_base + index as f32 * line_height;
+        if top + line_height < clip_rect.y || top > clip_rect.y + clip_rect.h {
+            continue;
+        }
+        let label = (index + 1).to_string();
+        push_text_entry(
+            font_system,
+            font_aliases,
+            out,
+            &label,
+            line_font_size,
+            line_height,
+            line_font_family,
+            line_font_weight,
+            left,
+            top,
+            bounds,
+            line_color,
+            TextAlign::Right,
+            cache,
+            None,
+            caret_positions,
+            options,
+        );
     }
 }
 
@@ -5595,6 +6052,7 @@ mod tests {
                 selected: None,
                 sort: None,
                 row_order: None,
+                column_widths: Vec::new(),
             },
         );
 
@@ -5692,6 +6150,7 @@ mod tests {
                 selected: None,
                 sort: None,
                 row_order: None,
+                column_widths: Vec::new(),
             },
         );
 

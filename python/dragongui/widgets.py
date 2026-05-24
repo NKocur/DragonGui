@@ -7,6 +7,7 @@ import zlib
 from contextlib import AbstractContextManager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
+from datetime import date as _Date, datetime as _DateTime, time as _Time
 from itertools import count
 import math
 import numbers
@@ -437,6 +438,8 @@ _SUPPORTED_PARTS_BY_KIND: dict[str, set[str]] = {
     "pages": {"scrollbar-track", "scrollbar-thumb"},
     "page": {"scrollbar-track", "scrollbar-thumb"},
     "sidebar": {"scrollbar-track", "scrollbar-thumb"},
+    "splitter": {"gutter"},
+    "pane": {"pane"},
     "panel": {"accent", "scrollbar-track", "scrollbar-thumb"},
     "collapsible": {
         "header",
@@ -447,6 +450,10 @@ _SUPPORTED_PARTS_BY_KIND: dict[str, set[str]] = {
     },
     "modal": {"scrim", "scrollbar-track", "scrollbar-thumb"},
     "button": {"badge"},
+    "small_button": {"badge"},
+    "icon_button": {"icon"},
+    "image_button": {"image"},
+    "arrow_button": {"icon"},
     "number_input": {
         "field",
         "stepper",
@@ -456,15 +463,28 @@ _SUPPORTED_PARTS_BY_KIND: dict[str, set[str]] = {
         "divider",
         "caret",
     },
+    "code_editor": {"field", "gutter", "line-number", "caret"},
+    "log_view": {"line", "debug", "info", "warning", "error"},
+    "drag_number": {"field", "value", "grip"},
     "dropdown": {"field", "chevron", "menu", "item", "item-selected", "item-hover"},
     "checkbox": {"row", "box", "indicator", "label"},
+    "toggle_switch": {"row", "track", "thumb", "label"},
+    "tree_node": {"row", "indicator", "label", "guide"},
     "led": {"dot", "glow", "highlight"},
     "slider": {"track", "fill", "thumb"},
+    "range_slider": {"track", "range", "thumb-min", "thumb-max", "label"},
     "progress_bar": {"track", "fill", "label"},
     "tabs": {"header"},
     "tab": {"tab", "accent", "badge"},
     "nav_item": {"item", "accent", "badge"},
-    "dataframe_table": {"header", "row", "row-selected", "grid-line"},
+    "dataframe_table": {
+        "header",
+        "row",
+        "row-selected",
+        "grid-line",
+        "scrollbar-track",
+        "scrollbar-thumb",
+    },
 }
 
 _BADGE_LEVELS = {"neutral", "info", "success", "warning", "danger", "error"}
@@ -537,10 +557,19 @@ def _walk_widget_tree(widget: "Widget") -> list["Widget"]:
 Callback = Callable[[], None]
 BoolCallback = Callable[[bool], None]
 FloatCallback = Callable[[float], None]
+RangeCallback = Callable[[tuple[float, float]], None]
 StringCallback = Callable[[str], None]
 ColorCallback = Callable[[tuple[int, ...]], None]
 BadgeValue = str | int | None
 LedColorValue = str | Sequence[object]
+DropAcceptValue = str | Sequence[str] | None
+
+
+@dataclass(frozen=True)
+class PropertyChange:
+    key: str
+    value: object
+    old_value: object | None = None
 
 
 @dataclass(frozen=True)
@@ -551,7 +580,37 @@ class TableSelection:
     value: object
 
 
+@dataclass(frozen=True)
+class TableSort:
+    column_index: int
+    column: str
+    descending: bool = False
+    is_index: bool = False
+
+    @property
+    def direction(self) -> str:
+        return "desc" if self.descending else "asc"
+
+    @property
+    def target(self) -> str:
+        return "index" if self.is_index else "column"
+
+
 TableSelectCallback = Callable[[TableSelection], None]
+TableSortCallback = Callable[[TableSort], None]
+
+
+@dataclass(frozen=True)
+class DragDropPayload:
+    source_id: str
+    target_id: str
+    payload: object
+    kind: str | None = None
+    x: float = 0.0
+    y: float = 0.0
+
+
+DropCallback = Callable[[DragDropPayload], None]
 
 
 @dataclass(frozen=True)
@@ -1091,6 +1150,49 @@ def _badge_value(value: BadgeValue) -> str | None:
     raise TypeError("badge must be a str, int, or None")
 
 
+def _json_compatible_payload(value: object) -> object:
+    try:
+        encoded = json.dumps(value, separators=(",", ":"), sort_keys=True)
+    except (TypeError, ValueError) as exc:
+        raise TypeError("drag payload must be JSON serializable") from exc
+    return json.loads(encoded)
+
+
+def _payload_kind(payload: object, drag_kind: str | None) -> str | None:
+    if drag_kind is not None:
+        kind = str(drag_kind).strip()
+        if not kind:
+            raise ValueError("drag kind cannot be empty")
+        return kind
+    if isinstance(payload, Mapping):
+        value = payload.get("kind")
+        if value is not None:
+            kind = str(value).strip()
+            if kind:
+                return kind
+    return None
+
+
+def _drop_accept_list(accept: DropAcceptValue) -> list[str]:
+    if accept is None:
+        return []
+    if isinstance(accept, str):
+        values = [accept]
+    elif isinstance(accept, Sequence) and not isinstance(accept, (bytes, bytearray)):
+        values = list(accept)
+    else:
+        raise TypeError("drop accept must be a string, a sequence of strings, or None")
+    normalized: list[str] = []
+    for value in values:
+        if not isinstance(value, str):
+            raise TypeError("drop accept entries must be strings")
+        item = value.strip()
+        if not item:
+            raise ValueError("drop accept entries cannot be empty")
+        normalized.append(item)
+    return normalized
+
+
 def _badge_level(value: str) -> str:
     if not isinstance(value, str):
         raise TypeError("badge level must be a string")
@@ -1203,6 +1305,13 @@ class Widget:
         handle = self._live()
         if handle is not None and patch:
             handle.enqueue_set_style(patch)
+
+    def set_class(self, class_: str | None) -> None:
+        if class_ is not None and (not isinstance(class_, str) or not class_):
+            raise ValueError("widget class_ must be a non-empty string")
+        self.class_ = class_
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("class", self.class_)
 
     def to_dict(self) -> dict[str, Any]:
         props = self.props()
@@ -1681,6 +1790,217 @@ class FlowLayout(Container):
         if self._flow_cross_align != "start":
             p["cross_align"] = self._flow_cross_align
         return p
+
+
+SplitterSize = int | float | str | None
+
+
+def _normalize_splitter_orientation(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized in {"h", "horizontal", "row", "x"}:
+        return "horizontal"
+    if normalized in {"v", "vertical", "column", "y"}:
+        return "vertical"
+    raise ValueError("Splitter orientation must be 'horizontal' or 'vertical'")
+
+
+def _normalize_splitter_size(value: SplitterSize) -> float | str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"", "auto"}:
+            return None
+        if text.endswith("fr"):
+            number = text[:-2].strip() or "1"
+            flex = float(number)
+            if not math.isfinite(flex) or flex <= 0:
+                raise ValueError("Splitter fr sizes must be positive")
+            return f"{flex:g}fr"
+        raise ValueError("Splitter sizes must be numbers, 'auto', or '<number>fr'")
+    size = float(value)
+    if not math.isfinite(size) or size < 0:
+        raise ValueError("Splitter sizes must be non-negative finite values")
+    return size
+
+
+def _splitter_size_to_flex(value: float | str | None) -> float:
+    if isinstance(value, str) and value.endswith("fr"):
+        return float(value[:-2])
+    return 1.0
+
+
+class Splitter(Container):
+    """Resizable multi-pane layout container."""
+
+    kind = "splitter"
+
+    def __init__(
+        self,
+        *,
+        orientation: str = "horizontal",
+        sizes: Sequence[SplitterSize] | None = None,
+        min_sizes: Sequence[float | None] | None = None,
+        max_sizes: Sequence[float | None] | None = None,
+        gutter_size: int | float = 6,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.orientation = _normalize_splitter_orientation(orientation)
+        self.sizes = tuple(_normalize_splitter_size(size) for size in (sizes or ()))
+        self.min_sizes = self._normalize_optional_sizes(min_sizes, "min_sizes")
+        self.max_sizes = self._normalize_optional_sizes(max_sizes, "max_sizes")
+        gutter = float(gutter_size)
+        if not math.isfinite(gutter) or gutter < 1:
+            raise ValueError("Splitter gutter_size must be a positive finite value")
+        self.gutter_size = gutter
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    @staticmethod
+    def _normalize_optional_sizes(
+        values: Sequence[float | None] | None,
+        name: str,
+    ) -> tuple[float | None, ...]:
+        if values is None:
+            return ()
+        normalized: list[float | None] = []
+        for value in values:
+            if value is None:
+                normalized.append(None)
+                continue
+            size = float(value)
+            if not math.isfinite(size) or size < 0:
+                raise ValueError(f"Splitter {name} entries must be non-negative finite values")
+            normalized.append(size)
+        return tuple(normalized)
+
+    def add(self, child: Widget) -> Widget:
+        child = super().add(child)
+        self._apply_pane_defaults()
+        return child
+
+    def set_sizes(self, sizes: Sequence[SplitterSize]) -> None:
+        self.sizes = tuple(_normalize_splitter_size(size) for size in sizes)
+        self._apply_pane_defaults()
+        for index, child in enumerate(self.children):
+            if not isinstance(child, Pane) or index >= len(self.sizes):
+                continue
+            size = self.sizes[index]
+            if isinstance(size, str):
+                child.set_size(None)
+                child.flex = _splitter_size_to_flex(size)
+            else:
+                child.set_size(size)
+
+    def _apply_pane_defaults(self) -> None:
+        for index, child in enumerate(self.children):
+            if not isinstance(child, Pane):
+                continue
+            child._splitter_orientation = self.orientation
+            child._splitter_index = index
+            if index < len(self.sizes) and child._explicit_size is None:
+                size = self.sizes[index]
+                child._splitter_size = None if isinstance(size, str) else size
+                child._splitter_flex = _splitter_size_to_flex(size)
+            if index < len(self.min_sizes) and child._explicit_min_size is None:
+                child._splitter_min_size = self.min_sizes[index]
+            if index < len(self.max_sizes) and child._explicit_max_size is None:
+                child._splitter_max_size = self.max_sizes[index]
+
+    def props(self) -> dict[str, Any]:
+        self._apply_pane_defaults()
+        return {
+            "orientation": self.orientation,
+            "gutter_size": self.gutter_size,
+            "sizes": list(self.sizes),
+            "min_sizes": list(self.min_sizes),
+            "max_sizes": list(self.max_sizes),
+        }
+
+
+class Pane(Container):
+    """Pane child for Splitter layouts."""
+
+    kind = "pane"
+
+    def __init__(
+        self,
+        *,
+        size: float | None = None,
+        min_size: float | None | object = _UNSET,
+        max_size: float | None = None,
+        flex: float = 1,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self._explicit_size = self._normalize_optional_size(size, "size")
+        if min_size is _UNSET:
+            self._explicit_min_size = None
+            self._default_min_size: float | None = 80.0
+        else:
+            self._explicit_min_size = self._normalize_optional_size(min_size, "min_size")
+            self._default_min_size = None
+        self._explicit_max_size = self._normalize_optional_size(max_size, "max_size")
+        flex_value = float(flex)
+        if not math.isfinite(flex_value) or flex_value <= 0:
+            raise ValueError("Pane flex must be a positive finite value")
+        self.flex = flex_value
+        self._splitter_orientation = "horizontal"
+        self._splitter_index: int | None = None
+        self._splitter_size: float | None = None
+        self._splitter_min_size: float | None = None
+        self._splitter_max_size: float | None = None
+        self._splitter_flex: float | None = None
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    @staticmethod
+    def _normalize_optional_size(value: float | None, name: str) -> float | None:
+        if value is None:
+            return None
+        size = float(value)
+        if not math.isfinite(size) or size < 0:
+            raise ValueError(f"Pane {name} must be a non-negative finite value")
+        return size
+
+    def _effective_size(self) -> float | None:
+        return self._explicit_size if self._explicit_size is not None else self._splitter_size
+
+    def _effective_min_size(self) -> float | None:
+        if self._explicit_min_size is not None:
+            return self._explicit_min_size
+        if self._splitter_min_size is not None:
+            return self._splitter_min_size
+        return self._default_min_size
+
+    def _effective_max_size(self) -> float | None:
+        if self._explicit_max_size is not None:
+            return self._explicit_max_size
+        return self._splitter_max_size
+
+    def _effective_flex(self) -> float:
+        return self._splitter_flex if self._splitter_flex is not None else self.flex
+
+    def set_size(self, size: float | None) -> None:
+        self._explicit_size = self._normalize_optional_size(size, "size")
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("size", self._explicit_size)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "orientation": self._splitter_orientation,
+            "size": self._effective_size(),
+            "min_size": self._effective_min_size(),
+            "max_size": self._effective_max_size(),
+            "flex": self._effective_flex(),
+        }
 
 
 class Separator(Widget):
@@ -2207,6 +2527,118 @@ class Panel(Container):
         }
 
 
+class DragSource(Container):
+    """Transparent container that starts an app-local drag with a JSON payload."""
+
+    kind = "drag_source"
+
+    def __init__(
+        self,
+        payload: object,
+        *,
+        drag_kind: str | None = None,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.payload = _json_compatible_payload(payload)
+        self.drag_kind = _payload_kind(self.payload, drag_kind)
+        self.disabled = bool(disabled)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "payload": self.payload,
+            "drag_kind": self.drag_kind,
+            "disabled": self.disabled,
+        }
+
+
+class DropTarget(Container):
+    """Transparent container that accepts app-local drops from ``DragSource``."""
+
+    kind = "drop_target"
+
+    def __init__(
+        self,
+        *,
+        accept: DropAcceptValue = None,
+        on_drop: DropCallback | None = None,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.accept = _drop_accept_list(accept)
+        self.on_drop = on_drop
+        self.disabled = bool(disabled)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "accept": self.accept,
+            "disabled": self.disabled,
+            "events": ["change"] if self.on_drop and not self.disabled else [],
+        }
+
+
+class DropZone(DropTarget):
+    """Styled drop target convenience widget with a centered label."""
+
+    _DEFAULT_STYLE: ClassVar[dict[str, object]] = {
+        "height": 142,
+        "padding": 14,
+        "border_width": 1,
+        "border_radius": 8,
+        "border_color": "rgba(255,255,255,0.18)",
+        "background": "rgba(255,255,255,0.045)",
+        "align_items": "center",
+        "justify_content": "center",
+        "gap": 6,
+    }
+
+    def __init__(
+        self,
+        label: str,
+        *,
+        accept: DropAcceptValue = None,
+        on_drop: DropCallback | None = None,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.label = str(label)
+        merged_style = {**self._DEFAULT_STYLE, **(style or {})}
+        super().__init__(
+            accept=accept,
+            on_drop=on_drop,
+            disabled=disabled,
+            id=id,
+            key=key,
+            class_=class_,
+            style=merged_style,
+            tooltip=tooltip,
+            parent=parent,
+        )
+        Label(self.label, parent=self, class_="drop-zone-label")
+
+    def props(self) -> dict[str, Any]:
+        data = super().props()
+        data["text"] = self.label
+        return data
+
+
 class Collapsible(Container):
     kind = "collapsible"
 
@@ -2523,6 +2955,302 @@ class Button(Widget):
             handle.enqueue_set_prop("badge", self.badge)
 
 
+def _button_size_value(value: int | float | None, name: str) -> float | None:
+    if value is None:
+        return None
+    size = float(value)
+    if not math.isfinite(size) or size <= 0:
+        raise ValueError(f"{name} must be a positive finite number")
+    return size
+
+
+class SmallButton(Button):
+    kind = "small_button"
+
+
+class IconButton(Button):
+    kind = "icon_button"
+
+    def __init__(
+        self,
+        icon: str,
+        *,
+        on_click: Callback | None = None,
+        disabled: bool = False,
+        size: int | float | None = None,
+        width: int | float | None = None,
+        height: int | float | None = None,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.icon = self._normalize_icon(icon)
+        default_size = _button_size_value(size, "IconButton size")
+        self.width = _button_size_value(width, "IconButton width")
+        self.height = _button_size_value(height, "IconButton height")
+        if default_size is not None:
+            self.width = self.width or default_size
+            self.height = self.height or default_size
+        super().__init__(
+            "",
+            on_click=on_click,
+            disabled=disabled,
+            id=id,
+            key=key,
+            class_=class_,
+            style=style,
+            tooltip=tooltip,
+            parent=parent,
+        )
+
+    @staticmethod
+    def _normalize_icon(icon: str) -> str:
+        value = str(icon).strip().lower().replace("_", "-")
+        if not value:
+            raise ValueError("IconButton icon must be non-empty")
+        return value
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "icon": self.icon,
+            "width": self.width,
+            "height": self.height,
+            "disabled": self.disabled,
+            "events": ["click"] if self.on_click and not self.disabled else [],
+        }
+
+    def set_icon(self, icon: str) -> None:
+        self.icon = self._normalize_icon(icon)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("icon", self.icon)
+
+
+class ImageButton(Button):
+    kind = "image_button"
+
+    def __init__(
+        self,
+        path: object,
+        *,
+        fit: str = "contain",
+        on_click: Callback | None = None,
+        disabled: bool = False,
+        size: int | float | None = None,
+        width: int | float | None = None,
+        height: int | float | None = None,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.path = Image._normalize_path(path)
+        self.fit = Image._normalize_fit(fit)
+        default_size = _button_size_value(size, "ImageButton size")
+        self.width = _button_size_value(width, "ImageButton width")
+        self.height = _button_size_value(height, "ImageButton height")
+        if default_size is not None:
+            self.width = self.width or default_size
+            self.height = self.height or default_size
+        super().__init__(
+            "",
+            on_click=on_click,
+            disabled=disabled,
+            id=id,
+            key=key,
+            class_=class_,
+            style=style,
+            tooltip=tooltip,
+            parent=parent,
+        )
+
+    def set_path(self, path: object) -> None:
+        self.path = Image._normalize_path(path)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("path", self.path)
+
+    def reload(self) -> None:
+        self.set_path(self.path)
+
+    def set_fit(self, fit: str) -> None:
+        self.fit = Image._normalize_fit(fit)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("fit", self.fit)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "fit": self.fit,
+            "width": self.width,
+            "height": self.height,
+            "disabled": self.disabled,
+            "events": ["click"] if self.on_click and not self.disabled else [],
+        }
+
+
+class ArrowButton(Button):
+    kind = "arrow_button"
+    _DIRECTIONS = {"left", "right", "up", "down"}
+
+    def __init__(
+        self,
+        direction: str,
+        *,
+        on_click: Callback | None = None,
+        disabled: bool = False,
+        size: int | float | None = None,
+        width: int | float | None = None,
+        height: int | float | None = None,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.direction = self._normalize_direction(direction)
+        default_size = _button_size_value(size, "ArrowButton size")
+        self.width = _button_size_value(width, "ArrowButton width")
+        self.height = _button_size_value(height, "ArrowButton height")
+        if default_size is not None:
+            self.width = self.width or default_size
+            self.height = self.height or default_size
+        super().__init__(
+            "",
+            on_click=on_click,
+            disabled=disabled,
+            id=id,
+            key=key,
+            class_=class_,
+            style=style,
+            tooltip=tooltip,
+            parent=parent,
+        )
+
+    @classmethod
+    def _normalize_direction(cls, direction: str) -> str:
+        value = str(direction).strip().lower()
+        if value not in cls._DIRECTIONS:
+            allowed = ", ".join(sorted(cls._DIRECTIONS))
+            raise ValueError(f"ArrowButton direction must be one of: {allowed}")
+        return value
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "direction": self.direction,
+            "width": self.width,
+            "height": self.height,
+            "disabled": self.disabled,
+            "events": ["click"] if self.on_click and not self.disabled else [],
+        }
+
+    def set_direction(self, direction: str) -> None:
+        self.direction = self._normalize_direction(direction)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("direction", self.direction)
+
+
+class Selectable(Widget):
+    kind = "selectable"
+
+    def __init__(
+        self,
+        text: str,
+        *,
+        value: str | None = None,
+        selected: bool = False,
+        toggle: bool = True,
+        on_select: BoolCallback | None = None,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.text = str(text)
+        self.value = self.text if value is None else str(value)
+        self.selected = bool(selected)
+        self.toggle = bool(toggle)
+        self.on_select = on_select
+        self.disabled = bool(disabled)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def set_selected(self, selected: bool, *, notify: bool = False) -> None:
+        self.selected = bool(selected)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("checked", self.selected)
+        if notify and not self.disabled and self.on_select is not None:
+            self.on_select(self.selected)
+
+    def select(self, *, notify: bool = False) -> None:
+        self.set_selected(True, notify=notify)
+
+    def clear_selection(self, *, notify: bool = False) -> None:
+        self.set_selected(False, notify=notify)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "text": self.text,
+            "value": self.value,
+            "checked": self.selected,
+            "toggle": self.toggle,
+            "disabled": self.disabled,
+            "events": ["change"] if self.on_select and not self.disabled else [],
+        }
+
+
+class RadioButton(Widget):
+    kind = "radio_button"
+
+    def __init__(
+        self,
+        label: str,
+        *,
+        value: str | None = None,
+        checked: bool = False,
+        on_change: BoolCallback | None = None,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.label = str(label)
+        self.value = self.label if value is None else str(value)
+        self.checked = bool(checked)
+        self.on_change = on_change
+        self.disabled = bool(disabled)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def set_checked(self, checked: bool, *, notify: bool = False) -> None:
+        self.checked = bool(checked)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("checked", self.checked)
+        if notify and not self.disabled and self.on_change is not None:
+            self.on_change(self.checked)
+
+    def select(self, *, notify: bool = False) -> None:
+        self.set_checked(True, notify=notify)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "label": self.label,
+            "value": self.value,
+            "checked": self.checked,
+            "toggle": False,
+            "disabled": self.disabled,
+            "events": ["change"] if self.on_change and not self.disabled else [],
+        }
+
+
 class TextInput(Widget):
     kind = "text_input"
 
@@ -2604,6 +3332,308 @@ class TextArea(Widget):
         }
 
 
+class CodeEditor(Widget):
+    kind = "code_editor"
+
+    def __init__(
+        self,
+        value: str = "",
+        *,
+        language: str = "",
+        placeholder: str = "",
+        rows: int = 10,
+        wrap: bool = False,
+        on_change: StringCallback | None = None,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        rows_i = int(rows)
+        if rows_i < 1:
+            raise ValueError("CodeEditor rows must be at least 1")
+        self.value = str(value)
+        self.language = str(language)
+        self.placeholder = str(placeholder)
+        self.rows = rows_i
+        self.wrap = bool(wrap)
+        self.on_change = on_change
+        self.disabled = disabled
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def set_value(self, value: str) -> None:
+        self.value = str(value)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("value", self.value)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "value": self.value,
+            "language": self.language,
+            "placeholder": self.placeholder,
+            "rows": self.rows,
+            "wrap": self.wrap,
+            "disabled": self.disabled,
+        }
+
+
+class LogView(Widget):
+    kind = "log_view"
+
+    def __init__(
+        self,
+        lines: str | Iterable[object] = (),
+        *,
+        follow: bool = True,
+        max_lines: int = 10_000,
+        rows: int = 12,
+        wrap: bool = False,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        rows_i = int(rows)
+        if rows_i < 1:
+            raise ValueError("LogView rows must be at least 1")
+        max_lines_i = int(max_lines)
+        if max_lines_i < 1:
+            raise ValueError("LogView max_lines must be at least 1")
+        self.follow = bool(follow)
+        self.max_lines = max_lines_i
+        self.rows = rows_i
+        self.wrap = bool(wrap)
+        self.disabled = bool(disabled)
+        self.lines = self._normalize_lines(lines)
+        self._trim()
+        self.value = self._joined()
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    @staticmethod
+    def _normalize_lines(lines: str | Iterable[object]) -> list[str]:
+        if isinstance(lines, str):
+            return lines.splitlines()
+        out: list[str] = []
+        for line in lines:
+            text = str(line)
+            parts = text.splitlines()
+            out.extend(parts if parts else [""])
+        return out
+
+    def _trim(self) -> None:
+        if len(self.lines) > self.max_lines:
+            self.lines = self.lines[-self.max_lines :]
+
+    def _joined(self) -> str:
+        return "\n".join(self.lines)
+
+    def _sync_value(self) -> None:
+        self._trim()
+        self.value = self._joined()
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("value", self.value)
+
+    def set_lines(self, lines: str | Iterable[object]) -> None:
+        self.lines = self._normalize_lines(lines)
+        self._sync_value()
+
+    def append_line(self, line: object = "") -> None:
+        self.lines.extend(self._normalize_lines([line]))
+        self._sync_value()
+
+    def append_lines(self, lines: Iterable[object]) -> None:
+        self.lines.extend(self._normalize_lines(lines))
+        self._sync_value()
+
+    def clear(self) -> None:
+        self.lines = []
+        self._sync_value()
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "value": self.value,
+            "follow": self.follow,
+            "max_lines": self.max_lines,
+            "rows": self.rows,
+            "wrap": self.wrap,
+            "disabled": self.disabled,
+        }
+
+
+TemporalValue = str | _Date | _Time | _DateTime
+
+
+def _format_time_iso(value: _Time) -> str:
+    timespec = "microseconds" if value.microsecond else "seconds" if value.second else "minutes"
+    return value.isoformat(timespec=timespec)
+
+
+def _format_datetime_iso(value: _DateTime) -> str:
+    timespec = "microseconds" if value.microsecond else "seconds"
+    return value.isoformat(timespec=timespec)
+
+
+class _TemporalInput(Widget):
+    kind = "text_input"
+    _css_class = "temporal-input"
+    _placeholder = ""
+    _value_name = "TemporalInput"
+
+    def __init__(
+        self,
+        value: object = "",
+        *,
+        placeholder: str | None = None,
+        on_change: StringCallback | None = None,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        normalized = self._normalize(value)
+        self.value = normalized
+        self.text = normalized
+        self.placeholder = self._placeholder if placeholder is None else str(placeholder)
+        self.on_change = on_change
+        self.disabled = bool(disabled)
+        self.invalid = False
+        self._base_class = _merge_widget_class(self._css_class, class_)
+        super().__init__(
+            id=id,
+            key=key,
+            class_=self._class_name(),
+            style=style,
+            tooltip=tooltip,
+            parent=parent,
+        )
+
+    def _normalize(self, value: object) -> str:
+        raise NotImplementedError
+
+    def _class_name(self) -> str:
+        if self.invalid:
+            return _merge_widget_class(self._base_class, "invalid")
+        return self._base_class
+
+    def _refresh_class(self) -> None:
+        next_class = self._class_name()
+        if next_class != self.class_:
+            self.set_class(next_class)
+
+    def _set_invalid(self, invalid: bool) -> None:
+        self.invalid = bool(invalid)
+        self._refresh_class()
+
+    def _handle_native_change(self, value: object) -> None:
+        text = str(value)
+        self.text = text
+        try:
+            normalized = self._normalize(text)
+        except (TypeError, ValueError):
+            self._set_invalid(bool(text))
+            return
+        self.value = normalized
+        self.text = text
+        self._set_invalid(False)
+        if self.on_change is not None and not self.disabled:
+            self.on_change(self.value)
+
+    def set_value(self, value: object, *, notify: bool = False) -> None:
+        self.value = self._normalize(value)
+        self.text = self.value
+        self._set_invalid(False)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("value", self.text)
+        if notify and self.on_change is not None and not self.disabled:
+            self.on_change(self.value)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "value": self.text,
+            "placeholder": self.placeholder,
+            "disabled": self.disabled,
+            "events": ["change"],
+        }
+
+
+class DateInput(_TemporalInput):
+    """Validated ISO date input. `value` and callbacks use `YYYY-MM-DD` strings."""
+
+    _css_class = "temporal-input date-input"
+    _placeholder = "YYYY-MM-DD"
+    _value_name = "DateInput"
+
+    def _normalize(self, value: object) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, _DateTime):
+            return value.date().isoformat()
+        if isinstance(value, _Date):
+            return value.isoformat()
+        text = str(value).strip()
+        if not text:
+            return ""
+        try:
+            return _Date.fromisoformat(text).isoformat()
+        except ValueError as exc:
+            raise ValueError("DateInput value must be an ISO date string (YYYY-MM-DD)") from exc
+
+
+class TimeInput(_TemporalInput):
+    """Validated ISO time input. `value` and callbacks use ISO time strings."""
+
+    _css_class = "temporal-input time-input"
+    _placeholder = "HH:MM"
+    _value_name = "TimeInput"
+
+    def _normalize(self, value: object) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, _DateTime):
+            return _format_time_iso(value.time())
+        if isinstance(value, _Time):
+            return _format_time_iso(value)
+        text = str(value).strip()
+        if not text:
+            return ""
+        try:
+            return _format_time_iso(_Time.fromisoformat(text))
+        except ValueError as exc:
+            raise ValueError("TimeInput value must be an ISO time string (HH:MM or HH:MM:SS)") from exc
+
+
+class DateTimeInput(_TemporalInput):
+    """Validated ISO datetime input. `value` and callbacks use ISO datetime strings."""
+
+    _css_class = "temporal-input datetime-input"
+    _placeholder = "YYYY-MM-DDTHH:MM:SS"
+    _value_name = "DateTimeInput"
+
+    def _normalize(self, value: object) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, _DateTime):
+            return _format_datetime_iso(value)
+        text = str(value).strip()
+        if not text:
+            return ""
+        try:
+            return _format_datetime_iso(_DateTime.fromisoformat(text))
+        except ValueError as exc:
+            raise ValueError(
+                "DateTimeInput value must be an ISO datetime string (YYYY-MM-DDTHH:MM:SS)"
+            ) from exc
+
+
 class Slider(Widget):
     kind = "slider"
 
@@ -2663,6 +3693,85 @@ class Slider(Widget):
             "max": self.max,
             "step": self.step,
             "disabled": self.disabled,
+        }
+
+
+class RangeSlider(Widget):
+    """Two-thumb slider for selecting a bounded numeric interval."""
+
+    kind = "range_slider"
+
+    def __init__(
+        self,
+        value: Sequence[float] = (0, 1),
+        *,
+        min: float = 0,
+        max: float = 1,
+        step: float = 0.01,
+        on_change: RangeCallback | None = None,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        min_value = float(min)
+        max_value = float(max)
+        if not math.isfinite(min_value):
+            raise ValueError("RangeSlider min must be finite")
+        if not math.isfinite(max_value):
+            raise ValueError("RangeSlider max must be finite")
+        if max_value < min_value:
+            raise ValueError("RangeSlider max must be greater than or equal to min")
+        step_value = float(step)
+        if step_value <= 0 or not math.isfinite(step_value):
+            raise ValueError("RangeSlider step must be greater than zero")
+        self.min = min_value
+        self.max = max_value
+        self.step = step_value
+        self.value = self._normalize_value(value)
+        self.on_change = on_change
+        self.disabled = bool(disabled)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def _normalize_value(self, value: Sequence[float]) -> tuple[float, float]:
+        if isinstance(value, (str, bytes, bytearray)) or not isinstance(value, Sequence):
+            raise TypeError("RangeSlider value must be a two-item sequence")
+        if len(value) != 2:
+            raise ValueError("RangeSlider value must contain exactly two values")
+        low = float(value[0])
+        high = float(value[1])
+        if not math.isfinite(low) or not math.isfinite(high):
+            raise ValueError("RangeSlider values must be finite")
+        low, high = sorted((low, high))
+        return (self._clamp_value(low), self._clamp_value(high))
+
+    def _clamp_value(self, value: float) -> float:
+        if value < self.min:
+            return self.min
+        if value > self.max:
+            return self.max
+        return value
+
+    def set_value(self, value: Sequence[float], *, notify: bool = False) -> None:
+        self.value = self._normalize_value(value)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("value_min", self.value[0])
+            handle.enqueue_set_prop("value_max", self.value[1])
+        if notify and self.on_change is not None and not self.disabled:
+            self.on_change(self.value)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "value_min": self.value[0],
+            "value_max": self.value[1],
+            "min": self.min,
+            "max": self.max,
+            "step": self.step,
+            "disabled": self.disabled,
+            "events": ["change"] if self.on_change and not self.disabled else [],
         }
 
 
@@ -2800,6 +3909,691 @@ class NumberInput(Widget):
         }
 
 
+class DragNumber(Widget):
+    """Numeric field adjusted by horizontal pointer dragging."""
+
+    kind = "drag_number"
+
+    def __init__(
+        self,
+        value: float = 0,
+        *,
+        min: float | None = None,
+        max: float | None = None,
+        step: float = 1,
+        speed: float | None = None,
+        on_change: FloatCallback | None = None,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        min_value = None if min is None else float(min)
+        max_value = None if max is None else float(max)
+        if min_value is not None and not math.isfinite(min_value):
+            raise ValueError("DragNumber min must be finite")
+        if max_value is not None and not math.isfinite(max_value):
+            raise ValueError("DragNumber max must be finite")
+        if min_value is not None and max_value is not None and max_value < min_value:
+            raise ValueError("DragNumber max must be greater than or equal to min")
+        step_value = float(step)
+        if step_value <= 0 or not math.isfinite(step_value):
+            raise ValueError("DragNumber step must be greater than zero")
+        speed_value = step_value if speed is None else float(speed)
+        if speed_value <= 0 or not math.isfinite(speed_value):
+            raise ValueError("DragNumber speed must be greater than zero")
+        value_f = float(value)
+        if not math.isfinite(value_f):
+            raise ValueError("DragNumber value must be finite")
+        self.min = min_value
+        self.max = max_value
+        self.step = step_value
+        self.speed = speed_value
+        self.value = self._clamp_value(value_f)
+        self.on_change = on_change
+        self.disabled = bool(disabled)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def _clamp_value(self, value: float) -> float:
+        if self.min is not None and value < self.min:
+            return self.min
+        if self.max is not None and value > self.max:
+            return self.max
+        return value
+
+    def set_value(self, value: float, *, notify: bool = False) -> None:
+        value_f = float(value)
+        if not math.isfinite(value_f):
+            raise ValueError("DragNumber value must be finite")
+        self.value = self._clamp_value(value_f)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("value", self.value)
+        if notify and not self.disabled and self.on_change is not None:
+            self.on_change(self.value)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "value": self.value,
+            "min": self.min,
+            "max": self.max,
+            "step": self.step,
+            "speed": self.speed,
+            "text": _format_number(self.value),
+            "disabled": self.disabled,
+            "events": ["change"] if self.on_change and not self.disabled else [],
+        }
+
+
+class DragVector(FlowLayout):
+    """Compact vector editor built from DragNumber components."""
+
+    _DEFAULT_LABELS = ("X", "Y", "Z", "W")
+
+    def __init__(
+        self,
+        value: Sequence[float],
+        *,
+        labels: Sequence[str] | None = None,
+        min: float | Sequence[float] | None = None,
+        max: float | Sequence[float] | None = None,
+        step: float | Sequence[float] = 1,
+        speed: float | Sequence[float] | None = None,
+        on_change: Callable[[tuple[float, ...]], None] | None = None,
+        disabled: bool = False,
+        gap: int | float | None = 8,
+        row_gap: int | float | None = 6,
+        component_gap: int | float = 4,
+        component_width: int | float | None = 88,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        values = tuple(float(v) for v in value)
+        if not values:
+            raise ValueError("DragVector value cannot be empty")
+        if len(values) > len(self._DEFAULT_LABELS):
+            raise ValueError("DragVector supports at most 4 components")
+        if not all(math.isfinite(v) for v in values):
+            raise ValueError("DragVector values must be finite")
+        self.labels = tuple(str(label) for label in (labels or self._DEFAULT_LABELS[: len(values)]))
+        if len(self.labels) != len(values):
+            raise ValueError("DragVector labels must match value length")
+        self.min_values = self._component_values(min, len(values), "min")
+        self.max_values = self._component_values(max, len(values), "max")
+        for min_value, max_value in zip(self.min_values, self.max_values, strict=True):
+            if min_value is not None and max_value is not None and max_value < min_value:
+                raise ValueError("DragVector max values must be greater than or equal to min values")
+        self.value = tuple(
+            self._clamp_component(component, min_value, max_value)
+            for component, min_value, max_value in zip(values, self.min_values, self.max_values, strict=True)
+        )
+        self.step_values = self._component_values(step, len(values), "step", default=1.0)
+        self.speed_values = self._component_values(
+            speed,
+            len(values),
+            "speed",
+            default=None,
+            fallback=self.step_values,
+        )
+        if any(v is None or v <= 0 for v in self.step_values):
+            raise ValueError("DragVector step values must be greater than zero")
+        if any(v is None or v <= 0 for v in self.speed_values):
+            raise ValueError("DragVector speed values must be greater than zero")
+        self.on_change = on_change
+        self.disabled = bool(disabled)
+        self._number_widgets: list[DragNumber] = []
+        self.component_gap = self._non_negative_finite(component_gap, "component_gap")
+        self.component_width = (
+            None if component_width is None else self._positive_finite(component_width, "component_width")
+        )
+
+        merged_style = dict(style or {})
+        if gap is not None:
+            merged_style.setdefault("gap", self._non_negative_finite(gap, "gap"))
+        if row_gap is not None:
+            merged_style.setdefault("row_gap", self._non_negative_finite(row_gap, "row_gap"))
+
+        super().__init__(
+            gap=None,
+            row_gap=None,
+            cross_align="center",
+            id=id,
+            key=key,
+            class_=class_,
+            style=merged_style or None,
+            tooltip=tooltip,
+            parent=parent,
+        )
+        self._sync_children(live=False)
+
+    @staticmethod
+    def _component_values(
+        value: float | Sequence[float] | None,
+        count: int,
+        name: str,
+        *,
+        default: float | None = None,
+        fallback: Sequence[float | None] | None = None,
+    ) -> tuple[float | None, ...]:
+        if value is None:
+            if fallback is not None:
+                return tuple(fallback)
+            return tuple(default for _ in range(count))
+        if isinstance(value, (str, bytes, bytearray)) or not isinstance(value, Sequence):
+            values: tuple[float | None, ...] = tuple(float(value) for _ in range(count))
+        else:
+            if len(value) != count:
+                raise ValueError(f"DragVector {name} values must match value length")
+            values = tuple(float(v) if v is not None else None for v in value)
+        if any(v is not None and not math.isfinite(v) for v in values):
+            raise ValueError(f"DragVector {name} values must be finite")
+        return values
+
+    @staticmethod
+    def _non_negative_finite(value: int | float, name: str) -> float:
+        value_f = float(value)
+        if not math.isfinite(value_f) or value_f < 0:
+            raise ValueError(f"DragVector {name} must be a non-negative finite number")
+        return value_f
+
+    @staticmethod
+    def _positive_finite(value: int | float, name: str) -> float:
+        value_f = float(value)
+        if not math.isfinite(value_f) or value_f <= 0:
+            raise ValueError(f"DragVector {name} must be a positive finite number")
+        return value_f
+
+    @staticmethod
+    def _clamp_component(value: float, min_value: float | None, max_value: float | None) -> float:
+        if min_value is not None and value < min_value:
+            return min_value
+        if max_value is not None and value > max_value:
+            return max_value
+        return value
+
+    def _handle_component_change(self, index: int, component_value: float) -> None:
+        values = list(self.value)
+        values[index] = float(component_value)
+        self.value = tuple(values)
+        if self.on_change is not None and not self.disabled:
+            self.on_change(self.value)
+
+    def _make_children(self) -> list[Widget]:
+        children: list[Widget] = []
+        numbers: list[DragNumber] = []
+        for index, label in enumerate(self.labels):
+            group = HLayout(
+                class_="drag-vector-component",
+                style={
+                    "gap": self.component_gap,
+                    "align_items": "center",
+                    "flex_grow": 0,
+                    "flex_shrink": 0,
+                },
+                parent=None,
+            )
+            Label(label, class_="drag-vector-label", parent=group)
+
+            def on_number_change(value: float, index: int = index) -> None:
+                self._handle_component_change(index, value)
+
+            number_style = {"width": self.component_width} if self.component_width is not None else None
+            number = DragNumber(
+                self.value[index],
+                min=self.min_values[index],
+                max=self.max_values[index],
+                step=self.step_values[index] or 1,
+                speed=self.speed_values[index] or self.step_values[index] or 1,
+                on_change=on_number_change,
+                disabled=self.disabled,
+                class_="drag-vector-value",
+                style=number_style,
+                parent=group,
+            )
+            numbers.append(number)
+            children.append(group)
+        self._number_widgets = numbers
+        return children
+
+    def _sync_children(self, *, live: bool) -> None:
+        children = self._make_children()
+        if live:
+            self.replace_children(children)
+            return
+        self.children = []
+        for child in children:
+            self.add(child)
+
+    def set_value(self, value: Sequence[float], *, notify: bool = False) -> None:
+        values = tuple(float(v) for v in value)
+        if len(values) != len(self.value):
+            raise ValueError("DragVector value length cannot change")
+        if not all(math.isfinite(v) for v in values):
+            raise ValueError("DragVector values must be finite")
+        next_values = tuple(
+            self._clamp_component(component, min_value, max_value)
+            for component, min_value, max_value in zip(values, self.min_values, self.max_values, strict=True)
+        )
+        self.value = next_values
+        for number, component_value in zip(self._number_widgets, self.value, strict=True):
+            number.set_value(component_value)
+        if notify and self.on_change is not None and not self.disabled:
+            self.on_change(self.value)
+
+
+def _merge_widget_class(base: str, extra: str | None) -> str:
+    return base if extra is None else f"{base} {extra}"
+
+
+class Property(HLayout):
+    """Single label/editor row for PropertyGrid."""
+
+    def __init__(
+        self,
+        label: str,
+        editor: Widget | None = None,
+        *,
+        label_width: int | float | None = None,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.label = str(label)
+        if not self.label:
+            raise ValueError("Property label cannot be empty")
+        actual_parent = _BuildContext.parent() if parent is _AUTO_PARENT else parent
+        grid = actual_parent if isinstance(actual_parent, PropertyGrid) else None
+        width = grid.label_width if label_width is None and grid is not None else label_width
+        if width is None:
+            width = 140.0
+        width_f = float(width)
+        if not math.isfinite(width_f) or width_f <= 0:
+            raise ValueError("Property label_width must be a positive finite number")
+        row_style = {
+            "gap": 10,
+            "align_items": "center",
+            "width": "100%",
+            **(style or {}),
+        }
+        super().__init__(
+            id=id,
+            key=key,
+            class_=_merge_widget_class("property-row", class_),
+            style=row_style,
+            tooltip=tooltip,
+            parent=actual_parent,
+        )
+        Label(
+            self.label,
+            class_="property-label",
+            style={"width": width_f, "flex_shrink": 0, "text_overflow": "ellipsis"},
+            parent=self,
+        )
+        self._editor_slot = HLayout(
+            class_="property-editor",
+            style={
+                "gap": 8,
+                "align_items": "center",
+                "flex": 1,
+                "min_width": 0,
+            },
+            parent=self,
+        )
+        if editor is not None:
+            self.set_editor(editor)
+
+    def set_editor(self, editor: Widget) -> None:
+        if not isinstance(editor, Widget):
+            raise TypeError("Property editor must be a DragonGUI widget")
+        self._editor_slot.add(editor)
+
+    def __enter__(self) -> Self:
+        _BuildContext.push(self._editor_slot)
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        _BuildContext.pop(self._editor_slot)
+
+
+class PropertyGrid(VLayout):
+    """Structured property inspector built from existing controls."""
+
+    def __init__(
+        self,
+        values: Mapping[str, object] | None = None,
+        *,
+        schema: Mapping[str, Mapping[str, object]] | None = None,
+        sections: Mapping[str, Iterable[str] | Mapping[str, object]] | None = None,
+        on_change: Callable[[PropertyChange], None] | None = None,
+        label_width: int | float = 140,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        label_width_f = float(label_width)
+        if not math.isfinite(label_width_f) or label_width_f <= 0:
+            raise ValueError("PropertyGrid label_width must be a positive finite number")
+        self.values: dict[str, object] = {str(k): v for k, v in (values or {}).items()}
+        self.schema: dict[str, dict[str, object]] = {
+            str(k): dict(v) for k, v in (schema or {}).items()
+        }
+        self.sections = sections
+        self.on_change = on_change
+        self.label_width = label_width_f
+        self.disabled = bool(disabled)
+        self._editors: dict[str, Widget] = {}
+        merged_style = {"gap": 6, "width": "100%", **(style or {})}
+        super().__init__(
+            id=id,
+            key=key,
+            class_=_merge_widget_class("property-grid", class_),
+            style=merged_style,
+            tooltip=tooltip,
+            parent=parent,
+        )
+        if values is not None:
+            self._sync_children(live=False)
+
+    def editor(self, key: str) -> Widget | None:
+        return self._editors.get(str(key))
+
+    def set_value(self, key: str, value: object, *, notify: bool = False) -> None:
+        key_s = str(key)
+        if key_s not in self.values:
+            raise KeyError(key_s)
+        schema = self.schema.get(key_s, {})
+        old_value = self.values.get(key_s)
+        next_value = self._coerce_value(key_s, value, schema)
+        self.values[key_s] = next_value
+        self._set_editor_value(key_s, next_value)
+        if notify and self.on_change is not None and not self.disabled:
+            self.on_change(PropertyChange(key_s, next_value, old_value))
+
+    def set_values(self, values: Mapping[str, object], *, notify: bool = False) -> None:
+        for key, value in values.items():
+            self.set_value(str(key), value, notify=notify)
+
+    def _sync_children(self, *, live: bool) -> None:
+        self._editors = {}
+        children = self._make_children()
+        if live:
+            self.replace_children(children)
+            return
+        self.children = []
+        for child in children:
+            self.add(child)
+
+    def _make_children(self) -> list[Widget]:
+        if self.sections:
+            return self._make_sectioned_children()
+        grouped: dict[str | None, list[str]] = {}
+        for key in self.values:
+            section = self.schema.get(key, {}).get("section")
+            section_key = None if section is None else str(section)
+            grouped.setdefault(section_key, []).append(key)
+        children: list[Widget] = []
+        for section, keys in grouped.items():
+            rows = [self._make_property_row(key) for key in keys]
+            if section is None:
+                children.extend(rows)
+            else:
+                children.append(self._make_section(section, rows))
+        return children
+
+    def _make_sectioned_children(self) -> list[Widget]:
+        children: list[Widget] = []
+        seen: set[str] = set()
+        assert self.sections is not None
+        for section, spec in self.sections.items():
+            if isinstance(spec, Mapping):
+                keys = []
+                for raw_key, value in spec.items():
+                    key = str(raw_key)
+                    keys.append(key)
+                    self.values.setdefault(key, value)
+            else:
+                keys = [str(key) for key in spec]
+            seen.update(keys)
+            children.append(self._make_section(str(section), [self._make_property_row(key) for key in keys]))
+        remaining = [key for key in self.values if key not in seen]
+        children.extend(self._make_property_row(key) for key in remaining)
+        return children
+
+    def _make_section(self, title: str, rows: list[Widget]) -> Collapsible:
+        section = Collapsible(title, expanded=True, class_="property-section", parent=None)
+        for row in rows:
+            section.add(row)
+        return section
+
+    def _make_property_row(self, key: str) -> Property:
+        if key not in self.values:
+            raise KeyError(key)
+        editor = self._make_editor(key, self.values[key], self.schema.get(key, {}))
+        row = Property(
+            self.schema.get(key, {}).get("label", key),
+            editor,
+            label_width=self.label_width,
+            parent=None,
+        )
+        return row
+
+    def _make_editor(self, key: str, value: object, schema: Mapping[str, object]) -> Widget:
+        disabled = self.disabled or bool(schema.get("disabled", False))
+        editor_kind = self._editor_kind(value, schema)
+
+        def changed(next_value: object) -> None:
+            self._handle_editor_change(key, next_value)
+
+        if editor_kind == "bool":
+            editor = Checkbox("", checked=bool(value), on_change=changed, disabled=disabled, parent=None)
+        elif editor_kind == "select":
+            options = self._schema_options(schema)
+            selected = str(value) if value is not None else options[0]
+            editor = Dropdown(options, value=selected, on_change=changed, disabled=disabled, parent=None)
+        elif editor_kind == "range":
+            low, high = self._range_pair(value)
+            editor = RangeSlider(
+                (low, high),
+                min=float(schema.get("min", min(low, high, 0.0))),
+                max=float(schema.get("max", max(low, high, 1.0))),
+                step=float(schema.get("step", 0.01)),
+                on_change=changed,
+                disabled=disabled,
+                parent=None,
+            )
+        elif editor_kind == "slider":
+            editor = Slider(
+                float(value),
+                min=float(schema.get("min", 0.0)),
+                max=float(schema.get("max", 1.0)),
+                step=float(schema.get("step", 0.01)),
+                on_change=changed,
+                disabled=disabled,
+                parent=None,
+            )
+        elif editor_kind == "number":
+            editor = NumberInput(
+                float(value),
+                min=self._optional_float(schema.get("min")),
+                max=self._optional_float(schema.get("max")),
+                step=float(schema.get("step", 1.0)),
+                on_change=changed,
+                disabled=disabled,
+                parent=None,
+            )
+        elif editor_kind == "float" or editor_kind == "int":
+            editor = DragNumber(
+                float(value),
+                min=self._optional_float(schema.get("min")),
+                max=self._optional_float(schema.get("max")),
+                step=float(schema.get("step", 1.0 if editor_kind == "int" else 0.01)),
+                speed=self._optional_float(schema.get("speed")),
+                on_change=changed,
+                disabled=disabled,
+                parent=None,
+            )
+        elif editor_kind == "color":
+            editor = self._make_color_editor(str(value), changed, disabled)
+        elif editor_kind == "multiline":
+            editor = TextArea(
+                str(value),
+                rows=int(schema.get("rows", 4)),
+                on_change=changed,
+                disabled=disabled,
+                parent=None,
+            )
+        elif editor_kind == "readonly":
+            editor = Label(str(value), class_="property-value", parent=None)
+        else:
+            editor = TextInput(
+                str(value),
+                on_change=changed,
+                disabled=disabled,
+                style={"width": "100%"},
+                parent=None,
+            )
+        self._editors[key] = editor
+        return editor
+
+    def _make_color_editor(
+        self,
+        value: str,
+        changed: Callable[[object], None],
+        disabled: bool,
+    ) -> HLayout:
+        row = HLayout(class_="property-color-editor", style={"gap": 8, "align_items": "center"}, parent=None)
+        swatch = LED(True, states={"on": value}, size=16, parent=row)
+
+        def color_changed(next_value: str) -> None:
+            swatch.set_color(next_value)
+            changed(next_value)
+
+        text = TextInput(
+            value,
+            on_change=color_changed,
+            disabled=disabled,
+            style={"width": 118},
+            parent=row,
+        )
+        return row
+
+    @staticmethod
+    def _optional_float(value: object) -> float | None:
+        if value is None:
+            return None
+        return float(value)
+
+    @staticmethod
+    def _schema_options(schema: Mapping[str, object]) -> list[str]:
+        raw = schema.get("options", schema.get("items"))
+        if raw is None:
+            raise ValueError("PropertyGrid select properties require options")
+        options = [str(item[1] if isinstance(item, tuple) and len(item) == 2 else item) for item in raw]  # type: ignore[union-attr]
+        if not options:
+            raise ValueError("PropertyGrid select options cannot be empty")
+        return options
+
+    @staticmethod
+    def _range_pair(value: object) -> tuple[float, float]:
+        if isinstance(value, (str, bytes, bytearray)) or not isinstance(value, Sequence):
+            raise TypeError("PropertyGrid range values must be a two-item sequence")
+        if len(value) != 2:
+            raise ValueError("PropertyGrid range values must contain exactly two values")
+        return float(value[0]), float(value[1])
+
+    @staticmethod
+    def _editor_kind(value: object, schema: Mapping[str, object]) -> str:
+        explicit = schema.get("editor", schema.get("type"))
+        if explicit is not None:
+            kind = str(explicit).strip().lower().replace("_", "-")
+            aliases = {
+                "boolean": "bool",
+                "dropdown": "select",
+                "choice": "select",
+                "drag": "float",
+                "drag-number": "float",
+                "text": "string",
+                "str": "string",
+                "read-only": "readonly",
+            }
+            return aliases.get(kind, kind)
+        if "options" in schema or "items" in schema:
+            return "select"
+        if isinstance(value, bool):
+            return "bool"
+        if isinstance(value, int) and not isinstance(value, bool):
+            return "int"
+        if isinstance(value, float):
+            return "float"
+        if (
+            isinstance(value, Sequence)
+            and not isinstance(value, (str, bytes, bytearray))
+            and len(value) == 2
+            and all(isinstance(item, numbers.Real) for item in value)
+        ):
+            return "range"
+        return "string"
+
+    def _coerce_value(self, key: str, value: object, schema: Mapping[str, object]) -> object:
+        kind = self._editor_kind(self.values.get(key), schema)
+        if kind == "bool":
+            return bool(value)
+        if kind == "int":
+            return int(round(float(value)))
+        if kind in {"float", "slider", "number"}:
+            return float(value)
+        if kind == "range":
+            return self._range_pair(value)
+        if kind == "select":
+            return str(value)
+        if kind in {"color", "string", "multiline"}:
+            return str(value)
+        return value
+
+    def _handle_editor_change(self, key: str, value: object) -> None:
+        if self.disabled:
+            return
+        old_value = self.values.get(key)
+        next_value = self._coerce_value(key, value, self.schema.get(key, {}))
+        self.values[key] = next_value
+        if self.on_change is not None:
+            self.on_change(PropertyChange(key, next_value, old_value))
+
+    def _set_editor_value(self, key: str, value: object) -> None:
+        editor = self._editors.get(key)
+        if editor is None:
+            return
+        if isinstance(editor, Checkbox):
+            editor.set_checked(bool(value))
+        elif isinstance(editor, (TextInput, TextArea)):
+            editor.set_value(str(value))
+        elif isinstance(editor, Dropdown):
+            editor.set_value(str(value))
+        elif isinstance(editor, (Slider, NumberInput, DragNumber)):
+            editor.set_value(float(value))
+        elif isinstance(editor, RangeSlider):
+            editor.set_value(self._range_pair(value))
+        elif isinstance(editor, HLayout):
+            for child in editor.children:
+                if isinstance(child, LED):
+                    child.set_color(str(value))
+                elif isinstance(child, TextInput):
+                    child.set_value(str(value))
+
+
 class Dropdown(Widget):
     kind = "dropdown"
 
@@ -2876,6 +4670,922 @@ class Checkbox(Widget):
         return {
             "label": self.label,
             "checked": self.checked,
+            "disabled": self.disabled,
+        }
+
+
+class ToggleSwitch(Widget):
+    kind = "toggle_switch"
+
+    _LABEL_POSITIONS = {"left", "right"}
+
+    def __init__(
+        self,
+        label: str,
+        *,
+        checked: bool = False,
+        on_change: "BoolCallback | None" = None,
+        disabled: bool = False,
+        label_position: str = "right",
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        position = str(label_position).strip().lower()
+        if position not in self._LABEL_POSITIONS:
+            raise ValueError("ToggleSwitch label_position must be 'left' or 'right'")
+        self.label = label
+        self.checked = bool(checked)
+        self.on_change = on_change
+        self.disabled = bool(disabled)
+        self.label_position = position
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def set_checked(self, checked: bool) -> None:
+        self.checked = bool(checked)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("checked", self.checked)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "label": self.label,
+            "checked": self.checked,
+            "disabled": self.disabled,
+            "label_position": self.label_position,
+            "events": ["change"] if self.on_change and not self.disabled else [],
+        }
+
+
+class SelectableList(VLayout):
+    """Dense single- or multi-selection list built from Selectable rows."""
+
+    _MODES = {"single", "multiple"}
+
+    def __init__(
+        self,
+        items: Iterable[object],
+        *,
+        value: str | None = None,
+        selected: Iterable[str] | None = None,
+        selection_mode: str = "single",
+        on_change: Callable[[object], None] | None = None,
+        disabled: bool = False,
+        max_height: int | float | None = None,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        mode = selection_mode.strip().lower()
+        if mode not in self._MODES:
+            raise ValueError("SelectableList selection_mode must be 'single' or 'multiple'")
+        self.items = [self._normalize_item(item) for item in items]
+        if not self.items:
+            raise ValueError("SelectableList items cannot be empty")
+        values = [item[1] for item in self.items]
+        if len(set(values)) != len(values):
+            raise ValueError("SelectableList item values must be unique")
+
+        self.selection_mode = mode
+        self.on_change = on_change
+        self.disabled = bool(disabled)
+        self._option_widgets: list[Selectable] = []
+
+        if mode == "single":
+            self.value: str | None = values[0] if value is None else str(value)
+            self._selected_values: set[str] = set()
+            if self.value is not None:
+                self._validate_value(self.value)
+                self._selected_values.add(self.value)
+        else:
+            if value is not None:
+                raise ValueError("SelectableList value is only valid in single selection mode")
+            selected_values = {str(item) for item in (selected or ())}
+            self._validate_values(selected_values)
+            self.value = None
+            self._selected_values = selected_values
+
+        merged_style = dict(style or {})
+        if max_height is not None:
+            height = float(max_height)
+            if not math.isfinite(height) or height <= 0:
+                raise ValueError("SelectableList max_height must be a positive finite number")
+            merged_style.setdefault("max_height", height)
+            merged_style.setdefault("overflow_y", "auto")
+            merged_style.setdefault("min_height", 0)
+
+        super().__init__(
+            id=id,
+            key=key,
+            class_=class_,
+            style=merged_style or None,
+            tooltip=tooltip,
+            parent=parent,
+        )
+        self._sync_children(live=False)
+
+    @property
+    def selected(self) -> set[str]:
+        return set(self._selected_values)
+
+    @staticmethod
+    def _normalize_item(item: object) -> tuple[str, str, bool]:
+        if isinstance(item, Mapping):
+            raw_label = item.get("label", item.get("text", item.get("value")))
+            if raw_label is None:
+                raise ValueError("SelectableList item mappings require label, text, or value")
+            label = str(raw_label)
+            value = str(item.get("value", label))
+            disabled = bool(item.get("disabled", False))
+            return label, value, disabled
+        if isinstance(item, tuple) and len(item) == 2:
+            label, value = item
+            return str(label), str(value), False
+        label = str(item)
+        return label, label, False
+
+    def _validate_value(self, value: str) -> None:
+        if value not in {item[1] for item in self.items}:
+            raise ValueError("SelectableList value must be one of its item values")
+
+    def _validate_values(self, values: set[str]) -> None:
+        valid = {item[1] for item in self.items}
+        missing = values - valid
+        if missing:
+            raise ValueError("SelectableList selected values must be item values")
+
+    def _ordered_selected(self) -> tuple[str, ...]:
+        return tuple(value for _, value, _ in self.items if value in self._selected_values)
+
+    def _notify_payload(self) -> object:
+        if self.selection_mode == "single":
+            return self.value
+        return self._ordered_selected()
+
+    def _handle_item_select(self, value: str, selected: bool) -> None:
+        if self.disabled:
+            return
+        if self.selection_mode == "single":
+            changed = value != self.value or not self._selected_values
+            self.set_value(value, notify=changed)
+            return
+
+        next_selected = set(self._selected_values)
+        if selected:
+            next_selected.add(value)
+        else:
+            next_selected.discard(value)
+        self.set_selected(next_selected, notify=next_selected != self._selected_values)
+
+    def _make_widgets(self) -> list[Selectable]:
+        toggle = self.selection_mode == "multiple"
+        widgets: list[Selectable] = []
+        for label, value, item_disabled in self.items:
+            def on_select(selected: bool, value: str = value) -> None:
+                self._handle_item_select(value, selected)
+
+            widgets.append(
+                Selectable(
+                    label,
+                    value=value,
+                    selected=value in self._selected_values,
+                    toggle=toggle,
+                    on_select=on_select,
+                    disabled=self.disabled or item_disabled,
+                    parent=None,
+                )
+            )
+        return widgets
+
+    def _sync_children(self, *, live: bool) -> None:
+        widgets = self._make_widgets()
+        self._option_widgets = widgets
+        if live:
+            self.replace_children(widgets)
+            return
+        self.children = []
+        for widget in widgets:
+            self.add(widget)
+
+    def set_value(self, value: str, *, notify: bool = False) -> None:
+        if self.selection_mode != "single":
+            raise RuntimeError("SelectableList.set_value is only valid in single selection mode")
+        selected = str(value)
+        self._validate_value(selected)
+        self.value = selected
+        self._selected_values = {selected}
+        for widget in self._option_widgets:
+            widget.set_selected(widget.value == selected)
+        if notify and self.on_change is not None:
+            self.on_change(self._notify_payload())
+
+    def set_selected(self, values: Iterable[str], *, notify: bool = False) -> None:
+        if self.selection_mode != "multiple":
+            raise RuntimeError("SelectableList.set_selected is only valid in multiple selection mode")
+        selected_values = {str(value) for value in values}
+        self._validate_values(selected_values)
+        self._selected_values = selected_values
+        for widget in self._option_widgets:
+            widget.set_selected(widget.value in self._selected_values)
+        if notify and self.on_change is not None:
+            self.on_change(self._notify_payload())
+
+    def clear_selection(self, *, notify: bool = False) -> None:
+        if self.selection_mode == "single":
+            self.value = None
+        self._selected_values = set()
+        for widget in self._option_widgets:
+            widget.set_selected(False)
+        if notify and self.on_change is not None:
+            self.on_change(self._notify_payload())
+
+
+class SearchBox(HLayout):
+    """Search input with leading search affordance and a clear button."""
+
+    def __init__(
+        self,
+        value: str = "",
+        *,
+        placeholder: str = "Search...",
+        on_change: StringCallback | None = None,
+        disabled: bool = False,
+        clearable: bool = True,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.value = str(value)
+        self.placeholder = str(placeholder)
+        self.on_change = on_change
+        self.disabled = bool(disabled)
+        self.clearable = bool(clearable)
+        self.input: TextInput | None = None
+        self.clear_button: IconButton | None = None
+        merged_style = {
+            "gap": 6,
+            "align_items": "center",
+            "width": "100%",
+            **(style or {}),
+        }
+        super().__init__(
+            id=id,
+            key=key,
+            class_=_merge_widget_class("search-box", class_),
+            style=merged_style,
+            tooltip=tooltip,
+            parent=parent,
+        )
+        IconButton(
+            "search",
+            disabled=True,
+            size=28,
+            class_="search-box-icon",
+            parent=self,
+        )
+        self.input = TextInput(
+            self.value,
+            placeholder=self.placeholder,
+            on_change=self._handle_input_change,
+            disabled=self.disabled,
+            class_="search-box-input",
+            style={"flex": 1, "min_width": 0},
+            parent=self,
+        )
+        if self.clearable:
+            self.clear_button = IconButton(
+                "close",
+                on_click=self.clear,
+                disabled=self.disabled,
+                size=28,
+                class_="search-box-clear",
+                tooltip="Clear",
+                parent=self,
+            )
+
+    def _handle_input_change(self, value: str) -> None:
+        self.value = str(value)
+        if self.on_change is not None and not self.disabled:
+            self.on_change(self.value)
+
+    def set_value(self, value: str, *, notify: bool = False) -> None:
+        self.value = str(value)
+        if self.input is not None:
+            self.input.set_value(self.value)
+        if notify and self.on_change is not None and not self.disabled:
+            self.on_change(self.value)
+
+    def clear(self, *, notify: bool = True) -> None:
+        self.set_value("", notify=notify)
+
+
+@dataclass
+class Command:
+    """CommandPalette action metadata."""
+
+    id: str
+    title: str
+    on_run: Callback | None = None
+    subtitle: str | None = None
+    keywords: Iterable[str] = ()
+    disabled: bool = False
+
+    def __post_init__(self) -> None:
+        command_id = str(self.id).strip()
+        title = str(self.title).strip()
+        if not command_id:
+            raise ValueError("Command id must be a non-empty string")
+        if not title:
+            raise ValueError("Command title must be a non-empty string")
+        self.id = command_id
+        self.title = title
+        self.subtitle = None if self.subtitle is None else str(self.subtitle)
+        if self.keywords is None:
+            keywords: Iterable[object] = ()
+        elif isinstance(self.keywords, str):
+            keywords = (self.keywords,)
+        else:
+            keywords = self.keywords
+        self.keywords = tuple(str(keyword) for keyword in keywords)
+        self.disabled = bool(self.disabled)
+
+    def matches(self, query: str) -> bool:
+        needle = query.strip().lower()
+        if not needle:
+            return True
+        haystack = " ".join(
+            (
+                self.id,
+                self.title,
+                self.subtitle or "",
+                *self.keywords,
+            )
+        ).lower()
+        return needle in haystack
+
+
+class CommandPalette(Modal):
+    """Searchable command launcher built from SearchBox and Selectable rows."""
+
+    def __init__(
+        self,
+        commands: Iterable[Command | Mapping[str, object]],
+        *,
+        open: bool = False,
+        title: str = "Command Palette",
+        value: str = "",
+        placeholder: str = "Search commands...",
+        width: int | float = 520,
+        height: int | float = 360,
+        max_results: int | None = None,
+        close_on_run: bool = True,
+        on_run: Callable[[Command], None] | None = None,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.commands = [self._normalize_command(command) for command in commands]
+        command_ids = [command.id for command in self.commands]
+        if len(set(command_ids)) != len(command_ids):
+            raise ValueError("CommandPalette command ids must be unique")
+        self.query = str(value)
+        self.placeholder = str(placeholder)
+        self.max_results = None if max_results is None else int(max_results)
+        if self.max_results is not None and self.max_results <= 0:
+            raise ValueError("CommandPalette max_results must be greater than zero")
+        self.close_on_run = bool(close_on_run)
+        self.on_run = on_run
+        self.selected: str | None = None
+        self.search_box: SearchBox | None = None
+        self.results: VLayout | None = None
+        merged_style = {
+            "gap": 10,
+            **(style or {}),
+        }
+        super().__init__(
+            title,
+            open=open,
+            width=width,
+            height=height,
+            id=id,
+            key=key,
+            class_=_merge_widget_class("command-palette", class_),
+            style=merged_style,
+            tooltip=tooltip,
+            parent=parent,
+        )
+        self.search_box = SearchBox(
+            self.query,
+            placeholder=self.placeholder,
+            on_change=self._handle_query_change,
+            class_="command-palette-search",
+            parent=self,
+        )
+        self.results = VLayout(
+            class_="command-palette-results",
+            style={"gap": 3, "width": "100%", "flex": 1, "min_height": 0, "overflow_y": "auto"},
+            parent=self,
+        )
+        self._sync_results(live=False)
+
+    @staticmethod
+    def _normalize_command(command: Command | Mapping[str, object]) -> Command:
+        if isinstance(command, Command):
+            return command
+        if not isinstance(command, Mapping):
+            raise TypeError("CommandPalette commands must be Command objects or mappings")
+        if "id" not in command or "title" not in command:
+            raise ValueError("Command mappings require id and title")
+        on_run = command.get("on_run")
+        if on_run is not None and not callable(on_run):
+            raise TypeError("Command on_run must be callable")
+        return Command(
+            str(command["id"]),
+            str(command["title"]),
+            on_run=on_run,  # type: ignore[arg-type]
+            subtitle=None if command.get("subtitle") is None else str(command.get("subtitle")),
+            keywords=command.get("keywords", ()),  # type: ignore[arg-type]
+            disabled=bool(command.get("disabled", False)),
+        )
+
+    def filtered_commands(self) -> tuple[Command, ...]:
+        matches = [command for command in self.commands if command.matches(self.query)]
+        if self.max_results is not None:
+            matches = matches[: self.max_results]
+        return tuple(matches)
+
+    def _ensure_selected(self, commands: Sequence[Command]) -> None:
+        enabled_ids = [command.id for command in commands if not command.disabled]
+        if self.selected not in enabled_ids:
+            self.selected = enabled_ids[0] if enabled_ids else None
+
+    def _row_text(self, command: Command) -> str:
+        if command.subtitle:
+            return f"{command.title} - {command.subtitle}"
+        return command.title
+
+    def _make_result_rows(self) -> list[Widget]:
+        commands = list(self.filtered_commands())
+        self._ensure_selected(commands)
+        if not commands:
+            return [
+                Label(
+                    "No commands",
+                    class_="command-palette-empty",
+                    style={"height": 34, "color": "muted", "align_self": "center"},
+                    parent=None,
+                )
+            ]
+        rows: list[Widget] = []
+        for command in commands:
+            def on_select(selected: bool, command_id: str = command.id) -> None:
+                if selected:
+                    self.run(command_id)
+
+            rows.append(
+                Selectable(
+                    self._row_text(command),
+                    value=command.id,
+                    selected=command.id == self.selected,
+                    toggle=False,
+                    on_select=on_select,
+                    disabled=command.disabled,
+                    class_="command-palette-row",
+                    parent=None,
+                )
+            )
+        return rows
+
+    def _sync_results(self, *, live: bool) -> None:
+        if self.results is None:
+            return
+        rows = self._make_result_rows()
+        if live:
+            self.results.replace_children(rows)
+            return
+        self.results.children = []
+        for row in rows:
+            self.results.add(row)
+
+    def _handle_query_change(self, query: str) -> None:
+        self.query = str(query)
+        self._sync_results(live=self.results is not None and self.results.is_live)
+
+    def set_query(self, query: str) -> None:
+        self.query = str(query)
+        if self.search_box is not None:
+            self.search_box.set_value(self.query)
+        self._sync_results(live=self.results is not None and self.results.is_live)
+
+    def set_commands(self, commands: Iterable[Command | Mapping[str, object]]) -> None:
+        self.commands = [self._normalize_command(command) for command in commands]
+        command_ids = [command.id for command in self.commands]
+        if len(set(command_ids)) != len(command_ids):
+            raise ValueError("CommandPalette command ids must be unique")
+        self._sync_results(live=self.results is not None and self.results.is_live)
+
+    def run_selected(self) -> None:
+        if self.selected is not None:
+            self.run(self.selected)
+
+    def run(self, command_id: str) -> None:
+        selected = str(command_id)
+        command = next((command for command in self.commands if command.id == selected), None)
+        if command is None:
+            raise ValueError("CommandPalette command_id must match a command")
+        if command.disabled:
+            return
+        self.selected = command.id
+        if command.on_run is not None:
+            command.on_run()
+        if self.on_run is not None:
+            self.on_run(command)
+        if self.close_on_run:
+            self.close()
+
+
+class RadioGroup(VLayout):
+    """Mutually exclusive choice group built from RadioButton rows."""
+
+    _ORIENTATIONS = {"vertical", "horizontal"}
+
+    def __init__(
+        self,
+        items: Iterable[object],
+        *,
+        value: str | None = None,
+        orientation: str = "vertical",
+        on_change: StringCallback | None = None,
+        disabled: bool = False,
+        gap: int | float | None = None,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        orientation_value = orientation.strip().lower()
+        if orientation_value not in self._ORIENTATIONS:
+            raise ValueError("RadioGroup orientation must be 'vertical' or 'horizontal'")
+        self.items = [self._normalize_item(item) for item in items]
+        if not self.items:
+            raise ValueError("RadioGroup items cannot be empty")
+        values = [item[1] for item in self.items]
+        if len(set(values)) != len(values):
+            raise ValueError("RadioGroup item values must be unique")
+
+        selected = values[0] if value is None else str(value)
+        self._validate_value(selected)
+        self.value = selected
+        self.orientation = orientation_value
+        self.on_change = on_change
+        self.disabled = bool(disabled)
+        self._button_widgets: list[RadioButton] = []
+
+        merged_style = dict(style or {})
+        if orientation_value == "horizontal":
+            merged_style.setdefault("display", "flex")
+            merged_style.setdefault("flex_direction", "row")
+            merged_style.setdefault("align_items", "center")
+            merged_style.setdefault("height", "auto")
+        if gap is not None:
+            gap_value = float(gap)
+            if not math.isfinite(gap_value) or gap_value < 0:
+                raise ValueError("RadioGroup gap must be a non-negative finite number")
+            merged_style.setdefault("gap", gap_value)
+
+        super().__init__(
+            id=id,
+            key=key,
+            class_=class_,
+            style=merged_style or None,
+            tooltip=tooltip,
+            parent=parent,
+        )
+        self._sync_children(live=False)
+
+    @staticmethod
+    def _normalize_item(item: object) -> tuple[str, str, bool]:
+        if isinstance(item, Mapping):
+            raw_label = item.get("label", item.get("text", item.get("value")))
+            if raw_label is None:
+                raise ValueError("RadioGroup item mappings require label, text, or value")
+            label = str(raw_label)
+            value = str(item.get("value", label))
+            disabled = bool(item.get("disabled", False))
+            return label, value, disabled
+        if isinstance(item, tuple) and len(item) == 2:
+            label, value = item
+            return str(label), str(value), False
+        label = str(item)
+        return label, label, False
+
+    def _validate_value(self, value: str) -> None:
+        if value not in {item[1] for item in self.items}:
+            raise ValueError("RadioGroup value must be one of its item values")
+
+    def _handle_button_change(self, value: str, checked: bool) -> None:
+        if self.disabled or not checked:
+            return
+        self.set_value(value, notify=value != self.value)
+
+    def _make_buttons(self) -> list[RadioButton]:
+        buttons: list[RadioButton] = []
+        for label, value, item_disabled in self.items:
+            def on_change(checked: bool, value: str = value) -> None:
+                self._handle_button_change(value, checked)
+
+            buttons.append(
+                RadioButton(
+                    label,
+                    value=value,
+                    checked=value == self.value,
+                    on_change=on_change,
+                    disabled=self.disabled or item_disabled,
+                    parent=None,
+                )
+            )
+        return buttons
+
+    def _sync_children(self, *, live: bool) -> None:
+        buttons = self._make_buttons()
+        self._button_widgets = buttons
+        if live:
+            self.replace_children(buttons)
+            return
+        self.children = []
+        for button in buttons:
+            self.add(button)
+
+    def set_value(self, value: str, *, notify: bool = False) -> None:
+        selected = str(value)
+        self._validate_value(selected)
+        self.value = selected
+        for button in self._button_widgets:
+            button.set_checked(button.value == selected)
+        if notify and self.on_change is not None:
+            self.on_change(self.value)
+
+
+class TreeNode(Container):
+    """Dense hierarchical row for TreeView."""
+
+    kind = "tree_node"
+
+    def __init__(
+        self,
+        label: str,
+        *,
+        node_id: str | None = None,
+        expanded: bool = False,
+        selected: bool = False,
+        leaf: bool = False,
+        on_select: BoolCallback | None = None,
+        on_expand: BoolCallback | None = None,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.label = str(label)
+        if not self.label:
+            raise ValueError("TreeNode label cannot be empty")
+        self.node_id = self.label if node_id is None else str(node_id)
+        if not self.node_id:
+            raise ValueError("TreeNode node_id cannot be empty")
+        self.expanded = bool(expanded)
+        self.selected = bool(selected)
+        self.leaf = bool(leaf)
+        self.on_select = on_select
+        self.on_expand = on_expand
+        self.disabled = bool(disabled)
+        self._tree_view: TreeView | None = None
+        super().__init__(
+            id=id,
+            key=key,
+            class_=class_,
+            style=style,
+            tooltip=tooltip,
+            parent=parent,
+        )
+        self._attach_tree_view_from_parent()
+
+    def _attach_tree_view_from_parent(self) -> None:
+        parent = self.parent
+        while parent is not None:
+            if isinstance(parent, TreeView):
+                parent._wire_node(self)
+                return
+            parent = parent.parent
+
+    def add(self, child: Widget) -> Widget:
+        added = super().add(child)
+        if isinstance(added, TreeNode):
+            added._tree_view = self._tree_view
+            if self._tree_view is not None:
+                self._tree_view._wire_node(added)
+        return added
+
+    def set_expanded(self, expanded: bool, *, notify: bool = False) -> None:
+        self.expanded = bool(expanded)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("expanded", self.expanded)
+        if notify and not self.disabled and self.on_expand is not None:
+            self.on_expand(self.expanded)
+
+    def expand(self, *, notify: bool = False) -> None:
+        self.set_expanded(True, notify=notify)
+
+    def collapse(self, *, notify: bool = False) -> None:
+        self.set_expanded(False, notify=notify)
+
+    def toggle(self, *, notify: bool = False) -> None:
+        self.set_expanded(not self.expanded, notify=notify)
+
+    def set_selected(self, selected: bool, *, notify: bool = False) -> None:
+        self.selected = bool(selected)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("checked", self.selected)
+        if notify and not self.disabled and self.on_select is not None:
+            self.on_select(self.selected)
+
+    def select(self, *, notify: bool = False) -> None:
+        if self._tree_view is not None:
+            self._tree_view.set_selected(self.node_id, notify=notify)
+            return
+        self.set_selected(True, notify=notify)
+
+    def _handle_native_event(self, value: object) -> None:
+        payload = json.loads(value) if isinstance(value, str) else value
+        if not isinstance(payload, Mapping):
+            payload = {"event": "select", "selected": bool(value)}
+        event = str(payload.get("event", "select"))
+        if event == "expand":
+            self.expanded = bool(payload.get("expanded", False))
+            if self.on_expand is not None:
+                self.on_expand(self.expanded)
+            return
+        if event == "select":
+            self.selected = bool(payload.get("selected", True))
+            if self._tree_view is not None and self.selected:
+                self._tree_view._handle_node_selected(self, notify=True)
+            elif self.on_select is not None:
+                self.on_select(self.selected)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "label": self.label,
+            "value": self.node_id,
+            "expanded": self.expanded,
+            "checked": self.selected,
+            "leaf": self.leaf,
+            "disabled": self.disabled,
+            "events": ["change"]
+            if (self.on_select or self.on_expand or self._tree_view is not None)
+            and not self.disabled
+            else [],
+        }
+
+
+class TreeView(Container):
+    """Hierarchical selectable tree container."""
+
+    kind = "tree_view"
+
+    def __init__(
+        self,
+        items: Iterable[object] | None = None,
+        *,
+        selected: str | None = None,
+        on_select: StringCallback | None = None,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.selected = None if selected is None else str(selected)
+        self.on_select = on_select
+        self.disabled = bool(disabled)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+        if items is not None:
+            for item in items:
+                self.add(self._node_from_item(item))
+        self._wire_descendants()
+        if self.selected is not None and self._find_node(self.selected) is not None:
+            self.set_selected(self.selected)
+
+    def add(self, child: Widget) -> Widget:
+        added = super().add(child)
+        if isinstance(added, TreeNode):
+            self._wire_node(added)
+        return added
+
+    def _wire_node(self, node: TreeNode) -> None:
+        node._tree_view = self
+        if self.disabled:
+            node.disabled = True
+        if node.selected:
+            self.selected = node.node_id
+        elif self.selected == node.node_id:
+            node.selected = True
+        for child in node.children:
+            if isinstance(child, TreeNode):
+                self._wire_node(child)
+
+    def _wire_descendants(self) -> None:
+        for child in self.children:
+            if isinstance(child, TreeNode):
+                self._wire_node(child)
+
+    @staticmethod
+    def _node_from_item(item: object) -> TreeNode:
+        if isinstance(item, Mapping):
+            raw_label = item.get("label", item.get("text", item.get("name", item.get("id"))))
+            if raw_label is None:
+                raise ValueError("TreeView item mappings require label, text, name, or id")
+            label = str(raw_label)
+            node_id = str(item.get("id", item.get("node_id", label)))
+            children = item.get("children", ())
+            node = TreeNode(
+                label,
+                node_id=node_id,
+                expanded=bool(item.get("expanded", False)),
+                selected=bool(item.get("selected", False)),
+                leaf=bool(item.get("leaf", False)),
+                disabled=bool(item.get("disabled", False)),
+                parent=None,
+            )
+            if children is not None:
+                for child in children:
+                    node.add(TreeView._node_from_item(child))
+            return node
+        if isinstance(item, tuple) and len(item) == 2:
+            label, node_id = item
+            return TreeNode(str(label), node_id=str(node_id), leaf=True, parent=None)
+        label = str(item)
+        return TreeNode(label, node_id=label, leaf=True, parent=None)
+
+    def _tree_nodes(self) -> list[TreeNode]:
+        nodes: list[TreeNode] = []
+
+        def walk(node: Widget) -> None:
+            if isinstance(node, TreeNode):
+                nodes.append(node)
+            if isinstance(node, Container):
+                for child in node.children:
+                    walk(child)
+
+        for child in self.children:
+            walk(child)
+        return nodes
+
+    def _find_node(self, node_id: str) -> TreeNode | None:
+        for node in self._tree_nodes():
+            if node.node_id == node_id:
+                return node
+        return None
+
+    def _handle_node_selected(self, node: TreeNode, *, notify: bool) -> None:
+        self.selected = node.node_id
+        for candidate in self._tree_nodes():
+            candidate.set_selected(candidate is node)
+        if notify and self.on_select is not None:
+            self.on_select(node.node_id)
+
+    def set_selected(self, node_id: str, *, notify: bool = False) -> None:
+        selected = str(node_id)
+        node = self._find_node(selected)
+        if node is None:
+            raise ValueError("TreeView selected node_id must exist in the tree")
+        self._handle_node_selected(node, notify=notify)
+
+    def clear_selection(self, *, notify: bool = False) -> None:
+        self.selected = None
+        for node in self._tree_nodes():
+            node.set_selected(False)
+        if notify and self.on_select is not None:
+            self.on_select("")
+
+    def props(self) -> dict[str, Any]:
+        return {
             "disabled": self.disabled,
         }
 
@@ -6189,10 +8899,11 @@ class Scatter3D(Widget):
                 buffer = memoryview(packed).cast("B")
             elif kind in "OSU":
                 dtype = "utf8"
-                strings = [str(value) for value in arr.astype(str, copy=False).tolist()]
-                if any("\0" in value for value in strings):
+                strings = arr.astype(str, copy=False).tolist()
+                joined = "\0".join(strings)
+                if joined.count("\0") != max(row_count - 1, 0):
                     return None
-                buffer = "\0".join(strings).encode("utf-8")
+                buffer = joined.encode("utf-8")
             else:
                 return None
             metadata.append({"name": str(col), "dtype": dtype, "len": row_count})
@@ -6946,7 +9657,10 @@ class DataFrameTable(Widget):
         *,
         page_size: int = 100,
         sample_rows: int = DEFAULT_TABLE_SAMPLE_ROWS,
+        sortable: bool = True,
+        resizable_columns: bool = True,
         on_select: TableSelectCallback | None = None,
+        on_sort: TableSortCallback | None = None,
         id: str | None = None,
         key: str | None = None,
         class_: str | None = None,
@@ -6966,8 +9680,12 @@ class DataFrameTable(Widget):
         self.frame_summary = summarize_frame(frame)
         self.cells = extract_table_sample(frame, self.frame_summary, self.sample_rows)
         self.column_buffers = extract_table_column_buffers(frame, self.frame_summary)
+        self.sortable = bool(sortable)
+        self.resizable_columns = bool(resizable_columns)
         self.on_select = on_select
+        self.on_sort = on_sort
         self.selection: TableSelection | None = None
+        self.sort: TableSort | None = None
         super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
         self.resource_id = f"{self.id}:table"
 
@@ -7007,6 +9725,8 @@ class DataFrameTable(Widget):
             "resource_ref": id(self.frame),
             "page_size": self.page_size,
             "virtualized": True,
+            "sortable": self.sortable,
+            "resizable_columns": self.resizable_columns,
             "sample_rows": self.sample_rows,
             "buffer_columns": len(self.column_buffers),
             "cells": self.cells if include_cells else [],
@@ -7015,7 +9735,7 @@ class DataFrameTable(Widget):
     def props(self) -> dict[str, Any]:
         include_cells = _include_startup_resource_payloads() or not self.column_buffers
         props = self._table_payload(include_cells=include_cells)
-        props["events"] = ["change"] if self.on_select is not None else []
+        props["events"] = ["change"] if (self.on_select is not None or self.on_sort is not None) else []
         return props
 
 

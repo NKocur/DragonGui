@@ -34,10 +34,43 @@ Scatter3D {
 }
 
 Button,
+SmallButton,
+IconButton,
+ImageButton,
+ArrowButton,
 Dropdown {
     background: surface_alt;
     border: 1px solid border;
     border-radius: var(--dg-radius);
+    accent: accent;
+    color: text;
+}
+
+Selectable {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--dg-radius);
+    accent: accent;
+    color: text;
+}
+
+RadioButton {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--dg-radius);
+    accent: accent;
+    color: text;
+}
+
+TreeView {
+    background: transparent;
+    color: text;
+}
+
+TreeNode {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
     accent: accent;
     color: text;
 }
@@ -48,38 +81,119 @@ Tag {
     color: text;
 }
 
+SmallButton {
+    height: 26px;
+}
+
+IconButton,
+ImageButton,
+ArrowButton {
+    width: 30px;
+    height: 30px;
+    padding: 5px;
+}
+
 Button:hover,
+SmallButton:hover,
+IconButton:hover,
+ImageButton:hover,
+ArrowButton:hover,
 Dropdown:hover {
     background: accent_mix_20;
     border-color: accent;
 }
 
+Selectable:hover {
+    background: accent_mix_20;
+}
+
+RadioButton:hover {
+    background: accent_mix_20;
+}
+
+TreeNode:hover {
+    background: accent_mix_20;
+}
+
 Button:focus,
+SmallButton:focus,
+IconButton:focus,
+ImageButton:focus,
+ArrowButton:focus,
 Dropdown:focus,
+Selectable:focus,
+RadioButton:focus,
+TreeNode:focus,
 TextInput:focus,
 TextArea:focus,
-NumberInput:focus {
+CodeEditor:focus,
+LogView:focus,
+NumberInput:focus,
+DragNumber:focus {
     border-color: focus;
 }
 
 Button:active,
+SmallButton:active,
+IconButton:active,
+ImageButton:active,
+ArrowButton:active,
 Dropdown:active {
     background: accent_dark;
     border-color: accent_dark;
 }
 
+Selectable:active {
+    background: accent_mix_20;
+}
+
+RadioButton:active {
+    background: accent_mix_20;
+}
+
+TreeNode:active {
+    background: accent_mix_20;
+}
+
+Selectable:selected {
+    background: accent_mix_20;
+    border-color: accent;
+}
+
+RadioButton:selected {
+    color: text;
+}
+
+TreeNode:selected {
+    background: accent_mix_20;
+    border-color: accent;
+}
+
 Button:disabled,
+SmallButton:disabled,
+IconButton:disabled,
+ImageButton:disabled,
+ArrowButton:disabled,
 Dropdown:disabled,
+Selectable:disabled,
+RadioButton:disabled,
+TreeNode:disabled,
 TextInput:disabled,
 TextArea:disabled,
-NumberInput:disabled {
+CodeEditor:disabled,
+LogView:disabled,
+NumberInput:disabled,
+DragNumber:disabled {
     border-color: disabled;
     opacity: 0.62;
 }
 
 TextInput,
 TextArea,
-NumberInput {
+CodeEditor,
+LogView,
+NumberInput,
+DragNumber {
     border: 1px solid border;
     border-radius: var(--dg-radius);
     accent: accent;
@@ -88,8 +202,23 @@ NumberInput {
 
 TextInput:hover,
 TextArea:hover,
-NumberInput:hover {
+CodeEditor:hover,
+LogView:hover,
+NumberInput:hover,
+DragNumber:hover {
     border-color: accent;
+}
+
+CodeEditor {
+    font-family: "Consolas";
+}
+
+LogView {
+    font-family: "Consolas";
+}
+
+DragNumber:active {
+    background: accent_mix_20;
 }
 
 Checkbox {
@@ -98,7 +227,25 @@ Checkbox {
     color: text;
 }
 
-Slider {
+ToggleSwitch {
+    border-radius: var(--dg-radius);
+    accent: accent;
+    color: text;
+}
+
+Splitter {
+    gap: 6px;
+}
+
+Splitter::gutter {
+    width: 2px;
+    height: 2px;
+    background: transparent;
+    border-radius: 999px;
+}
+
+Slider,
+RangeSlider {
     track-color: border;
     thumb-color: accent;
     accent: accent;

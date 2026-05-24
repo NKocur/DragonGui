@@ -62,3 +62,7 @@ Suggested order:
 31. `container_queries_probe.py` - first-slice named `@container` width queries with `container-type: inline-size`.
 32. `primitive_benchmark_probe.py` - dense primitive rect rendering benchmark with split-path diagnostics.
 33. `line_plot_stream_benchmark_probe.py` - LinePlot append streaming benchmark with native, primitive, decimation, and dedicated line renderer diagnostics.
+34. `toggle_switch_probe.py` - ToggleSwitch state, callbacks, disabled state, label position, and track/thumb parts.
+35. `date_time_inputs_probe.py` - DateInput, TimeInput, and DateTimeInput validation, normalization, callbacks, and invalid styling.
+36. `code_editor_probe.py` - CodeEditor multiline editing, fixed-width text, line numbers, gutter styling, and disabled state.
+37. `log_view_probe.py` - LogView append streams, visible-line rendering, follow mode, scrolling, and severity row parts.

@@ -820,6 +820,7 @@ pub enum DgLayoutDeclaration {
     Flex(DgCssNumber),
     FlexGrow(DgCssNumber),
     FlexShrink(DgCssNumber),
+    FlexBasis(DgCssLength),
     Width(DgCssLength),
     Height(DgCssLength),
     MinWidth(DgCssLength),
@@ -2692,6 +2693,7 @@ pub enum DgLayoutPropertyName {
     Flex,
     FlexGrow,
     FlexShrink,
+    FlexBasis,
     Width,
     Height,
     MinWidth,
@@ -2838,7 +2840,7 @@ impl DgStyleWarning {
 impl DgStylePropertyName {
     /// Supported DragonGUI CSS property matrix.
     ///
-    /// Layout: display, flex-direction, flex, flex-grow, flex-shrink, width,
+    /// Layout: display, flex-direction, flex, flex-grow, flex-shrink, flex-basis, width,
     /// height, min-width, min-height, max-width, max-height, padding,
     /// padding-left, padding-right, padding-top, padding-bottom, margin,
     /// margin-left, margin-right, margin-top, margin-bottom, gap,
@@ -2872,6 +2874,7 @@ impl DgStylePropertyName {
             "flex" => Ok(Self::Layout(DgLayoutPropertyName::Flex)),
             "flex-grow" => Ok(Self::Layout(DgLayoutPropertyName::FlexGrow)),
             "flex-shrink" => Ok(Self::Layout(DgLayoutPropertyName::FlexShrink)),
+            "flex-basis" => Ok(Self::Layout(DgLayoutPropertyName::FlexBasis)),
             "width" => Ok(Self::Layout(DgLayoutPropertyName::Width)),
             "height" => Ok(Self::Layout(DgLayoutPropertyName::Height)),
             "min-width" => Ok(Self::Layout(DgLayoutPropertyName::MinWidth)),
@@ -3006,6 +3009,8 @@ pub fn widget_kind_from_css_type(name: &str) -> Option<WidgetKind> {
         "ScrollArea" => Some(WidgetKind::ScrollArea),
         "GridLayout" => Some(WidgetKind::GridLayout),
         "FlowLayout" => Some(WidgetKind::FlowLayout),
+        "Splitter" => Some(WidgetKind::Splitter),
+        "Pane" => Some(WidgetKind::Pane),
         "Panel" => Some(WidgetKind::Panel),
         "Collapsible" => Some(WidgetKind::Collapsible),
         "Modal" => Some(WidgetKind::Modal),
@@ -3027,13 +3032,28 @@ pub fn widget_kind_from_css_type(name: &str) -> Option<WidgetKind> {
         "NavItem" => Some(WidgetKind::NavItem),
         "Label" => Some(WidgetKind::Label),
         "Button" => Some(WidgetKind::Button),
+        "SmallButton" => Some(WidgetKind::SmallButton),
+        "IconButton" => Some(WidgetKind::IconButton),
+        "ImageButton" => Some(WidgetKind::ImageButton),
+        "ArrowButton" => Some(WidgetKind::ArrowButton),
+        "Selectable" => Some(WidgetKind::Selectable),
+        "RadioButton" => Some(WidgetKind::RadioButton),
+        "TreeView" => Some(WidgetKind::TreeView),
+        "TreeNode" => Some(WidgetKind::TreeNode),
+        "DragSource" => Some(WidgetKind::DragSource),
+        "DropTarget" => Some(WidgetKind::DropTarget),
         "TextInput" => Some(WidgetKind::TextInput),
         "TextArea" => Some(WidgetKind::TextArea),
+        "CodeEditor" => Some(WidgetKind::CodeEditor),
+        "LogView" => Some(WidgetKind::LogView),
         "NumberInput" => Some(WidgetKind::NumberInput),
+        "DragNumber" => Some(WidgetKind::DragNumber),
         "Slider" => Some(WidgetKind::Slider),
+        "RangeSlider" => Some(WidgetKind::RangeSlider),
         "ProgressBar" => Some(WidgetKind::ProgressBar),
         "Dropdown" => Some(WidgetKind::Dropdown),
         "Checkbox" => Some(WidgetKind::Checkbox),
+        "ToggleSwitch" => Some(WidgetKind::ToggleSwitch),
         "Separator" => Some(WidgetKind::Separator),
         "Spacer" => Some(WidgetKind::Spacer),
         "PieChart" => Some(WidgetKind::PieChart),
@@ -3055,6 +3075,8 @@ pub fn css_type_name(kind: WidgetKind) -> Option<&'static str> {
         WidgetKind::ScrollArea => Some("ScrollArea"),
         WidgetKind::GridLayout => Some("GridLayout"),
         WidgetKind::FlowLayout => Some("FlowLayout"),
+        WidgetKind::Splitter => Some("Splitter"),
+        WidgetKind::Pane => Some("Pane"),
         WidgetKind::Panel => Some("Panel"),
         WidgetKind::Collapsible => Some("Collapsible"),
         WidgetKind::Modal => Some("Modal"),
@@ -3076,13 +3098,28 @@ pub fn css_type_name(kind: WidgetKind) -> Option<&'static str> {
         WidgetKind::NavItem => Some("NavItem"),
         WidgetKind::Label => Some("Label"),
         WidgetKind::Button => Some("Button"),
+        WidgetKind::SmallButton => Some("SmallButton"),
+        WidgetKind::IconButton => Some("IconButton"),
+        WidgetKind::ImageButton => Some("ImageButton"),
+        WidgetKind::ArrowButton => Some("ArrowButton"),
+        WidgetKind::Selectable => Some("Selectable"),
+        WidgetKind::RadioButton => Some("RadioButton"),
+        WidgetKind::TreeView => Some("TreeView"),
+        WidgetKind::TreeNode => Some("TreeNode"),
+        WidgetKind::DragSource => Some("DragSource"),
+        WidgetKind::DropTarget => Some("DropTarget"),
         WidgetKind::TextInput => Some("TextInput"),
         WidgetKind::TextArea => Some("TextArea"),
+        WidgetKind::CodeEditor => Some("CodeEditor"),
+        WidgetKind::LogView => Some("LogView"),
         WidgetKind::NumberInput => Some("NumberInput"),
+        WidgetKind::DragNumber => Some("DragNumber"),
         WidgetKind::Slider => Some("Slider"),
+        WidgetKind::RangeSlider => Some("RangeSlider"),
         WidgetKind::ProgressBar => Some("ProgressBar"),
         WidgetKind::Dropdown => Some("Dropdown"),
         WidgetKind::Checkbox => Some("Checkbox"),
+        WidgetKind::ToggleSwitch => Some("ToggleSwitch"),
         WidgetKind::Separator => Some("Separator"),
         WidgetKind::Spacer => Some("Spacer"),
         WidgetKind::PieChart => Some("PieChart"),
@@ -3199,8 +3236,27 @@ fn node_snapshot_pseudo_classes(node: &WidgetNode) -> Vec<DgPseudoClass> {
     if node.props.disabled {
         pseudos.push(DgPseudoClass::Disabled);
     }
-    if node.kind == WidgetKind::Checkbox && node.props.checked.unwrap_or(false) {
+    if matches!(node.kind, WidgetKind::Checkbox | WidgetKind::ToggleSwitch)
+        && node.props.checked.unwrap_or(false)
+    {
         pseudos.push(DgPseudoClass::Checked);
+    }
+    if node.kind == WidgetKind::Selectable && node.props.checked.unwrap_or(false) {
+        pseudos.push(DgPseudoClass::Selected);
+    }
+    if node.kind == WidgetKind::RadioButton && node.props.checked.unwrap_or(false) {
+        pseudos.push(DgPseudoClass::Checked);
+        pseudos.push(DgPseudoClass::Selected);
+    }
+    if node.kind == WidgetKind::TreeNode {
+        if node.props.checked.unwrap_or(false) {
+            pseudos.push(DgPseudoClass::Selected);
+        }
+        if node.props.expanded.unwrap_or(false) {
+            pseudos.push(DgPseudoClass::Expanded);
+        } else {
+            pseudos.push(DgPseudoClass::Collapsed);
+        }
     }
     if node.kind == WidgetKind::Modal && node.props.open == Some(true) {
         pseudos.push(DgPseudoClass::Open);
@@ -4328,7 +4384,18 @@ fn widget_kind_supports_part(kind: WidgetKind, part: &str) -> bool {
         WidgetKind::Panel => matches!(part, "accent"),
         WidgetKind::Collapsible => matches!(part, "header" | "indicator" | "body"),
         WidgetKind::Modal => matches!(part, "scrim"),
-        WidgetKind::Button => matches!(part, "badge"),
+        WidgetKind::Splitter => matches!(part, "gutter"),
+        WidgetKind::Pane => matches!(part, "pane"),
+        WidgetKind::Button | WidgetKind::SmallButton => matches!(part, "badge"),
+        WidgetKind::IconButton | WidgetKind::ArrowButton => matches!(part, "icon"),
+        WidgetKind::ImageButton => matches!(part, "image"),
+        WidgetKind::Selectable => matches!(part, "row" | "indicator" | "label"),
+        WidgetKind::RadioButton => matches!(part, "indicator" | "dot" | "label"),
+        WidgetKind::TreeNode => matches!(part, "row" | "indicator" | "label" | "guide"),
+        WidgetKind::CodeEditor => matches!(part, "field" | "gutter" | "line-number" | "caret"),
+        WidgetKind::LogView => {
+            matches!(part, "line" | "debug" | "info" | "warning" | "error")
+        }
         WidgetKind::NumberInput => matches!(
             part,
             "field"
@@ -4339,19 +4406,35 @@ fn widget_kind_supports_part(kind: WidgetKind, part: &str) -> bool {
                 | "divider"
                 | "caret"
         ),
+        WidgetKind::DragNumber => matches!(part, "field" | "value" | "grip"),
         WidgetKind::Dropdown => matches!(
             part,
             "field" | "chevron" | "menu" | "item" | "item-selected" | "item-hover"
         ),
         WidgetKind::Checkbox => matches!(part, "row" | "box" | "indicator" | "label"),
+        WidgetKind::ToggleSwitch => matches!(part, "row" | "track" | "thumb" | "label"),
         WidgetKind::Led => matches!(part, "dot" | "glow" | "highlight"),
         WidgetKind::Slider => matches!(part, "track" | "fill" | "thumb"),
+        WidgetKind::RangeSlider => {
+            matches!(
+                part,
+                "track" | "range" | "thumb-min" | "thumb-max" | "label"
+            )
+        }
         WidgetKind::ProgressBar => matches!(part, "track" | "fill" | "label"),
         WidgetKind::Tabs => matches!(part, "header"),
         WidgetKind::Tab => matches!(part, "tab" | "accent" | "badge"),
         WidgetKind::NavItem => matches!(part, "item" | "accent" | "badge"),
         WidgetKind::DataFrameTable => {
-            matches!(part, "header" | "row" | "row-selected" | "grid-line")
+            matches!(
+                part,
+                "header"
+                    | "row"
+                    | "row-selected"
+                    | "grid-line"
+                    | "scrollbar-track"
+                    | "scrollbar-thumb"
+            )
         }
         _ => false,
     }
@@ -4368,6 +4451,7 @@ fn widget_kind_supports_scrollbar_part(kind: WidgetKind) -> bool {
             | WidgetKind::Panel
             | WidgetKind::Collapsible
             | WidgetKind::Modal
+            | WidgetKind::DataFrameTable
     )
 }
 
@@ -4392,6 +4476,8 @@ fn merge_node_style(base: &mut NodeStyle, overlay: &NodeStyle) {
 fn merge_layout_style(base: &mut LayoutStyle, overlay: &LayoutStyle) {
     base.display = overlay.display.or(base.display);
     base.flex_direction = overlay.flex_direction.or(base.flex_direction);
+    base.align_items = overlay.align_items.or(base.align_items);
+    base.align_self = overlay.align_self.or(base.align_self);
     base.width = overlay.width.or(base.width);
     base.height = overlay.height.or(base.height);
     base.min_width = overlay.min_width.or(base.min_width);
@@ -4441,6 +4527,8 @@ fn merge_layout_style(base: &mut LayoutStyle, overlay: &LayoutStyle) {
     base.z_index = overlay.z_index.or(base.z_index);
     base.flex_grow = overlay.flex_grow.or(base.flex_grow);
     base.flex_shrink = overlay.flex_shrink.or(base.flex_shrink);
+    base.flex_basis = overlay.flex_basis.or(base.flex_basis);
+    base.flex_basis_value = overlay.flex_basis_value.or(base.flex_basis_value);
     base.grid_template_columns = overlay
         .grid_template_columns
         .clone()
@@ -4700,9 +4788,18 @@ fn apply_layout_declaration(style: &mut LayoutStyle, declaration: &DgLayoutDecla
         DgLayoutDeclaration::FlexDirection(value) => {
             style.flex_direction = flex_direction_from_keyword(value);
         }
-        DgLayoutDeclaration::Flex(value) => style.flex_grow = Some(value.0.max(0.0)),
+        DgLayoutDeclaration::Flex(value) => {
+            style.flex_grow = Some(value.0.max(0.0));
+            style.flex_shrink = Some(1.0);
+            style.flex_basis = Some(0.0);
+            style.flex_basis_value = Some(LayoutLength::LogicalPx(0.0));
+        }
         DgLayoutDeclaration::FlexGrow(value) => style.flex_grow = Some(value.0.max(0.0)),
         DgLayoutDeclaration::FlexShrink(value) => style.flex_shrink = Some(value.0.max(0.0)),
+        DgLayoutDeclaration::FlexBasis(value) => {
+            style.flex_basis = length_px(value);
+            style.flex_basis_value = layout_length(value);
+        }
         DgLayoutDeclaration::Width(value) => {
             style.width = length_px(value);
             style.width_value = layout_length(value);
@@ -7645,6 +7742,9 @@ fn lower_layout(
         }
         DgLayoutPropertyName::FlexShrink => {
             DgLayoutDeclaration::FlexShrink(parse_number_value(name, value, variables)?)
+        }
+        DgLayoutPropertyName::FlexBasis => {
+            DgLayoutDeclaration::FlexBasis(parse_layout_length_value(name, value, variables)?)
         }
         DgLayoutPropertyName::Width => {
             DgLayoutDeclaration::Width(parse_layout_length_value(name, value, variables)?)
@@ -11444,6 +11544,7 @@ fn unquote(value: &str) -> String {
 mod tests {
     use super::*;
     use crate::document::NodeProps;
+    use crate::style::AlignItemsStyle;
     use crate::style::StepPosition;
 
     fn env_usize(name: &str, default: usize) -> usize {
@@ -11760,6 +11861,10 @@ mod tests {
                 DgStylePropertyName::Layout(DgLayoutPropertyName::FlexDirection),
             ),
             (
+                "flex-basis",
+                DgStylePropertyName::Layout(DgLayoutPropertyName::FlexBasis),
+            ),
+            (
                 "background-color",
                 DgStylePropertyName::Visual(DgVisualPropertyName::Background),
             ),
@@ -12053,6 +12158,10 @@ mod tests {
     fn css_widget_type_names_round_trip_known_widgets() {
         let kinds = [
             WidgetKind::Button,
+            WidgetKind::SmallButton,
+            WidgetKind::IconButton,
+            WidgetKind::ImageButton,
+            WidgetKind::ArrowButton,
             WidgetKind::Badge,
             WidgetKind::Tag,
             WidgetKind::Panel,
@@ -14512,6 +14621,67 @@ mod tests {
                 )))
             )
         }));
+    }
+
+    #[test]
+    fn flex_shorthand_sets_shrink_and_zero_basis() {
+        let parsed = parse_stylesheet(
+            "HLayout > TextInput { flex: 1; flex-basis: 25%; }",
+            StylesheetOrigin::User,
+        )
+        .unwrap();
+
+        assert!(parsed.warnings.is_empty(), "{:?}", parsed.warnings);
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::Flex(DgCssNumber(1.0)))
+            )
+        }));
+        assert!(parsed.rules[0].declarations.iter().any(|declaration| {
+            matches!(
+                declaration.property,
+                DgStyleProperty::Layout(DgLayoutDeclaration::FlexBasis(DgCssLength::Percent(25.0)))
+            )
+        }));
+
+        let mut tree = css_bench_node("window", WidgetKind::Window, None);
+        let mut row = css_bench_node("row", WidgetKind::HLayout, None);
+        row.children
+            .push(css_bench_node("input", WidgetKind::TextInput, None));
+        tree.children.push(row);
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(StylesheetOrigin::User, "TextInput { flex: 1; }")
+            .unwrap();
+
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+        let input = &tree.children[0].children[0];
+        assert_eq!(input.style.layout.flex_grow, Some(1.0));
+        assert_eq!(input.style.layout.flex_shrink, Some(1.0));
+        assert_eq!(
+            input.style.layout.flex_basis_value,
+            Some(LayoutLength::LogicalPx(0.0))
+        );
+    }
+
+    #[test]
+    fn inline_alignment_survives_stylesheet_merge() {
+        let mut tree = css_bench_node("window", WidgetKind::Window, None);
+        let mut row = css_bench_node("row", WidgetKind::HLayout, None);
+        row.inline_style.layout.align_items = Some(AlignItemsStyle::Center);
+        row.style.layout.align_items = Some(AlignItemsStyle::Center);
+        tree.children.push(row);
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(StylesheetOrigin::User, "HLayout { gap: 8px; }")
+            .unwrap();
+
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+        let row = &tree.children[0];
+
+        assert_eq!(row.style.layout.align_items, Some(AlignItemsStyle::Center));
+        assert_eq!(row.style.layout.gap, Some(8.0));
     }
 
     #[test]

@@ -6,12 +6,12 @@ use taffy::style::Overflow;
 use crate::document::{WidgetKind, WidgetNode};
 use crate::events::WidgetState;
 use crate::style::{
-    badge_width_for_text, collapsible_header_height_for_style, standalone_badge_width_for_text,
-    tabs_header_height_for_style, AlignItemsStyle, DisplayStyle, FlexDirectionStyle,
-    GridAutoFlowStyle, GridLineStyle, GridPlacementStyle, GridTemplateAreas,
+    badge_width_for_text, code_editor_gutter_width_for_style, collapsible_header_height_for_style,
+    standalone_badge_width_for_text, tabs_header_height_for_style, AlignItemsStyle, DisplayStyle,
+    FlexDirectionStyle, GridAutoFlowStyle, GridLineStyle, GridPlacementStyle, GridTemplateAreas,
     GridTrackFitContentSize, GridTrackMaxSize, GridTrackMinSize, GridTrackRepeatKind,
     GridTrackSize, LayoutLength, LineHeight, OverflowStyle, PositionStyle, TextOverflow,
-    BADGE_GAP_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP,
+    BADGE_GAP_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP, TOGGLE_SWITCH_TRACK_WIDTH_LP,
 };
 use crate::theme::Theme;
 
@@ -183,6 +183,8 @@ fn build_node(
             | WidgetKind::Toast
     ) || (node.kind == WidgetKind::Modal && !layout_modal_children)
         || (node.kind == WidgetKind::Collapsible && !collapsible_expanded(node, state));
+    let skip_children =
+        skip_children || (node.kind == WidgetKind::TreeNode && !tree_node_expanded(node, state));
     let child_ids: Vec<NodeId> = if skip_children {
         Vec::new()
     } else if titled_container_uses_body_layout(node) {
@@ -384,6 +386,134 @@ fn style_for(
             ..Default::default()
         },
 
+        WidgetKind::Splitter => {
+            let horizontal =
+                node.props.orientation.as_deref().unwrap_or("horizontal") != "vertical";
+            let gutter = node.props.gutter_size.unwrap_or(6.0).max(1.0) * sf;
+            Style {
+                display: Display::Flex,
+                flex_direction: if horizontal {
+                    FlexDirection::Row
+                } else {
+                    FlexDirection::Column
+                },
+                align_items: Some(AlignItems::Stretch),
+                flex_grow: 1.0,
+                flex_shrink: 1.0,
+                size: Size {
+                    width: Dimension::Auto,
+                    height: Dimension::Auto,
+                },
+                min_size: Size {
+                    width: Dimension::Length(0.0),
+                    height: Dimension::Length(0.0),
+                },
+                gap: taffy::geometry::Size {
+                    width: LengthPercentage::Length(if horizontal { gutter } else { 0.0 }),
+                    height: LengthPercentage::Length(if horizontal { 0.0 } else { gutter }),
+                },
+                ..Default::default()
+            }
+        }
+
+        WidgetKind::Pane => {
+            let horizontal =
+                node.props.orientation.as_deref().unwrap_or("horizontal") != "vertical";
+            let active_size = state
+                .and_then(|state| state.pane_size(&node.id))
+                .or(node.props.pane_size)
+                .map(|size| size.max(0.0) * sf);
+            let min_size = node.props.pane_min_size.unwrap_or(0.0).max(0.0) * sf;
+            let max_size = node
+                .props
+                .pane_max_size
+                .filter(|value| value.is_finite() && *value >= 0.0)
+                .map(|value| value * sf);
+            let flex_grow = if active_size.is_some() {
+                0.0
+            } else {
+                node.props.pane_flex.unwrap_or(1.0).max(0.0)
+            };
+            let mut pane_style = Style {
+                display: Display::Flex,
+                flex_direction: FlexDirection::Column,
+                align_items: Some(AlignItems::Stretch),
+                flex_grow,
+                flex_shrink: 1.0,
+                size: Size {
+                    width: Dimension::Auto,
+                    height: Dimension::Auto,
+                },
+                min_size: Size {
+                    width: Dimension::Length(0.0),
+                    height: Dimension::Length(0.0),
+                },
+                max_size: Size {
+                    width: Dimension::Auto,
+                    height: Dimension::Auto,
+                },
+                ..Default::default()
+            };
+            if horizontal {
+                if let Some(size) = active_size {
+                    pane_style.size.width = Dimension::Length(size);
+                    pane_style.flex_shrink = 0.0;
+                }
+                pane_style.min_size.width = Dimension::Length(min_size);
+                if let Some(size) = max_size {
+                    pane_style.max_size.width = Dimension::Length(size);
+                }
+            } else {
+                if let Some(size) = active_size {
+                    pane_style.size.height = Dimension::Length(size);
+                    pane_style.flex_shrink = 0.0;
+                }
+                pane_style.min_size.height = Dimension::Length(min_size);
+                if let Some(size) = max_size {
+                    pane_style.max_size.height = Dimension::Length(size);
+                }
+            }
+            pane_style
+        }
+
+        WidgetKind::TreeView => Style {
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            align_items: Some(AlignItems::Stretch),
+            flex_grow: 0.0,
+            flex_shrink: 1.0,
+            size: Size {
+                width: Dimension::Auto,
+                height: Dimension::Auto,
+            },
+            min_size: Size {
+                width: Dimension::Length(0.0),
+                height: Dimension::Length(0.0),
+            },
+            gap: taffy::geometry::Size {
+                width: LengthPercentage::Length(0.0),
+                height: LengthPercentage::Length(0.0),
+            },
+            ..Default::default()
+        },
+
+        WidgetKind::DragSource | WidgetKind::DropTarget => Style {
+            display: Display::Flex,
+            flex_direction: FlexDirection::Column,
+            align_items: Some(AlignItems::Stretch),
+            flex_grow: 0.0,
+            flex_shrink: 1.0,
+            size: Size {
+                width: Dimension::Auto,
+                height: Dimension::Auto,
+            },
+            min_size: Size {
+                width: Dimension::Length(0.0),
+                height: Dimension::Length(0.0),
+            },
+            ..Default::default()
+        },
+
         WidgetKind::StatusBar => Style {
             display: Display::Flex,
             flex_direction: FlexDirection::Row,
@@ -549,11 +679,66 @@ fn style_for(
         },
 
         // ── leaf controls ────────────────────────────────────────────────────
+        WidgetKind::TreeNode => {
+            let expanded = tree_node_expanded(node, state);
+            let row_h = tree_node_row_height_for_style(node, theme, sf, parent_size.map(|s| s.1));
+            if expanded && !node.children.is_empty() {
+                Style {
+                    display: Display::Flex,
+                    flex_direction: FlexDirection::Column,
+                    align_items: Some(AlignItems::Stretch),
+                    flex_grow: 0.0,
+                    flex_shrink: 0.0,
+                    size: Size {
+                        width: Dimension::Auto,
+                        height: Dimension::Auto,
+                    },
+                    min_size: Size {
+                        width: Dimension::Length(0.0),
+                        height: Dimension::Length(row_h),
+                    },
+                    padding: taffy::geometry::Rect {
+                        left: LengthPercentage::Length((theme.spacing + 8.0) * sf),
+                        right: LengthPercentage::Length(0.0),
+                        top: LengthPercentage::Length(row_h),
+                        bottom: LengthPercentage::Length(0.0),
+                    },
+                    gap: taffy::geometry::Size {
+                        width: LengthPercentage::Length(0.0),
+                        height: LengthPercentage::Length(0.0),
+                    },
+                    ..Default::default()
+                }
+            } else {
+                Style {
+                    size: Size {
+                        width: Dimension::Auto,
+                        height: Dimension::Length(row_h),
+                    },
+                    flex_shrink: 0.0,
+                    ..Default::default()
+                }
+            }
+        }
+
+        WidgetKind::IconButton | WidgetKind::ImageButton | WidgetKind::ArrowButton => Style {
+            size: Size {
+                width: Dimension::Length(ctrl_h),
+                height: Dimension::Length(ctrl_h),
+            },
+            flex_shrink: 0.0,
+            ..Default::default()
+        },
+
         WidgetKind::Button
+        | WidgetKind::SmallButton
+        | WidgetKind::Selectable
+        | WidgetKind::RadioButton
         | WidgetKind::Dropdown
         | WidgetKind::Menu
         | WidgetKind::MenuItem
         | WidgetKind::NumberInput
+        | WidgetKind::DragNumber
         | WidgetKind::NavItem
         | WidgetKind::Tab => Style {
             size: Size {
@@ -585,7 +770,7 @@ fn style_for(
             }
         }
 
-        WidgetKind::Checkbox => Style {
+        WidgetKind::Checkbox | WidgetKind::ToggleSwitch => Style {
             size: Size {
                 width: Dimension::Auto,
                 height: Dimension::Length(ctrl_h),
@@ -603,7 +788,10 @@ fn style_for(
             ..Default::default()
         },
 
-        WidgetKind::Slider | WidgetKind::ProgressBar | WidgetKind::TextInput => Style {
+        WidgetKind::Slider
+        | WidgetKind::RangeSlider
+        | WidgetKind::ProgressBar
+        | WidgetKind::TextInput => Style {
             size: Size {
                 width: Dimension::Auto,
                 height: Dimension::Length(ctrl_h),
@@ -612,7 +800,7 @@ fn style_for(
             ..Default::default()
         },
 
-        WidgetKind::TextArea => Style {
+        WidgetKind::TextArea | WidgetKind::CodeEditor | WidgetKind::LogView => Style {
             size: Size {
                 width: Dimension::Auto,
                 height: Dimension::Length(text_area_height_lp(node, theme) * sf),
@@ -749,6 +937,8 @@ fn style_for(
     if !matches!(node.kind, WidgetKind::Tooltip | WidgetKind::Toast) {
         apply_node_style(&mut style, node, sf, parent_size);
     }
+    reserve_collapsible_header_space(&mut style, node, sf, theme, parent_size, state);
+    normalize_tree_node_layout_style(&mut style, node, sf, theme, parent_size, state);
     apply_grid_layout_default_tracks(&mut style, node, sf, parent_size);
     apply_flow_layout_intrinsic_height(&mut style, node, sf, theme, parent_size);
     apply_flow_layout_alignment(&mut style, node);
@@ -831,6 +1021,60 @@ fn titled_container_body_style(node: &WidgetNode, sf: f32, theme: &Theme) -> Sty
             height: row_gap,
         },
         ..Default::default()
+    }
+}
+
+fn reserve_collapsible_header_space(
+    style: &mut Style,
+    node: &WidgetNode,
+    sf: f32,
+    theme: &Theme,
+    parent_size: Option<(f32, f32)>,
+    state: Option<&WidgetState>,
+) {
+    if node.kind != WidgetKind::Collapsible {
+        return;
+    }
+
+    let header_h = collapsible_header_height_for_style(&node.style, theme, sf);
+    let default_body_pad = if collapsible_expanded(node, state) {
+        (theme.spacing + 2.0) * sf
+    } else {
+        0.0
+    };
+    let body_top = authored_padding_top(node, sf, parent_size.map(|size| size.0))
+        .unwrap_or_else(|| LengthPercentage::Length(default_body_pad));
+    style.padding.top = add_fixed_padding(body_top, header_h, parent_size.map(|size| size.0));
+    style.min_size.height = max_dimension_length(style.min_size.height, header_h);
+}
+
+fn authored_padding_top(
+    node: &WidgetNode,
+    sf: f32,
+    parent_width: Option<f32>,
+) -> Option<LengthPercentage> {
+    let layout = &node.style.layout;
+    let pad_all_value = layout
+        .padding_value
+        .or_else(|| layout.padding.map(LayoutLength::LogicalPx));
+    layout_length_percentage(
+        layout.padding_top_value.or(pad_all_value),
+        layout.padding_top.or(layout.padding),
+        sf,
+        parent_width,
+    )
+}
+
+fn add_fixed_padding(
+    value: LengthPercentage,
+    add_px: f32,
+    parent_width: Option<f32>,
+) -> LengthPercentage {
+    match value {
+        LengthPercentage::Length(current) => LengthPercentage::Length(current + add_px),
+        LengthPercentage::Percent(percent) => parent_width
+            .map(|width| LengthPercentage::Length(width * percent + add_px))
+            .unwrap_or_else(|| LengthPercentage::Length(add_px)),
     }
 }
 
@@ -1082,14 +1326,23 @@ fn flow_child_height_px(child: &WidgetNode, theme: &Theme, sf: f32) -> f32 {
 fn default_leaf_height_px(node: &WidgetNode, theme: &Theme, sf: f32) -> f32 {
     match node.kind {
         WidgetKind::Button
+        | WidgetKind::SmallButton
+        | WidgetKind::IconButton
+        | WidgetKind::ImageButton
+        | WidgetKind::ArrowButton
+        | WidgetKind::Selectable
+        | WidgetKind::RadioButton
         | WidgetKind::Dropdown
         | WidgetKind::Menu
         | WidgetKind::MenuItem
         | WidgetKind::NumberInput
+        | WidgetKind::DragNumber
         | WidgetKind::NavItem
         | WidgetKind::Tab
         | WidgetKind::Checkbox
+        | WidgetKind::ToggleSwitch
         | WidgetKind::Slider
+        | WidgetKind::RangeSlider
         | WidgetKind::ProgressBar
         | WidgetKind::TextInput => node_control_height_lp(node, theme) * sf,
         WidgetKind::Label => label_height_lp(node, theme, None) * sf,
@@ -1097,7 +1350,9 @@ fn default_leaf_height_px(node: &WidgetNode, theme: &Theme, sf: f32) -> f32 {
             (node_font_size_lp(node, theme) + 8.0).max(20.0) * sf
         }
         WidgetKind::Led => node.props.led_size.unwrap_or(14.0).max(1.0) * sf,
-        WidgetKind::TextArea => text_area_height_lp(node, theme) * sf,
+        WidgetKind::TextArea | WidgetKind::CodeEditor | WidgetKind::LogView => {
+            text_area_height_lp(node, theme) * sf
+        }
         WidgetKind::HtmlReport => node.props.fixed_height.unwrap_or(360.0) * sf,
         WidgetKind::Separator => sf,
         _ => 0.0,
@@ -1116,6 +1371,53 @@ fn collapsible_expanded(node: &WidgetNode, state: Option<&WidgetState>) -> bool 
         .and_then(|state| state.expanded.get(&node.id).copied())
         .or(node.props.expanded)
         .unwrap_or(true)
+}
+
+fn tree_node_expanded(node: &WidgetNode, state: Option<&WidgetState>) -> bool {
+    !node.children.is_empty()
+        && state
+            .and_then(|state| state.expanded.get(&node.id).copied())
+            .or(node.props.expanded)
+            .unwrap_or(false)
+}
+
+pub(crate) fn tree_node_row_height_for_style(
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    parent_axis_size: Option<f32>,
+) -> f32 {
+    let fallback = node_control_height_lp(node, theme) * sf;
+    layout_dimension(
+        node.style.layout.height_value,
+        node.style.layout.height,
+        sf,
+        parent_axis_size,
+    )
+    .and_then(|dimension| match dimension {
+        Dimension::Length(value) => Some(value),
+        Dimension::Percent(percent) => parent_axis_size.map(|size| size * percent),
+        Dimension::Auto => None,
+    })
+    .unwrap_or(fallback)
+    .max(1.0)
+}
+
+fn normalize_tree_node_layout_style(
+    style: &mut Style,
+    node: &WidgetNode,
+    sf: f32,
+    theme: &Theme,
+    parent_size: Option<(f32, f32)>,
+    state: Option<&WidgetState>,
+) {
+    if node.kind != WidgetKind::TreeNode || !tree_node_expanded(node, state) {
+        return;
+    }
+    let row_h = tree_node_row_height_for_style(node, theme, sf, parent_size.map(|s| s.1));
+    style.size.height = Dimension::Auto;
+    style.min_size.height = Dimension::Length(row_h);
+    style.padding.top = LengthPercentage::Length(row_h);
 }
 
 fn reserve_panel_title_space(style: &mut Style, node: &WidgetNode, sf: f32, theme: &Theme) {
@@ -1211,6 +1513,17 @@ fn intrinsic_leaf_width(node: &WidgetNode, theme: &Theme) -> Option<f32> {
     let badge_w = badge_extra_width(node, theme);
     match node.kind {
         WidgetKind::Button => Some((text_w.unwrap_or(0.0) + pad + badge_w).clamp(72.0, 280.0)),
+        WidgetKind::SmallButton => {
+            Some((text_w.unwrap_or(0.0) + pad * 1.4 + badge_w).clamp(48.0, 180.0))
+        }
+        WidgetKind::IconButton | WidgetKind::ImageButton | WidgetKind::ArrowButton => {
+            Some(node_control_height_lp(node, theme))
+        }
+        WidgetKind::Selectable => Some((text_w.unwrap_or(0.0) + pad * 2.0).clamp(72.0, 320.0)),
+        WidgetKind::RadioButton => {
+            Some((text_w.unwrap_or(0.0) + pad * 2.0 + 18.0).clamp(72.0, 320.0))
+        }
+        WidgetKind::TreeNode => Some((text_w.unwrap_or(0.0) + pad * 2.0 + 18.0).clamp(72.0, 360.0)),
         WidgetKind::Badge | WidgetKind::Tag => node
             .props
             .text
@@ -1225,16 +1538,31 @@ fn intrinsic_leaf_width(node: &WidgetNode, theme: &Theme) -> Option<f32> {
         }
         WidgetKind::Dropdown => Some((text_w.unwrap_or(0.0) + pad + 22.0).clamp(112.0, 260.0)),
         WidgetKind::NumberInput => Some((text_w.unwrap_or(0.0) + pad + 34.0).clamp(96.0, 220.0)),
+        WidgetKind::DragNumber => {
+            Some((text_w.unwrap_or(0.0) + pad * 2.0 + 18.0).clamp(88.0, 180.0))
+        }
         WidgetKind::TextInput => Some((text_w.unwrap_or(0.0) + pad).clamp(120.0, 280.0)),
         WidgetKind::TextArea => Some((text_w.unwrap_or(0.0) + pad).clamp(180.0, 420.0)),
+        WidgetKind::CodeEditor => Some(
+            (text_w.unwrap_or(0.0) + pad + code_editor_gutter_width_for_style(&node.style, 1.0))
+                .clamp(220.0, 560.0),
+        ),
+        WidgetKind::LogView => Some((text_w.unwrap_or(0.0) + pad).clamp(220.0, 560.0)),
         WidgetKind::Checkbox => Some(
             (text_w.unwrap_or(0.0) + CHECKBOX_LEFT_PAD_LP + checkbox_box_width_lp(node) + pad)
                 .clamp(48.0, 280.0),
         ),
+        WidgetKind::ToggleSwitch => Some(
+            (text_w.unwrap_or(0.0)
+                + CHECKBOX_LEFT_PAD_LP
+                + toggle_switch_track_width_lp(node)
+                + pad)
+                .clamp(64.0, 320.0),
+        ),
         WidgetKind::Label | WidgetKind::NavItem | WidgetKind::Tab => {
             Some((text_w.unwrap_or(0.0) + pad + badge_w).clamp(32.0, 320.0))
         }
-        WidgetKind::Slider => Some(140.0),
+        WidgetKind::Slider | WidgetKind::RangeSlider => Some(140.0),
         WidgetKind::ProgressBar => Some(160.0),
         _ => None,
     }
@@ -1358,6 +1686,16 @@ fn checkbox_box_width_lp(node: &WidgetNode) -> f32 {
         .max(1.0)
 }
 
+fn toggle_switch_track_width_lp(node: &WidgetNode) -> f32 {
+    node.style
+        .parts
+        .parts
+        .get("track")
+        .and_then(|part| part.layout.width)
+        .unwrap_or(TOGGLE_SWITCH_TRACK_WIDTH_LP)
+        .max(1.0)
+}
+
 fn node_font_size_lp(node: &WidgetNode, theme: &Theme) -> f32 {
     node.style
         .text
@@ -1439,6 +1777,7 @@ fn apply_node_style(
         || layout.width_value.is_some()
         || layout.height_value.is_some())
         && layout.flex_shrink.is_none()
+        && !matches!(node.kind, WidgetKind::DragSource | WidgetKind::DropTarget)
     {
         style.flex_shrink = 0.0;
     }
@@ -1479,6 +1818,14 @@ fn apply_node_style(
     }
     if let Some(shrink) = layout.flex_shrink {
         style.flex_shrink = shrink.max(0.0);
+    }
+    if let Some(basis) = layout_dimension(
+        layout.flex_basis_value,
+        layout.flex_basis,
+        sf,
+        parent_size.map(|size| size.0),
+    ) {
+        style.flex_basis = basis;
     }
     if let Some(gap) = layout_length_percentage(
         layout.gap_value,
@@ -2548,7 +2895,9 @@ fn estimate_tooltip_height(node: &WidgetNode, theme: &Theme, sf: f32) -> f32 {
 
 fn estimated_node_height(node: &WidgetNode, theme: &Theme, sf: f32) -> f32 {
     match node.kind {
-        WidgetKind::TextArea => text_area_height_lp(node, theme) * sf,
+        WidgetKind::TextArea | WidgetKind::CodeEditor | WidgetKind::LogView => {
+            text_area_height_lp(node, theme) * sf
+        }
         WidgetKind::Panel | WidgetKind::VLayout | WidgetKind::HLayout => {
             estimate_tooltip_height(node, theme, sf)
         }
@@ -3292,6 +3641,113 @@ mod tests {
     }
 
     #[test]
+    fn expanded_collapsible_styled_padding_is_body_padding() {
+        let mut section = node(
+            "section",
+            WidgetKind::Collapsible,
+            NodeProps {
+                text: Some("Advanced".to_string()),
+                expanded: Some(true),
+                ..NodeProps::default()
+            },
+            vec![
+                node("first", WidgetKind::Button, NodeProps::default(), vec![]),
+                node("second", WidgetKind::Button, NodeProps::default(), vec![]),
+            ],
+        );
+        section.style.layout.padding = Some(8.0);
+        section.style.layout.gap = Some(6.0);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![section],
+        );
+
+        let theme = Theme::dark();
+        let layout = compute_layout(&root, 400.0, 300.0, 1.0, &theme, None);
+        let section = layout.rects.get("section").unwrap();
+        let first = layout.rects.get("first").unwrap();
+        let second = layout.rects.get("second").unwrap();
+
+        assert!(
+            first.y >= section.y + theme.control_height() + 8.0,
+            "styled collapsible padding must start below the header: section={section:?} first={first:?}"
+        );
+        assert!(
+            second.y >= first.y + first.h + 6.0,
+            "styled collapsible gap should separate body rows: first={first:?} second={second:?}"
+        );
+    }
+
+    #[test]
+    fn expanded_tree_node_height_includes_children_when_row_height_is_styled() {
+        let mut branch = node(
+            "branch",
+            WidgetKind::TreeNode,
+            NodeProps {
+                text: Some("Branch".to_string()),
+                expanded: Some(true),
+                ..NodeProps::default()
+            },
+            vec![
+                node(
+                    "leaf-a",
+                    WidgetKind::TreeNode,
+                    NodeProps {
+                        text: Some("Leaf A".to_string()),
+                        ..NodeProps::default()
+                    },
+                    vec![],
+                ),
+                node(
+                    "leaf-b",
+                    WidgetKind::TreeNode,
+                    NodeProps {
+                        text: Some("Leaf B".to_string()),
+                        ..NodeProps::default()
+                    },
+                    vec![],
+                ),
+            ],
+        );
+        branch.style.layout.height_value = Some(LayoutLength::LogicalPx(28.0));
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "tree",
+                WidgetKind::TreeView,
+                NodeProps::default(),
+                vec![
+                    branch,
+                    node(
+                        "sibling",
+                        WidgetKind::TreeNode,
+                        NodeProps {
+                            text: Some("Sibling".to_string()),
+                            ..NodeProps::default()
+                        },
+                        vec![],
+                    ),
+                ],
+            )],
+        );
+
+        let layout = compute_layout(&root, 400.0, 300.0, 1.0, &Theme::dark(), None);
+        let branch = layout.rects.get("branch").unwrap();
+        let leaf_a = layout.rects.get("leaf-a").unwrap();
+        let leaf_b = layout.rects.get("leaf-b").unwrap();
+        let sibling = layout.rects.get("sibling").unwrap();
+
+        assert!(branch.h > 28.0);
+        assert!(leaf_a.y >= branch.y + 28.0);
+        assert!(leaf_b.y >= leaf_a.y + leaf_a.h);
+        assert!(sibling.y >= leaf_b.y + leaf_b.h);
+    }
+
+    #[test]
     fn text_area_rows_drive_preferred_height() {
         let root = node(
             "window",
@@ -3591,6 +4047,51 @@ mod tests {
         assert!(
             switch.w >= normal.w + 18.0,
             "styled switch checkbox did not reserve its wider box: normal={normal:?} switch={switch:?}"
+        );
+    }
+
+    #[test]
+    fn toggle_switch_intrinsic_width_uses_styled_track_width() {
+        let mut normal = node(
+            "normal",
+            WidgetKind::ToggleSwitch,
+            NodeProps {
+                text: Some("Network".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        normal.style.text.font_size = Some(12.0);
+
+        let mut wide = normal.clone();
+        wide.id = "wide".to_string();
+        wide.style
+            .parts
+            .parts
+            .entry("track".to_string())
+            .or_default()
+            .layout
+            .width = Some(60.0);
+
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "row",
+                WidgetKind::HLayout,
+                NodeProps::default(),
+                vec![normal, wide],
+            )],
+        );
+
+        let layout = compute_layout(&root, 520.0, 120.0, 1.0, &Theme::dark(), None);
+        let normal = layout.rects.get("normal").unwrap();
+        let wide = layout.rects.get("wide").unwrap();
+
+        assert!(
+            wide.w >= normal.w + 17.0,
+            "styled toggle switch did not reserve its wider track: normal={normal:?} wide={wide:?}"
         );
     }
 
@@ -4003,6 +4504,172 @@ mod tests {
         assert!(
             flexible.w > 340.0,
             "explicit width:auto with flex-grow should fill the remaining row: {flexible:?}"
+        );
+    }
+
+    #[test]
+    fn flex_drop_targets_split_available_row_width_without_clipping() {
+        let mut left = node("left", WidgetKind::DropTarget, NodeProps::default(), vec![]);
+        left.style.layout.flex_grow = Some(1.0);
+        left.style.layout.flex_shrink = Some(1.0);
+        left.style.layout.flex_basis = Some(0.0);
+        left.style.layout.min_width = Some(0.0);
+        let mut right = node(
+            "right",
+            WidgetKind::DropTarget,
+            NodeProps::default(),
+            vec![],
+        );
+        right.style.layout.flex_grow = Some(1.0);
+        right.style.layout.flex_shrink = Some(1.0);
+        right.style.layout.flex_basis = Some(0.0);
+        right.style.layout.min_width = Some(0.0);
+
+        let mut row = node(
+            "row",
+            WidgetKind::HLayout,
+            NodeProps::default(),
+            vec![left, right],
+        );
+        row.style.layout.width = Some(600.0);
+        row.style.layout.gap = Some(12.0);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![row],
+        );
+
+        let layout = compute_layout(&root, 700.0, 300.0, 1.0, &Theme::dark(), None);
+        let row = layout.rects.get("row").unwrap();
+        let left = layout.rects.get("left").unwrap();
+        let right = layout.rects.get("right").unwrap();
+
+        assert_eq!(left.w, 294.0);
+        assert_eq!(right.w, 294.0);
+        assert_eq!(right.x + right.w, row.x + row.w);
+    }
+
+    #[test]
+    fn explicit_calc_width_children_can_shrink_inside_flex_sized_parent() {
+        let mut sidebar = node("sidebar", WidgetKind::Panel, NodeProps::default(), vec![]);
+        sidebar.style.layout.width = Some(300.0);
+        sidebar.style.layout.flex_grow = Some(0.0);
+        sidebar.style.layout.flex_shrink = Some(0.0);
+
+        let mut left = node("left", WidgetKind::DropTarget, NodeProps::default(), vec![]);
+        left.style.layout.width_value = Some(LayoutLength::Calc(crate::style::CalcLength {
+            percent: 50.0,
+            px: -6.0,
+        }));
+        let mut right = node(
+            "right",
+            WidgetKind::DropTarget,
+            NodeProps::default(),
+            vec![],
+        );
+        right.style.layout.width_value = Some(LayoutLength::Calc(crate::style::CalcLength {
+            percent: 50.0,
+            px: -6.0,
+        }));
+
+        let mut row = node(
+            "row",
+            WidgetKind::HLayout,
+            NodeProps::default(),
+            vec![left, right],
+        );
+        row.style.layout.width_value = Some(LayoutLength::Percent(100.0));
+        row.style.layout.gap = Some(12.0);
+
+        let mut target_panel = node(
+            "target-panel",
+            WidgetKind::Panel,
+            NodeProps::default(),
+            vec![row],
+        );
+        target_panel.style.layout.flex_grow = Some(1.0);
+        target_panel.style.layout.flex_shrink = Some(1.0);
+        target_panel.style.layout.min_width = Some(0.0);
+        target_panel.style.layout.padding = Some(0.0);
+
+        let mut shell = node(
+            "shell",
+            WidgetKind::HLayout,
+            NodeProps::default(),
+            vec![sidebar, target_panel],
+        );
+        shell.style.layout.gap = Some(12.0);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![shell],
+        );
+
+        let layout = compute_layout(&root, 980.0, 300.0, 1.0, &Theme::dark(), None);
+        let row = layout.rects.get("row").unwrap();
+        let left = layout.rects.get("left").unwrap();
+        let right = layout.rects.get("right").unwrap();
+
+        assert!(right.x + right.w <= row.x + row.w + 0.5);
+        assert!(
+            (left.w - right.w).abs() <= 1.0,
+            "lane widths should remain balanced: left={left:?} right={right:?}"
+        );
+    }
+
+    #[test]
+    fn zero_flex_basis_fill_slot_uses_remaining_row_width() {
+        let mut label = node("label", WidgetKind::Panel, NodeProps::default(), vec![]);
+        label.style.layout.width = Some(112.0);
+        label.style.layout.flex_grow = Some(0.0);
+        label.style.layout.flex_shrink = Some(0.0);
+
+        let mut input = node("input", WidgetKind::TextInput, NodeProps::default(), vec![]);
+        input.style.layout.width_value = Some(LayoutLength::Percent(100.0));
+
+        let mut editor = node(
+            "editor",
+            WidgetKind::HLayout,
+            NodeProps::default(),
+            vec![input],
+        );
+        editor.style.layout.width_value = Some(LayoutLength::Percent(100.0));
+        editor.style.layout.flex_grow = Some(1.0);
+        editor.style.layout.flex_shrink = Some(1.0);
+        editor.style.layout.flex_basis_value = Some(LayoutLength::LogicalPx(0.0));
+
+        let mut row = node(
+            "row",
+            WidgetKind::HLayout,
+            NodeProps::default(),
+            vec![label, editor],
+        );
+        row.style.layout.width = Some(366.0);
+        row.style.layout.gap = Some(10.0);
+
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![row],
+        );
+
+        let layout = compute_layout(&root, 500.0, 120.0, 1.0, &Theme::dark(), None);
+        let row = layout.rects.get("row").unwrap();
+        let label = layout.rects.get("label").unwrap();
+        let editor = layout.rects.get("editor").unwrap();
+        let input = layout.rects.get("input").unwrap();
+
+        assert_eq!(row.w, 366.0);
+        assert_eq!(label.w, 112.0);
+        assert_eq!(editor.x, label.x + label.w + 10.0);
+        assert_eq!(editor.w, 244.0);
+        assert_eq!(input.w, 244.0);
+        assert!(
+            input.x + input.w <= row.x + row.w,
+            "flex:1-style slot should not overflow row: row={row:?} input={input:?}"
         );
     }
 

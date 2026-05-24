@@ -1822,7 +1822,7 @@ def _table_column_payload(columns: object) -> tuple[list[dict[str, object]], lis
 def _collect_runtime_callbacks(
     widget: object,
 ) -> tuple[dict[str, Callable[[], None]], dict[str, Callable[[object], None]]]:
-    from .widgets import Button, Checkbox, Collapsible, Container, DataFrameTable, Dropdown, MenuItem, NumberInput, Pages, Scatter3D, ScatterHit, ScatterPick, Slider, TableSelection, Tabs, TextArea, TextInput, Widget
+    from .widgets import Button, Checkbox, CodeEditor, Collapsible, Container, DataFrameTable, DateInput, DateTimeInput, DragDropPayload, DragNumber, DropTarget, Dropdown, MenuItem, NumberInput, Pages, RadioButton, RangeSlider, Scatter3D, ScatterHit, ScatterPick, Selectable, Slider, TableSelection, TableSort, Tabs, TextArea, TextInput, TimeInput, ToggleSwitch, TreeNode, TreeView, Widget
 
     click_callbacks: dict[str, Callable[[], None]] = {}
     change_callbacks: dict[str, Callable[[object], None]] = {}
@@ -1840,30 +1840,104 @@ def _collect_runtime_callbacks(
                 widget.on_change(widget.checked)
 
             change_callbacks[node.id] = checkbox_changed
+        if isinstance(node, ToggleSwitch) and node.on_change is not None:
+            def toggle_switch_changed(value: object, widget: ToggleSwitch = node) -> None:
+                widget.checked = bool(value)
+                widget.on_change(widget.checked)
+
+            change_callbacks[node.id] = toggle_switch_changed
+        if isinstance(node, Selectable) and node.on_select is not None:
+            def selectable_changed(value: object, widget: Selectable = node) -> None:
+                widget.selected = bool(value)
+                widget.on_select(widget.selected)
+
+            change_callbacks[node.id] = selectable_changed
+        if isinstance(node, RadioButton) and node.on_change is not None:
+            def radio_changed(value: object, widget: RadioButton = node) -> None:
+                widget.checked = bool(value)
+                widget.on_change(widget.checked)
+
+            change_callbacks[node.id] = radio_changed
+        if isinstance(node, TreeView):
+            node._wire_descendants()
+        if isinstance(node, TreeNode) and (
+            node.on_select is not None
+            or node.on_expand is not None
+            or node._tree_view is not None
+        ):
+            def tree_node_changed(value: object, widget: TreeNode = node) -> None:
+                widget._handle_native_event(value)
+
+            change_callbacks[node.id] = tree_node_changed
         if isinstance(node, Collapsible) and node.on_change is not None:
             def collapsible_changed(value: object, widget: Collapsible = node) -> None:
                 widget.expanded = bool(value)
                 widget.on_change(widget.expanded)
 
             change_callbacks[node.id] = collapsible_changed
+        if isinstance(node, DropTarget) and node.on_drop is not None:
+            def drop_target_changed(value: object, widget: DropTarget = node) -> None:
+                payload = json.loads(value) if isinstance(value, str) else value
+                if not isinstance(payload, Mapping):
+                    raise TypeError("DropTarget change payload must be a mapping")
+                drop = DragDropPayload(
+                    source_id=str(payload.get("source_id", "")),
+                    target_id=str(payload.get("target_id", widget.id)),
+                    kind=payload.get("kind") if payload.get("kind") is not None else None,
+                    payload=payload.get("payload"),
+                    x=float(payload.get("x", 0.0)),
+                    y=float(payload.get("y", 0.0)),
+                )
+                widget.on_drop(drop)
+
+            change_callbacks[node.id] = drop_target_changed
         if isinstance(node, Slider) and node.on_change is not None:
             def slider_changed(value: object, widget: Slider = node) -> None:
                 widget.value = float(value)
                 widget.on_change(widget.value)
 
             change_callbacks[node.id] = slider_changed
+        if isinstance(node, RangeSlider) and node.on_change is not None:
+            def range_slider_changed(value: object, widget: RangeSlider = node) -> None:
+                payload = json.loads(value) if isinstance(value, str) else value
+                if isinstance(payload, Mapping):
+                    low = payload.get("min")
+                    high = payload.get("max")
+                    if low is None or high is None:
+                        pair = payload.get("value")
+                        if isinstance(pair, Sequence) and len(pair) >= 2:
+                            low, high = pair[0], pair[1]
+                elif isinstance(payload, Sequence) and len(payload) >= 2:
+                    low, high = payload[0], payload[1]
+                else:
+                    raise TypeError("RangeSlider change payload must be a pair or JSON object")
+                widget.value = widget._normalize_value((float(low), float(high)))
+                widget.on_change(widget.value)
+
+            change_callbacks[node.id] = range_slider_changed
         if isinstance(node, NumberInput) and node.on_change is not None:
             def number_changed(value: object, widget: NumberInput = node) -> None:
                 widget.value = float(value)
                 widget.on_change(widget.value)
 
             change_callbacks[node.id] = number_changed
+        if isinstance(node, DragNumber) and node.on_change is not None:
+            def drag_number_changed(value: object, widget: DragNumber = node) -> None:
+                widget.value = float(value)
+                widget.on_change(widget.value)
+
+            change_callbacks[node.id] = drag_number_changed
         if isinstance(node, Dropdown) and node.on_change is not None:
             def dropdown_changed(value: object, widget: Dropdown = node) -> None:
                 widget.value = str(value)
                 widget.on_change(widget.value)
 
             change_callbacks[node.id] = dropdown_changed
+        if isinstance(node, (DateInput, TimeInput, DateTimeInput)):
+            def temporal_changed(value: object, widget: DateInput | TimeInput | DateTimeInput = node) -> None:
+                widget._handle_native_change(value)
+
+            change_callbacks[node.id] = temporal_changed
         if isinstance(node, TextInput) and node.on_change is not None:
             def text_changed(value: object, widget: TextInput = node) -> None:
                 widget.value = str(value)
@@ -1876,6 +1950,12 @@ def _collect_runtime_callbacks(
                 widget.on_change(widget.value)
 
             change_callbacks[node.id] = text_area_changed
+        if isinstance(node, CodeEditor) and node.on_change is not None:
+            def code_editor_changed(value: object, widget: CodeEditor = node) -> None:
+                widget.value = str(value)
+                widget.on_change(widget.value)
+
+            change_callbacks[node.id] = code_editor_changed
         if isinstance(node, Tabs) and node.on_change is not None:
             def tabs_changed(value: object, widget: Tabs = node) -> None:
                 widget.value = str(value)
@@ -1888,17 +1968,40 @@ def _collect_runtime_callbacks(
                 widget.on_change(widget.value)
 
             change_callbacks[node.id] = pages_changed
-        if isinstance(node, DataFrameTable) and node.on_select is not None:
-            callback_arity = _table_select_callback_arity(node.on_select)
+        if isinstance(node, DataFrameTable) and (
+            node.on_select is not None or node.on_sort is not None
+        ):
+            callback_arity = (
+                _table_select_callback_arity(node.on_select)
+                if node.on_select is not None
+                else 1
+            )
 
-            def table_selected(
+            def table_changed(
                 value: object,
                 widget: DataFrameTable = node,
                 arity: int = callback_arity,
             ) -> None:
                 payload = json.loads(value) if isinstance(value, str) else value
                 if not isinstance(payload, Mapping):
-                    raise TypeError("DataFrameTable selection payload must be a mapping")
+                    raise TypeError("DataFrameTable change payload must be a mapping")
+                event = str(payload.get("event", "select"))
+                if event == "sort":
+                    is_index = (
+                        str(payload.get("target", "")).lower() == "index"
+                        or bool(payload.get("is_index", False))
+                        or int(payload.get("column_index", 0)) < 0
+                    )
+                    sort = TableSort(
+                        column_index=-1 if is_index else int(payload["column_index"]),
+                        column="#" if is_index else str(payload["column"]),
+                        descending=bool(payload.get("descending", False)),
+                        is_index=is_index,
+                    )
+                    widget.sort = sort
+                    if widget.on_sort is not None:
+                        widget.on_sort(sort)
+                    return
                 selection = TableSelection(
                     row_index=int(payload["row_index"]),
                     column_index=int(payload["column_index"]),
@@ -1906,6 +2009,8 @@ def _collect_runtime_callbacks(
                     value=payload.get("value"),
                 )
                 widget.selection = selection
+                if widget.on_select is None:
+                    return
                 if arity >= 4:
                     widget.on_select(
                         selection.row_index,
@@ -1918,7 +2023,7 @@ def _collect_runtime_callbacks(
                 else:
                     widget.on_select(selection)
 
-            change_callbacks[node.id] = table_selected
+            change_callbacks[node.id] = table_changed
         if isinstance(node, Scatter3D):
             def scatter_picked(
                 value: object,

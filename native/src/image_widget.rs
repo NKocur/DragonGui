@@ -382,7 +382,7 @@ fn collect_image_specs(
     out: &mut Vec<ImageSpec>,
 ) {
     let subtree_start = out.len();
-    if node.kind == WidgetKind::Image {
+    if matches!(node.kind, WidgetKind::Image | WidgetKind::ImageButton) {
         if let (Some(path), Some(rect)) = (
             node.props.image_path.as_ref(),
             layout.visible_rect(&node.id),
@@ -391,7 +391,12 @@ fn collect_image_specs(
                 .map(|state| visual_for_widget(node, state, theme))
                 .unwrap_or_else(|| Cow::Borrowed(&node.style.visual));
             let border_w = visual.border_width.unwrap_or(BORDER_WIDTH_LP).max(0.0) * sf;
-            let content = inset_rect(rect, border_w);
+            let button_inset = if node.kind == WidgetKind::ImageButton {
+                node.style.layout.padding.unwrap_or(5.0).max(0.0) * sf
+            } else {
+                0.0
+            };
+            let content = inset_rect(rect, border_w + button_inset);
             let radius = visual.border_radius.unwrap_or(theme.radius).max(0.0);
             let radii = visual
                 .corner_radii

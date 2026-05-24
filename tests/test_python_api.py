@@ -5,6 +5,7 @@ import threading
 import subprocess
 import sys
 import os
+from datetime import date, datetime, time
 from pathlib import Path
 
 import pytest
@@ -186,6 +187,37 @@ def test_widget_style_and_class_serialize_as_v1_metadata() -> None:
     assert number.to_dict()["style"]["parts"]["stepper_up"]["background"] == "surface_alt"
 
 
+def test_toggle_switch_serializes_and_validates() -> None:
+    calls: list[bool] = []
+    toggle = dg.ToggleSwitch(
+        "Live updates",
+        checked=True,
+        on_change=lambda checked: calls.append(checked),
+        label_position="left",
+        style={"parts": {"track": {"width": 48}, "thumb": {"height": 18}}},
+        parent=None,
+    )
+
+    serialized = toggle.to_dict()
+
+    assert serialized["type"] == "toggle_switch"
+    assert serialized["props"] == {
+        "label": "Live updates",
+        "checked": True,
+        "disabled": False,
+        "label_position": "left",
+        "events": ["change"],
+    }
+
+    toggle.set_checked(False)
+    assert toggle.checked is False
+
+    with pytest.raises(ValueError, match="label_position"):
+        dg.ToggleSwitch("Bad", label_position="center", parent=None)
+    with pytest.raises(ValueError, match="no CSS part"):
+        dg.ToggleSwitch("Bad", style={"parts": {"box": {}}}, parent=None)
+
+
 def test_inline_part_style_catalog_serializes_for_supported_widgets() -> None:
     class TypedFrame:
         columns = ("a", "b")
@@ -242,6 +274,26 @@ def test_inline_part_style_catalog_serializes_for_supported_widgets() -> None:
             ("field", "stepper", "stepper_up", "stepper_down", "stepper_divider", "divider", "caret"),
         ),
         (
+            lambda style: dg.CodeEditor("print('hi')", style=style, parent=None),
+            ("field", "gutter", "line_number", "caret"),
+        ),
+        (
+            lambda style: dg.LogView(["INFO boot"], style=style, parent=None),
+            ("line", "debug", "info", "warning", "error"),
+        ),
+        (
+            lambda style: dg.DragNumber(4, style=style, parent=None),
+            ("field", "value", "grip"),
+        ),
+        (
+            lambda style: dg.Splitter(style=style, parent=None),
+            ("gutter",),
+        ),
+        (
+            lambda style: dg.Pane(style=style, parent=None),
+            ("pane",),
+        ),
+        (
             lambda style: dg.Dropdown(("A", "B"), style=style, parent=None),
             ("field", "chevron", "menu", "item", "item_selected", "item_hover"),
         ),
@@ -250,12 +302,20 @@ def test_inline_part_style_catalog_serializes_for_supported_widgets() -> None:
             ("row", "box", "indicator", "label"),
         ),
         (
+            lambda style: dg.ToggleSwitch("Live updates", style=style, parent=None),
+            ("row", "track", "thumb", "label"),
+        ),
+        (
             lambda style: dg.LED(True, style=style, parent=None),
             ("dot", "glow", "highlight"),
         ),
         (
             lambda style: dg.Slider(0.5, style=style, parent=None),
             ("track", "fill", "thumb"),
+        ),
+        (
+            lambda style: dg.RangeSlider((0.25, 0.75), style=style, parent=None),
+            ("track", "range", "thumb_min", "thumb_max", "label"),
         ),
         (
             lambda style: dg.ProgressBar(0.5, style=style, parent=None),
@@ -752,6 +812,68 @@ def test_progress_bar_set_value_updates_live_native_value_and_label() -> None:
     ]
 
 
+def test_temporal_inputs_serialize_normalize_and_validate() -> None:
+    calls: list[tuple[str, str]] = []
+    app = dg.App()
+    win = dg.Window("Temporal")
+
+    date_input = dg.DateInput(
+        date(2026, 5, 22),
+        on_change=lambda value: calls.append(("date", value)),
+        parent=win,
+    )
+    time_input = dg.TimeInput(time(14, 30), parent=win)
+    datetime_input = dg.DateTimeInput("2026-05-22T14:30", parent=win)
+
+    serialized = app.document(win)["window"]["children"]
+
+    assert date_input.value == "2026-05-22"
+    assert time_input.value == "14:30"
+    assert datetime_input.value == "2026-05-22T14:30:00"
+    assert serialized[0]["type"] == "text_input"
+    assert "date-input" in serialized[0]["class"]
+    assert serialized[0]["props"]["value"] == "2026-05-22"
+    assert serialized[0]["props"]["placeholder"] == "YYYY-MM-DD"
+    assert serialized[0]["props"]["events"] == ["change"]
+
+    date_input.set_value("2026-05-23", notify=True)
+    assert date_input.value == "2026-05-23"
+    assert calls == [("date", "2026-05-23")]
+
+    with pytest.raises(ValueError, match="DateInput"):
+        dg.DateInput("2026-99-99", parent=None)
+    with pytest.raises(ValueError, match="TimeInput"):
+        dg.TimeInput("25:00", parent=None)
+    with pytest.raises(ValueError, match="DateTimeInput"):
+        dg.DateTimeInput("not-a-datetime", parent=None)
+
+
+def test_temporal_input_callbacks_commit_only_valid_values() -> None:
+    calls: list[str] = []
+    win = dg.Window("Temporal")
+    field = dg.DateInput(
+        "2026-05-22",
+        on_change=lambda value: calls.append(value),
+        parent=win,
+    )
+
+    _, change_cbs = _collect_runtime_callbacks(win)
+
+    change_cbs[field.id]("invalid")
+    assert field.value == "2026-05-22"
+    assert field.text == "invalid"
+    assert field.invalid is True
+    assert "invalid" in field.class_.split()
+    assert calls == []
+
+    change_cbs[field.id]("2026-05-23")
+    assert field.value == "2026-05-23"
+    assert field.text == "2026-05-23"
+    assert field.invalid is False
+    assert "invalid" not in field.class_.split()
+    assert calls == ["2026-05-23"]
+
+
 def test_number_input_serializes_clamps_and_registers_callback() -> None:
     calls: list[float] = []
     app = dg.App()
@@ -810,6 +932,137 @@ def test_number_input_set_value_updates_live_native_value() -> None:
 
     assert number.value == 10.0
     assert sender.props == [("gain", "value", 10.0)]
+
+
+def test_drag_number_serializes_clamps_and_registers_callback() -> None:
+    calls: list[float] = []
+    app = dg.App()
+    win = dg.Window("Drag")
+
+    drag = dg.DragNumber(
+        12.5,
+        min=0,
+        max=10,
+        step=0.25,
+        speed=0.05,
+        on_change=lambda value: calls.append(value),
+        parent=win,
+    )
+
+    serialized = app.document(win)["window"]["children"][0]
+
+    assert drag.value == 10.0
+    assert serialized["type"] == "drag_number"
+    assert serialized["props"]["value"] == 10.0
+    assert serialized["props"]["min"] == 0.0
+    assert serialized["props"]["max"] == 10.0
+    assert serialized["props"]["step"] == 0.25
+    assert serialized["props"]["speed"] == 0.05
+    assert serialized["props"]["text"] == "10"
+    assert serialized["props"]["events"] == ["change"]
+
+    handle = AppHandle()
+    handle.register_widget_callbacks(drag)
+    assert handle._invoke_change_callback(drag.id, 7.25) is True
+    assert drag.value == 7.25
+    assert calls == [7.25]
+
+    with pytest.raises(ValueError, match="step"):
+        dg.DragNumber(1, step=0, parent=None)
+    with pytest.raises(ValueError, match="speed"):
+        dg.DragNumber(1, speed=0, parent=None)
+    with pytest.raises(ValueError, match="max"):
+        dg.DragNumber(1, min=2, max=1, parent=None)
+
+
+def test_drag_vector_builds_component_drag_numbers() -> None:
+    calls: list[tuple[float, ...]] = []
+    vector = dg.DragVector(
+        (1, 2, 3),
+        min=(-10, -20, -30),
+        max=(10, 20, 30),
+        step=0.1,
+        labels=("x", "y", "z"),
+        on_change=lambda values: calls.append(values),
+        parent=None,
+    )
+
+    serialized = vector.to_dict()
+
+    assert serialized["type"] == "flow_layout"
+    assert serialized["props"]["cross_align"] == "center"
+    assert [child["type"] for child in serialized["children"]] == [
+        "h_layout",
+        "h_layout",
+        "h_layout",
+    ]
+    first_component = serialized["children"][0]["children"]
+    second_component = serialized["children"][1]["children"]
+    third_component = serialized["children"][2]["children"]
+    assert [child["type"] for child in first_component] == ["label", "drag_number"]
+    assert first_component[1]["class"] == "drag-vector-value"
+    assert first_component[1]["style"]["width"] == 88.0
+    assert first_component[1]["props"]["value"] == 1.0
+    assert second_component[1]["props"]["min"] == -20.0
+    assert third_component[1]["props"]["max"] == 30.0
+
+    vector._number_widgets[1].set_value(5, notify=True)
+
+    assert vector.value == (1.0, 5.0, 3.0)
+    assert calls == [(1.0, 5.0, 3.0)]
+
+    with pytest.raises(ValueError, match="component_width"):
+        dg.DragVector((1, 2), component_width=0, parent=None)
+
+
+def test_splitter_and_pane_serialize_size_defaults() -> None:
+    win = dg.Window("Split")
+    with dg.Splitter(
+        orientation="horizontal",
+        sizes=(240, "1fr"),
+        min_sizes=(160, 220),
+        gutter_size=8,
+        parent=win,
+    ) as split:
+        with dg.Pane():
+            dg.Label("Left")
+        with dg.Pane():
+            dg.Label("Right")
+
+    serialized = split.to_dict()
+
+    assert serialized["type"] == "splitter"
+    assert serialized["props"]["orientation"] == "horizontal"
+    assert serialized["props"]["gutter_size"] == 8.0
+    assert [child["type"] for child in serialized["children"]] == ["pane", "pane"]
+    assert serialized["children"][0]["props"] == {
+        "orientation": "horizontal",
+        "size": 240.0,
+        "min_size": 160.0,
+        "max_size": None,
+        "flex": 1.0,
+    }
+    assert serialized["children"][1]["props"] == {
+        "orientation": "horizontal",
+        "size": None,
+        "min_size": 220.0,
+        "max_size": None,
+        "flex": 1.0,
+    }
+
+    split.set_sizes((260, "2fr"))
+    updated = split.to_dict()
+
+    assert updated["children"][0]["props"]["size"] == 260.0
+    assert updated["children"][1]["props"]["size"] is None
+    assert updated["children"][1]["props"]["flex"] == 2.0
+
+    with pytest.raises(ValueError, match="orientation"):
+        dg.Splitter(orientation="diagonal", parent=None)
+    with pytest.raises(ValueError, match="fr"):
+        dg.Splitter(sizes=("0fr",), parent=None)
+    with pytest.raises(ValueError, match="flex"):
+        dg.Pane(flex=0, parent=None)
 
 
 def test_widget_set_style_updates_python_state_and_live_native_style() -> None:
@@ -1016,6 +1269,13 @@ def test_app_handle_runtime_change_callbacks_update_widget_state() -> None:
         on_change=lambda value: calls.append(("check", value)),
         parent=None,
     )
+    toggle = dg.ToggleSwitch(
+        "Live updates",
+        id="toggle",
+        checked=False,
+        on_change=lambda value: calls.append(("toggle", value)),
+        parent=None,
+    )
     collapsible = dg.Collapsible(
         "Advanced",
         id="advanced",
@@ -1037,20 +1297,24 @@ def test_app_handle_runtime_change_callbacks_update_widget_state() -> None:
     )
 
     handle.register_widget_callbacks(checkbox)
+    handle.register_widget_callbacks(toggle)
     handle.register_widget_callbacks(collapsible)
     handle.register_widget_callbacks(text)
     handle.register_widget_callbacks(text_area)
 
     assert handle._invoke_change_callback("check", True) is True
+    assert handle._invoke_change_callback("toggle", True) is True
     assert handle._invoke_change_callback("advanced", True) is True
     assert handle._invoke_change_callback("text", "hello") is True
     assert handle._invoke_change_callback("notes", "hello\nworld") is True
     assert checkbox.checked is True
+    assert toggle.checked is True
     assert collapsible.expanded is True
     assert text.value == "hello"
     assert text_area.value == "hello\nworld"
     assert calls == [
         ("check", True),
+        ("toggle", True),
         ("advanced", True),
         ("text", "hello"),
         ("notes", "hello\nworld"),
@@ -1463,9 +1727,13 @@ def test_live_widget_setters_enqueue_native_props() -> None:
     badge = dg.Badge("Ready", id="badge", parent=None)
     text = dg.TextInput("old", id="text", parent=None)
     text_area = dg.TextArea("old\nvalue", id="notes", parent=None)
+    code_editor = dg.CodeEditor("old();", id="code", parent=None)
+    date_input = dg.DateInput("2026-05-22", id="date", parent=None)
     slider = dg.Slider(0.0, min=0, max=1, id="slider", parent=None)
+    range_slider = dg.RangeSlider((0.2, 0.6), min=0, max=1, id="range", parent=None)
     dropdown = dg.Dropdown(["x", "y"], id="dropdown", parent=None)
     checkbox = dg.Checkbox("Enabled", id="checkbox", parent=None)
+    toggle = dg.ToggleSwitch("Live updates", id="toggle", parent=None)
     led = dg.LED(False, id="led", states={"busy": "#ffcc33"}, parent=None)
     collapsible = dg.Collapsible("Advanced", id="advanced", expanded=False, parent=None)
     tabs = dg.Tabs(value="one", id="tabs", parent=None)
@@ -1480,9 +1748,13 @@ def test_live_widget_setters_enqueue_native_props() -> None:
         badge,
         text,
         text_area,
+        code_editor,
+        date_input,
         slider,
+        range_slider,
         dropdown,
         checkbox,
+        toggle,
         led,
         collapsible,
         tabs,
@@ -1496,9 +1768,13 @@ def test_live_widget_setters_enqueue_native_props() -> None:
     badge.set_level("warning")
     text.set_value("new")
     text_area.set_value("new\nvalue")
+    code_editor.set_value("new();")
+    date_input.set_value("2026-05-23")
     slider.set_value(2.0)
+    range_slider.set_value((0.8, 1.2))
     dropdown.set_value("y")
     checkbox.set_checked(True)
+    toggle.set_checked(True)
     led.set_state("busy")
     led.set_color("#ffaa00")
     led.set_size(18)
@@ -1518,9 +1794,13 @@ def test_live_widget_setters_enqueue_native_props() -> None:
     assert badge.level == "warning"
     assert text.value == "new"
     assert text_area.value == "new\nvalue"
+    assert code_editor.value == "new();"
+    assert date_input.value == "2026-05-23"
     assert slider.value == 1.0
+    assert range_slider.value == (0.8, 1.0)
     assert dropdown.value == "y"
     assert checkbox.checked is True
+    assert toggle.checked is True
     assert led.state == "busy"
     assert led.color == "#ffaa00"
     assert led.size == 18.0
@@ -1533,9 +1813,14 @@ def test_live_widget_setters_enqueue_native_props() -> None:
         ("badge", "level", "warning"),
         ("text", "value", "new"),
         ("notes", "value", "new\nvalue"),
+        ("code", "value", "new();"),
+        ("date", "value", "2026-05-23"),
         ("slider", "value", 1.0),
+        ("range", "value_min", 0.8),
+        ("range", "value_max", 1.0),
         ("dropdown", "value", "y"),
         ("checkbox", "checked", True),
+        ("toggle", "checked", True),
         ("led", "state", "busy"),
         ("led", "color", "#ffcc33"),
         ("led", "color", "#ffaa00"),
@@ -1552,6 +1837,38 @@ def test_live_widget_setters_enqueue_native_props() -> None:
     assert enqueue_epoch_ms is not None and enqueue_epoch_ms > 0.0
     assert colormap == "viridis"
     assert fit is True
+
+
+def test_log_view_append_trim_clear_and_live_updates() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.props: list[tuple[str, str, object]] = []
+
+        def enqueue_set_prop(self, widget_id: str, prop: str, value: object) -> None:
+            self.props.append((widget_id, prop, value))
+
+        def close(self) -> None:
+            pass
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+    log = dg.LogView(["one", "two"], id="log", max_lines=3, parent=None)
+    log._bind_live(handle.widget_handle(log.id))
+
+    log.append_line("three")
+    log.append_lines(["four", "five\nsix"])
+    log.set_lines("alpha\nbeta")
+    log.clear()
+
+    assert log.lines == []
+    assert log.value == ""
+    assert sender.props == [
+        ("log", "value", "one\ntwo\nthree"),
+        ("log", "value", "four\nfive\nsix"),
+        ("log", "value", "alpha\nbeta"),
+        ("log", "value", ""),
+    ]
 
 
 def test_scatter_colormap_serializes_and_live_update_reuploads_points(monkeypatch) -> None:
@@ -2837,8 +3154,11 @@ def test_m5_theme_and_mutable_control_props_serialize() -> None:
     button = dg.Button("Filters", badge=3, parent=win)
     text = dg.TextInput("abc", placeholder="Name", parent=win)
     text_area = dg.TextArea("line 1\nline 2", placeholder="Notes", rows=5, wrap=False, parent=win)
+    code = dg.CodeEditor("def run():\n    return 42", language="python", rows=8, parent=win)
+    log = dg.LogView(["INFO boot", "WARN temp"], follow=True, max_lines=50, rows=6, parent=win)
     dropdown = dg.Dropdown(["x", "y"], value="y", disabled=True, parent=win)
     slider = dg.Slider(0.5, min=0, max=1, step=0.25, parent=win)
+    range_slider = dg.RangeSlider((0.25, 0.75), min=0, max=1, step=0.05, parent=win)
     badge = dg.Badge("live", level="success", parent=win)
     tag = dg.Tag("queued", level="warning", parent=win)
     led = dg.LED(True, parent=win)
@@ -2853,6 +3173,10 @@ def test_m5_theme_and_mutable_control_props_serialize() -> None:
     assert text.to_dict()["props"]["placeholder"] == "Name"
     assert dropdown.to_dict()["props"]["disabled"] is True
     assert slider.to_dict()["props"]["step"] == 0.25
+    assert range_slider.to_dict()["type"] == "range_slider"
+    assert range_slider.to_dict()["props"]["value_min"] == 0.25
+    assert range_slider.to_dict()["props"]["value_max"] == 0.75
+    assert range_slider.to_dict()["props"]["step"] == 0.05
     assert badge.to_dict()["type"] == "badge"
     assert badge.to_dict()["props"] == {"text": "live", "level": "success"}
     assert tag.to_dict()["type"] == "tag"
@@ -2869,10 +3193,30 @@ def test_m5_theme_and_mutable_control_props_serialize() -> None:
     assert text_area.to_dict()["props"]["placeholder"] == "Notes"
     assert text_area.to_dict()["props"]["rows"] == 5
     assert text_area.to_dict()["props"]["wrap"] is False
+    assert code.to_dict()["type"] == "code_editor"
+    assert code.to_dict()["props"]["value"] == "def run():\n    return 42"
+    assert code.to_dict()["props"]["language"] == "python"
+    assert code.to_dict()["props"]["rows"] == 8
+    assert code.to_dict()["props"]["wrap"] is False
+    assert log.to_dict()["type"] == "log_view"
+    assert log.to_dict()["props"] == {
+        "value": "INFO boot\nWARN temp",
+        "follow": True,
+        "max_lines": 50,
+        "rows": 6,
+        "wrap": False,
+        "disabled": False,
+    }
     assert button.to_dict()["props"]["badge"] == "3"
 
     with pytest.raises(ValueError, match="rows"):
         dg.TextArea(rows=0, parent=None)
+    with pytest.raises(ValueError, match="rows"):
+        dg.CodeEditor(rows=0, parent=None)
+    with pytest.raises(ValueError, match="rows"):
+        dg.LogView(rows=0, parent=None)
+    with pytest.raises(ValueError, match="max_lines"):
+        dg.LogView(max_lines=0, parent=None)
     with pytest.raises(TypeError, match="badge"):
         dg.Button("Bad", badge=True, parent=None)
     with pytest.raises(ValueError, match="unknown badge level"):
@@ -2881,6 +3225,383 @@ def test_m5_theme_and_mutable_control_props_serialize() -> None:
         dg.LED("missing", states={"ready": "success"}, parent=None)
     with pytest.raises(ValueError, match="size"):
         dg.LED(size=0, parent=None)
+
+
+def test_tool_buttons_serialize_and_validate() -> None:
+    win = dg.Window("Tool buttons")
+    calls: list[str] = []
+
+    small = dg.SmallButton("Reset", on_click=lambda: calls.append("small"), parent=win)
+    icon = dg.IconButton(
+        "play",
+        size=28,
+        tooltip="Run",
+        on_click=lambda: calls.append("icon"),
+        parent=win,
+    )
+    image = dg.ImageButton("assets/save.png", fit="cover", width=34, height=30, parent=win)
+    arrow = dg.ArrowButton("left", disabled=True, parent=win)
+
+    assert small.to_dict()["type"] == "small_button"
+    assert small.to_dict()["props"]["text"] == "Reset"
+    assert small.to_dict()["props"]["events"] == ["click"]
+    assert icon.to_dict()["type"] == "icon_button"
+    icon_props = icon.to_dict()["props"]
+    assert icon_props == {
+        "icon": "play",
+        "width": 28.0,
+        "height": 28.0,
+        "disabled": False,
+        "events": ["click"],
+        "tooltip": "Run",
+    }
+    assert image.to_dict()["type"] == "image_button"
+    assert image.to_dict()["props"]["path"] == "assets/save.png"
+    assert image.to_dict()["props"]["fit"] == "cover"
+    assert image.to_dict()["props"]["width"] == 34.0
+    assert image.to_dict()["props"]["height"] == 30.0
+    assert arrow.to_dict()["type"] == "arrow_button"
+    assert arrow.to_dict()["props"]["direction"] == "left"
+    assert arrow.to_dict()["props"]["events"] == []
+
+    small.click()
+    icon.click()
+    arrow.click()
+    assert calls == ["small", "icon"]
+
+    with pytest.raises(ValueError, match="IconButton icon"):
+        dg.IconButton("", parent=None)
+    with pytest.raises(ValueError, match="direction"):
+        dg.ArrowButton("north", parent=None)
+    with pytest.raises(ValueError, match="fit"):
+        dg.ImageButton("assets/save.png", fit="tile", parent=None)
+    with pytest.raises(ValueError, match="size"):
+        dg.IconButton("play", size=0, parent=None)
+    with pytest.raises(ValueError, match="IconButton has no CSS part 'image'"):
+        dg.IconButton("play", style={"parts": {"image": {"width": 12}}}, parent=None)
+
+
+def test_drag_drop_widgets_serialize_and_dispatch_payload() -> None:
+    calls: list[dg.DragDropPayload] = []
+    win = dg.Window("Drag drop")
+
+    with dg.DragSource({"kind": "asset", "id": "sensor-a"}, id="source", parent=win) as source:
+        dg.Selectable("Sensor A")
+    with dg.DropTarget(accept="asset", on_drop=calls.append, id="target", parent=win) as target:
+        dg.Panel("Assets")
+    zone = dg.DropZone("Drop CSV files", accept=["file", ".csv"], parent=win)
+
+    assert source.to_dict()["type"] == "drag_source"
+    assert source.to_dict()["props"] == {
+        "payload": {"kind": "asset", "id": "sensor-a"},
+        "drag_kind": "asset",
+        "disabled": False,
+    }
+    assert target.to_dict()["type"] == "drop_target"
+    assert target.to_dict()["props"] == {
+        "accept": ["asset"],
+        "disabled": False,
+        "events": ["change"],
+    }
+    assert zone.to_dict()["type"] == "drop_target"
+    assert zone.to_dict()["props"]["accept"] == ["file", ".csv"]
+    assert zone.to_dict()["props"]["text"] == "Drop CSV files"
+    assert zone.to_dict()["children"][0]["type"] == "label"
+
+    _, change_cbs = _collect_runtime_callbacks(win)
+    change_cbs["target"](
+        '{"event":"drop","source_id":"source","target_id":"target","kind":"asset",'
+        '"payload":{"kind":"asset","id":"sensor-a"},"x":12,"y":34}'
+    )
+
+    assert calls == [
+        dg.DragDropPayload(
+            source_id="source",
+            target_id="target",
+            kind="asset",
+            payload={"kind": "asset", "id": "sensor-a"},
+            x=12.0,
+            y=34.0,
+        )
+    ]
+
+    with pytest.raises(TypeError, match="JSON serializable"):
+        dg.DragSource({"bad": object()}, parent=None)
+    with pytest.raises(ValueError, match="accept"):
+        dg.DropTarget(accept="", parent=None)
+
+
+def test_property_grid_builds_schema_rows_and_emits_changes() -> None:
+    calls: list[dg.PropertyChange] = []
+    grid = dg.PropertyGrid(
+        {
+            "Name": "Sensor A",
+            "Enabled": True,
+            "Gain": 0.25,
+            "Mode": "Auto",
+            "Band": (20, 80),
+            "Color": "#66ccff",
+        },
+        schema={
+            "Gain": {"type": "float", "min": 0.0, "max": 1.0, "step": 0.01},
+            "Mode": {"type": "select", "options": ["Auto", "Manual"]},
+            "Band": {"type": "range", "min": 0, "max": 100, "step": 5},
+            "Color": {"type": "color"},
+        },
+        sections={
+            "Device": ["Name", "Enabled"],
+            "Tuning": ["Gain", "Mode", "Band", "Color"],
+        },
+        on_change=calls.append,
+        parent=None,
+    )
+
+    serialized = grid.to_dict()
+
+    assert serialized["type"] == "v_layout"
+    assert serialized["class"] == "property-grid"
+    assert [child["type"] for child in serialized["children"]] == ["collapsible", "collapsible"]
+    tuning_rows = serialized["children"][1]["children"]
+    assert [row["type"] for row in tuning_rows] == ["h_layout", "h_layout", "h_layout", "h_layout"]
+    assert tuning_rows[0]["children"][0]["props"]["text"] == "Gain"
+    assert tuning_rows[0]["children"][1]["style"]["flex"] == 1
+    assert tuning_rows[0]["children"][1]["style"]["min_width"] == 0
+    assert tuning_rows[0]["children"][1]["children"][0]["type"] == "drag_number"
+    assert tuning_rows[1]["children"][1]["children"][0]["type"] == "dropdown"
+    assert tuning_rows[2]["children"][1]["children"][0]["type"] == "range_slider"
+    assert tuning_rows[3]["children"][1]["children"][0]["type"] == "h_layout"
+
+    gain = grid.editor("Gain")
+    assert isinstance(gain, dg.DragNumber)
+    gain.set_value(0.5, notify=True)
+
+    assert grid.values["Gain"] == 0.5
+    assert calls[-1] == dg.PropertyChange("Gain", 0.5, 0.25)
+
+    grid.set_value("Mode", "Manual", notify=True)
+    assert grid.values["Mode"] == "Manual"
+    assert calls[-1] == dg.PropertyChange("Mode", "Manual", "Auto")
+
+    with pytest.raises(ValueError, match="label_width"):
+        dg.PropertyGrid(label_width=0, parent=None)
+
+
+def test_property_grid_manual_property_row_adopts_auto_parented_editor() -> None:
+    with dg.PropertyGrid(parent=None) as grid:
+        dg.Property("Gain", dg.DragNumber(0.25))
+        with dg.Property("Name"):
+            dg.TextInput("Sensor A")
+
+    serialized = grid.to_dict()
+
+    assert len(serialized["children"]) == 2
+    first_row = serialized["children"][0]
+    second_row = serialized["children"][1]
+    assert first_row["children"][0]["props"]["text"] == "Gain"
+    assert first_row["children"][1]["children"][0]["type"] == "drag_number"
+    assert second_row["children"][0]["props"]["text"] == "Name"
+    assert second_row["children"][1]["children"][0]["type"] == "text_input"
+
+
+def test_selectable_and_selectable_list_serialize() -> None:
+    win = dg.Window("Selectable")
+    selectable = dg.Selectable(
+        "Layer 01",
+        value="layer-01",
+        selected=True,
+        toggle=False,
+        parent=win,
+    )
+    single = dg.SelectableList(
+        [("CPU renderer", "cpu"), ("GPU renderer", "gpu")],
+        value="gpu",
+        parent=win,
+    )
+    multi = dg.SelectableList(
+        ["Frame time", "Draw batches"],
+        selection_mode="multiple",
+        selected={"Frame time"},
+        parent=win,
+    )
+
+    assert selectable.to_dict()["type"] == "selectable"
+    assert selectable.to_dict()["props"] == {
+        "text": "Layer 01",
+        "value": "layer-01",
+        "checked": True,
+        "toggle": False,
+        "disabled": False,
+        "events": [],
+    }
+    assert [child.to_dict()["type"] for child in single.children] == ["selectable", "selectable"]
+    assert [child.to_dict()["props"]["checked"] for child in single.children] == [False, True]
+    assert [child.to_dict()["props"]["toggle"] for child in single.children] == [False, False]
+    assert multi.selected == {"Frame time"}
+    assert [child.to_dict()["props"]["toggle"] for child in multi.children] == [True, True]
+
+
+def test_search_box_serializes_and_emits_change_and_clear() -> None:
+    calls: list[str] = []
+    box = dg.SearchBox(
+        "gpu",
+        placeholder="Filter commands...",
+        on_change=calls.append,
+        parent=None,
+    )
+
+    serialized = box.to_dict()
+
+    assert serialized["type"] == "h_layout"
+    assert serialized["class"] == "search-box"
+    assert serialized["style"]["align_items"] == "center"
+    assert [child["type"] for child in serialized["children"]] == [
+        "icon_button",
+        "text_input",
+        "icon_button",
+    ]
+    assert serialized["children"][1]["props"]["value"] == "gpu"
+    assert serialized["children"][1]["props"]["placeholder"] == "Filter commands..."
+    assert box.input is not None
+
+    click_cbs, change_cbs = _collect_runtime_callbacks(box)
+    change_cbs[box.input.id]("cpu")
+
+    assert box.value == "cpu"
+    assert calls == ["cpu"]
+    assert box.clear_button is not None
+
+    click_cbs[box.clear_button.id]()
+
+    assert box.value == ""
+    assert box.input.value == ""
+    assert calls == ["cpu", ""]
+
+
+def test_command_palette_filters_and_runs_commands() -> None:
+    calls: list[str] = []
+    palette = dg.CommandPalette(
+        [
+            dg.Command("open", "Open File", on_run=lambda: calls.append("open"), keywords=("file",)),
+            dg.Command("export", "Export Report", on_run=lambda: calls.append("export")),
+            dg.Command("disabled", "Disabled Command", on_run=lambda: calls.append("disabled"), disabled=True),
+        ],
+        open=True,
+        value="open",
+        on_run=lambda command: calls.append(f"palette:{command.id}"),
+        parent=None,
+    )
+
+    serialized = palette.to_dict()
+
+    assert serialized["type"] == "modal"
+    assert serialized["class"] == "command-palette"
+    assert serialized["props"]["open"] is True
+    assert [child["type"] for child in serialized["children"]] == ["h_layout", "v_layout"]
+    assert [command.id for command in palette.filtered_commands()] == ["open"]
+    assert palette.selected == "open"
+    assert palette.search_box is not None
+    assert palette.results is not None
+
+    row = palette.results.children[0]
+    assert row.to_dict()["type"] == "selectable"
+
+    _, change_cbs = _collect_runtime_callbacks(palette)
+    change_cbs[row.id](True)
+
+    assert calls == ["open", "palette:open"]
+    assert palette.open is False
+
+    palette.show()
+    palette.set_query("report")
+
+    assert [command.id for command in palette.filtered_commands()] == ["export"]
+    assert palette.selected == "export"
+
+    row = palette.results.children[0]
+    _, change_cbs = _collect_runtime_callbacks(palette)
+    change_cbs[row.id](True)
+
+    assert calls[-2:] == ["export", "palette:export"]
+
+
+def test_radio_button_and_radio_group_serialize() -> None:
+    win = dg.Window("Radio")
+    radio = dg.RadioButton(
+        "Quality",
+        value="quality",
+        checked=True,
+        parent=win,
+    )
+    group = dg.RadioGroup(
+        [
+            ("Fast", "fast"),
+            ("Balanced", "balanced"),
+            {"label": "Quality", "value": "quality", "disabled": True},
+        ],
+        value="balanced",
+        orientation="horizontal",
+        gap=8,
+        parent=win,
+    )
+
+    assert radio.to_dict()["type"] == "radio_button"
+    assert radio.to_dict()["props"] == {
+        "label": "Quality",
+        "value": "quality",
+        "checked": True,
+        "toggle": False,
+        "disabled": False,
+        "events": [],
+    }
+    assert group.value == "balanced"
+    assert group.to_dict()["type"] == "v_layout"
+    assert group.to_dict()["style"]["flex_direction"] == "row"
+    assert [child.to_dict()["type"] for child in group.children] == [
+        "radio_button",
+        "radio_button",
+        "radio_button",
+    ]
+    assert [child.to_dict()["props"]["checked"] for child in group.children] == [
+        False,
+        True,
+        False,
+    ]
+    assert group.children[2].to_dict()["props"]["disabled"] is True
+
+
+def test_tree_view_and_tree_node_serialize() -> None:
+    win = dg.Window("Tree")
+    tree = dg.TreeView(
+        [
+            {
+                "label": "src",
+                "id": "src",
+                "expanded": True,
+                "children": [
+                    {"label": "main.py", "id": "src/main.py", "leaf": True},
+                    {"label": "widgets.py", "id": "src/widgets.py", "leaf": True},
+                ],
+            },
+            ("README.md", "readme"),
+        ],
+        selected="src/widgets.py",
+        parent=win,
+    )
+
+    assert tree.to_dict()["type"] == "tree_view"
+    assert tree.selected == "src/widgets.py"
+    assert tree.children[0].to_dict()["type"] == "tree_node"
+    assert tree.children[0].to_dict()["props"] == {
+        "label": "src",
+        "value": "src",
+        "expanded": True,
+        "checked": False,
+        "leaf": False,
+        "disabled": False,
+        "events": ["change"],
+    }
+    assert tree.children[0].children[1].to_dict()["props"]["checked"] is True
+    assert tree.children[1].to_dict()["props"]["leaf"] is True
 
 
 def test_change_callback_wrappers_update_python_handles() -> None:
@@ -2892,9 +3613,20 @@ def test_change_callback_wrappers_update_python_handles() -> None:
         on_change=lambda v: calls.append(("check", v)),
         parent=win,
     )
+    toggle = dg.ToggleSwitch(
+        "Live updates",
+        checked=False,
+        on_change=lambda v: calls.append(("toggle", v)),
+        parent=win,
+    )
     slider = dg.Slider(
         0.0,
         on_change=lambda v: calls.append(("slider", v)),
+        parent=win,
+    )
+    range_slider = dg.RangeSlider(
+        (0.2, 0.6),
+        on_change=lambda v: calls.append(("range", v)),
         parent=win,
     )
     dropdown = dg.Dropdown(
@@ -2912,26 +3644,99 @@ def test_change_callback_wrappers_update_python_handles() -> None:
         on_change=lambda v: calls.append(("notes", v)),
         parent=win,
     )
+    code_editor = dg.CodeEditor(
+        "",
+        on_change=lambda v: calls.append(("code", v)),
+        parent=win,
+    )
+    selectable = dg.Selectable(
+        "Layer 01",
+        selected=False,
+        on_select=lambda v: calls.append(("selectable", v)),
+        parent=win,
+    )
+    selectable_list = dg.SelectableList(
+        ["CPU", "GPU"],
+        value="CPU",
+        on_change=lambda v: calls.append(("list", v)),
+        parent=win,
+    )
+    radio = dg.RadioButton(
+        "Quality",
+        value="quality",
+        checked=False,
+        on_change=lambda v: calls.append(("radio", v)),
+        parent=win,
+    )
+    radio_group = dg.RadioGroup(
+        ["Fast", "Balanced"],
+        value="Fast",
+        on_change=lambda v: calls.append(("radio_group", v)),
+        parent=win,
+    )
+    tree = dg.TreeView(
+        [
+            {
+                "label": "src",
+                "id": "src",
+                "expanded": False,
+                "children": [{"label": "main.py", "id": "src/main.py", "leaf": True}],
+            },
+            ("README.md", "readme"),
+        ],
+        selected="src/main.py",
+        on_select=lambda v: calls.append(("tree", v)),
+        parent=win,
+    )
 
     _, change_cbs = _collect_runtime_callbacks(win)
 
     change_cbs[checkbox.id](True)
+    change_cbs[toggle.id](True)
     change_cbs[slider.id](0.75)
+    change_cbs[range_slider.id](json.dumps({"min": 0.25, "max": 0.8}))
     change_cbs[dropdown.id]("y")
     change_cbs[text.id]("hello")
     change_cbs[text_area.id]("hello\nworld")
+    change_cbs[code_editor.id]("print('ok')\n")
+    change_cbs[selectable.id](True)
+    change_cbs[selectable_list.children[1].id](True)
+    change_cbs[radio.id](True)
+    change_cbs[radio_group.children[1].id](True)
+    change_cbs[tree.children[0].id](json.dumps({"event": "expand", "expanded": True}))
+    change_cbs[tree.children[1].id](json.dumps({"event": "select", "selected": True}))
 
     assert checkbox.checked is True
+    assert toggle.checked is True
     assert slider.value == 0.75
+    assert range_slider.value == (0.25, 0.8)
     assert dropdown.value == "y"
     assert text.value == "hello"
     assert text_area.value == "hello\nworld"
+    assert code_editor.value == "print('ok')\n"
+    assert selectable.selected is True
+    assert selectable_list.value == "GPU"
+    assert [child.selected for child in selectable_list.children] == [False, True]
+    assert radio.checked is True
+    assert radio_group.value == "Balanced"
+    assert [child.checked for child in radio_group.children] == [False, True]
+    assert tree.children[0].expanded is True
+    assert tree.selected == "readme"
+    assert [child.selected for child in tree.children] == [False, True]
     assert calls == [
         ("check", True),
+        ("toggle", True),
         ("slider", 0.75),
+        ("range", (0.25, 0.8)),
         ("drop", "y"),
         ("text", "hello"),
         ("notes", "hello\nworld"),
+        ("code", "print('ok')\n"),
+        ("selectable", True),
+        ("list", "GPU"),
+        ("radio", True),
+        ("radio_group", "Balanced"),
+        ("tree", "readme"),
     ]
 
 
@@ -2999,6 +3804,72 @@ def test_dataframe_table_select_callback_accepts_selection_object() -> None:
     assert table.selection == calls[0]
 
 
+def test_dataframe_table_sort_callback_payload() -> None:
+    class Frame:
+        columns = ("city", "total")
+        dtypes = ("str", "int64")
+        shape = (2, 2)
+        city = ["Oslo", "Lima"]
+        total = [7, 9]
+
+    calls: list[dg.TableSort] = []
+    win = dg.Window("Table")
+    table = dg.DataFrameTable(
+        Frame(),
+        id="table",
+        sortable=True,
+        on_sort=calls.append,
+        parent=win,
+    )
+
+    _, change_cbs = _collect_runtime_callbacks(win)
+    change_cbs["table"](
+        {
+            "event": "sort",
+            "column_index": 1,
+            "column": "total",
+            "descending": True,
+        }
+    )
+
+    assert table.to_dict()["props"]["events"] == ["change"]
+    assert table.to_dict()["props"]["sortable"] is True
+    assert calls == [dg.TableSort(1, "total", True)]
+    assert calls[0].direction == "desc"
+    assert calls[0].target == "column"
+    assert table.sort == calls[0]
+
+    change_cbs["table"](
+        {
+            "event": "sort",
+            "target": "index",
+            "column_index": -1,
+            "column": "#",
+            "descending": False,
+        }
+    )
+
+    assert calls[-1] == dg.TableSort(-1, "#", False, True)
+    assert calls[-1].target == "index"
+    assert calls[-1].direction == "asc"
+    assert table.sort == calls[-1]
+
+
+def test_dataframe_table_sortable_prop_serializes() -> None:
+    table = dg.DataFrameTable(
+        DemoFrame(),
+        sortable=False,
+        resizable_columns=False,
+        parent=None,
+    )
+
+    props = table.to_dict()["props"]
+
+    assert props["sortable"] is False
+    assert props["resizable_columns"] is False
+    assert props["events"] == []
+
+
 def test_scatter_pick_callback_payload() -> None:
     calls = []
     win = dg.Window("Scatter")
@@ -3047,7 +3918,9 @@ def test_change_callbacks_only_registered_when_requested() -> None:
     # explicitly provided.
     win = dg.Window("No callbacks")
     dg.Checkbox("Enabled", checked=False, parent=win)
+    dg.ToggleSwitch("Live updates", checked=False, parent=win)
     dg.Slider(0.0, parent=win)
+    dg.RangeSlider((0.25, 0.75), parent=win)
     dg.Dropdown(["x", "y"], parent=win)
     dg.TextInput("", parent=win)
     dg.TextArea("", parent=win)
@@ -3063,11 +3936,19 @@ def test_widget_validation_prevents_state_drift() -> None:
     slider = dg.Slider(10, min=0, max=5, parent=None)
     assert slider.value == 5
     assert slider.to_dict()["props"]["value"] == 5
+    range_slider = dg.RangeSlider((10, -5), min=0, max=5, parent=None)
+    assert range_slider.value == (0, 5)
+    assert range_slider.to_dict()["props"]["value_min"] == 0
+    assert range_slider.to_dict()["props"]["value_max"] == 5
 
     with pytest.raises(ValueError, match="max"):
         dg.Slider(0, min=5, max=0, parent=None)
     with pytest.raises(ValueError, match="step"):
         dg.Slider(0, step=0, parent=None)
+    with pytest.raises(ValueError, match="exactly two"):
+        dg.RangeSlider((0,), parent=None)
+    with pytest.raises(ValueError, match="step"):
+        dg.RangeSlider((0, 1), step=0, parent=None)
     with pytest.raises(ValueError, match="cannot be empty"):
         dg.Dropdown([], parent=None)
     with pytest.raises(ValueError, match="one of its items"):

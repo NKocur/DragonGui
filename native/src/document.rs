@@ -838,6 +838,8 @@ pub enum WidgetKind {
     ScrollArea,
     GridLayout,
     FlowLayout,
+    Splitter,
+    Pane,
     Panel,
     Collapsible,
     Modal,
@@ -845,14 +847,29 @@ pub enum WidgetKind {
     Tag,
     Led,
     Button,
+    SmallButton,
+    IconButton,
+    ImageButton,
+    ArrowButton,
+    Selectable,
+    RadioButton,
+    TreeView,
+    TreeNode,
+    DragSource,
+    DropTarget,
     Checkbox,
+    ToggleSwitch,
     Dropdown,
     Label,
     Slider,
+    RangeSlider,
     NumberInput,
+    DragNumber,
     ProgressBar,
     TextInput,
     TextArea,
+    CodeEditor,
+    LogView,
     Separator,
     Spacer,
     StatusBar,
@@ -887,6 +904,8 @@ impl WidgetKind {
             "scroll_area" => WidgetKind::ScrollArea,
             "grid_layout" => WidgetKind::GridLayout,
             "flow_layout" => WidgetKind::FlowLayout,
+            "splitter" => WidgetKind::Splitter,
+            "pane" => WidgetKind::Pane,
             "panel" => WidgetKind::Panel,
             "collapsible" => WidgetKind::Collapsible,
             "modal" => WidgetKind::Modal,
@@ -894,14 +913,29 @@ impl WidgetKind {
             "tag" => WidgetKind::Tag,
             "led" => WidgetKind::Led,
             "button" => WidgetKind::Button,
+            "small_button" => WidgetKind::SmallButton,
+            "icon_button" => WidgetKind::IconButton,
+            "image_button" => WidgetKind::ImageButton,
+            "arrow_button" => WidgetKind::ArrowButton,
+            "selectable" => WidgetKind::Selectable,
+            "radio_button" => WidgetKind::RadioButton,
+            "tree_view" => WidgetKind::TreeView,
+            "tree_node" => WidgetKind::TreeNode,
+            "drag_source" => WidgetKind::DragSource,
+            "drop_target" => WidgetKind::DropTarget,
             "checkbox" => WidgetKind::Checkbox,
+            "toggle_switch" => WidgetKind::ToggleSwitch,
             "dropdown" => WidgetKind::Dropdown,
             "label" => WidgetKind::Label,
             "slider" => WidgetKind::Slider,
+            "range_slider" => WidgetKind::RangeSlider,
             "number_input" => WidgetKind::NumberInput,
+            "drag_number" => WidgetKind::DragNumber,
             "progress_bar" => WidgetKind::ProgressBar,
             "text_input" => WidgetKind::TextInput,
             "text_area" => WidgetKind::TextArea,
+            "code_editor" => WidgetKind::CodeEditor,
+            "log_view" => WidgetKind::LogView,
             "separator" => WidgetKind::Separator,
             "spacer" => WidgetKind::Spacer,
             "status_bar" => WidgetKind::StatusBar,
@@ -952,17 +986,33 @@ pub struct NodeProps {
     pub flow_cross_align: Option<String>,
     /// Explicit or auto layout orientation for separators.
     pub orientation: Option<String>,
-    /// Checkbox initial checked state.
+    /// Splitter gutter size in logical pixels.
+    pub gutter_size: Option<f32>,
+    /// Pane size along its splitter axis in logical pixels.
+    pub pane_size: Option<f32>,
+    /// Pane minimum size along its splitter axis in logical pixels.
+    pub pane_min_size: Option<f32>,
+    /// Pane maximum size along its splitter axis in logical pixels.
+    pub pane_max_size: Option<f32>,
+    /// Pane flex grow factor when no explicit size is active.
+    pub pane_flex: Option<f32>,
+    /// Checkbox/ToggleSwitch initial checked state.
     pub checked: Option<bool>,
+    /// Whether selecting the widget toggles off when already selected.
+    pub toggle: Option<bool>,
     /// Slider current value.
     pub value: Option<f32>,
+    /// RangeSlider lower selected value.
+    pub value_min: Option<f32>,
+    /// RangeSlider upper selected value.
+    pub value_max: Option<f32>,
     /// Slider minimum value.
     pub min: Option<f32>,
     /// Slider maximum value.
     pub max: Option<f32>,
     /// Slider keyboard step.
     pub step: Option<f32>,
-    /// Display text for Label and Button widgets; label for Checkbox.
+    /// Display text for Label and Button widgets; label for Checkbox/ToggleSwitch.
     pub text: Option<String>,
     /// Optional inline badge text for selected controls.
     pub badge: Option<String>,
@@ -992,6 +1042,10 @@ pub struct NodeProps {
     pub table_sample_rows: Option<usize>,
     /// Requested visible row window size from Python.
     pub page_size: Option<usize>,
+    /// Whether table header clicks sort columns.
+    pub table_sortable: Option<bool>,
+    /// Whether table header divider drags resize columns.
+    pub table_resizable_columns: Option<bool>,
     /// Bounded startup sample of formatted table cells, row-major.
     pub table_cells: Vec<Vec<String>>,
     /// Non-interactive disabled state.
@@ -1191,9 +1245,38 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         .get("orientation")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+    let finite_nonnegative = |name: &str| {
+        props
+            .get(name)
+            .and_then(|v| v.as_f64())
+            .filter(|v| v.is_finite() && *v >= 0.0)
+            .map(|v| v as f32)
+    };
+    let gutter_size = props
+        .get("gutter_size")
+        .and_then(|v| v.as_f64())
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .map(|v| v as f32);
+    let pane_size = finite_nonnegative("size");
+    let pane_min_size = finite_nonnegative("min_size");
+    let pane_max_size = finite_nonnegative("max_size");
+    let pane_flex = props
+        .get("flex")
+        .and_then(|v| v.as_f64())
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .map(|v| v as f32);
     let checked = props.get("checked").and_then(|v| v.as_bool());
+    let toggle = props.get("toggle").and_then(|v| v.as_bool());
     let value = props
         .get("value")
+        .and_then(|v| v.as_f64())
+        .map(|v| v as f32);
+    let value_min = props
+        .get("value_min")
+        .and_then(|v| v.as_f64())
+        .map(|v| v as f32);
+    let value_max = props
+        .get("value_max")
         .and_then(|v| v.as_f64())
         .map(|v| v as f32);
     let min = props.get("min").and_then(|v| v.as_f64()).map(|v| v as f32);
@@ -1267,6 +1350,18 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         .get("page_size")
         .and_then(|v| v.as_u64())
         .map(|v| v as usize);
+    let table_sortable = Some(
+        props
+            .get("sortable")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true),
+    );
+    let table_resizable_columns = Some(
+        props
+            .get("resizable_columns")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true),
+    );
     let table_cells = props
         .get("cells")
         .and_then(|v| v.as_array())
@@ -1293,7 +1388,7 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         .and_then(|v| v.as_str())
         .filter(|v| !v.is_empty())
         .map(|v| v.to_string());
-    let image_path = if matches!(kind, WidgetKind::Image) {
+    let image_path = if matches!(kind, WidgetKind::Image | WidgetKind::ImageButton) {
         props
             .get("path")
             .and_then(|v| v.as_str())
@@ -1302,7 +1397,7 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
     } else {
         None
     };
-    let image_fit = if matches!(kind, WidgetKind::Image) {
+    let image_fit = if matches!(kind, WidgetKind::Image | WidgetKind::ImageButton) {
         props
             .get("fit")
             .and_then(|v| v.as_str())
@@ -1351,17 +1446,23 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
     } else {
         (None, None, None, false, false, false)
     };
-    let led_state = props
-        .get("state")
-        .and_then(|v| v.as_str())
-        .filter(|v| !v.is_empty())
-        .map(|v| v.to_string());
-    let led_color = parse_color_ref(props.get("color"));
-    let led_size = props
-        .get("size")
-        .and_then(|v| v.as_f64())
-        .filter(|v| v.is_finite() && *v > 0.0)
-        .map(|v| v as f32);
+    let (led_state, led_color, led_size) = if matches!(kind, WidgetKind::Led) {
+        (
+            props
+                .get("state")
+                .and_then(|v| v.as_str())
+                .filter(|v| !v.is_empty())
+                .map(|v| v.to_string()),
+            parse_color_ref(props.get("color")),
+            props
+                .get("size")
+                .and_then(|v| v.as_f64())
+                .filter(|v| v.is_finite() && *v > 0.0)
+                .map(|v| v as f32),
+        )
+    } else {
+        (None, None, None)
+    };
     let (
         line_plot_series,
         line_plot_x_label,
@@ -1748,8 +1849,13 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal | WidgetKind::Collapsible => {
             "title"
         }
-        WidgetKind::Checkbox => "label",
-        WidgetKind::Dropdown | WidgetKind::TextInput | WidgetKind::TextArea => "value",
+        WidgetKind::Checkbox | WidgetKind::ToggleSwitch | WidgetKind::RadioButton => "label",
+        WidgetKind::TreeNode => "label",
+        WidgetKind::Dropdown
+        | WidgetKind::TextInput
+        | WidgetKind::TextArea
+        | WidgetKind::CodeEditor
+        | WidgetKind::LogView => "value",
         WidgetKind::ProgressBar => "label",
         WidgetKind::Tab | WidgetKind::NavItem | WidgetKind::Menu | WidgetKind::MenuItem => "label",
         WidgetKind::Page => "title",
@@ -1758,7 +1864,10 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
     let text = props
         .get(text_key)
         .or_else(|| {
-            if matches!(kind, WidgetKind::TextInput | WidgetKind::TextArea) {
+            if matches!(
+                kind,
+                WidgetKind::TextInput | WidgetKind::TextArea | WidgetKind::CodeEditor
+            ) {
                 props.get("placeholder")
             } else {
                 None
@@ -1777,8 +1886,16 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         flow_align,
         flow_cross_align,
         orientation,
+        gutter_size,
+        pane_size,
+        pane_min_size,
+        pane_max_size,
+        pane_flex,
         checked,
+        toggle,
         value,
+        value_min,
+        value_max,
         min,
         max,
         step,
@@ -1797,6 +1914,8 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         table_resource_id,
         table_sample_rows,
         page_size,
+        table_sortable,
+        table_resizable_columns,
         table_cells,
         disabled,
         expanded,

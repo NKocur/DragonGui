@@ -6,16 +6,17 @@ use crate::css_style::{
     computed_style_for_virtual_element_with_media, DgMediaEnvironment, StylesheetStore,
 };
 use crate::document::{WidgetKind, WidgetNode};
-use crate::events::{NavigationItem, SortDirection, WidgetState};
+use crate::events::{NavigationItem, SortDirection, TableSortColumn, WidgetState};
 use crate::layout::{
     is_scroll_container_node, panel_title_body_gap_lp, panel_title_line_height_lp,
-    panel_title_top_padding_lp, scroll_container_max_x, scroll_container_max_y, LayoutResult, Rect,
+    panel_title_top_padding_lp, scroll_container_max_x, scroll_container_max_y,
+    tree_node_row_height_for_style, LayoutResult, Rect,
 };
 use crate::overlays::{menu_popup_rect, rich_tooltip_target, tooltip_target};
 use crate::style::{
     badge_height_for_style, badge_width_for_text, base_part_style, checked_part_style_for_state,
-    collapsed_part_style_for_state, collapsible_header_height_for_style,
-    expanded_part_style_for_state,
+    code_editor_gutter_width_for_style, collapsed_part_style_for_state,
+    collapsible_header_height_for_style, expanded_part_style_for_state,
     merged_part_visual_for_state as style_merged_part_visual_for_state,
     number_stepper_width_for_style, open_part_style_for_state,
     part_style_active_for_state as style_part_style_active_for_state,
@@ -26,7 +27,8 @@ use crate::style::{
     CARET_WIDTH_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP, DROPDOWN_CHEVRON_WIDTH_LP,
     FOCUS_RING_LP, PANEL_ACCENT_WIDTH_LP, SLIDER_THUMB_WIDTH_LP, SLIDER_TRACK_HEIGHT_LP,
     SLIDER_TRACK_MARGIN_LP, TAB_ACTIVE_BAR_LP, TAB_GAP_LP, TAB_INACTIVE_BOTTOM_INSET_LP,
-    TAB_TOP_INSET_LP,
+    TAB_TOP_INSET_LP, TOGGLE_SWITCH_THUMB_SIZE_LP, TOGGLE_SWITCH_TRACK_HEIGHT_LP,
+    TOGGLE_SWITCH_TRACK_WIDTH_LP,
 };
 use crate::table;
 use crate::theme::{Color, Theme};
@@ -709,6 +711,14 @@ impl PrimitivesRenderer {
             scale_factor,
             stylesheets,
             media,
+            window_w,
+            window_h,
+            &mut self.instances,
+        );
+        emit_drag_drop_overlay(
+            state,
+            theme,
+            scale_factor,
             window_w,
             window_h,
             &mut self.instances,
@@ -5458,6 +5468,202 @@ fn emit_stepper_mark(
     }
 }
 
+fn widget_raw_str<'a>(node: &'a WidgetNode, key: &str) -> Option<&'a str> {
+    node.props
+        .raw_props
+        .get(key)
+        .and_then(|value| value.as_str())
+}
+
+fn emit_tool_icon_button_mark(
+    out: &mut Vec<RectInstance>,
+    node: &WidgetNode,
+    rect: [f32; 4],
+    color: Color,
+    sf: f32,
+) {
+    let icon = widget_raw_str(node, "icon").unwrap_or("more");
+    match icon {
+        "add" | "plus" | "new" => emit_stepper_mark(out, rect, color, true, sf),
+        "minus" | "remove" | "subtract" => emit_stepper_mark(out, rect, color, false, sf),
+        "close" | "x" | "delete" | "clear" => emit_tool_x_icon(out, rect, color, sf),
+        "check" | "ok" | "done" => emit_tool_check_icon(out, rect, color, sf),
+        "play" | "run" => emit_tool_triangle_icon(out, rect, color, "right", sf),
+        "pause" => emit_tool_pause_icon(out, rect, color, sf),
+        "stop" | "square" => emit_tool_stop_icon(out, rect, color, sf),
+        "save" => emit_tool_save_icon(out, rect, color, sf),
+        "search" | "zoom" => emit_line_plot_zoom_icon(out, rect, color, sf),
+        "fit" => emit_line_plot_fit_icon(out, rect, color, sf),
+        "pan" | "move" => emit_line_plot_pan_icon(out, rect, color, sf),
+        "grid" => emit_line_plot_grid_icon(out, rect, color, sf),
+        "axes" => emit_line_plot_axes_icon(out, rect, color, sf),
+        _ => emit_tool_more_icon(out, rect, color, sf),
+    }
+}
+
+fn emit_arrow_button_mark(
+    out: &mut Vec<RectInstance>,
+    node: &WidgetNode,
+    rect: [f32; 4],
+    color: Color,
+    sf: f32,
+) {
+    let direction = widget_raw_str(node, "direction").unwrap_or("right");
+    emit_tool_triangle_icon(out, rect, color, direction, sf);
+}
+
+fn emit_tool_triangle_icon(
+    out: &mut Vec<RectInstance>,
+    rect: [f32; 4],
+    color: Color,
+    direction: &str,
+    sf: f32,
+) {
+    let [x, y, w, h] = rect;
+    if w <= 0.0 || h <= 0.0 {
+        return;
+    }
+    let mark = (w.min(h) * 0.42).max(8.0 * sf);
+    let mut tri = inst_rounded_triangle(
+        [x + (w - mark) * 0.5, y + (h - mark) * 0.5, mark, mark],
+        color,
+        !matches!(direction, "down"),
+        (1.0 * sf).max(0.75),
+    );
+    tri.transform2[0] = match direction {
+        "left" => -std::f32::consts::FRAC_PI_2,
+        "right" => std::f32::consts::FRAC_PI_2,
+        _ => 0.0,
+    };
+    out.push(tri);
+}
+
+fn emit_tool_bar(
+    out: &mut Vec<RectInstance>,
+    center: [f32; 2],
+    len: f32,
+    stroke: f32,
+    angle: f32,
+    color: Color,
+) {
+    let radius = stroke * 0.5;
+    let mut mark = inst_radii(
+        [center[0] - len * 0.5, center[1] - stroke * 0.5, len, stroke],
+        color,
+        [radius; 4],
+    );
+    mark.transform2[0] = angle;
+    out.push(mark);
+}
+
+fn emit_tool_x_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
+    let [x, y, w, h] = rect;
+    let len = (w.min(h) * 0.42).max(8.0 * sf);
+    let stroke = (1.55 * sf).max(1.1);
+    let center = [x + w * 0.5, y + h * 0.5];
+    emit_tool_bar(out, center, len, stroke, std::f32::consts::FRAC_PI_4, color);
+    emit_tool_bar(
+        out,
+        center,
+        len,
+        stroke,
+        -std::f32::consts::FRAC_PI_4,
+        color,
+    );
+}
+
+fn emit_tool_check_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
+    let [x, y, w, h] = rect;
+    let stroke = (1.65 * sf).max(1.1);
+    let cx = x + w * 0.5;
+    let cy = y + h * 0.54;
+    emit_tool_bar(
+        out,
+        [cx - 2.6 * sf, cy + 1.4 * sf],
+        5.0 * sf,
+        stroke,
+        std::f32::consts::FRAC_PI_4,
+        color,
+    );
+    emit_tool_bar(
+        out,
+        [cx + 2.4 * sf, cy - 1.8 * sf],
+        9.0 * sf,
+        stroke,
+        -std::f32::consts::FRAC_PI_4,
+        color,
+    );
+}
+
+fn emit_tool_pause_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
+    let [x, y, w, h] = rect;
+    let bar_w = (2.6 * sf).max(1.5);
+    let bar_h = (w.min(h) * 0.45).max(9.0 * sf);
+    let gap = (3.3 * sf).max(2.0);
+    let cx = x + w * 0.5;
+    let top = y + (h - bar_h) * 0.5;
+    let radius = (0.9 * sf).max(0.6);
+    for left in [cx - gap * 0.5 - bar_w, cx + gap * 0.5] {
+        out.push(inst_radii([left, top, bar_w, bar_h], color, [radius; 4]));
+    }
+}
+
+fn emit_tool_stop_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
+    let [x, y, w, h] = rect;
+    let size = (w.min(h) * 0.42).max(8.0 * sf);
+    let radius = (1.4 * sf).max(0.8);
+    out.push(inst_radii(
+        [x + (w - size) * 0.5, y + (h - size) * 0.5, size, size],
+        color,
+        [radius; 4],
+    ));
+}
+
+fn emit_tool_save_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
+    let [x, y, w, h] = rect;
+    let size = (w.min(h) * 0.52).max(10.0 * sf);
+    let left = x + (w - size) * 0.5;
+    let top = y + (h - size) * 0.5;
+    let stroke = (1.25 * sf).max(1.0);
+    let radius = (1.2 * sf).max(0.75);
+    out.push(inst_radii([left, top, size, size], color, [radius; 4]));
+    out.push(inst_radii(
+        [
+            left + stroke * 1.5,
+            top + stroke * 1.4,
+            size * 0.46,
+            stroke * 2.2,
+        ],
+        [0.0, 0.0, 0.0, color[3] * 0.55],
+        [stroke * 0.4; 4],
+    ));
+    out.push(inst_radii(
+        [
+            left + stroke * 1.5,
+            top + size - stroke * 3.0,
+            size - stroke * 3.0,
+            stroke * 1.6,
+        ],
+        [0.0, 0.0, 0.0, color[3] * 0.55],
+        [stroke * 0.4; 4],
+    ));
+}
+
+fn emit_tool_more_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
+    let [x, y, w, h] = rect;
+    let dot = (2.2 * sf).max(1.4);
+    let gap = (4.2 * sf).max(dot * 1.6);
+    let cx = x + w * 0.5;
+    let cy = y + h * 0.5;
+    for offset in [-gap, 0.0, gap] {
+        out.push(inst_radii(
+            [cx + offset - dot * 0.5, cy - dot * 0.5, dot, dot],
+            color,
+            [dot * 0.5; 4],
+        ));
+    }
+}
+
 fn dropdown_chevron_width_for_style(node: &WidgetNode, sf: f32) -> f32 {
     node.style
         .parts
@@ -5728,6 +5934,133 @@ pub(crate) fn panel_scrollbar_geometry(
     }
 }
 
+pub(crate) fn table_scrollbar_geometry(
+    node: &WidgetNode,
+    state: &WidgetState,
+    theme: &Theme,
+    sf: f32,
+    rect: Rect,
+) -> Option<PanelScrollbarGeometry> {
+    let table_state = state.table(&node.id)?;
+    if rect.w <= 0.0 || rect.h <= 0.0 {
+        return None;
+    }
+    let metrics = table::metrics_for_node(node, theme, sf);
+    let visible = table::visible(table_state, &rect, metrics);
+    let max_scroll_x = table_state.columns.len().saturating_sub(1) as f32;
+    let max_scroll_y = table_state.rows.saturating_sub(1) as f32;
+    let has_horizontal = max_scroll_x > 0.0 && visible.col_count < table_state.columns.len();
+    let has_vertical = max_scroll_y > 0.0 && visible.row_count < table_state.rows;
+    if !has_horizontal && !has_vertical {
+        return None;
+    }
+
+    let visual = visual_for(node, state, theme);
+    let border_w = visual.border_width.unwrap_or(BORDER_WIDTH_LP).max(0.0) * sf;
+    let radii = visual_radii(&visual, visual.border_radius.unwrap_or(theme.radius), sf);
+    let track_thickness = scrollbar_part_width_px(node, "scrollbar-track", 4.0, sf).max(2.0);
+    let thumb_thickness = scrollbar_part_width_px(
+        node,
+        "scrollbar-thumb",
+        track_thickness / sf.max(0.0001),
+        sf,
+    )
+    .max(2.0);
+    let gutter_thickness = track_thickness.max(thumb_thickness);
+    let gap = (4.0 * sf).max(2.0);
+    let part_padding = base_part_style(&node.style, "scrollbar-track")
+        .and_then(|part| part.layout.padding)
+        .map(|padding| (padding.max(0.0) * sf).max(border_w));
+    let default_pad = (border_w + gap * 1.25).max(radii.iter().copied().fold(0.0, f32::max) * 0.25);
+    let pad = part_padding
+        .map(|padding| padding.max(default_pad))
+        .unwrap_or(default_pad);
+
+    let mut geometry = PanelScrollbarGeometry::default();
+    let vertical_reserve = if has_vertical {
+        gutter_thickness + gap
+    } else {
+        0.0
+    };
+    let horizontal_reserve = if has_horizontal {
+        gutter_thickness + gap
+    } else {
+        0.0
+    };
+
+    if has_vertical {
+        let viewport_h = (rect.h - metrics.header_h).max(1.0);
+        let content_h = table_state.rows.max(1) as f32 * metrics.row_h;
+        let gutter_x = rect.x + rect.w - pad - gutter_thickness;
+        let track_x = gutter_x + (gutter_thickness - track_thickness) * 0.5;
+        let track_y = rect.y + metrics.header_h + pad;
+        let track_bottom = rect.y + rect.h - pad - horizontal_reserve;
+        let track_h = (track_bottom - track_y).max(1.0);
+        if gutter_x >= rect.x && track_h >= SCROLLBAR_MIN_TRACK_LEN_PX * sf {
+            let thumb_h = (track_h * (viewport_h / content_h).clamp(0.0, 1.0))
+                .max(18.0 * sf)
+                .min(track_h);
+            let travel = (track_h - thumb_h).max(0.0);
+            let thumb_y =
+                track_y + travel * (table_state.scroll_row as f32 / max_scroll_y).clamp(0.0, 1.0);
+            geometry.vertical = Some(PanelScrollbarAxisGeometry {
+                track: Rect {
+                    x: track_x,
+                    y: track_y,
+                    w: track_thickness,
+                    h: track_h,
+                },
+                thumb: Rect {
+                    x: gutter_x + (gutter_thickness - thumb_thickness) * 0.5,
+                    y: thumb_y,
+                    w: thumb_thickness,
+                    h: thumb_h,
+                },
+                max_scroll: max_scroll_y,
+            });
+        }
+    }
+
+    if has_horizontal {
+        let viewport_w = (rect.w - metrics.index_w).max(1.0);
+        let content_w = table::total_column_width(table_state, metrics).max(viewport_w);
+        let gutter_y = rect.y + rect.h - pad - gutter_thickness;
+        let track_x = rect.x + metrics.index_w + pad;
+        let track_right = rect.x + rect.w - pad - vertical_reserve;
+        let track_y = gutter_y + (gutter_thickness - track_thickness) * 0.5;
+        let track_w = (track_right - track_x).max(1.0);
+        if gutter_y >= rect.y && track_w >= SCROLLBAR_MIN_TRACK_LEN_PX * sf {
+            let thumb_w = (track_w * (viewport_w / content_w).clamp(0.0, 1.0))
+                .max(18.0 * sf)
+                .min(track_w);
+            let travel = (track_w - thumb_w).max(0.0);
+            let thumb_x =
+                track_x + travel * (table_state.scroll_col as f32 / max_scroll_x).clamp(0.0, 1.0);
+            geometry.horizontal = Some(PanelScrollbarAxisGeometry {
+                track: Rect {
+                    x: track_x,
+                    y: track_y,
+                    w: track_w,
+                    h: track_thickness,
+                },
+                thumb: Rect {
+                    x: thumb_x,
+                    y: gutter_y + (gutter_thickness - thumb_thickness) * 0.5,
+                    w: thumb_w,
+                    h: thumb_thickness,
+                },
+                max_scroll: max_scroll_x,
+            });
+        }
+    }
+
+    if geometry.horizontal.is_some() || geometry.vertical.is_some() {
+        Some(geometry)
+    } else {
+        None
+    }
+}
+
 fn emit_panel_scrollbar(
     node: &WidgetNode,
     layout: &LayoutResult,
@@ -5747,6 +6080,65 @@ fn emit_panel_scrollbar(
     let thumb_visual = part_visual_for(node, state, "scrollbar-thumb");
     let track_fallback = with_alpha(mix(theme.surface, theme.muted_text, 0.25), 0.22);
     let thumb_fallback = with_alpha(mix(theme.surface_alt, theme.muted_text, 0.45), 0.58);
+
+    if let Some(vertical) = geometry.vertical {
+        emit_scrollbar_part_rect(
+            out,
+            rect_array(vertical.track),
+            &track_visual,
+            theme,
+            track_fallback,
+            [vertical.track.w * 0.5; 4],
+            sf,
+        );
+        emit_scrollbar_part_rect(
+            out,
+            rect_array(vertical.thumb),
+            &thumb_visual,
+            theme,
+            thumb_fallback,
+            [vertical.thumb.w * 0.5; 4],
+            sf,
+        );
+    }
+
+    if let Some(horizontal) = geometry.horizontal {
+        emit_scrollbar_part_rect(
+            out,
+            rect_array(horizontal.track),
+            &track_visual,
+            theme,
+            track_fallback,
+            [horizontal.track.h * 0.5; 4],
+            sf,
+        );
+        emit_scrollbar_part_rect(
+            out,
+            rect_array(horizontal.thumb),
+            &thumb_visual,
+            theme,
+            thumb_fallback,
+            [horizontal.thumb.h * 0.5; 4],
+            sf,
+        );
+    }
+}
+
+fn emit_table_scrollbar(
+    node: &WidgetNode,
+    state: &WidgetState,
+    theme: &Theme,
+    sf: f32,
+    rect: Rect,
+    out: &mut Vec<RectInstance>,
+) {
+    let Some(geometry) = table_scrollbar_geometry(node, state, theme, sf, rect) else {
+        return;
+    };
+    let track_visual = part_visual_for(node, state, "scrollbar-track");
+    let thumb_visual = part_visual_for(node, state, "scrollbar-thumb");
+    let track_fallback = with_alpha(mix(theme.surface, theme.muted_text, 0.25), 0.20);
+    let thumb_fallback = with_alpha(mix(theme.surface_alt, theme.muted_text, 0.52), 0.68);
 
     if let Some(vertical) = geometry.vertical {
         emit_scrollbar_part_rect(
@@ -6520,6 +6912,103 @@ fn emit_focus_ring_radii(
     }
 }
 
+fn emit_drag_drop_overlay(
+    state: &WidgetState,
+    theme: &Theme,
+    sf: f32,
+    window_w: f32,
+    window_h: f32,
+    out: &mut Vec<RectInstance>,
+) {
+    let Some(pos) = state.drag_pos else {
+        return;
+    };
+    if state.drag_source.is_none() {
+        return;
+    }
+    if window_w <= 0.0 || window_h <= 0.0 {
+        return;
+    }
+
+    let accent = if state.drag_hover_target.is_some() {
+        theme.success
+    } else {
+        theme.accent
+    };
+    let offset = 14.0 * sf;
+    let chip_w = 54.0 * sf;
+    let chip_h = 28.0 * sf;
+    let margin = 6.0 * sf;
+    let mut x = pos[0] + offset;
+    let mut y = pos[1] + offset;
+    if x + chip_w + margin > window_w {
+        x = (pos[0] - chip_w - offset).max(margin);
+    }
+    if y + chip_h + margin > window_h {
+        y = (pos[1] - chip_h - offset).max(margin);
+    }
+
+    let ring_size = 12.0 * sf;
+    let ring_rect = [
+        pos[0] - ring_size * 0.5,
+        pos[1] - ring_size * 0.5,
+        ring_size,
+        ring_size,
+    ];
+    out.push(inst_radii(
+        ring_rect,
+        with_alpha(accent, 0.16),
+        [ring_size * 0.5; 4],
+    ));
+    out.push(inst_outline_ring_clipped(
+        ring_rect,
+        with_alpha(accent, 0.74),
+        [ring_size * 0.5; 4],
+        (1.5 * sf).max(1.0),
+        default_local_clip(ring_rect),
+    ));
+
+    let chip_rect = [x, y, chip_w, chip_h];
+    let radius = 9.0 * sf;
+    let shadow_rect = [x + 2.0 * sf, y + 4.0 * sf, chip_w, chip_h];
+    out.push(inst_radii(shadow_rect, [0.0, 0.0, 0.0, 0.24], [radius; 4]));
+    out.push(inst_radii(
+        chip_rect,
+        with_alpha(mix(theme.surface_alt, accent, 0.20), 0.94),
+        [radius; 4],
+    ));
+    out.push(inst_outline_ring_clipped(
+        chip_rect,
+        with_alpha(accent, 0.78),
+        [radius; 4],
+        (1.5 * sf).max(1.0),
+        default_local_clip(chip_rect),
+    ));
+
+    let dot = 8.0 * sf;
+    out.push(inst_radii(
+        [x + 10.0 * sf, y + (chip_h - dot) * 0.5, dot, dot],
+        with_alpha(accent, 0.96),
+        [dot * 0.5; 4],
+    ));
+
+    let handle_x = x + 24.0 * sf;
+    let handle_y = y + 8.0 * sf;
+    let handle_w = 17.0 * sf;
+    let handle_h = (2.0 * sf).max(1.0);
+    let handle_gap = 5.0 * sf;
+    let handle = with_alpha(theme.text, 0.72);
+    for index in 0..3 {
+        let rect = [
+            handle_x,
+            handle_y + index as f32 * handle_gap,
+            handle_w,
+            handle_h,
+        ];
+        out.push(inst_radii(rect, handle, [handle_h * 0.5; 4]));
+    }
+}
+
 fn emit_rects(
     node: &WidgetNode,
     layout: &LayoutResult,
@@ -6632,6 +7121,53 @@ fn emit_rects_inner(
                             accent_fill,
                             inner_radii,
                             [-1.0, -1.0, accent_w, inner_h + 1.0],
+                        ));
+                    }
+                }
+            }
+
+            WidgetKind::DragSource | WidgetKind::DropTarget => {
+                let is_drop_hover = state.drag_hover_target.as_deref() == Some(node.id.as_str());
+                let has_visual = visual.background.is_some()
+                    || visual.background_paint.is_some()
+                    || visual.foreground.is_some()
+                    || visual.border_color.is_some()
+                    || visual.border_width.is_some()
+                    || is_drop_hover;
+                if has_visual {
+                    emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], radii, out);
+                    let fallback_fill = if is_drop_hover {
+                        with_alpha(styled_accent.unwrap_or(theme.accent), 0.14)
+                    } else {
+                        [0.0, 0.0, 0.0, 0.0]
+                    };
+                    let fill = if visual.background_paint.is_some() {
+                        resolve_background_paint(&visual, theme, fallback_fill)
+                    } else {
+                        FillPaint::Solid(styled_bg.unwrap_or(fallback_fill))
+                    };
+                    let border_color = styled_border.unwrap_or_else(|| {
+                        if is_drop_hover {
+                            styled_accent.unwrap_or(theme.accent)
+                        } else {
+                            with_alpha(theme.border, 0.0)
+                        }
+                    });
+                    emit_bordered_paint_rect_radii(
+                        out,
+                        [x, y, w, h],
+                        border_color,
+                        fill,
+                        radii,
+                        border_w,
+                    );
+                    if is_drop_hover {
+                        out.push(inst_outline_ring_clipped(
+                            [x, y, w, h],
+                            with_alpha(styled_accent.unwrap_or(theme.accent), 0.72),
+                            radii,
+                            (2.0 * sf).max(1.0),
+                            default_local_clip([x, y, w, h]),
                         ));
                     }
                 }
@@ -6864,6 +7400,90 @@ fn emit_rects_inner(
                 ));
             }
 
+            WidgetKind::Splitter => {
+                let has_box_style = styled_bg.is_some()
+                    || styled_border.is_some()
+                    || visual.background_paint.is_some()
+                    || visual.border_width.is_some();
+                if has_box_style {
+                    let splitter_border_w = visual
+                        .border_width
+                        .map(|width| (width.max(0.0) * sf).max(0.0))
+                        .unwrap_or(0.0);
+                    let fill = if visual.background_paint.is_some() {
+                        resolve_background_paint(
+                            &visual,
+                            theme,
+                            styled_bg.unwrap_or([0.0, 0.0, 0.0, 0.0]),
+                        )
+                    } else {
+                        FillPaint::Solid(styled_bg.unwrap_or([0.0, 0.0, 0.0, 0.0]))
+                    };
+                    if splitter_border_w > 0.0 || styled_border.is_some() {
+                        emit_bordered_paint_rect_radii(
+                            out,
+                            [x, y, w, h],
+                            styled_border.unwrap_or(theme.border),
+                            fill,
+                            radii,
+                            splitter_border_w.max(if styled_border.is_some() {
+                                border_w
+                            } else {
+                                0.0
+                            }),
+                        );
+                    } else {
+                        emit_paint_rect_radii(out, [x, y, w, h], fill, radii);
+                    }
+                }
+                emit_splitter_gutters(node, layout, theme, sf, state, [x, y, w, h], out);
+            }
+
+            WidgetKind::Pane => {
+                let pane_visual = visual
+                    .as_ref()
+                    .clone()
+                    .merged(&part_visual_for(node, state, "pane"));
+                let pane_bg = resolve_color(&pane_visual.background, theme)
+                    .map(|color| apply_opacity(color, pane_visual.opacity.or(visual.opacity)))
+                    .or(styled_bg);
+                let pane_border = resolve_color(&pane_visual.border_color, theme)
+                    .map(|color| apply_opacity(color, pane_visual.opacity.or(visual.opacity)))
+                    .or(styled_border);
+                let pane_border_w = pane_visual
+                    .border_width
+                    .map(|width| (width.max(0.0) * sf).max(0.0))
+                    .unwrap_or(0.0);
+                let has_pane_style = pane_bg.is_some()
+                    || pane_border.is_some()
+                    || pane_visual.background_paint.is_some()
+                    || pane_border_w > 0.0;
+                if has_pane_style {
+                    let fill = if pane_visual.background_paint.is_some() {
+                        resolve_background_paint(
+                            &pane_visual,
+                            theme,
+                            pane_bg.unwrap_or([0.0, 0.0, 0.0, 0.0]),
+                        )
+                    } else {
+                        FillPaint::Solid(pane_bg.unwrap_or([0.0, 0.0, 0.0, 0.0]))
+                    };
+                    let pane_radii = visual_radii_with_fallback(&pane_visual, radii, sf);
+                    if pane_border_w > 0.0 || pane_border.is_some() {
+                        emit_bordered_paint_rect_radii(
+                            out,
+                            [x, y, w, h],
+                            pane_border.unwrap_or(theme.border),
+                            fill,
+                            pane_radii,
+                            pane_border_w.max(if pane_border.is_some() { border_w } else { 0.0 }),
+                        );
+                    } else {
+                        emit_paint_rect_radii(out, [x, y, w, h], fill, pane_radii);
+                    }
+                }
+            }
+
             WidgetKind::MenuBar => {
                 emit_paint_rect_radii(
                     out,
@@ -6949,7 +7569,12 @@ fn emit_rects_inner(
                 }
             }
 
-            WidgetKind::Button | WidgetKind::Dropdown => {
+            WidgetKind::Button
+            | WidgetKind::SmallButton
+            | WidgetKind::IconButton
+            | WidgetKind::ImageButton
+            | WidgetKind::ArrowButton
+            | WidgetKind::Dropdown => {
                 emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], radii, out);
                 let fill = if visual.background_paint.is_some() {
                     resolve_background_paint(&visual, theme, control_fill(node, theme, state))
@@ -6964,12 +7589,26 @@ fn emit_rects_inner(
                     radii,
                     border_w,
                 );
-                if node.kind == WidgetKind::Button {
+                if matches!(node.kind, WidgetKind::Button | WidgetKind::SmallButton) {
                     if let Some(rect) =
                         badge_rect(node, [x, y, w, h], theme, sf, theme.spacing * sf)
                     {
                         emit_badge_pill(node, theme, sf, state, rect, out);
                     }
+                } else if node.kind == WidgetKind::IconButton {
+                    let icon_fallback = resolve_color(&visual.foreground, theme)
+                        .map(|c| apply_opacity(c, visual.opacity))
+                        .unwrap_or(theme.text);
+                    let icon_color =
+                        single_part_mark_color(node, state, theme, "icon", icon_fallback);
+                    emit_tool_icon_button_mark(out, node, [x, y, w, h], icon_color, sf);
+                } else if node.kind == WidgetKind::ArrowButton {
+                    let icon_fallback = resolve_color(&visual.foreground, theme)
+                        .map(|c| apply_opacity(c, visual.opacity))
+                        .unwrap_or(theme.text);
+                    let icon_color =
+                        single_part_mark_color(node, state, theme, "icon", icon_fallback);
+                    emit_arrow_button_mark(out, node, [x, y, w, h], icon_color, sf);
                 } else if node.kind == WidgetKind::Dropdown {
                     let chevron_w = dropdown_chevron_width_for_style(node, sf);
                     let chevron_rect = [x + w - theme.spacing * sf - chevron_w, y, chevron_w, h];
@@ -6980,6 +7619,289 @@ fn emit_rects_inner(
                         state.open_dropdown.as_deref() == Some(node.id.as_str()),
                         sf,
                     );
+                }
+            }
+
+            WidgetKind::Selectable => {
+                let selected = state.is_selectable_selected(&node.id);
+                let row_visual = visual
+                    .as_ref()
+                    .clone()
+                    .merged(&part_visual_for(node, state, "row"));
+                let row_radii = visual_radii_with_fallback(&row_visual, radii, sf);
+                let fallback_fill = if selected {
+                    mix(
+                        theme.surface_alt,
+                        styled_accent.unwrap_or(theme.accent),
+                        0.24,
+                    )
+                } else if state.hovered.as_deref() == Some(node.id.as_str()) {
+                    mix(theme.surface, theme.surface_alt, 0.62)
+                } else {
+                    [0.0, 0.0, 0.0, 0.0]
+                };
+                let row_fill_solid = resolve_color(&row_visual.background, theme)
+                    .map(|color| apply_opacity(color, row_visual.opacity))
+                    .or(styled_bg)
+                    .unwrap_or(fallback_fill);
+                let row_fill = if row_visual.background_paint.is_some() {
+                    resolve_background_paint(&row_visual, theme, row_fill_solid)
+                } else {
+                    FillPaint::Solid(row_fill_solid)
+                };
+                let row_border_w = row_visual
+                    .border_width
+                    .map(|width| (width.max(0.0) * sf).max(0.0))
+                    .unwrap_or(border_w);
+                let row_border = resolve_color(&row_visual.border_color, theme)
+                    .map(|color| apply_opacity(color, row_visual.opacity))
+                    .or(styled_border)
+                    .unwrap_or([0.0, 0.0, 0.0, 0.0]);
+                if row_border_w > 0.0 {
+                    emit_bordered_paint_rect_radii(
+                        out,
+                        [x, y, w, h],
+                        row_border,
+                        row_fill,
+                        row_radii,
+                        row_border_w,
+                    );
+                } else if row_fill_solid[3] > 0.001 || row_visual.background_paint.is_some() {
+                    emit_paint_rect_radii(out, [x, y, w, h], row_fill, row_radii);
+                }
+                if selected {
+                    let indicator_visual = part_visual_for(node, state, "indicator");
+                    let indicator_style = node.style.parts.parts.get("indicator");
+                    let indicator_w = indicator_style
+                        .and_then(|style| style.layout.width)
+                        .unwrap_or(3.0)
+                        .max(1.0)
+                        * sf;
+                    let indicator_h = indicator_style
+                        .and_then(|style| style.layout.height)
+                        .unwrap_or(14.0)
+                        .max(1.0)
+                        * sf;
+                    let indicator_x = x + (theme.spacing * 0.75 * sf).min(w.max(0.0));
+                    let indicator_y = y + ((h - indicator_h) * 0.5).max(0.0);
+                    let indicator_rect = [
+                        indicator_x,
+                        indicator_y,
+                        indicator_w.min(w.max(1.0)),
+                        indicator_h.min(h.max(1.0)),
+                    ];
+                    let indicator_color = apply_opacity(
+                        resolve_color(&indicator_visual.background, theme)
+                            .or(resolve_color(&indicator_visual.foreground, theme))
+                            .unwrap_or_else(|| styled_accent.unwrap_or(theme.accent)),
+                        indicator_visual.opacity,
+                    );
+                    let indicator_radius =
+                        (indicator_rect[2].min(indicator_rect[3]) * 0.5).max(0.0);
+                    let indicator_radii =
+                        visual_radii_with_fallback(&indicator_visual, [indicator_radius; 4], sf);
+                    out.push(inst_radii(indicator_rect, indicator_color, indicator_radii));
+                }
+                emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], row_radii, out);
+            }
+
+            WidgetKind::TreeNode => {
+                let selected = state.is_selectable_selected(&node.id);
+                let expanded = state.is_expanded(&node.id) && !node.children.is_empty();
+                let row_h = tree_node_row_height_for_style(node, theme, sf, Some(h))
+                    .min(h)
+                    .max(1.0);
+                let row_rect = [x, y, w, row_h];
+                let row_visual = visual
+                    .as_ref()
+                    .clone()
+                    .merged(&part_visual_for(node, state, "row"));
+                let row_radii = visual_radii_with_fallback(&row_visual, radii, sf);
+                let fallback_fill = if selected {
+                    mix(
+                        theme.surface_alt,
+                        styled_accent.unwrap_or(theme.accent),
+                        0.24,
+                    )
+                } else if state.pressed.as_deref() == Some(node.id.as_str()) {
+                    mix(
+                        theme.surface_alt,
+                        styled_accent.unwrap_or(theme.accent),
+                        0.20,
+                    )
+                } else if state.hovered.as_deref() == Some(node.id.as_str())
+                    || state.focused.as_deref() == Some(node.id.as_str())
+                {
+                    mix(theme.surface, theme.surface_alt, 0.62)
+                } else {
+                    [0.0, 0.0, 0.0, 0.0]
+                };
+                let row_fill_solid = resolve_color(&row_visual.background, theme)
+                    .map(|color| apply_opacity(color, row_visual.opacity))
+                    .or(styled_bg)
+                    .unwrap_or(fallback_fill);
+                let row_fill = if row_visual.background_paint.is_some() {
+                    resolve_background_paint(&row_visual, theme, row_fill_solid)
+                } else {
+                    FillPaint::Solid(row_fill_solid)
+                };
+                let row_border_w = row_visual
+                    .border_width
+                    .map(|width| (width.max(0.0) * sf).max(0.0))
+                    .unwrap_or(border_w);
+                let row_border = resolve_color(&row_visual.border_color, theme)
+                    .map(|color| apply_opacity(color, row_visual.opacity))
+                    .or(styled_border)
+                    .unwrap_or([0.0, 0.0, 0.0, 0.0]);
+                if row_border_w > 0.0 {
+                    emit_bordered_paint_rect_radii(
+                        out,
+                        row_rect,
+                        row_border,
+                        row_fill,
+                        row_radii,
+                        row_border_w,
+                    );
+                } else if row_fill_solid[3] > 0.001 || row_visual.background_paint.is_some() {
+                    emit_paint_rect_radii(out, row_rect, row_fill, row_radii);
+                }
+
+                let indicator_w = collapsible_indicator_width_for_style(node, sf);
+                let indicator_rect = [x + theme.spacing * 0.5 * sf, y, indicator_w, row_h];
+                if !node.children.is_empty() {
+                    emit_collapsible_indicator(
+                        out,
+                        indicator_rect,
+                        single_part_mark_color(node, state, theme, "indicator", theme.muted_text),
+                        expanded,
+                        sf,
+                        layout.visible_rect(&node.id),
+                    );
+                }
+                if expanded && h > row_h {
+                    let guide_visual = part_visual_for(node, state, "guide");
+                    let guide_color = apply_opacity(
+                        resolve_color(&guide_visual.background, theme)
+                            .or(resolve_color(&guide_visual.foreground, theme))
+                            .unwrap_or(theme.border),
+                        guide_visual.opacity,
+                    );
+                    let guide_w = guide_visual.border_width.unwrap_or(1.0).max(1.0) * sf;
+                    let guide_x = indicator_rect[0] + indicator_rect[2] * 0.5 - guide_w * 0.5;
+                    out.push(inst(
+                        [guide_x, y + row_h, guide_w.max(1.0), (h - row_h).max(1.0)],
+                        guide_color,
+                        0.0,
+                    ));
+                }
+                emit_focus_ring_radii(node, theme, sf, state, row_rect, row_radii, out);
+            }
+
+            WidgetKind::RadioButton => {
+                let selected = state.is_selectable_selected(&node.id);
+                emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], radii, out);
+
+                let row_fill = if visual.background_paint.is_some() {
+                    resolve_background_paint(&visual, theme, [0.0, 0.0, 0.0, 0.0])
+                } else {
+                    FillPaint::Solid(styled_bg.unwrap_or([0.0, 0.0, 0.0, 0.0]))
+                };
+                let row_border = styled_border.unwrap_or([0.0, 0.0, 0.0, 0.0]);
+                if border_w > 0.0 {
+                    emit_bordered_paint_rect_radii(
+                        out,
+                        [x, y, w, h],
+                        row_border,
+                        row_fill,
+                        radii,
+                        border_w,
+                    );
+                }
+
+                let indicator_visual = part_visual_for(node, state, "indicator");
+                let indicator_style = node.style.parts.parts.get("indicator");
+                let indicator_w = indicator_style
+                    .and_then(|style| style.layout.width)
+                    .unwrap_or(14.0)
+                    .max(1.0)
+                    * sf;
+                let indicator_h = indicator_style
+                    .and_then(|style| style.layout.height)
+                    .unwrap_or(indicator_w / sf)
+                    .max(1.0)
+                    * sf;
+                let indicator_side = indicator_w.min(indicator_h).max(1.0);
+                let indicator_x = x + theme.spacing * sf;
+                let indicator_y = y + ((h - indicator_side) * 0.5).max(0.0);
+                let indicator_rect = [indicator_x, indicator_y, indicator_side, indicator_side];
+                let disabled = state.is_disabled(&node.id);
+                let indicator_border_w = indicator_visual
+                    .border_width
+                    .map(|width| (width.max(0.0) * sf).max(0.0))
+                    .unwrap_or((1.5 * sf).max(1.0));
+                let indicator_border = apply_opacity(
+                    resolve_color(&indicator_visual.border_color, theme).unwrap_or_else(|| {
+                        if disabled {
+                            theme.disabled
+                        } else if selected {
+                            styled_accent.unwrap_or(theme.accent)
+                        } else {
+                            theme.border
+                        }
+                    }),
+                    indicator_visual.opacity,
+                );
+                let indicator_fill_solid = apply_opacity(
+                    resolve_color(&indicator_visual.background, theme).unwrap_or(theme.surface),
+                    indicator_visual.opacity,
+                );
+                let indicator_fill = if indicator_visual.background_paint.is_some() {
+                    resolve_background_paint(&indicator_visual, theme, indicator_fill_solid)
+                } else {
+                    FillPaint::Solid(indicator_fill_solid)
+                };
+                let indicator_radii =
+                    visual_radii_with_fallback(&indicator_visual, [indicator_side * 0.5; 4], sf);
+                emit_bordered_paint_rect_radii(
+                    out,
+                    indicator_rect,
+                    indicator_border,
+                    indicator_fill,
+                    indicator_radii,
+                    indicator_border_w,
+                );
+
+                if selected {
+                    let dot_visual = part_visual_for(node, state, "dot");
+                    let dot_style = node.style.parts.parts.get("dot");
+                    let dot_side = dot_style
+                        .and_then(|style| style.layout.width.or(style.layout.height))
+                        .unwrap_or(6.0)
+                        .max(1.0)
+                        * sf;
+                    let dot_side =
+                        dot_side.min((indicator_side - indicator_border_w * 2.0).max(1.0));
+                    let dot_rect = [
+                        indicator_x + (indicator_side - dot_side) * 0.5,
+                        indicator_y + (indicator_side - dot_side) * 0.5,
+                        dot_side,
+                        dot_side,
+                    ];
+                    let dot_fill = apply_opacity(
+                        resolve_color(&dot_visual.background, theme)
+                            .or(resolve_color(&dot_visual.foreground, theme))
+                            .unwrap_or_else(|| {
+                                if disabled {
+                                    theme.disabled
+                                } else {
+                                    styled_accent.unwrap_or(theme.accent)
+                                }
+                            }),
+                        dot_visual.opacity,
+                    );
+                    let dot_radii =
+                        visual_radii_with_fallback(&dot_visual, [dot_side * 0.5; 4], sf);
+                    out.push(inst_radii(dot_rect, dot_fill, dot_radii));
                 }
             }
 
@@ -7465,7 +8387,10 @@ fn emit_rects_inner(
                 emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], item_radii, out);
             }
 
-            WidgetKind::TextInput | WidgetKind::TextArea => {
+            WidgetKind::TextInput
+            | WidgetKind::TextArea
+            | WidgetKind::CodeEditor
+            | WidgetKind::LogView => {
                 emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], radii, out);
                 let fill_solid = if state.is_disabled(&node.id) {
                     styled_bg.unwrap_or_else(|| mix(theme.surface_alt, theme.disabled, 0.24))
@@ -7489,24 +8414,64 @@ fn emit_rects_inner(
                     radii,
                     border_w,
                 );
+                let gutter_w = if node.kind == WidgetKind::CodeEditor {
+                    let gutter_w = code_editor_gutter_width_for_style(&node.style, sf)
+                        .min((w - theme.spacing * sf * 2.0).max(1.0) * 0.5);
+                    let gutter_visual = part_visual_for(node, state, "gutter");
+                    let gutter_color = resolve_color(&gutter_visual.background, theme)
+                        .map(|color| apply_opacity(color, gutter_visual.opacity))
+                        .unwrap_or_else(|| mix(fill_solid, theme.surface_alt, 0.38));
+                    let inner_h = (h - border_w * 2.0).max(1.0);
+                    let gutter_radii = [
+                        (radii[0] - border_w).max(0.0),
+                        0.0,
+                        0.0,
+                        (radii[3] - border_w).max(0.0),
+                    ];
+                    out.push(inst_radii(
+                        [x + border_w, y + border_w, gutter_w, inner_h],
+                        gutter_color,
+                        gutter_radii,
+                    ));
+                    let divider_color = resolve_color(&gutter_visual.border_color, theme)
+                        .map(|color| apply_opacity(color, gutter_visual.opacity))
+                        .unwrap_or_else(|| mix(theme.border, theme.surface_alt, 0.35));
+                    out.push(inst(
+                        [
+                            x + border_w + gutter_w,
+                            y + border_w,
+                            border_w.max(1.0),
+                            inner_h,
+                        ],
+                        divider_color,
+                        0.0,
+                    ));
+                    gutter_w
+                } else {
+                    0.0
+                };
                 if state.focused.as_deref() == Some(node.id.as_str())
+                    && node.kind != WidgetKind::LogView
                     && !state.is_disabled(&node.id)
                 {
                     let pad = theme.spacing * sf;
-                    let text_w = (w - pad * 2.0).max(1.0);
+                    let text_left = x + pad + gutter_w;
+                    let text_w = (w - pad * 2.0 - gutter_w).max(1.0);
                     let caret_xy =
-                        caret_xy_for_node(x + pad, text_w, &node.id, state, caret_positions);
+                        caret_xy_for_node(text_left, text_w, &node.id, state, caret_positions);
                     let caret_font_size = node.style.text.font_size.unwrap_or(theme.font_size) * sf;
                     let caret_h = (caret_font_size + 5.0 * sf).min((h - border_w * 2.0).max(1.0));
-                    let caret_y = if node.kind == WidgetKind::TextArea {
+                    let multiline =
+                        matches!(node.kind, WidgetKind::TextArea | WidgetKind::CodeEditor);
+                    let caret_y = if multiline {
                         y + pad + caret_xy[1]
                     } else {
                         y + (h - caret_h) * 0.5
                     };
-                    let visible_caret = node.kind != WidgetKind::TextArea
+                    let visible_caret = !multiline
                         || (caret_y < y + h - border_w && caret_y + caret_h > y + border_w);
                     if visible_caret {
-                        let caret_y = if node.kind == WidgetKind::TextArea {
+                        let caret_y = if multiline {
                             caret_y.clamp(y + border_w, y + h - border_w - caret_h)
                         } else {
                             caret_y
@@ -7753,6 +8718,97 @@ fn emit_rects_inner(
                 }
             }
 
+            WidgetKind::DragNumber => {
+                emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], radii, out);
+                let field_visual = part_visual_for(node, state, "field");
+                let base_fill = if state.is_disabled(&node.id) {
+                    styled_bg.unwrap_or_else(|| mix(theme.surface_alt, theme.disabled, 0.24))
+                } else if state.pressed.as_deref() == Some(node.id.as_str()) {
+                    styled_bg.unwrap_or_else(|| {
+                        mix(
+                            theme.surface_alt,
+                            styled_accent.unwrap_or(theme.accent),
+                            0.20,
+                        )
+                    })
+                } else if state.hovered.as_deref() == Some(node.id.as_str())
+                    || state.focused.as_deref() == Some(node.id.as_str())
+                {
+                    styled_bg.unwrap_or_else(|| mix(theme.surface, theme.surface_alt, 0.70))
+                } else {
+                    styled_bg.unwrap_or_else(|| mix(theme.surface, theme.surface_alt, 0.55))
+                };
+                let field_fill_solid = resolve_color(&field_visual.background, theme)
+                    .map(|color| apply_opacity(color, field_visual.opacity))
+                    .unwrap_or(base_fill);
+                let field_fill = if field_visual.background_paint.is_some() {
+                    resolve_background_paint(&field_visual, theme, field_fill_solid)
+                } else if visual.background_paint.is_some() {
+                    resolve_background_paint(&visual, theme, field_fill_solid)
+                } else {
+                    FillPaint::Solid(field_fill_solid)
+                };
+                let field_border = resolve_color(&field_visual.border_color, theme)
+                    .map(|color| apply_opacity(color, field_visual.opacity))
+                    .or(styled_border)
+                    .unwrap_or_else(|| control_border(node, theme, state));
+                let field_border_w = field_visual
+                    .border_width
+                    .map(|width| (width.max(0.0) * sf).max(0.0))
+                    .unwrap_or(border_w);
+                emit_bordered_paint_rect_radii(
+                    out,
+                    [x, y, w, h],
+                    field_border,
+                    field_fill,
+                    visual_radii_with_fallback(&field_visual, radii, sf),
+                    field_border_w,
+                );
+
+                let grip_visual = part_visual_for(node, state, "grip");
+                let grip_style = node.style.parts.parts.get("grip");
+                let grip_w = grip_style
+                    .and_then(|part| part.layout.width)
+                    .unwrap_or(16.0)
+                    .max(1.0)
+                    * sf;
+                let dot_color = resolve_color(&grip_visual.background, theme)
+                    .or_else(|| resolve_color(&grip_visual.foreground, theme))
+                    .or_else(|| resolve_color(&grip_visual.border_color, theme))
+                    .map(|color| apply_opacity(color, grip_visual.opacity))
+                    .unwrap_or_else(|| {
+                        if state.is_disabled(&node.id) {
+                            theme.disabled
+                        } else {
+                            mix(
+                                theme.muted_text,
+                                styled_accent.unwrap_or(theme.accent),
+                                0.32,
+                            )
+                        }
+                    });
+                let grip_slot_w = grip_w.min((w - field_border_w * 2.0).max(1.0));
+                let mark_h = grip_style
+                    .and_then(|part| part.layout.height)
+                    .unwrap_or(2.5)
+                    .max(1.0)
+                    * sf;
+                let mark_w = (grip_slot_w * 0.46).clamp(4.0 * sf, 8.0 * sf);
+                let inner_right = x + w - field_border_w.max(0.0) - 4.0 * sf;
+                let grip_center_x = inner_right - grip_slot_w * 0.5;
+                let grip_center_y = y + h * 0.5;
+                let gap = (mark_h * 2.4).max(4.0 * sf);
+                for offset in [-1.0_f32, 0.0, 1.0] {
+                    let mark_rect = [
+                        grip_center_x - mark_w * 0.5,
+                        grip_center_y + offset * gap - mark_h * 0.5,
+                        mark_w,
+                        mark_h,
+                    ];
+                    out.push(inst_radii(mark_rect, dot_color, [mark_h * 0.5; 4]));
+                }
+            }
+
             WidgetKind::Checkbox => {
                 let box_style = node.style.parts.parts.get("box");
                 let box_w = box_style
@@ -7871,6 +8927,146 @@ fn emit_rects_inner(
                         ),
                     ));
                 }
+            }
+
+            WidgetKind::ToggleSwitch => {
+                let track_style = node.style.parts.parts.get("track");
+                let thumb_style = node.style.parts.parts.get("thumb");
+                let track_w = track_style
+                    .and_then(|style| style.layout.width)
+                    .map(|width| width.max(1.0) * sf)
+                    .unwrap_or(TOGGLE_SWITCH_TRACK_WIDTH_LP * sf)
+                    .min(w.max(1.0));
+                let track_h = track_style
+                    .and_then(|style| style.layout.height)
+                    .map(|height| height.max(1.0) * sf)
+                    .unwrap_or(TOGGLE_SWITCH_TRACK_HEIGHT_LP * sf)
+                    .min(h.max(1.0));
+                let label_left = node
+                    .props
+                    .raw_props
+                    .get("label_position")
+                    .and_then(|value| value.as_str())
+                    .is_some_and(|value| value.eq_ignore_ascii_case("left"));
+                let track_x = if label_left {
+                    (x + w - CHECKBOX_LEFT_PAD_LP * sf - track_w).max(x)
+                } else {
+                    x + CHECKBOX_LEFT_PAD_LP * sf
+                };
+                let track_y = y + (h - track_h) * 0.5;
+                let checked = state.checked.get(&node.id).copied().unwrap_or(false);
+                let progress = state
+                    .checked_t
+                    .get(&node.id)
+                    .copied()
+                    .unwrap_or(if checked { 1.0 } else { 0.0 })
+                    .clamp(0.0, 1.0);
+                let disabled = state.is_disabled(&node.id);
+                let interactive = !disabled
+                    && (state.hovered.as_deref() == Some(node.id.as_str())
+                        || state.pressed.as_deref() == Some(node.id.as_str())
+                        || state.focused.as_deref() == Some(node.id.as_str()));
+                let row_visual = part_visual_for(node, state, "row");
+                if interactive || row_visual.background.is_some() {
+                    let fallback_row_fill = if state.pressed.as_deref() == Some(node.id.as_str()) {
+                        with_alpha(darken(styled_accent.unwrap_or(theme.accent), 0.12), 0.20)
+                    } else {
+                        with_alpha(mix(theme.surface_alt, theme.accent, 0.18), 0.32)
+                    };
+                    let row_fill = resolve_color(&row_visual.background, theme)
+                        .map(|color| apply_opacity(color, row_visual.opacity))
+                        .unwrap_or(fallback_row_fill);
+                    out.push(inst_radii(
+                        [x, y, w, h],
+                        row_fill,
+                        visual_radii_with_fallback(&row_visual, radii, sf),
+                    ));
+                }
+                emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], radii, out);
+
+                let track_visual = part_visual_for(node, state, "track");
+                let default_off_fill =
+                    styled_bg.unwrap_or_else(|| mix(theme.surface, theme.surface_alt, 0.70));
+                let default_on_fill = if disabled {
+                    theme.disabled
+                } else if state.pressed.as_deref() == Some(node.id.as_str()) {
+                    darken(styled_accent.unwrap_or(theme.accent), 0.12)
+                } else {
+                    styled_accent.unwrap_or(theme.accent)
+                };
+                let default_track_fill = mix(default_off_fill, default_on_fill, progress);
+                let default_track_border = if progress >= 0.5 {
+                    if disabled {
+                        theme.disabled
+                    } else {
+                        styled_border.unwrap_or(styled_accent.unwrap_or(theme.accent))
+                    }
+                } else {
+                    styled_border.unwrap_or_else(|| control_border(node, theme, state))
+                };
+                let track_border_w = track_visual
+                    .border_width
+                    .map(|width| width.max(0.0) * sf)
+                    .unwrap_or(border_w);
+                emit_bordered_rect_radii(
+                    out,
+                    [track_x, track_y, track_w, track_h],
+                    resolve_color(&track_visual.border_color, theme)
+                        .map(|color| apply_opacity(color, track_visual.opacity))
+                        .unwrap_or(default_track_border),
+                    resolve_color(&track_visual.background, theme)
+                        .map(|color| apply_opacity(color, track_visual.opacity))
+                        .unwrap_or(default_track_fill),
+                    visual_radii_with_fallback(&track_visual, [track_h * 0.5; 4], sf),
+                    track_border_w,
+                );
+
+                let thumb_visual = part_visual_for(node, state, "thumb");
+                let default_thumb_size = (track_h - 4.0 * sf)
+                    .max(1.0)
+                    .min(TOGGLE_SWITCH_THUMB_SIZE_LP * sf);
+                let thumb_w = thumb_style
+                    .and_then(|style| style.layout.width)
+                    .map(|width| width.max(1.0) * sf)
+                    .unwrap_or(default_thumb_size)
+                    .min(track_w);
+                let thumb_h = thumb_style
+                    .and_then(|style| style.layout.height)
+                    .map(|height| height.max(1.0) * sf)
+                    .unwrap_or(default_thumb_size)
+                    .min(track_h);
+                let inset = ((track_h - thumb_h) * 0.5)
+                    .max(track_border_w + 2.0 * sf)
+                    .min((track_w - thumb_w).max(0.0) * 0.5);
+                let travel = (track_w - thumb_w - inset * 2.0).max(0.0);
+                let thumb_x = track_x + inset + travel * progress;
+                let thumb_y = track_y + (track_h - thumb_h) * 0.5;
+                let default_thumb_fill = if disabled {
+                    mix(theme.surface_alt, theme.disabled, 0.32)
+                } else {
+                    theme.text
+                };
+                let default_thumb_border = if disabled {
+                    theme.disabled
+                } else {
+                    mix(theme.border, theme.text, 0.28)
+                };
+                emit_bordered_rect_radii(
+                    out,
+                    [thumb_x, thumb_y, thumb_w, thumb_h],
+                    resolve_color(&thumb_visual.border_color, theme)
+                        .map(|color| apply_opacity(color, thumb_visual.opacity))
+                        .unwrap_or(default_thumb_border),
+                    resolve_color(&thumb_visual.background, theme)
+                        .or_else(|| resolve_color(&thumb_visual.foreground, theme))
+                        .map(|color| apply_opacity(color, thumb_visual.opacity))
+                        .unwrap_or(default_thumb_fill),
+                    visual_radii_with_fallback(&thumb_visual, [thumb_w.min(thumb_h) * 0.5; 4], sf),
+                    thumb_visual
+                        .border_width
+                        .map(|width| width.max(0.0) * sf)
+                        .unwrap_or((1.0 * sf).min(track_h * 0.12)),
+                );
             }
 
             WidgetKind::ProgressBar => {
@@ -8049,6 +9245,176 @@ fn emit_rects_inner(
                 );
             }
 
+            WidgetKind::RangeSlider => {
+                emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], radii, out);
+                let track_visual = part_visual_for(node, state, "track");
+                let range_visual = part_visual_for(node, state, "range");
+                let thumb_min_visual = part_visual_for(node, state, "thumb-min");
+                let thumb_max_visual = part_visual_for(node, state, "thumb-max");
+                let track_color = resolve_color(&track_visual.background, theme)
+                    .map(|color| apply_opacity(color, track_visual.opacity.or(visual.opacity)))
+                    .or_else(|| {
+                        resolve_color(&visual.track_color, theme)
+                            .map(|color| apply_opacity(color, visual.opacity))
+                    })
+                    .unwrap_or(theme.border);
+                let fallback_thumb_color = resolve_color(&visual.thumb_color, theme)
+                    .map(|color| apply_opacity(color, visual.opacity))
+                    .unwrap_or_else(|| styled_accent.unwrap_or(theme.accent));
+                let track_h = node
+                    .style
+                    .parts
+                    .parts
+                    .get("track")
+                    .and_then(|part| part.layout.height)
+                    .map(|height| height.max(1.0) * sf)
+                    .unwrap_or(SLIDER_TRACK_HEIGHT_LP * sf)
+                    .max(border_w);
+                let track_y = y + (h - track_h) * 0.5;
+                let margin = SLIDER_TRACK_MARGIN_LP * sf;
+                let track_w = (w - 2.0 * margin).max(0.0);
+                let track_rect = [x + margin, track_y, track_w, track_h];
+                let track_radii = visual_radii_with_fallback(&track_visual, [track_h * 0.5; 4], sf);
+                let track_border_w = track_visual
+                    .border_width
+                    .map(|width| width.max(0.0) * sf)
+                    .unwrap_or(0.0);
+                if track_border_w > 0.0 || track_visual.border_color.is_some() {
+                    emit_bordered_rect_radii(
+                        out,
+                        track_rect,
+                        resolve_color(&track_visual.border_color, theme)
+                            .map(|color| apply_opacity(color, track_visual.opacity))
+                            .unwrap_or_else(|| control_border(node, theme, state)),
+                        track_color,
+                        track_radii,
+                        track_border_w.max(border_w),
+                    );
+                } else {
+                    out.push(inst_radii(track_rect, track_color, track_radii));
+                }
+
+                let (t_min, t_max) = state.range_slider_t(&node.id);
+                let range_x = x + margin + track_w * t_min.min(t_max);
+                let range_w = track_w * (t_max - t_min).abs();
+                if range_w > 0.5 {
+                    let range_color = resolve_color(&range_visual.background, theme)
+                        .or_else(|| resolve_color(&range_visual.foreground, theme))
+                        .map(|color| apply_opacity(color, range_visual.opacity))
+                        .unwrap_or(if state.is_disabled(&node.id) {
+                            theme.disabled
+                        } else {
+                            fallback_thumb_color
+                        });
+                    let range_radii = visual_radii_with_fallback(
+                        &range_visual,
+                        [range_w.min(track_h) * 0.5; 4],
+                        sf,
+                    );
+                    out.push(inst_radii(
+                        [range_x, track_y, range_w, track_h],
+                        range_color,
+                        range_radii,
+                    ));
+                }
+
+                let min_thumb_layout = node
+                    .style
+                    .parts
+                    .parts
+                    .get("thumb-min")
+                    .map(|part| &part.layout);
+                let min_thumb_w = min_thumb_layout
+                    .and_then(|layout| layout.width)
+                    .map(|width| width.max(1.0) * sf)
+                    .unwrap_or(SLIDER_THUMB_WIDTH_LP * sf);
+                let min_thumb_h = min_thumb_layout
+                    .and_then(|layout| layout.height)
+                    .map(|height| height.max(1.0) * sf)
+                    .unwrap_or(min_thumb_w);
+                let thumb_min_x = x + margin;
+                let min_thumb_max_x = (x + w - margin - min_thumb_w).max(thumb_min_x);
+                let min_thumb_x = (x + margin + t_min * track_w - min_thumb_w * 0.5)
+                    .clamp(thumb_min_x, min_thumb_max_x);
+                let min_thumb_y = y + (h - min_thumb_h) * 0.5;
+                let min_thumb_border_w = thumb_min_visual
+                    .border_width
+                    .map(|width| width.max(0.0) * sf)
+                    .unwrap_or(border_w);
+                let min_thumb_color = resolve_color(&thumb_min_visual.background, theme)
+                    .or_else(|| resolve_color(&thumb_min_visual.foreground, theme))
+                    .map(|color| apply_opacity(color, thumb_min_visual.opacity.or(visual.opacity)))
+                    .unwrap_or(fallback_thumb_color);
+                emit_bordered_rect_radii(
+                    out,
+                    [min_thumb_x, min_thumb_y, min_thumb_w, min_thumb_h],
+                    resolve_color(&thumb_min_visual.border_color, theme)
+                        .map(|color| apply_opacity(color, thumb_min_visual.opacity))
+                        .unwrap_or_else(|| {
+                            styled_border.unwrap_or_else(|| control_border(node, theme, state))
+                        }),
+                    if state.is_disabled(&node.id) {
+                        theme.disabled
+                    } else {
+                        min_thumb_color
+                    },
+                    visual_radii_with_fallback(
+                        &thumb_min_visual,
+                        [min_thumb_w.min(min_thumb_h) * 0.5; 4],
+                        sf,
+                    ),
+                    min_thumb_border_w,
+                );
+
+                let max_thumb_layout = node
+                    .style
+                    .parts
+                    .parts
+                    .get("thumb-max")
+                    .map(|part| &part.layout);
+                let max_thumb_w = max_thumb_layout
+                    .and_then(|layout| layout.width)
+                    .map(|width| width.max(1.0) * sf)
+                    .unwrap_or(SLIDER_THUMB_WIDTH_LP * sf);
+                let max_thumb_h = max_thumb_layout
+                    .and_then(|layout| layout.height)
+                    .map(|height| height.max(1.0) * sf)
+                    .unwrap_or(max_thumb_w);
+                let max_thumb_min_x = x + margin;
+                let max_thumb_max_x = (x + w - margin - max_thumb_w).max(max_thumb_min_x);
+                let max_thumb_x = (x + margin + t_max * track_w - max_thumb_w * 0.5)
+                    .clamp(max_thumb_min_x, max_thumb_max_x);
+                let max_thumb_y = y + (h - max_thumb_h) * 0.5;
+                let max_thumb_border_w = thumb_max_visual
+                    .border_width
+                    .map(|width| width.max(0.0) * sf)
+                    .unwrap_or(border_w);
+                let max_thumb_color = resolve_color(&thumb_max_visual.background, theme)
+                    .or_else(|| resolve_color(&thumb_max_visual.foreground, theme))
+                    .map(|color| apply_opacity(color, thumb_max_visual.opacity.or(visual.opacity)))
+                    .unwrap_or(fallback_thumb_color);
+                emit_bordered_rect_radii(
+                    out,
+                    [max_thumb_x, max_thumb_y, max_thumb_w, max_thumb_h],
+                    resolve_color(&thumb_max_visual.border_color, theme)
+                        .map(|color| apply_opacity(color, thumb_max_visual.opacity))
+                        .unwrap_or_else(|| {
+                            styled_border.unwrap_or_else(|| control_border(node, theme, state))
+                        }),
+                    if state.is_disabled(&node.id) {
+                        theme.disabled
+                    } else {
+                        max_thumb_color
+                    },
+                    visual_radii_with_fallback(
+                        &thumb_max_visual,
+                        [max_thumb_w.min(max_thumb_h) * 0.5; 4],
+                        sf,
+                    ),
+                    max_thumb_border_w,
+                );
+            }
+
             WidgetKind::Histogram => emit_histogram(
                 out,
                 node,
@@ -8167,7 +9533,7 @@ fn emit_rects_inner(
 
                     for col_offset in 0..visible.col_count {
                         let Some((col_x, _)) =
-                            table::column_bounds(&full_rect, metrics, col_offset)
+                            table::column_bounds(table_state, &full_rect, metrics, col_offset)
                         else {
                             continue;
                         };
@@ -8182,34 +9548,22 @@ fn emit_rects_inner(
                         }
                     }
 
-                    if let Some((sort_col, direction)) = table_state.sort {
-                        if sort_col >= visible.first_col
-                            && sort_col < visible.first_col + visible.col_count
-                            && header_h > 0.0
-                        {
-                            if let Some((_, col_right)) = table::column_bounds(
-                                &full_rect,
-                                metrics,
-                                sort_col - visible.first_col,
-                            ) {
-                                let indicator_w = DROPDOWN_CHEVRON_WIDTH_LP * sf;
-                                let inset = (theme.spacing * 0.5 * sf).max(2.0 * sf);
-                                let marker_right = col_right.min(table_right) - inset;
+                    if let Some((sort_target, direction)) = table_state.sort {
+                        let indicator_w = DROPDOWN_CHEVRON_WIDTH_LP * sf;
+                        let inset = (theme.spacing * 0.5 * sf).max(2.0 * sf);
+                        let color =
+                            single_part_mark_color(node, state, theme, "header", theme.muted_text);
+                        let clip = Rect {
+                            x,
+                            y,
+                            w,
+                            h: header_h,
+                        };
+                        match sort_target {
+                            TableSortColumn::Index if header_h > 0.0 => {
+                                let marker_right = (x + metrics.index_w).min(table_right) - inset;
                                 let marker_x = marker_right - indicator_w;
-                                if marker_x > x + metrics.index_w && marker_right > marker_x {
-                                    let color = single_part_mark_color(
-                                        node,
-                                        state,
-                                        theme,
-                                        "header",
-                                        theme.muted_text,
-                                    );
-                                    let clip = Rect {
-                                        x,
-                                        y,
-                                        w,
-                                        h: header_h,
-                                    };
+                                if marker_x > x && marker_right > marker_x {
                                     emit_triangle_chevron(
                                         out,
                                         [marker_x, y, indicator_w, header_h],
@@ -8220,6 +9574,32 @@ fn emit_rects_inner(
                                     );
                                 }
                             }
+                            TableSortColumn::Data(sort_col)
+                                if sort_col >= visible.first_col
+                                    && sort_col < visible.first_col + visible.col_count
+                                    && header_h > 0.0 =>
+                            {
+                                if let Some((_, col_right)) = table::column_bounds(
+                                    table_state,
+                                    &full_rect,
+                                    metrics,
+                                    sort_col - visible.first_col,
+                                ) {
+                                    let marker_right = col_right.min(table_right) - inset;
+                                    let marker_x = marker_right - indicator_w;
+                                    if marker_x > x + metrics.index_w && marker_right > marker_x {
+                                        emit_triangle_chevron(
+                                            out,
+                                            [marker_x, y, indicator_w, header_h],
+                                            color,
+                                            matches!(direction, SortDirection::Asc),
+                                            sf,
+                                            Some(clip),
+                                        );
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
                     }
 
@@ -8283,6 +9663,7 @@ fn emit_rects_inner(
                             && selected_col < visible.first_col + visible.col_count
                         {
                             if let Some((col_x, col_right)) = table::column_bounds(
+                                table_state,
                                 &full_rect,
                                 metrics,
                                 selected_col - visible.first_col,
@@ -8297,6 +9678,7 @@ fn emit_rects_inner(
                             }
                         }
                     }
+                    emit_table_scrollbar(node, state, theme, sf, full_rect, out);
                 }
                 let border_color = styled_border.unwrap_or(grid_color);
                 if border_w > 0.0 {
@@ -8316,6 +9698,7 @@ fn emit_rects_inner(
             | WidgetKind::ScrollArea
             | WidgetKind::GridLayout
             | WidgetKind::FlowLayout
+            | WidgetKind::TreeView
             | WidgetKind::Pages
             | WidgetKind::Page
             | WidgetKind::Spacer
@@ -8380,6 +9763,145 @@ fn emit_rects_inner(
         );
     }
     apply_paint_clip(&mut out[subtree_primitive_start..], subtree_paint_clip);
+}
+
+fn splitter_is_horizontal(node: &WidgetNode) -> bool {
+    node.props.orientation.as_deref().unwrap_or("horizontal") != "vertical"
+}
+
+fn splitter_gutter_size_px(node: &WidgetNode, horizontal: bool, sf: f32) -> f32 {
+    let styled_size = node.style.parts.parts.get("gutter").and_then(|part| {
+        if horizontal {
+            part.layout.width
+        } else {
+            part.layout.height
+        }
+    });
+    styled_size
+        .or(node.props.gutter_size)
+        .unwrap_or(6.0)
+        .max(1.0)
+        * sf
+}
+
+fn emit_splitter_gutters(
+    node: &WidgetNode,
+    layout: &LayoutResult,
+    theme: &Theme,
+    sf: f32,
+    state: &WidgetState,
+    splitter_rect: [f32; 4],
+    out: &mut Vec<RectInstance>,
+) {
+    let horizontal = splitter_is_horizontal(node);
+    let gutter_visual = part_visual_for(node, state, "gutter");
+    let preferred_size = splitter_gutter_size_px(node, horizontal, sf);
+    let fallback_color = resolve_color(&gutter_visual.background, theme)
+        .or_else(|| resolve_color(&gutter_visual.foreground, theme))
+        .or_else(|| resolve_color(&gutter_visual.border_color, theme))
+        .map(|color| apply_opacity(color, gutter_visual.opacity))
+        .unwrap_or_else(|| apply_opacity(theme.border, gutter_visual.opacity));
+    let gutter_fill = resolve_part_background_paint(&gutter_visual, theme, fallback_color);
+    let gutter_border = resolve_color(&gutter_visual.border_color, theme)
+        .map(|color| apply_opacity(color, gutter_visual.opacity))
+        .unwrap_or(fallback_color);
+    let gutter_border_w = gutter_visual
+        .border_width
+        .map(|width| (width.max(0.0) * sf).max(0.0))
+        .unwrap_or(0.0);
+    let gutter_width_override = node
+        .style
+        .parts
+        .parts
+        .get("gutter")
+        .and_then(|part| part.layout.width)
+        .map(|width| width.max(1.0) * sf);
+    let gutter_height_override = node
+        .style
+        .parts
+        .parts
+        .get("gutter")
+        .and_then(|part| part.layout.height)
+        .map(|height| height.max(1.0) * sf);
+    let panes: Vec<&WidgetNode> = node
+        .children
+        .iter()
+        .filter(|child| child.kind == WidgetKind::Pane && layout.rects.contains_key(&child.id))
+        .collect();
+
+    for pair in panes.windows(2) {
+        let Some(before) = layout.rects.get(&pair[0].id).copied() else {
+            continue;
+        };
+        let Some(after) = layout.rects.get(&pair[1].id).copied() else {
+            continue;
+        };
+        let mut rect = if horizontal {
+            let before_end = before.x + before.w;
+            let after_start = after.x;
+            let gap = after_start - before_end;
+            let gutter_w = if gap > 0.5 { gap } else { preferred_size };
+            [
+                if gap > 0.5 {
+                    before_end
+                } else {
+                    before_end - gutter_w * 0.5
+                },
+                splitter_rect[1],
+                gutter_w,
+                splitter_rect[3],
+            ]
+        } else {
+            let before_end = before.y + before.h;
+            let after_start = after.y;
+            let gap = after_start - before_end;
+            let gutter_h = if gap > 0.5 { gap } else { preferred_size };
+            [
+                splitter_rect[0],
+                if gap > 0.5 {
+                    before_end
+                } else {
+                    before_end - gutter_h * 0.5
+                },
+                splitter_rect[2],
+                gutter_h,
+            ]
+        };
+
+        if horizontal {
+            let width = gutter_width_override
+                .unwrap_or(2.0 * sf)
+                .min(rect[2])
+                .max(1.0);
+            rect[0] += (rect[2] - width) * 0.5;
+            rect[2] = width;
+        } else {
+            let height = gutter_height_override
+                .unwrap_or(2.0 * sf)
+                .min(rect[3])
+                .max(1.0);
+            rect[1] += (rect[3] - height) * 0.5;
+            rect[3] = height;
+        }
+
+        if rect[2] <= 0.0 || rect[3] <= 0.0 {
+            continue;
+        }
+        let radius = rect[2].min(rect[3]) * 0.5;
+        let gutter_radii = visual_radii_with_fallback(&gutter_visual, [radius; 4], sf);
+        if gutter_border_w > 0.0 {
+            emit_bordered_paint_rect_radii(
+                out,
+                rect,
+                gutter_border,
+                gutter_fill.clone(),
+                gutter_radii,
+                gutter_border_w,
+            );
+        } else {
+            emit_paint_rect_radii(out, rect, gutter_fill.clone(), gutter_radii);
+        }
+    }
 }
 
 fn standalone_badge_level_color(node: &WidgetNode, theme: &Theme) -> [f32; 4] {
@@ -11558,6 +13080,45 @@ mod tests {
     }
 
     #[test]
+    fn drag_drop_overlay_emits_cursor_ring_and_follow_chip() {
+        let theme = Theme::dark();
+        let state = WidgetState {
+            drag_source: Some("source".to_string()),
+            drag_kind: Some("asset".to_string()),
+            drag_pos: Some([100.0, 80.0]),
+            ..Default::default()
+        };
+        let mut out = Vec::new();
+
+        emit_drag_drop_overlay(&state, &theme, 1.0, 400.0, 300.0, &mut out);
+
+        assert!(out.len() >= 7, "drag ghost should emit a visible overlay");
+        assert!(
+            out.iter().any(|inst| inst.rect == [94.0, 74.0, 12.0, 12.0]),
+            "drag ghost should include a cursor-local ring"
+        );
+        assert!(
+            out.iter()
+                .any(|inst| inst.rect == [114.0, 94.0, 54.0, 28.0]),
+            "drag ghost should include a chip offset from the pointer"
+        );
+
+        let valid_target = WidgetState {
+            drag_source: Some("source".to_string()),
+            drag_hover_target: Some("target".to_string()),
+            drag_pos: Some([100.0, 80.0]),
+            ..Default::default()
+        };
+        out.clear();
+        emit_drag_drop_overlay(&valid_target, &theme, 1.0, 400.0, 300.0, &mut out);
+        assert!(
+            out.iter()
+                .any(|inst| inst.color == with_alpha(theme.success, 0.96)),
+            "compatible target state should switch the drag ghost accent to success"
+        );
+    }
+
+    #[test]
     fn hover_transition_progress_interpolates_visual_fields() {
         let mut button = node("run", WidgetKind::Button);
         button.style.visual.background = Some(ColorRef::Rgba([0.0, 0.0, 0.0, 1.0]));
@@ -11628,6 +13189,43 @@ mod tests {
             Some(ColorRef::Rgba([0.1, 0.4, 0.2, 1.0]))
         );
         assert_eq!(visual.border_width, Some(3.0));
+    }
+
+    #[test]
+    fn toggle_switch_checked_state_places_thumb_on_right() {
+        let mut toggle = node("wifi", WidgetKind::ToggleSwitch);
+        toggle.props.checked = Some(true);
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "wifi".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 120.0,
+                h: 32.0,
+            },
+        );
+        let mut state = WidgetState::from_tree(&toggle);
+        state.checked_t.insert("wifi".to_string(), 1.0);
+        let mut out = Vec::new();
+
+        emit_rects(
+            &toggle,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &state,
+            &HashMap::new(),
+            &mut out,
+        );
+
+        assert!(
+            out.iter().any(|inst| inst.rect[0] >= 26.0
+                && inst.rect[0] <= 29.0
+                && inst.rect[2] >= 15.0
+                && inst.rect[2] <= 19.0),
+            "checked ToggleSwitch should draw its thumb near the right side of the track"
+        );
     }
 
     #[test]
@@ -12184,8 +13782,9 @@ mod tests {
                 scroll_row: 0,
                 scroll_col: 0,
                 selected: None,
-                sort: Some((1, SortDirection::Asc)),
+                sort: Some((TableSortColumn::Data(1), SortDirection::Asc)),
                 row_order: None,
+                column_widths: Vec::new(),
             },
         );
         let mut out = Vec::new();
@@ -12207,6 +13806,51 @@ mod tests {
         assert_eq!(marks.len(), 1);
         assert_eq!(marks[0].params[3], 1.0);
         assert_eq!(marks[0].paint[3], 1.0);
+    }
+
+    #[test]
+    fn dataframe_table_scrollbar_geometry_tracks_row_and_column_scroll() {
+        let mut table = node("table", WidgetKind::DataFrameTable);
+        table.style.widget.table_header_height = Some(28.0);
+        table.style.widget.table_row_height = Some(24.0);
+        table.style.widget.table_index_width = Some(48.0);
+        table.style.widget.table_column_width = Some(110.0);
+        let mut state = WidgetState::default();
+        state.tables.insert(
+            "table".to_string(),
+            crate::events::TableState {
+                columns: (0..8).map(|idx| format!("c{idx}")).collect(),
+                dtypes: vec![],
+                rows: 40,
+                resource_id: None,
+                page_size: 100,
+                scroll_row: 10,
+                scroll_col: 2,
+                selected: None,
+                sort: None,
+                row_order: None,
+                column_widths: Vec::new(),
+            },
+        );
+
+        let geometry = table_scrollbar_geometry(
+            &table,
+            &state,
+            &Theme::dark(),
+            1.0,
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 280.0,
+                h: 150.0,
+            },
+        )
+        .expect("scrollbar geometry");
+        let vertical = geometry.vertical.expect("vertical scrollbar");
+        let horizontal = geometry.horizontal.expect("horizontal scrollbar");
+
+        assert!(vertical.thumb.y > vertical.track.y);
+        assert!(horizontal.thumb.x > horizontal.track.x);
     }
 
     #[test]

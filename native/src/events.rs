@@ -31,6 +31,21 @@ impl SortDirection {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TableSortColumn {
+    Index,
+    Data(usize),
+}
+
+impl TableSortColumn {
+    pub fn data_index(self) -> Option<usize> {
+        match self {
+            Self::Index => None,
+            Self::Data(index) => Some(index),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TableState {
     pub columns: Vec<String>,
@@ -41,8 +56,9 @@ pub struct TableState {
     pub scroll_row: usize,
     pub scroll_col: usize,
     pub selected: Option<(usize, usize)>,
-    pub sort: Option<(usize, SortDirection)>,
+    pub sort: Option<(TableSortColumn, SortDirection)>,
     pub row_order: Option<Vec<usize>>,
+    pub column_widths: Vec<f32>,
 }
 
 impl TableState {
@@ -64,6 +80,7 @@ impl TableState {
             selected: None,
             sort: None,
             row_order: None,
+            column_widths: Vec::new(),
         }
     }
 }
@@ -85,10 +102,16 @@ pub struct NavigationItem {
 /// the user interacts with the UI.
 #[derive(Debug, Clone, Default)]
 pub struct WidgetState {
-    /// Checkbox checked/unchecked state keyed by widget id.
+    /// Checkbox/ToggleSwitch checked/unchecked state keyed by widget id.
     pub checked: HashMap<String, bool>,
+    /// Selectable selected/unselected state keyed by widget id.
+    pub selectable_selected: HashMap<String, bool>,
     /// Slider current value keyed by widget id.
     pub float_val: HashMap<String, f32>,
+    /// RangeSlider selected low/high values keyed by widget id.
+    pub range_val: HashMap<String, (f32, f32)>,
+    /// Splitter pane sizes along their active axis, in logical pixels.
+    pub pane_sizes: HashMap<String, Option<f32>>,
     /// Slider (min, max) range keyed by widget id.
     pub float_range: HashMap<String, (f32, f32)>,
     /// Slider keyboard step keyed by widget id.
@@ -139,6 +162,14 @@ pub struct WidgetState {
     pub animation_visuals: HashMap<String, VisualStyle>,
     /// Widget that received a pointer-down (not yet released).
     pub pressed: Option<String>,
+    /// App-local drag source id while a drag operation is active.
+    pub drag_source: Option<String>,
+    /// Compatible drop target id currently under the cursor while dragging.
+    pub drag_hover_target: Option<String>,
+    /// Optional semantic kind for the active app-local drag payload.
+    pub drag_kind: Option<String>,
+    /// Current pointer position for the active app-local drag, in physical pixels.
+    pub drag_pos: Option<[f32; 2]>,
     /// Dropdown whose menu is currently open.
     pub open_dropdown: Option<String>,
     /// Open dropdown item currently under the cursor, as (dropdown id, item index).
@@ -185,20 +216,51 @@ impl WidgetState {
         s
     }
 
-    /// Toggle a checkbox and return the new value.
+    /// Toggle a checked-state widget and return the new value.
     pub fn toggle_checkbox(&mut self, id: &str) -> bool {
         let entry = self.checked.entry(id.to_string()).or_insert(false);
         *entry = !*entry;
         *entry
     }
 
-    /// Set a checkbox from a live native command.
+    /// Set a checked-state widget from a live native command.
     pub fn set_checked(&mut self, id: &str, checked: bool) -> Option<bool> {
         if !self.checked.contains_key(id) {
             return None;
         }
         self.checked.insert(id.to_string(), checked);
         Some(checked)
+    }
+
+    /// Activate a selectable row and return its new selected state.
+    pub fn activate_selectable(&mut self, id: &str, toggle: bool) -> Option<bool> {
+        if self.is_disabled(id) {
+            return None;
+        }
+        let current = self.selectable_selected.get(id).copied()?;
+        let selected = if toggle { !current } else { true };
+        self.selectable_selected.insert(id.to_string(), selected);
+        if self.checked.contains_key(id) {
+            self.checked.insert(id.to_string(), selected);
+        }
+        self.close_popups();
+        Some(selected)
+    }
+
+    /// Set a selectable row from a live native command.
+    pub fn set_selectable_selected(&mut self, id: &str, selected: bool) -> Option<bool> {
+        if !self.selectable_selected.contains_key(id) {
+            return None;
+        }
+        self.selectable_selected.insert(id.to_string(), selected);
+        if self.checked.contains_key(id) {
+            self.checked.insert(id.to_string(), selected);
+        }
+        Some(selected)
+    }
+
+    pub fn is_selectable_selected(&self, id: &str) -> bool {
+        self.selectable_selected.get(id).copied().unwrap_or(false)
     }
 
     /// Update a slider value.
@@ -224,6 +286,71 @@ impl WidgetState {
     }
 
     /// Return the slider normalized position `t ∈ [0, 1]`.
+    pub fn set_range_values(&mut self, id: &str, low: f32, high: f32) -> Option<(f32, f32)> {
+        if !self.range_val.contains_key(id) && !self.float_range.contains_key(id) {
+            return None;
+        }
+        let (min, max) = self.float_range.get(id).copied().unwrap_or((0.0, 1.0));
+        let range_min = min.min(max);
+        let range_max = min.max(max);
+        let (low, high) = if low <= high {
+            (low, high)
+        } else {
+            (high, low)
+        };
+        let low = low.clamp(range_min, range_max);
+        let high = high.clamp(range_min, range_max);
+        let pair = if low <= high {
+            (low, high)
+        } else {
+            (high, low)
+        };
+        self.range_val.insert(id.to_string(), pair);
+        Some(pair)
+    }
+
+    pub fn set_range_min_value(&mut self, id: &str, low: f32) -> Option<(f32, f32)> {
+        let current = self.range_val.get(id).copied().or_else(|| {
+            self.float_range
+                .get(id)
+                .copied()
+                .map(|(min, max)| (min.min(max), min.max(max)))
+        })?;
+        self.set_range_values(id, low, current.1)
+    }
+
+    pub fn set_range_max_value(&mut self, id: &str, high: f32) -> Option<(f32, f32)> {
+        let current = self.range_val.get(id).copied().or_else(|| {
+            self.float_range
+                .get(id)
+                .copied()
+                .map(|(min, max)| (min.min(max), min.max(max)))
+        })?;
+        self.set_range_values(id, current.0, high)
+    }
+
+    pub fn adjust_range(&mut self, id: &str, direction: f32) -> Option<(f32, f32)> {
+        let (low, high) = self.range_val.get(id).copied()?;
+        let (min, max) = self.float_range.get(id).copied().unwrap_or((0.0, 1.0));
+        let range_min = min.min(max);
+        let range_max = min.max(max);
+        let step = self.float_step.get(id).copied().unwrap_or(0.01).abs();
+        let delta = step * direction;
+        let mut next_low = low + delta;
+        let mut next_high = high + delta;
+        if next_low < range_min {
+            let offset = range_min - next_low;
+            next_low += offset;
+            next_high += offset;
+        }
+        if next_high > range_max {
+            let offset = next_high - range_max;
+            next_low -= offset;
+            next_high -= offset;
+        }
+        self.set_range_values(id, next_low, next_high)
+    }
+
     pub fn set_number_value(&mut self, id: &str, v: f32) -> Option<f32> {
         if !self.float_val.contains_key(id) && !self.float_range.contains_key(id) {
             return None;
@@ -269,6 +396,32 @@ impl WidgetState {
         } else {
             0.0
         }
+    }
+
+    pub fn range_slider_t(&self, id: &str) -> (f32, f32) {
+        let (low, high) = self.range_val.get(id).copied().unwrap_or((0.0, 1.0));
+        let (min, max) = self.float_range.get(id).copied().unwrap_or((0.0, 1.0));
+        if max > min {
+            (
+                ((low - min) / (max - min)).clamp(0.0, 1.0),
+                ((high - min) / (max - min)).clamp(0.0, 1.0),
+            )
+        } else {
+            (0.0, 0.0)
+        }
+    }
+
+    pub fn pane_size(&self, id: &str) -> Option<f32> {
+        self.pane_sizes.get(id).and_then(|size| *size)
+    }
+
+    pub fn set_pane_size(&mut self, id: &str, size: Option<f32>) -> Option<Option<f32>> {
+        if !self.pane_sizes.contains_key(id) {
+            return None;
+        }
+        let size = size.filter(|value| value.is_finite() && *value >= 0.0);
+        self.pane_sizes.insert(id.to_string(), size);
+        Some(size)
     }
 
     pub fn is_disabled(&self, id: &str) -> bool {
@@ -735,9 +888,12 @@ impl WidgetState {
     }
 
     pub fn is_selected_widget(&self, id: &str) -> bool {
-        self.is_active_tab(id)
+        self.is_selectable_selected(id)
+            || self.is_active_tab(id)
             || self.is_active_nav_item(id)
             || self.is_active_page_child(id)
+            || self.drag_source.as_deref() == Some(id)
+            || self.drag_hover_target.as_deref() == Some(id)
             || self
                 .tables
                 .get(id)
@@ -801,6 +957,12 @@ impl WidgetState {
             }
         }
 
+        for (id, value) in &previous.selectable_selected {
+            if self.selectable_selected.contains_key(id) {
+                self.selectable_selected.insert(id.clone(), *value);
+            }
+        }
+
         for (id, value) in &previous.float_val {
             if self.float_val.contains_key(id) {
                 let (min, max) = self
@@ -810,6 +972,18 @@ impl WidgetState {
                     .unwrap_or((f32::NEG_INFINITY, f32::INFINITY));
                 self.float_val
                     .insert(id.clone(), value.clamp(min.min(max), min.max(max)));
+            }
+        }
+
+        for (id, value) in &previous.range_val {
+            if self.range_val.contains_key(id) {
+                let _ = self.set_range_values(id, value.0, value.1);
+            }
+        }
+
+        for (id, size) in &previous.pane_sizes {
+            if self.pane_sizes.contains_key(id) {
+                self.pane_sizes.insert(id.clone(), *size);
             }
         }
 
@@ -870,13 +1044,23 @@ impl WidgetState {
             table.selected = previous_table.selected.and_then(|(row, col)| {
                 (row < table.rows && col < table.columns.len()).then_some((row, col))
             });
-            table.sort = previous_table
-                .sort
-                .filter(|(column, _)| *column < table.columns.len());
+            table.sort = previous_table.sort.filter(|(target, _)| {
+                target
+                    .data_index()
+                    .map(|column| column < table.columns.len())
+                    .unwrap_or(true)
+            });
             table.row_order = previous_table
                 .row_order
                 .clone()
                 .filter(|rows| rows.len() == table.rows);
+            table.column_widths = previous_table
+                .column_widths
+                .iter()
+                .take(table.columns.len())
+                .copied()
+                .filter(|width| width.is_finite() && *width > 0.0)
+                .collect();
         }
 
         let active_tabs: Vec<(String, String)> = previous
@@ -1037,6 +1221,20 @@ impl WidgetState {
         old != (table.scroll_row, table.scroll_col)
     }
 
+    pub fn scroll_table_to(&mut self, id: &str, row: Option<usize>, col: Option<usize>) -> bool {
+        let Some(table) = self.tables.get_mut(id) else {
+            return false;
+        };
+        let old = (table.scroll_row, table.scroll_col);
+        if let Some(row) = row {
+            table.scroll_row = row.min(table.rows.saturating_sub(1));
+        }
+        if let Some(col) = col {
+            table.scroll_col = col.min(table.columns.len().saturating_sub(1));
+        }
+        old != (table.scroll_row, table.scroll_col)
+    }
+
     pub fn select_table_cell(&mut self, id: &str, row: usize, col: usize) -> bool {
         let Some(table) = self.tables.get_mut(id) else {
             return false;
@@ -1049,16 +1247,21 @@ impl WidgetState {
         old != table.selected
     }
 
-    pub fn toggle_table_sort(&mut self, id: &str, col: usize) -> bool {
+    pub fn toggle_table_sort(&mut self, id: &str, target: TableSortColumn) -> bool {
         let Some(table) = self.tables.get_mut(id) else {
             return false;
         };
-        if col >= table.columns.len() {
+        if target
+            .data_index()
+            .is_some_and(|col| col >= table.columns.len())
+        {
             return false;
         }
         table.sort = Some(match table.sort {
-            Some((current_col, direction)) if current_col == col => (col, direction.toggle()),
-            _ => (col, SortDirection::Asc),
+            Some((current_target, direction)) if current_target == target => {
+                (target, direction.toggle())
+            }
+            _ => (target, SortDirection::Asc),
         });
         table.scroll_row = 0;
         table.selected = None;
@@ -1071,6 +1274,25 @@ impl WidgetState {
         };
         table.row_order = row_order.filter(|rows| rows.len() == table.rows);
         true
+    }
+
+    pub fn set_table_column_width(
+        &mut self,
+        id: &str,
+        col: usize,
+        width: f32,
+        min_width: f32,
+    ) -> Option<f32> {
+        let table = self.tables.get_mut(id)?;
+        if col >= table.columns.len() || !width.is_finite() {
+            return None;
+        }
+        if table.column_widths.len() < table.columns.len() {
+            table.column_widths.resize(table.columns.len(), 0.0);
+        }
+        let width = width.max(min_width.max(1.0));
+        table.column_widths[col] = width;
+        Some(width)
     }
 
     pub fn move_table_selection(
@@ -1145,9 +1367,27 @@ fn collect_state(node: &WidgetNode, s: &mut WidgetState, parent: Option<&WidgetN
         return;
     }
     match node.kind {
-        WidgetKind::Checkbox => {
+        WidgetKind::Checkbox | WidgetKind::ToggleSwitch => {
             s.checked
                 .insert(node.id.clone(), node.props.checked.unwrap_or(false));
+        }
+        WidgetKind::Selectable => {
+            s.selectable_selected
+                .insert(node.id.clone(), node.props.checked.unwrap_or(false));
+        }
+        WidgetKind::TreeNode => {
+            s.selectable_selected
+                .insert(node.id.clone(), node.props.checked.unwrap_or(false));
+            s.expanded
+                .insert(node.id.clone(), node.props.expanded.unwrap_or(false));
+        }
+        WidgetKind::RadioButton => {
+            let checked = node.props.checked.unwrap_or(false);
+            s.checked.insert(node.id.clone(), checked);
+            s.selectable_selected.insert(node.id.clone(), checked);
+        }
+        WidgetKind::Pane => {
+            s.pane_sizes.insert(node.id.clone(), node.props.pane_size);
         }
         WidgetKind::Slider => {
             s.float_val
@@ -1159,7 +1399,17 @@ fn collect_state(node: &WidgetNode, s: &mut WidgetState, parent: Option<&WidgetN
             s.float_step
                 .insert(node.id.clone(), node.props.step.unwrap_or(0.01));
         }
-        WidgetKind::NumberInput => {
+        WidgetKind::RangeSlider => {
+            let min = node.props.min.unwrap_or(0.0);
+            let max = node.props.max.unwrap_or(1.0);
+            s.float_range.insert(node.id.clone(), (min, max));
+            s.float_step
+                .insert(node.id.clone(), node.props.step.unwrap_or(0.01));
+            let low = node.props.value_min.unwrap_or(min);
+            let high = node.props.value_max.unwrap_or(max);
+            let _ = s.set_range_values(&node.id, low, high);
+        }
+        WidgetKind::NumberInput | WidgetKind::DragNumber => {
             let value = node.props.value.unwrap_or(0.0);
             s.float_val.insert(node.id.clone(), value);
             s.float_range.insert(
@@ -1188,17 +1438,30 @@ fn collect_state(node: &WidgetNode, s: &mut WidgetState, parent: Option<&WidgetN
                 s.float_range.insert(node.id.clone(), (min, max));
             }
         }
-        WidgetKind::TextInput | WidgetKind::TextArea => {
+        WidgetKind::TextInput | WidgetKind::TextArea | WidgetKind::CodeEditor => {
             let value = node.props.text.clone().unwrap_or_default();
             s.text_cursor.insert(node.id.clone(), value.len());
             s.text_val.insert(node.id.clone(), value);
-            if node.kind == WidgetKind::TextArea {
+            if matches!(node.kind, WidgetKind::TextArea | WidgetKind::CodeEditor) {
                 s.text_scroll_y.insert(node.id.clone(), 0.0);
             }
             if let Some(placeholder) = &node.props.placeholder {
                 s.text_placeholder
                     .insert(node.id.clone(), placeholder.to_string());
             }
+        }
+        WidgetKind::LogView => {
+            let value = node.props.text.clone().unwrap_or_default();
+            s.text_cursor.insert(node.id.clone(), value.len());
+            s.text_val.insert(node.id.clone(), value);
+            let follow = node
+                .props
+                .raw_props
+                .get("follow")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(true);
+            s.text_scroll_y
+                .insert(node.id.clone(), if follow { f32::MAX } else { 0.0 });
         }
         WidgetKind::Dropdown => {
             let selected = node.props.text.as_deref();
@@ -1505,13 +1768,26 @@ fn is_interactive(kind: &WidgetKind) -> bool {
     matches!(
         kind,
         WidgetKind::Button
+            | WidgetKind::SmallButton
+            | WidgetKind::IconButton
+            | WidgetKind::ImageButton
+            | WidgetKind::ArrowButton
+            | WidgetKind::Selectable
+            | WidgetKind::RadioButton
+            | WidgetKind::TreeNode
+            | WidgetKind::DropTarget
             | WidgetKind::Checkbox
+            | WidgetKind::ToggleSwitch
             | WidgetKind::Dropdown
             | WidgetKind::Menu
             | WidgetKind::Slider
+            | WidgetKind::RangeSlider
             | WidgetKind::NumberInput
+            | WidgetKind::DragNumber
             | WidgetKind::TextInput
             | WidgetKind::TextArea
+            | WidgetKind::CodeEditor
+            | WidgetKind::LogView
             | WidgetKind::DataFrameTable
             | WidgetKind::Histogram
             | WidgetKind::LinePlot
@@ -1684,6 +1960,95 @@ impl SliderDrag {
     pub fn compute_value(&self, mouse_x: f32) -> f32 {
         let t = ((mouse_x - self.track_x) / self.track_w).clamp(0.0, 1.0);
         self.min + t * (self.max - self.min)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RangeSliderDrag - two-thumb slider drag state.
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, Debug)]
+pub enum RangeSliderThumb {
+    Min,
+    Max,
+}
+
+/// RangeSlider drag geometry and selected thumb captured on pointer-down.
+pub struct RangeSliderDrag {
+    pub widget_id: String,
+    thumb: RangeSliderThumb,
+    track_x: f32,
+    track_w: f32,
+    min: f32,
+    max: f32,
+}
+
+impl RangeSliderDrag {
+    pub fn new(
+        widget_id: String,
+        rect: &Rect,
+        min: f32,
+        max: f32,
+        current: (f32, f32),
+        mouse_x: f32,
+        sf: f32,
+    ) -> Self {
+        let margin = SLIDER_TRACK_MARGIN_LP * sf;
+        let track_x = rect.x + margin;
+        let track_w = (rect.w - 2.0 * margin).max(1.0);
+        let span = (max - min).max(f32::EPSILON);
+        let low_t = ((current.0 - min) / span).clamp(0.0, 1.0);
+        let high_t = ((current.1 - min) / span).clamp(0.0, 1.0);
+        let low_x = track_x + low_t * track_w;
+        let high_x = track_x + high_t * track_w;
+        let thumb = if (mouse_x - low_x).abs() <= (mouse_x - high_x).abs() {
+            RangeSliderThumb::Min
+        } else {
+            RangeSliderThumb::Max
+        };
+        Self {
+            widget_id,
+            thumb,
+            track_x,
+            track_w,
+            min,
+            max,
+        }
+    }
+
+    pub fn compute_values(&self, mouse_x: f32, current: (f32, f32)) -> (f32, f32) {
+        let t = ((mouse_x - self.track_x) / self.track_w).clamp(0.0, 1.0);
+        let value = self.min + t * (self.max - self.min);
+        match self.thumb {
+            RangeSliderThumb::Min => (value.min(current.1), current.1),
+            RangeSliderThumb::Max => (current.0, value.max(current.0)),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// DragNumberDrag - relative horizontal drag state for numeric fields.
+// ---------------------------------------------------------------------------
+
+pub struct DragNumberDrag {
+    pub widget_id: String,
+    start_x: f32,
+    start_value: f32,
+    speed: f32,
+}
+
+impl DragNumberDrag {
+    pub fn new(widget_id: String, start_x: f32, start_value: f32, speed: f32) -> Self {
+        Self {
+            widget_id,
+            start_x,
+            start_value,
+            speed: speed.abs().max(f32::EPSILON),
+        }
+    }
+
+    pub fn compute_value(&self, mouse_x: f32) -> f32 {
+        self.start_value + (mouse_x - self.start_x) * self.speed
     }
 }
 
@@ -1917,6 +2282,7 @@ mod tests {
                 selected: Some((0, 0)),
                 sort: None,
                 row_order: None,
+                column_widths: Vec::new(),
             },
         );
 
@@ -1943,6 +2309,7 @@ mod tests {
                 selected: Some((2, 1)),
                 sort: None,
                 row_order: None,
+                column_widths: Vec::new(),
             },
         );
 
@@ -1968,12 +2335,16 @@ mod tests {
                 selected: Some((2, 1)),
                 sort: None,
                 row_order: None,
+                column_widths: Vec::new(),
             },
         );
 
-        assert!(state.toggle_table_sort("table", 0));
+        assert!(state.toggle_table_sort("table", TableSortColumn::Data(0)));
         let table = state.table("table").unwrap();
-        assert_eq!(table.sort, Some((0, SortDirection::Asc)));
+        assert_eq!(
+            table.sort,
+            Some((TableSortColumn::Data(0), SortDirection::Asc))
+        );
         assert_eq!(table.scroll_row, 0);
         assert_eq!(table.selected, None);
 
@@ -1983,10 +2354,16 @@ mod tests {
             Some([1, 0, 2].as_slice())
         );
 
-        assert!(state.toggle_table_sort("table", 0));
+        assert!(state.toggle_table_sort("table", TableSortColumn::Data(0)));
         assert_eq!(
             state.table("table").unwrap().sort,
-            Some((0, SortDirection::Desc))
+            Some((TableSortColumn::Data(0), SortDirection::Desc))
+        );
+
+        assert!(state.toggle_table_sort("table", TableSortColumn::Index));
+        assert_eq!(
+            state.table("table").unwrap().sort,
+            Some((TableSortColumn::Index, SortDirection::Asc))
         );
     }
 
