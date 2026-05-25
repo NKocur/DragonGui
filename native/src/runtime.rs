@@ -1341,6 +1341,7 @@ struct ScatterRenderTarget {
     width: u32,
     height: u32,
     format: wgpu::TextureFormat,
+    scene_revision: u64,
 }
 
 impl ScatterRenderTarget {
@@ -1391,6 +1392,7 @@ impl ScatterRenderTarget {
             width,
             height,
             format,
+            scene_revision: 0,
         }
     }
 
@@ -5724,6 +5726,13 @@ struct ScatterMetrics {
     last_overlay_ms: f64,
     last_total_native_ms: f64,
     last_render_encode_ms: f64,
+    last_render_redraw_ms: f64,
+    last_render_composite_ms: f64,
+    last_render_cache_hit: bool,
+    render_encode_timing: StageTimingStats,
+    render_redraw_timing: StageTimingStats,
+    render_composite_timing: StageTimingStats,
+    render_cache_hits: u64,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -5786,6 +5795,7 @@ fn loading_rect(rect: [f32; 4], color: [f32; 4], radius: f32) -> RectInstance {
 struct ScatterRuntime {
     widget: ScatterWidget,
     render_target: Option<ScatterRenderTarget>,
+    last_direct_scene_revision: u64,
     quality_last_change: Instant,
     /// CPU copy of point instances used for picking.
     points: Vec<PointInstance>,
@@ -7076,6 +7086,7 @@ impl WgpuState {
                     ScatterRuntime {
                         widget,
                         render_target: None,
+                        last_direct_scene_revision: 0,
                         quality_last_change: Instant::now(),
                         points: pts,
                         primary_compact_xyz: Vec::new(),
@@ -9615,6 +9626,10 @@ impl WgpuState {
             last_overlay_ms: overlay_ms,
             last_total_native_ms: total_t0.elapsed().as_secs_f64() * 1000.0,
             last_render_encode_ms: runtime.metrics.last_render_encode_ms,
+            last_render_redraw_ms: runtime.metrics.last_render_redraw_ms,
+            last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+            last_render_cache_hit: runtime.metrics.last_render_cache_hit,
+            ..runtime.metrics.clone()
         };
         true
     }
@@ -9681,6 +9696,10 @@ impl WgpuState {
             last_overlay_ms: overlay_ms,
             last_total_native_ms: total_t0.elapsed().as_secs_f64() * 1000.0,
             last_render_encode_ms: runtime.metrics.last_render_encode_ms,
+            last_render_redraw_ms: runtime.metrics.last_render_redraw_ms,
+            last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+            last_render_cache_hit: runtime.metrics.last_render_cache_hit,
+            ..runtime.metrics.clone()
         };
         true
     }
@@ -9884,6 +9903,7 @@ impl WgpuState {
                     ScatterRuntime {
                         widget,
                         render_target: None,
+                        last_direct_scene_revision: 0,
                         quality_last_change: Instant::now(),
                         points: pts,
                         primary_compact_xyz: Vec::new(),
@@ -11291,6 +11311,10 @@ impl WgpuState {
                     last_overlay_ms: overlay_ms,
                     last_total_native_ms: total_t0.elapsed().as_secs_f64() * 1000.0,
                     last_render_encode_ms: runtime.metrics.last_render_encode_ms,
+                    last_render_redraw_ms: runtime.metrics.last_render_redraw_ms,
+                    last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+                    last_render_cache_hit: runtime.metrics.last_render_cache_hit,
+                    ..runtime.metrics.clone()
                 };
                 return Ok(true);
             }
@@ -11365,6 +11389,10 @@ impl WgpuState {
                     last_overlay_ms: overlay_ms,
                     last_total_native_ms: total_t0.elapsed().as_secs_f64() * 1000.0,
                     last_render_encode_ms: runtime.metrics.last_render_encode_ms,
+                    last_render_redraw_ms: runtime.metrics.last_render_redraw_ms,
+                    last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+                    last_render_cache_hit: runtime.metrics.last_render_cache_hit,
+                    ..runtime.metrics.clone()
                 };
                 return Ok(true);
             }
@@ -11458,6 +11486,10 @@ impl WgpuState {
                         last_overlay_ms: overlay_ms,
                         last_total_native_ms: total_t0.elapsed().as_secs_f64() * 1000.0,
                         last_render_encode_ms: runtime.metrics.last_render_encode_ms,
+                        last_render_redraw_ms: runtime.metrics.last_render_redraw_ms,
+                        last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+                        last_render_cache_hit: runtime.metrics.last_render_cache_hit,
+                        ..runtime.metrics.clone()
                     };
                     return Ok(true);
                 }
@@ -11552,6 +11584,10 @@ impl WgpuState {
                 last_overlay_ms: overlay_ms,
                 last_total_native_ms: total_t0.elapsed().as_secs_f64() * 1000.0,
                 last_render_encode_ms: runtime.metrics.last_render_encode_ms,
+                last_render_redraw_ms: runtime.metrics.last_render_redraw_ms,
+                last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+                last_render_cache_hit: runtime.metrics.last_render_cache_hit,
+                ..runtime.metrics.clone()
             };
             return Ok(true);
         }
@@ -11642,6 +11678,10 @@ impl WgpuState {
             last_overlay_ms: overlay_ms,
             last_total_native_ms: total_t0.elapsed().as_secs_f64() * 1000.0,
             last_render_encode_ms: runtime.metrics.last_render_encode_ms,
+            last_render_redraw_ms: runtime.metrics.last_render_redraw_ms,
+            last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+            last_render_cache_hit: runtime.metrics.last_render_cache_hit,
+            ..runtime.metrics.clone()
         };
         Ok(true)
     }
@@ -11904,6 +11944,55 @@ impl WgpuState {
         map.insert(
             "last_render_encode_ms".to_string(),
             json!(rt.metrics.last_render_encode_ms),
+        );
+        map.insert(
+            "last_render_redraw_ms".to_string(),
+            json!(rt.metrics.last_render_redraw_ms),
+        );
+        map.insert(
+            "last_render_composite_ms".to_string(),
+            json!(rt.metrics.last_render_composite_ms),
+        );
+        map.insert(
+            "last_render_cache_hit".to_string(),
+            json!(rt.metrics.last_render_cache_hit),
+        );
+        map.insert(
+            "render_count".to_string(),
+            json!(rt.metrics.render_encode_timing.count),
+        );
+        map.insert(
+            "render_cache_hits".to_string(),
+            json!(rt.metrics.render_cache_hits),
+        );
+        map.insert(
+            "render_cache_hit_rate".to_string(),
+            json!(if rt.metrics.render_encode_timing.count == 0 {
+                0.0
+            } else {
+                rt.metrics.render_cache_hits as f64
+                    / rt.metrics.render_encode_timing.count as f64
+            }),
+        );
+        map.insert(
+            "render_encode_avg_ms".to_string(),
+            json!(rt.metrics.render_encode_timing.avg_ms()),
+        );
+        map.insert(
+            "render_redraw_avg_ms".to_string(),
+            json!(rt.metrics.render_redraw_timing.avg_ms()),
+        );
+        map.insert(
+            "render_composite_avg_ms".to_string(),
+            json!(rt.metrics.render_composite_timing.avg_ms()),
+        );
+        map.insert(
+            "render_cache_revision".to_string(),
+            json!(rt.render_target.as_ref().map(|target| target.scene_revision)),
+        );
+        map.insert(
+            "scene_revision".to_string(),
+            json!(rt.widget.scene_revision()),
         );
         map.insert(
             "payload_status".to_string(),
@@ -13001,7 +13090,30 @@ impl WgpuState {
                 let render_t0 = Instant::now();
                 runtime.widget.prepare_render_pipelines(&self.device);
                 let render_scale = runtime.widget.active_render_scale();
-                if render_scale < 0.999 && runtime.widget.width > 0 && runtime.widget.height > 0 {
+                let cache_static_full_scale =
+                    render_scale >= 0.999 && !runtime.widget.lod_active;
+                let scene_revision = runtime.widget.scene_revision();
+                let can_render_to_target = runtime.widget.width > 0 && runtime.widget.height > 0;
+                let render_to_target = if can_render_to_target && render_scale < 0.999 {
+                    true
+                } else if can_render_to_target && cache_static_full_scale {
+                    let (target_width, target_height) =
+                        runtime.widget.scaled_render_target_size(render_scale);
+                    let cached_matches = runtime
+                        .render_target
+                        .as_ref()
+                        .is_some_and(|target| {
+                            target.matches(target_width, target_height, self.config.format)
+                                && target.scene_revision == scene_revision
+                        });
+                    cached_matches || runtime.last_direct_scene_revision == scene_revision
+                } else {
+                    false
+                };
+                let mut redraw_ms = 0.0;
+                let mut composite_ms = 0.0;
+                let mut cache_hit = false;
+                if render_to_target {
                     let (target_width, target_height) =
                         runtime.widget.scaled_render_target_size(render_scale);
                     let recreate = runtime
@@ -13020,44 +13132,58 @@ impl WgpuState {
                             self.config.format,
                         ));
                     }
-                    let target = runtime.render_target.as_ref().unwrap();
-                    {
-                        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                            label: Some("dragongui-scatter-scaled"),
-                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                view: &target.color_view,
-                                resolve_target: None,
-                                depth_slice: None,
-                                ops: wgpu::Operations {
-                                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                                        r: 0.0,
-                                        g: 0.0,
-                                        b: 0.0,
-                                        a: 0.0,
-                                    }),
-                                    store: wgpu::StoreOp::Store,
-                                },
-                            })],
-                            depth_stencil_attachment: Some(
-                                wgpu::RenderPassDepthStencilAttachment {
-                                    view: &target.depth_view,
-                                    depth_ops: Some(wgpu::Operations {
-                                        load: wgpu::LoadOp::Clear(1.0),
+                    let needs_redraw = runtime
+                        .render_target
+                        .as_ref()
+                        .map(|target| target.scene_revision != scene_revision)
+                        .unwrap_or(true);
+                    cache_hit = cache_static_full_scale && !needs_redraw;
+                    if needs_redraw {
+                        let redraw_t0 = Instant::now();
+                        let target = runtime.render_target.as_ref().unwrap();
+                        {
+                            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                label: Some("dragongui-scatter-target"),
+                                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                    view: &target.color_view,
+                                    resolve_target: None,
+                                    depth_slice: None,
+                                    ops: wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                                            r: 0.0,
+                                            g: 0.0,
+                                            b: 0.0,
+                                            a: 0.0,
+                                        }),
                                         store: wgpu::StoreOp::Store,
-                                    }),
-                                    stencil_ops: Some(wgpu::Operations {
-                                        load: wgpu::LoadOp::Clear(0),
-                                        store: wgpu::StoreOp::Store,
-                                    }),
-                                },
-                            ),
-                            timestamp_writes: None,
-                            occlusion_query_set: None,
-                            multiview_mask: None,
-                        });
-                        runtime
-                            .widget
-                            .render_offscreen(&mut pass, target_width, target_height);
+                                    },
+                                })],
+                                depth_stencil_attachment: Some(
+                                    wgpu::RenderPassDepthStencilAttachment {
+                                        view: &target.depth_view,
+                                        depth_ops: Some(wgpu::Operations {
+                                            load: wgpu::LoadOp::Clear(1.0),
+                                            store: wgpu::StoreOp::Store,
+                                        }),
+                                        stencil_ops: Some(wgpu::Operations {
+                                            load: wgpu::LoadOp::Clear(0),
+                                            store: wgpu::StoreOp::Store,
+                                        }),
+                                    },
+                                ),
+                                timestamp_writes: None,
+                                occlusion_query_set: None,
+                                multiview_mask: None,
+                            });
+                            runtime
+                                .widget
+                                .render_offscreen(&mut pass, target_width, target_height);
+                        }
+                        if let Some(target) = runtime.render_target.as_mut() {
+                            target.scene_revision = scene_revision;
+                        }
+                        runtime.last_direct_scene_revision = scene_revision;
+                        redraw_ms = redraw_t0.elapsed().as_secs_f64() * 1000.0;
                     }
                     self.scatter_compositor.update_uniforms(
                         &self.queue,
@@ -13071,6 +13197,8 @@ impl WgpuState {
                         self.config.height,
                     );
                     {
+                        let composite_t0 = Instant::now();
+                        let target = runtime.render_target.as_ref().unwrap();
                         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                             label: Some("dragongui-scatter-composite"),
                             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -13089,8 +13217,10 @@ impl WgpuState {
                         });
                         self.scatter_compositor
                             .render(&mut pass, &target.bind_group);
+                        composite_ms = composite_t0.elapsed().as_secs_f64() * 1000.0;
                     }
                 } else {
+                    let redraw_t0 = Instant::now();
                     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                         label: Some("dragongui-scatter"),
                         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -13118,8 +13248,21 @@ impl WgpuState {
                         multiview_mask: None,
                     });
                     runtime.widget.render(&mut pass);
+                    runtime.last_direct_scene_revision = scene_revision;
+                    redraw_ms = redraw_t0.elapsed().as_secs_f64() * 1000.0;
                 }
-                runtime.metrics.last_render_encode_ms = render_t0.elapsed().as_secs_f64() * 1000.0;
+                let render_encode_ms = render_t0.elapsed().as_secs_f64() * 1000.0;
+                runtime.metrics.last_render_encode_ms = render_encode_ms;
+                runtime.metrics.last_render_redraw_ms = redraw_ms;
+                runtime.metrics.last_render_composite_ms = composite_ms;
+                runtime.metrics.last_render_cache_hit = cache_hit;
+                runtime.metrics.render_encode_timing.record(render_encode_ms);
+                runtime.metrics.render_redraw_timing.record(redraw_ms);
+                runtime.metrics.render_composite_timing.record(composite_ms);
+                if cache_hit {
+                    runtime.metrics.render_cache_hits =
+                        runtime.metrics.render_cache_hits.saturating_add(1);
+                }
             }
         }
 

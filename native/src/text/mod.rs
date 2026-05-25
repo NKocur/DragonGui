@@ -120,6 +120,19 @@ struct TextEntry {
 type TextBufferCache = HashMap<TextKey, Vec<Buffer>>;
 type FontFamilyAliases = HashMap<String, String>;
 
+const OVERLAY_TEXT_BUFFER_CACHE_LIMIT: usize = 512;
+
+fn text_buffer_cache_len(cache: &TextBufferCache) -> usize {
+    cache.values().map(Vec::len).sum()
+}
+
+fn stash_text_buffer(cache: &mut TextBufferCache, key: TextKey, buffer: Buffer) {
+    if text_buffer_cache_len(cache) >= OVERLAY_TEXT_BUFFER_CACHE_LIMIT {
+        cache.clear();
+    }
+    cache.entry(key).or_default().push(buffer);
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct AxisLabelGlyphKey {
     text: String,
@@ -207,6 +220,7 @@ pub struct TextRendererDg {
     overlay_entry_start: usize,
     /// Ephemeral entries for scatter grid labels, cleared each frame.
     scatter_label_start: usize,
+    scatter_label_cache: TextBufferCache,
     axis_label_glyph_ids: HashMap<AxisLabelGlyphKey, CustomGlyphId>,
     axis_label_glyph_images: HashMap<CustomGlyphId, AxisLabelGlyphImage>,
     next_axis_label_glyph_id: CustomGlyphId,
@@ -263,6 +277,7 @@ impl TextRendererDg {
             entries: Vec::new(),
             overlay_entry_start: 0,
             scatter_label_start: 0,
+            scatter_label_cache: HashMap::new(),
             axis_label_glyph_ids: HashMap::new(),
             axis_label_glyph_images: HashMap::new(),
             next_axis_label_glyph_id: 1,
@@ -464,7 +479,11 @@ impl TextRendererDg {
     /// Remove scatter grid labels added since the last `rebuild()` call.
     /// Call this each frame before `push_scatter_label`, just before `prepare()`.
     pub fn clear_scatter_labels(&mut self) {
-        self.entries.truncate(self.scatter_label_start);
+        for entry in self.entries.drain(self.scatter_label_start..) {
+            if entry.custom_glyphs.is_empty() {
+                stash_text_buffer(&mut self.scatter_label_cache, entry.key, entry.buffer);
+            }
+        }
     }
 
     /// Append a scatter grid tick or axis-title label at a projected screen position.
@@ -591,7 +610,6 @@ impl TextRendererDg {
         } else {
             400
         };
-        let mut cache: TextBufferCache = HashMap::new();
         let mut caret_positions = HashMap::new();
         push_text_entry(
             &mut self.font_system,
@@ -607,7 +625,7 @@ impl TextRendererDg {
             label_clip,
             color,
             text_align,
-            &mut cache,
+            &mut self.scatter_label_cache,
             None,
             &mut caret_positions,
             TextRenderOptions::default(),

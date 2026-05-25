@@ -103,7 +103,7 @@ fn gpu_colormap_uniform(name: &str) -> ([[f32; 4]; MAX_GPU_COLORMAP_POINTS], u32
 // ---------------------------------------------------------------------------
 
 #[repr(C)]
-#[derive(Copy, Clone, Pod, Zeroable)]
+#[derive(Copy, Clone, Pod, Zeroable, PartialEq)]
 struct Uniforms {
     view_proj: [[f32; 4]; 4],
     screen_size: [f32; 2],
@@ -1243,6 +1243,8 @@ pub struct ScatterWidget {
     // ── Phase 7: Screenshot cache ─────────────────────────────────────────────
     surface_format: wgpu::TextureFormat,
     screenshot_cache: Option<ScreenshotCache>,
+    scene_revision: u64,
+    last_uniforms: Option<Uniforms>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -1615,7 +1617,17 @@ impl ScatterWidget {
             mesh_actors: std::collections::HashMap::new(),
             surface_format,
             screenshot_cache: None,
+            scene_revision: 1,
+            last_uniforms: None,
         }
+    }
+
+    pub fn scene_revision(&self) -> u64 {
+        self.scene_revision
+    }
+
+    fn mark_scene_dirty(&mut self) {
+        self.scene_revision = self.scene_revision.wrapping_add(1).max(1);
     }
 
     fn scatter_pipeline_layout(&self, device: &wgpu::Device) -> wgpu::PipelineLayout {
@@ -1915,6 +1927,7 @@ impl ScatterWidget {
             self.primary_storage = PrimaryPointStorage::PointInstance;
             self.lod_vertex_buffer = None;
             self.lod_vertex_cap = 0;
+            self.mark_scene_dirty();
             self.recompute_point_size_scale();
             self.update_camera(queue);
             return ScatterUploadTimings::default();
@@ -1940,6 +1953,7 @@ impl ScatterWidget {
         self.point_count = points.len() as u32;
         self.primary_points_opaque = points_are_opaque(points);
         self.primary_storage = PrimaryPointStorage::PointInstance;
+        self.mark_scene_dirty();
         let lod_ms = if self.should_build_active_lod(self.point_count) {
             let lod_t0 = Instant::now();
             upload_lod_buffer(
@@ -1990,6 +2004,7 @@ impl ScatterWidget {
             self.primary_storage = PrimaryPointStorage::PointInstance;
             self.lod_vertex_buffer = None;
             self.lod_vertex_cap = 0;
+            self.mark_scene_dirty();
             self.recompute_point_size_scale();
             self.update_camera(queue);
             return Some(ScatterUploadTimings::default());
@@ -2012,6 +2027,7 @@ impl ScatterWidget {
         self.primary_storage = PrimaryPointStorage::PointInstance;
         self.lod_vertex_buffer = None;
         self.lod_vertex_cap = 0;
+        self.mark_scene_dirty();
         self.recompute_point_size_scale();
         self.update_camera(queue);
         Some(ScatterUploadTimings {
@@ -2047,6 +2063,7 @@ impl ScatterWidget {
             self.primary_storage = PrimaryPointStorage::XyzF32;
             self.lod_vertex_buffer = None;
             self.lod_vertex_cap = 0;
+            self.mark_scene_dirty();
             self.recompute_point_size_scale();
             self.update_camera(queue);
             return Some(ScatterUploadTimings::default());
@@ -2073,6 +2090,7 @@ impl ScatterWidget {
         self.primary_storage = PrimaryPointStorage::XyzF32;
         self.lod_vertex_buffer = None;
         self.lod_vertex_cap = 0;
+        self.mark_scene_dirty();
         self.recompute_point_size_scale();
         self.update_camera(queue);
         Some(ScatterUploadTimings {
@@ -2156,7 +2174,11 @@ impl ScatterWidget {
     pub fn update_camera(&mut self, queue: &wgpu::Queue) {
         self.recompute_point_size_scale();
         let uniforms = self.uniforms_for_size(self.width, self.height);
-        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+        if self.last_uniforms != Some(uniforms) {
+            queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+            self.last_uniforms = Some(uniforms);
+            self.mark_scene_dirty();
+        }
     }
 
     fn uniforms_for_size(&self, width: u32, height: u32) -> Uniforms {
@@ -2306,14 +2328,21 @@ impl ScatterWidget {
     ) {
         let rect = scatter_layout_rect(x, y, w, h, visible_clip);
         let dims_changed = self.width != rect.width || self.height != rect.height;
+        let scissor_changed =
+            self.scissor_offset != rect.scissor_offset || self.scissor_size != rect.scissor_size;
+        let clip_radii = clamp_clip_radii(clip_radii, w, h);
+        let clip_changed = self.clip_radii != clip_radii;
         self.offset = rect.offset;
         self.width = rect.width;
         self.height = rect.height;
         self.scissor_offset = rect.scissor_offset;
         self.scissor_size = rect.scissor_size;
-        self.clip_radii = clamp_clip_radii(clip_radii, w, h);
+        self.clip_radii = clip_radii;
         self.camera.aspect = w / h.max(1.0);
         self.recompute_point_size_scale();
+        if dims_changed || scissor_changed || clip_changed {
+            self.mark_scene_dirty();
+        }
         self.update_camera(queue);
         if dims_changed {
             self.screenshot_cache = None;
@@ -2519,6 +2548,8 @@ impl ScatterWidget {
         self.offset = saved_offset;
         self.scissor_offset = saved_scissor_offset;
         self.scissor_size = saved_scissor_size;
+        self.last_uniforms = None;
+        self.update_camera(queue);
 
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
@@ -2642,6 +2673,9 @@ impl ScatterWidget {
         queue: &wgpu::Queue,
     ) {
         if !self.chrome.grid_visible {
+            if self.grid_vertex_count != 0 || !self.grid_labels.is_empty() {
+                self.mark_scene_dirty();
+            }
             self.grid_vertex_count = 0;
             self.grid_labels.clear();
             self.reproject_grid_labels();
@@ -2719,6 +2753,7 @@ impl ScatterWidget {
             }
             queue.write_buffer(self.line_vertex_buffer.as_ref().unwrap(), 0, line_bytes);
             self.grid_vertex_count = vertices.len() as u32;
+            self.mark_scene_dirty();
         }
 
         self.grid_labels = labels;
@@ -2924,7 +2959,11 @@ impl ScatterWidget {
             }
             queue.write_buffer(self.bg_vertex_buffer.as_ref().unwrap(), 0, bytes);
             self.bg_vertex_count = 6;
+            self.mark_scene_dirty();
         } else {
+            if self.bg_vertex_count != 0 {
+                self.mark_scene_dirty();
+            }
             self.bg_vertex_count = 0;
         }
 
@@ -2940,6 +2979,9 @@ impl ScatterWidget {
             && self.hover_label.is_none()
             && self.user_labels.is_empty()
         {
+            if self.overlay_vertex_count != 0 {
+                self.mark_scene_dirty();
+            }
             self.overlay_vertex_count = 0;
             return;
         }
@@ -2947,6 +2989,9 @@ impl ScatterWidget {
         let w = self.width as f32;
         let h = self.height as f32;
         if w == 0.0 || h == 0.0 {
+            if self.overlay_vertex_count != 0 {
+                self.mark_scene_dirty();
+            }
             self.overlay_vertex_count = 0;
             return;
         }
@@ -3249,6 +3294,9 @@ impl ScatterWidget {
         let bytes: &[u8] = bytemuck::cast_slice(verts);
         let size = bytes.len() as u64;
         if size == 0 {
+            if self.overlay_vertex_count != 0 {
+                self.mark_scene_dirty();
+            }
             self.overlay_vertex_count = 0;
             return;
         }
@@ -3264,6 +3312,7 @@ impl ScatterWidget {
         }
         queue.write_buffer(self.overlay_vertex_buffer.as_ref().unwrap(), 0, bytes);
         self.overlay_vertex_count = verts.len() as u32;
+        self.mark_scene_dirty();
     }
 
     // ── User labels ──────────────────────────────────────────────────────────
@@ -3447,6 +3496,7 @@ impl ScatterWidget {
         actor.data_min = mn;
         actor.data_max = mx;
         actor.visible = true;
+        self.mark_scene_dirty();
         self.recompute_point_size_scale();
         self.update_camera(queue);
     }
@@ -3468,23 +3518,32 @@ impl ScatterWidget {
             actor.data_min = mn;
             actor.data_max = mx;
             actor.hover_meta = Vec::new();
+            self.mark_scene_dirty();
             self.recompute_point_size_scale();
             self.update_camera(queue);
         }
     }
 
     pub fn remove_actor(&mut self, id: u32) {
-        self.extra_actors.remove(&id);
+        if self.extra_actors.remove(&id).is_some() {
+            self.mark_scene_dirty();
+        }
     }
 
     pub fn set_actor_visible(&mut self, id: u32, visible: bool) {
         if let Some(actor) = self.extra_actors.get_mut(&id) {
-            actor.visible = visible;
+            if actor.visible != visible {
+                actor.visible = visible;
+                self.mark_scene_dirty();
+            }
         }
     }
 
     pub fn clear_extra_actors(&mut self) {
-        self.extra_actors.clear();
+        if !self.extra_actors.is_empty() {
+            self.extra_actors.clear();
+            self.mark_scene_dirty();
+        }
     }
 
     /// Returns the union bounds of all visible extra actors, or None if there are none.
@@ -3542,6 +3601,7 @@ impl ScatterWidget {
             max_points as usize
         ];
         self.extra_actors.insert(id, actor);
+        self.mark_scene_dirty();
     }
 
     /// Append or ring-overwrite points into a stream actor.
@@ -3591,6 +3651,7 @@ impl ScatterWidget {
         actor.data_min = mn;
         actor.data_max = mx;
         actor.points_opaque = points_are_opaque(&actor.points[..actor.point_count as usize]);
+        self.mark_scene_dirty();
         self.recompute_point_size_scale();
         self.update_camera(queue);
     }
@@ -3602,6 +3663,7 @@ impl ScatterWidget {
             actor.stream_write_offset = 0;
             actor.data_min = glam::Vec3::splat(f32::MAX);
             actor.data_max = glam::Vec3::splat(f32::MIN);
+            self.mark_scene_dirty();
             self.recompute_point_size_scale();
             self.update_camera(queue);
         }
@@ -3619,6 +3681,9 @@ impl ScatterWidget {
         let bytes: &[u8] = bytemuck::cast_slice(&all_verts);
         let size = bytes.len() as u64;
         if size == 0 {
+            if self.user_line_vertex_count != 0 {
+                self.mark_scene_dirty();
+            }
             self.user_line_vertex_count = 0;
             return;
         }
@@ -3634,6 +3699,7 @@ impl ScatterWidget {
         }
         queue.write_buffer(self.user_line_vertex_buffer.as_ref().unwrap(), 0, bytes);
         self.user_line_vertex_count = all_verts.len() as u32;
+        self.mark_scene_dirty();
     }
 
     // ── Mesh overlay management (Phase 6) ────────────────────────────────────
@@ -3781,6 +3847,7 @@ impl ScatterWidget {
         self.ensure_mesh_pipelines(device);
         let actor = MeshActor::new(id, positions, triangle_indices, color, wireframe, device);
         self.mesh_actors.insert(id, actor);
+        self.mark_scene_dirty();
     }
 
     pub fn update_mesh_actor(
@@ -3816,21 +3883,30 @@ impl ScatterWidget {
         }
         if geometry_changed {
             actor.rebuild_buffers(device);
+            self.mark_scene_dirty();
         }
     }
 
     pub fn remove_mesh_actor(&mut self, id: u32) {
-        self.mesh_actors.remove(&id);
+        if self.mesh_actors.remove(&id).is_some() {
+            self.mark_scene_dirty();
+        }
     }
 
     pub fn set_mesh_actor_visible(&mut self, id: u32, visible: bool) {
         if let Some(a) = self.mesh_actors.get_mut(&id) {
-            a.visible = visible;
+            if a.visible != visible {
+                a.visible = visible;
+                self.mark_scene_dirty();
+            }
         }
     }
 
     pub fn clear_mesh_actors(&mut self) {
-        self.mesh_actors.clear();
+        if !self.mesh_actors.is_empty() {
+            self.mesh_actors.clear();
+            self.mark_scene_dirty();
+        }
     }
 
     /// Bounds that include all visible mesh actors.

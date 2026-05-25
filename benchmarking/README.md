@@ -36,3 +36,40 @@ Read the metrics as two different budgets:
 
 DragonGUI also reports native packet/upload timings from its debug snapshot.
 VisPy reports draw-event timing from its canvas callbacks when available.
+
+## V4 Widget Probe Baselines
+
+Run the static v4 widget probes in smoke mode and collect frame, stage,
+primitive, and widget-count metrics:
+
+```powershell
+python benchmarking\v4_widget_benchmark.py --frames 20 --json-out benchmarking\v4_widget_baseline.json
+```
+
+Useful options:
+
+```powershell
+--quick
+--probe heatmap
+--probe bar_chart
+--frames 60
+--repeat 3
+--json-out benchmarking\v4_widget_baseline_after.json
+```
+
+For optimization work, sort by `frame_work_ms_avg`, `frame_prepare_ms_avg`,
+`frame_encode_ms_avg`, `primitive_rects`, and `primitive_complex`. The headline
+`frame_ms` can include presentation timing, so it is a weaker bottleneck signal
+for short static probe runs.
+
+## Dynamic Scatter Camera Benchmark
+
+Run the paced camera-motion benchmark when checking scatter interaction costs:
+
+```powershell
+python benchmarking\scatter_dynamic_camera_benchmark.py --points 65000 --camera-updates 90 --interval-ms 16 --repeat 3 --json-out benchmarking\scatter_dynamic_camera_paced.json
+```
+
+The static v4 benchmark can show cache hits after the camera stops. This dynamic
+benchmark forces camera changes at a paced interval and reports aggregate scatter
+render timing plus cache hit rate.

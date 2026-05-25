@@ -4866,6 +4866,26 @@ fn heatmap_cell_rect(node: &WidgetNode, plot: [f32; 4], row: usize, col: usize) 
     [x0, y0, (x1 - x0).max(0.5), (y1 - y0).max(0.5)]
 }
 
+fn heatmap_cell_stride(node: &WidgetNode, plot: [f32; 4], sf: f32) -> usize {
+    let rows = node.props.heatmap.rows;
+    let cols = node.props.heatmap.cols;
+    let total = rows.saturating_mul(cols);
+    if total <= 4_096 {
+        return 1;
+    }
+
+    let cell_w = plot[2] / cols.max(1) as f32;
+    let cell_h = plot[3] / rows.max(1) as f32;
+    if cell_w >= 5.0 * sf && cell_h >= 5.0 * sf {
+        return 1;
+    }
+
+    let sample_px = (4.0 * sf).max(2.0);
+    let screen_target = ((plot[2] * plot[3]) / (sample_px * sample_px))
+        .clamp(2_048.0, 12_000.0) as usize;
+    ((total as f32 / screen_target.max(1) as f32).sqrt().ceil() as usize).max(2)
+}
+
 pub(crate) fn heatmap_cell_at(
     node: &WidgetNode,
     sf: f32,
@@ -4958,13 +4978,7 @@ fn emit_heatmap(
         return;
     }
 
-    let total = rows.saturating_mul(cols);
-    let max_cells = 40_000usize;
-    let stride = if total > max_cells {
-        ((total as f32 / max_cells as f32).sqrt().ceil() as usize).max(1)
-    } else {
-        1
-    };
+    let stride = heatmap_cell_stride(node, plot, sf);
     for row in (0..rows).step_by(stride) {
         let row_end = (row + stride).min(rows);
         let sample_row = row + (row_end - row) / 2;
@@ -12754,6 +12768,65 @@ mod tests {
         assert!(
             label_room >= 40.0,
             "scalar bar labels need enough room inside the widget rect, got {label_room}"
+        );
+    }
+
+    #[test]
+    fn heatmap_cell_stride_keeps_small_grids_exact() {
+        let mut heatmap = node("heat-small", WidgetKind::Heatmap);
+        heatmap.props.heatmap.rows = 32;
+        heatmap.props.heatmap.cols = 32;
+        heatmap.props.heatmap.values = vec![0.0; 32 * 32];
+        heatmap.props.heatmap.show_labels = true;
+        heatmap.props.heatmap.scalar_bar = true;
+
+        let rect = [0.0, 0.0, 420.0, 280.0];
+        let plot = heatmap_plot_rect(&heatmap, 1.0, rect);
+
+        assert_eq!(heatmap_cell_stride(&heatmap, plot, 1.0), 1);
+    }
+
+    #[test]
+    fn heatmap_cell_stride_downsamples_dense_pixel_grids() {
+        let mut heatmap = node("heat-dense", WidgetKind::Heatmap);
+        heatmap.props.heatmap.rows = 96;
+        heatmap.props.heatmap.cols = 144;
+        heatmap.props.heatmap.values = vec![0.0; 96 * 144];
+        heatmap.props.heatmap.show_labels = false;
+        heatmap.props.heatmap.scalar_bar = true;
+
+        let rect = [0.0, 0.0, 720.0, 260.0];
+        let plot = heatmap_plot_rect(&heatmap, 1.0, rect);
+
+        assert_eq!(heatmap_cell_stride(&heatmap, plot, 1.0), 2);
+    }
+
+    #[test]
+    fn emit_heatmap_limits_dense_cell_primitives() {
+        let mut heatmap = node("heat-dense", WidgetKind::Heatmap);
+        heatmap.props.heatmap.rows = 96;
+        heatmap.props.heatmap.cols = 144;
+        heatmap.props.heatmap.values = vec![0.0; 96 * 144];
+        heatmap.props.heatmap.show_labels = false;
+        heatmap.props.heatmap.scalar_bar = true;
+
+        let mut out = Vec::new();
+        emit_heatmap(
+            &mut out,
+            &heatmap,
+            &Theme::dark(),
+            1.0,
+            [0.0, 0.0, 720.0, 260.0],
+            None,
+            None,
+            [0.0; 4],
+            1.0,
+        );
+
+        assert!(
+            out.len() < 3_600,
+            "dense heatmap should emit the strided cell grid, got {} rect instances",
+            out.len()
         );
     }
 
