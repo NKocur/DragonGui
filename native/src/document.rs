@@ -214,6 +214,91 @@ pub struct HistogramProp {
 }
 
 #[derive(Debug, Clone, Default)]
+pub struct BarChartSeriesProp {
+    pub label: Option<String>,
+    pub values: Vec<f32>,
+    pub color: Option<ColorRef>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BarChartHoverProp {
+    pub index: usize,
+    pub category: String,
+    pub series_index: usize,
+    pub series_label: Option<String>,
+    pub value: f32,
+    pub screen: [f32; 2],
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct BarChartProp {
+    pub labels: Vec<String>,
+    pub series: Vec<BarChartSeriesProp>,
+    pub label: Option<String>,
+    pub x_label: Option<String>,
+    pub y_label: Option<String>,
+    pub aggregate: String,
+    pub orientation: String,
+    pub show_grid: bool,
+    pub show_axes: bool,
+    pub show_ticks: bool,
+    pub show_toolbar: bool,
+    pub tick_count: usize,
+    pub auto_fit: bool,
+    pub value_min: Option<f32>,
+    pub value_max: Option<f32>,
+    pub bar_gap: f32,
+    pub hover: Option<BarChartHoverProp>,
+}
+
+#[derive(Debug, Clone)]
+pub struct HeatmapHoverProp {
+    pub row: usize,
+    pub col: usize,
+    pub value: f32,
+    pub screen: [f32; 2],
+    pub x_label: Option<String>,
+    pub y_label: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct HeatmapProp {
+    pub rows: usize,
+    pub cols: usize,
+    pub values: Vec<f32>,
+    pub finite_count: usize,
+    pub vmin: f32,
+    pub vmax: f32,
+    pub colormap: String,
+    pub x_labels: Vec<String>,
+    pub y_labels: Vec<String>,
+    pub show_labels: bool,
+    pub scalar_bar: bool,
+    pub title: Option<String>,
+    pub hover: Option<HeatmapHoverProp>,
+}
+
+impl Default for HeatmapProp {
+    fn default() -> Self {
+        Self {
+            rows: 0,
+            cols: 0,
+            values: Vec::new(),
+            finite_count: 0,
+            vmin: 0.0,
+            vmax: 1.0,
+            colormap: "viridis".to_string(),
+            x_labels: Vec::new(),
+            y_labels: Vec::new(),
+            show_labels: true,
+            scalar_bar: true,
+            title: None,
+            hover: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
 pub struct PieChartSliceProp {
     pub label: String,
     pub value: f32,
@@ -649,6 +734,218 @@ fn parse_histogram_props(props: &serde_json::Value) -> HistogramProp {
     }
 }
 
+fn parse_bar_chart_props(props: &serde_json::Value) -> BarChartProp {
+    let labels = parse_string_vec(props.get("labels"));
+    let mut series = Vec::new();
+    if !labels.is_empty() {
+        if let Some(items) = props.get("series").and_then(Value::as_array) {
+            for item in items {
+                let values = parse_f32_vec(item.get("values"));
+                if values.len() != labels.len() {
+                    continue;
+                }
+                series.push(BarChartSeriesProp {
+                    label: item
+                        .get("label")
+                        .and_then(Value::as_str)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string),
+                    values,
+                    color: parse_color_ref(item.get("color")),
+                });
+            }
+        }
+    }
+    let orientation = props
+        .get("orientation")
+        .and_then(Value::as_str)
+        .filter(|value| matches!(*value, "vertical" | "horizontal"))
+        .unwrap_or("vertical")
+        .to_string();
+    let aggregate = props
+        .get("aggregate")
+        .and_then(Value::as_str)
+        .filter(|value| matches!(*value, "count" | "sum" | "mean" | "min" | "max"))
+        .unwrap_or("sum")
+        .to_string();
+    BarChartProp {
+        labels,
+        series,
+        label: props
+            .get("label")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        x_label: props
+            .get("x_label")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        y_label: props
+            .get("y_label")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        aggregate,
+        orientation,
+        show_grid: props
+            .get("show_grid")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        show_axes: props
+            .get("show_axes")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        show_ticks: props
+            .get("show_ticks")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        show_toolbar: props
+            .get("show_toolbar")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        tick_count: props
+            .get("tick_count")
+            .and_then(Value::as_u64)
+            .map(|value| value as usize)
+            .unwrap_or(5)
+            .clamp(2, 9),
+        auto_fit: props
+            .get("auto_fit")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        value_min: props
+            .get("value_min")
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+            .map(|value| value as f32),
+        value_max: props
+            .get("value_max")
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+            .map(|value| value as f32),
+        bar_gap: props
+            .get("bar_gap")
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite() && *value >= 0.0)
+            .map(|value| value as f32)
+            .unwrap_or(2.0),
+        hover: None,
+    }
+}
+
+fn decode_heatmap_f32_b64(data: &str, expected_values: usize) -> Result<Vec<f32>, String> {
+    let bytes = BASE64
+        .decode(data)
+        .map_err(|err| format!("base64 decode failed: {err}"))?;
+    let expected_bytes = expected_values
+        .checked_mul(std::mem::size_of::<f32>())
+        .ok_or_else(|| "matrix is too large".to_string())?;
+    if bytes.len() != expected_bytes {
+        return Err(format!(
+            "expected {expected_bytes} matrix bytes, got {}",
+            bytes.len()
+        ));
+    }
+    let mut values = Vec::with_capacity(expected_values);
+    for chunk in bytes.chunks_exact(4) {
+        values.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+    }
+    Ok(values)
+}
+
+fn parse_heatmap_props(props: &serde_json::Value) -> HeatmapProp {
+    let rows = props
+        .get("rows")
+        .and_then(Value::as_u64)
+        .map(|value| value as usize)
+        .unwrap_or(0);
+    let cols = props
+        .get("cols")
+        .and_then(Value::as_u64)
+        .map(|value| value as usize)
+        .unwrap_or(0);
+    let expected = rows.saturating_mul(cols);
+    let values = if rows > 0 && cols > 0 {
+        props
+            .get("data_b64")
+            .and_then(Value::as_str)
+            .filter(|data| !data.is_empty())
+            .map(|data| match decode_heatmap_f32_b64(data, expected) {
+                Ok(values) => values,
+                Err(err) => {
+                    eprintln!("DragonGUI: heatmap data decode: {err}");
+                    Vec::new()
+                }
+            })
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let finite_count = props
+        .get("finite_count")
+        .and_then(Value::as_u64)
+        .map(|value| value as usize)
+        .unwrap_or_else(|| values.iter().filter(|value| value.is_finite()).count());
+    let mut vmin = props
+        .get("vmin")
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite())
+        .map(|value| value as f32)
+        .unwrap_or(0.0);
+    let mut vmax = props
+        .get("vmax")
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite())
+        .map(|value| value as f32)
+        .unwrap_or(1.0);
+    if vmax < vmin {
+        std::mem::swap(&mut vmin, &mut vmax);
+    }
+    if vmax <= vmin {
+        vmin -= 0.5;
+        vmax += 0.5;
+    }
+    let mut x_labels = parse_string_vec(props.get("x_labels"));
+    if x_labels.len() != cols {
+        x_labels.clear();
+    }
+    let mut y_labels = parse_string_vec(props.get("y_labels"));
+    if y_labels.len() != rows {
+        y_labels.clear();
+    }
+    HeatmapProp {
+        rows: if values.len() == expected { rows } else { 0 },
+        cols: if values.len() == expected { cols } else { 0 },
+        values,
+        finite_count,
+        vmin,
+        vmax,
+        colormap: props
+            .get("colormap")
+            .and_then(Value::as_str)
+            .map(|value| value.trim().to_ascii_lowercase())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "viridis".to_string()),
+        x_labels,
+        y_labels,
+        show_labels: props
+            .get("show_labels")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        scalar_bar: props
+            .get("scalar_bar")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        title: props
+            .get("title")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        hover: None,
+    }
+}
+
 fn parse_string_vec(v: Option<&serde_json::Value>) -> Vec<String> {
     v.and_then(Value::as_array)
         .map(|items| {
@@ -866,6 +1163,7 @@ pub enum WidgetKind {
     NumberInput,
     DragNumber,
     ProgressBar,
+    LoadingSpinner,
     TextInput,
     TextArea,
     CodeEditor,
@@ -887,6 +1185,8 @@ pub enum WidgetKind {
     NavItem,
     PieChart,
     Histogram,
+    BarChart,
+    Heatmap,
     LinePlot,
     Scatter3D,
     DataFrameTable,
@@ -932,6 +1232,7 @@ impl WidgetKind {
             "number_input" => WidgetKind::NumberInput,
             "drag_number" => WidgetKind::DragNumber,
             "progress_bar" => WidgetKind::ProgressBar,
+            "loading_spinner" => WidgetKind::LoadingSpinner,
             "text_input" => WidgetKind::TextInput,
             "text_area" => WidgetKind::TextArea,
             "code_editor" => WidgetKind::CodeEditor,
@@ -953,6 +1254,8 @@ impl WidgetKind {
             "nav_item" => WidgetKind::NavItem,
             "pie_chart" => WidgetKind::PieChart,
             "histogram" => WidgetKind::Histogram,
+            "bar_chart" => WidgetKind::BarChart,
+            "heatmap" => WidgetKind::Heatmap,
             "line_plot" => WidgetKind::LinePlot,
             "scatter_3d" => WidgetKind::Scatter3D,
             "dataframe_table" => WidgetKind::DataFrameTable,
@@ -980,6 +1283,8 @@ pub struct NodeProps {
     pub grid_template_columns: Option<Vec<GridTrackSize>>,
     /// GridLayout: explicit row track template.
     pub grid_template_rows: Option<Vec<GridTrackSize>>,
+    /// GridLayout: pack auto-placed children into shortest columns.
+    pub grid_masonry: bool,
     /// FlowLayout main-axis alignment: start, center, or end.
     pub flow_align: Option<String>,
     /// FlowLayout cross-axis alignment: start, center, end, or stretch.
@@ -1103,6 +1408,10 @@ pub struct NodeProps {
     pub pie_chart: PieChartProp,
     /// Histogram pre-binned startup data and chrome props.
     pub histogram: HistogramProp,
+    /// BarChart categorical startup data and chrome props.
+    pub bar_chart: BarChartProp,
+    /// Heatmap packed matrix startup data and chrome props.
+    pub heatmap: HeatmapProp,
     /// Scatter3D colormap name.
     pub scatter_colormap: Option<String>,
     /// Scatter3D base64-encoded startup payload.
@@ -1231,6 +1540,11 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         .get("template_rows")
         .or_else(|| props.get("grid_template_rows"))
         .and_then(parse_grid_template_tracks_value);
+    let grid_masonry = props
+        .get("masonry")
+        .or_else(|| props.get("grid_masonry"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     let flow_align = props
         .get("align")
         .and_then(|v| v.as_str())
@@ -1610,6 +1924,16 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
     } else {
         HistogramProp::default()
     };
+    let bar_chart = if matches!(kind, WidgetKind::BarChart) {
+        parse_bar_chart_props(props)
+    } else {
+        BarChartProp::default()
+    };
+    let heatmap = if matches!(kind, WidgetKind::Heatmap) {
+        parse_heatmap_props(props)
+    } else {
+        HeatmapProp::default()
+    };
     let (scatter_colormap, scatter_data_b64, scatter_data_format) =
         if matches!(kind, WidgetKind::Scatter3D) {
             let cmap = props
@@ -1856,7 +2180,7 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         | WidgetKind::TextArea
         | WidgetKind::CodeEditor
         | WidgetKind::LogView => "value",
-        WidgetKind::ProgressBar => "label",
+        WidgetKind::ProgressBar | WidgetKind::LoadingSpinner => "label",
         WidgetKind::Tab | WidgetKind::NavItem | WidgetKind::Menu | WidgetKind::MenuItem => "label",
         WidgetKind::Page => "title",
         _ => "text",
@@ -1883,6 +2207,7 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         grid_min_column_width,
         grid_template_columns,
         grid_template_rows,
+        grid_masonry,
         flow_align,
         flow_cross_align,
         orientation,
@@ -1955,6 +2280,8 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         line_plot_hover,
         pie_chart,
         histogram,
+        bar_chart,
+        heatmap,
         scatter_colormap,
         scatter_data_b64,
         scatter_data_format,
@@ -2235,6 +2562,97 @@ mod tests {
         assert_eq!(node.props.histogram.interaction, "zoom");
         assert_eq!(node.props.histogram.tick_count, 7);
         assert_eq!(node.props.histogram.bar_gap, 2.0);
+    }
+
+    #[test]
+    fn parse_bar_chart_widget_props() {
+        let node = parse_widget_node(&json!({
+            "id": "bars",
+            "type": "bar_chart",
+            "props": {
+                "labels": ["Q1", "Q2"],
+                "series": [
+                    {"label": "sales", "values": [10.0, 12.0], "color": "#42a5ff"},
+                    {"label": "cost", "values": [7.0, 8.0], "color": "#76e0b1"}
+                ],
+                "label": "Quarterly",
+                "x_label": "quarter",
+                "y_label": "usd",
+                "aggregate": "sum",
+                "orientation": "horizontal",
+                "show_grid": false,
+                "show_axes": true,
+                "show_ticks": false,
+                "show_toolbar": true,
+                "auto_fit": false,
+                "value_min": 0.0,
+                "value_max": 20.0,
+                "tick_count": 7,
+                "bar_gap": 3.0
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(node.kind, WidgetKind::BarChart);
+        assert_eq!(node.props.bar_chart.labels, vec!["Q1", "Q2"]);
+        assert_eq!(node.props.bar_chart.series.len(), 2);
+        assert_eq!(
+            node.props.bar_chart.series[0].label.as_deref(),
+            Some("sales")
+        );
+        assert_eq!(node.props.bar_chart.series[0].values, vec![10.0, 12.0]);
+        assert_eq!(node.props.bar_chart.orientation, "horizontal");
+        assert_eq!(node.props.bar_chart.x_label.as_deref(), Some("quarter"));
+        assert_eq!(node.props.bar_chart.y_label.as_deref(), Some("usd"));
+        assert!(!node.props.bar_chart.show_grid);
+        assert!(!node.props.bar_chart.show_ticks);
+        assert!(node.props.bar_chart.show_toolbar);
+        assert!(!node.props.bar_chart.auto_fit);
+        assert_eq!(node.props.bar_chart.value_min, Some(0.0));
+        assert_eq!(node.props.bar_chart.value_max, Some(20.0));
+        assert_eq!(node.props.bar_chart.tick_count, 7);
+        assert_eq!(node.props.bar_chart.bar_gap, 3.0);
+    }
+
+    #[test]
+    fn parse_heatmap_widget_props_decodes_matrix_payload() {
+        let mut bytes = Vec::new();
+        for value in [1.0_f32, 2.5, -1.0, 4.0] {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        let data_b64 = BASE64.encode(bytes);
+        let node = parse_widget_node(&json!({
+            "id": "heat",
+            "type": "heatmap",
+            "props": {
+                "rows": 2,
+                "cols": 2,
+                "finite_count": 4,
+                "data_b64": data_b64,
+                "vmin": -1.0,
+                "vmax": 4.0,
+                "colormap": "turbo",
+                "x_labels": ["A", "B"],
+                "y_labels": ["R0", "R1"],
+                "show_labels": true,
+                "scalar_bar": false,
+                "title": "Dense"
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(node.kind, WidgetKind::Heatmap);
+        assert_eq!(node.props.heatmap.rows, 2);
+        assert_eq!(node.props.heatmap.cols, 2);
+        assert_eq!(node.props.heatmap.values, vec![1.0, 2.5, -1.0, 4.0]);
+        assert_eq!(node.props.heatmap.finite_count, 4);
+        assert_eq!(node.props.heatmap.vmin, -1.0);
+        assert_eq!(node.props.heatmap.vmax, 4.0);
+        assert_eq!(node.props.heatmap.colormap, "turbo");
+        assert_eq!(node.props.heatmap.x_labels, vec!["A", "B"]);
+        assert_eq!(node.props.heatmap.y_labels, vec!["R0", "R1"]);
+        assert!(!node.props.heatmap.scalar_bar);
+        assert_eq!(node.props.heatmap.title.as_deref(), Some("Dense"));
     }
 
     #[test]

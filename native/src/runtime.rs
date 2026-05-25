@@ -28,7 +28,8 @@ use crate::css_style::{
     DgMediaEnvironment, DgMediaHover, DgMediaPointer, StylesheetOrigin, StylesheetStore,
 };
 use crate::document::{
-    self, LinePlotHoverProp, LoadingScreenSpec, NodeProps, WidgetKind, WidgetNode,
+    self, BarChartHoverProp, HeatmapHoverProp, LinePlotHoverProp, LoadingScreenSpec, NodeProps,
+    WidgetKind, WidgetNode,
 };
 use crate::document::{LinePlotPayloadFormat, ScatterPayloadFormat};
 use crate::error::DragonError;
@@ -44,23 +45,26 @@ use crate::layout::{
 };
 use crate::overlays::{find_node, menu_popup_width};
 use crate::primitives::{
-    histogram_plot_rect, histogram_resolved_bounds, histogram_text_labels, histogram_toolbar_hit,
+    bar_chart_bar_at as primitive_bar_chart_bar_at, bar_chart_text_labels, bar_chart_toolbar_hit,
+    heatmap_cell_at as primitive_heatmap_cell_at, heatmap_text_labels, histogram_plot_rect,
+    histogram_resolved_bounds, histogram_text_labels, histogram_toolbar_hit,
     interpolate_visual_style, line_plot_plot_rect, line_plot_resolved_bounds,
-    line_plot_text_labels, line_plot_toolbar_hit, panel_scrollbar_geometry, pie_chart_text_labels,
-    table_scrollbar_geometry, LinePlotBounds, LinePlotRenderer, PanelScrollbarAxis,
-    PanelScrollbarAxisGeometry, PrimitivesRenderer, RectInstance,
+    line_plot_text_labels, line_plot_toolbar_hit, modal_close_button_rect,
+    panel_scrollbar_geometry, pie_chart_text_labels, table_scrollbar_geometry, LinePlotBounds,
+    LinePlotRenderer, PanelScrollbarAxis, PanelScrollbarAxisGeometry, PrimitivesRenderer,
+    RectInstance,
 };
 use crate::resources::ResourceRegistry;
 use crate::scatter::{self, PointInstance, ScatterWidget};
 use crate::style::{
-    collapsible_header_height_for_style, number_stepper_width, number_stepper_width_for_style,
-    AlignItemsStyle, AnimationDirection, AnimationFillMode, AnimationIterationCount,
-    AnimationPlayState, AnimationStyle, BackgroundPaint, BoxShadow, ColorRef, DisplayStyle,
-    FlexDirectionStyle, FontFamily, FontStyle, FontVariantNumeric, GeneratedContent,
-    GridAutoFlowStyle, GridLineStyle, GridPlacementStyle, GridTrackSize, LayoutLength, LayoutStyle,
-    LineHeight, NodeStyle, OverflowStyle, PartLayoutStyle, PartStyle, PositionStyle, StepPosition,
-    TextAlign, TextOverflow, TextSpacing, TextStyle, TextTransform, TransitionStyle,
-    TransitionTimingFunction, VisualStyle, WidgetStyle, BORDER_WIDTH_LP,
+    code_editor_gutter_width_for_style, collapsible_header_height_for_style, number_stepper_width,
+    number_stepper_width_for_style, AlignItemsStyle, AnimationDirection, AnimationFillMode,
+    AnimationIterationCount, AnimationPlayState, AnimationStyle, BackgroundPaint, BoxShadow,
+    ColorRef, DisplayStyle, FlexDirectionStyle, FontFamily, FontStyle, FontVariantNumeric,
+    GeneratedContent, GridAutoFlowStyle, GridLineStyle, GridPlacementStyle, GridTrackSize,
+    LayoutLength, LayoutStyle, LineHeight, NodeStyle, OverflowStyle, PartLayoutStyle, PartStyle,
+    PositionStyle, StepPosition, TextAlign, TextOverflow, TextSpacing, TextStyle, TextTransform,
+    TransitionStyle, TransitionTimingFunction, VisualStyle, WidgetStyle, BORDER_WIDTH_LP,
 };
 use crate::table::{self, TableHit};
 use crate::text::TextRendererDg;
@@ -1106,6 +1110,15 @@ fn scatter_chrome_from_node(node: &WidgetNode) -> scatter::ScatterChromeState {
     chrome
 }
 
+fn scatter_interaction_mode_from_node(node: &WidgetNode) -> scatter::ScatterInteractionMode {
+    node.props
+        .raw_props
+        .get("interaction")
+        .and_then(|value| value.as_str())
+        .map(scatter::ScatterInteractionMode::from_str)
+        .unwrap_or_default()
+}
+
 fn apply_scatter_chrome_style(chrome: &mut scatter::ScatterChromeState, style: &WidgetStyle) {
     if let Some(visible) = style.scatter_grid_visible {
         chrome.grid_visible = visible;
@@ -1751,6 +1764,16 @@ fn scroll_container_at_pos(
     (max_scroll_x > 0.0 || max_scroll_y > 0.0).then(|| node.id.clone())
 }
 
+fn active_scroll_container_at_pos(
+    tree: &WidgetNode,
+    layout: &crate::layout::LayoutResult,
+    state: &WidgetState,
+    pos: [f32; 2],
+) -> Option<String> {
+    let root = active_modal_ref(tree).unwrap_or(tree);
+    scroll_container_at_pos(root, layout, state, pos)
+}
+
 fn clear_line_plot_hover_except(node: &mut WidgetNode, keep_id: Option<&str>, changed: &mut bool) {
     if node.kind == WidgetKind::LinePlot
         && Some(node.id.as_str()) != keep_id
@@ -1761,6 +1784,44 @@ fn clear_line_plot_hover_except(node: &mut WidgetNode, keep_id: Option<&str>, ch
     }
     for child in &mut node.children {
         clear_line_plot_hover_except(child, keep_id, changed);
+    }
+}
+
+fn clear_heatmap_hover_except(
+    node: &mut WidgetNode,
+    keep_id: Option<&str>,
+    changed: &mut bool,
+    cleared: &mut Vec<String>,
+) {
+    if node.kind == WidgetKind::Heatmap
+        && Some(node.id.as_str()) != keep_id
+        && node.props.heatmap.hover.is_some()
+    {
+        node.props.heatmap.hover = None;
+        cleared.push(node.id.clone());
+        *changed = true;
+    }
+    for child in &mut node.children {
+        clear_heatmap_hover_except(child, keep_id, changed, cleared);
+    }
+}
+
+fn clear_bar_chart_hover_except(
+    node: &mut WidgetNode,
+    keep_id: Option<&str>,
+    changed: &mut bool,
+    cleared: &mut Vec<String>,
+) {
+    if node.kind == WidgetKind::BarChart
+        && Some(node.id.as_str()) != keep_id
+        && node.props.bar_chart.hover.is_some()
+    {
+        node.props.bar_chart.hover = None;
+        cleared.push(node.id.clone());
+        *changed = true;
+    }
+    for child in &mut node.children {
+        clear_bar_chart_hover_except(child, keep_id, changed, cleared);
     }
 }
 
@@ -1780,6 +1841,32 @@ fn map_line_plot_point_to_screen(
     let tx = ((px - bounds.x_min) / (bounds.x_max - bounds.x_min)).clamp(0.0, 1.0);
     let ty = ((py - bounds.y_min) / (bounds.y_max - bounds.y_min)).clamp(0.0, 1.0);
     Some([plot[0] + plot[2] * tx, plot[1] + plot[3] * (1.0 - ty)])
+}
+
+fn heatmap_hover_payload(id: &str, hover: &HeatmapHoverProp) -> String {
+    json!({
+        "event": "hover_changed",
+        "widget_id": id,
+        "row": hover.row,
+        "col": hover.col,
+        "value": hover.value,
+        "x_label": hover.x_label.as_deref(),
+        "y_label": hover.y_label.as_deref(),
+    })
+    .to_string()
+}
+
+fn bar_chart_hover_payload(id: &str, hover: &BarChartHoverProp) -> String {
+    json!({
+        "event": "hover_changed",
+        "widget_id": id,
+        "index": hover.index,
+        "category": hover.category,
+        "series_index": hover.series_index,
+        "series": hover.series_label.as_deref(),
+        "value": hover.value,
+    })
+    .to_string()
 }
 
 #[derive(Clone, Debug)]
@@ -2073,6 +2160,7 @@ fn widget_kind_name(kind: &WidgetKind) -> &'static str {
         WidgetKind::NumberInput => "number_input",
         WidgetKind::DragNumber => "drag_number",
         WidgetKind::ProgressBar => "progress_bar",
+        WidgetKind::LoadingSpinner => "loading_spinner",
         WidgetKind::TextInput => "text_input",
         WidgetKind::TextArea => "text_area",
         WidgetKind::CodeEditor => "code_editor",
@@ -2094,6 +2182,8 @@ fn widget_kind_name(kind: &WidgetKind) -> &'static str {
         WidgetKind::NavItem => "nav_item",
         WidgetKind::PieChart => "pie_chart",
         WidgetKind::Histogram => "histogram",
+        WidgetKind::BarChart => "bar_chart",
+        WidgetKind::Heatmap => "heatmap",
         WidgetKind::LinePlot => "line_plot",
         WidgetKind::Scatter3D => "scatter_3d",
         WidgetKind::DataFrameTable => "dataframe_table",
@@ -3114,6 +3204,7 @@ fn props_snapshot(node: &WidgetNode) -> Value {
         "grid_template_rows": props.grid_template_rows.as_ref().map(|tracks| {
             tracks.iter().map(grid_track_json).collect::<Vec<_>>()
         }),
+        "grid_masonry": props.grid_masonry,
         "flow_align": props.flow_align.as_deref(),
         "flow_cross_align": props.flow_cross_align.as_deref(),
         "disabled": props.disabled,
@@ -3191,6 +3282,27 @@ fn props_snapshot(node: &WidgetNode) -> Value {
                     "tick_count": props.histogram.tick_count,
                     "auto_fit": props.histogram.auto_fit,
                     "interaction": props.histogram.interaction.as_str(),
+                }),
+            );
+        }
+    }
+    if node.kind == WidgetKind::BarChart {
+        if let Value::Object(map) = &mut snapshot {
+            map.insert(
+                "bar_chart".to_string(),
+                json!({
+                    "categories": props.bar_chart.labels.len(),
+                    "series": props.bar_chart.series.len(),
+                    "aggregate": props.bar_chart.aggregate.as_str(),
+                    "orientation": props.bar_chart.orientation.as_str(),
+                    "x_label": props.bar_chart.x_label.as_deref(),
+                    "y_label": props.bar_chart.y_label.as_deref(),
+                    "show_grid": props.bar_chart.show_grid,
+                    "show_axes": props.bar_chart.show_axes,
+                    "show_ticks": props.bar_chart.show_ticks,
+                    "show_toolbar": props.bar_chart.show_toolbar,
+                    "tick_count": props.bar_chart.tick_count,
+                    "auto_fit": props.bar_chart.auto_fit,
                 }),
             );
         }
@@ -3356,6 +3468,7 @@ fn widget_state_snapshot(state: Option<&WidgetState>) -> Value {
         "float_range": &state.float_range,
         "text_val": &state.text_val,
         "text_cursor": &state.text_cursor,
+        "text_scroll_x": &state.text_scroll_x,
         "text_scroll_y": &state.text_scroll_y,
         "container_scroll_x": &state.container_scroll_x,
         "container_scroll_y": &state.container_scroll_y,
@@ -3443,6 +3556,28 @@ fn now_epoch_ms() -> f64 {
         .unwrap_or(0.0)
 }
 
+fn node_has_active_loading_spinner(
+    node: &WidgetNode,
+    layout: &LayoutResult,
+    state: &WidgetState,
+) -> bool {
+    if node.kind == WidgetKind::LoadingSpinner
+        && !state.is_disabled(&node.id)
+        && layout.visible_rect(&node.id).is_some()
+        && node
+            .props
+            .raw_props
+            .get("spinning")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(true)
+    {
+        return true;
+    }
+    node.children
+        .iter()
+        .any(|child| node_has_active_loading_spinner(child, layout, state))
+}
+
 fn set_widget_text_prop(node: &mut WidgetNode, id: &str, prop: &str, value: String) -> bool {
     let Some(target) = find_widget_mut(node, id) else {
         return false;
@@ -3467,6 +3602,10 @@ fn set_widget_text_prop(node: &mut WidgetNode, id: &str, prop: &str, value: Stri
             target.props.text = Some(value);
             true
         }
+        (WidgetKind::LoadingSpinner, "text" | "label") => {
+            target.props.text = (!value.is_empty()).then_some(value);
+            true
+        }
         (
             WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal | WidgetKind::Page,
             "title",
@@ -3486,6 +3625,74 @@ fn set_widget_text_prop(node: &mut WidgetNode, id: &str, prop: &str, value: Stri
             true
         }
         _ => false,
+    }
+}
+
+fn set_widget_loading_spinner_prop(
+    node: &mut WidgetNode,
+    id: &str,
+    prop: &str,
+    value: CommandValue,
+) -> Option<Dirty> {
+    let target = find_widget_mut(node, id)?;
+    if target.kind != WidgetKind::LoadingSpinner {
+        return None;
+    }
+    match (prop, value) {
+        ("label", CommandValue::Text(text)) | ("text", CommandValue::Text(text)) => {
+            target.props.text = (!text.is_empty()).then_some(text.clone());
+            target
+                .props
+                .raw_props
+                .insert("label".to_string(), Value::String(text));
+            Some(Dirty::Text)
+        }
+        ("label", CommandValue::None) | ("text", CommandValue::None) => {
+            target.props.text = None;
+            target.props.raw_props.remove("label");
+            Some(Dirty::Text)
+        }
+        ("spinning", CommandValue::Bool(spinning)) => {
+            target
+                .props
+                .raw_props
+                .insert("spinning".to_string(), Value::Bool(spinning));
+            Some(Dirty::Visual)
+        }
+        ("speed", CommandValue::Float(speed)) if speed.is_finite() && speed >= 0.0 => {
+            if let Some(number) = serde_json::Number::from_f64(speed as f64) {
+                target
+                    .props
+                    .raw_props
+                    .insert("speed".to_string(), Value::Number(number));
+                Some(Dirty::Visual)
+            } else {
+                None
+            }
+        }
+        ("size", CommandValue::Float(size)) if size.is_finite() && size > 0.0 => {
+            if let Some(number) = serde_json::Number::from_f64(size as f64) {
+                target
+                    .props
+                    .raw_props
+                    .insert("size".to_string(), Value::Number(number));
+                Some(Dirty::Layout)
+            } else {
+                None
+            }
+        }
+        ("stroke_width", CommandValue::Float(width)) if width.is_finite() && width > 0.0 => {
+            if let Some(number) = serde_json::Number::from_f64(width as f64) {
+                target
+                    .props
+                    .raw_props
+                    .insert("stroke_width".to_string(), Value::Number(number));
+                Some(Dirty::Visual)
+            } else {
+                None
+            }
+        }
+        (_, _) => None,
     }
 }
 
@@ -4834,6 +5041,63 @@ mod style_patch_tests {
     }
 
     #[test]
+    fn wheel_target_prefers_active_modal_over_background_scroller() {
+        let modal_rows: Vec<_> = (1..=12)
+            .map(|index| {
+                json!({
+                    "id": format!("modal-row-{index}"),
+                    "type": "label",
+                    "props": {"text": format!("Modal row {index}")}
+                })
+            })
+            .collect();
+
+        let tree = crate::document::parse_widget_node(&json!({
+            "id": "window",
+            "type": "window",
+            "children": [
+                {
+                    "id": "modal",
+                    "type": "modal",
+                    "props": {
+                        "title": "Scrollable modal",
+                        "open": true,
+                        "width": 320,
+                        "height": 145
+                    },
+                    "children": modal_rows
+                },
+                {
+                    "id": "root",
+                    "type": "v_layout",
+                    "style": {
+                        "height": 320,
+                        "overflow_y": "auto"
+                    },
+                    "children": [
+                        {"id": "top", "type": "spacer", "props": {"height": 420}},
+                        {"id": "bottom", "type": "spacer", "props": {"height": 420}}
+                    ]
+                }
+            ]
+        }))
+        .unwrap();
+        let state = WidgetState::from_tree(&tree);
+        let layout =
+            crate::layout::compute_layout(&tree, 420.0, 320.0, 1.0, &Theme::dark(), Some(&state));
+        let modal = layout.rects.get("modal").unwrap();
+        let pos = [modal.x + modal.w * 0.5, modal.y + modal.h * 0.65];
+
+        assert!(layout.scroll_max_y.get("root").copied().unwrap_or(0.0) > 0.0);
+        assert!(layout.scroll_max_y.get("modal").copied().unwrap_or(0.0) > 0.0);
+        assert_eq!(
+            active_scroll_container_at_pos(&tree, &layout, &state, pos),
+            Some("modal".to_string()),
+            "wheel over open modal should not target background root scroller: modal={modal:?} pos={pos:?}"
+        );
+    }
+
+    #[test]
     fn computed_style_snapshot_includes_part_matched_rules() {
         let mut tree = crate::document::parse_widget_node(&json!({
             "id": "root",
@@ -5535,6 +5799,8 @@ struct ScatterRuntime {
     data_max: glam::Vec3,
     payload_format: ScatterPayloadFormat,
     payload_status: ScatterPayloadStatus,
+    /// Fit command received before the scatter had a real viewport.
+    pending_fit_bounds: Option<Option<[f32; 6]>>,
     /// Per-point tooltip text for the primary buffer (actor_id == 0).
     primary_hover_meta: Vec<String>,
     /// Compact per-column hover data formatted only for the picked row.
@@ -5550,6 +5816,12 @@ struct ScatterRuntime {
 }
 
 impl ScatterRuntime {
+    fn has_fit_bounds(&self) -> bool {
+        self.widget.point_count > 0
+            || self.widget.merged_extra_bounds().is_some()
+            || self.widget.merged_mesh_bounds().is_some()
+    }
+
     /// Bounds of actor 0 (legacy single scene) merged with all visible extra actors.
     fn merged_bounds(&self) -> (glam::Vec3, glam::Vec3) {
         let mut mn = self.data_min;
@@ -5563,6 +5835,44 @@ impl ScatterRuntime {
             mx = mx.max(mmx);
         }
         (mn, mx)
+    }
+
+    fn fit_command_bounds(&self, bounds: Option<[f32; 6]>) -> Option<(glam::Vec3, glam::Vec3)> {
+        if let Some(b) = bounds {
+            return Some((
+                glam::Vec3::new(b[0], b[1], b[2]),
+                glam::Vec3::new(b[3], b[4], b[5]),
+            ));
+        }
+        if self.has_fit_bounds() {
+            return Some(self.merged_bounds());
+        }
+        None
+    }
+
+    fn apply_fit_command(&mut self, bounds: Option<[f32; 6]>, queue: &wgpu::Queue) -> bool {
+        let Some((fit_min, fit_max)) = self.fit_command_bounds(bounds) else {
+            return false;
+        };
+        // Do not overwrite data_min/data_max; fit is a camera operation only.
+        self.widget.fit_to_bounds(fit_min, fit_max, queue);
+        self.fitted_once = true;
+        true
+    }
+
+    fn apply_pending_fit_if_visible(&mut self, queue: &wgpu::Queue) -> bool {
+        if !self.widget.has_visible_viewport() {
+            return false;
+        }
+        let Some(pending) = self.pending_fit_bounds.take() else {
+            return false;
+        };
+        if self.apply_fit_command(pending, queue) {
+            true
+        } else {
+            self.pending_fit_bounds = Some(pending);
+            false
+        }
     }
 
     fn set_interaction_lod_active(
@@ -6269,6 +6579,47 @@ fn number_input_step_at_pos(
     None
 }
 
+fn mix_rgba(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
+    let t = t.clamp(0.0, 1.0);
+    [
+        a[0] + (b[0] - a[0]) * t,
+        a[1] + (b[1] - a[1]) * t,
+        a[2] + (b[2] - a[2]) * t,
+        a[3] + (b[3] - a[3]) * t,
+    ]
+}
+
+fn text_bounds_from_rect(rect: crate::layout::Rect) -> glyphon::TextBounds {
+    glyphon::TextBounds {
+        left: rect.x.floor() as i32,
+        top: rect.y.floor() as i32,
+        right: (rect.x + rect.w).ceil() as i32,
+        bottom: (rect.y + rect.h).ceil() as i32,
+    }
+}
+
+fn text_bounds_from_xywh(rect: [f32; 4]) -> glyphon::TextBounds {
+    glyphon::TextBounds {
+        left: rect[0].floor() as i32,
+        top: rect[1].floor() as i32,
+        right: (rect[0] + rect[2]).ceil() as i32,
+        bottom: (rect[1] + rect[3]).ceil() as i32,
+    }
+}
+
+fn intersect_text_bounds(
+    a: glyphon::TextBounds,
+    b: glyphon::TextBounds,
+) -> Option<glyphon::TextBounds> {
+    let bounds = glyphon::TextBounds {
+        left: a.left.max(b.left),
+        top: a.top.max(b.top),
+        right: a.right.min(b.right),
+        bottom: a.bottom.min(b.bottom),
+    };
+    (bounds.right > bounds.left && bounds.bottom > bounds.top).then_some(bounds)
+}
+
 fn push_plot_overlay_labels(
     text: &mut TextRendererDg,
     node: &WidgetNode,
@@ -6278,18 +6629,24 @@ fn push_plot_overlay_labels(
 ) {
     if matches!(
         node.kind,
-        WidgetKind::Histogram | WidgetKind::LinePlot | WidgetKind::PieChart
+        WidgetKind::Histogram
+            | WidgetKind::BarChart
+            | WidgetKind::Heatmap
+            | WidgetKind::LinePlot
+            | WidgetKind::PieChart
     ) {
-        if let Some(rect) = layout.visible_rect(&node.id) {
-            let clip = glyphon::TextBounds {
-                left: rect.x as i32,
-                top: rect.y as i32,
-                right: (rect.x + rect.w) as i32,
-                bottom: (rect.y + rect.h) as i32,
-            };
+        if let Some(visible_rect) = layout.visible_rect(&node.id) {
+            let rect = layout.rects.get(&node.id).copied().unwrap_or(visible_rect);
+            let clip = text_bounds_from_rect(visible_rect);
             let labels = match node.kind {
                 WidgetKind::Histogram => {
                     histogram_text_labels(node, theme, sf, [rect.x, rect.y, rect.w, rect.h])
+                }
+                WidgetKind::BarChart => {
+                    bar_chart_text_labels(node, theme, sf, [rect.x, rect.y, rect.w, rect.h])
+                }
+                WidgetKind::Heatmap => {
+                    heatmap_text_labels(node, theme, sf, [rect.x, rect.y, rect.w, rect.h])
                 }
                 WidgetKind::PieChart => {
                     pie_chart_text_labels(node, theme, sf, [rect.x, rect.y, rect.w, rect.h])
@@ -6297,15 +6654,35 @@ fn push_plot_overlay_labels(
                 _ => line_plot_text_labels(node, theme, sf, [rect.x, rect.y, rect.w, rect.h]),
             };
             for label in labels {
-                let label_clip = label
-                    .clip_rect
-                    .map(|clip_rect| glyphon::TextBounds {
-                        left: clip_rect[0].floor() as i32,
-                        top: clip_rect[1].floor() as i32,
-                        right: (clip_rect[0] + clip_rect[2]).ceil() as i32,
-                        bottom: (clip_rect[1] + clip_rect[3]).ceil() as i32,
-                    })
-                    .unwrap_or(clip);
+                let raw_label_clip = label.clip_rect.map(text_bounds_from_xywh).unwrap_or(clip);
+                let Some(label_clip) = intersect_text_bounds(raw_label_clip, clip) else {
+                    continue;
+                };
+                if matches!(node.kind, WidgetKind::Heatmap | WidgetKind::BarChart)
+                    && label.anchor == "plot-readout"
+                {
+                    if let Some(readout) = label.clip_rect {
+                        let mut border = mix_rgba(theme.border, theme.accent, 0.42);
+                        border[3] = 0.92;
+                        let mut bg = mix_rgba(theme.surface, theme.background, 0.12);
+                        bg[3] = 0.94;
+                        text.push_overlay_panel_rect(readout, 5.0 * sf, border, label_clip);
+                        let inset = (1.0 * sf).max(1.0);
+                        if readout[2] > inset * 2.0 && readout[3] > inset * 2.0 {
+                            text.push_overlay_panel_rect(
+                                [
+                                    readout[0] + inset,
+                                    readout[1] + inset,
+                                    readout[2] - inset * 2.0,
+                                    readout[3] - inset * 2.0,
+                                ],
+                                4.0 * sf,
+                                bg,
+                                label_clip,
+                            );
+                        }
+                    }
+                }
                 text.push_scatter_label(
                     &label.text,
                     label.screen_x,
@@ -6615,7 +6992,7 @@ impl WgpuState {
             collect_all_scatter_ids(tree, &mut scatter_ids);
             for scatter_id in scatter_ids {
                 let node = find_widget(tree, &scatter_id);
-                let (colormap, data_b64, data_format, startup_chrome) = node
+                let (colormap, data_b64, data_format, startup_chrome, interaction_mode) = node
                     .map(|n| {
                         let chrome = scatter_chrome_from_node(n);
                         (
@@ -6626,6 +7003,7 @@ impl WgpuState {
                             n.props.scatter_data_b64.clone(),
                             n.props.scatter_data_format,
                             chrome,
+                            scatter_interaction_mode_from_node(n),
                         )
                     })
                     .unwrap_or_else(|| {
@@ -6634,10 +7012,12 @@ impl WgpuState {
                             None,
                             ScatterPayloadFormat::default(),
                             scatter::ScatterChromeState::default(),
+                            scatter::ScatterInteractionMode::default(),
                         )
                     });
 
                 let mut widget = ScatterWidget::new(&device, config.format, width, height);
+                widget.interaction_mode = interaction_mode;
                 let t0 = Instant::now();
                 let (mut pts, mut status) = if let Some(b64) = data_b64 {
                     let decoded_bytes = BASE64.decode(&b64);
@@ -6706,6 +7086,7 @@ impl WgpuState {
                         data_max,
                         payload_format: data_format,
                         payload_status: status,
+                        pending_fit_bounds: None,
                         primary_hover_meta: Vec::new(),
                         primary_hover_columns: Vec::new(),
                         tooltip_axis_labels: ["x".to_string(), "y".to_string(), "z".to_string()],
@@ -7062,7 +7443,9 @@ impl WgpuState {
                         queue,
                     );
                     let (data_min, data_max) = runtime.merged_bounds();
-                    if !runtime.fitted_once
+                    if runtime.apply_pending_fit_if_visible(queue) {
+                        // Pending explicit fit commands are applied once real layout exists.
+                    } else if !runtime.fitted_once
                         && !runtime.points.is_empty()
                         && runtime.widget.has_visible_viewport()
                     {
@@ -7221,6 +7604,51 @@ impl WgpuState {
             line_plots.rebuild(device, queue, tree, layout, theme, *scale_factor);
         }
         line_plot_rebuild_timing.record(line_plot_t0.elapsed().as_secs_f64() * 1000.0);
+        rebuild_primitives_timing.record(total_t0.elapsed().as_secs_f64() * 1000.0);
+    }
+
+    fn rebuild_widget_primitives(&mut self) {
+        let total_t0 = Instant::now();
+        let media = self.media_environment();
+        let WgpuState {
+            widget_tree,
+            current_layout,
+            widget_state,
+            primitives,
+            device,
+            queue,
+            theme,
+            scale_factor,
+            caret_positions,
+            toast_overlays,
+            stylesheets,
+            primitive_rebuild_timing,
+            rebuild_primitives_timing,
+            ..
+        } = self;
+
+        let primitive_t0 = Instant::now();
+        if let (Some(tree), Some(layout), Some(state), Some(prims)) = (
+            widget_tree.as_ref(),
+            current_layout.as_ref(),
+            widget_state.as_ref(),
+            primitives.as_mut(),
+        ) {
+            prims.rebuild(
+                device,
+                queue,
+                tree,
+                layout,
+                theme,
+                *scale_factor,
+                state,
+                caret_positions,
+                toast_overlays,
+                stylesheets,
+                media,
+            );
+        }
+        primitive_rebuild_timing.record(primitive_t0.elapsed().as_secs_f64() * 1000.0);
         rebuild_primitives_timing.record(total_t0.elapsed().as_secs_f64() * 1000.0);
     }
 
@@ -8395,10 +8823,35 @@ impl WgpuState {
         modal_blocks_point(tree, layout, pos)
     }
 
+    fn modal_close_button_at(&self, pos: [f32; 2]) -> Option<String> {
+        let tree = self.widget_tree.as_ref()?;
+        let layout = self.current_layout.as_ref()?;
+        let modal = active_modal_ref(tree)?;
+        let rect = modal_close_button_rect(modal, layout, &self.theme, self.scale_factor)?;
+        let hit = pos[0] >= rect[0]
+            && pos[0] < rect[0] + rect[2]
+            && pos[1] >= rect[1]
+            && pos[1] < rect[1] + rect[3];
+        hit.then(|| modal.id.clone())
+    }
+
     fn has_active_modal(&self) -> bool {
         self.widget_tree
             .as_ref()
             .is_some_and(|tree| has_active_modal(tree))
+    }
+
+    fn has_active_loading_spinner(&self) -> bool {
+        match (
+            self.widget_tree.as_ref(),
+            self.current_layout.as_ref(),
+            self.widget_state.as_ref(),
+        ) {
+            (Some(tree), Some(layout), Some(state)) => {
+                node_has_active_loading_spinner(tree, layout, state)
+            }
+            _ => false,
+        }
     }
 
     fn close_active_modal(&mut self) -> Option<String> {
@@ -8462,6 +8915,18 @@ impl WgpuState {
                 }
             }
             return None;
+        }
+        if kind == WidgetKind::LoadingSpinner {
+            let Some(tree) = self.widget_tree.as_mut() else {
+                return None;
+            };
+            let dirty = set_widget_loading_spinner_prop(tree, id, prop, value);
+            if dirty.is_none() {
+                eprintln!(
+                    "DragonGUI: ignoring unsupported live SetProp for widget {id:?} ({kind:?}).{prop}"
+                );
+            }
+            return dirty;
         }
         if let CommandValue::Text(text) = &value {
             if matches!(
@@ -8734,6 +9199,58 @@ impl WgpuState {
                         return Some(Dirty::Visual);
                     }
                     return None;
+                }
+                (_, _) => {
+                    eprintln!(
+                        "DragonGUI: ignoring unsupported live SetProp for widget {id:?} ({kind:?}).{prop}"
+                    );
+                    return None;
+                }
+            }
+        }
+        if kind == WidgetKind::BarChart {
+            let Some(tree) = self.widget_tree.as_mut() else {
+                return None;
+            };
+            let Some(node) = find_widget_mut(tree, id) else {
+                return None;
+            };
+            match (prop, value) {
+                ("show_grid", CommandValue::Bool(visible)) => {
+                    node.props.bar_chart.show_grid = visible;
+                    return Some(Dirty::Visual);
+                }
+                ("show_axes", CommandValue::Bool(visible)) => {
+                    node.props.bar_chart.show_axes = visible;
+                    return Some(Dirty::Text);
+                }
+                ("show_ticks", CommandValue::Bool(visible)) => {
+                    node.props.bar_chart.show_ticks = visible;
+                    return Some(Dirty::Text);
+                }
+                ("show_toolbar", CommandValue::Bool(visible)) => {
+                    node.props.bar_chart.show_toolbar = visible;
+                    return Some(Dirty::Text);
+                }
+                ("tick_count", CommandValue::Float(count)) => {
+                    node.props.bar_chart.tick_count = (count.round() as isize).clamp(2, 9) as usize;
+                    return Some(Dirty::Text);
+                }
+                ("x_label", CommandValue::Text(label)) => {
+                    node.props.bar_chart.x_label = (!label.trim().is_empty()).then_some(label);
+                    return Some(Dirty::Text);
+                }
+                ("y_label", CommandValue::Text(label)) => {
+                    node.props.bar_chart.y_label = (!label.trim().is_empty()).then_some(label);
+                    return Some(Dirty::Text);
+                }
+                ("auto_fit", CommandValue::Bool(auto_fit)) => {
+                    node.props.bar_chart.auto_fit = auto_fit;
+                    if auto_fit {
+                        node.props.bar_chart.value_min = None;
+                        node.props.bar_chart.value_max = None;
+                    }
+                    return Some(Dirty::Visual);
                 }
                 (_, _) => {
                     eprintln!(
@@ -9273,7 +9790,7 @@ impl WgpuState {
                     .widget_tree
                     .as_ref()
                     .and_then(|tree| find_widget(tree, id));
-                let (colormap, data_b64, data_format, startup_chrome) = node
+                let (colormap, data_b64, data_format, startup_chrome, interaction_mode) = node
                     .map(|n| {
                         let chrome = scatter_chrome_from_node(n);
                         (
@@ -9284,6 +9801,7 @@ impl WgpuState {
                             n.props.scatter_data_b64.clone(),
                             n.props.scatter_data_format,
                             chrome,
+                            scatter_interaction_mode_from_node(n),
                         )
                     })
                     .unwrap_or_else(|| {
@@ -9292,11 +9810,13 @@ impl WgpuState {
                             None,
                             ScatterPayloadFormat::default(),
                             scatter::ScatterChromeState::default(),
+                            scatter::ScatterInteractionMode::default(),
                         )
                     });
 
                 let widget_t0 = Instant::now();
                 let mut widget = self.take_scatter_widget();
+                widget.interaction_mode = interaction_mode;
                 self.retained_scatter_new_widget_timing
                     .record(widget_t0.elapsed().as_secs_f64() * 1000.0);
                 let decode_t0 = Instant::now();
@@ -9374,6 +9894,7 @@ impl WgpuState {
                         data_max,
                         payload_format: data_format,
                         payload_status: status,
+                        pending_fit_bounds: None,
                         primary_hover_meta: Vec::new(),
                         primary_hover_columns: Vec::new(),
                         tooltip_axis_labels: ["x".to_string(), "y".to_string(), "z".to_string()],
@@ -9382,6 +9903,15 @@ impl WgpuState {
                         pick_candidates_scratch: Vec::new(),
                     },
                 );
+            }
+        }
+        if let Some(tree) = &self.widget_tree {
+            for id in &current_ids {
+                if let (Some(runtime), Some(node)) =
+                    (self.scatters.get_mut(id), find_widget(tree, id))
+                {
+                    runtime.widget.interaction_mode = scatter_interaction_mode_from_node(node);
+                }
             }
         }
         self.retained_scatter_sync_timing
@@ -9981,9 +10511,72 @@ impl WgpuState {
         true
     }
 
+    fn activate_bar_chart_toolbar(&mut self, id: &str, pos: [f32; 2]) -> bool {
+        if self.widget_kind(id) != Some(WidgetKind::BarChart) {
+            return false;
+        }
+        let hit = {
+            let Some(layout) = self.current_layout.as_ref() else {
+                return false;
+            };
+            let Some(rect) = layout.visible_rect(id) else {
+                return false;
+            };
+            let Some(tree) = self.widget_tree.as_ref() else {
+                return false;
+            };
+            let Some(node) = find_node(tree, id) else {
+                return false;
+            };
+            bar_chart_toolbar_hit(
+                node,
+                self.scale_factor,
+                [rect.x, rect.y, rect.w, rect.h],
+                pos,
+            )
+        };
+        let Some(action) = hit else {
+            return false;
+        };
+        let Some(tree) = self.widget_tree.as_mut() else {
+            return false;
+        };
+        let Some(node) = find_widget_mut(tree, id) else {
+            return false;
+        };
+        match action {
+            "Fit" => {
+                node.props.bar_chart.auto_fit = true;
+                node.props.bar_chart.value_min = None;
+                node.props.bar_chart.value_max = None;
+            }
+            "Grid" => {
+                node.props.bar_chart.show_grid = !node.props.bar_chart.show_grid;
+            }
+            "Axes" => {
+                let visible = !(node.props.bar_chart.show_axes || node.props.bar_chart.show_ticks);
+                node.props.bar_chart.show_axes = visible;
+                node.props.bar_chart.show_ticks = visible;
+            }
+            _ => return false,
+        }
+        self.rebuild_primitives();
+        true
+    }
+
     fn line_plot_at(&self, pos: [f32; 2]) -> Option<String> {
         self.hit_test_ui(pos)
             .and_then(|(id, kind)| (kind == WidgetKind::LinePlot).then_some(id))
+    }
+
+    fn heatmap_at(&self, pos: [f32; 2]) -> Option<String> {
+        self.hit_test_ui(pos)
+            .and_then(|(id, kind)| (kind == WidgetKind::Heatmap).then_some(id))
+    }
+
+    fn bar_chart_at(&self, pos: [f32; 2]) -> Option<String> {
+        self.hit_test_ui(pos)
+            .and_then(|(id, kind)| (kind == WidgetKind::BarChart).then_some(id))
     }
 
     fn line_plot_interaction(&self, id: &str) -> Option<&str> {
@@ -10378,6 +10971,161 @@ impl WgpuState {
             self.rebuild_visuals();
         }
         changed
+    }
+
+    fn update_heatmap_hover(&mut self, pos: [f32; 2]) -> (bool, Vec<(String, String)>) {
+        let hit = self
+            .heatmap_at(pos)
+            .and_then(|id| self.heatmap_cell_at(&id, pos).map(|hover| (id, hover)));
+        let keep_id = hit.as_ref().map(|(id, _)| id.clone());
+        let mut changed = false;
+        let mut cleared_ids = Vec::new();
+        let mut payloads = Vec::new();
+        let Some(tree) = self.widget_tree.as_mut() else {
+            return (false, payloads);
+        };
+        clear_heatmap_hover_except(tree, keep_id.as_deref(), &mut changed, &mut cleared_ids);
+        for id in cleared_ids {
+            payloads.push((
+                id.clone(),
+                json!({"event":"hover_changed","widget_id": id}).to_string(),
+            ));
+        }
+        if let Some((id, hover)) = hit {
+            if let Some(node) = find_widget_mut(tree, &id) {
+                let should_update = node.props.heatmap.hover.as_ref().is_none_or(|current| {
+                    current.row != hover.row
+                        || current.col != hover.col
+                        || (current.value - hover.value).abs() > f32::EPSILON
+                });
+                if should_update {
+                    let payload = heatmap_hover_payload(&id, &hover);
+                    node.props.heatmap.hover = Some(hover);
+                    changed = true;
+                    payloads.push((id, payload));
+                }
+            }
+        }
+        if changed {
+            self.rebuild_visuals();
+        }
+        (changed, payloads)
+    }
+
+    fn clear_heatmap_hover_all(&mut self) -> (bool, Vec<(String, String)>) {
+        let Some(tree) = self.widget_tree.as_mut() else {
+            return (false, Vec::new());
+        };
+        let mut changed = false;
+        let mut cleared_ids = Vec::new();
+        clear_heatmap_hover_except(tree, None, &mut changed, &mut cleared_ids);
+        if changed {
+            self.rebuild_visuals();
+        }
+        let payloads = cleared_ids
+            .into_iter()
+            .map(|id| {
+                (
+                    id.clone(),
+                    json!({"event":"hover_changed","widget_id": id}).to_string(),
+                )
+            })
+            .collect();
+        (changed, payloads)
+    }
+
+    fn update_bar_chart_hover(&mut self, pos: [f32; 2]) -> (bool, Vec<(String, String)>) {
+        let hit = self
+            .bar_chart_at(pos)
+            .and_then(|id| self.bar_chart_bar_at(&id, pos).map(|hover| (id, hover)));
+        let keep_id = hit.as_ref().map(|(id, _)| id.clone());
+        let mut changed = false;
+        let mut cleared_ids = Vec::new();
+        let mut payloads = Vec::new();
+        let Some(tree) = self.widget_tree.as_mut() else {
+            return (false, payloads);
+        };
+        clear_bar_chart_hover_except(tree, keep_id.as_deref(), &mut changed, &mut cleared_ids);
+        for id in cleared_ids {
+            payloads.push((
+                id.clone(),
+                json!({"event":"hover_changed","widget_id": id}).to_string(),
+            ));
+        }
+        if let Some((id, hover)) = hit {
+            if let Some(node) = find_widget_mut(tree, &id) {
+                let should_update = node.props.bar_chart.hover.as_ref().is_none_or(|current| {
+                    current.index != hover.index
+                        || current.series_index != hover.series_index
+                        || (current.value - hover.value).abs() > f32::EPSILON
+                });
+                if should_update {
+                    let payload = bar_chart_hover_payload(&id, &hover);
+                    node.props.bar_chart.hover = Some(hover);
+                    changed = true;
+                    payloads.push((id, payload));
+                }
+            }
+        }
+        if changed {
+            self.rebuild_visuals();
+        }
+        (changed, payloads)
+    }
+
+    fn clear_bar_chart_hover_all(&mut self) -> (bool, Vec<(String, String)>) {
+        let Some(tree) = self.widget_tree.as_mut() else {
+            return (false, Vec::new());
+        };
+        let mut changed = false;
+        let mut cleared_ids = Vec::new();
+        clear_bar_chart_hover_except(tree, None, &mut changed, &mut cleared_ids);
+        if changed {
+            self.rebuild_visuals();
+        }
+        let payloads = cleared_ids
+            .into_iter()
+            .map(|id| {
+                (
+                    id.clone(),
+                    json!({"event":"hover_changed","widget_id": id}).to_string(),
+                )
+            })
+            .collect();
+        (changed, payloads)
+    }
+
+    fn bar_chart_bar_at(&self, id: &str, pos: [f32; 2]) -> Option<BarChartHoverProp> {
+        let layout = self.current_layout.as_ref()?;
+        let rect = layout.visible_rect(id)?;
+        let tree = self.widget_tree.as_ref()?;
+        let node = find_node(tree, id)?;
+        if node.kind != WidgetKind::BarChart {
+            return None;
+        }
+        primitive_bar_chart_bar_at(
+            node,
+            &self.theme,
+            self.scale_factor,
+            [rect.x, rect.y, rect.w, rect.h],
+            pos,
+        )
+    }
+
+    fn heatmap_cell_at(&self, id: &str, pos: [f32; 2]) -> Option<HeatmapHoverProp> {
+        let layout = self.current_layout.as_ref()?;
+        let rect = layout.visible_rect(id)?;
+        let tree = self.widget_tree.as_ref()?;
+        let node = find_node(tree, id)?;
+        if node.kind != WidgetKind::Heatmap {
+            return None;
+        }
+        primitive_heatmap_cell_at(
+            node,
+            self.scale_factor,
+            [rect.x, rect.y, rect.w, rect.h],
+            pos,
+        )
     }
 
     fn nearest_line_plot_point(&self, id: &str, pos: [f32; 2]) -> Option<LinePlotHoverProp> {
@@ -11760,7 +12508,7 @@ impl WgpuState {
         let tree = self.widget_tree.as_ref()?;
         let layout = self.current_layout.as_ref()?;
         let state = self.widget_state.as_ref()?;
-        scroll_container_at_pos(tree, layout, state, pos)
+        active_scroll_container_at_pos(tree, layout, state, pos)
     }
 
     fn keyboard_scroll_container_target(
@@ -11775,7 +12523,8 @@ impl WgpuState {
         }) {
             return Some(target);
         }
-        let id = fallback_pos.and_then(|pos| scroll_container_at_pos(tree, layout, state, pos))?;
+        let id = fallback_pos
+            .and_then(|pos| active_scroll_container_at_pos(tree, layout, state, pos))?;
         let node = find_widget(tree, &id)?;
         scroll_container_keyboard_target_by_id(node, layout, state)
     }
@@ -11857,7 +12606,7 @@ impl WgpuState {
         None
     }
 
-    fn text_area_scroll_geometry(&self, id: &str) -> Option<(f32, f32)> {
+    fn text_area_scroll_geometry(&self, id: &str) -> Option<(f32, f32, f32)> {
         let tree = self.widget_tree.as_ref()?;
         let layout = self.current_layout.as_ref()?;
         let node = crate::overlays::find_node(tree, id)?;
@@ -11866,19 +12615,28 @@ impl WgpuState {
             .or_else(|| layout.rects.get(id).copied())?;
         let pad = self.theme.spacing * self.scale_factor;
         let visible_h = (rect.h - pad * 2.0).max(1.0);
+        let gutter_w = if node.kind == WidgetKind::CodeEditor {
+            code_editor_gutter_width_for_style(&node.style, self.scale_factor)
+                .min((rect.w - pad * 2.0).max(1.0) * 0.5)
+        } else {
+            0.0
+        };
+        let visible_w = (rect.w - pad * 2.0 - gutter_w).max(1.0);
         let font_size = crate::text::text_font_size(node, &self.theme, self.scale_factor);
         let line_h = crate::text::text_line_height(font_size, &self.theme, self.scale_factor);
-        Some((visible_h, line_h))
+        Some((visible_w, visible_h, line_h))
     }
 
-    fn scroll_text_area(&mut self, id: &str, wheel_y: f32) -> bool {
-        let Some((visible_h, line_h)) = self.text_area_scroll_geometry(id) else {
+    fn scroll_text_area(&mut self, id: &str, wheel_x: f32, wheel_y: f32) -> bool {
+        let Some((_visible_w, visible_h, line_h)) = self.text_area_scroll_geometry(id) else {
             return false;
         };
+        let delta_x = -wheel_x * line_h * 3.0;
+        let delta_y = -wheel_y * line_h * 3.0;
         let changed = self
             .widget_state
             .as_mut()
-            .map(|state| state.scroll_text_area(id, -wheel_y * line_h * 3.0, visible_h, line_h))
+            .map(|state| state.scroll_text_area(id, delta_x, delta_y, visible_h, line_h))
             .unwrap_or(false);
         if changed {
             self.rebuild_visuals();
@@ -11965,12 +12723,15 @@ impl WgpuState {
     }
 
     fn ensure_text_area_cursor_visible(&mut self, id: &str) -> bool {
-        let Some((visible_h, line_h)) = self.text_area_scroll_geometry(id) else {
+        let Some((visible_w, visible_h, line_h)) = self.text_area_scroll_geometry(id) else {
             return false;
         };
+        let caret_x = self.caret_positions.get(id).map(|xy| xy[0]);
         self.widget_state
             .as_mut()
-            .map(|state| state.ensure_text_area_cursor_visible(id, visible_h, line_h))
+            .map(|state| {
+                state.ensure_text_area_cursor_visible(id, visible_w, visible_h, line_h, caret_x)
+            })
             .unwrap_or(false)
     }
 
@@ -12063,6 +12824,7 @@ impl WgpuState {
                 self.widget_kind(id),
                 Some(WidgetKind::TextArea | WidgetKind::CodeEditor)
             ) {
+                self.rebuild_text();
                 self.ensure_text_area_cursor_visible(id);
             }
         }
@@ -14208,15 +14970,21 @@ impl DragonApp {
                     let Some(rt) = gpu.scatters.get_mut(&id) else {
                         return false;
                     };
+                    if !rt.widget.has_visible_viewport() {
+                        rt.pending_fit_bounds = Some(bounds);
+                        rt.fitted_once = false;
+                        return false;
+                    }
                     if let Some(b) = bounds {
                         let min = glam::Vec3::new(b[0], b[1], b[2]);
                         let max = glam::Vec3::new(b[3], b[4], b[5]);
                         // Do not overwrite data_min/data_max — fit is a camera operation only.
                         rt.widget.fit_to_bounds(min, max, &gpu.queue);
                         rt.fitted_once = true;
-                    } else if !rt.points.is_empty() || rt.widget.merged_extra_bounds().is_some() {
+                    } else if rt.has_fit_bounds() {
                         let (bmn, bmx) = rt.merged_bounds();
                         rt.widget.fit_to_bounds(bmn, bmx, &gpu.queue);
+                        rt.fitted_once = true;
                     }
                     let (bmn, bmx) = rt.merged_bounds();
                     rt.widget.refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
@@ -16880,6 +17648,16 @@ impl DragonApp {
                     needs_text_rebuild = true;
                 }
             }
+            WidgetKind::BarChart => {
+                let pos = self.last_mouse_pos.unwrap_or([0.0, 0.0]);
+                if self
+                    .gpu
+                    .as_mut()
+                    .is_some_and(|gpu| gpu.activate_bar_chart_toolbar(id, pos))
+                {
+                    needs_text_rebuild = true;
+                }
+            }
             _ => {}
         }
 
@@ -17845,6 +18623,7 @@ impl DragonApp {
         if handled {
             if let Some(gpu) = &mut self.gpu {
                 if multiline {
+                    gpu.rebuild_text();
                     gpu.ensure_text_area_cursor_visible(id);
                 }
                 gpu.rebuild_visuals();
@@ -17970,6 +18749,16 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                     next_deadline
                         .map(|deadline| deadline.min(transition_deadline))
                         .unwrap_or(transition_deadline),
+                );
+            }
+            if gpu.has_active_loading_spinner() {
+                gpu.rebuild_widget_primitives();
+                request_redraw = true;
+                let spinner_deadline = Instant::now() + Duration::from_millis(16);
+                next_deadline = Some(
+                    next_deadline
+                        .map(|deadline| deadline.min(spinner_deadline))
+                        .unwrap_or(spinner_deadline),
                 );
             }
         }
@@ -18249,6 +19038,34 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                         } else {
                             // ── press ─────────────────────────────────────────
                             let pos = self.last_mouse_pos.unwrap_or([0.0, 0.0]);
+                            if let Some(close_id) =
+                                self.gpu.as_ref().and_then(|g| g.modal_close_button_at(pos))
+                            {
+                                if let Some(closed) =
+                                    self.gpu.as_mut().and_then(WgpuState::close_active_modal)
+                                {
+                                    self.set_focus(None);
+                                    self.record_runtime_command(
+                                        "ModalClose",
+                                        Some(closed),
+                                        Some("close_button".to_string()),
+                                        Some(Dirty::Layout),
+                                        "applied",
+                                        true,
+                                    );
+                                } else {
+                                    self.record_runtime_command(
+                                        "ModalClose",
+                                        Some(close_id),
+                                        Some("close_button".to_string()),
+                                        Some(Dirty::Layout),
+                                        "no-op: modal not found",
+                                        false,
+                                    );
+                                }
+                                self.request_redraw();
+                                return;
+                            }
                             if self
                                 .gpu
                                 .as_ref()
@@ -18311,9 +19128,8 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                 return;
                             }
 
-                            if let Some(hit) = (!modal_active)
-                                .then(|| self.gpu.as_ref().and_then(|g| g.panel_scrollbar_at(pos)))
-                                .flatten()
+                            if let Some(hit) =
+                                self.gpu.as_ref().and_then(|g| g.panel_scrollbar_at(pos))
                             {
                                 self.set_focus(None);
                                 if let Some(gpu) = &mut self.gpu {
@@ -18638,13 +19454,26 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                         gpu.hover_change_requires_layout(old_hover.as_deref(), None);
                     let cleared = gpu.update_hover_state(None, None);
                     let cleared_line_plot_hover = gpu.clear_line_plot_hover_all();
-                    if cleared || cleared_line_plot_hover {
+                    let (cleared_heatmap_hover, heatmap_payloads) = gpu.clear_heatmap_hover_all();
+                    let (cleared_bar_chart_hover, bar_chart_payloads) =
+                        gpu.clear_bar_chart_hover_all();
+                    if cleared
+                        || cleared_line_plot_hover
+                        || cleared_heatmap_hover
+                        || cleared_bar_chart_hover
+                    {
                         if requires_layout {
                             gpu.apply_layout();
                         } else {
                             gpu.rebuild_visuals();
                         }
                         self.request_redraw();
+                    }
+                    for (id, payload) in heatmap_payloads {
+                        self.emit_change(&id, ChangeValue::Text(payload));
+                    }
+                    for (id, payload) in bar_chart_payloads {
+                        self.emit_change(&id, ChangeValue::Text(payload));
                     }
                 }
                 let mut stale_payloads: Vec<(String, String)> = Vec::new();
@@ -18752,7 +19581,13 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                     if self.pan_active {
                                         runtime.widget.camera.pan(delta);
                                     } else if self.orbit_active {
-                                        runtime.widget.camera.orbit(delta);
+                                        if runtime.widget.interaction_mode
+                                            == scatter::ScatterInteractionMode::Pan2D
+                                        {
+                                            runtime.widget.camera.pan(delta);
+                                        } else {
+                                            runtime.widget.camera.orbit(delta);
+                                        }
                                     }
                                     runtime.widget.update_camera(&gpu.queue);
                                     let (bmn, bmx) = runtime.merged_bounds();
@@ -18883,6 +19718,30 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                         .is_some_and(|gpu| gpu.update_line_plot_hover(new_pos))
                     {
                         self.request_redraw();
+                    }
+
+                    let (heatmap_hover_changed, heatmap_payloads) = self
+                        .gpu
+                        .as_mut()
+                        .map(|gpu| gpu.update_heatmap_hover(new_pos))
+                        .unwrap_or((false, Vec::new()));
+                    if heatmap_hover_changed {
+                        self.request_redraw();
+                    }
+                    for (id, payload) in heatmap_payloads {
+                        self.emit_change(&id, ChangeValue::Text(payload));
+                    }
+
+                    let (bar_chart_hover_changed, bar_chart_payloads) = self
+                        .gpu
+                        .as_mut()
+                        .map(|gpu| gpu.update_bar_chart_hover(new_pos))
+                        .unwrap_or((false, Vec::new()));
+                    if bar_chart_hover_changed {
+                        self.request_redraw();
+                    }
+                    for (id, payload) in bar_chart_payloads {
+                        self.emit_change(&id, ChangeValue::Text(payload));
                     }
 
                     // Scatter hover tooltip: pick nearest point and show a floating label.
@@ -19026,11 +19885,21 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                 };
                 if let Some(pos) = self.last_mouse_pos {
                     if let Some(id) = self.gpu.as_ref().and_then(|gpu| gpu.text_area_at(pos)) {
-                        if self
-                            .gpu
-                            .as_mut()
-                            .is_some_and(|gpu| gpu.scroll_text_area(&id, scroll_y))
-                        {
+                        let text_scroll_x = if scroll_x.abs() >= 0.5 {
+                            scroll_x
+                        } else if self.modifiers.shift_key() {
+                            scroll_y
+                        } else {
+                            0.0
+                        };
+                        let text_scroll_y = if self.modifiers.shift_key() && scroll_x.abs() < 0.5 {
+                            0.0
+                        } else {
+                            scroll_y
+                        };
+                        if self.gpu.as_mut().is_some_and(|gpu| {
+                            gpu.scroll_text_area(&id, text_scroll_x, text_scroll_y)
+                        }) {
                             self.request_redraw();
                         }
                         return;
@@ -19184,6 +20053,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                     self.emit_change(&id, ChangeValue::Text(value));
                                 }
                                 if let Some(gpu) = &mut self.gpu {
+                                    gpu.rebuild_text();
                                     gpu.ensure_text_area_cursor_visible(&id);
                                     gpu.rebuild_visuals();
                                 }

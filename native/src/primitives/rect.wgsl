@@ -389,6 +389,56 @@ fn fs_main(in: VertOut) -> @location(0) vec4<f32> {
     let shape_inset = max(in.params.y, 0.0);
     let shape_half_size = max(in.half_size - vec2<f32>(shape_inset, shape_inset), vec2<f32>(0.5, 0.5));
     let p = in.local_px - in.half_size; // centered coords
+    if (in.params.w > 3.5 && in.params.w < 4.5) {
+        let radius = min(shape_half_size.x, shape_half_size.y);
+        let dist = length(p);
+        let inner_ratio = clamp(in.paint.w, 0.0, 0.95);
+        let inner_radius = inner_ratio * radius;
+        let ring_sdf = max(dist - radius, inner_radius - dist);
+        let ring_mask = 1.0 - smoothstep(0.0, 1.0, ring_sdf);
+
+        let tau = 6.28318530718;
+        let start = in.paint.y;
+        let sweep = clamp(in.paint.z, 0.0001, tau);
+        let angle = atan2(p.y, p.x);
+        var rel = angle - start;
+        rel = rel - floor(rel / tau) * tau;
+
+        let mid_radius = (radius + inner_radius) * 0.5;
+        let stroke_radius = max((radius - inner_radius) * 0.5, 0.001);
+        let angular_sdf = max(-rel, rel - sweep) * mid_radius;
+        let radial_sdf = abs(dist - mid_radius) - stroke_radius;
+        let body_sdf = max(radial_sdf, angular_sdf);
+        let start_center = vec2<f32>(cos(start), sin(start)) * mid_radius;
+        let end_angle = start + sweep;
+        let end_center = vec2<f32>(cos(end_angle), sin(end_angle)) * mid_radius;
+        let start_cap_sdf = length(p - start_center) - stroke_radius;
+        let end_cap_sdf = length(p - end_center) - stroke_radius;
+        let arc_sdf = min(body_sdf, min(start_cap_sdf, end_cap_sdf));
+        let arc_mask = 1.0 - smoothstep(0.0, 1.0, arc_sdf);
+        let tail_alpha = clamp(in.gradient_stops.x, 0.0, 1.0);
+        var fade_progress = rel;
+        if (rel > sweep) {
+            if (start_cap_sdf <= end_cap_sdf) {
+                fade_progress = 0.0;
+            } else {
+                fade_progress = sweep;
+            }
+        }
+        let fade = tail_alpha + (1.0 - tail_alpha) * smoothstep(0.0, sweep * 0.72, fade_progress);
+
+        let track_a = ring_mask * in.color2.a;
+        let arc_a = arc_mask * in.color.a * fade;
+        let out_a = arc_a + track_a * (1.0 - arc_a);
+        if (out_a < 0.001) {
+            discard;
+        }
+        let out_rgb = (
+            in.color.rgb * arc_a +
+            in.color2.rgb * track_a * (1.0 - arc_a)
+        ) / max(out_a, 0.001);
+        return vec4<f32>(out_rgb, out_a);
+    }
     var sdf: f32;
     if (in.params.w > 1.5 && in.params.w < 2.5) {
         let radius = min(shape_half_size.x, shape_half_size.y);

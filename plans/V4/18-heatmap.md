@@ -1,5 +1,7 @@
 # V4 Heatmap
 
+Status: implemented in first slice.
+
 ## Objective
 
 Add matrix/grid visualization for correlation matrices, sensor arrays, images,
@@ -30,4 +32,3 @@ dg.Heatmap(matrix, x_labels=cols, y_labels=rows, colormap="viridis")
 - Large matrices render without primitive explosion.
 - Small labeled matrices are readable.
 - Hover callback identifies cell.
-

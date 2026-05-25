@@ -36,6 +36,7 @@ drag-and-drop interactions.
 - `ScatterPlot2D`
 - `Heatmap`
 - `BarChart`
+- Layout torture suite / framework hardening
 
 ## Common Requirements
 
@@ -76,10 +77,15 @@ Add V4 examples as features land:
 - `examples/splitter_tool.py`
 - `examples/command_palette_tool.py`
 - `examples/drag_drop_tool.py`
+- `examples/css_feature_probes/layout_flex_stress_probe.py`
+- `examples/css_feature_probes/layout_panel_bounds_probe.py`
+- `examples/css_feature_probes/layout_grid_masonry_probe.py`
+- `examples/css_feature_probes/layout_overlay_collision_probe.py`
+- `examples/css_feature_probes/layout_scrollable_composites_probe.py`
+- `examples/css_feature_probes/layout_plot_embedding_probe.py`
 
 Update:
 
 - `docs/widgets.md`
 - `docs/library-overview.md`
 - `examples/all_features_v3_demo.py` or a new V4 demo when enough widgets land
-

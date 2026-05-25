@@ -124,6 +124,8 @@ pub struct WidgetState {
     pub text_cursor: HashMap<String, usize>,
     /// TextArea vertical scroll offset in physical pixels keyed by widget id.
     pub text_scroll_y: HashMap<String, f32>,
+    /// TextArea horizontal scroll offset in physical pixels keyed by widget id.
+    pub text_scroll_x: HashMap<String, f32>,
     /// Scrollable container vertical offset in physical pixels keyed by widget id.
     pub container_scroll_y: HashMap<String, f32>,
     /// Scrollable container horizontal offset in physical pixels keyed by widget id.
@@ -536,6 +538,7 @@ impl WidgetState {
         self.text_cursor.insert(id.to_string(), value.len());
         self.text_val.insert(id.to_string(), value.clone());
         self.text_scroll_y.insert(id.to_string(), 0.0);
+        self.text_scroll_x.insert(id.to_string(), 0.0);
         self.close_popups();
         Some(value)
     }
@@ -667,9 +670,14 @@ impl WidgetState {
             .clamp(0.0, max_scroll)
     }
 
+    pub fn text_area_scroll_x(&self, id: &str) -> f32 {
+        self.text_scroll_x.get(id).copied().unwrap_or(0.0).max(0.0)
+    }
+
     pub fn scroll_text_area(
         &mut self,
         id: &str,
+        delta_x: f32,
         delta_y: f32,
         visible_h: f32,
         line_h: f32,
@@ -678,13 +686,17 @@ impl WidgetState {
             return false;
         };
         let max_scroll = text_area_max_scroll(value, visible_h, line_h);
-        let current = self.text_scroll_y.get(id).copied().unwrap_or(0.0);
-        let next = (current + delta_y).clamp(0.0, max_scroll);
-        if (next - current).abs() <= f32::EPSILON {
-            self.text_scroll_y.insert(id.to_string(), next);
+        let current_y = self.text_scroll_y.get(id).copied().unwrap_or(0.0);
+        let current_x = self.text_area_scroll_x(id);
+        let next_y = (current_y + delta_y).clamp(0.0, max_scroll);
+        let next_x = (current_x + delta_x).max(0.0);
+        let changed =
+            (next_y - current_y).abs() > f32::EPSILON || (next_x - current_x).abs() > f32::EPSILON;
+        self.text_scroll_y.insert(id.to_string(), next_y);
+        self.text_scroll_x.insert(id.to_string(), next_x);
+        if !changed {
             return false;
         }
-        self.text_scroll_y.insert(id.to_string(), next);
         true
     }
 
@@ -729,37 +741,55 @@ impl WidgetState {
     pub fn ensure_text_area_cursor_visible(
         &mut self,
         id: &str,
+        visible_w: f32,
         visible_h: f32,
         line_h: f32,
+        caret_x: Option<f32>,
     ) -> bool {
         let Some(value) = self.text_val.get(id) else {
             return false;
         };
         if visible_h <= 0.0 || line_h <= 0.0 {
             self.text_scroll_y.insert(id.to_string(), 0.0);
+            self.text_scroll_x.insert(id.to_string(), 0.0);
             return false;
         }
         let cursor = self.text_cursor.get(id).copied().unwrap_or(value.len());
         let cursor = clamp_boundary(value, cursor);
         let (line, _) = line_column_for_cursor(value, cursor);
         let max_scroll = text_area_max_scroll(value, visible_h, line_h);
-        let current = self
+        let current_y = self
             .text_scroll_y
             .get(id)
             .copied()
             .unwrap_or(0.0)
             .clamp(0.0, max_scroll);
+        let current_x = self.text_area_scroll_x(id);
         let caret_top = line as f32 * line_h;
         let caret_bottom = caret_top + line_h;
-        let mut next = current;
-        if caret_top < next {
-            next = caret_top;
-        } else if caret_bottom > next + visible_h {
-            next = caret_bottom - visible_h;
+        let mut next_y = current_y;
+        if caret_top < next_y {
+            next_y = caret_top;
+        } else if caret_bottom > next_y + visible_h {
+            next_y = caret_bottom - visible_h;
         }
-        next = next.clamp(0.0, max_scroll);
-        self.text_scroll_y.insert(id.to_string(), next);
-        (next - current).abs() > f32::EPSILON
+        next_y = next_y.clamp(0.0, max_scroll);
+
+        let mut next_x = current_x;
+        if let Some(caret_x) = caret_x.filter(|value| value.is_finite()) {
+            let visible_w = visible_w.max(1.0);
+            let margin = (line_h * 0.75).max(8.0).min(visible_w * 0.35);
+            let right_edge = (visible_w - margin).max(margin);
+            if caret_x < margin {
+                next_x = (current_x - (margin - caret_x)).max(0.0);
+            } else if caret_x > right_edge {
+                next_x = current_x + (caret_x - right_edge);
+            }
+        }
+
+        self.text_scroll_y.insert(id.to_string(), next_y);
+        self.text_scroll_x.insert(id.to_string(), next_x);
+        (next_y - current_y).abs() > f32::EPSILON || (next_x - current_x).abs() > f32::EPSILON
     }
 
     pub fn set_dropdown_open(&mut self, id: Option<String>) {
@@ -1005,6 +1035,11 @@ impl WidgetState {
         for (id, scroll) in &previous.text_scroll_y {
             if self.text_scroll_y.contains_key(id) {
                 self.text_scroll_y.insert(id.clone(), scroll.max(0.0));
+            }
+        }
+        for (id, scroll) in &previous.text_scroll_x {
+            if self.text_scroll_x.contains_key(id) {
+                self.text_scroll_x.insert(id.clone(), scroll.max(0.0));
             }
         }
         for (id, scroll) in &previous.container_scroll_x {
@@ -1444,6 +1479,7 @@ fn collect_state(node: &WidgetNode, s: &mut WidgetState, parent: Option<&WidgetN
             s.text_val.insert(node.id.clone(), value);
             if matches!(node.kind, WidgetKind::TextArea | WidgetKind::CodeEditor) {
                 s.text_scroll_y.insert(node.id.clone(), 0.0);
+                s.text_scroll_x.insert(node.id.clone(), 0.0);
             }
             if let Some(placeholder) = &node.props.placeholder {
                 s.text_placeholder
@@ -1790,6 +1826,8 @@ fn is_interactive(kind: &WidgetKind) -> bool {
             | WidgetKind::LogView
             | WidgetKind::DataFrameTable
             | WidgetKind::Histogram
+            | WidgetKind::BarChart
+            | WidgetKind::Heatmap
             | WidgetKind::LinePlot
             | WidgetKind::Collapsible
             | WidgetKind::Tab
@@ -2221,7 +2259,7 @@ mod tests {
             .insert("notes".to_string(), "one\ntwo\nthree\nfour".len());
         state.text_scroll_y.insert("notes".to_string(), 0.0);
 
-        assert!(state.ensure_text_area_cursor_visible("notes", 20.0, 10.0));
+        assert!(state.ensure_text_area_cursor_visible("notes", 160.0, 20.0, 10.0, None));
         assert_eq!(state.text_area_scroll_y("notes", 20.0, 10.0), 20.0);
     }
 
@@ -2232,10 +2270,34 @@ mod tests {
             .text_val
             .insert("notes".to_string(), "one\ntwo\nthree".to_string());
 
-        assert!(state.scroll_text_area("notes", 999.0, 20.0, 10.0));
+        assert!(state.scroll_text_area("notes", 0.0, 999.0, 20.0, 10.0));
         assert_eq!(state.text_area_scroll_y("notes", 20.0, 10.0), 10.0);
-        assert!(state.scroll_text_area("notes", -999.0, 20.0, 10.0));
+        assert!(state.scroll_text_area("notes", 0.0, -999.0, 20.0, 10.0));
         assert_eq!(state.text_area_scroll_y("notes", 20.0, 10.0), 0.0);
+    }
+
+    #[test]
+    fn text_area_cursor_visibility_updates_horizontal_scroll_offset() {
+        let mut state = WidgetState::default();
+        state.text_val.insert(
+            "code".to_string(),
+            "0123456789abcdefghijklmnopqrstuvwxyz".to_string(),
+        );
+        state.text_cursor.insert("code".to_string(), 24);
+        state.text_scroll_x.insert("code".to_string(), 0.0);
+
+        assert!(state.ensure_text_area_cursor_visible("code", 120.0, 80.0, 18.0, Some(260.0)));
+        assert!(
+            state.text_area_scroll_x("code") > 0.0,
+            "caret to the right of the viewport should move horizontal text scroll"
+        );
+        let shifted = state.text_area_scroll_x("code");
+
+        assert!(state.ensure_text_area_cursor_visible("code", 120.0, 80.0, 18.0, Some(-12.0)));
+        assert!(
+            state.text_area_scroll_x("code") < shifted,
+            "caret to the left of the viewport should reduce horizontal text scroll"
+        );
     }
 
     #[test]

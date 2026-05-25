@@ -35,3 +35,9 @@ dg.BarChart(frame, category="month", value=["sales", "cost"], grouped=True)
 - Hundreds of bars remain performant.
 - Hover callback returns category, series, value, and index.
 
+## Implementation Status
+
+- Implemented `dg.BarChart` with direct labels/values and frame aggregation.
+- Added vertical, horizontal, and grouped native primitive rendering.
+- Reused histogram-style plot chrome, toolbar buttons, grid/axis/tick labels, and hover readout treatment.
+- Added `examples/css_feature_probes/bar_chart_probe.py`.

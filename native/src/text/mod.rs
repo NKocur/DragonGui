@@ -43,6 +43,46 @@ use crate::table;
 use crate::theme::Theme;
 use crate::toast::{toast_colors, toast_padding, toast_rect, toast_stack_index, ToastOverlay};
 
+const LOADING_SPINNER_DEFAULT_SIZE_LP: f32 = 18.0;
+const LOADING_SPINNER_GAP_LP: f32 = 8.0;
+
+fn raw_prop_f32(node: &WidgetNode, name: &str) -> Option<f32> {
+    node.props
+        .raw_props
+        .get(name)
+        .and_then(|value| value.as_f64())
+        .map(|value| value as f32)
+        .filter(|value| value.is_finite())
+}
+
+fn raw_prop_bool(node: &WidgetNode, name: &str) -> Option<bool> {
+    node.props
+        .raw_props
+        .get(name)
+        .and_then(|value| value.as_bool())
+}
+
+fn raw_prop_str<'a>(node: &'a WidgetNode, name: &str) -> Option<&'a str> {
+    node.props
+        .raw_props
+        .get(name)
+        .and_then(|value| value.as_str())
+}
+
+fn icon_button_symbol_text(node: &WidgetNode) -> Option<&'static str> {
+    match raw_prop_str(node, "icon")? {
+        "help" | "question" => Some("?"),
+        "warning" | "alert" => Some("!"),
+        _ => None,
+    }
+}
+
+fn loading_spinner_size_lp(node: &WidgetNode) -> f32 {
+    raw_prop_f32(node, "size")
+        .filter(|value| *value > 0.0)
+        .unwrap_or(LOADING_SPINNER_DEFAULT_SIZE_LP)
+}
+
 // ---------------------------------------------------------------------------
 // Layout constants (logical pixels × scale_factor = physical pixels)
 // ---------------------------------------------------------------------------
@@ -522,6 +562,11 @@ impl TextRendererDg {
                     screen_y - font_size * 0.5,
                 )
             }
+            "plot-y-category" => (
+                TextAlign::Right,
+                label_clip.left as f32,
+                screen_y - font_size * 0.5,
+            ),
             "top" => (TextAlign::Center, screen_x - avail_w * 0.5, screen_y),
             "bottom" => (
                 TextAlign::Center,
@@ -567,6 +612,89 @@ impl TextRendererDg {
             &mut caret_positions,
             TextRenderOptions::default(),
         );
+    }
+
+    pub fn push_overlay_panel_rect(
+        &mut self,
+        rect: [f32; 4],
+        radius: f32,
+        color: [f32; 4],
+        clip: TextBounds,
+    ) {
+        if rect[2] <= 0.0 || rect[3] <= 0.0 {
+            return;
+        }
+        let width = rect[2].ceil().clamp(1.0, u16::MAX as f32) as u16;
+        let height = rect[3].ceil().clamp(1.0, u16::MAX as f32) as u16;
+        let radius = radius.round().clamp(0.0, width.min(height) as f32 * 0.5) as u16;
+        let panel_bounds = TextBounds {
+            left: rect[0].floor() as i32,
+            top: rect[1].floor() as i32,
+            right: (rect[0] + width as f32).ceil() as i32,
+            bottom: (rect[1] + height as f32).ceil() as i32,
+        };
+        let clip = intersect_text_bounds(clip, panel_bounds);
+        if clip.right <= clip.left || clip.bottom <= clip.top {
+            return;
+        }
+        let Some(glyph_id) = self.register_panel_rect_glyph(width, height, radius) else {
+            return;
+        };
+        let mut buffer = Buffer::new(&mut self.font_system, Metrics::new(1.0, 1.0));
+        buffer.set_size(
+            &mut self.font_system,
+            Some(width as f32),
+            Some(height as f32),
+        );
+        let key = TextKey {
+            text: String::new(),
+            font_family: String::new(),
+            font_weight: Weight::NORMAL.0,
+            font_style: FontStyle::Normal,
+            tabular_nums: false,
+            letter_spacing_milli: 0,
+            font_size_milli: 1000,
+            line_height_milli: 1000,
+            width_milli: i32::from(width) * 1000,
+            wrap: false,
+        };
+        self.entries.push(TextEntry {
+            key,
+            buffer,
+            left: rect[0].floor(),
+            top: rect[1].floor(),
+            scale: 1.0,
+            clip,
+            untransformed_clip: clip,
+            color: glyph_color(color),
+            custom_glyphs: vec![CustomGlyph {
+                id: glyph_id,
+                left: 0.0,
+                top: 0.0,
+                width: width as f32,
+                height: height as f32,
+                color: None,
+                snap_to_physical_pixel: true,
+                metadata: 0,
+            }],
+        });
+    }
+
+    fn register_panel_rect_glyph(
+        &mut self,
+        width: u16,
+        height: u16,
+        radius: u16,
+    ) -> Option<CustomGlyphId> {
+        let key = AxisLabelGlyphKey {
+            text: format!("__dg_panel_rect_{width}_{height}_{radius}"),
+            font_size_milli: 0,
+            rotate_ccw: false,
+        };
+        if let Some(id) = self.axis_label_glyph_ids.get(&key).copied() {
+            return Some(id);
+        }
+        self.register_axis_label_glyph(key, panel_rect_glyph_image(width, height, radius))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -892,6 +1020,51 @@ fn axis_label_custom_glyph_image(
         data: image.data.clone(),
         content_type: ContentType::Mask,
     })
+}
+
+fn panel_rect_glyph_image(width: u16, height: u16, radius: u16) -> AxisLabelGlyphImage {
+    let width_usize = width as usize;
+    let height_usize = height as usize;
+    let radius = (radius as f32)
+        .min(width as f32 * 0.5)
+        .min(height as f32 * 0.5);
+    let mut data = vec![255_u8; width_usize.saturating_mul(height_usize)];
+    if radius <= 0.0 || width == 0 || height == 0 {
+        return AxisLabelGlyphImage {
+            width,
+            height,
+            data,
+        };
+    }
+
+    let samples = 4usize;
+    let inv_samples = 1.0 / samples as f32;
+    for y in 0..height_usize {
+        for x in 0..width_usize {
+            let mut covered = 0usize;
+            for sy in 0..samples {
+                for sx in 0..samples {
+                    let px = x as f32 + (sx as f32 + 0.5) * inv_samples;
+                    let py = y as f32 + (sy as f32 + 0.5) * inv_samples;
+                    let cx = px.clamp(radius, width as f32 - radius);
+                    let cy = py.clamp(radius, height as f32 - radius);
+                    let dx = px - cx;
+                    let dy = py - cy;
+                    if dx * dx + dy * dy <= radius * radius {
+                        covered += 1;
+                    }
+                }
+            }
+            data[y * width_usize + x] =
+                ((covered as f32 / (samples * samples) as f32) * 255.0).round() as u8;
+        }
+    }
+
+    AxisLabelGlyphImage {
+        width,
+        height,
+        data,
+    }
 }
 
 struct AxisLabelMask {
@@ -1388,6 +1561,7 @@ fn collect_text(
     let subtree_text_start = out.len();
     let primary_part_text = match node.kind {
         WidgetKind::ProgressBar => base_part_style(&node.style, "label").map(|part| &part.text),
+        WidgetKind::LoadingSpinner => base_part_style(&node.style, "label").map(|part| &part.text),
         WidgetKind::Tab => base_part_style(&node.style, "tab").map(|part| &part.text),
         WidgetKind::NavItem => base_part_style(&node.style, "item").map(|part| &part.text),
         WidgetKind::Selectable => base_part_style(&node.style, "label").map(|part| &part.text),
@@ -1396,6 +1570,7 @@ fn collect_text(
         WidgetKind::ToggleSwitch => base_part_style(&node.style, "label").map(|part| &part.text),
         WidgetKind::DragNumber => base_part_style(&node.style, "value").map(|part| &part.text),
         WidgetKind::Collapsible => base_part_style(&node.style, "header").map(|part| &part.text),
+        WidgetKind::IconButton => base_part_style(&node.style, "icon").map(|part| &part.text),
         _ => None,
     };
     let font_size = primary_part_text
@@ -1404,23 +1579,39 @@ fn collect_text(
         .unwrap_or_else(|| {
             if matches!(node.kind, WidgetKind::Badge | WidgetKind::Tag) {
                 badge_font_size_lp(&node.style, theme) * sf
+            } else if node.kind == WidgetKind::IconButton {
+                (theme.font_size + 2.0).max(14.0) * sf
             } else {
                 text_font_size(node, theme, sf)
             }
         });
-    let line_height =
-        text_line_height_from_styles(primary_part_text, &node.style.text, font_size, theme, sf);
+    let line_height = if matches!(node.kind, WidgetKind::Badge | WidgetKind::Tag) {
+        text_line_height_from_styles(primary_part_text, &node.style.text, font_size, theme, sf)
+            .max(standalone_badge_line_height(node, font_size, theme, sf))
+    } else {
+        text_line_height_from_styles(primary_part_text, &node.style.text, font_size, theme, sf)
+    };
     let font_family = primary_part_text
         .and_then(|text| text.font_family.as_ref())
         .or(node.style.text.font_family.as_ref());
     let font_weight = primary_part_text
         .and_then(|text| text.font_weight)
         .or(node.style.text.font_weight)
-        .unwrap_or(Weight::NORMAL.0);
+        .unwrap_or_else(|| {
+            if node.kind == WidgetKind::IconButton {
+                Weight::SEMIBOLD.0
+            } else {
+                Weight::NORMAL.0
+            }
+        });
     let align = primary_part_text
         .and_then(|text| text.text_align)
         .or(node.style.text.text_align)
         .unwrap_or(TextAlign::Left);
+    let has_explicit_text_align = primary_part_text
+        .and_then(|text| text.text_align)
+        .or(node.style.text.text_align)
+        .is_some();
     let text_options = text_options_from_styles(primary_part_text, &node.style.text);
     let is_text_widget = matches!(
         node.kind,
@@ -1447,8 +1638,10 @@ fn collect_text(
             | WidgetKind::NumberInput
             | WidgetKind::DragNumber
             | WidgetKind::ProgressBar
+            | WidgetKind::LoadingSpinner
             | WidgetKind::Tab
             | WidgetKind::NavItem
+            | WidgetKind::IconButton
             | WidgetKind::HtmlReport
     );
     if is_text_widget {
@@ -1477,7 +1670,7 @@ fn collect_text(
             (display_text(node, state), layout.rects.get(&node.id))
         {
             if r.w > 0.0 && r.h > 0.0 {
-                let node_clip = Some(*r);
+                let node_clip = layout.visible_rect(&node.id);
                 let (left, top, clip_left, clip_top, clip_right, clip_bottom) = match node.kind {
                     WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal => {
                         let title_pad = panel_title_padding(node, theme, sf);
@@ -1499,7 +1692,15 @@ fn collect_text(
                             text_top,
                             r.x + title_pad.left,
                             r.y,
-                            r.x + r.w - title_pad.right,
+                            r.x + r.w
+                                - title_pad.right
+                                - if node.kind == WidgetKind::Modal
+                                    && raw_prop_bool(node, "close_button").unwrap_or(false)
+                                {
+                                    30.0 * sf
+                                } else {
+                                    0.0
+                                },
                             text_top + line_height,
                         )
                     }
@@ -1548,7 +1749,7 @@ fn collect_text(
                     }
                     WidgetKind::Button | WidgetKind::SmallButton => {
                         let reserved = badge_reserved_width(node, theme, sf);
-                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        let top = centered_control_text_top(*r, line_height);
                         (
                             r.x + pad,
                             top,
@@ -1628,7 +1829,7 @@ fn collect_text(
                             standalone_badge_horizontal_padding_lp(&node.style);
                         let pad_left = pad_left * sf;
                         let pad_right = pad_right * sf;
-                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        let top = standalone_badge_text_top(*r, line_height);
                         (
                             r.x + pad_left,
                             top,
@@ -1675,6 +1876,11 @@ fn collect_text(
                     WidgetKind::TextArea | WidgetKind::CodeEditor => {
                         let visible_h = (r.h - pad * 2.0).max(1.0);
                         let scroll_y = state.text_area_scroll_y(&node.id, visible_h, line_height);
+                        let scroll_x = if node.props.wrap.unwrap_or(true) {
+                            0.0
+                        } else {
+                            state.text_area_scroll_x(&node.id)
+                        };
                         let gutter_w = if node.kind == WidgetKind::CodeEditor {
                             code_editor_gutter_width_for_style(&node.style, sf)
                                 .min((r.w - pad * 2.0).max(1.0) * 0.5)
@@ -1683,7 +1889,7 @@ fn collect_text(
                         };
                         let top = r.y + pad;
                         (
-                            r.x + pad + gutter_w,
+                            r.x + pad + gutter_w - scroll_x,
                             top - scroll_y,
                             r.x + pad + gutter_w,
                             r.y + pad,
@@ -1722,6 +1928,17 @@ fn collect_text(
                     WidgetKind::ProgressBar => {
                         let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
                         (r.x + pad, top, r.x + pad, r.y, r.x + r.w - pad, r.y + r.h)
+                    }
+                    WidgetKind::LoadingSpinner => {
+                        let spinner_size = loading_spinner_size_lp(node) * sf;
+                        let gap = LOADING_SPINNER_GAP_LP * sf;
+                        let left = r.x + spinner_size + gap;
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        (left, top, left, r.y, r.x + r.w - pad, r.y + r.h)
+                    }
+                    WidgetKind::IconButton => {
+                        let top = centered_control_text_top(*r, line_height);
+                        (r.x, top, r.x, r.y, r.x + r.w, r.y + r.h)
                     }
                     WidgetKind::NavItem => {
                         let item_pad = part_padding(node, &["item"], pad, sf);
@@ -1854,6 +2071,22 @@ fn collect_text(
                         &["label"],
                         text_color(node, state, theme, placeholder),
                     )
+                } else if node.kind == WidgetKind::LoadingSpinner && !placeholder {
+                    part_text_color(
+                        node,
+                        state,
+                        theme,
+                        &["label"],
+                        text_color(node, state, theme, placeholder),
+                    )
+                } else if node.kind == WidgetKind::IconButton && !placeholder {
+                    part_text_color(
+                        node,
+                        state,
+                        theme,
+                        &["icon"],
+                        text_color(node, state, theme, placeholder),
+                    )
                 } else if node.kind == WidgetKind::Tab && !placeholder {
                     part_text_color(
                         node,
@@ -1877,8 +2110,13 @@ fn collect_text(
                 };
                 let align = if matches!(
                     node.kind,
-                    WidgetKind::ProgressBar | WidgetKind::Badge | WidgetKind::Tag
-                ) && node.style.text.text_align.is_none()
+                    WidgetKind::Button
+                        | WidgetKind::SmallButton
+                        | WidgetKind::IconButton
+                        | WidgetKind::ProgressBar
+                        | WidgetKind::Badge
+                        | WidgetKind::Tag
+                ) && !has_explicit_text_align
                 {
                     TextAlign::Center
                 } else {
@@ -1965,6 +2203,11 @@ fn collect_text(
                                     )
                                 })
                                 .unwrap_or(0.0);
+                            let scroll_x = if node.props.wrap.unwrap_or(true) {
+                                0.0
+                            } else {
+                                state.text_area_scroll_x(&node.id)
+                            };
                             if node.kind == WidgetKind::CodeEditor {
                                 let raw_text = state.text_for(&node.id).unwrap_or("");
                                 emit_code_editor_line_numbers(
@@ -2002,6 +2245,7 @@ fn collect_text(
                                 color,
                                 align,
                                 node.props.wrap.unwrap_or(true),
+                                scroll_x,
                                 scroll_y,
                                 cache,
                                 if placeholder { None } else { caret },
@@ -2404,6 +2648,7 @@ fn widget_kind_name(kind: WidgetKind) -> &'static str {
         WidgetKind::NumberInput => "number_input",
         WidgetKind::DragNumber => "drag_number",
         WidgetKind::ProgressBar => "progress_bar",
+        WidgetKind::LoadingSpinner => "loading_spinner",
         WidgetKind::TextInput => "text_input",
         WidgetKind::TextArea => "text_area",
         WidgetKind::CodeEditor => "code_editor",
@@ -2425,6 +2670,8 @@ fn widget_kind_name(kind: WidgetKind) -> &'static str {
         WidgetKind::NavItem => "nav_item",
         WidgetKind::PieChart => "pie_chart",
         WidgetKind::Histogram => "histogram",
+        WidgetKind::BarChart => "bar_chart",
+        WidgetKind::Heatmap => "heatmap",
         WidgetKind::LinePlot => "line_plot",
         WidgetKind::Scatter3D => "scatter_3d",
         WidgetKind::DataFrameTable => "dataframe_table",
@@ -2558,20 +2805,27 @@ fn label_text_should_top_align(
     text.chars().count() as f32 * approx_char_width > available_width + 1.0
 }
 
+fn centered_control_text_top(rect: Rect, line_height: f32) -> f32 {
+    (rect.y + ((rect.h - line_height) * 0.5).max(0.0)).round()
+}
+
+fn standalone_badge_text_top(rect: Rect, line_height: f32) -> f32 {
+    centered_control_text_top(rect, line_height)
+}
+
 fn is_obscured_by_overlay(
     node: &WidgetNode,
     r: &Rect,
     open_dropdown: Option<&str>,
     dropdown_overlay: Option<Rect>,
     _menu_overlays: [Option<Rect>; 2],
-    tooltip_overlay: Option<Rect>,
+    _tooltip_overlay: Option<Rect>,
     extra_overlays: &[Rect],
 ) -> bool {
     if open_dropdown == Some(node.id.as_str()) {
         return false;
     }
     dropdown_overlay.is_some_and(|overlay| rects_intersect(*r, overlay))
-        || tooltip_overlay.is_some_and(|overlay| rects_intersect(*r, overlay))
         || extra_overlays
             .iter()
             .any(|overlay| rects_intersect(*r, *overlay))
@@ -2637,6 +2891,20 @@ fn text_scale(font_size: f32, theme: &Theme) -> f32 {
 
 pub(crate) fn text_line_height(font_size: f32, theme: &Theme, sf: f32) -> f32 {
     (font_size + 5.0 * sf).max((theme.font_size + 3.0) * sf)
+}
+
+fn standalone_badge_line_height(
+    node: &WidgetNode,
+    font_size: f32,
+    theme: &Theme,
+    sf: f32,
+) -> f32 {
+    let height_lp = node
+        .style
+        .layout
+        .height
+        .unwrap_or_else(|| (badge_font_size_lp(&node.style, theme) + 8.0).max(20.0));
+    (height_lp * sf).max(font_size + 2.0 * sf).max(1.0)
 }
 
 fn text_line_height_for_style(style: &TextStyle, font_size: f32, theme: &Theme, sf: f32) -> f32 {
@@ -3173,7 +3441,7 @@ fn emit_badge_text(
     let badge_font_size = badge_font_size_lp(&node.style, theme) * sf;
     let badge_parts = &["badge"];
     let badge_line_height =
-        text_line_height_for_parts(node, badge_parts, badge_font_size, theme, sf);
+        text_line_height_for_parts(node, badge_parts, badge_font_size, theme, sf).max(rect.h);
     let visual = crate::style::part_visual_for_state(&node.style, &node.id, state, "badge");
     let bg = visual
         .background
@@ -3419,20 +3687,39 @@ fn collect_single_menu_overlay_text(
     let Some(node) = find_node(tree, menu_id) else {
         return;
     };
-    let font_size = text_font_size(node, theme, sf);
-    let line_height = text_line_height_for_style(&node.style.text, font_size, theme, sf);
-    let font_family = node.style.text.font_family.as_ref();
-    let font_weight = node.style.text.font_weight.unwrap_or(Weight::NORMAL.0);
-    let text_options = text_options_from_style(&node.style.text);
+    let base_font_size = text_font_size(node, theme, sf);
+    let font_size = part_font_size(node, &["item"], base_font_size, sf);
+    let line_height = text_line_height_for_parts(node, &["item"], font_size, theme, sf);
+    let font_family = part_font_family(node, &["item"], node.style.text.font_family.as_ref());
+    let font_weight = part_font_weight(
+        node,
+        &["item"],
+        node.style.text.font_weight.unwrap_or(Weight::NORMAL.0),
+    );
+    let text_options = text_options_for_parts(node, &["item"]);
     let row_h = theme.control_height() * sf;
     for (idx, item) in items.iter().enumerate() {
         let y = rect.y + idx as f32 * row_h;
         let disabled = item.disabled || state.is_disabled(&item.id);
-        let color = if disabled {
-            glyph_color(theme.muted_text)
+        let hovered = state.hovered.as_deref() == Some(item.id.as_str());
+        let parts: &[&str] = if disabled {
+            &["item-disabled", "item"]
+        } else if hovered {
+            &["item-hover", "item"]
         } else {
-            glyph_color(theme.text)
+            &["item"]
         };
+        let color = part_text_color(
+            node,
+            state,
+            theme,
+            parts,
+            glyph_color(if disabled {
+                theme.muted_text
+            } else {
+                theme.text
+            }),
+        );
         push_text_entry(
             font_system,
             font_aliases,
@@ -4055,6 +4342,7 @@ fn display_text<'a>(node: &'a WidgetNode, state: &'a WidgetState) -> Option<(&'a
             .dropdown_value(&node.id)
             .filter(|t| !t.is_empty())
             .map(|t| (t, false)),
+        WidgetKind::IconButton => icon_button_symbol_text(node).map(|text| (text, false)),
         _ => node
             .props
             .text
@@ -4299,6 +4587,7 @@ fn push_text_entry(
         align,
         false,
         0.0,
+        0.0,
         cache,
         caret,
         caret_positions,
@@ -4341,6 +4630,7 @@ fn push_wrapped_text_entry(
         align,
         true,
         0.0,
+        0.0,
         cache,
         None,
         caret_positions,
@@ -4364,6 +4654,7 @@ fn push_text_entry_impl(
     color: Color,
     align: TextAlign,
     wrap: bool,
+    caret_scroll_x: f32,
     caret_scroll_y: f32,
     cache: &mut TextBufferCache,
     caret: Option<(&str, usize)>,
@@ -4422,6 +4713,7 @@ fn push_text_entry_impl(
         });
     if let Some((id, cursor)) = caret {
         let mut xy = caret_xy_for_buffer(&buf, text, cursor);
+        xy[0] -= caret_scroll_x;
         xy[1] -= caret_scroll_y;
         caret_positions.insert(id.to_string(), xy);
     }
@@ -5112,6 +5404,71 @@ mod tests {
     }
 
     #[test]
+    fn button_text_defaults_to_center_alignment() {
+        let mut button = node("edge", WidgetKind::Button);
+        button.props.text = Some("Top left".to_string());
+        button.style.text.font_size = Some(14.0);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "edge".to_string(),
+            Rect {
+                x: 10.0,
+                y: 12.0,
+                w: 148.0,
+                h: 34.0,
+            },
+        );
+
+        let theme = Theme::dark();
+        let state = WidgetState::default();
+        let mut font_system = FontSystem::new();
+        let font_aliases = FontFamilyAliases::default();
+        let mut cache = TextBufferCache::default();
+        let mut caret_positions = HashMap::new();
+        let mut entries = Vec::new();
+        collect_text(
+            &button,
+            &layout,
+            &state,
+            &theme,
+            None,
+            None,
+            [None, None],
+            None,
+            &[],
+            false,
+            &mut font_system,
+            &font_aliases,
+            1.0,
+            theme.spacing,
+            &mut cache,
+            &mut caret_positions,
+            &mut entries,
+        );
+
+        let entry = entries.first().expect("button text entry");
+        let text_w = text_width_for_buffer(&entry.buffer);
+        let content_left = 10.0 + theme.spacing;
+        let content_w = 148.0 - theme.spacing * 2.0;
+        let expected_left = content_left + ((content_w - text_w).max(0.0) * 0.5);
+        let font_size = text_font_size(&button, &theme, 1.0);
+        let line_height = text_line_height(font_size, &theme, 1.0);
+        let expected_top = (12.0 + ((34.0 - line_height) * 0.5).max(0.0)).round();
+
+        assert!(
+            (entry.left - expected_left).abs() < 0.01,
+            "button text should default to horizontal center: left={} expected={expected_left}",
+            entry.left
+        );
+        assert!(
+            (entry.top - expected_top).abs() < 0.01,
+            "button text should stay vertically centered on a physical pixel: top={} expected={expected_top}",
+            entry.top
+        );
+    }
+
+    #[test]
     fn number_input_text_color_uses_field_part() {
         let mut number = node("amount", WidgetKind::NumberInput);
         number.style.parts.parts.insert(
@@ -5435,6 +5792,73 @@ mod tests {
     }
 
     #[test]
+    fn clipped_label_visible_rect_suppresses_text_entry() {
+        let mut label = node("label", WidgetKind::Label);
+        label.props.text = Some("Row 08".to_string());
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "label".to_string(),
+            Rect {
+                x: 20.0,
+                y: 220.0,
+                w: 96.0,
+                h: 24.0,
+            },
+        );
+        layout.clips.insert(
+            "label".to_string(),
+            Rect {
+                x: 20.0,
+                y: 220.0,
+                w: 0.0,
+                h: 0.0,
+            },
+        );
+        layout.paint_clips.insert(
+            "label".to_string(),
+            Rect {
+                x: 20.0,
+                y: 100.0,
+                w: 160.0,
+                h: 96.0,
+            },
+        );
+
+        let theme = Theme::dark();
+        let state = WidgetState::default();
+        let mut font_system = FontSystem::new();
+        let font_aliases = FontFamilyAliases::default();
+        let mut cache = TextBufferCache::default();
+        let mut caret_positions = HashMap::new();
+        let mut entries = Vec::new();
+        collect_text(
+            &label,
+            &layout,
+            &state,
+            &theme,
+            None,
+            None,
+            [None, None],
+            None,
+            &[],
+            false,
+            &mut font_system,
+            &font_aliases,
+            1.0,
+            0.0,
+            &mut cache,
+            &mut caret_positions,
+            &mut entries,
+        );
+
+        assert!(
+            entries.is_empty(),
+            "fully clipped labels should not submit text entries"
+        );
+    }
+
+    #[test]
     fn single_line_label_text_centers_vertically_in_tall_rect() {
         let mut label = node("label", WidgetKind::Label);
         label.props.text = Some("80,000 rows".to_string());
@@ -5533,6 +5957,74 @@ mod tests {
         assert!(
             !entry.key.wrap,
             "label wrap=false should keep single-line path"
+        );
+    }
+
+    #[test]
+    fn non_wrapping_text_area_applies_horizontal_scroll_offset() {
+        let mut area = node("code", WidgetKind::TextArea);
+        area.props.wrap = Some(false);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "code".to_string(),
+            Rect {
+                x: 8.0,
+                y: 10.0,
+                w: 180.0,
+                h: 48.0,
+            },
+        );
+
+        let mut state = WidgetState::default();
+        state.text_val.insert(
+            "code".to_string(),
+            "alpha.beta.gamma.delta.epsilon".to_string(),
+        );
+        state.text_cursor.insert("code".to_string(), 22);
+        state.text_scroll_x.insert("code".to_string(), 42.0);
+        state.text_scroll_y.insert("code".to_string(), 0.0);
+
+        let theme = Theme::dark();
+        let mut font_system = FontSystem::new();
+        let font_aliases = FontFamilyAliases::default();
+        let mut cache = TextBufferCache::default();
+        let mut caret_positions = HashMap::new();
+        let mut entries = Vec::new();
+        collect_text(
+            &area,
+            &layout,
+            &state,
+            &theme,
+            None,
+            None,
+            [None, None],
+            None,
+            &[],
+            false,
+            &mut font_system,
+            &font_aliases,
+            1.0,
+            theme.spacing,
+            &mut cache,
+            &mut caret_positions,
+            &mut entries,
+        );
+
+        let entry = entries.first().expect("text area entry");
+        let expected_left = 8.0 + theme.spacing - 42.0;
+        assert!(
+            (entry.left - expected_left).abs() < 0.01,
+            "non-wrapping text should shift left by horizontal scroll: left={} expected={expected_left}",
+            entry.left
+        );
+        let caret_x = caret_positions
+            .get("code")
+            .map(|xy| xy[0])
+            .expect("caret position");
+        assert!(
+            caret_x < text_width_for_buffer(&entry.buffer),
+            "caret position should be recorded after horizontal scroll adjustment"
         );
     }
 
@@ -5953,6 +6445,169 @@ mod tests {
     }
 
     #[test]
+    fn standalone_badge_text_uses_pill_height_line_box() {
+        let mut badge = node("badge", WidgetKind::Badge);
+        badge.props.text = Some("latency p95".to_string());
+
+        let mut layout = LayoutResult::default();
+        let rect = Rect {
+            x: 8.0,
+            y: 10.0,
+            w: 144.0,
+            h: 23.0,
+        };
+        layout.rects.insert("badge".to_string(), rect);
+
+        let theme = Theme::dark();
+        let state = WidgetState::default();
+        let mut font_system = FontSystem::new();
+        let font_aliases = FontFamilyAliases::default();
+        let mut cache = TextBufferCache::default();
+        let mut caret_positions = HashMap::new();
+        let mut entries = Vec::new();
+        collect_text(
+            &badge,
+            &layout,
+            &state,
+            &theme,
+            None,
+            None,
+            [None, None],
+            None,
+            &[],
+            false,
+            &mut font_system,
+            &font_aliases,
+            1.0,
+            theme.spacing,
+            &mut cache,
+            &mut caret_positions,
+            &mut entries,
+        );
+
+        let entry = entries.first().expect("badge text entry");
+        let line_height = entry.key.line_height_milli as f32 / 1000.0;
+        assert!(
+            (line_height - 20.0).abs() < 0.001,
+            "default 12px badge text should use the default 20px pill height as line-height, got {line_height}"
+        );
+        let expected = standalone_badge_text_top(rect, line_height);
+        assert_eq!(expected, 12.0);
+        assert!(
+            (entry.top - expected).abs() < 0.001,
+            "filled badge text should center the font metrics inside the pill height: top={} expected={expected}",
+            entry.top
+        );
+    }
+
+    #[test]
+    fn standalone_tag_text_uses_same_pill_height_line_box() {
+        let mut tag = node("tag", WidgetKind::Tag);
+        tag.props.text = Some("Scatter3D".to_string());
+
+        let mut layout = LayoutResult::default();
+        let rect = Rect {
+            x: 8.0,
+            y: 10.0,
+            w: 112.0,
+            h: 23.0,
+        };
+        layout.rects.insert("tag".to_string(), rect);
+
+        let theme = Theme::dark();
+        let state = WidgetState::default();
+        let mut font_system = FontSystem::new();
+        let font_aliases = FontFamilyAliases::default();
+        let mut cache = TextBufferCache::default();
+        let mut caret_positions = HashMap::new();
+        let mut entries = Vec::new();
+        collect_text(
+            &tag,
+            &layout,
+            &state,
+            &theme,
+            None,
+            None,
+            [None, None],
+            None,
+            &[],
+            false,
+            &mut font_system,
+            &font_aliases,
+            1.0,
+            theme.spacing,
+            &mut cache,
+            &mut caret_positions,
+            &mut entries,
+        );
+
+        let entry = entries.first().expect("tag text entry");
+        let line_height = entry.key.line_height_milli as f32 / 1000.0;
+        let expected = standalone_badge_text_top(rect, line_height);
+        assert_eq!(expected, 12.0);
+        assert!(
+            (entry.top - expected).abs() < 0.001,
+            "tag text should use the same pill-height line box as badges: top={} expected={expected}",
+            entry.top
+        );
+    }
+
+    #[test]
+    fn terminal_badge_font_family_does_not_change_vertical_line_box() {
+        let mut badge = node("badge", WidgetKind::Badge);
+        badge.props.text = Some("error rate".to_string());
+        badge.style.text.font_family = Some(FontFamily::Name("Consolas".to_string()));
+        badge.style.text.font_size = Some(14.0);
+
+        let mut layout = LayoutResult::default();
+        let rect = Rect {
+            x: 8.0,
+            y: 10.0,
+            w: 120.0,
+            h: 22.0,
+        };
+        layout.rects.insert("badge".to_string(), rect);
+
+        let theme = Theme::dark();
+        let state = WidgetState::default();
+        let mut font_system = FontSystem::new();
+        let font_aliases = FontFamilyAliases::default();
+        let mut cache = TextBufferCache::default();
+        let mut caret_positions = HashMap::new();
+        let mut entries = Vec::new();
+        collect_text(
+            &badge,
+            &layout,
+            &state,
+            &theme,
+            None,
+            None,
+            [None, None],
+            None,
+            &[],
+            false,
+            &mut font_system,
+            &font_aliases,
+            1.0,
+            theme.spacing,
+            &mut cache,
+            &mut caret_positions,
+            &mut entries,
+        );
+
+        let entry = entries.first().expect("badge text entry");
+        let line_height = entry.key.line_height_milli as f32 / 1000.0;
+        assert!(
+            (line_height - 22.0).abs() < 0.001,
+            "14px terminal badges should use the 22px pill height as line-height, got {line_height}"
+        );
+        assert!(
+            (entry.top - rect.y).abs() < 0.001,
+            "terminal font metrics should be centered by the text engine inside the pill line box"
+        );
+    }
+
+    #[test]
     fn panel_generated_after_anchors_to_title_band() {
         let mut panel = node("panel", WidgetKind::Panel);
         panel.style.layout.padding = Some(12.0);
@@ -6024,7 +6679,7 @@ mod tests {
     }
 
     #[test]
-    fn table_tooltip_obscures_only_intersecting_text_bounds() {
+    fn table_tooltip_overlay_does_not_remove_underlying_text() {
         let table = node("table", WidgetKind::DataFrameTable);
         let theme = Theme::dark();
         let mut layout = LayoutResult::default();
@@ -6084,7 +6739,7 @@ mod tests {
         );
 
         let metrics = table::metrics_for_node(&table, &theme, 1.0);
-        let mut partially_obscured = Vec::new();
+        let mut with_tooltip_overlay = Vec::new();
         collect_table_text(
             &table,
             &layout,
@@ -6108,11 +6763,91 @@ mod tests {
             6.0,
             &mut cache,
             &mut caret_positions,
-            &mut partially_obscured,
+            &mut with_tooltip_overlay,
         );
 
-        assert!(unobscured.len() > partially_obscured.len());
-        assert!(!partially_obscured.is_empty());
+        assert_eq!(unobscured.len(), with_tooltip_overlay.len());
+        assert!(!with_tooltip_overlay.is_empty());
+    }
+
+    #[test]
+    fn tooltip_overlay_text_does_not_remove_underlying_base_text() {
+        let mut target = node("target", WidgetKind::Button);
+        target.props.text = Some("Target".to_string());
+        target.props.tooltip = Some("Tooltip copy".to_string());
+        let mut background = node("background", WidgetKind::Label);
+        background.props.text = Some("Text under tooltip".to_string());
+        let mut root = node("window", WidgetKind::Window);
+        root.children = vec![target, background];
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "window".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 400.0,
+                h: 240.0,
+            },
+        );
+        layout.rects.insert(
+            "target".to_string(),
+            Rect {
+                x: 12.0,
+                y: 12.0,
+                w: 90.0,
+                h: 30.0,
+            },
+        );
+        layout.rects.insert(
+            "background".to_string(),
+            Rect {
+                x: 20.0,
+                y: 50.0,
+                w: 220.0,
+                h: 30.0,
+            },
+        );
+
+        let theme = Theme::dark();
+        let state = WidgetState {
+            hovered: Some("target".to_string()),
+            ..Default::default()
+        };
+        let tooltip_overlay = active_tooltip_overlay_rect(&root, &layout, &theme, &state, 1.0);
+        assert!(tooltip_overlay.is_some());
+
+        let mut font_system = FontSystem::new();
+        let font_aliases = FontFamilyAliases::default();
+        let mut cache = TextBufferCache::default();
+        let mut caret_positions = HashMap::new();
+        let mut entries = Vec::new();
+        collect_text(
+            &root,
+            &layout,
+            &state,
+            &theme,
+            None,
+            None,
+            [None, None],
+            tooltip_overlay,
+            &[],
+            true,
+            &mut font_system,
+            &font_aliases,
+            1.0,
+            6.0,
+            &mut cache,
+            &mut caret_positions,
+            &mut entries,
+        );
+
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.key.text == "Text under tooltip"),
+            "tooltip overlays should paint above existing text without deleting it from the base pass"
+        );
     }
 
     #[test]

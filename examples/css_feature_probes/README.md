@@ -66,3 +66,16 @@ Suggested order:
 35. `date_time_inputs_probe.py` - DateInput, TimeInput, and DateTimeInput validation, normalization, callbacks, and invalid styling.
 36. `code_editor_probe.py` - CodeEditor multiline editing, fixed-width text, line numbers, gutter styling, and disabled state.
 37. `log_view_probe.py` - LogView append streams, visible-line rendering, follow mode, scrolling, and severity row parts.
+38. `breadcrumbs_probe.py` - Breadcrumbs path navigation, collapsed middle segments, current styling, and selection callbacks.
+39. `toolbar_probe.py` - Toolbar and ToolbarSeparator grouped actions, embedded controls, vertical layout, and disabled states.
+40. `loading_spinner_probe.py` - LoadingSpinner animated, paused, disabled, labeled, and CSS part states.
+41. `scatter_plot_2d_probe.py` - ScatterPlot2D scalar and categorical packed point rendering with flat camera controls.
+42. `scatter3d_dense_probe.py` - Dense 3D scalar volume rendering, depth behavior, orbit controls, view snaps, and packed point rendering.
+43. `heatmap_probe.py` - Heatmap packed matrix rendering, labels, scalar bars, and hover readout.
+44. `bar_chart_probe.py` - BarChart categorical rendering, grouped series, horizontal orientation, native toolbar, and hover readout.
+45. `layout_flex_stress_probe.py` - long labels, mixed fixed/flexible controls, nested rows, wrapped chips, and constrained cards.
+46. `layout_panel_bounds_probe.py` - fixed and auto-height panels, scroll bodies, nested groups, logs, and constrained tables.
+47. `layout_grid_masonry_probe.py` - masonry packing, standard grid alignment, nested cards, split panes, and responsive fallback.
+48. `layout_overlay_collision_probe.py` - tooltips, menus, dropdowns, modal, command palette, toasts, and drag ghost overlay collision stress.
+49. `layout_scrollable_composites_probe.py` - tables, logs, code editor, tree/list widgets, property rows, command results, and nested scroll regions.
+50. `layout_plot_embedding_probe.py` - line, scatter, heatmap, histogram, bar, and table widgets embedded in constrained cards and split panes.

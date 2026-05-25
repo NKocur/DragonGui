@@ -3051,6 +3051,7 @@ pub fn widget_kind_from_css_type(name: &str) -> Option<WidgetKind> {
         "Slider" => Some(WidgetKind::Slider),
         "RangeSlider" => Some(WidgetKind::RangeSlider),
         "ProgressBar" => Some(WidgetKind::ProgressBar),
+        "LoadingSpinner" => Some(WidgetKind::LoadingSpinner),
         "Dropdown" => Some(WidgetKind::Dropdown),
         "Checkbox" => Some(WidgetKind::Checkbox),
         "ToggleSwitch" => Some(WidgetKind::ToggleSwitch),
@@ -3058,6 +3059,8 @@ pub fn widget_kind_from_css_type(name: &str) -> Option<WidgetKind> {
         "Spacer" => Some(WidgetKind::Spacer),
         "PieChart" => Some(WidgetKind::PieChart),
         "Histogram" => Some(WidgetKind::Histogram),
+        "BarChart" => Some(WidgetKind::BarChart),
+        "Heatmap" => Some(WidgetKind::Heatmap),
         "LinePlot" => Some(WidgetKind::LinePlot),
         "Scatter3D" => Some(WidgetKind::Scatter3D),
         "DataFrameTable" => Some(WidgetKind::DataFrameTable),
@@ -3117,6 +3120,7 @@ pub fn css_type_name(kind: WidgetKind) -> Option<&'static str> {
         WidgetKind::Slider => Some("Slider"),
         WidgetKind::RangeSlider => Some("RangeSlider"),
         WidgetKind::ProgressBar => Some("ProgressBar"),
+        WidgetKind::LoadingSpinner => Some("LoadingSpinner"),
         WidgetKind::Dropdown => Some("Dropdown"),
         WidgetKind::Checkbox => Some("Checkbox"),
         WidgetKind::ToggleSwitch => Some("ToggleSwitch"),
@@ -3124,6 +3128,8 @@ pub fn css_type_name(kind: WidgetKind) -> Option<&'static str> {
         WidgetKind::Spacer => Some("Spacer"),
         WidgetKind::PieChart => Some("PieChart"),
         WidgetKind::Histogram => Some("Histogram"),
+        WidgetKind::BarChart => Some("BarChart"),
+        WidgetKind::Heatmap => Some("Heatmap"),
         WidgetKind::LinePlot => Some("LinePlot"),
         WidgetKind::Scatter3D => Some("Scatter3D"),
         WidgetKind::DataFrameTable => Some("DataFrameTable"),
@@ -4384,6 +4390,9 @@ fn widget_kind_supports_part(kind: WidgetKind, part: &str) -> bool {
         WidgetKind::Panel => matches!(part, "accent"),
         WidgetKind::Collapsible => matches!(part, "header" | "indicator" | "body"),
         WidgetKind::Modal => matches!(part, "scrim"),
+        WidgetKind::Menu | WidgetKind::ContextMenu => {
+            matches!(part, "menu" | "item" | "item-hover" | "item-disabled")
+        }
         WidgetKind::Splitter => matches!(part, "gutter"),
         WidgetKind::Pane => matches!(part, "pane"),
         WidgetKind::Button | WidgetKind::SmallButton => matches!(part, "badge"),
@@ -4422,6 +4431,9 @@ fn widget_kind_supports_part(kind: WidgetKind, part: &str) -> bool {
             )
         }
         WidgetKind::ProgressBar => matches!(part, "track" | "fill" | "label"),
+        WidgetKind::LoadingSpinner => matches!(part, "track" | "arc" | "label"),
+        WidgetKind::Heatmap => matches!(part, "cell" | "grid" | "hover" | "scalar-bar" | "label"),
+        WidgetKind::BarChart => matches!(part, "label" | "value-label"),
         WidgetKind::Tabs => matches!(part, "header"),
         WidgetKind::Tab => matches!(part, "tab" | "accent" | "badge"),
         WidgetKind::NavItem => matches!(part, "item" | "accent" | "badge"),
@@ -12168,6 +12180,8 @@ mod tests {
             WidgetKind::DataFrameTable,
             WidgetKind::PieChart,
             WidgetKind::Histogram,
+            WidgetKind::BarChart,
+            WidgetKind::Heatmap,
             WidgetKind::LinePlot,
             WidgetKind::Scatter3D,
             WidgetKind::HtmlReport,
@@ -18605,6 +18619,121 @@ mod tests {
             label_style.text.color,
             Some(ColorRef::Token("muted_text".to_string()))
         );
+    }
+
+    #[test]
+    fn stylesheet_cascade_applies_bar_chart_value_label_part_styles() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "bars",
+                "type": "bar_chart"
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                BarChart::label {
+                    color: muted_text;
+                }
+                BarChart::value-label {
+                    color: warning;
+                    font-size: 11px;
+                }
+                "#,
+            )
+            .unwrap();
+
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+        let chart = &tree.children[0];
+        let label_style = chart.style.parts.parts.get("label").unwrap();
+        let value_label_style = chart.style.parts.parts.get("value-label").unwrap();
+
+        assert_eq!(
+            label_style.text.color,
+            Some(ColorRef::Token("muted_text".to_string()))
+        );
+        assert_eq!(
+            value_label_style.text.color,
+            Some(ColorRef::Token("warning".to_string()))
+        );
+        assert_eq!(value_label_style.text.font_size, Some(11.0));
+        assert!(store.warnings().is_empty());
+    }
+
+    #[test]
+    fn stylesheet_cascade_applies_menu_popup_part_styles() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "file",
+                "type": "menu"
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                Menu::menu {
+                    background: surface_alt;
+                    border-color: accent;
+                }
+                Menu::item {
+                    color: text;
+                }
+                Menu::item-hover {
+                    background: accent;
+                }
+                Menu::item-disabled {
+                    color: muted_text;
+                }
+                "#,
+            )
+            .unwrap();
+
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+        let menu = &tree.children[0];
+
+        assert_eq!(
+            menu.style
+                .parts
+                .parts
+                .get("menu")
+                .and_then(|style| style.visual.background.clone()),
+            Some(ColorRef::Token("surface_alt".to_string()))
+        );
+        assert_eq!(
+            menu.style
+                .parts
+                .parts
+                .get("item")
+                .and_then(|style| style.text.color.clone()),
+            Some(ColorRef::Token("text".to_string()))
+        );
+        assert_eq!(
+            menu.style
+                .parts
+                .parts
+                .get("item-hover")
+                .and_then(|style| style.visual.background.clone()),
+            Some(ColorRef::Token("accent".to_string()))
+        );
+        assert_eq!(
+            menu.style
+                .parts
+                .parts
+                .get("item-disabled")
+                .and_then(|style| style.text.color.clone()),
+            Some(ColorRef::Token("muted_text".to_string()))
+        );
+        assert!(store.warnings().is_empty());
     }
 
     #[test]

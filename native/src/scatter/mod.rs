@@ -287,6 +287,25 @@ impl PickingMode {
     }
 }
 
+/// Mouse and depth behavior for scatter widgets.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ScatterInteractionMode {
+    /// Left drag orbits the 3D camera and opaque points write depth.
+    #[default]
+    Orbit3D,
+    /// Left drag pans a flat XY view and points render without depth writes.
+    Pan2D,
+}
+
+impl ScatterInteractionMode {
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "pan_2d" | "2d" | "flat" => Self::Pan2D,
+            _ => Self::Orbit3D,
+        }
+    }
+}
+
 /// How a stream actor fills its fixed-capacity buffer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum StreamMode {
@@ -1119,6 +1138,7 @@ fn scatter_layout_rect(
 pub struct ScatterWidget {
     pipeline: wgpu::RenderPipeline,
     opaque_pipeline: Option<wgpu::RenderPipeline>,
+    compact_pipeline: Option<wgpu::RenderPipeline>,
     compact_opaque_pipeline: Option<wgpu::RenderPipeline>,
     clip_mask_pipeline: Option<wgpu::RenderPipeline>,
     vertex_buffer: Option<wgpu::Buffer>,
@@ -1146,6 +1166,7 @@ pub struct ScatterWidget {
     pub auto_quality_enabled: bool,
     pub quality_target_frame_ms: f32,
     pub quality_level: u32,
+    pub interaction_mode: ScatterInteractionMode,
     point_style: u32,
     clip_radii: [f32; 4],
     compact_z_range: [f32; 2],
@@ -1509,6 +1530,7 @@ impl ScatterWidget {
         Self {
             pipeline,
             opaque_pipeline: None,
+            compact_pipeline: None,
             compact_opaque_pipeline: None,
             clip_mask_pipeline: None,
             vertex_buffer: None,
@@ -1534,6 +1556,7 @@ impl ScatterWidget {
             auto_quality_enabled: false,
             quality_target_frame_ms: 100.0,
             quality_level: 0,
+            interaction_mode: ScatterInteractionMode::Orbit3D,
             point_style: 0,
             clip_radii: [0.0; 4],
             compact_z_range: [0.0, 1.0],
@@ -1826,27 +1849,54 @@ impl ScatterWidget {
         ));
     }
 
+    fn ensure_compact_point_pipeline(&mut self, device: &wgpu::Device) {
+        if self.compact_pipeline.is_some() {
+            return;
+        }
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("scatter-compact-points-flat"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("compact_points.wgsl").into()),
+        });
+        let pipeline_layout = self.scatter_pipeline_layout(device);
+        self.compact_pipeline = Some(create_scatter_point_pipeline(
+            device,
+            self.surface_format,
+            &pipeline_layout,
+            &shader,
+            "scatter-compact-flat",
+            xyz_point_layout(),
+            false,
+        ));
+    }
+
     pub fn prepare_render_pipelines(&mut self, device: &wgpu::Device) {
         self.ensure_base_render_pipelines(device);
 
         let primary_is_lod =
             self.lod_enabled && self.lod_active && self.point_count > self.lod_threshold;
         let primary_visible = self.point_count > 0 && self.vertex_buffer.is_some();
+        let flat_2d = self.interaction_mode == ScatterInteractionMode::Pan2D;
 
         if primary_visible && self.primary_points_opaque {
             if self.primary_storage == PrimaryPointStorage::XyzF32 && !primary_is_lod {
-                self.ensure_compact_opaque_point_pipeline(device);
-            } else {
+                if flat_2d {
+                    self.ensure_compact_point_pipeline(device);
+                } else {
+                    self.ensure_compact_opaque_point_pipeline(device);
+                }
+            } else if !flat_2d {
                 self.ensure_opaque_point_pipeline(device);
             }
         }
 
-        if self.extra_actors.values().any(|actor| {
-            actor.visible
-                && actor.point_count > 0
-                && actor.points_opaque
-                && actor.vertex_buffer.is_some()
-        }) {
+        if !flat_2d
+            && self.extra_actors.values().any(|actor| {
+                actor.visible
+                    && actor.point_count > 0
+                    && actor.points_opaque
+                    && actor.vertex_buffer.is_some()
+            })
+        {
             self.ensure_opaque_point_pipeline(device);
         }
     }
@@ -2554,7 +2604,7 @@ impl ScatterWidget {
         self.fit_center = center;
         self.fit_radius = radius;
         let aspect = self.width as f32 / self.height.max(1) as f32;
-        self.camera = Camera::fit(center, radius, aspect);
+        self.camera = self.camera.fit_preserving_view(center, radius, aspect);
         self.update_camera(queue);
     }
 
@@ -4099,14 +4149,22 @@ impl ScatterWidget {
             }
         }
 
+        let flat_2d = self.interaction_mode == ScatterInteractionMode::Pan2D;
         let mut draw_point_buffer =
             |opaque: bool, compact: bool, vb: &wgpu::Buffer, draw_count: u32| {
                 let pipeline = if compact {
-                    let Some(pipeline) = self.compact_opaque_pipeline.as_ref() else {
-                        return;
-                    };
-                    pipeline
-                } else if opaque {
+                    if flat_2d {
+                        let Some(pipeline) = self.compact_pipeline.as_ref() else {
+                            return;
+                        };
+                        pipeline
+                    } else {
+                        let Some(pipeline) = self.compact_opaque_pipeline.as_ref() else {
+                            return;
+                        };
+                        pipeline
+                    }
+                } else if opaque && !flat_2d {
                     let Some(pipeline) = self.opaque_pipeline.as_ref() else {
                         return;
                     };
@@ -4120,7 +4178,7 @@ impl ScatterWidget {
                 pass.draw(0..4, 0..draw_count);
             };
 
-        if has_points && self.primary_points_opaque {
+        if has_points && self.primary_points_opaque && !flat_2d {
             let is_lod =
                 self.lod_enabled && self.lod_active && self.point_count > self.lod_threshold;
             // Use the pre-shuffled LOD buffer when active so the first N instances
@@ -4144,7 +4202,7 @@ impl ScatterWidget {
         // Draw opaque actors before translucent point sets so their depth can
         // occlude later transparent billboard fragments correctly.
         for actor in self.extra_actors.values() {
-            if actor.visible && actor.point_count > 0 && actor.points_opaque {
+            if actor.visible && actor.point_count > 0 && actor.points_opaque && !flat_2d {
                 let is_lod =
                     self.lod_enabled && self.lod_active && actor.point_count > self.lod_threshold;
                 let draw_vb = if is_lod {
@@ -4166,7 +4224,7 @@ impl ScatterWidget {
             }
         }
 
-        if has_points && !self.primary_points_opaque {
+        if has_points && (!self.primary_points_opaque || flat_2d) {
             let is_lod =
                 self.lod_enabled && self.lod_active && self.point_count > self.lod_threshold;
             let draw_vb = if is_lod {
@@ -4182,12 +4240,13 @@ impl ScatterWidget {
                 } else {
                     self.point_count
                 };
-                draw_point_buffer(false, false, vb, draw_count);
+                let compact = self.primary_storage == PrimaryPointStorage::XyzF32 && !is_lod;
+                draw_point_buffer(false, compact, vb, draw_count);
             }
         }
 
         for actor in self.extra_actors.values() {
-            if actor.visible && actor.point_count > 0 && !actor.points_opaque {
+            if actor.visible && actor.point_count > 0 && (!actor.points_opaque || flat_2d) {
                 let is_lod =
                     self.lod_enabled && self.lod_active && actor.point_count > self.lod_threshold;
                 let draw_vb = if is_lod {

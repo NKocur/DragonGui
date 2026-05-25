@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import json
+import struct
 import threading
 import subprocess
 import sys
@@ -322,6 +324,10 @@ def test_inline_part_style_catalog_serializes_for_supported_widgets() -> None:
             ("track", "fill", "label"),
         ),
         (
+            lambda style: dg.LoadingSpinner(label="Loading", style=style, parent=None),
+            ("track", "arc", "label"),
+        ),
+        (
             lambda style: dg.Tabs(style=style, parent=None),
             ("header",),
         ),
@@ -466,7 +472,7 @@ def test_modal_serializes_and_live_open_updates() -> None:
 
     app = dg.App()
     win = dg.Window("Modal")
-    modal = dg.Modal("Confirm", open=False, width=480, height=240, parent=win)
+    modal = dg.Modal("Confirm", open=False, width=480, height=240, close_button=True, parent=win)
     dg.Label("Continue?", parent=modal)
     dg.Button("OK", parent=modal)
 
@@ -475,6 +481,7 @@ def test_modal_serializes_and_live_open_updates() -> None:
     assert serialized["props"]["title"] == "Confirm"
     assert serialized["props"]["open"] is False
     assert serialized["props"]["width"] == 480.0
+    assert serialized["props"]["close_button"] is True
     assert serialized["children"][0]["type"] == "label"
 
     sender = Sender()
@@ -810,6 +817,61 @@ def test_progress_bar_set_value_updates_live_native_value_and_label() -> None:
         ("progress", "value", 0.42),
         ("progress", "label", "42%"),
     ]
+
+
+def test_loading_spinner_serializes_validates_and_updates_live_props() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.props: list[tuple[str, str, object]] = []
+
+        def enqueue_set_prop(self, widget_id: str, prop: str, value: object) -> None:
+            self.props.append((widget_id, prop, value))
+
+        def close(self) -> None:
+            pass
+
+    spinner = dg.LoadingSpinner(
+        id="spinner",
+        size=24,
+        label="Syncing",
+        stroke_width=3,
+        speed=1.35,
+        spinning=True,
+        style={"parts": {"arc": {"background": "accent"}}},
+        parent=None,
+    )
+
+    serialized = spinner.to_dict()
+    assert serialized["type"] == "loading_spinner"
+    assert serialized["props"] == {
+        "size": 24.0,
+        "label": "Syncing",
+        "stroke_width": 3.0,
+        "speed": 1.35,
+        "spinning": True,
+        "disabled": False,
+    }
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+    spinner._bind_live(handle.widget_handle(spinner.id))
+    spinner.set_label("Indexed")
+    spinner.set_spinning(False)
+
+    assert spinner.label == "Indexed"
+    assert spinner.spinning is False
+    assert sender.props == [
+        ("spinner", "label", "Indexed"),
+        ("spinner", "spinning", False),
+    ]
+
+    with pytest.raises(ValueError, match="size"):
+        dg.LoadingSpinner(size=0, parent=None)
+    with pytest.raises(ValueError, match="stroke_width"):
+        dg.LoadingSpinner(stroke_width=0, parent=None)
+    with pytest.raises(ValueError, match="speed"):
+        dg.LoadingSpinner(speed=-0.1, parent=None)
 
 
 def test_temporal_inputs_serialize_normalize_and_validate() -> None:
@@ -2096,6 +2158,56 @@ def test_histogram_serializes_binned_data() -> None:
     assert props["color"] == "#42a5ff"
 
 
+def test_bar_chart_serializes_direct_and_frame_data() -> None:
+    chart = dg.BarChart(
+        labels=["Q1", "Q2", "Q3"],
+        values=[[10, 14, 18], [8, 11, 13]],
+        series=["sales", "cost"],
+        colors=["#111111", "#222222"],
+        show_toolbar=True,
+        style={"parts": {"value_label": {"color": "#101820"}, "label": {"font_size": 11}}},
+        parent=None,
+    )
+    data = chart.to_dict()
+    props = data["props"]
+
+    assert data["type"] == "bar_chart"
+    assert data["style"] == {
+        "parts": {"value_label": {"color": "#101820"}, "label": {"font_size": 11}}
+    }
+    assert props["labels"] == ["Q1", "Q2", "Q3"]
+    assert props["series"][0]["label"] == "sales"
+    assert props["series"][0]["values"] == [10.0, 14.0, 18.0]
+    assert props["series"][0]["color"] == "#111111"
+    assert props["series"][1]["label"] == "cost"
+    assert props["series"][1]["values"] == [8.0, 11.0, 13.0]
+    assert props["orientation"] == "vertical"
+    assert props["show_toolbar"] is True
+
+    class SegmentFrame:
+        columns = ("segment", "revenue")
+        dtypes = ("str", "float32")
+        shape = (4, 2)
+        segment = ["core", "edge", "core", "edge"]
+        revenue = [3.0, 4.0, 5.0, float("nan")]
+
+        def __getitem__(self, column: str) -> object:
+            return getattr(self, column)
+
+    frame_chart = dg.BarChart(
+        SegmentFrame(),
+        category="segment",
+        value="revenue",
+        aggregate="sum",
+        parent=None,
+    )
+    frame_props = frame_chart.to_dict()["props"]
+    assert frame_props["labels"] == ["core", "edge"]
+    assert frame_props["series"][0]["label"] == "revenue"
+    assert frame_props["series"][0]["values"] == [8.0, 4.0]
+    assert frame_props["finite_count"] == 3
+
+
 def test_pie_chart_serializes_direct_and_frame_data() -> None:
     chart = dg.PieChart(
         labels=["A", "B", "C"],
@@ -3304,9 +3416,12 @@ def test_drag_drop_widgets_serialize_and_dispatch_payload() -> None:
         "events": ["change"],
     }
     assert zone.to_dict()["type"] == "drop_target"
+    assert zone.to_dict()["class"] == "drop-zone"
     assert zone.to_dict()["props"]["accept"] == ["file", ".csv"]
     assert zone.to_dict()["props"]["text"] == "Drop CSV files"
     assert zone.to_dict()["children"][0]["type"] == "label"
+    assert "background" not in zone.to_dict()["style"]
+    assert "border_color" not in zone.to_dict()["style"]
 
     _, change_cbs = _collect_runtime_callbacks(win)
     change_cbs["target"](
@@ -3370,6 +3485,8 @@ def test_property_grid_builds_schema_rows_and_emits_changes() -> None:
     assert tuning_rows[1]["children"][1]["children"][0]["type"] == "dropdown"
     assert tuning_rows[2]["children"][1]["children"][0]["type"] == "range_slider"
     assert tuning_rows[3]["children"][1]["children"][0]["type"] == "h_layout"
+    assert tuning_rows[3]["children"][1]["children"][0]["style"]["width"] == "100%"
+    assert tuning_rows[3]["children"][1]["children"][0]["children"][1]["style"]["flex"] == 1
 
     gain = grid.editor("Gain")
     assert isinstance(gain, dg.DragNumber)
@@ -3384,6 +3501,25 @@ def test_property_grid_builds_schema_rows_and_emits_changes() -> None:
 
     with pytest.raises(ValueError, match="label_width"):
         dg.PropertyGrid(label_width=0, parent=None)
+
+
+def test_property_grid_multiline_editor_fills_available_row_width() -> None:
+    grid = dg.PropertyGrid(
+        {"Notes": "Grid child should remain bounded."},
+        schema={"Notes": {"type": "multiline", "rows": 3}},
+        label_width=92,
+        parent=None,
+    )
+
+    row = grid.to_dict()["children"][0]
+    editor_slot = row["children"][1]
+    editor = editor_slot["children"][0]
+
+    assert editor["type"] == "text_area"
+    assert editor["props"]["rows"] == 3
+    assert editor["style"]["width"] == 0
+    assert editor["style"]["flex"] == 1
+    assert editor["style"]["min_width"] == 0
 
 
 def test_property_grid_manual_property_row_adopts_auto_parented_editor() -> None:
@@ -3434,10 +3570,138 @@ def test_selectable_and_selectable_list_serialize() -> None:
         "events": [],
     }
     assert [child.to_dict()["type"] for child in single.children] == ["selectable", "selectable"]
+    assert single.to_dict()["class"] == "selectable-list selectable-list-single"
+    assert multi.to_dict()["class"] == "selectable-list selectable-list-multiple"
     assert [child.to_dict()["props"]["checked"] for child in single.children] == [False, True]
     assert [child.to_dict()["props"]["toggle"] for child in single.children] == [False, False]
     assert multi.selected == {"Frame time"}
     assert [child.to_dict()["props"]["toggle"] for child in multi.children] == [True, True]
+
+
+def test_breadcrumbs_serialize_and_emit_selection() -> None:
+    calls: list[dg.BreadcrumbSelection] = []
+    crumbs = dg.Breadcrumbs(
+        [
+            "Workspace",
+            {"label": "Runs", "value": "runs"},
+            ("Run 42", "run-42"),
+        ],
+        current="run-42",
+        on_select=calls.append,
+        parent=None,
+    )
+
+    serialized = crumbs.to_dict()
+
+    assert serialized["type"] == "h_layout"
+    assert serialized["class"] == "breadcrumbs"
+    assert [child["type"] for child in serialized["children"]] == [
+        "small_button",
+        "label",
+        "small_button",
+        "label",
+        "label",
+    ]
+    assert [child["class"] for child in serialized["children"]] == [
+        "breadcrumb-item",
+        "breadcrumb-separator",
+        "breadcrumb-item",
+        "breadcrumb-separator",
+        "breadcrumb-current",
+    ]
+
+    click_cbs, _ = _collect_runtime_callbacks(crumbs)
+    click_cbs[crumbs.children[0].id]()
+
+    assert crumbs.current_index == 0
+    assert calls == [dg.BreadcrumbSelection(index=0, label="Workspace", value="Workspace")]
+
+
+def test_breadcrumbs_collapses_long_paths_and_validates() -> None:
+    crumbs = dg.Breadcrumbs(
+        ["Root", "Projects", "DragonFrame", "examples", "probe.py"],
+        max_items=4,
+        parent=None,
+    )
+
+    assert [child.class_ for child in crumbs.children] == [
+        "breadcrumb-item",
+        "breadcrumb-separator",
+        "breadcrumb-overflow",
+        "breadcrumb-separator",
+        "breadcrumb-item",
+        "breadcrumb-separator",
+        "breadcrumb-current",
+    ]
+
+    crumbs.set_current("DragonFrame")
+    assert crumbs.current_index == 2
+    crumbs.set_items(["A", "B"], current=0)
+    assert crumbs.current_index == 0
+    assert [child.class_ for child in crumbs.children] == [
+        "breadcrumb-current",
+        "breadcrumb-separator",
+        "breadcrumb-item",
+    ]
+
+    with pytest.raises(ValueError, match="items"):
+        dg.Breadcrumbs([], parent=None)
+    with pytest.raises(ValueError, match="labels"):
+        dg.Breadcrumbs([""], parent=None)
+    with pytest.raises(ValueError, match="max_items"):
+        dg.Breadcrumbs(["A", "B", "C"], max_items=2, parent=None)
+
+
+def test_toolbar_and_toolbar_separator_serialize() -> None:
+    calls: list[str] = []
+    with dg.Toolbar(parent=None) as toolbar:
+        dg.IconButton("play", tooltip="Run", on_click=lambda: calls.append("run"))
+        dg.ToolbarSeparator()
+        dg.SmallButton("Reset", on_click=lambda: calls.append("reset"))
+
+    serialized = toolbar.to_dict()
+
+    assert serialized["type"] == "h_layout"
+    assert serialized["class"] == "toolbar toolbar-horizontal"
+    assert serialized["props"] == {"orientation": "horizontal", "compact": True}
+    assert serialized["style"]["flex_direction"] == "row"
+    assert serialized["style"]["height"] == 38
+    assert [child["type"] for child in serialized["children"]] == [
+        "icon_button",
+        "separator",
+        "small_button",
+    ]
+    assert serialized["children"][1]["class"] == "toolbar-separator"
+    assert serialized["children"][1]["props"]["orientation"] == "vertical"
+    assert serialized["children"][1]["style"] == {"width": 1, "height": 24}
+
+    click_cbs, _ = _collect_runtime_callbacks(toolbar)
+    click_cbs[toolbar.children[0].id]()
+    click_cbs[toolbar.children[2].id]()
+
+    assert calls == ["run", "reset"]
+
+
+def test_vertical_toolbar_separator_and_validation() -> None:
+    with dg.Toolbar(orientation="vertical", compact=False, gap=8, parent=None) as toolbar:
+        dg.IconButton("up")
+        dg.ToolbarSeparator()
+        dg.IconButton("down")
+
+    serialized = toolbar.to_dict()
+
+    assert serialized["class"] == "toolbar toolbar-vertical"
+    assert serialized["style"]["flex_direction"] == "column"
+    assert serialized["style"]["width"] == 44
+    assert serialized["style"]["height"] == "100%"
+    assert serialized["style"]["gap"] == 8.0
+    assert serialized["children"][1]["props"]["orientation"] == "horizontal"
+    assert serialized["children"][1]["style"] == {"width": 24, "height": 1}
+
+    with pytest.raises(ValueError, match="orientation"):
+        dg.Toolbar(orientation="diagonal", parent=None)
+    with pytest.raises(ValueError, match="gap"):
+        dg.Toolbar(gap=-1, parent=None)
 
 
 def test_search_box_serializes_and_emits_change_and_clear() -> None:
@@ -3454,6 +3718,9 @@ def test_search_box_serializes_and_emits_change_and_clear() -> None:
     assert serialized["type"] == "h_layout"
     assert serialized["class"] == "search-box"
     assert serialized["style"]["align_items"] == "center"
+    assert serialized["style"]["height"] == 38
+    assert serialized["style"]["flex_grow"] == 0
+    assert serialized["style"]["flex_shrink"] == 0
     assert [child["type"] for child in serialized["children"]] == [
         "icon_button",
         "text_input",
@@ -3496,7 +3763,10 @@ def test_command_palette_filters_and_runs_commands() -> None:
     assert serialized["type"] == "modal"
     assert serialized["class"] == "command-palette"
     assert serialized["props"]["open"] is True
+    assert serialized["props"]["close_button"] is True
     assert [child["type"] for child in serialized["children"]] == ["h_layout", "v_layout"]
+    assert serialized["children"][0]["class"] == "search-box command-palette-search"
+    assert serialized["children"][0]["children"][-1]["class"] == "search-box-clear"
     assert [command.id for command in palette.filtered_commands()] == ["open"]
     assert palette.selected == "open"
     assert palette.search_box is not None
@@ -3555,6 +3825,7 @@ def test_radio_button_and_radio_group_serialize() -> None:
     }
     assert group.value == "balanced"
     assert group.to_dict()["type"] == "v_layout"
+    assert group.to_dict()["class"] == "radio-group radio-group-horizontal"
     assert group.to_dict()["style"]["flex_direction"] == "row"
     assert [child.to_dict()["type"] for child in group.children] == [
         "radio_button",
@@ -5715,6 +5986,191 @@ def test_scatter_get_view_bounds_2d_returns_none_when_not_live() -> None:
     s = dg.Scatter3D(DemoFrame(), x="x", y="y", z="z", parent=None)
     result = s.get_view_bounds_2d()
     assert result is None
+
+
+def test_scatter_plot_2d_serializes_as_flat_scatter() -> None:
+    class Frame2D:
+        columns = ("time", "value", "group")
+        shape = (128, 3)
+
+    plot = dg.ScatterPlot2D(
+        Frame2D(),
+        x="time",
+        y="value",
+        color="group",
+        id="plot",
+        class_="latency",
+        parent=None,
+    )
+
+    node = plot.to_dict()
+    props = node["props"]
+    assert node["type"] == "scatter_3d"
+    assert node["class"] == "scatter-plot-2d latency"
+    assert props["x"] == "time"
+    assert props["y"] == "value"
+    assert props["z"] == "_scatter2d_z"
+    assert props["interaction"] == "pan_2d"
+    assert props["axis_x"] == "time"
+    assert props["axis_y"] == "value"
+    assert props["axis_vis_z"] is False
+    assert props["frame"]["columns"] == ["time", "value", "group"]
+
+
+def test_scatter_plot_2d_payload_uses_zero_z_column() -> None:
+    np = pytest.importorskip("numpy")
+    import struct
+
+    class Frame2D:
+        columns = ("x", "y")
+        shape = (2, 2)
+        x = np.array([1.0, 2.0], dtype=np.float32)
+        y = np.array([3.0, 4.0], dtype=np.float32)
+
+        def __getitem__(self, column: str) -> object:
+            return getattr(self, column)
+
+    plot = dg.ScatterPlot2D(Frame2D(), x="x", y="y", parent=None)
+    payload = plot._build_payload()
+    assert payload is not None
+    assert struct.unpack_from("<3f", payload, 0) == pytest.approx((1.0, 3.0, 0.0))
+    assert struct.unpack_from("<3f", payload, 12) == pytest.approx((2.0, 4.0, 0.0))
+
+
+def test_scatter_plot_2d_fit_syncs_flat_camera() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.calls: list[tuple] = []
+
+        def enqueue_set_scatter_parallel_projection(self, widget_id: str, parallel: bool) -> None:
+            self.calls.append(("parallel", widget_id, parallel))
+
+        def enqueue_set_scatter_view_direction(self, widget_id: str, direction: str) -> None:
+            self.calls.append(("view", widget_id, direction))
+
+        def enqueue_set_scatter_axis_visibility(
+            self, widget_id: str, x: bool, y: bool, z: bool
+        ) -> None:
+            self.calls.append(("axis", widget_id, x, y, z))
+
+        def enqueue_fit_scatter_camera(self, widget_id: str, bounds: object) -> None:
+            self.calls.append(("fit", widget_id, bounds))
+
+        def close(self) -> None:
+            pass
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+
+    plot = dg.ScatterPlot2D(DemoFrame(), x="x", y="y", id="plot2d", parent=None)
+    plot._bind_live(handle.widget_handle(plot.id))
+    plot.fit()
+
+    assert sender.calls[-4:] == [
+        ("fit", "plot2d", None),
+        ("parallel", "plot2d", True),
+        ("view", "plot2d", "xy"),
+        ("axis", "plot2d", True, True, False),
+    ]
+
+
+def test_heatmap_serializes_packed_matrix() -> None:
+    np = pytest.importorskip("numpy")
+
+    matrix = np.array([[1.0, 2.5, float("nan")], [-1.0, 0.0, 4.0]], dtype=np.float32)
+    heatmap = dg.Heatmap(
+        matrix,
+        x_labels=["a", "b", "c"],
+        y_labels=["r0", "r1"],
+        colormap="turbo",
+        title="Matrix",
+        id="heat",
+        parent=None,
+    )
+
+    node = heatmap.to_dict()
+    props = node["props"]
+    assert node["type"] == "heatmap"
+    assert props["rows"] == 2
+    assert props["cols"] == 3
+    assert props["finite_count"] == 5
+    assert props["vmin"] == pytest.approx(-1.0)
+    assert props["vmax"] == pytest.approx(4.0)
+    assert props["x_labels"] == ["a", "b", "c"]
+    assert props["y_labels"] == ["r0", "r1"]
+    assert props["colormap"] == "turbo"
+    assert props["title"] == "Matrix"
+    assert props["scalar_bar"] is True
+    raw = base64.b64decode(props["data_b64"])
+    assert struct.unpack("<6f", raw)[:2] == pytest.approx((1.0, 2.5))
+    assert props["events"] == []
+
+
+def test_heatmap_hover_callback_payload() -> None:
+    calls: list[dg.HeatmapCell | None] = []
+    win = dg.Window("Heatmap")
+    heatmap = dg.Heatmap(
+        [[1.0, 2.0], [3.0, 4.0]],
+        x_labels=["a", "b"],
+        y_labels=["r0", "r1"],
+        id="heat",
+        on_hover=lambda cell: calls.append(cell),
+        parent=win,
+    )
+
+    _, change_cbs = _collect_runtime_callbacks(win)
+    change_cbs["heat"](
+        json.dumps(
+            {
+                "event": "hover_changed",
+                "row": 1,
+                "col": 0,
+                "value": 3.0,
+                "x_label": "a",
+                "y_label": "r1",
+            }
+        )
+    )
+    change_cbs["heat"](json.dumps({"event": "hover_changed", "widget_id": "heat"}))
+
+    assert heatmap.to_dict()["props"]["events"] == ["change"]
+    assert calls == [dg.HeatmapCell(1, 0, 3.0, "a", "r1"), None]
+    assert heatmap.hover_cell is None
+
+
+def test_heatmap_queues_startup_resource_payload() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.replacements: list[tuple[str, str]] = []
+
+        def enqueue_replace_node(self, widget_id: str, node_json: str) -> None:
+            self.replacements.append((widget_id, node_json))
+
+        def close(self) -> None:
+            pass
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+
+    heatmap = dg.Heatmap([[1.0, 2.0]], id="heat", parent=None)
+    heatmap._bind_live(handle.widget_handle(heatmap.id))
+    heatmap._queue_startup_resources()
+
+    assert sender.replacements
+    widget_id, node_json = sender.replacements[-1]
+    assert widget_id == "heat"
+    assert json.loads(node_json)["props"]["data_b64"]
+
+
+def test_heatmap_validation() -> None:
+    with pytest.raises(ValueError, match="2D"):
+        dg.Heatmap([1.0, 2.0], parent=None)
+    with pytest.raises(ValueError, match="x_labels length"):
+        dg.Heatmap([[1.0, 2.0]], x_labels=["only one"], parent=None)
+    with pytest.raises(ValueError, match="color range"):
+        dg.Heatmap([[1.0]], clim=(float("nan"), 2.0), parent=None)
 
 
 def test_scatter_screenshot_returns_none_when_not_live() -> None:
@@ -8003,6 +8459,13 @@ def test_grid_layout_min_column_width() -> None:
     dg.GridLayout(min_column_width=120, id="g")
     node = win.to_dict()["children"][0]
     assert node["props"].get("min_column_width") == 120
+
+
+def test_grid_layout_masonry_serialization() -> None:
+    win = dg.Window("Grid")
+    dg.GridLayout(masonry=True, id="g")
+    node = win.to_dict()["children"][0]
+    assert node["props"].get("masonry") is True
 
 
 def test_grid_layout_auto_columns_omits_columns_prop() -> None:

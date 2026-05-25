@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 from collections import deque
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 import inspect
 import json
 import math
@@ -1822,7 +1822,7 @@ def _table_column_payload(columns: object) -> tuple[list[dict[str, object]], lis
 def _collect_runtime_callbacks(
     widget: object,
 ) -> tuple[dict[str, Callable[[], None]], dict[str, Callable[[object], None]]]:
-    from .widgets import Button, Checkbox, CodeEditor, Collapsible, Container, DataFrameTable, DateInput, DateTimeInput, DragDropPayload, DragNumber, DropTarget, Dropdown, MenuItem, NumberInput, Pages, RadioButton, RangeSlider, Scatter3D, ScatterHit, ScatterPick, Selectable, Slider, TableSelection, TableSort, Tabs, TextArea, TextInput, TimeInput, ToggleSwitch, TreeNode, TreeView, Widget
+    from .widgets import BarChart, BarChartBar, Button, Checkbox, CodeEditor, Collapsible, Container, DataFrameTable, DateInput, DateTimeInput, DragDropPayload, DragNumber, DropTarget, Dropdown, Heatmap, HeatmapCell, MenuItem, NumberInput, Pages, RadioButton, RangeSlider, Scatter3D, ScatterHit, ScatterPick, Selectable, Slider, TableSelection, TableSort, Tabs, TextArea, TextInput, TimeInput, ToggleSwitch, TreeNode, TreeView, Widget
 
     click_callbacks: dict[str, Callable[[], None]] = {}
     change_callbacks: dict[str, Callable[[object], None]] = {}
@@ -2024,6 +2024,46 @@ def _collect_runtime_callbacks(
                     widget.on_select(selection)
 
             change_callbacks[node.id] = table_changed
+        if isinstance(node, Heatmap) and node.on_hover is not None:
+            def heatmap_hover_changed(value: object, widget: Heatmap = node) -> None:
+                payload = json.loads(value) if isinstance(value, str) else value
+                if not isinstance(payload, Mapping) or payload.get("event") != "hover_changed":
+                    return
+                if "row" not in payload or "col" not in payload or "value" not in payload:
+                    widget.hover_cell = None
+                    widget.on_hover(None)
+                    return
+                cell = HeatmapCell(
+                    row=int(payload["row"]),
+                    col=int(payload["col"]),
+                    value=float(payload["value"]),
+                    x_label=payload.get("x_label") if payload.get("x_label") is not None else None,
+                    y_label=payload.get("y_label") if payload.get("y_label") is not None else None,
+                )
+                widget.hover_cell = cell
+                widget.on_hover(cell)
+
+            change_callbacks[node.id] = heatmap_hover_changed
+        if isinstance(node, BarChart) and node.on_hover is not None:
+            def bar_chart_hover_changed(value: object, widget: BarChart = node) -> None:
+                payload = json.loads(value) if isinstance(value, str) else value
+                if not isinstance(payload, Mapping) or payload.get("event") != "hover_changed":
+                    return
+                if "index" not in payload or "series_index" not in payload or "value" not in payload:
+                    widget.hover_bar = None
+                    widget.on_hover(None)
+                    return
+                bar = BarChartBar(
+                    index=int(payload["index"]),
+                    category=str(payload.get("category") or ""),
+                    series_index=int(payload["series_index"]),
+                    series=str(payload.get("series") or ""),
+                    value=float(payload["value"]),
+                )
+                widget.hover_bar = bar
+                widget.on_hover(bar)
+
+            change_callbacks[node.id] = bar_chart_hover_changed
         if isinstance(node, Scatter3D):
             def scatter_picked(
                 value: object,

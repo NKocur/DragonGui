@@ -27,6 +27,8 @@ Tabs {
 }
 
 Separator,
+BarChart,
+Heatmap,
 Scatter3D {
     background: border;
     border-color: border;
@@ -258,6 +260,18 @@ Image {
     accent: accent;
 }
 
+LoadingSpinner {
+    accent: accent;
+    color: text;
+}
+
+DropTarget.drop-zone {
+    background: surface_alt;
+    border: 1px solid border;
+    border-radius: var(--dg-radius);
+    color: text;
+}
+
 Image {
     background: surface_alt;
 }
@@ -273,4 +287,27 @@ Menu:hover,
 Menu:active,
 Menu:open {
     color: accent;
+}
+
+Menu::menu,
+ContextMenu::menu {
+    background: surface;
+    border: 1px solid border;
+    border-radius: var(--dg-radius);
+}
+
+Menu::item,
+ContextMenu::item {
+    background: surface_alt;
+    color: text;
+}
+
+Menu::item-hover,
+ContextMenu::item-hover {
+    background: accent_mix_20;
+}
+
+Menu::item-disabled,
+ContextMenu::item-disabled {
+    color: muted_text;
 }

@@ -77,6 +77,11 @@ app.stylesheet(
         height: 38px;
     }
 
+    FlowLayout.icon-grid {
+        gap: 8px;
+        row-gap: 8px;
+    }
+
     Label.title {
         color: white;
         font-size: 20px;
@@ -112,6 +117,21 @@ app.stylesheet(
         color: rgba(247, 250, 255, 0.92);
     }
 
+    IconButton.paper-swatch,
+    ArrowButton.paper-swatch {
+        background: #ffffff;
+        border-color: #c9b99f;
+    }
+
+    IconButton.paper-swatch::icon,
+    ArrowButton.paper-swatch::icon {
+        color: #18202a;
+    }
+
+    IconButton.accent::icon {
+        color: #74ddb0;
+    }
+
     IconButton.warning::icon {
         color: #ffd166;
     }
@@ -133,7 +153,46 @@ app.stylesheet(
     """
 )
 
-win = dg.Window("Tool buttons probe", width=820, height=390)
+win = dg.Window("Tool buttons probe", width=900, height=640)
+
+
+ICON_NAMES = (
+    "play",
+    "pause",
+    "stop",
+    "save",
+    "search",
+    "plus",
+    "minus",
+    "check",
+    "close",
+    "edit",
+    "copy",
+    "file",
+    "folder",
+    "upload",
+    "download",
+    "refresh",
+    "settings",
+    "home",
+    "info",
+    "help",
+    "warning",
+    "lock",
+    "unlock",
+    "eye",
+    "eye-off",
+    "menu",
+    "list",
+    "filter",
+    "sort",
+    "undo",
+    "redo",
+    "fit",
+    "pan",
+    "grid",
+    "axes",
+)
 
 
 with dg.VLayout(class_="root"):
@@ -143,17 +202,25 @@ with dg.VLayout(class_="root"):
     def mark(action: str) -> None:
         status.set_value(f"Clicked: {action}")
 
-    with dg.Panel("IconButton", class_="case"):
-        dg.Label("Compact square controls keep a stable size regardless of icon name.", class_="caption")
-        with dg.HLayout(class_="toolbar"):
-            dg.IconButton("play", tooltip="Run", on_click=lambda: mark("play"))
-            dg.IconButton("pause", tooltip="Pause", on_click=lambda: mark("pause"))
-            dg.IconButton("stop", tooltip="Stop", on_click=lambda: mark("stop"))
-            dg.IconButton("save", tooltip="Save", on_click=lambda: mark("save"))
-            dg.IconButton("search", tooltip="Search", on_click=lambda: mark("search"))
-            dg.IconButton("plus", tooltip="Add", on_click=lambda: mark("add"))
-            dg.IconButton("close", tooltip="Close", class_="warning", on_click=lambda: mark("close"))
+    with dg.Panel("IconButton catalog", class_="case"):
+        dg.Label(
+            "Compact square controls keep a stable size and expose the glyph through IconButton::icon.",
+            class_="caption",
+        )
+        with dg.FlowLayout(class_="icon-grid"):
+            for icon in ICON_NAMES:
+                classes = "warning" if icon in {"close", "warning"} else None
+                dg.IconButton(icon, tooltip=icon, class_=classes, on_click=lambda name=icon: mark(name))
+            dg.IconButton("unknown-symbol", tooltip="fallback more", class_="accent", on_click=lambda: mark("fallback"))
             dg.IconButton("play", disabled=True)
+
+    with dg.Panel("CSS icon color on light buttons", class_="case"):
+        dg.Label("These white buttons use IconButton::icon and ArrowButton::icon so the symbols remain visible.", class_="caption")
+        with dg.HLayout(class_="toolbar"):
+            for icon in ("save", "edit", "copy", "download", "settings", "warning"):
+                dg.IconButton(icon, tooltip=icon, class_="paper-swatch", on_click=lambda name=icon: mark(f"paper {name}"))
+            dg.ArrowButton("left", tooltip="paper left", class_="paper-swatch", on_click=lambda: mark("paper left"))
+            dg.ArrowButton("right", tooltip="paper right", class_="paper-swatch", on_click=lambda: mark("paper right"))
 
     with dg.Panel("ImageButton, ArrowButton, SmallButton", class_="case"):
         with dg.HLayout(class_="toolbar"):

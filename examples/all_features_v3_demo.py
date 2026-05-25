@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from pathlib import Path
 from pprint import pprint
 import struct
@@ -164,6 +165,45 @@ DEBUG_MONITOR_STYLE = {
     "flex_grow": 1,
     "flex_shrink": 1,
     "align_self": "stretch",
+}
+V4_SCROLL_STYLE = {
+    "width": "100%",
+    "height": "100%",
+    "min_height": 0,
+    "flex_grow": 1,
+    "flex_shrink": 1,
+    "padding": 10,
+    "padding_right": 18,
+    "padding_bottom": 24,
+    "overflow_y": "auto",
+}
+V4_CARD_STYLE = {
+    **CARD_STYLE,
+    "min_width": 0,
+    "min_height": 0,
+}
+V4_CHART_STYLE = {
+    "height": 220,
+    "min_height": 180,
+    "width": "100%",
+}
+V4_INSPECTOR_SPLITTER_STYLE = {
+    "height": 330,
+    "width": "100%",
+}
+V4_INSPECTOR_NAV_PANE_STYLE = {
+    "gap": 6,
+    "padding_right": 4,
+    "min_width": 0,
+}
+V4_INSPECTOR_BODY_PANE_STYLE = {
+    "gap": 10,
+    "min_width": 0,
+}
+V4_INSPECTOR_SEPARATOR_STYLE = {
+    "margin_top": 4,
+    "margin_bottom": 4,
+    "opacity": 0.55,
 }
 
 
@@ -779,6 +819,24 @@ CSS_MIDNIGHT = """
 :root {
     --panel-radius: 10px;
     --control-radius: 8px;
+    --v4-surface: rgba(18, 27, 43, 0.96);
+    --v4-surface-alt: rgba(255, 255, 255, 0.07);
+    --v4-control-bg: rgba(255, 255, 255, 0.08);
+    --v4-control-hover: rgba(90, 169, 255, 0.18);
+    --v4-border: rgba(255, 255, 255, 0.16);
+    --v4-border-strong: rgba(90, 169, 255, 0.52);
+    --v4-text: rgba(245, 248, 255, 0.94);
+    --v4-muted: rgba(245, 248, 255, 0.66);
+    --v4-icon: rgba(245, 248, 255, 0.94);
+    --v4-accent: #5aa9ff;
+    --v4-accent-2: #74ddb0;
+    --v4-danger: #f36b7f;
+    --v4-plot-bg: rgba(4, 8, 18, 0.72);
+    --v4-plot-grid: rgba(255, 255, 255, 0.14);
+    --v4-menu-bg: #101827;
+    --v4-menu-row: #172235;
+    --v4-spinner-track: rgba(255, 255, 255, 0.16);
+    --v4-spinner-arc: #74ddb0;
 }
 
 Window {
@@ -977,6 +1035,320 @@ ProgressBar {
     accent: #74ddb0;
 }
 
+MenuBar Menu {
+    background: transparent;
+    border-color: transparent;
+    color: var(--v4-text);
+}
+
+MenuBar Menu:hover,
+MenuBar Menu:open {
+    background: var(--v4-control-hover);
+    border-color: var(--v4-border-strong);
+    color: var(--v4-text);
+}
+
+Menu::menu,
+ContextMenu::menu {
+    background: var(--v4-menu-bg);
+    border: 1px solid var(--v4-border-strong);
+    border-radius: var(--control-radius);
+    box-shadow: 0 14px 34px rgba(0, 0, 0, 0.34);
+}
+
+Menu::item,
+ContextMenu::item {
+    background: var(--v4-menu-row);
+    color: var(--v4-text);
+}
+
+Menu::item-hover,
+ContextMenu::item-hover {
+    background: var(--v4-control-hover);
+    color: var(--v4-text);
+}
+
+Menu::item-disabled,
+ContextMenu::item-disabled {
+    color: var(--v4-muted);
+}
+
+SmallButton,
+IconButton,
+ArrowButton,
+TextArea,
+CodeEditor,
+LogView,
+DragNumber {
+    background: var(--v4-control-bg);
+    border: 1px solid var(--v4-border);
+    border-radius: var(--control-radius);
+    color: var(--v4-text);
+    accent: var(--v4-accent);
+}
+
+IconButton::icon,
+ArrowButton::icon {
+    color: var(--v4-icon);
+}
+
+SmallButton:hover,
+IconButton:hover,
+ArrowButton:hover,
+TextArea:hover,
+CodeEditor:hover,
+LogView:hover,
+DragNumber:hover {
+    background: var(--v4-control-hover);
+    border-color: var(--v4-border-strong);
+}
+
+Selectable,
+RadioButton,
+TreeNode,
+ToggleSwitch {
+    color: var(--v4-text);
+    accent: var(--v4-accent);
+    border-radius: var(--control-radius);
+}
+
+Selectable:hover,
+Selectable:selected,
+RadioButton:hover,
+TreeNode:hover,
+TreeNode:selected {
+    background: var(--v4-control-hover);
+    border-color: var(--v4-border-strong);
+}
+
+TextInput.temporal-input.invalid {
+    border-color: var(--v4-danger);
+}
+
+DragNumber::field,
+NumberInput::field,
+CodeEditor::field {
+    background: var(--v4-control-bg);
+    border-color: var(--v4-border);
+}
+
+DragNumber::grip,
+CodeEditor::gutter,
+CodeEditor::line-number {
+    color: var(--v4-muted);
+}
+
+RangeSlider {
+    accent: var(--v4-accent);
+    track-color: var(--v4-border);
+    thumb-color: var(--v4-text);
+}
+
+RangeSlider::track {
+    height: 8px;
+    background: var(--v4-border);
+    border-radius: 999px;
+}
+
+RangeSlider::range {
+    height: 8px;
+    background: var(--v4-accent);
+    border-radius: 999px;
+}
+
+RangeSlider::thumb-min,
+RangeSlider::thumb-max {
+    width: 18px;
+    height: 18px;
+    background: var(--v4-text);
+    border: 2px solid var(--v4-accent);
+    border-radius: 999px;
+}
+
+RangeSlider::label,
+LoadingSpinner::label {
+    color: var(--v4-muted);
+}
+
+ToggleSwitch::track {
+    background: var(--v4-border);
+    border-radius: 999px;
+}
+
+ToggleSwitch:checked::track {
+    background: var(--v4-accent);
+}
+
+ToggleSwitch::thumb {
+    background: var(--v4-text);
+    border-radius: 999px;
+}
+
+Splitter::gutter {
+    width: 4px;
+    background: var(--v4-border-strong);
+    border-radius: 999px;
+}
+
+DropTarget.drop-zone {
+    background: var(--v4-surface-alt);
+    border: 1px solid var(--v4-border);
+    border-radius: var(--control-radius);
+    color: var(--v4-muted);
+}
+
+DropTarget.drop-zone:selected {
+    background: var(--v4-control-hover);
+    border-color: var(--v4-border-strong);
+    color: var(--v4-text);
+}
+
+Label.drop-zone-label {
+    color: var(--v4-muted);
+}
+
+VLayout.selectable-list,
+VLayout.radio-group,
+VLayout.property-grid {
+    color: var(--v4-text);
+}
+
+HLayout.toolbar {
+    background: var(--v4-surface-alt);
+    border: 1px solid var(--v4-border);
+    border-radius: var(--control-radius);
+    padding: 5px;
+}
+
+Separator.toolbar-separator {
+    background: var(--v4-border);
+    border-color: var(--v4-border);
+}
+
+HLayout.breadcrumbs {
+    color: var(--v4-muted);
+}
+
+SmallButton.breadcrumb-item {
+    background: transparent;
+    border-color: transparent;
+    color: var(--v4-accent);
+}
+
+Label.breadcrumb-current {
+    color: var(--v4-text);
+    font-weight: 750;
+}
+
+Label.breadcrumb-separator,
+Label.breadcrumb-overflow {
+    color: var(--v4-muted);
+}
+
+HLayout.search-box {
+    background: var(--v4-control-bg);
+    border: 1px solid var(--v4-border);
+    border-radius: var(--control-radius);
+    padding: 4px;
+}
+
+HLayout.search-box TextInput {
+    background: transparent;
+    border-color: transparent;
+}
+
+IconButton.search-box-icon,
+IconButton.search-box-clear {
+    background: transparent;
+    border-color: transparent;
+}
+
+Modal.command-palette {
+    background: var(--v4-surface);
+    border-color: var(--v4-border-strong);
+}
+
+VLayout.command-palette-results {
+    background: transparent;
+}
+
+Selectable.command-palette-row {
+    background: transparent;
+    border-color: transparent;
+}
+
+Selectable.command-palette-row:hover,
+Selectable.command-palette-row:selected {
+    background: var(--v4-control-hover);
+    border-color: var(--v4-border-strong);
+}
+
+Label.command-palette-empty,
+Label.property-label,
+Label.property-value {
+    color: var(--v4-muted);
+}
+
+HLayout.property-row {
+    color: var(--v4-text);
+}
+
+Collapsible.property-section::header {
+    background: var(--v4-surface-alt);
+    border-color: var(--v4-border);
+}
+
+LoadingSpinner::track {
+    background: var(--v4-spinner-track);
+}
+
+LoadingSpinner::arc {
+    background: var(--v4-spinner-arc);
+}
+
+BarChart,
+Heatmap {
+    width: 100%;
+    min-height: 180px;
+    background: var(--v4-plot-bg);
+    border: 1px solid var(--v4-border-strong);
+    border-radius: var(--control-radius);
+    color: var(--v4-accent);
+}
+
+BarChart::label,
+BarChart::value-label,
+Heatmap::label {
+    color: var(--v4-text);
+}
+
+DataFrameTable {
+    background: var(--v4-plot-bg);
+    border-color: var(--v4-border-strong);
+}
+
+DataFrameTable::header {
+    background: var(--v4-surface-alt);
+    color: var(--v4-text);
+}
+
+DataFrameTable::row {
+    color: var(--v4-text);
+}
+
+DataFrameTable::row-selected {
+    background: var(--v4-control-hover);
+}
+
+DataFrameTable::grid-line,
+DataFrameTable::scrollbar-track {
+    background: var(--v4-border);
+}
+
+DataFrameTable::scrollbar-thumb {
+    background: var(--v4-border-strong);
+}
+
 DataFrameTable,
 Histogram,
 LinePlot,
@@ -1146,6 +1518,27 @@ GridLayout.histogram-grid {
 
 
 CSS_PAPER = CSS_MIDNIGHT + """
+:root {
+    --v4-surface: #fffaf0;
+    --v4-surface-alt: #fff2dc;
+    --v4-control-bg: #ffffff;
+    --v4-control-hover: #ffe0b8;
+    --v4-border: #c9b99f;
+    --v4-border-strong: #d06b2c;
+    --v4-text: #18202a;
+    --v4-muted: #735f4a;
+    --v4-icon: #18202a;
+    --v4-accent: #d06b2c;
+    --v4-accent-2: #2c8c99;
+    --v4-danger: #b8322b;
+    --v4-plot-bg: #fffdf7;
+    --v4-plot-grid: #dbc6a6;
+    --v4-menu-bg: #fffaf0;
+    --v4-menu-row: #ffffff;
+    --v4-spinner-track: rgba(115, 95, 74, 0.24);
+    --v4-spinner-arc: #2c8c99;
+}
+
 Window {
     background: #f4efe4;
     color: #28313d;
@@ -1353,6 +1746,27 @@ HtmlReport {
 
 
 CSS_NEON = CSS_MIDNIGHT + """
+:root {
+    --v4-surface: #0d1433;
+    --v4-surface-alt: #101947;
+    --v4-control-bg: #101947;
+    --v4-control-hover: rgba(255, 54, 214, 0.22);
+    --v4-border: #ff36d6;
+    --v4-border-strong: #00e5ff;
+    --v4-text: #ffffff;
+    --v4-muted: #9eefff;
+    --v4-icon: #ffffff;
+    --v4-accent: #ff36d6;
+    --v4-accent-2: #39ff88;
+    --v4-danger: #ff5f9f;
+    --v4-plot-bg: rgba(4, 8, 28, 0.86);
+    --v4-plot-grid: #22306a;
+    --v4-menu-bg: #090f26;
+    --v4-menu-row: #101947;
+    --v4-spinner-track: rgba(0, 229, 255, 0.22);
+    --v4-spinner-arc: #39ff88;
+}
+
 Window {
     background: #040617;
 }
@@ -1523,6 +1937,27 @@ HtmlReport {
 """
 
 CSS_TERMINAL = CSS_MIDNIGHT + """
+:root {
+    --v4-surface: #030712;
+    --v4-surface-alt: rgba(16, 185, 129, 0.10);
+    --v4-control-bg: #020617;
+    --v4-control-hover: rgba(16, 185, 129, 0.18);
+    --v4-border: #10b981;
+    --v4-border-strong: #bef264;
+    --v4-text: #d1fae5;
+    --v4-muted: rgba(209, 250, 229, 0.68);
+    --v4-icon: #bef264;
+    --v4-accent: #34d399;
+    --v4-accent-2: #bef264;
+    --v4-danger: #f87171;
+    --v4-plot-bg: #020617;
+    --v4-plot-grid: rgba(16, 185, 129, 0.22);
+    --v4-menu-bg: #020617;
+    --v4-menu-row: #052e2b;
+    --v4-spinner-track: rgba(16, 185, 129, 0.22);
+    --v4-spinner-arc: #bef264;
+}
+
 Window {
     background: #030712;
     color: #d1fae5;
@@ -1850,7 +2285,7 @@ demo_state = {
     "ticks_y": 5,
     "ticks_z": 5,
     "stats_auto": False,
-    "page": "overview",
+    "page": os.environ.get("DRAGONGUI_DEMO_PAGE", "overview"),
     "line_stream_t": 60.0,
     "line_width": 2.0,
     "line_ticks": 5,
@@ -1873,6 +2308,13 @@ pie_segment_frame = type(
         "__getitem__": lambda self, column: getattr(self, column),
     },
 )()
+v4_scatter_frame = DemoFrame(mode="cloud", rows=12_000)
+v4_table_frame = DemoFrame(mode="wave", rows=420)
+v4_heatmap_matrix = (
+    np.sin(np.linspace(0.0, math.tau * 1.8, 9, dtype=np.float32))[:, None] * 0.55
+    + np.cos(np.linspace(0.0, math.tau * 1.4, 12, dtype=np.float32))[None, :] * 0.45
+    + np.linspace(-0.25, 0.35, 12, dtype=np.float32)[None, :]
+).astype(np.float32)
 demo_image_path = make_demo_image()
 report_overview_path, report_detail_path, report_inline_path = write_demo_reports()
 stream_payload_cache: dict[str, list[tuple[float, dg.ScatterPayload]]] = {}
@@ -2832,6 +3274,36 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
     global histogram_tick_label
     global confirm_modal, about_modal
 
+    v4_log: dg.LogView | None = None
+    v4_palette: dg.CommandPalette | None = None
+    v4_drop_status: dg.Label | None = None
+
+    def v4_mark(message: str) -> None:
+        set_status(f"V4: {message}")
+        if v4_log is not None:
+            v4_log.append_line(f"{time.strftime('%H:%M:%S')}  {message}")
+
+    def open_v4_palette() -> None:
+        if v4_palette is not None:
+            v4_palette.show()
+
+    def on_v4_property(change: dg.PropertyChange) -> None:
+        v4_mark(f"{change.key}: {change.old_value!r} -> {change.value!r}")
+
+    def on_v4_drop(payload: dg.DragDropPayload) -> None:
+        text = f"Dropped {payload.kind or 'payload'}: {payload.payload}"
+        if v4_drop_status is not None:
+            v4_drop_status.set_value(text)
+        v4_mark(text)
+
+    def on_v4_heatmap(cell: dg.HeatmapCell | None) -> None:
+        if cell is not None:
+            v4_mark(f"Heatmap {cell.y_label or cell.row}/{cell.x_label or cell.col}: {cell.value:.3f}")
+
+    def on_v4_bar(bar: dg.BarChartBar | None) -> None:
+        if bar is not None:
+            v4_mark(f"Bar {bar.category}/{bar.series}: {bar.value:.3g}")
+
     win = dg.Window("DragonGUI All Features V3 Demo", width=1440, height=900)
 
     with dg.MenuBar(height=34, tooltip="Menus render as native overlays."):
@@ -2858,7 +3330,7 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
     with dg.HLayout(style={"gap": 0}):
         with dg.Sidebar(width=238, style={"padding": 12, "gap": 8}):
             dg.Label("DragonGUI", class_="brand")
-            dg.Label("All features V3", class_="subtle")
+            dg.Label("All features V3 + V4", class_="subtle")
             with dg.FlowLayout(gap=6, row_gap=4):
                 dg.LED(True, tooltip="Renderer online")
                 dg.LED("stream", states={"stream": "warning"}, tooltip="Custom stream state")
@@ -2866,6 +3338,7 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                 dg.Tag("Scatter3D", level="info")
                 dg.Tag("LinePlot", level="info")
                 dg.Tag("Histogram", level="warning")
+                dg.Tag("V4", level="success")
                 dg.Tag("HtmlReport", level="success")
             dg.Separator()
             dg.NavItem("Overview", page="overview")
@@ -2873,6 +3346,7 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
             dg.NavItem("Line plots", page="lineplots")
             dg.NavItem("Histograms", page="histograms")
             dg.NavItem("Pie charts", page="piecharts")
+            dg.NavItem("V4 widgets", page="v4widgets")
             dg.NavItem("Controls", page="controls")
             dg.NavItem("Data", page="data")
             dg.NavItem("Runtime", page="runtime")
@@ -2883,7 +3357,7 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
             dg.Separator()
             dg.Label("Responsive grids, CSS, overlays, tables, and live native commands.", class_="subtle")
 
-        with dg.Pages(value="overview", on_change=set_page, key="main-pages"):
+        with dg.Pages(value=str(demo_state["page"]), on_change=set_page, key="main-pages"):
             with dg.Page("overview", title="Overview"):
                 with dg.GridLayout(columns=3, min_column_width=270, gap=GRID_GAP, style=GRID_STYLE):
                     with dg.Panel("Frame", class_="highlight", style=CARD_STYLE):
@@ -3323,6 +3797,297 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                             key="v3-pie-revenue",
                         )
 
+            with dg.Page("v4widgets", title="V4 widgets"):
+                with dg.ScrollArea(axis="y", gap=GRID_GAP, style=V4_SCROLL_STYLE):
+                    with dg.GridLayout(columns=2, min_column_width=430, masonry=True, gap=GRID_GAP, style=GRID_STYLE):
+                        with dg.Panel("Selection and navigation", style=V4_CARD_STYLE):
+                            dg.Breadcrumbs(
+                                [
+                                    ("Workspace", "workspace"),
+                                    ("Telemetry", "telemetry"),
+                                    ("Sensor cluster", "cluster"),
+                                    ("Run 042", "run"),
+                                ],
+                                max_items=4,
+                                on_select=lambda item: v4_mark(f"Breadcrumb: {item.label}"),
+                            )
+                            dg.SelectableList(
+                                [
+                                    ("Overview", "overview"),
+                                    ("Sensors", "sensors"),
+                                    ("Streaming plots", "streams"),
+                                    {"label": "Archived batch", "value": "archive", "disabled": True},
+                                ],
+                                value="sensors",
+                                on_change=lambda value: v4_mark(f"SelectableList: {value}"),
+                                max_height=150,
+                            )
+                            with dg.FlowLayout(gap=8, row_gap=6):
+                                dg.Selectable(
+                                    "Standalone selectable",
+                                    selected=True,
+                                    on_select=lambda selected: v4_mark(f"Selectable: {selected}"),
+                                )
+                                dg.RadioButton(
+                                    "Manual radio",
+                                    checked=True,
+                                    on_change=lambda checked: v4_mark(f"RadioButton: {checked}"),
+                                )
+                            dg.RadioGroup(
+                                ["Low", "Medium", "High"],
+                                value="Medium",
+                                orientation="horizontal",
+                                gap=12,
+                                on_change=lambda value: v4_mark(f"RadioGroup: {value}"),
+                            )
+                            with dg.TreeView(on_select=lambda node_id: v4_mark(f"TreeView: {node_id}")):
+                                with dg.TreeNode("Scene", node_id="scene", expanded=True):
+                                    dg.TreeNode("Camera", node_id="camera", leaf=True)
+                                    with dg.TreeNode("Lights", node_id="lights", expanded=True):
+                                        dg.TreeNode("Key", node_id="key-light", leaf=True, selected=True)
+                                        dg.TreeNode("Fill", node_id="fill-light", leaf=True)
+                                with dg.TreeNode("Materials", node_id="materials"):
+                                    dg.TreeNode("Glass", node_id="glass", leaf=True)
+                                    dg.TreeNode("Metal", node_id="metal", leaf=True)
+
+                        with dg.Panel("Numeric and temporal inputs", style=V4_CARD_STYLE):
+                            dg.ToggleSwitch(
+                                "Live acquisition",
+                                checked=True,
+                                on_change=lambda checked: v4_mark(f"ToggleSwitch: {checked}"),
+                            )
+                            dg.DragNumber(
+                                12.5,
+                                min=0,
+                                max=30,
+                                step=0.5,
+                                on_change=lambda value: v4_mark(f"DragNumber: {value:.1f} ms"),
+                            )
+                            dg.DragVector(
+                                (0.0, 1.5, -2.0),
+                                labels=("X", "Y", "Z"),
+                                min=-5,
+                                max=5,
+                                step=0.25,
+                                component_width=86,
+                                on_change=lambda value: v4_mark(f"DragVector: {tuple(round(v, 2) for v in value)}"),
+                            )
+                            dg.RangeSlider(
+                                (20, 84),
+                                min=0,
+                                max=100,
+                                step=2,
+                                on_change=lambda value: v4_mark(f"RangeSlider: {value[0]:.0f}-{value[1]:.0f}"),
+                            )
+                            with dg.GridLayout(columns=3, min_column_width=120, gap=8, style={"width": "100%"}):
+                                dg.DateInput("2026-05-24", on_change=lambda value: v4_mark(f"DateInput: {value}"))
+                                dg.TimeInput("09:30", on_change=lambda value: v4_mark(f"TimeInput: {value}"))
+                                dg.DateTimeInput(
+                                    "2026-05-24T09:30:00",
+                                    on_change=lambda value: v4_mark(f"DateTimeInput: {value}"),
+                                )
+
+                        with dg.Panel("Toolbar and command palette", style=V4_CARD_STYLE):
+                            with dg.Toolbar():
+                                dg.IconButton("play", tooltip="Run", on_click=lambda: v4_mark("Toolbar run"))
+                                dg.IconButton("pause", tooltip="Pause", on_click=lambda: v4_mark("Toolbar pause"))
+                                dg.IconButton("stop", tooltip="Stop", on_click=lambda: v4_mark("Toolbar stop"))
+                                dg.ToolbarSeparator()
+                                dg.IconButton("save", tooltip="Save", on_click=lambda: v4_mark("Toolbar save"))
+                                dg.ImageButton(
+                                    demo_image_path,
+                                    size=34,
+                                    fit="cover",
+                                    tooltip="ImageButton",
+                                    on_click=lambda: v4_mark("ImageButton"),
+                                )
+                                dg.ToolbarSeparator()
+                                dg.SearchBox(
+                                    "",
+                                    placeholder="Search status...",
+                                    on_change=lambda value: v4_mark(f"SearchBox: {value}"),
+                                    style={"width": 210},
+                                )
+                                dg.SmallButton("Deploy", class_="primary", on_click=lambda: v4_mark("SmallButton deploy"))
+                            with dg.FlowLayout(gap=8, row_gap=8):
+                                dg.ArrowButton("left", tooltip="Previous", on_click=lambda: v4_mark("Arrow left"))
+                                dg.ArrowButton("right", tooltip="Next", on_click=lambda: v4_mark("Arrow right"))
+                                dg.ArrowButton("up", tooltip="Move up", on_click=lambda: v4_mark("Arrow up"))
+                                dg.ArrowButton("down", tooltip="Move down", on_click=lambda: v4_mark("Arrow down"))
+                                dg.Button("Command palette", on_click=open_v4_palette)
+                            with dg.HLayout(style={"gap": 10, "align_items": "center"}):
+                                dg.LoadingSpinner(size=26, label="Syncing", speed=1.25)
+                                dg.LoadingSpinner(size=22, spinning=False, label="Paused")
+
+                        with dg.Panel("Property inspector and split panes", style=V4_CARD_STYLE):
+                            with dg.Splitter(
+                                orientation="horizontal",
+                                sizes=(120, "1fr"),
+                                min_sizes=(110, 240),
+                                gutter_size=10,
+                                style=V4_INSPECTOR_SPLITTER_STYLE,
+                            ):
+                                with dg.Pane(min_size=110, style=V4_INSPECTOR_NAV_PANE_STYLE):
+                                    dg.Selectable("Inspector", selected=True)
+                                    dg.Selectable("Metrics")
+                                    dg.Selectable("Exports")
+                                    dg.Separator(style=V4_INSPECTOR_SEPARATOR_STYLE)
+                                    dg.Label("Drag center divider", class_="subtle")
+                                with dg.Pane(min_size=240, style=V4_INSPECTOR_BODY_PANE_STYLE):
+                                    with dg.PropertyGrid(label_width=84):
+                                        dg.Property(
+                                            "Threshold",
+                                            dg.RangeSlider(
+                                                (0.2, 0.82),
+                                                min=0,
+                                                max=1,
+                                                step=0.02,
+                                                on_change=lambda value: v4_mark(
+                                                    f"Threshold: {value[0]:.2f}-{value[1]:.2f}"
+                                                ),
+                                            ),
+                                        )
+                                        dg.Property(
+                                            "Exposure",
+                                            dg.DragNumber(
+                                                8.5,
+                                                min=0,
+                                                max=24,
+                                                step=0.5,
+                                                on_change=lambda value: v4_mark(f"Exposure: {value:.1f}"),
+                                            ),
+                                        )
+                                    dg.PropertyGrid(
+                                        {
+                                            "Name": "Sensor A",
+                                            "Enabled": True,
+                                            "Mode": "Auto",
+                                            "Gain": 0.42,
+                                            "Color": "#69b7ff",
+                                        },
+                                        schema={
+                                            "Mode": {"type": "select", "options": ["Auto", "Manual", "Disabled"]},
+                                            "Gain": {"type": "float", "min": 0.0, "max": 1.0, "step": 0.01},
+                                            "Color": {"type": "color"},
+                                        },
+                                        on_change=on_v4_property,
+                                        label_width=84,
+                                    )
+
+                        with dg.Panel("Drag, drop, and table upgrades", style=V4_CARD_STYLE):
+                            with dg.FlowLayout(gap=8, row_gap=8):
+                                with dg.DragSource(
+                                    {"metric": "latency", "window": "p95"},
+                                    drag_kind="metric",
+                                ):
+                                    dg.Badge("latency p95", level="warning")
+                                with dg.DragSource(
+                                    {"metric": "error_rate", "window": "1h"},
+                                    drag_kind="metric",
+                                ):
+                                    dg.Badge("error rate", level="danger")
+                            v4_drop_status = dg.Label("Drag a metric badge onto the drop zone.", class_="subtle")
+                            dg.DropZone("Drop metric here", accept="metric", on_drop=on_v4_drop, style={"height": 96})
+                            dg.DataFrameTable(
+                                v4_table_frame,
+                                page_size=36,
+                                sample_rows=36,
+                                sortable=True,
+                                resizable_columns=True,
+                                on_select=lambda selection: v4_mark(
+                                    f"Table {selection.row_index}:{selection.column}={selection.value}"
+                                ),
+                                on_sort=lambda sort: v4_mark(f"Sort {sort.target} {sort.column} {sort.direction}"),
+                                style={"height": 230, "min_height": 0},
+                            )
+
+                        with dg.Panel("Code editor and log view", style=V4_CARD_STYLE):
+                            dg.CodeEditor(
+                                "def classify(sample):\n"
+                                "    if sample.score > 0.8:\n"
+                                "        return 'watch'\n"
+                                "    return 'ok'\n",
+                                language="python",
+                                rows=7,
+                                on_change=lambda value: v4_mark(f"CodeEditor lines: {len(value.splitlines())}"),
+                                style={"width": "100%"},
+                            )
+                            v4_log = dg.LogView(
+                                [
+                                    "09:30:00  V4 page mounted",
+                                    "09:30:01  Waiting for widget interaction",
+                                    "09:30:02  Native log rows are virtualized",
+                                ],
+                                rows=7,
+                                follow=True,
+                                style={"width": "100%"},
+                            )
+                            with dg.FlowLayout(gap=8, row_gap=8):
+                                dg.SmallButton("Append log", on_click=lambda: v4_mark("Manual log append"))
+                                dg.SmallButton("Clear log", on_click=lambda: v4_log.clear() if v4_log is not None else None)
+
+                        with dg.Panel("2D scatter and heatmap", style=V4_CARD_STYLE):
+                            dg.ScatterPlot2D(
+                                v4_scatter_frame,
+                                x="x",
+                                y="y",
+                                scalars="score",
+                                colormap="turbo",
+                                point_size=3.0,
+                                scalar_bar=True,
+                                scalar_bar_title="score",
+                                hover=["row_id", "group"],
+                                on_pick=lambda point: v4_mark(f"Scatter2D point {point.index}"),
+                                style=V4_CHART_STYLE,
+                            )
+                            dg.Heatmap(
+                                v4_heatmap_matrix,
+                                x_labels=[f"T{i}" for i in range(v4_heatmap_matrix.shape[1])],
+                                y_labels=[f"L{i}" for i in range(v4_heatmap_matrix.shape[0])],
+                                title="Classifier bins",
+                                colormap="magma",
+                                on_hover=on_v4_heatmap,
+                                style=V4_CHART_STYLE,
+                            )
+
+                        with dg.Panel("Bar chart", style=V4_CARD_STYLE):
+                            dg.BarChart(
+                                pie_segment_frame,
+                                category="segment",
+                                value=["revenue", "accounts"],
+                                aggregate="sum",
+                                x_label="segment",
+                                y_label="total",
+                                colors=["#69b7ff", "#76e0b1"],
+                                show_toolbar=True,
+                                on_hover=on_v4_bar,
+                                style=V4_CHART_STYLE,
+                            )
+                            dg.BarChart(
+                                labels=["Ingest", "Transform", "Validate", "Export"],
+                                values=[78, 64, 52, 38],
+                                orientation="horizontal",
+                                x_label="jobs",
+                                y_label="stage",
+                                colors=["#ffbf69"],
+                                show_toolbar=True,
+                                on_hover=on_v4_bar,
+                                style=V4_CHART_STYLE,
+                            )
+
+                    v4_palette = dg.CommandPalette(
+                        [
+                            dg.Command("push-scatter", "Push scatter frame", lambda: push_scatter("cloud"), "Cloud demo data"),
+                            dg.Command("fit-lines", "Fit line plots", fit_line_plots, "Reset line plot bounds"),
+                            dg.Command("snapshot", "Print snapshot", print_snapshot, "Dump redacted document"),
+                            dg.Command("theme-midnight", "Theme: midnight", lambda: apply_theme("midnight")),
+                            dg.Command("disabled", "Disabled command", disabled=True),
+                        ],
+                        title="V4 Command Palette",
+                        on_run=lambda command: v4_mark(f"Command: {command.id}"),
+                        parent=win,
+                    )
+
             with dg.Page("controls", title="Controls"):
                 with dg.GridLayout(columns=2, min_column_width=360, gap=GRID_GAP, style=GRID_STYLE):
                     with dg.Panel("Form controls", style=CARD_STYLE):
@@ -3498,7 +4263,7 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
         dg.Label(f"{POINT_ROWS:,} points")
         dg.Label(f"{TABLE_ROWS:,} table rows")
         dg.Spacer()
-        dg.Label("All features V3")
+        dg.Label("All features V3 + V4")
 
 
     confirm_modal = dg.confirm(
@@ -3512,7 +4277,7 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
 
     about_modal = dg.alert(
         "About DragonGUI",
-        "This V3 demo uses responsive grids, CSS themes, Scatter3D, LinePlot, Histogram, PieChart, HtmlReport, DataFrameTable, modals, menus, context menus, toasts, resources, and live runtime updates.",
+        "This V3 demo now includes the V4 widget set: inspectors, command palette, toolbars, split panes, drag/drop, temporal inputs, code/log views, 2D scatter, heatmap, and bar chart.",
         open=False,
         parent=win,
     )
@@ -3523,6 +4288,93 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
         dg.MenuItem("Load Cloud Table", on_click=lambda: update_table("cloud"))
 
     return win
+
+
+def layout_summary_for_page(result: dict, route: str) -> dict:
+    gpu = result.get("debug_snapshot", {}).get("gpu", {})
+    tree = gpu.get("tree") or {}
+    layout = gpu.get("layout") or {}
+    rects = layout.get("rects") or {}
+    clips = layout.get("clips") or {}
+    scroll_max_y = layout.get("scroll_max_y") or {}
+
+    page: dict | None = None
+    descendants: list[dict] = []
+
+    def walk(node: dict, under_page: bool = False) -> None:
+        nonlocal page
+        props = node.get("props") or {}
+        is_page = node.get("type") == "page" and props.get("route_value") == route
+        if is_page:
+            page = node
+        if under_page or is_page:
+            descendants.append(node)
+        for child in node.get("children") or []:
+            if isinstance(child, dict):
+                walk(child, under_page or is_page)
+
+    if isinstance(tree, dict):
+        walk(tree)
+
+    def rect_for(node: dict) -> dict | None:
+        rect = rects.get(node.get("id"))
+        if not isinstance(rect, dict):
+            return None
+        return {
+            "x": round(float(rect.get("x", 0.0)), 1),
+            "y": round(float(rect.get("y", 0.0)), 1),
+            "w": round(float(rect.get("w", 0.0)), 1),
+            "h": round(float(rect.get("h", 0.0)), 1),
+        }
+
+    def label_for(node: dict) -> str:
+        props = node.get("props") or {}
+        return str(props.get("text") or props.get("route_value") or node.get("type") or node.get("id"))
+
+    focus_types = {"page", "scroll_area", "grid_layout"}
+    focus = []
+    panels = []
+    for node in descendants:
+        node_type = node.get("type")
+        rect = rect_for(node)
+        if rect is None:
+            continue
+        item = {
+            "id": node.get("id"),
+            "type": node_type,
+            "label": label_for(node),
+            "rect": rect,
+            "clip": clips.get(node.get("id")),
+            "scroll_max_y": round(float(scroll_max_y.get(node.get("id"), 0.0)), 1),
+        }
+        if node_type in focus_types:
+            focus.append(item)
+        if node_type == "panel":
+            panels.append(item)
+
+    overlaps = []
+    for index, left in enumerate(panels):
+        a = left["rect"]
+        for right in panels[index + 1 :]:
+            b = right["rect"]
+            overlap_w = min(a["x"] + a["w"], b["x"] + b["w"]) - max(a["x"], b["x"])
+            overlap_h = min(a["y"] + a["h"], b["y"] + b["h"]) - max(a["y"], b["y"])
+            if overlap_w > 1 and overlap_h > 1:
+                overlaps.append(
+                    {
+                        "a": left["label"],
+                        "b": right["label"],
+                        "overlap": [round(overlap_w, 1), round(overlap_h, 1)],
+                    }
+                )
+
+    return {
+        "route": route,
+        "page_found": page is not None,
+        "focus": focus,
+        "panels": panels,
+        "panel_overlaps": overlaps,
+    }
 
 
 
@@ -3541,7 +4393,10 @@ except dg.BackendUnavailableError:
     print("Native backend is not built, so this run prints the UI document.")
     pprint(redacted_document(app.document(win)))
 else:
-    print(result)
+    if os.environ.get("DRAGONGUI_DEMO_LAYOUT_SUMMARY"):
+        print(json.dumps(layout_summary_for_page(result, str(demo_state["page"])), indent=2))
+    else:
+        print(result)
 finally:
     stats_stop.set()
     stream_cancel.set()

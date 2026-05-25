@@ -61,6 +61,14 @@ impl Camera {
         }
     }
 
+    pub fn fit_preserving_view(&self, center: Vec3, radius: f32, aspect: f32) -> Self {
+        let mut next = Self::fit(center, radius, aspect);
+        next.yaw = self.yaw;
+        next.pitch = self.pitch;
+        next.parallel = self.parallel;
+        next
+    }
+
     pub fn position(&self) -> Vec3 {
         let (sin_y, cos_y) = self.yaw.sin_cos();
         let (sin_p, cos_p) = self.pitch.sin_cos();
@@ -150,5 +158,23 @@ mod tests {
         assert!(portrait.distance > square.distance * 1.9);
         assert!((landscape.distance - square.distance).abs() < 0.001);
         assert!(very_narrow.far > very_narrow.distance);
+    }
+
+    #[test]
+    fn fit_preserving_view_keeps_projection_and_angles() {
+        let mut camera = Camera::fit(Vec3::ZERO, 5.0, 1.0);
+        camera.yaw = 1.25;
+        camera.pitch = -0.5;
+        camera.parallel = true;
+
+        let next = camera.fit_preserving_view(Vec3::new(1.0, 2.0, 3.0), 8.0, 1.6);
+
+        assert_eq!(next.target, Vec3::new(1.0, 2.0, 3.0));
+        assert!(next.distance > camera.distance);
+        assert_eq!(next.yaw, camera.yaw);
+        assert_eq!(next.pitch, camera.pitch);
+        assert_eq!(next.parallel, camera.parallel);
+        assert_eq!(next.ortho_half_w, 0.0);
+        assert_eq!(next.ortho_half_h, 0.0);
     }
 }

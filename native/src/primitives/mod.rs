@@ -1,18 +1,23 @@
-use std::{borrow::Cow, collections::HashMap, time::Instant};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    time::{Instant, SystemTime, UNIX_EPOCH},
+};
 
 use bytemuck::{Pod, Zeroable};
 
 use crate::css_style::{
     computed_style_for_virtual_element_with_media, DgMediaEnvironment, StylesheetStore,
 };
-use crate::document::{WidgetKind, WidgetNode};
+use crate::document::{BarChartHoverProp, HeatmapHoverProp, WidgetKind, WidgetNode};
 use crate::events::{NavigationItem, SortDirection, TableSortColumn, WidgetState};
 use crate::layout::{
     is_scroll_container_node, panel_title_body_gap_lp, panel_title_line_height_lp,
     panel_title_top_padding_lp, scroll_container_max_x, scroll_container_max_y,
     tree_node_row_height_for_style, LayoutResult, Rect,
 };
-use crate::overlays::{menu_popup_rect, rich_tooltip_target, tooltip_target};
+use crate::overlays::{find_node, menu_popup_rect, rich_tooltip_target, tooltip_target};
+use crate::scatter::colormap;
 use crate::style::{
     badge_height_for_style, badge_width_for_text, base_part_style, checked_part_style_for_state,
     code_editor_gutter_width_for_style, collapsed_part_style_for_state,
@@ -37,6 +42,100 @@ use crate::toast::{toast_colors, toast_rect, toast_stack_index, ToastOverlay};
 const SCROLLBAR_VISIBILITY_EPSILON_PX: f32 = 2.0;
 const SCROLLBAR_MIN_TRACK_LEN_PX: f32 = 44.0;
 const IMPLICIT_PANEL_SCROLLBAR_MIN_SIZE_PX: f32 = 64.0;
+const LOADING_SPINNER_DEFAULT_SIZE_LP: f32 = 18.0;
+const LOADING_SPINNER_TAU: f32 = std::f32::consts::PI * 2.0;
+
+fn raw_prop_f32(node: &WidgetNode, name: &str) -> Option<f32> {
+    node.props
+        .raw_props
+        .get(name)
+        .and_then(|value| value.as_f64())
+        .map(|value| value as f32)
+        .filter(|value| value.is_finite())
+}
+
+fn raw_prop_bool(node: &WidgetNode, name: &str) -> Option<bool> {
+    node.props
+        .raw_props
+        .get(name)
+        .and_then(|value| value.as_bool())
+}
+
+pub(crate) fn modal_close_button_rect(
+    node: &WidgetNode,
+    layout: &LayoutResult,
+    theme: &Theme,
+    sf: f32,
+) -> Option<[f32; 4]> {
+    if node.kind != WidgetKind::Modal || !raw_prop_bool(node, "close_button").unwrap_or(false) {
+        return None;
+    }
+    let rect = layout.rects.get(&node.id)?;
+    if rect.w <= 0.0 || rect.h <= 0.0 {
+        return None;
+    }
+    let inset = (theme.spacing * sf * 0.75).max(6.0 * sf);
+    let border_w = node
+        .style
+        .visual
+        .border_width
+        .unwrap_or(BORDER_WIDTH_LP)
+        .max(0.0)
+        * sf;
+    let has_title = node
+        .props
+        .text
+        .as_deref()
+        .is_some_and(|text| !text.is_empty());
+    let title_band_h = if has_title {
+        ((panel_title_top_padding_lp(node, theme) + panel_title_line_height_lp(node, theme)) * sf)
+            .min((rect.h - border_w * 2.0).max(1.0))
+    } else {
+        26.0 * sf
+    };
+    let size = if has_title {
+        (18.0 * sf).min((title_band_h - 6.0 * sf).max(12.0 * sf))
+    } else {
+        18.0 * sf
+    }
+    .min((rect.w - border_w * 2.0 - inset * 2.0).max(1.0))
+    .min((rect.h - border_w * 2.0).max(1.0));
+    let x = rect.x + rect.w - border_w - inset - size;
+    let y = rect.y + border_w + ((title_band_h - size) * 0.5).max(0.0);
+    Some([x, y, size, size])
+}
+
+fn loading_spinner_size_lp(node: &WidgetNode) -> f32 {
+    raw_prop_f32(node, "size")
+        .filter(|value| *value > 0.0)
+        .unwrap_or(LOADING_SPINNER_DEFAULT_SIZE_LP)
+}
+
+fn loading_spinner_stroke_lp(node: &WidgetNode, size_lp: f32) -> f32 {
+    raw_prop_f32(node, "stroke_width")
+        .filter(|value| *value > 0.0)
+        .unwrap_or_else(|| (size_lp * 0.14).clamp(1.75, 3.0))
+}
+
+fn loading_spinner_phase(node: &WidgetNode, disabled: bool) -> f32 {
+    let spinning = raw_prop_bool(node, "spinning").unwrap_or(true) && !disabled;
+    if !spinning {
+        return -std::f32::consts::FRAC_PI_2;
+    }
+    let speed = raw_prop_f32(node, "speed")
+        .filter(|value| *value >= 0.0)
+        .unwrap_or(1.0);
+    let seconds = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64())
+        .unwrap_or(0.0);
+    loading_spinner_phase_at_seconds(speed, seconds)
+}
+
+fn loading_spinner_phase_at_seconds(speed: f32, seconds: f64) -> f32 {
+    let rotations = (seconds * speed as f64).rem_euclid(1.0) as f32;
+    rotations * LOADING_SPINNER_TAU - std::f32::consts::FRAC_PI_2
+}
 
 // ---------------------------------------------------------------------------
 // Per-instance GPU data
@@ -1494,6 +1593,28 @@ fn inst_pie_slice(
     let mut instance = inst_radii(rect, color, [0.0; 4]);
     instance.params = [1.0, 0.0, 0.0, 2.0];
     instance.paint = [0.0, start_rad, end_rad, inner_ratio.clamp(0.0, 0.9)];
+    instance
+}
+
+fn inst_loading_spinner(
+    rect: [f32; 4],
+    track_color: [f32; 4],
+    arc_color: [f32; 4],
+    phase_rad: f32,
+    sweep_rad: f32,
+    inner_ratio: f32,
+    tail_alpha: f32,
+) -> RectInstance {
+    let mut instance = inst_radii(rect, arc_color, [0.0; 4]);
+    instance.params = [1.0, 0.0, 0.0, 4.0];
+    instance.color2 = track_color;
+    instance.paint = [
+        0.0,
+        phase_rad,
+        sweep_rad.clamp(0.001, LOADING_SPINNER_TAU),
+        inner_ratio.clamp(0.0, 0.95),
+    ];
+    instance.gradient_stops[0] = tail_alpha.clamp(0.0, 1.0);
     instance
 }
 
@@ -3963,6 +4084,1145 @@ pub(crate) fn histogram_text_labels(
     labels
 }
 
+pub(crate) fn bar_chart_plot_rect(node: &WidgetNode, sf: f32, rect: [f32; 4]) -> [f32; 4] {
+    let base_pad = 10.0 * sf;
+    let show_ticks = bar_chart_ticks_enabled(node, rect);
+    let show_axis_labels = bar_chart_axis_labels_enabled(node, rect);
+    let show_toolbar = bar_chart_toolbar_enabled(node, rect);
+    let left = if node.props.bar_chart.show_axes || show_ticks {
+        if bar_chart_is_horizontal(node) {
+            let label_lane = if show_ticks {
+                let max_chars = node
+                    .props
+                    .bar_chart
+                    .labels
+                    .iter()
+                    .map(|label| label.chars().count())
+                    .max()
+                    .unwrap_or(0) as f32;
+                (max_chars * 4.8 * sf + 8.0 * sf).clamp(36.0 * sf, 68.0 * sf)
+            } else {
+                0.0
+            };
+            let title_lane = if show_axis_labels && node.props.bar_chart.y_label.is_some() {
+                20.0 * sf
+            } else {
+                0.0
+            };
+            (base_pad + title_lane + label_lane + 5.0 * sf).max(44.0 * sf)
+        } else if show_axis_labels {
+            48.0 * sf
+        } else {
+            34.0 * sf
+        }
+    } else {
+        base_pad
+    };
+    let bottom = if node.props.bar_chart.show_axes || show_ticks {
+        if show_axis_labels {
+            42.0 * sf
+        } else {
+            28.0 * sf
+        }
+    } else {
+        base_pad
+    };
+    let top = if show_toolbar { 44.0 * sf } else { base_pad };
+    [
+        rect[0] + left,
+        rect[1] + top,
+        (rect[2] - left - base_pad).max(1.0),
+        (rect[3] - top - bottom).max(1.0),
+    ]
+}
+
+fn bar_chart_toolbar_enabled(node: &WidgetNode, rect: [f32; 4]) -> bool {
+    node.props.bar_chart.show_toolbar && rect[2] >= 145.0 && rect[3] >= 150.0
+}
+
+fn bar_chart_ticks_enabled(node: &WidgetNode, rect: [f32; 4]) -> bool {
+    node.props.bar_chart.show_ticks && rect[2] >= 220.0 && rect[3] >= 150.0
+}
+
+fn bar_chart_axis_labels_enabled(node: &WidgetNode, rect: [f32; 4]) -> bool {
+    node.props.bar_chart.show_axes && rect[2] >= 260.0 && rect[3] >= 205.0
+}
+
+fn bar_chart_is_horizontal(node: &WidgetNode) -> bool {
+    node.props.bar_chart.orientation == "horizontal"
+}
+
+pub(crate) fn bar_chart_resolved_bounds(node: &WidgetNode) -> Option<LinePlotBounds> {
+    let categories = node.props.bar_chart.labels.len();
+    if categories == 0 || node.props.bar_chart.series.is_empty() {
+        return None;
+    }
+    let (mut value_min, mut value_max) = if !node.props.bar_chart.auto_fit {
+        match (
+            node.props.bar_chart.value_min,
+            node.props.bar_chart.value_max,
+        ) {
+            (Some(min), Some(max)) if min.is_finite() && max.is_finite() && max > min => (min, max),
+            _ => bar_chart_data_value_bounds(node)?,
+        }
+    } else {
+        bar_chart_data_value_bounds(node)?
+    };
+    if value_min == value_max {
+        value_min -= 0.5;
+        value_max += 0.5;
+    }
+    if bar_chart_is_horizontal(node) {
+        Some(LinePlotBounds {
+            x_min: value_min,
+            x_max: value_max,
+            y_min: 0.0,
+            y_max: categories as f32,
+        })
+    } else {
+        Some(LinePlotBounds {
+            x_min: 0.0,
+            x_max: categories as f32,
+            y_min: value_min,
+            y_max: value_max,
+        })
+    }
+}
+
+fn bar_chart_data_value_bounds(node: &WidgetNode) -> Option<(f32, f32)> {
+    let mut min_value = 0.0_f32;
+    let mut max_value = 0.0_f32;
+    let mut any = false;
+    for series in &node.props.bar_chart.series {
+        for value in &series.values {
+            if !value.is_finite() {
+                continue;
+            }
+            if !any {
+                min_value = min_value.min(*value);
+                max_value = max_value.max(*value);
+                any = true;
+            } else {
+                min_value = min_value.min(*value);
+                max_value = max_value.max(*value);
+            }
+        }
+    }
+    if !any {
+        return Some((0.0, 1.0));
+    }
+    if min_value >= 0.0 {
+        max_value = if max_value <= 0.0 {
+            1.0
+        } else {
+            max_value * 1.08
+        };
+        min_value = 0.0;
+    } else if max_value <= 0.0 {
+        min_value *= 1.08;
+        max_value = 0.0;
+    } else {
+        let pad = (max_value - min_value).abs() * 0.06;
+        min_value -= pad;
+        max_value += pad;
+    }
+    Some((min_value, max_value))
+}
+
+#[derive(Debug, Clone)]
+struct BarChartBarLayout {
+    index: usize,
+    category: String,
+    series_index: usize,
+    series_label: Option<String>,
+    value: f32,
+    rect: [f32; 4],
+    center: [f32; 2],
+    color: [f32; 4],
+}
+
+fn bar_chart_bar_layouts(
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    plot: [f32; 4],
+    bounds: LinePlotBounds,
+    styled_accent: Option<[f32; 4]>,
+) -> Vec<BarChartBarLayout> {
+    let categories = node.props.bar_chart.labels.len();
+    let series_count = node.props.bar_chart.series.len();
+    if categories == 0 || series_count == 0 {
+        return Vec::new();
+    }
+    let gap = node.props.bar_chart.bar_gap.max(0.0) * sf;
+    let mut bars = Vec::with_capacity(categories.saturating_mul(series_count));
+    if bar_chart_is_horizontal(node) {
+        let group_h = plot[3] / categories as f32;
+        let group_pad = gap.min(group_h * 0.22);
+        let inner_h = (group_h - group_pad * 2.0).max(1.0);
+        let series_gap = gap.min(inner_h * 0.24);
+        let bar_h = ((inner_h - series_gap * series_count.saturating_sub(1) as f32)
+            / series_count as f32)
+            .max(0.75);
+        let span = (bounds.x_max - bounds.x_min).max(f32::EPSILON);
+        let zero_x = plot[0] + ((0.0 - bounds.x_min) / span).clamp(0.0, 1.0) * plot[2];
+        for (index, category) in node.props.bar_chart.labels.iter().enumerate() {
+            let group_y = plot[1] + group_h * index as f32 + group_pad;
+            for (series_index, series) in node.props.bar_chart.series.iter().enumerate() {
+                let Some(value) = series.values.get(index).copied() else {
+                    continue;
+                };
+                if !value.is_finite() {
+                    continue;
+                }
+                let clamped = value.clamp(bounds.x_min, bounds.x_max);
+                let value_x = plot[0] + ((clamped - bounds.x_min) / span).clamp(0.0, 1.0) * plot[2];
+                let x = zero_x.min(value_x);
+                let w = (zero_x - value_x).abs().max(0.75);
+                let y = group_y + series_index as f32 * (bar_h + series_gap);
+                let color = series
+                    .color
+                    .as_ref()
+                    .map(|color| color.resolve(theme))
+                    .unwrap_or_else(|| {
+                        if series_count == 1 {
+                            styled_accent.unwrap_or(theme.accent)
+                        } else {
+                            palette_color(series_index, theme)
+                        }
+                    });
+                bars.push(BarChartBarLayout {
+                    index,
+                    category: category.clone(),
+                    series_index,
+                    series_label: series.label.clone(),
+                    value,
+                    rect: [x, y, w, bar_h],
+                    center: [x + w * 0.5, y + bar_h * 0.5],
+                    color,
+                });
+            }
+        }
+    } else {
+        let group_w = plot[2] / categories as f32;
+        let group_pad = gap.min(group_w * 0.22);
+        let inner_w = (group_w - group_pad * 2.0).max(1.0);
+        let series_gap = gap.min(inner_w * 0.24);
+        let bar_w = ((inner_w - series_gap * series_count.saturating_sub(1) as f32)
+            / series_count as f32)
+            .max(0.75);
+        let span = (bounds.y_max - bounds.y_min).max(f32::EPSILON);
+        let zero_y = plot[1] + plot[3] * (1.0 - ((0.0 - bounds.y_min) / span).clamp(0.0, 1.0));
+        for (index, category) in node.props.bar_chart.labels.iter().enumerate() {
+            let group_x = plot[0] + group_w * index as f32 + group_pad;
+            for (series_index, series) in node.props.bar_chart.series.iter().enumerate() {
+                let Some(value) = series.values.get(index).copied() else {
+                    continue;
+                };
+                if !value.is_finite() {
+                    continue;
+                }
+                let clamped = value.clamp(bounds.y_min, bounds.y_max);
+                let value_y =
+                    plot[1] + plot[3] * (1.0 - ((clamped - bounds.y_min) / span).clamp(0.0, 1.0));
+                let y = zero_y.min(value_y);
+                let h = (zero_y - value_y).abs().max(0.75);
+                let x = group_x + series_index as f32 * (bar_w + series_gap);
+                let color = series
+                    .color
+                    .as_ref()
+                    .map(|color| color.resolve(theme))
+                    .unwrap_or_else(|| {
+                        if series_count == 1 {
+                            styled_accent.unwrap_or(theme.accent)
+                        } else {
+                            palette_color(series_index, theme)
+                        }
+                    });
+                bars.push(BarChartBarLayout {
+                    index,
+                    category: category.clone(),
+                    series_index,
+                    series_label: series.label.clone(),
+                    value,
+                    rect: [x, y, bar_w, h],
+                    center: [x + bar_w * 0.5, y + h * 0.5],
+                    color,
+                });
+            }
+        }
+    }
+    bars
+}
+
+pub(crate) fn bar_chart_bar_at(
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    rect: [f32; 4],
+    pos: [f32; 2],
+) -> Option<BarChartHoverProp> {
+    let plot = bar_chart_plot_rect(node, sf, rect);
+    if pos[0] < plot[0]
+        || pos[0] >= plot[0] + plot[2]
+        || pos[1] < plot[1]
+        || pos[1] >= plot[1] + plot[3]
+    {
+        return None;
+    }
+    let bounds = bar_chart_resolved_bounds(node)?;
+    for bar in bar_chart_bar_layouts(node, theme, sf, plot, bounds, None) {
+        let [x, y, w, h] = bar.rect;
+        if pos[0] >= x && pos[0] < x + w && pos[1] >= y && pos[1] < y + h {
+            return Some(BarChartHoverProp {
+                index: bar.index,
+                category: bar.category,
+                series_index: bar.series_index,
+                series_label: bar.series_label,
+                value: bar.value,
+                screen: bar.center,
+            });
+        }
+    }
+    None
+}
+
+fn bar_chart_readout_rect(screen: [f32; 2], plot: [f32; 4], sf: f32) -> [f32; 4] {
+    let box_w = 190.0 * sf;
+    let box_h = 30.0 * sf;
+    let mut left = screen[0] + 10.0 * sf;
+    let mut top = screen[1] - box_h - 8.0 * sf;
+    if left + box_w > plot[0] + plot[2] {
+        left = screen[0] - box_w - 10.0 * sf;
+    }
+    if top < plot[1] {
+        top = screen[1] + 10.0 * sf;
+    }
+    [left, top, box_w, box_h]
+}
+
+fn part_style_text_rgb(style: &PartStyle, theme: &Theme) -> Option<[f32; 3]> {
+    let color = style
+        .text
+        .color
+        .as_ref()
+        .or(style.visual.foreground.as_ref())?;
+    let resolved = color.resolve(theme);
+    Some([resolved[0], resolved[1], resolved[2]])
+}
+
+fn bar_chart_value_label_text_color(node: &WidgetNode, theme: &Theme) -> Option<[f32; 3]> {
+    ["value-label", "label"].into_iter().find_map(|part| {
+        base_part_style(&node.style, part).and_then(|style| part_style_text_rgb(style, theme))
+    })
+}
+
+fn bar_chart_value_label_font_size(node: &WidgetNode) -> Option<f32> {
+    ["value-label", "label"].into_iter().find_map(|part| {
+        base_part_style(&node.style, part)
+            .and_then(|style| style.text.font_size)
+            .map(|size| size.max(8.0))
+    })
+}
+
+fn emit_bar_chart(
+    out: &mut Vec<RectInstance>,
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    rect: [f32; 4],
+    styled_bg: Option<[f32; 4]>,
+    styled_border: Option<[f32; 4]>,
+    styled_accent: Option<[f32; 4]>,
+    radii: [f32; 4],
+    border_w: f32,
+) {
+    emit_bordered_rect_radii(
+        out,
+        rect,
+        styled_border.unwrap_or(theme.border),
+        styled_bg.unwrap_or(theme.surface),
+        radii,
+        border_w,
+    );
+    if rect[2] <= 2.0 || rect[3] <= 2.0 {
+        return;
+    }
+    let plot = bar_chart_plot_rect(node, sf, rect);
+    let plot_fill = mix(styled_bg.unwrap_or(theme.surface), theme.background, 0.18);
+    out.push(inst_radii(plot, plot_fill, [2.0 * sf; 4]));
+    let Some(bounds) = bar_chart_resolved_bounds(node) else {
+        emit_line_plot_grid(
+            out,
+            plot,
+            theme,
+            sf,
+            node.props.bar_chart.show_grid,
+            node.props.bar_chart.show_axes,
+            node.props.bar_chart.show_ticks,
+            None,
+            &[],
+            &[],
+        );
+        emit_bar_chart_toolbar(out, node, theme, sf, rect);
+        return;
+    };
+    let tick_count = node.props.bar_chart.tick_count.clamp(2, 9);
+    if bar_chart_is_horizontal(node) {
+        let x_ticks = line_plot_ticks(bounds.x_min, bounds.x_max, tick_count);
+        emit_line_plot_grid(
+            out,
+            plot,
+            theme,
+            sf,
+            node.props.bar_chart.show_grid,
+            node.props.bar_chart.show_axes,
+            node.props.bar_chart.show_ticks,
+            Some(bounds),
+            &x_ticks,
+            &[],
+        );
+    } else {
+        let y_ticks = line_plot_ticks(bounds.y_min, bounds.y_max, tick_count);
+        emit_line_plot_grid(
+            out,
+            plot,
+            theme,
+            sf,
+            node.props.bar_chart.show_grid,
+            node.props.bar_chart.show_axes,
+            node.props.bar_chart.show_ticks,
+            Some(bounds),
+            &[],
+            &y_ticks,
+        );
+    }
+
+    let bars = bar_chart_bar_layouts(node, theme, sf, plot, bounds, styled_accent);
+    let hover = node.props.bar_chart.hover.as_ref();
+    for bar in &bars {
+        let mut color = bar.color;
+        if hover
+            .is_some_and(|hover| hover.index == bar.index && hover.series_index == bar.series_index)
+        {
+            color = mix(color, theme.text, 0.14);
+        }
+        out.push(inst_radii(
+            bar.rect,
+            color,
+            if bar_chart_is_horizontal(node) {
+                [0.0, 2.0 * sf, 2.0 * sf, 0.0]
+            } else {
+                [2.0 * sf, 2.0 * sf, 0.0, 0.0]
+            },
+        ));
+    }
+    if let Some(hover) = hover {
+        if let Some(bar) = bars
+            .iter()
+            .find(|bar| bar.index == hover.index && bar.series_index == hover.series_index)
+        {
+            let mut border = mix(theme.text, theme.accent, 0.18);
+            border[3] = 0.94;
+            out.push(inst_outline_ring_clipped(
+                bar.rect,
+                border,
+                [2.0 * sf; 4],
+                (2.0 * sf).max(1.0),
+                [-2.0, -2.0, bar.rect[2] + 4.0, bar.rect[3] + 4.0],
+            ));
+        }
+    }
+    emit_bar_chart_toolbar(out, node, theme, sf, rect);
+}
+
+fn bar_chart_toolbar_buttons(
+    node: &WidgetNode,
+    sf: f32,
+    rect: [f32; 4],
+) -> Vec<(&'static str, [f32; 4], bool)> {
+    if !bar_chart_toolbar_enabled(node, rect) {
+        return Vec::new();
+    }
+    let pad = 10.0 * sf;
+    let button = 24.0 * sf;
+    let gap = 5.0 * sf;
+    let labels = ["Fit", "Grid", "Axes"];
+    let total = button * labels.len() as f32 + gap * (labels.len().saturating_sub(1)) as f32;
+    let y = rect[1] + pad;
+    let mut x = rect[0] + rect[2] - pad - total;
+    let mut buttons = Vec::with_capacity(labels.len());
+    for label in labels {
+        let active = match label {
+            "Grid" => node.props.bar_chart.show_grid,
+            "Axes" => node.props.bar_chart.show_axes || node.props.bar_chart.show_ticks,
+            _ => true,
+        };
+        buttons.push((label, [x, y, button, button], active));
+        x += button + gap;
+    }
+    buttons
+}
+
+pub(crate) fn bar_chart_toolbar_hit(
+    node: &WidgetNode,
+    sf: f32,
+    rect: [f32; 4],
+    pos: [f32; 2],
+) -> Option<&'static str> {
+    for (label, button, _) in bar_chart_toolbar_buttons(node, sf, rect) {
+        if pos[0] >= button[0]
+            && pos[0] < button[0] + button[2]
+            && pos[1] >= button[1]
+            && pos[1] < button[1] + button[3]
+        {
+            return Some(label);
+        }
+    }
+    None
+}
+
+fn emit_bar_chart_toolbar(
+    out: &mut Vec<RectInstance>,
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    rect: [f32; 4],
+) {
+    for (label, button, active) in bar_chart_toolbar_buttons(node, sf, rect) {
+        let mut fill = if active {
+            mix(theme.surface_alt, theme.accent, 0.18)
+        } else {
+            mix(theme.surface_alt, theme.surface, 0.45)
+        };
+        fill[3] = fill[3].min(0.88);
+        let mut border = if active {
+            mix(theme.border, theme.accent, 0.50)
+        } else {
+            mix(theme.border, theme.muted_text, 0.20)
+        };
+        border[3] = border[3].min(0.68);
+        emit_bordered_rect_radii(out, button, border, fill, [4.0 * sf; 4], 1.0 * sf);
+        let mut icon = if active {
+            mix(theme.text, theme.accent, 0.24)
+        } else {
+            mix(theme.muted_text, theme.text, 0.20)
+        };
+        icon[3] = icon[3].min(0.92);
+        emit_line_plot_toolbar_icon(out, label, button, icon, sf);
+    }
+}
+
+pub(crate) fn bar_chart_text_labels(
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    rect: [f32; 4],
+) -> Vec<LinePlotTextLabel> {
+    let mut labels = Vec::new();
+    let plot = bar_chart_plot_rect(node, sf, rect);
+    let tick_color = mix(theme.muted_text, theme.text, 0.18);
+    let tick_color = Some([tick_color[0], tick_color[1], tick_color[2]]);
+
+    if bar_chart_axis_labels_enabled(node, rect) {
+        let axis_color = mix(theme.muted_text, theme.text, 0.72);
+        let axis_color = Some([axis_color[0], axis_color[1], axis_color[2]]);
+        if let Some(label) = node.props.bar_chart.x_label.as_deref() {
+            labels.push(LinePlotTextLabel {
+                text: label.to_string(),
+                screen_x: plot[0] + plot[2] * 0.5,
+                screen_y: rect[1] + rect[3] - 11.0 * sf,
+                is_title: true,
+                anchor: "plot-x-label",
+                color: axis_color,
+                font_size: Some(LINE_PLOT_AXIS_LABEL_FONT_SIZE_LP),
+                clip_rect: None,
+            });
+        }
+        if let Some(label) = node.props.bar_chart.y_label.as_deref() {
+            labels.push(LinePlotTextLabel {
+                text: label.to_string(),
+                screen_x: rect[0] + 18.0 * sf,
+                screen_y: plot[1] + plot[3] * 0.5,
+                is_title: true,
+                anchor: "plot-y-label",
+                color: axis_color,
+                font_size: Some(LINE_PLOT_AXIS_LABEL_FONT_SIZE_LP),
+                clip_rect: None,
+            });
+        }
+    }
+
+    let Some(bounds) = bar_chart_resolved_bounds(node) else {
+        return labels;
+    };
+    if bar_chart_ticks_enabled(node, rect) {
+        let tick_count = node.props.bar_chart.tick_count.clamp(2, 9);
+        let category_count = node.props.bar_chart.labels.len();
+        if bar_chart_is_horizontal(node) {
+            let x_ticks = line_plot_ticks(bounds.x_min, bounds.x_max, tick_count);
+            let x_step = x_ticks
+                .windows(2)
+                .next()
+                .map(|pair| (pair[1] - pair[0]).abs())
+                .unwrap_or_else(|| (bounds.x_max - bounds.x_min).abs());
+            for tick in x_ticks {
+                let t = ((tick - bounds.x_min) / (bounds.x_max - bounds.x_min).max(f32::EPSILON))
+                    .clamp(0.0, 1.0);
+                labels.push(LinePlotTextLabel {
+                    text: format_line_plot_tick(tick, x_step),
+                    screen_x: plot[0] + plot[2] * t,
+                    screen_y: plot[1] + plot[3] + 7.0 * sf,
+                    is_title: false,
+                    anchor: "plot-x-tick",
+                    color: tick_color,
+                    font_size: Some(10.0),
+                    clip_rect: None,
+                });
+            }
+            let group_h = plot[3] / category_count.max(1) as f32;
+            if category_count <= 32 && group_h >= 13.0 * sf {
+                let label_left = if bar_chart_axis_labels_enabled(node, rect) {
+                    rect[0] + 24.0 * sf
+                } else {
+                    rect[0] + 8.0 * sf
+                };
+                let label_right = (plot[0] - 5.0 * sf).max(label_left + 1.0);
+                for (index, label) in node.props.bar_chart.labels.iter().enumerate() {
+                    labels.push(LinePlotTextLabel {
+                        text: label.clone(),
+                        screen_x: label_right,
+                        screen_y: plot[1] + group_h * (index as f32 + 0.5),
+                        is_title: false,
+                        anchor: "plot-y-category",
+                        color: tick_color,
+                        font_size: Some(10.0),
+                        clip_rect: Some([
+                            label_left,
+                            plot[1] + group_h * index as f32,
+                            label_right - label_left,
+                            group_h,
+                        ]),
+                    });
+                }
+            }
+        } else {
+            let y_ticks = line_plot_ticks(bounds.y_min, bounds.y_max, tick_count);
+            let y_step = y_ticks
+                .windows(2)
+                .next()
+                .map(|pair| (pair[1] - pair[0]).abs())
+                .unwrap_or_else(|| (bounds.y_max - bounds.y_min).abs());
+            for tick in y_ticks {
+                let t = ((tick - bounds.y_min) / (bounds.y_max - bounds.y_min).max(f32::EPSILON))
+                    .clamp(0.0, 1.0);
+                labels.push(LinePlotTextLabel {
+                    text: format_line_plot_tick(tick, y_step),
+                    screen_x: plot[0] - 2.0 * sf,
+                    screen_y: plot[1] + plot[3] * (1.0 - t),
+                    is_title: false,
+                    anchor: "plot-y-tick",
+                    color: tick_color,
+                    font_size: Some(10.0),
+                    clip_rect: None,
+                });
+            }
+            let group_w = plot[2] / category_count.max(1) as f32;
+            if category_count <= 32 && group_w >= 24.0 * sf {
+                for (index, label) in node.props.bar_chart.labels.iter().enumerate() {
+                    labels.push(LinePlotTextLabel {
+                        text: label.clone(),
+                        screen_x: plot[0] + group_w * (index as f32 + 0.5),
+                        screen_y: plot[1] + plot[3] + 7.0 * sf,
+                        is_title: false,
+                        anchor: "plot-x-tick",
+                        color: tick_color,
+                        font_size: Some(10.0),
+                        clip_rect: Some([
+                            plot[0] + group_w * index as f32,
+                            plot[1] + plot[3],
+                            group_w,
+                            rect[1] + rect[3] - plot[1] - plot[3],
+                        ]),
+                    });
+                }
+            }
+        }
+    }
+
+    let bars = bar_chart_bar_layouts(node, theme, sf, plot, bounds, None);
+    let value_label_color = bar_chart_value_label_text_color(node, theme);
+    let value_label_font_size = bar_chart_value_label_font_size(node).unwrap_or(10.0);
+    if bars.len() <= 80 {
+        for bar in &bars {
+            if bar.rect[2] < 22.0 * sf || bar.rect[3] < 14.0 * sf {
+                continue;
+            }
+            labels.push(LinePlotTextLabel {
+                text: format_line_plot_hover_value(bar.value),
+                screen_x: bar.center[0],
+                screen_y: bar.center[1],
+                is_title: false,
+                anchor: "box-center",
+                color: Some(
+                    value_label_color.unwrap_or_else(|| contrast_label_rgb(bar.color, 0.58)),
+                ),
+                font_size: Some(value_label_font_size),
+                clip_rect: Some(bar.rect),
+            });
+        }
+    }
+
+    if let Some(hover) = node.props.bar_chart.hover.as_ref() {
+        let series = hover.series_label.as_deref().unwrap_or("value");
+        let readout = bar_chart_readout_rect(hover.screen, plot, sf);
+        let text_color = mix(theme.text, theme.accent, 0.10);
+        labels.push(LinePlotTextLabel {
+            text: format!(
+                "{}, {series}: {}",
+                hover.category,
+                format_line_plot_hover_value(hover.value)
+            ),
+            screen_x: readout[0] + readout[2] * 0.5,
+            screen_y: readout[1] + readout[3] * 0.5,
+            is_title: false,
+            anchor: "plot-readout",
+            color: Some([text_color[0], text_color[1], text_color[2]]),
+            font_size: Some(10.0),
+            clip_rect: Some(readout),
+        });
+    }
+
+    labels
+}
+
+pub(crate) fn heatmap_plot_rect(node: &WidgetNode, sf: f32, rect: [f32; 4]) -> [f32; 4] {
+    let base_pad = 10.0 * sf;
+    let title_h = if node.props.heatmap.title.is_some() && rect[3] >= 140.0 {
+        24.0 * sf
+    } else {
+        0.0
+    };
+    let label_x = node.props.heatmap.show_labels
+        && !node.props.heatmap.y_labels.is_empty()
+        && node.props.heatmap.rows <= 32
+        && rect[2] >= 260.0
+        && rect[3] >= 180.0;
+    let label_y = node.props.heatmap.show_labels
+        && !node.props.heatmap.x_labels.is_empty()
+        && node.props.heatmap.cols <= 32
+        && rect[2] >= 260.0
+        && rect[3] >= 180.0;
+    let scalar = node.props.heatmap.scalar_bar && rect[2] >= 240.0 && rect[3] >= 150.0;
+    let left = if label_x { 58.0 * sf } else { base_pad };
+    let bottom = if label_y { 34.0 * sf } else { base_pad };
+    let right = if scalar {
+        heatmap_scalar_bar_gutter(sf)
+    } else {
+        base_pad
+    };
+    let top = base_pad + title_h;
+    [
+        rect[0] + left,
+        rect[1] + top,
+        (rect[2] - left - right).max(1.0),
+        (rect[3] - top - bottom).max(1.0),
+    ]
+}
+
+fn heatmap_scalar_bar_gutter(sf: f32) -> f32 {
+    (80.0 * sf).max(66.0)
+}
+
+fn heatmap_scalar_bar_rect(node: &WidgetNode, sf: f32, rect: [f32; 4]) -> Option<[f32; 4]> {
+    if !node.props.heatmap.scalar_bar || rect[2] < 240.0 || rect[3] < 150.0 {
+        return None;
+    }
+    let plot = heatmap_plot_rect(node, sf, rect);
+    let width = (12.0 * sf).max(8.0);
+    let x = plot[0] + plot[2] + 18.0 * sf;
+    Some([x, plot[1], width, plot[3]])
+}
+
+fn heatmap_value_color(node: &WidgetNode, value: f32, theme: &Theme) -> [f32; 4] {
+    if !value.is_finite() {
+        let mut color = mix(theme.surface_alt, theme.background, 0.42);
+        color[3] = 0.38;
+        return color;
+    }
+    let span = (node.props.heatmap.vmax - node.props.heatmap.vmin).max(f32::EPSILON);
+    let t = ((value - node.props.heatmap.vmin) / span).clamp(0.0, 1.0);
+    let rgb = colormap::sample(colormap::resolve(&node.props.heatmap.colormap), t);
+    [rgb[0], rgb[1], rgb[2], 1.0]
+}
+
+fn heatmap_cell_rect(node: &WidgetNode, plot: [f32; 4], row: usize, col: usize) -> [f32; 4] {
+    let rows = node.props.heatmap.rows.max(1) as f32;
+    let cols = node.props.heatmap.cols.max(1) as f32;
+    let x0 = plot[0] + plot[2] * (col as f32 / cols);
+    let x1 = plot[0] + plot[2] * ((col + 1) as f32 / cols);
+    let y0 = plot[1] + plot[3] * (row as f32 / rows);
+    let y1 = plot[1] + plot[3] * ((row + 1) as f32 / rows);
+    [x0, y0, (x1 - x0).max(0.5), (y1 - y0).max(0.5)]
+}
+
+pub(crate) fn heatmap_cell_at(
+    node: &WidgetNode,
+    sf: f32,
+    rect: [f32; 4],
+    pos: [f32; 2],
+) -> Option<HeatmapHoverProp> {
+    let rows = node.props.heatmap.rows;
+    let cols = node.props.heatmap.cols;
+    if rows == 0 || cols == 0 || node.props.heatmap.values.len() != rows.saturating_mul(cols) {
+        return None;
+    }
+    let plot = heatmap_plot_rect(node, sf, rect);
+    if pos[0] < plot[0]
+        || pos[0] >= plot[0] + plot[2]
+        || pos[1] < plot[1]
+        || pos[1] >= plot[1] + plot[3]
+    {
+        return None;
+    }
+    let col = (((pos[0] - plot[0]) / plot[2]).clamp(0.0, 0.999_999) * cols as f32) as usize;
+    let row = (((pos[1] - plot[1]) / plot[3]).clamp(0.0, 0.999_999) * rows as f32) as usize;
+    let value = *node.props.heatmap.values.get(row * cols + col)?;
+    let cell = heatmap_cell_rect(node, plot, row, col);
+    Some(HeatmapHoverProp {
+        row,
+        col,
+        value,
+        screen: [cell[0] + cell[2] * 0.5, cell[1] + cell[3] * 0.5],
+        x_label: node.props.heatmap.x_labels.get(col).cloned(),
+        y_label: node.props.heatmap.y_labels.get(row).cloned(),
+    })
+}
+
+fn heatmap_readout_rect(screen: [f32; 2], plot: [f32; 4], sf: f32) -> [f32; 4] {
+    let box_w = 186.0 * sf;
+    let box_h = 30.0 * sf;
+    let mut left = screen[0] + 10.0 * sf;
+    let mut top = screen[1] - box_h - 8.0 * sf;
+    if left + box_w > plot[0] + plot[2] {
+        left = screen[0] - box_w - 10.0 * sf;
+    }
+    if top < plot[1] {
+        top = screen[1] + 10.0 * sf;
+    }
+    [left, top, box_w, box_h]
+}
+
+fn contrast_label_rgb(color: [f32; 4], threshold: f32) -> [f32; 3] {
+    let luminance = 0.2126 * color[0] + 0.7152 * color[1] + 0.0722 * color[2];
+    if luminance > threshold {
+        [0.035, 0.045, 0.065]
+    } else {
+        [0.96, 0.98, 1.0]
+    }
+}
+
+fn heatmap_cell_text_color(node: &WidgetNode, value: f32, theme: &Theme) -> [f32; 3] {
+    contrast_label_rgb(heatmap_value_color(node, value, theme), 0.58)
+}
+
+fn emit_heatmap(
+    out: &mut Vec<RectInstance>,
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    rect: [f32; 4],
+    styled_bg: Option<[f32; 4]>,
+    styled_border: Option<[f32; 4]>,
+    radii: [f32; 4],
+    border_w: f32,
+) {
+    emit_bordered_rect_radii(
+        out,
+        rect,
+        styled_border.unwrap_or(theme.border),
+        styled_bg.unwrap_or(theme.surface),
+        radii,
+        border_w,
+    );
+    if rect[2] <= 2.0 || rect[3] <= 2.0 {
+        return;
+    }
+    let plot = heatmap_plot_rect(node, sf, rect);
+    let plot_fill = mix(styled_bg.unwrap_or(theme.surface), theme.background, 0.18);
+    out.push(inst_radii(plot, plot_fill, [2.0 * sf; 4]));
+
+    let rows = node.props.heatmap.rows;
+    let cols = node.props.heatmap.cols;
+    if rows == 0 || cols == 0 || node.props.heatmap.values.len() != rows.saturating_mul(cols) {
+        return;
+    }
+
+    let total = rows.saturating_mul(cols);
+    let max_cells = 40_000usize;
+    let stride = if total > max_cells {
+        ((total as f32 / max_cells as f32).sqrt().ceil() as usize).max(1)
+    } else {
+        1
+    };
+    for row in (0..rows).step_by(stride) {
+        let row_end = (row + stride).min(rows);
+        let sample_row = row + (row_end - row) / 2;
+        for col in (0..cols).step_by(stride) {
+            let col_end = (col + stride).min(cols);
+            let sample_col = col + (col_end - col) / 2;
+            let Some(value) = node
+                .props
+                .heatmap
+                .values
+                .get(sample_row * cols + sample_col)
+                .copied()
+            else {
+                continue;
+            };
+            let x0 = plot[0] + plot[2] * (col as f32 / cols as f32);
+            let x1 = plot[0] + plot[2] * (col_end as f32 / cols as f32);
+            let y0 = plot[1] + plot[3] * (row as f32 / rows as f32);
+            let y1 = plot[1] + plot[3] * (row_end as f32 / rows as f32);
+            out.push(inst_radii(
+                [x0, y0, (x1 - x0).max(0.5), (y1 - y0).max(0.5)],
+                heatmap_value_color(node, value, theme),
+                [0.0; 4],
+            ));
+        }
+    }
+
+    let cell_w = plot[2] / cols.max(1) as f32;
+    let cell_h = plot[3] / rows.max(1) as f32;
+    if rows <= 40 && cols <= 40 && cell_w >= 6.0 * sf && cell_h >= 6.0 * sf {
+        let mut grid_color = mix(theme.border, theme.background, 0.16);
+        grid_color[3] = 0.38;
+        let grid_w = (1.0 * sf).max(1.0);
+        for col in 1..cols {
+            let x = plot[0] + plot[2] * (col as f32 / cols as f32);
+            out.push(inst_radii(
+                [x, plot[1], grid_w, plot[3]],
+                grid_color,
+                [0.0; 4],
+            ));
+        }
+        for row in 1..rows {
+            let y = plot[1] + plot[3] * (row as f32 / rows as f32);
+            out.push(inst_radii(
+                [plot[0], y, plot[2], grid_w],
+                grid_color,
+                [0.0; 4],
+            ));
+        }
+    }
+
+    if let Some(bar) = heatmap_scalar_bar_rect(node, sf, rect) {
+        let steps = 64usize;
+        let cmap = colormap::resolve(&node.props.heatmap.colormap);
+        for index in 0..steps {
+            let t0 = index as f32 / steps as f32;
+            let t1 = (index + 1) as f32 / steps as f32;
+            let rgb = colormap::sample(cmap, 1.0 - (t0 + t1) * 0.5);
+            out.push(inst_radii(
+                [
+                    bar[0],
+                    bar[1] + bar[3] * t0,
+                    bar[2],
+                    (bar[3] * (t1 - t0)).max(0.75),
+                ],
+                [rgb[0], rgb[1], rgb[2], 1.0],
+                [0.0; 4],
+            ));
+        }
+        out.push(inst_outline_ring_clipped(
+            bar,
+            styled_border.unwrap_or(theme.border),
+            [2.0 * sf; 4],
+            (1.0 * sf).max(1.0),
+            [-1.0, -1.0, bar[2] + 2.0, bar[3] + 2.0],
+        ));
+    }
+
+    if let Some(hover) = node.props.heatmap.hover.as_ref() {
+        if hover.row < rows && hover.col < cols {
+            let cell = heatmap_cell_rect(node, plot, hover.row, hover.col);
+            let mut fill = mix(theme.accent, theme.surface, 0.26);
+            fill[3] = 0.14;
+            let mut border = mix(theme.text, theme.accent, 0.20);
+            border[3] = 0.94;
+            emit_bordered_rect_radii(out, cell, border, fill, [1.5 * sf; 4], (2.0 * sf).max(1.0));
+            let readout = heatmap_readout_rect(hover.screen, plot, sf);
+            let mut bg = mix(theme.surface, theme.background, 0.12);
+            bg[3] = 0.98;
+            let mut readout_border = mix(theme.border, theme.accent, 0.42);
+            readout_border[3] = 0.82;
+            emit_bordered_rect_radii(
+                out,
+                readout,
+                readout_border,
+                bg,
+                [5.0 * sf; 4],
+                (1.0 * sf).max(1.0),
+            );
+        }
+    }
+}
+
+pub(crate) fn heatmap_text_labels(
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    rect: [f32; 4],
+) -> Vec<LinePlotTextLabel> {
+    let mut labels = Vec::new();
+    let plot = heatmap_plot_rect(node, sf, rect);
+    let color = mix(theme.muted_text, theme.text, 0.56);
+    let color = Some([color[0], color[1], color[2]]);
+
+    if let Some(title) = node.props.heatmap.title.as_deref() {
+        labels.push(LinePlotTextLabel {
+            text: title.to_string(),
+            screen_x: rect[0] + 12.0 * sf,
+            screen_y: rect[1] + 8.0 * sf,
+            is_title: true,
+            anchor: "top-left",
+            color,
+            font_size: Some(13.0),
+            clip_rect: Some(rect),
+        });
+    }
+
+    if node.props.heatmap.show_labels {
+        let rows = node.props.heatmap.rows.max(1);
+        let cols = node.props.heatmap.cols.max(1);
+        let cell_w = plot[2] / cols as f32;
+        let cell_h = plot[3] / rows as f32;
+        if !node.props.heatmap.x_labels.is_empty() && cols <= 32 && cell_w >= 18.0 * sf {
+            for (index, label) in node.props.heatmap.x_labels.iter().enumerate() {
+                labels.push(LinePlotTextLabel {
+                    text: label.clone(),
+                    screen_x: plot[0] + cell_w * (index as f32 + 0.5),
+                    screen_y: plot[1] + plot[3] + 6.0 * sf,
+                    is_title: false,
+                    anchor: "plot-x-tick",
+                    color,
+                    font_size: Some(10.0),
+                    clip_rect: Some([
+                        plot[0] + cell_w * index as f32,
+                        plot[1] + plot[3],
+                        cell_w,
+                        rect[1] + rect[3] - plot[1] - plot[3],
+                    ]),
+                });
+            }
+        }
+        if !node.props.heatmap.y_labels.is_empty() && rows <= 32 && cell_h >= 13.0 * sf {
+            for (index, label) in node.props.heatmap.y_labels.iter().enumerate() {
+                labels.push(LinePlotTextLabel {
+                    text: label.clone(),
+                    screen_x: plot[0] - 4.0 * sf,
+                    screen_y: plot[1] + cell_h * (index as f32 + 0.5),
+                    is_title: false,
+                    anchor: "plot-y-tick",
+                    color,
+                    font_size: Some(10.0),
+                    clip_rect: Some([rect[0], plot[1], plot[0] - rect[0], plot[3]]),
+                });
+            }
+        }
+        if node
+            .props
+            .heatmap
+            .rows
+            .saturating_mul(node.props.heatmap.cols)
+            <= 100
+            && cell_w >= 38.0 * sf
+            && cell_h >= 22.0 * sf
+        {
+            for row in 0..node.props.heatmap.rows {
+                for col in 0..node.props.heatmap.cols {
+                    let Some(value) = node
+                        .props
+                        .heatmap
+                        .values
+                        .get(row * node.props.heatmap.cols + col)
+                    else {
+                        continue;
+                    };
+                    if !value.is_finite() {
+                        continue;
+                    }
+                    let cell = heatmap_cell_rect(node, plot, row, col);
+                    let rgb = heatmap_cell_text_color(node, *value, theme);
+                    labels.push(LinePlotTextLabel {
+                        text: format_line_plot_hover_value(*value),
+                        screen_x: cell[0] + cell[2] * 0.5,
+                        screen_y: cell[1] + cell[3] * 0.5,
+                        is_title: false,
+                        anchor: "box-center",
+                        color: Some(rgb),
+                        font_size: Some(10.0),
+                        clip_rect: Some(cell),
+                    });
+                }
+            }
+        }
+    }
+
+    if let Some(bar) = heatmap_scalar_bar_rect(node, sf, rect) {
+        labels.push(LinePlotTextLabel {
+            text: format_line_plot_hover_value(node.props.heatmap.vmax),
+            screen_x: bar[0] + bar[2] + 6.0 * sf,
+            screen_y: bar[1] - 1.0 * sf,
+            is_title: false,
+            anchor: "top-left",
+            color,
+            font_size: Some(10.0),
+            clip_rect: Some(rect),
+        });
+        labels.push(LinePlotTextLabel {
+            text: format_line_plot_hover_value(node.props.heatmap.vmin),
+            screen_x: bar[0] + bar[2] + 6.0 * sf,
+            screen_y: bar[1] + bar[3] - 12.0 * sf,
+            is_title: false,
+            anchor: "top-left",
+            color,
+            font_size: Some(10.0),
+            clip_rect: Some(rect),
+        });
+    }
+
+    if let Some(hover) = node.props.heatmap.hover.as_ref() {
+        let row = hover
+            .y_label
+            .as_deref()
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("row {}", hover.row));
+        let col = hover
+            .x_label
+            .as_deref()
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("col {}", hover.col));
+        let readout = heatmap_readout_rect(hover.screen, plot, sf);
+        let text_color = mix(theme.text, theme.accent, 0.10);
+        labels.push(LinePlotTextLabel {
+            text: format!(
+                "{row}, {col}: {}",
+                format_line_plot_hover_value(hover.value)
+            ),
+            screen_x: readout[0] + readout[2] * 0.5,
+            screen_y: readout[1] + readout[3] * 0.5,
+            is_title: false,
+            anchor: "plot-readout",
+            color: Some([text_color[0], text_color[1], text_color[2]]),
+            font_size: Some(10.0),
+            clip_rect: Some(readout),
+        });
+    }
+
+    labels
+}
+
 pub(crate) fn line_plot_resolved_bounds(node: &WidgetNode) -> Option<LinePlotBounds> {
     if !node.props.line_plot_auto_fit {
         if let (Some(x_min), Some(x_max), Some(y_min), Some(y_max)) = (
@@ -5488,6 +6748,28 @@ fn emit_tool_icon_button_mark(
         "minus" | "remove" | "subtract" => emit_stepper_mark(out, rect, color, false, sf),
         "close" | "x" | "delete" | "clear" => emit_tool_x_icon(out, rect, color, sf),
         "check" | "ok" | "done" => emit_tool_check_icon(out, rect, color, sf),
+        "edit" | "pencil" => emit_tool_edit_icon(out, rect, color, sf),
+        "copy" | "duplicate" => emit_tool_copy_icon(out, rect, color, sf),
+        "file" | "document" => emit_tool_file_icon(out, rect, color, sf),
+        "folder" | "open" => emit_tool_folder_icon(out, rect, color, sf),
+        "upload" | "import" => emit_tool_transfer_icon(out, rect, color, true, sf),
+        "download" | "export" => emit_tool_transfer_icon(out, rect, color, false, sf),
+        "refresh" | "reload" | "sync" => emit_tool_refresh_icon(out, rect, color, sf),
+        "settings" | "gear" => emit_tool_settings_icon(out, rect, color, sf),
+        "home" => emit_tool_home_icon(out, rect, color, sf),
+        "info" => emit_tool_info_icon(out, rect, color, sf),
+        "help" | "question" => emit_tool_help_icon(out, rect, color, sf),
+        "warning" | "alert" => emit_tool_warning_icon(out, rect, color, sf),
+        "lock" => emit_tool_lock_icon(out, rect, color, false, sf),
+        "unlock" => emit_tool_lock_icon(out, rect, color, true, sf),
+        "eye" | "show" | "visible" => emit_tool_eye_icon(out, rect, color, false, sf),
+        "eye-off" | "hide" | "hidden" => emit_tool_eye_icon(out, rect, color, true, sf),
+        "menu" | "hamburger" => emit_tool_menu_icon(out, rect, color, sf),
+        "list" => emit_tool_list_icon(out, rect, color, sf),
+        "filter" | "funnel" => emit_tool_filter_icon(out, rect, color, sf),
+        "sort" => emit_tool_sort_icon(out, rect, color, sf),
+        "undo" => emit_tool_history_icon(out, rect, color, true, sf),
+        "redo" => emit_tool_history_icon(out, rect, color, false, sf),
         "play" | "run" => emit_tool_triangle_icon(out, rect, color, "right", sf),
         "pause" => emit_tool_pause_icon(out, rect, color, sf),
         "stop" | "square" => emit_tool_stop_icon(out, rect, color, sf),
@@ -5538,6 +6820,46 @@ fn emit_tool_triangle_icon(
     out.push(tri);
 }
 
+fn emit_tool_arrow_head(
+    out: &mut Vec<RectInstance>,
+    center: [f32; 2],
+    size: f32,
+    direction: &str,
+    color: Color,
+    sf: f32,
+) {
+    let mut tri = inst_rounded_triangle(
+        [center[0] - size * 0.5, center[1] - size * 0.5, size, size],
+        color,
+        !matches!(direction, "down"),
+        (0.8 * sf).max(0.5),
+    );
+    tri.transform2[0] = match direction {
+        "left" => -std::f32::consts::FRAC_PI_2,
+        "right" => std::f32::consts::FRAC_PI_2,
+        _ => 0.0,
+    };
+    out.push(tri);
+}
+
+fn emit_tool_arrow_head_angle(
+    out: &mut Vec<RectInstance>,
+    center: [f32; 2],
+    size: f32,
+    angle: f32,
+    color: Color,
+    sf: f32,
+) {
+    let mut tri = inst_rounded_triangle(
+        [center[0] - size * 0.5, center[1] - size * 0.5, size, size],
+        color,
+        true,
+        (0.8 * sf).max(0.5),
+    );
+    tri.transform2[0] = angle + std::f32::consts::FRAC_PI_2;
+    out.push(tri);
+}
+
 fn emit_tool_bar(
     out: &mut Vec<RectInstance>,
     center: [f32; 2],
@@ -5554,6 +6876,26 @@ fn emit_tool_bar(
     );
     mark.transform2[0] = angle;
     out.push(mark);
+}
+
+fn emit_tool_line_rect(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, stroke: f32) {
+    let [x, y, w, h] = rect;
+    if w <= 0.0 || h <= 0.0 {
+        return;
+    }
+    let radius = stroke * 0.5;
+    out.push(inst_radii([x, y, w, stroke], color, [radius; 4]));
+    out.push(inst_radii(
+        [x, y + h - stroke, w, stroke],
+        color,
+        [radius; 4],
+    ));
+    out.push(inst_radii([x, y, stroke, h], color, [radius; 4]));
+    out.push(inst_radii(
+        [x + w - stroke, y, stroke, h],
+        color,
+        [radius; 4],
+    ));
 }
 
 fn emit_tool_x_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
@@ -5593,6 +6935,744 @@ fn emit_tool_check_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Colo
         -std::f32::consts::FRAC_PI_4,
         color,
     );
+}
+
+fn emit_tool_edit_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
+    let [x, y, w, h] = rect;
+    let stroke = (2.0 * sf).max(1.2);
+    let len = (w.min(h) * 0.58).max(11.0 * sf);
+    let cx = x + w * 0.50;
+    let cy = y + h * 0.50;
+    emit_tool_bar(
+        out,
+        [cx, cy],
+        len,
+        stroke,
+        -std::f32::consts::FRAC_PI_4,
+        color,
+    );
+    emit_tool_bar(
+        out,
+        [cx - len * 0.32, cy + len * 0.32],
+        (5.0 * sf).max(stroke * 2.0),
+        stroke,
+        0.0,
+        color,
+    );
+    let cap = (3.6 * sf).max(stroke * 1.4);
+    out.push(inst_radii(
+        [
+            cx + len * 0.28 - cap * 0.5,
+            cy - len * 0.28 - cap * 0.5,
+            cap,
+            cap,
+        ],
+        color,
+        [cap * 0.18; 4],
+    ));
+}
+
+fn emit_tool_file_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
+    let [x, y, w, h] = rect;
+    let stroke = (1.35 * sf).max(1.0);
+    let doc_w = (w.min(h) * 0.48).max(10.0 * sf);
+    let doc_h = (doc_w * 1.22).min(h * 0.66).max(12.0 * sf);
+    let left = x + (w - doc_w) * 0.5;
+    let top = y + (h - doc_h) * 0.5;
+    emit_tool_line_rect(out, [left, top, doc_w, doc_h], color, stroke);
+    let fold = (doc_w * 0.26).max(3.0 * sf);
+    emit_tool_bar(
+        out,
+        [left + doc_w - fold * 0.52, top + fold * 0.52],
+        fold * 1.32,
+        stroke,
+        std::f32::consts::FRAC_PI_4,
+        color,
+    );
+    for offset in [0.44, 0.62] {
+        out.push(inst_radii(
+            [
+                left + doc_w * 0.24,
+                top + doc_h * offset,
+                doc_w * 0.52,
+                stroke,
+            ],
+            color,
+            [stroke * 0.5; 4],
+        ));
+    }
+}
+
+fn emit_tool_copy_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
+    let [x, y, w, h] = rect;
+    let stroke = (1.25 * sf).max(1.0);
+    let doc_w = (w.min(h) * 0.42).max(9.0 * sf);
+    let doc_h = (doc_w * 1.18).max(10.0 * sf);
+    let shift = (3.2 * sf).max(stroke * 2.0);
+    let left = x + (w - doc_w) * 0.5 - shift * 0.35;
+    let top = y + (h - doc_h) * 0.5 + shift * 0.35;
+    emit_tool_line_rect(
+        out,
+        [left + shift, top - shift, doc_w, doc_h],
+        color,
+        stroke,
+    );
+    emit_tool_line_rect(out, [left, top, doc_w, doc_h], color, stroke);
+}
+
+fn emit_tool_folder_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
+    let [x, y, w, h] = rect;
+    let width = (w.min(h) * 0.62).max(12.0 * sf);
+    let height = (width * 0.58).max(7.0 * sf);
+    let left = x + (w - width) * 0.5;
+    let top = y + h * 0.5 - height * 0.42;
+    let tab_w = width * 0.36;
+    let tab_h = height * 0.30;
+    let radius = (1.1 * sf).max(0.7);
+    out.push(inst_radii(
+        [left, top + tab_h, width, height],
+        color,
+        [radius; 4],
+    ));
+    out.push(inst_radii(
+        [left + width * 0.08, top, tab_w, tab_h + (1.0 * sf).max(0.8)],
+        color,
+        [radius; 4],
+    ));
+}
+
+fn emit_tool_transfer_icon(
+    out: &mut Vec<RectInstance>,
+    rect: [f32; 4],
+    color: Color,
+    upload: bool,
+    sf: f32,
+) {
+    let [x, y, w, h] = rect;
+    let stroke = (1.45 * sf).max(1.0);
+    let cx = x + w * 0.5;
+    let cy = y + h * 0.50;
+    let shaft = (7.2 * sf).min(h * 0.34).max(stroke * 3.0);
+    let head = (5.5 * sf).max(stroke * 2.2);
+    let base = (12.0 * sf).min(w * 0.56).max(stroke * 5.0);
+    let radius = stroke * 0.5;
+    out.push(inst_radii(
+        [cx - stroke * 0.5, cy - shaft * 0.5, stroke, shaft],
+        color,
+        [radius; 4],
+    ));
+    let mut tri = inst_rounded_triangle(
+        [
+            cx - head * 0.5,
+            if upload {
+                cy - shaft * 0.5 - head * 0.62
+            } else {
+                cy + shaft * 0.5 - head * 0.38
+            },
+            head,
+            head,
+        ],
+        color,
+        true,
+        (0.8 * sf).max(0.55),
+    );
+    if !upload {
+        tri.transform2[0] = std::f32::consts::PI;
+    }
+    out.push(tri);
+    out.push(inst_radii(
+        [cx - base * 0.5, y + h * 0.70, base, stroke],
+        color,
+        [radius; 4],
+    ));
+}
+
+fn emit_tool_refresh_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
+    let [x, y, w, h] = rect;
+    let stroke = (1.55 * sf).max(1.1);
+    let cx = x + w * 0.5;
+    let cy = y + h * 0.5;
+    let radius = (w.min(h) * 0.265).max(stroke * 4.2);
+    let inner_ratio = ((radius - stroke) / radius).clamp(0.58, 0.86);
+    let head = (w.min(h) * 0.16).max(stroke * 2.3);
+    for (start, sweep) in [
+        (std::f32::consts::PI * 1.03, 2.72_f32),
+        (0.02_f32, 2.72_f32),
+    ] {
+        out.push(inst_loading_spinner(
+            [cx - radius, cy - radius, radius * 2.0, radius * 2.0],
+            [0.0, 0.0, 0.0, 0.0],
+            color,
+            start,
+            sweep,
+            inner_ratio,
+            1.0,
+        ));
+        let end = start + sweep;
+        let head_center = [cx + end.cos() * radius, cy + end.sin() * radius];
+        let tangent_angle = (end.cos()).atan2(-end.sin());
+        emit_tool_arrow_head_angle(out, head_center, head, tangent_angle, color, sf);
+    }
+}
+
+fn emit_tool_settings_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
+    let [x, y, w, h] = rect;
+    let stroke = (1.55 * sf).max(1.1);
+    let cx = x + w * 0.5;
+    let cy = y + h * 0.5;
+    let radius = (w.min(h) * 0.18).max(stroke * 3.2);
+    let tooth_len = (3.4 * sf).max(stroke * 1.75);
+    let tooth_w = (2.15 * sf).max(stroke * 1.15);
+    for i in 0..8 {
+        let angle = i as f32 * std::f32::consts::FRAC_PI_4;
+        emit_tool_bar(
+            out,
+            [
+                cx + angle.cos() * (radius + tooth_len * 0.42),
+                cy + angle.sin() * (radius + tooth_len * 0.42),
+            ],
+            tooth_len,
+            tooth_w,
+            angle,
+            color,
+        );
+    }
+    out.push(inst_loading_spinner(
+        [cx - radius, cy - radius, radius * 2.0, radius * 2.0],
+        [0.0, 0.0, 0.0, 0.0],
+        color,
+        0.0,
+        std::f32::consts::TAU,
+        0.54,
+        1.0,
+    ));
+}
+
+fn emit_tool_home_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
+    let [x, y, w, h] = rect;
+    let icon = w.min(h);
+    let cx = x + w * 0.5;
+    let body_w = (icon * 0.42).max(9.5 * sf);
+    let body_h = (icon * 0.29).max(6.5 * sf);
+    let body_top = y + h * 0.52;
+    let body_left = cx - body_w * 0.5;
+    let radius = (1.2 * sf).max(0.7);
+    let chimney_w = (2.3 * sf).max(1.6);
+    let chimney_h = icon * 0.17;
+    out.push(inst_radii(
+        [
+            cx + body_w * 0.17,
+            body_top - chimney_h * 0.88,
+            chimney_w,
+            chimney_h,
+        ],
+        color,
+        [radius * 0.65; 4],
+    ));
+    let roof_w = (icon * 0.60).max(body_w * 1.24);
+    let roof_h = icon * 0.42;
+    out.push(inst_rounded_triangle(
+        [
+            cx - roof_w * 0.5,
+            body_top - roof_h * 0.77,
+            roof_w,
+            roof_h,
+        ],
+        color,
+        true,
+        (1.0 * sf).max(0.65),
+    ));
+    out.push(inst_radii(
+        [body_left, body_top, body_w, body_h],
+        color,
+        [radius; 4],
+    ));
+}
+
+fn emit_tool_info_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
+    let [x, y, w, h] = rect;
+    let stroke = (2.0 * sf).max(1.2);
+    let cx = x + w * 0.5;
+    let dot = (2.6 * sf).max(stroke * 1.1);
+    out.push(inst_radii(
+        [cx - dot * 0.5, y + h * 0.31 - dot * 0.5, dot, dot],
+        color,
+        [dot * 0.5; 4],
+    ));
+    out.push(inst_radii(
+        [cx - stroke * 0.5, y + h * 0.43, stroke, h * 0.27],
+        color,
+        [stroke * 0.5; 4],
+    ));
+    out.push(inst_radii(
+        [cx - stroke * 1.4, y + h * 0.70, stroke * 2.8, stroke],
+        color,
+        [stroke * 0.5; 4],
+    ));
+}
+
+fn emit_tool_help_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
+    let [x, y, w, h] = rect;
+    let icon = w.min(h);
+    let stroke = (1.35 * sf).max(1.0).min(icon * 0.09);
+    let cx = x + w * 0.5;
+    let cy = y + h * 0.5;
+    let radius = (icon * 0.285).max(stroke * 4.2);
+    let inner_ratio = ((radius - stroke) / radius).clamp(0.66, 0.88);
+    out.push(inst_loading_spinner(
+        [cx - radius, cy - radius, radius * 2.0, radius * 2.0],
+        [0.0, 0.0, 0.0, 0.0],
+        color,
+        0.0,
+        std::f32::consts::TAU,
+        inner_ratio,
+        1.0,
+    ));
+}
+
+fn emit_tool_warning_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
+    let [x, y, w, h] = rect;
+    let icon = w.min(h);
+    let stroke = (1.45 * sf).max(1.0).min(icon * 0.095);
+    let size = (icon * 0.58).max(12.0 * sf);
+    let cx = x + w * 0.5;
+    let top = y + (h - size) * 0.5 + icon * 0.03;
+    let apex = [cx, top + size * 0.12];
+    let left = [cx - size * 0.40, top + size * 0.78];
+    let right = [cx + size * 0.40, top + size * 0.78];
+    let side_len = ((apex[0] - left[0]).powi(2) + (apex[1] - left[1]).powi(2)).sqrt();
+    let side_angle = (apex[1] - left[1]).atan2(apex[0] - left[0]);
+    emit_tool_bar(
+        out,
+        [(apex[0] + left[0]) * 0.5, (apex[1] + left[1]) * 0.5],
+        side_len,
+        stroke,
+        side_angle,
+        color,
+    );
+    emit_tool_bar(
+        out,
+        [(apex[0] + right[0]) * 0.5, (apex[1] + right[1]) * 0.5],
+        side_len,
+        stroke,
+        -side_angle,
+        color,
+    );
+    emit_tool_bar(
+        out,
+        [cx, left[1]],
+        right[0] - left[0],
+        stroke,
+        0.0,
+        color,
+    );
+}
+
+fn emit_tool_lock_icon(
+    out: &mut Vec<RectInstance>,
+    rect: [f32; 4],
+    color: Color,
+    unlocked: bool,
+    sf: f32,
+) {
+    let [x, y, w, h] = rect;
+    let icon = w.min(h);
+    let stroke = (1.65 * sf).max(1.15).min(icon * 0.10);
+    let body_w = (icon * 0.44).max(9.5 * sf);
+    let body_h = (icon * 0.32).max(7.0 * sf);
+    let shackle_w = body_w * if unlocked { 0.72 } else { 0.56 };
+    let shackle_h = icon * if unlocked { 0.28 } else { 0.25 };
+    let shackle_radius_y = shackle_h * if unlocked { 0.66 } else { 0.76 };
+    let total_top_extra = shackle_radius_y + stroke * 0.55;
+    let total_h = total_top_extra + body_h;
+    let top = y + (h - total_h) * 0.5 + total_top_extra;
+    let left = x + (w - body_w) * 0.5 - if unlocked { body_w * 0.08 } else { 0.0 };
+    let body_radius = (2.2 * sf).max(1.2);
+    out.push(inst_radii(
+        [left, top, body_w, body_h],
+        color,
+        [body_radius; 4],
+    ));
+
+    let shackle_cx = if unlocked {
+        x + w * 0.5 + body_w * 0.28
+    } else {
+        x + w * 0.5
+    };
+    let arc_center = [
+        shackle_cx,
+        top - shackle_h * if unlocked { 0.16 } else { 0.02 },
+    ];
+    let radius = [shackle_w * 0.5, shackle_radius_y];
+    emit_tool_arc(
+        out,
+        arc_center,
+        radius,
+        std::f32::consts::PI,
+        std::f32::consts::TAU,
+        9,
+        stroke,
+        color,
+    );
+
+    let left_leg_x = shackle_cx - shackle_w * 0.5 - stroke * 0.5;
+    let right_leg_x = shackle_cx + shackle_w * 0.5 - stroke * 0.5;
+    if unlocked {
+        let leg_top = arc_center[1] - stroke * 0.20;
+        let left_leg_h = (top + stroke * 0.25 - leg_top).max(stroke * 1.65);
+        let right_leg_h = shackle_h * 0.28;
+        out.push(inst_radii(
+            [left_leg_x, leg_top, stroke, left_leg_h],
+            color,
+            [stroke * 0.5; 4],
+        ));
+        out.push(inst_radii(
+            [right_leg_x, leg_top, stroke, right_leg_h],
+            color,
+            [stroke * 0.5; 4],
+        ));
+    } else {
+        let leg_h = shackle_h * 0.58;
+        let leg_top = (arc_center[1] - stroke * 0.1).min(top - stroke * 0.15);
+        out.push(inst_radii(
+            [left_leg_x, leg_top, stroke, leg_h],
+            color,
+            [stroke * 0.5; 4],
+        ));
+        out.push(inst_radii(
+            [right_leg_x, leg_top, stroke, leg_h],
+            color,
+            [stroke * 0.5; 4],
+        ));
+    }
+
+    let key_dot = (1.8 * sf).max(stroke * 0.72);
+    let cutout = [0.0, 0.0, 0.0, color[3] * 0.45];
+    out.push(inst_radii(
+        [
+            left + body_w * 0.5 - key_dot * 0.5,
+            top + body_h * 0.40 - key_dot * 0.5,
+            key_dot,
+            key_dot,
+        ],
+        cutout,
+        [key_dot * 0.5; 4],
+    ));
+    out.push(inst_radii(
+        [
+            left + body_w * 0.5 - stroke * 0.5,
+            top + body_h * 0.48,
+            stroke,
+            body_h * 0.18,
+        ],
+        cutout,
+        [stroke * 0.5; 4],
+    ));
+}
+
+fn emit_tool_arc(
+    out: &mut Vec<RectInstance>,
+    center: [f32; 2],
+    radius: [f32; 2],
+    start: f32,
+    end: f32,
+    segments: usize,
+    stroke: f32,
+    color: Color,
+) {
+    if segments == 0 {
+        return;
+    }
+    let mut prev = [
+        center[0] + start.cos() * radius[0],
+        center[1] + start.sin() * radius[1],
+    ];
+    for i in 1..=segments {
+        let t = i as f32 / segments as f32;
+        let angle = start + (end - start) * t;
+        let next = [
+            center[0] + angle.cos() * radius[0],
+            center[1] + angle.sin() * radius[1],
+        ];
+        let dx = next[0] - prev[0];
+        let dy = next[1] - prev[1];
+        let len = (dx * dx + dy * dy).sqrt() + stroke * 0.24;
+        if len > 0.0 {
+            emit_tool_bar(
+                out,
+                [(prev[0] + next[0]) * 0.5, (prev[1] + next[1]) * 0.5],
+                len,
+                stroke,
+                dy.atan2(dx),
+                color,
+            );
+        }
+        prev = next;
+    }
+}
+
+fn emit_tool_ring(
+    out: &mut Vec<RectInstance>,
+    center: [f32; 2],
+    radius: f32,
+    segments: usize,
+    stroke: f32,
+    color: Color,
+) {
+    emit_tool_arc(
+        out,
+        center,
+        [radius, radius],
+        0.0,
+        std::f32::consts::TAU,
+        segments,
+        stroke,
+        color,
+    );
+}
+
+fn emit_tool_eye_icon(
+    out: &mut Vec<RectInstance>,
+    rect: [f32; 4],
+    color: Color,
+    hidden: bool,
+    sf: f32,
+) {
+    let [x, y, w, h] = rect;
+    let stroke = (1.25 * sf).max(1.0);
+    let cx = x + w * 0.5;
+    let cy = y + h * 0.5;
+    let eye_w = (w.min(h) * 0.72).max(14.0 * sf);
+    let eye_h = eye_w * 0.34;
+    let rx = eye_w * 0.5;
+    let ry = eye_h * 0.5;
+    let center = [cx, cy];
+    emit_tool_arc(
+        out,
+        center,
+        [rx, ry],
+        std::f32::consts::PI,
+        std::f32::consts::TAU,
+        8,
+        stroke,
+        color,
+    );
+    emit_tool_arc(
+        out,
+        center,
+        [rx, ry],
+        0.0,
+        std::f32::consts::PI,
+        8,
+        stroke,
+        color,
+    );
+    let iris = (eye_w * 0.18).max(3.3 * sf);
+    emit_tool_ring(out, center, iris, 12, stroke, color);
+    if hidden {
+        emit_tool_bar(
+            out,
+            [cx, cy],
+            eye_w * 1.02,
+            stroke * 1.18,
+            std::f32::consts::FRAC_PI_4,
+            color,
+        );
+    }
+}
+
+fn emit_tool_menu_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
+    let [x, y, w, h] = rect;
+    let stroke = (1.55 * sf).max(1.0);
+    let len = (w.min(h) * 0.52).max(10.0 * sf);
+    let cx = x + w * 0.5;
+    let cy = y + h * 0.5;
+    for offset in [-4.2 * sf, 0.0, 4.2 * sf] {
+        emit_tool_bar(out, [cx, cy + offset], len, stroke, 0.0, color);
+    }
+}
+
+fn emit_tool_list_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
+    let [x, y, w, h] = rect;
+    let stroke = (1.4 * sf).max(1.0);
+    let line_w = (w.min(h) * 0.42).max(8.0 * sf);
+    let dot = (2.0 * sf).max(stroke * 1.2);
+    let left = x + w * 0.34;
+    let cy = y + h * 0.5;
+    for offset in [-4.0 * sf, 0.0, 4.0 * sf] {
+        out.push(inst_radii(
+            [left - dot * 1.9, cy + offset - dot * 0.5, dot, dot],
+            color,
+            [dot * 0.5; 4],
+        ));
+        out.push(inst_radii(
+            [left, cy + offset - stroke * 0.5, line_w, stroke],
+            color,
+            [stroke * 0.5; 4],
+        ));
+    }
+}
+
+fn emit_tool_filter_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
+    let [x, y, w, h] = rect;
+    let icon = w.min(h);
+    let stroke = (1.35 * sf).max(1.0).min(icon * 0.095);
+    let cx = x + w * 0.5;
+    let cy = y + h * 0.5;
+    let size = (icon * 0.60).max(12.5 * sf);
+    let left = cx - size * 0.5;
+    let top = cy - size * 0.5;
+    let right = cx + size * 0.5;
+    let top_y = top + size * 0.12;
+    let box_bottom_y = top + size * 0.29;
+    let neck_y = top + size * 0.62;
+    let stem_bottom_y = top + size * 0.89;
+    let neck_left_x = cx - size * 0.105;
+    let neck_right_x = cx + size * 0.105;
+    let top_left_x = left + size * 0.06;
+    let top_right_x = right - size * 0.06;
+    let radius = stroke * 0.5;
+
+    out.push(inst_radii(
+        [top_left_x, top_y, top_right_x - top_left_x, stroke],
+        color,
+        [radius; 4],
+    ));
+    out.push(inst_radii(
+        [
+            top_left_x - stroke * 0.5,
+            top_y,
+            stroke,
+            box_bottom_y - top_y,
+        ],
+        color,
+        [radius; 4],
+    ));
+    out.push(inst_radii(
+        [
+            top_right_x - stroke * 0.5,
+            top_y,
+            stroke,
+            box_bottom_y - top_y,
+        ],
+        color,
+        [radius; 4],
+    ));
+
+    let left_diag_dx = neck_left_x - top_left_x;
+    let left_diag_dy = neck_y - box_bottom_y;
+    let left_diag_len = (left_diag_dx * left_diag_dx + left_diag_dy * left_diag_dy).sqrt();
+    let right_diag_dx = top_right_x - neck_right_x;
+    let right_diag_dy = neck_y - box_bottom_y;
+    let right_diag_len = (right_diag_dx * right_diag_dx + right_diag_dy * right_diag_dy).sqrt();
+    emit_tool_bar(
+        out,
+        [
+            (top_left_x + neck_left_x) * 0.5,
+            (box_bottom_y + neck_y) * 0.5,
+        ],
+        left_diag_len,
+        stroke,
+        left_diag_dy.atan2(left_diag_dx),
+        color,
+    );
+    emit_tool_bar(
+        out,
+        [
+            (top_right_x + neck_right_x) * 0.5,
+            (box_bottom_y + neck_y) * 0.5,
+        ],
+        right_diag_len,
+        stroke,
+        (neck_y - box_bottom_y).atan2(neck_right_x - top_right_x),
+        color,
+    );
+
+    out.push(inst_radii(
+        [
+            neck_left_x - stroke * 0.5,
+            neck_y,
+            stroke,
+            stem_bottom_y - neck_y,
+        ],
+        color,
+        [radius; 4],
+    ));
+    out.push(inst_radii(
+        [
+            neck_right_x - stroke * 0.5,
+            neck_y,
+            stroke,
+            stem_bottom_y - neck_y - size * 0.08,
+        ],
+        color,
+        [radius; 4],
+    ));
+    emit_tool_bar(
+        out,
+        [
+            (neck_left_x + neck_right_x) * 0.5,
+            stem_bottom_y - size * 0.04,
+        ],
+        neck_right_x - neck_left_x + size * 0.05,
+        stroke,
+        -0.32,
+        color,
+    );
+}
+
+fn emit_tool_sort_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
+    let [x, y, w, h] = rect;
+    let size = (5.5 * sf).max(3.5);
+    let cx = x + w * 0.5;
+    out.push(inst_rounded_triangle(
+        [cx - size * 0.5, y + h * 0.36 - size * 0.5, size, size],
+        color,
+        true,
+        (0.7 * sf).max(0.5),
+    ));
+    out.push(inst_rounded_triangle(
+        [cx - size * 0.5, y + h * 0.64 - size * 0.5, size, size],
+        color,
+        false,
+        (0.7 * sf).max(0.5),
+    ));
+}
+
+fn emit_tool_history_icon(
+    out: &mut Vec<RectInstance>,
+    rect: [f32; 4],
+    color: Color,
+    undo: bool,
+    sf: f32,
+) {
+    let [x, y, w, h] = rect;
+    let icon = w.min(h);
+    let stroke = (1.65 * sf).max(1.15).min(icon * 0.11);
+    let cx = x + w * 0.5;
+    let cy = y + h * 0.54;
+    let radius = (icon * 0.26).max(stroke * 4.2);
+    let inner_ratio = ((radius - stroke) / radius).clamp(0.58, 0.86);
+    let sweep = std::f32::consts::TAU * 0.79;
+    let top_angle = -std::f32::consts::FRAC_PI_2;
+    let start = if undo { top_angle } else { top_angle - sweep };
+    let head = (icon * 0.17).max(stroke * 2.45);
+    let head_y = cy - radius;
+
+    out.push(inst_loading_spinner(
+        [cx - radius, cy - radius, radius * 2.0, radius * 2.0],
+        [0.0, 0.0, 0.0, 0.0],
+        color,
+        start,
+        sweep,
+        inner_ratio,
+        1.0,
+    ));
+    if undo {
+        emit_tool_arrow_head(out, [cx - radius * 0.12, head_y], head, "left", color, sf);
+    } else {
+        emit_tool_arrow_head(out, [cx + radius * 0.12, head_y], head, "right", color, sf);
+    }
 }
 
 fn emit_tool_pause_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color, sf: f32) {
@@ -5797,11 +7877,11 @@ pub(crate) fn panel_scrollbar_geometry(
     if rect.w <= 0.0 || rect.h <= 0.0 {
         return None;
     }
-    let implicit_panel_scrollbar = node.kind == WidgetKind::Panel
+    let implicit_container_scrollbar = matches!(node.kind, WidgetKind::Panel | WidgetKind::Modal)
         && node.style.layout.overflow.is_none()
         && node.style.layout.overflow_x.is_none()
         && node.style.layout.overflow_y.is_none();
-    if implicit_panel_scrollbar && rect.h < IMPLICIT_PANEL_SCROLLBAR_MIN_SIZE_PX * sf {
+    if implicit_container_scrollbar && rect.h < IMPLICIT_PANEL_SCROLLBAR_MIN_SIZE_PX * sf {
         return None;
     }
 
@@ -6188,7 +8268,7 @@ fn rect_array(rect: Rect) -> [f32; 4] {
 }
 
 fn panel_scrollbar_title_inset(node: &WidgetNode, theme: &Theme, sf: f32) -> f32 {
-    if node.kind != WidgetKind::Panel {
+    if !matches!(node.kind, WidgetKind::Panel | WidgetKind::Modal) {
         return 0.0;
     }
     if !node
@@ -7368,6 +9448,17 @@ fn emit_rects_inner(
                         fill,
                         radii,
                         border_w,
+                    );
+                }
+                if let Some(button) = modal_close_button_rect(node, layout, theme, sf) {
+                    let button_radius = button[2].min(button[3]) * 0.5;
+                    let bg = apply_opacity(mix(theme.surface, theme.text, 0.10), visual.opacity);
+                    out.push(inst_radii(button, bg, [button_radius; 4]));
+                    emit_tool_x_icon(
+                        out,
+                        button,
+                        apply_opacity(theme.muted_text, visual.opacity),
+                        sf,
                     );
                 }
             }
@@ -8826,6 +10917,22 @@ fn emit_rects_inner(
                 let checked = state.checked.get(&node.id).copied().unwrap_or(false);
                 let disabled = state.is_disabled(&node.id);
                 let row_visual = part_visual_for(node, state, "row");
+                let has_label = node
+                    .props
+                    .text
+                    .as_deref()
+                    .is_some_and(|text| !text.trim().is_empty());
+                let interaction_rect = if has_label {
+                    [x, y, w, h]
+                } else {
+                    let left = (box_x - CHECKBOX_LEFT_PAD_LP * sf).max(x);
+                    let right = (box_x + box_w + CHECKBOX_LEFT_PAD_LP * sf).min(x + w);
+                    if right > left {
+                        [left, y, right - left, h]
+                    } else {
+                        [x, y, w, h]
+                    }
+                };
                 if !state.is_disabled(&node.id)
                     && (state.hovered.as_deref() == Some(node.id.as_str())
                         || state.pressed.as_deref() == Some(node.id.as_str())
@@ -8841,12 +10948,12 @@ fn emit_rects_inner(
                         .map(|color| apply_opacity(color, row_visual.opacity))
                         .unwrap_or(fallback_row_fill);
                     out.push(inst_radii(
-                        [x, y, w, h],
+                        interaction_rect,
                         row_fill,
                         visual_radii_with_fallback(&row_visual, radii, sf),
                     ));
                 }
-                emit_focus_ring_radii(node, theme, sf, state, [x, y, w, h], radii, out);
+                emit_focus_ring_radii(node, theme, sf, state, interaction_rect, radii, out);
                 let box_visual = part_visual_for(node, state, "box");
                 let default_fill = if checked {
                     if disabled {
@@ -9122,6 +11229,78 @@ fn emit_rects_inner(
                         visual_radii_with_fallback(&fill_visual, [fill_w.min(fill_h) * 0.5; 4], sf),
                     ));
                 }
+            }
+
+            WidgetKind::LoadingSpinner => {
+                let disabled = state.is_disabled(&node.id);
+                let size_lp = loading_spinner_size_lp(node);
+                let spinner_size = (size_lp * sf).max(2.0);
+                let stroke = (loading_spinner_stroke_lp(node, size_lp) * sf)
+                    .max(1.0)
+                    .min(spinner_size * 0.36);
+                let has_label = node
+                    .props
+                    .text
+                    .as_deref()
+                    .is_some_and(|text| !text.trim().is_empty());
+                let spinner_x = if has_label {
+                    x
+                } else {
+                    x + ((w - spinner_size) * 0.5).max(0.0)
+                };
+                let spinner_y = y + ((h - spinner_size) * 0.5).max(0.0);
+                let cx = spinner_x + spinner_size * 0.5;
+                let cy = spinner_y + spinner_size * 0.5;
+                let outer_radius = spinner_size * 0.5;
+                let inner_ratio =
+                    ((outer_radius - stroke) / outer_radius.max(0.001)).clamp(0.0, 0.95);
+
+                let track_visual = part_visual_for(node, state, "track");
+                let arc_visual = part_visual_for(node, state, "arc");
+                let mut track_color = resolve_color(&track_visual.background, theme)
+                    .or_else(|| resolve_color(&track_visual.foreground, theme))
+                    .or_else(|| resolve_color(&track_visual.border_color, theme))
+                    .map(|color| apply_opacity(color, track_visual.opacity.or(visual.opacity)))
+                    .unwrap_or_else(|| {
+                        let fallback = if disabled {
+                            theme.disabled
+                        } else {
+                            mix(theme.border, theme.surface_alt, 0.35)
+                        };
+                        apply_opacity(fallback, Some(0.52))
+                    });
+                let mut arc_color = resolve_color(&arc_visual.background, theme)
+                    .or_else(|| resolve_color(&arc_visual.foreground, theme))
+                    .or_else(|| resolve_color(&arc_visual.accent, theme))
+                    .map(|color| apply_opacity(color, arc_visual.opacity.or(visual.opacity)))
+                    .unwrap_or_else(|| {
+                        if disabled {
+                            theme.disabled
+                        } else {
+                            styled_accent.unwrap_or(theme.accent)
+                        }
+                    });
+                if disabled {
+                    track_color = apply_opacity(track_color, Some(0.68));
+                    arc_color = apply_opacity(arc_color, Some(0.66));
+                }
+
+                let phase = loading_spinner_phase(node, disabled);
+                let arc_len = LOADING_SPINNER_TAU * 0.72;
+                out.push(inst_loading_spinner(
+                    [
+                        cx - outer_radius,
+                        cy - outer_radius,
+                        outer_radius * 2.0,
+                        outer_radius * 2.0,
+                    ],
+                    track_color,
+                    arc_color,
+                    phase,
+                    arc_len,
+                    inner_ratio,
+                    0.0,
+                ));
             }
 
             WidgetKind::Image | WidgetKind::HtmlReport => {
@@ -9424,6 +11603,31 @@ fn emit_rects_inner(
                 styled_bg,
                 styled_border,
                 styled_accent,
+                radii,
+                border_w,
+            ),
+
+            WidgetKind::BarChart => emit_bar_chart(
+                out,
+                node,
+                theme,
+                sf,
+                [x, y, w, h],
+                styled_bg,
+                styled_border,
+                styled_accent,
+                radii,
+                border_w,
+            ),
+
+            WidgetKind::Heatmap => emit_heatmap(
+                out,
+                node,
+                theme,
+                sf,
+                [x, y, w, h],
+                styled_bg,
+                styled_border,
                 radii,
                 border_w,
             ),
@@ -10023,14 +12227,14 @@ fn emit_menu_overlays(
     if let Some(menu_id) = state.open_menu.as_deref() {
         if let Some(rect) = menu_popup_rect(tree, layout, state, theme, sf, menu_id) {
             if let Some(items) = state.menu_items.get(menu_id) {
-                emit_menu_popup(rect, items, theme, sf, state, out);
+                emit_menu_popup(tree, rect, items, theme, sf, state, menu_id, out);
             }
         }
     }
     if let Some(menu_id) = state.open_context_menu.as_deref() {
         if let Some(rect) = menu_popup_rect(tree, layout, state, theme, sf, menu_id) {
             if let Some(items) = state.menu_items.get(menu_id) {
-                emit_menu_popup(rect, items, theme, sf, state, out);
+                emit_menu_popup(tree, rect, items, theme, sf, state, menu_id, out);
             }
         }
     }
@@ -10055,46 +12259,76 @@ fn emit_modal_overlays(
 }
 
 fn emit_menu_popup(
+    tree: &WidgetNode,
     rect: Rect,
     items: &[NavigationItem],
     theme: &Theme,
     sf: f32,
     state: &WidgetState,
+    menu_id: &str,
     out: &mut Vec<RectInstance>,
 ) {
     if items.is_empty() || rect.w <= 0.0 || rect.h <= 0.0 {
         return;
     }
-    let radius = theme.radius * sf;
-    let radii = [radius; 4];
-    let border_w = BORDER_WIDTH_LP * sf;
+    let menu = find_node(tree, menu_id);
+    let menu_visual = menu
+        .map(|node| part_visual_for(node, state, "menu"))
+        .unwrap_or_default();
+    let radius = menu_visual.border_radius.unwrap_or(theme.radius).max(0.0) * sf;
+    let radii = visual_radii(&menu_visual, theme.radius, sf);
+    let border_w = menu_visual
+        .border_width
+        .map(|width| width.max(0.0) * sf)
+        .unwrap_or(BORDER_WIDTH_LP * sf);
     let row_h = theme.control_height() * sf;
     let popup_rect = [rect.x, rect.y, rect.w, rect.h];
-    let shadow_offset = 3.0 * sf;
-    out.push(inst(
-        [
-            rect.x + shadow_offset,
-            rect.y + shadow_offset,
-            rect.w,
-            rect.h,
-        ],
-        [0.0, 0.0, 0.0, 0.30],
-        radius,
-    ));
-    emit_bordered_rect_radii(
+    if menu_visual.box_shadows.is_some() {
+        emit_box_shadows(out, popup_rect, radii, &menu_visual, theme, sf, None);
+    } else {
+        let shadow_offset = 3.0 * sf;
+        out.push(inst(
+            [
+                rect.x + shadow_offset,
+                rect.y + shadow_offset,
+                rect.w,
+                rect.h,
+            ],
+            [0.0, 0.0, 0.0, 0.30],
+            radius,
+        ));
+    }
+    let border_color = resolve_color(&menu_visual.border_color, theme)
+        .map(|color| apply_opacity(color, menu_visual.opacity))
+        .unwrap_or_else(|| mix(theme.border, theme.accent, 0.18));
+    emit_paint_rect_radii(
         out,
         popup_rect,
-        mix(theme.border, theme.accent, 0.18),
-        theme.surface,
+        resolve_part_background_paint(&menu_visual, theme, theme.surface),
         radii,
-        border_w,
     );
     for (idx, item) in items.iter().enumerate() {
         let y = rect.y + idx as f32 * row_h;
         let disabled = item.disabled || state.is_disabled(&item.id);
-        let color = if disabled {
+        let hovered = state.hovered.as_deref() == Some(item.id.as_str());
+        let row_visual = menu
+            .map(|node| {
+                if disabled {
+                    merged_part_visual_for(node, state, &["item", "item-disabled"])
+                } else if hovered {
+                    merged_part_visual_for(node, state, &["item", "item-hover"])
+                } else {
+                    part_visual_for(node, state, "item")
+                }
+            })
+            .unwrap_or_default();
+        let color = if let Some(color) = resolve_color(&row_visual.background, theme)
+            .or_else(|| resolve_color(&row_visual.foreground, theme))
+        {
+            apply_opacity(color, row_visual.opacity)
+        } else if disabled {
             mix(theme.surface, theme.disabled, 0.18)
-        } else if state.hovered.as_deref() == Some(item.id.as_str()) {
+        } else if hovered {
             mix(theme.surface_alt, theme.accent, 0.24)
         } else {
             theme.surface_alt
@@ -10111,6 +12345,15 @@ fn emit_menu_popup(
                 row_h - border_w,
             ],
         );
+    }
+    if border_w > 0.0 {
+        out.push(inst_outline_ring_clipped(
+            popup_rect,
+            border_color,
+            radii,
+            border_w,
+            default_local_clip(popup_rect),
+        ));
     }
 }
 
@@ -10169,18 +12412,13 @@ fn emit_dropdown_overlays(
                     menu_radii,
                 ));
             }
-            emit_bordered_rect_radii(
-                out,
-                menu_rect,
-                resolve_color(&menu_visual.border_color, theme)
-                    .map(|color| apply_opacity(color, menu_visual.opacity))
-                    .unwrap_or_else(|| mix(theme.border, theme.accent, 0.18)),
-                resolve_color(&menu_visual.background, theme)
-                    .map(|color| apply_opacity(color, menu_visual.opacity))
-                    .unwrap_or(theme.surface),
-                menu_radii,
-                border_w,
-            );
+            let border_color = resolve_color(&menu_visual.border_color, theme)
+                .map(|color| apply_opacity(color, menu_visual.opacity))
+                .unwrap_or_else(|| mix(theme.border, theme.accent, 0.18));
+            let fill_color = resolve_color(&menu_visual.background, theme)
+                .map(|color| apply_opacity(color, menu_visual.opacity))
+                .unwrap_or(theme.surface);
+            out.push(inst_radii(menu_rect, fill_color, menu_radii));
             let selected = state.dropdown_index.get(&node.id).copied().unwrap_or(0);
             let hovered = state
                 .dropdown_hover
@@ -10223,6 +12461,15 @@ fn emit_dropdown_overlays(
                         row_h - border_w,
                     ],
                 );
+            }
+            if border_w > 0.0 {
+                out.push(inst_outline_ring_clipped(
+                    menu_rect,
+                    border_color,
+                    menu_radii,
+                    border_w,
+                    default_local_clip(menu_rect),
+                ));
             }
         }
     }
@@ -10447,7 +12694,9 @@ fn emit_toast_overlays(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::document::{LinePlotPayloadFormat, LinePlotSeriesProp, NodeProps};
+    use crate::document::{
+        BarChartSeriesProp, LinePlotPayloadFormat, LinePlotSeriesProp, NodeProps,
+    };
     use crate::style::{
         BackdropFilterStyle, BackgroundPaint, BlobGradient, BlobGradientStop, BoxShadow, ColorRef,
         GradientStop, LinearGradient, MeshGradient, OverflowStyle, PartLayoutStyle, PartStyle,
@@ -10466,6 +12715,89 @@ mod tests {
             style: Default::default(),
             children: Vec::new(),
         }
+    }
+
+    #[test]
+    fn loading_spinner_phase_preserves_frame_time_at_epoch_scale() {
+        let base = 1_800_000_000.0;
+        let phase0 = loading_spinner_phase_at_seconds(1.0, base);
+        let phase1 = loading_spinner_phase_at_seconds(1.0, base + 1.0 / 60.0);
+
+        assert!(
+            (phase1 - phase0).abs() > 0.01,
+            "spinner phase should advance across one frame even with epoch-sized timestamps"
+        );
+    }
+
+    #[test]
+    fn heatmap_scalar_bar_reserves_label_gutter() {
+        let mut heatmap = node("heat", WidgetKind::Heatmap);
+        heatmap.props.heatmap.rows = 28;
+        heatmap.props.heatmap.cols = 36;
+        heatmap.props.heatmap.values = vec![0.0; 28 * 36];
+        heatmap.props.heatmap.vmin = -1.25;
+        heatmap.props.heatmap.vmax = 2.75;
+        heatmap.props.heatmap.show_labels = false;
+        heatmap.props.heatmap.scalar_bar = true;
+
+        let rect = [0.0, 0.0, 330.0, 220.0];
+        let plot = heatmap_plot_rect(&heatmap, 1.0, rect);
+        let bar = heatmap_scalar_bar_rect(&heatmap, 1.0, rect).expect("scalar bar rect");
+        let scalar_gutter = rect[0] + rect[2] - (plot[0] + plot[2]);
+        let label_x = bar[0] + bar[2] + 6.0;
+        let label_room = rect[0] + rect[2] - label_x;
+
+        assert!(
+            scalar_gutter >= 80.0,
+            "scalar bar gutter should reserve room for bar and labels, got {scalar_gutter}"
+        );
+        assert!(
+            label_room >= 40.0,
+            "scalar bar labels need enough room inside the widget rect, got {label_room}"
+        );
+    }
+
+    #[test]
+    fn bar_chart_value_labels_auto_contrast_and_accept_style_part_color() {
+        let mut chart = node("bars", WidgetKind::BarChart);
+        chart.props.bar_chart.labels = vec!["A".to_string()];
+        chart.props.bar_chart.series = vec![BarChartSeriesProp {
+            label: Some("value".to_string()),
+            values: vec![10.0],
+            color: Some(ColorRef::Rgba([1.0, 0.92, 0.35, 1.0])),
+        }];
+        chart.props.bar_chart.show_axes = false;
+        chart.props.bar_chart.show_ticks = false;
+        chart.props.bar_chart.show_grid = false;
+
+        let labels = bar_chart_text_labels(&chart, &Theme::dark(), 1.0, [0.0, 0.0, 220.0, 160.0]);
+        let value = labels
+            .iter()
+            .find(|label| label.text == "10.00")
+            .expect("bar value label");
+
+        assert_eq!(value.color, Some([0.035, 0.045, 0.065]));
+
+        chart.style.parts.parts.insert(
+            "label".to_string(),
+            PartStyle {
+                text: TextStyle {
+                    color: Some(ColorRef::Rgba([0.18, 0.24, 0.32, 1.0])),
+                    font_size: Some(12.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let labels = bar_chart_text_labels(&chart, &Theme::dark(), 1.0, [0.0, 0.0, 220.0, 160.0]);
+        let value = labels
+            .iter()
+            .find(|label| label.text == "10.00")
+            .expect("styled bar value label");
+
+        assert_eq!(value.color, Some([0.18, 0.24, 0.32]));
+        assert_eq!(value.font_size, Some(12.0));
     }
 
     fn progress_bar_primitive_bench_fixture(
@@ -12301,6 +14633,72 @@ mod tests {
     }
 
     #[test]
+    fn titled_modal_scrollbar_track_starts_below_header_band() {
+        let mut modal = node("modal", WidgetKind::Modal);
+        modal.props.text = Some("Scrollable modal".to_string());
+        modal.style.visual.border_radius = Some(12.0);
+        modal.style.visual.border_width = Some(1.0);
+        modal.style.layout.padding = Some(14.0);
+        modal.style.parts.parts.insert(
+            "scrollbar-track".to_string(),
+            PartStyle {
+                layout: PartLayoutStyle {
+                    width: Some(8.0),
+                    padding: Some(1.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        modal.style.parts.parts.insert(
+            "scrollbar-thumb".to_string(),
+            PartStyle {
+                layout: PartLayoutStyle {
+                    width: Some(6.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "modal".to_string(),
+            Rect {
+                x: 50.0,
+                y: 40.0,
+                w: 320.0,
+                h: 180.0,
+            },
+        );
+        layout.scroll_max_y.insert("modal".to_string(), 120.0);
+        layout.scroll_y.insert("modal".to_string(), 0.0);
+
+        let geometry = panel_scrollbar_geometry(
+            &modal,
+            &layout,
+            &WidgetState::default(),
+            &Theme::dark(),
+            1.0,
+            Rect {
+                x: 50.0,
+                y: 40.0,
+                w: 320.0,
+                h: 180.0,
+            },
+        )
+        .expect("scrollbar geometry");
+        let vertical = geometry.vertical.expect("vertical scrollbar");
+        let title_inset = panel_scrollbar_title_inset(&modal, &Theme::dark(), 1.0);
+
+        assert!(
+            vertical.track.y >= 40.0 + title_inset,
+            "modal scrollbar should start below header band: track={:?} title_inset={title_inset}",
+            vertical.track
+        );
+    }
+
+    #[test]
     fn panel_scrollbar_geometry_stays_anchored_when_parent_clips_panel() {
         let mut panel = node("panel", WidgetKind::Panel);
         panel.props.text = Some("Controls".to_string());
@@ -13189,6 +15587,61 @@ mod tests {
             Some(ColorRef::Rgba([0.1, 0.4, 0.2, 1.0]))
         );
         assert_eq!(visual.border_width, Some(3.0));
+    }
+
+    #[test]
+    fn unlabeled_checkbox_row_and_focus_stay_tight_to_box() {
+        let mut checkbox = node("enabled", WidgetKind::Checkbox);
+        checkbox.props.text = Some(String::new());
+        checkbox.style.parts.parts.insert(
+            "row".to_string(),
+            PartStyle {
+                visual: VisualStyle {
+                    background: Some(rgba(0.20, 0.30, 0.40)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "enabled".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 90.0,
+                h: 32.0,
+            },
+        );
+        let theme = Theme::dark();
+        let state = WidgetState {
+            focused: Some("enabled".to_string()),
+            ..Default::default()
+        };
+        let mut out = Vec::new();
+
+        emit_rects(
+            &checkbox,
+            &layout,
+            &theme,
+            1.0,
+            &state,
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let row = out
+            .iter()
+            .find(|inst| inst.color == [0.20, 0.30, 0.40, 1.0])
+            .expect("checkbox row fill should be emitted");
+        assert_eq!(row.rect, [0.0, 0.0, 30.0, 32.0]);
+
+        let focus = out
+            .iter()
+            .find(|inst| inst.color == with_alpha(theme.focus, 0.60) && inst.params[2] == 3.0)
+            .expect("checkbox focus ring should be emitted");
+        assert_eq!(focus.rect, [-2.0, -2.0, 34.0, 36.0]);
     }
 
     #[test]
@@ -14210,6 +16663,83 @@ mod tests {
             out.is_empty(),
             "hovered top-level menu should rely on text color, not a button fill"
         );
+    }
+
+    #[test]
+    fn menu_popup_border_paints_above_row_fills() {
+        let mut root = node("root", WidgetKind::Window);
+        let mut menu = node("file-menu", WidgetKind::Menu);
+        menu.style.parts.parts.insert(
+            "menu".to_string(),
+            PartStyle {
+                visual: VisualStyle {
+                    background: Some(rgba(0.05, 0.06, 0.07)),
+                    border_color: Some(rgba(0.90, 0.10, 0.10)),
+                    border_width: Some(2.0),
+                    border_radius: Some(8.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        menu.style.parts.parts.insert(
+            "item".to_string(),
+            PartStyle {
+                visual: VisualStyle {
+                    background: Some(rgba(0.10, 0.70, 0.20)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        root.children.push(menu);
+
+        let items = vec![
+            NavigationItem {
+                id: "new".to_string(),
+                value: "New".to_string(),
+                disabled: false,
+            },
+            NavigationItem {
+                id: "open".to_string(),
+                value: "Open".to_string(),
+                disabled: false,
+            },
+        ];
+        let mut out = Vec::new();
+
+        emit_menu_popup(
+            &root,
+            Rect {
+                x: 10.0,
+                y: 30.0,
+                w: 140.0,
+                h: 60.0,
+            },
+            &items,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            "file-menu",
+            &mut out,
+        );
+
+        let last_row_fill = out
+            .iter()
+            .rposition(|inst| inst.color == [0.10, 0.70, 0.20, 1.0])
+            .expect("menu row fill should be emitted");
+        let border = out
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, inst)| inst.color == [0.90, 0.10, 0.10, 1.0] && inst.params[2] == 3.0)
+            .expect("menu border ring should be emitted");
+        assert!(
+            border.0 > last_row_fill,
+            "menu border ring should paint above row fills so rounded corners stay intact"
+        );
+        assert_eq!(border.1.rect, [10.0, 30.0, 140.0, 60.0]);
+        assert_eq!(border.1.paint[3], 2.0);
     }
 
     #[test]
