@@ -79,3 +79,6 @@ Suggested order:
 48. `layout_overlay_collision_probe.py` - tooltips, menus, dropdowns, modal, command palette, toasts, and drag ghost overlay collision stress.
 49. `layout_scrollable_composites_probe.py` - tables, logs, code editor, tree/list widgets, property rows, command results, and nested scroll regions.
 50. `layout_plot_embedding_probe.py` - line, scatter, heatmap, histogram, bar, and table widgets embedded in constrained cards and split panes.
+51. `custom_composite_widget_probe.py` - V5 composite widget state/keys plus the native ExtensionWidget layout/CSS foundation.
+52. `paint_widget_sparkline_probe.py` - V5 PaintWidget display-list primitives, theme-token colors, scaling, and sparkline rendering.
+53. `paint_widget_events_probe.py` - V5 PaintWidget click hit-testing, callback routing, live repaint, and ordinary-widget updates.

@@ -718,6 +718,38 @@ DropCallback = Callable[[DragDropPayload], None]
 
 
 @dataclass(frozen=True)
+class PaintPointerEvent:
+    widget_id: str
+    event: str
+    x: float
+    y: float
+    local_x: float
+    local_y: float
+    dx: float = 0.0
+    dy: float = 0.0
+    button: str | None = None
+
+
+PaintPointerCallback = Callable[[PaintPointerEvent], None]
+
+
+@dataclass(frozen=True)
+class PaintKeyEvent:
+    widget_id: str
+    event: str
+    key: str
+    text: str | None = None
+    shift: bool = False
+    ctrl: bool = False
+    alt: bool = False
+    super: bool = False
+    repeat: bool = False
+
+
+PaintKeyCallback = Callable[[PaintKeyEvent], None]
+
+
+@dataclass(frozen=True)
 class ScatterPick:
     index: int
     x: float
@@ -1527,6 +1559,486 @@ class Container(Widget, AbstractContextManager["Container"]):
         return data
 
 
+def _non_negative_finite_value(value: int | float | None, name: str) -> float | None:
+    if value is None:
+        return None
+    value_f = float(value)
+    if not math.isfinite(value_f) or value_f < 0:
+        raise ValueError(f"{name} must be a non-negative finite number")
+    return value_f
+
+
+def _positive_finite_value(value: int | float, name: str) -> float:
+    value_f = float(value)
+    if not math.isfinite(value_f) or value_f <= 0:
+        raise ValueError(f"{name} must be a positive finite number")
+    return value_f
+
+
+@dataclass(frozen=True)
+class Size:
+    """Logical size returned by custom painted widgets."""
+
+    width: float
+    height: float
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "width", _positive_finite_value(self.width, "width"))
+        object.__setattr__(self, "height", _positive_finite_value(self.height, "height"))
+
+
+@dataclass(frozen=True)
+class MeasureConstraints:
+    """Logical layout constraints passed to `PaintWidget.measure`."""
+
+    min_width: float = 0.0
+    min_height: float = 0.0
+    max_width: float | None = None
+    max_height: float | None = None
+
+    def __post_init__(self) -> None:
+        min_width = _non_negative_finite_value(self.min_width, "min_width")
+        min_height = _non_negative_finite_value(self.min_height, "min_height")
+        max_width = _non_negative_finite_value(self.max_width, "max_width")
+        max_height = _non_negative_finite_value(self.max_height, "max_height")
+        object.__setattr__(self, "min_width", min_width or 0.0)
+        object.__setattr__(self, "min_height", min_height or 0.0)
+        object.__setattr__(self, "max_width", max_width)
+        object.__setattr__(self, "max_height", max_height)
+        if max_width is not None and max_width < self.min_width:
+            raise ValueError("max_width must be greater than or equal to min_width")
+        if max_height is not None and max_height < self.min_height:
+            raise ValueError("max_height must be greater than or equal to min_height")
+
+    def clamp(self, size: Size) -> Size:
+        width = max(size.width, self.min_width)
+        height = max(size.height, self.min_height)
+        if self.max_width is not None:
+            width = min(width, self.max_width)
+        if self.max_height is not None:
+            height = min(height, self.max_height)
+        return Size(width, height)
+
+
+PaintColor = str | Sequence[object]
+
+
+def _paint_color_value(value: PaintColor | None, name: str) -> object | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        color = value.strip()
+        if not color:
+            raise ValueError(f"{name} must be a non-empty color string or RGB/RGBA sequence")
+        return color
+    if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+        return list(_normalize_color_tuple(value, alpha=True))
+    raise TypeError(f"{name} must be a color string or RGB/RGBA sequence")
+
+
+def _paint_finite(value: int | float, name: str) -> float:
+    value_f = float(value)
+    if not math.isfinite(value_f):
+        raise ValueError(f"{name} must be finite")
+    return value_f
+
+
+def _paint_non_negative(value: int | float, name: str) -> float:
+    value_f = _paint_finite(value, name)
+    if value_f < 0:
+        raise ValueError(f"{name} must be non-negative")
+    return value_f
+
+
+class PaintContext:
+    """Records display-list drawing commands for a `PaintWidget`."""
+
+    def __init__(self, width: int | float, height: int | float) -> None:
+        self.width = _positive_finite_value(width, "width")
+        self.height = _positive_finite_value(height, "height")
+        self._commands: list[dict[str, object]] = []
+
+    def rect(
+        self,
+        x: int | float,
+        y: int | float,
+        width: int | float,
+        height: int | float,
+        *,
+        fill: PaintColor | None = "surface_alt",
+        stroke: PaintColor | None = None,
+        stroke_width: int | float = 1.0,
+        radius: int | float = 0.0,
+    ) -> None:
+        command: dict[str, object] = {
+            "cmd": "rect",
+            "x": _paint_finite(x, "x"),
+            "y": _paint_finite(y, "y"),
+            "w": _paint_non_negative(width, "width"),
+            "h": _paint_non_negative(height, "height"),
+            "radius": _paint_non_negative(radius, "radius"),
+        }
+        if fill is not None:
+            command["fill"] = _paint_color_value(fill, "fill")
+        if stroke is not None:
+            command["stroke"] = _paint_color_value(stroke, "stroke")
+            command["stroke_width"] = _paint_non_negative(stroke_width, "stroke_width")
+        self._commands.append(command)
+
+    def rounded_rect(
+        self,
+        x: int | float,
+        y: int | float,
+        width: int | float,
+        height: int | float,
+        *,
+        radius: int | float = 6.0,
+        fill: PaintColor | None = "surface_alt",
+        stroke: PaintColor | None = None,
+        stroke_width: int | float = 1.0,
+    ) -> None:
+        self.rect(
+            x,
+            y,
+            width,
+            height,
+            fill=fill,
+            stroke=stroke,
+            stroke_width=stroke_width,
+            radius=radius,
+        )
+
+    def line(
+        self,
+        x1: int | float,
+        y1: int | float,
+        x2: int | float,
+        y2: int | float,
+        *,
+        stroke: PaintColor = "accent",
+        width: int | float = 1.5,
+    ) -> None:
+        self._commands.append(
+            {
+                "cmd": "line",
+                "x1": _paint_finite(x1, "x1"),
+                "y1": _paint_finite(y1, "y1"),
+                "x2": _paint_finite(x2, "x2"),
+                "y2": _paint_finite(y2, "y2"),
+                "stroke": _paint_color_value(stroke, "stroke"),
+                "stroke_width": _positive_finite_value(width, "width"),
+            }
+        )
+
+    def polyline(
+        self,
+        points: Sequence[Sequence[int | float]],
+        *,
+        stroke: PaintColor = "accent",
+        width: int | float = 1.5,
+    ) -> None:
+        if isinstance(points, (str, bytes, bytearray)):
+            raise TypeError("points must be a sequence of coordinate pairs")
+        clean_points: list[list[float]] = []
+        for index, point in enumerate(points):
+            if not isinstance(point, Sequence) or isinstance(point, (str, bytes, bytearray)):
+                raise TypeError("points must be a sequence of coordinate pairs")
+            if len(point) != 2:
+                raise ValueError(f"point {index} must have exactly two values")
+            clean_points.append(
+                [
+                    _paint_finite(point[0], f"point {index} x"),
+                    _paint_finite(point[1], f"point {index} y"),
+                ]
+            )
+        self._commands.append(
+            {
+                "cmd": "polyline",
+                "points": clean_points,
+                "stroke": _paint_color_value(stroke, "stroke"),
+                "stroke_width": _positive_finite_value(width, "width"),
+            }
+        )
+
+    def circle(
+        self,
+        cx: int | float,
+        cy: int | float,
+        radius: int | float,
+        *,
+        fill: PaintColor | None = "accent",
+        stroke: PaintColor | None = None,
+        stroke_width: int | float = 1.0,
+    ) -> None:
+        command: dict[str, object] = {
+            "cmd": "circle",
+            "cx": _paint_finite(cx, "cx"),
+            "cy": _paint_finite(cy, "cy"),
+            "r": _paint_non_negative(radius, "radius"),
+        }
+        if fill is not None:
+            command["fill"] = _paint_color_value(fill, "fill")
+        if stroke is not None:
+            command["stroke"] = _paint_color_value(stroke, "stroke")
+            command["stroke_width"] = _paint_non_negative(stroke_width, "stroke_width")
+        self._commands.append(command)
+
+    def text(
+        self,
+        x: int | float,
+        y: int | float,
+        text: object,
+        *,
+        fill: PaintColor = "text",
+        font_size: int | float | None = None,
+        font_weight: int | None = None,
+        align: str = "left",
+    ) -> None:
+        align_value = str(align).strip().lower()
+        if align_value not in {"left", "center", "right"}:
+            raise ValueError("align must be 'left', 'center', or 'right'")
+        command: dict[str, object] = {
+            "cmd": "text",
+            "x": _paint_finite(x, "x"),
+            "y": _paint_finite(y, "y"),
+            "text": str(text),
+            "fill": _paint_color_value(fill, "fill"),
+            "align": align_value,
+        }
+        if font_size is not None:
+            command["font_size"] = _positive_finite_value(font_size, "font_size")
+        if font_weight is not None:
+            weight = int(font_weight)
+            if weight < 1 or weight > 1000:
+                raise ValueError("font_weight must be between 1 and 1000")
+            command["font_weight"] = weight
+        self._commands.append(command)
+
+    def image(
+        self,
+        path: object,
+        x: int | float,
+        y: int | float,
+        width: int | float,
+        height: int | float,
+        *,
+        fit: str = "contain",
+        radius: int | float = 0.0,
+    ) -> None:
+        fit_value = str(fit).strip().lower()
+        if fit_value not in {"contain", "cover", "stretch"}:
+            raise ValueError("fit must be 'contain', 'cover', or 'stretch'")
+        path_text = Image._normalize_path(path)
+        self._commands.append(
+            {
+                "cmd": "image",
+                "path": path_text,
+                "x": _paint_finite(x, "x"),
+                "y": _paint_finite(y, "y"),
+                "w": _paint_non_negative(width, "width"),
+                "h": _paint_non_negative(height, "height"),
+                "fit": fit_value,
+                "radius": _paint_non_negative(radius, "radius"),
+            }
+        )
+
+    def to_list(self) -> list[dict[str, object]]:
+        return [dict(command) for command in self._commands]
+
+
+class ExtensionWidget(Widget):
+    """Internal leaf foundation for future third-party custom widgets.
+
+    This serializes as ``type: "extension"`` and keeps arbitrary JSON props
+    under a stable ``extension_type`` name. It can receive simple click events;
+    custom drawing and richer pointer events layer on top of this native widget
+    kind.
+    """
+
+    kind = "extension"
+
+    def __init__(
+        self,
+        extension_type: str,
+        props: Mapping[str, object] | None = None,
+        *,
+        intrinsic_width: int | float | None = None,
+        intrinsic_height: int | float | None = None,
+        width: int | float | None = None,
+        height: int | float | None = None,
+        on_click: Callback | None = None,
+        on_pointer_down: PaintPointerCallback | None = None,
+        on_pointer_move: PaintPointerCallback | None = None,
+        on_pointer_up: PaintPointerCallback | None = None,
+        on_wheel: PaintPointerCallback | None = None,
+        on_key_down: PaintKeyCallback | None = None,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        name = str(extension_type).strip()
+        if not name:
+            raise ValueError("extension_type must be a non-empty string")
+        if props is not None and not isinstance(props, Mapping):
+            raise TypeError("ExtensionWidget props must be a mapping")
+        clean_props = _json_compatible_payload(dict(props or {}))
+        if not isinstance(clean_props, dict):
+            raise TypeError("ExtensionWidget props must serialize to a JSON object")
+        clean_props["extension_type"] = name
+        for prop_name, prop_value in (
+            ("intrinsic_width", _non_negative_finite_value(intrinsic_width, "intrinsic_width")),
+            ("intrinsic_height", _non_negative_finite_value(intrinsic_height, "intrinsic_height")),
+            ("width", _non_negative_finite_value(width, "width")),
+            ("height", _non_negative_finite_value(height, "height")),
+        ):
+            if prop_value is not None:
+                clean_props[prop_name] = prop_value
+        self.extension_type = name
+        self.on_click = on_click
+        self.on_pointer_down = on_pointer_down
+        self.on_pointer_move = on_pointer_move
+        self.on_pointer_up = on_pointer_up
+        self.on_wheel = on_wheel
+        self.on_key_down = on_key_down
+        self.disabled = bool(disabled)
+        self.extension_props: dict[str, object] = self._runtime_extension_props(clean_props)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def _runtime_extension_props(self, props: Mapping[str, object]) -> dict[str, object]:
+        clean_props = dict(props)
+        clean_props["extension_type"] = self.extension_type
+        if self.disabled:
+            clean_props["disabled"] = True
+        else:
+            clean_props.pop("disabled", None)
+        events: list[str] = []
+        if self.on_click is not None and not self.disabled:
+            events.append("click")
+        if self.on_pointer_down is not None and not self.disabled:
+            events.append("pointer_down")
+        if self.on_pointer_move is not None and not self.disabled:
+            events.append("pointer_move")
+        if self.on_pointer_up is not None and not self.disabled:
+            events.append("pointer_up")
+        if self.on_wheel is not None and not self.disabled:
+            events.append("wheel")
+        if self.on_key_down is not None and not self.disabled:
+            events.append("key_down")
+        if events:
+            clean_props["events"] = events
+        else:
+            clean_props.pop("events", None)
+        return clean_props
+
+    def props(self) -> dict[str, Any]:
+        return dict(self.extension_props)
+
+    def set_extension_props(self, props: Mapping[str, object]) -> None:
+        """Replace extension props and queue a live node replacement when mounted."""
+        if not isinstance(props, Mapping):
+            raise TypeError("ExtensionWidget props must be a mapping")
+        clean_props = _json_compatible_payload(dict(props))
+        if not isinstance(clean_props, dict):
+            raise TypeError("ExtensionWidget props must serialize to a JSON object")
+        self.extension_props = self._runtime_extension_props(clean_props)
+        if (handle := self._live()) is not None:
+            handle.enqueue_replace_node(self.to_dict())
+
+
+class PaintWidget(ExtensionWidget):
+    """Base class for pure-Python custom painted widgets.
+
+    Subclasses override `measure()` and `paint(ctx)`. The paint method records a
+    small display list that the native renderer consumes through the extension
+    widget path.
+    """
+
+    def __init__(
+        self,
+        *,
+        extension_type: str = "paint",
+        width: int | float | None = None,
+        height: int | float | None = None,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        on_click: Callback | None = None,
+        on_pointer_down: PaintPointerCallback | None = None,
+        on_pointer_move: PaintPointerCallback | None = None,
+        on_pointer_up: PaintPointerCallback | None = None,
+        on_wheel: PaintPointerCallback | None = None,
+        on_key_down: PaintKeyCallback | None = None,
+        disabled: bool = False,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self._paint_fixed_width = _non_negative_finite_value(width, "width")
+        self._paint_fixed_height = _non_negative_finite_value(height, "height")
+        constraints = MeasureConstraints(
+            max_width=self._paint_fixed_width,
+            max_height=self._paint_fixed_height,
+        )
+        self.paint_size = constraints.clamp(self.measure(constraints))
+        props = self._paint_extension_props()
+        super().__init__(
+            extension_type,
+            props,
+            intrinsic_width=self.paint_size.width,
+            intrinsic_height=self.paint_size.height,
+            width=self._paint_fixed_width,
+            height=self._paint_fixed_height,
+            on_click=on_click,
+            on_pointer_down=on_pointer_down,
+            on_pointer_move=on_pointer_move,
+            on_pointer_up=on_pointer_up,
+            on_wheel=on_wheel,
+            on_key_down=on_key_down,
+            disabled=disabled,
+            id=id,
+            key=key,
+            class_=class_,
+            style=style,
+            tooltip=tooltip,
+            parent=parent,
+        )
+
+    def measure(self, constraints: MeasureConstraints) -> Size:
+        width = constraints.max_width if constraints.max_width is not None else 160.0
+        height = constraints.max_height if constraints.max_height is not None else 80.0
+        return Size(width, height)
+
+    def paint(self, ctx: PaintContext) -> None:
+        pass
+
+    def repaint(self) -> None:
+        """Rebuild the display list and replace live extension props if mounted."""
+        self.set_extension_props(self._paint_extension_props())
+
+    def _build_display_list(self) -> list[dict[str, object]]:
+        ctx = PaintContext(self.paint_size.width, self.paint_size.height)
+        self.paint(ctx)
+        return ctx.to_list()
+
+    def _paint_extension_props(self) -> dict[str, object]:
+        props: dict[str, object] = {
+            "paint_width": self.paint_size.width,
+            "paint_height": self.paint_size.height,
+            "intrinsic_width": self.paint_size.width,
+            "intrinsic_height": self.paint_size.height,
+            "display_list": self._build_display_list(),
+        }
+        if self._paint_fixed_width is not None:
+            props["width"] = self._paint_fixed_width
+        if self._paint_fixed_height is not None:
+            props["height"] = self._paint_fixed_height
+        return props
+
+
 class Window(Container):
     kind = "window"
 
@@ -1619,6 +2131,21 @@ class ScrollArea(Container):
             extra["height"] = float(height)
         merged: "Mapping[str, object]" = {**extra, **(style or {})}
         super().__init__(id=id, key=key, class_=class_, style=merged, tooltip=tooltip, parent=parent)
+
+    def scroll_to(
+        self,
+        *,
+        x: "int | float | None" = None,
+        y: "int | float | None" = None,
+    ) -> None:
+        """Set the live scroll offset for this scroll area, in logical pixels."""
+        handle = self._live()
+        if handle is None:
+            return
+        if x is not None:
+            handle.enqueue_set_prop("scroll_x", float(x))
+        if y is not None:
+            handle.enqueue_set_prop("scroll_y", float(y))
 
 
 GridTrackValue = int | float | str | Mapping[str, object]

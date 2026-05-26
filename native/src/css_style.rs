@@ -3066,6 +3066,7 @@ pub fn widget_kind_from_css_type(name: &str) -> Option<WidgetKind> {
         "DataFrameTable" => Some(WidgetKind::DataFrameTable),
         "HtmlReport" => Some(WidgetKind::HtmlReport),
         "Image" => Some(WidgetKind::Image),
+        "ExtensionWidget" | "Extension" | "PaintWidget" => Some(WidgetKind::Extension),
         _ => None,
     }
 }
@@ -3135,6 +3136,7 @@ pub fn css_type_name(kind: WidgetKind) -> Option<&'static str> {
         WidgetKind::DataFrameTable => Some("DataFrameTable"),
         WidgetKind::HtmlReport => Some("HtmlReport"),
         WidgetKind::Image => Some("Image"),
+        WidgetKind::Extension => Some("ExtensionWidget"),
         WidgetKind::Unknown => None,
     }
 }
@@ -4434,6 +4436,7 @@ fn widget_kind_supports_part(kind: WidgetKind, part: &str) -> bool {
         WidgetKind::LoadingSpinner => matches!(part, "track" | "arc" | "label"),
         WidgetKind::Heatmap => matches!(part, "cell" | "grid" | "hover" | "scalar-bar" | "label"),
         WidgetKind::BarChart => matches!(part, "label" | "value-label"),
+        WidgetKind::Extension => false,
         WidgetKind::Tabs => matches!(part, "header"),
         WidgetKind::Tab => matches!(part, "tab" | "accent" | "badge"),
         WidgetKind::NavItem => matches!(part, "item" | "accent" | "badge"),
@@ -12186,6 +12189,7 @@ mod tests {
             WidgetKind::Scatter3D,
             WidgetKind::HtmlReport,
             WidgetKind::Image,
+            WidgetKind::Extension,
             WidgetKind::Toast,
         ];
 
@@ -12193,6 +12197,10 @@ mod tests {
             let name = css_type_name(kind).expect("known widget should have a CSS name");
             assert_eq!(widget_kind_from_css_type(name), Some(kind));
         }
+        assert_eq!(
+            widget_kind_from_css_type("PaintWidget"),
+            Some(WidgetKind::Extension)
+        );
         assert_eq!(widget_kind_from_css_type("button"), None);
         assert_eq!(css_type_name(WidgetKind::Unknown), None);
     }

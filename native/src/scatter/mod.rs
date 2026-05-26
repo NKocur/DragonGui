@@ -2328,8 +2328,6 @@ impl ScatterWidget {
     ) {
         let rect = scatter_layout_rect(x, y, w, h, visible_clip);
         let dims_changed = self.width != rect.width || self.height != rect.height;
-        let scissor_changed =
-            self.scissor_offset != rect.scissor_offset || self.scissor_size != rect.scissor_size;
         let clip_radii = clamp_clip_radii(clip_radii, w, h);
         let clip_changed = self.clip_radii != clip_radii;
         self.offset = rect.offset;
@@ -2340,7 +2338,10 @@ impl ScatterWidget {
         self.clip_radii = clip_radii;
         self.camera.aspect = w / h.max(1.0);
         self.recompute_point_size_scale();
-        if dims_changed || scissor_changed || clip_changed {
+        // Screen position and scissor changes happen continuously while a parent
+        // scrolls. They do not change the scatter scene itself, so keep the
+        // cached render target valid and let the compositor apply the new clip.
+        if dims_changed || clip_changed {
             self.mark_scene_dirty();
         }
         self.update_camera(queue);

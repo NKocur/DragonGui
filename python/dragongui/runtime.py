@@ -1822,7 +1822,7 @@ def _table_column_payload(columns: object) -> tuple[list[dict[str, object]], lis
 def _collect_runtime_callbacks(
     widget: object,
 ) -> tuple[dict[str, Callable[[], None]], dict[str, Callable[[object], None]]]:
-    from .widgets import BarChart, BarChartBar, Button, Checkbox, CodeEditor, Collapsible, Container, DataFrameTable, DateInput, DateTimeInput, DragDropPayload, DragNumber, DropTarget, Dropdown, Heatmap, HeatmapCell, MenuItem, NumberInput, Pages, RadioButton, RangeSlider, Scatter3D, ScatterHit, ScatterPick, Selectable, Slider, TableSelection, TableSort, Tabs, TextArea, TextInput, TimeInput, ToggleSwitch, TreeNode, TreeView, Widget
+    from .widgets import BarChart, BarChartBar, Button, Checkbox, CodeEditor, Collapsible, Container, DataFrameTable, DateInput, DateTimeInput, DragDropPayload, DragNumber, DropTarget, Dropdown, ExtensionWidget, Heatmap, HeatmapCell, MenuItem, NumberInput, Pages, PaintKeyEvent, PaintPointerEvent, RadioButton, RangeSlider, Scatter3D, ScatterHit, ScatterPick, Selectable, Slider, TableSelection, TableSort, Tabs, TextArea, TextInput, TimeInput, ToggleSwitch, TreeNode, TreeView, Widget
 
     click_callbacks: dict[str, Callable[[], None]] = {}
     change_callbacks: dict[str, Callable[[object], None]] = {}
@@ -1834,6 +1834,64 @@ def _collect_runtime_callbacks(
             click_callbacks[node.id] = node.on_click
         if isinstance(node, MenuItem) and node.on_click is not None:
             click_callbacks[node.id] = node.on_click
+        if isinstance(node, ExtensionWidget) and node.on_click is not None and not node.disabled:
+            click_callbacks[node.id] = node.on_click
+        if isinstance(node, ExtensionWidget) and not node.disabled and (
+            node.on_pointer_down is not None
+            or node.on_pointer_move is not None
+            or node.on_pointer_up is not None
+            or node.on_wheel is not None
+            or node.on_key_down is not None
+        ):
+            def extension_changed(value: object, widget: ExtensionWidget = node) -> None:
+                payload = json.loads(value) if isinstance(value, str) else value
+                if not isinstance(payload, Mapping):
+                    raise TypeError("ExtensionWidget event payload must be a mapping")
+                if payload.get("event") == "key_down":
+                    if widget.on_key_down is not None:
+                        widget.on_key_down(
+                            PaintKeyEvent(
+                                widget_id=str(payload.get("widget_id", widget.id)),
+                                event="key_down",
+                                key=str(payload.get("key", "")),
+                                text=(
+                                    str(payload.get("text"))
+                                    if payload.get("text") is not None
+                                    else None
+                                ),
+                                shift=bool(payload.get("shift", False)),
+                                ctrl=bool(payload.get("ctrl", False)),
+                                alt=bool(payload.get("alt", False)),
+                                super=bool(payload.get("super", False)),
+                                repeat=bool(payload.get("repeat", False)),
+                            )
+                        )
+                    return
+                event = PaintPointerEvent(
+                    widget_id=str(payload.get("widget_id", widget.id)),
+                    event=str(payload.get("event", "")),
+                    x=float(payload.get("x", 0.0)),
+                    y=float(payload.get("y", 0.0)),
+                    local_x=float(payload.get("local_x", 0.0)),
+                    local_y=float(payload.get("local_y", 0.0)),
+                    dx=float(payload.get("dx", 0.0)),
+                    dy=float(payload.get("dy", 0.0)),
+                    button=(
+                        str(payload.get("button"))
+                        if payload.get("button") is not None
+                        else None
+                    ),
+                )
+                if event.event == "pointer_down" and widget.on_pointer_down is not None:
+                    widget.on_pointer_down(event)
+                elif event.event == "pointer_move" and widget.on_pointer_move is not None:
+                    widget.on_pointer_move(event)
+                elif event.event == "pointer_up" and widget.on_pointer_up is not None:
+                    widget.on_pointer_up(event)
+                elif event.event == "wheel" and widget.on_wheel is not None:
+                    widget.on_wheel(event)
+
+            change_callbacks[node.id] = extension_changed
         if isinstance(node, Checkbox) and node.on_change is not None:
             def checkbox_changed(value: object, widget: Checkbox = node) -> None:
                 widget.checked = bool(value)

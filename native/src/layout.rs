@@ -127,6 +127,7 @@ pub fn compute_layout(
         None,
         false,
         false,
+        false,
         state,
         None,
     );
@@ -173,6 +174,7 @@ fn build_node(
     parent_kind: Option<&WidgetKind>,
     parent_allows_intrinsic_leaf_width: bool,
     layout_modal_children: bool,
+    window_shell_body_child: bool,
     state: Option<&WidgetState>,
     parent_grid_areas: Option<&GridTemplateAreas>,
 ) -> NodeId {
@@ -184,6 +186,7 @@ fn build_node(
         parent_kind,
         parent_allows_intrinsic_leaf_width,
         layout_modal_children,
+        window_shell_body_child,
         state,
     );
     apply_parent_grid_area_placement(&mut style, node, parent_grid_areas);
@@ -226,6 +229,7 @@ fn build_node(
                     Some(&node.kind),
                     child_allows_intrinsic_leaf_width,
                     layout_modal_children,
+                    false,
                     state,
                     node.style.layout.grid_template_areas.as_ref(),
                 )
@@ -235,6 +239,7 @@ fn build_node(
             .new_with_children(body_style, &body_child_ids)
             .expect("taffy titled body node failed")]
     } else {
+        let window_has_shell_bars = window_has_app_shell_bars(node);
         node.children
             .iter()
             .map(|c| {
@@ -248,6 +253,7 @@ fn build_node(
                     Some(&node.kind),
                     child_allows_intrinsic_leaf_width,
                     layout_modal_children,
+                    window_body_child_needs_shell_shrink(node, c, window_has_shell_bars),
                     state,
                     node.style.layout.grid_template_areas.as_ref(),
                 )
@@ -260,6 +266,32 @@ fn build_node(
         tree.new_with_children(style, &child_ids)
             .expect("taffy new_with_children failed")
     }
+}
+
+fn window_has_app_shell_bars(node: &WidgetNode) -> bool {
+    node.kind == WidgetKind::Window
+        && node
+            .children
+            .iter()
+            .any(|child| matches!(child.kind, WidgetKind::MenuBar | WidgetKind::StatusBar))
+}
+
+fn window_body_child_needs_shell_shrink(
+    parent: &WidgetNode,
+    child: &WidgetNode,
+    parent_has_shell_bars: bool,
+) -> bool {
+    parent.kind == WidgetKind::Window
+        && parent_has_shell_bars
+        && !matches!(
+            child.kind,
+            WidgetKind::MenuBar
+                | WidgetKind::StatusBar
+                | WidgetKind::Modal
+                | WidgetKind::Tooltip
+                | WidgetKind::Toast
+                | WidgetKind::ContextMenu
+        )
 }
 
 fn apply_parent_grid_area_placement(
@@ -316,6 +348,7 @@ fn style_for(
     parent_kind: Option<&WidgetKind>,
     parent_allows_intrinsic_leaf_width: bool,
     layout_modal_children: bool,
+    window_shell_body_child: bool,
     state: Option<&WidgetState>,
 ) -> Style {
     let ctrl_h = node_control_height_lp(node, theme) * sf;
@@ -343,7 +376,7 @@ fn style_for(
             flex_direction: FlexDirection::Row,
             align_items: Some(AlignItems::Stretch),
             flex_grow: 1.0,
-            flex_shrink: 0.0,
+            flex_shrink: if window_shell_body_child { 1.0 } else { 0.0 },
             size: Size {
                 width: Dimension::Auto,
                 height: Dimension::Auto,
@@ -923,6 +956,32 @@ fn style_for(
             }
         }
 
+        WidgetKind::Extension => {
+            let width = node
+                .props
+                .fixed_width
+                .or(node.props.intrinsic_width)
+                .map(|w| Dimension::Length(w * sf));
+            let height = node
+                .props
+                .fixed_height
+                .or(node.props.intrinsic_height)
+                .map(|h| Dimension::Length(h * sf));
+            Style {
+                flex_grow: 0.0,
+                flex_shrink: 1.0,
+                size: Size {
+                    width: width.unwrap_or(Dimension::Auto),
+                    height: height.unwrap_or(Dimension::Length(80.0 * sf)),
+                },
+                min_size: Size {
+                    width: Dimension::Length(0.0),
+                    height: Dimension::Length(0.0),
+                },
+                ..Default::default()
+            }
+        }
+
         WidgetKind::ContextMenu => Style {
             flex_grow: 0.0,
             flex_shrink: 0.0,
@@ -960,13 +1019,33 @@ fn style_for(
         | WidgetKind::LinePlot
         | WidgetKind::Scatter3D
         | WidgetKind::DataFrameTable
-        | WidgetKind::Tabs
-        | WidgetKind::Pages => Style {
+        | WidgetKind::Tabs => Style {
             flex_grow: 1.0,
             flex_shrink: 0.0,
             size: Size {
                 width: Dimension::Auto,
                 height: Dimension::Auto,
+            },
+            ..Default::default()
+        },
+
+        WidgetKind::Pages => Style {
+            flex_grow: 1.0,
+            flex_shrink: if window_shell_body_child { 1.0 } else { 0.0 },
+            size: Size {
+                width: Dimension::Auto,
+                height: Dimension::Auto,
+            },
+            min_size: if window_shell_body_child {
+                Size {
+                    width: Dimension::Length(0.0),
+                    height: Dimension::Length(0.0),
+                }
+            } else {
+                Size {
+                    width: Dimension::Auto,
+                    height: Dimension::Auto,
+                }
             },
             ..Default::default()
         },
@@ -2123,7 +2202,10 @@ fn apply_intrinsic_leaf_width(
     if !parent_allows_intrinsic_leaf_width && !is_compact_boolean_leaf(node.kind) {
         return;
     }
-    if node.props.fixed_width.is_some() || authored_width_locks_intrinsic_leaf(node) {
+    if node.props.fixed_width.is_some()
+        || authored_width_locks_intrinsic_leaf(node)
+        || authored_min_width_locks_intrinsic_leaf(node)
+    {
         return;
     }
 
@@ -2158,6 +2240,14 @@ fn authored_width_locks_intrinsic_leaf(node: &WidgetNode) -> bool {
     node.style.layout.width.is_some()
         || matches!(
             node.style.layout.width_value,
+            Some(LayoutLength::LogicalPx(_) | LayoutLength::Percent(_) | LayoutLength::Calc(_))
+        )
+}
+
+fn authored_min_width_locks_intrinsic_leaf(node: &WidgetNode) -> bool {
+    node.style.layout.min_width.is_some()
+        || matches!(
+            node.style.layout.min_width_value,
             Some(LayoutLength::LogicalPx(_) | LayoutLength::Percent(_) | LayoutLength::Calc(_))
         )
 }
@@ -3679,6 +3769,7 @@ fn layout_modal(
         None,
         false,
         true,
+        false,
         None,
         None,
     );
@@ -4043,6 +4134,54 @@ mod tests {
         assert_eq!(scatter.x, 280.0);
         assert_eq!(scatter.w, 920.0);
         assert_eq!(scatter.h, 800.0);
+    }
+
+    #[test]
+    fn extension_leaf_uses_intrinsic_height_without_overlapping_siblings() {
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "column",
+                WidgetKind::VLayout,
+                NodeProps::default(),
+                vec![
+                    node(
+                        "spark",
+                        WidgetKind::Extension,
+                        NodeProps {
+                            extension_type: Some("sparkline".to_string()),
+                            intrinsic_width: Some(160.0),
+                            intrinsic_height: Some(44.0),
+                            ..NodeProps::default()
+                        },
+                        vec![],
+                    ),
+                    node(
+                        "gauge",
+                        WidgetKind::Extension,
+                        NodeProps {
+                            extension_type: Some("gauge".to_string()),
+                            intrinsic_width: Some(160.0),
+                            intrinsic_height: Some(52.0),
+                            ..NodeProps::default()
+                        },
+                        vec![],
+                    ),
+                ],
+            )],
+        );
+
+        let layout = compute_layout(&root, 320.0, 220.0, 1.0, &Theme::dark(), None);
+        let spark = layout.rects.get("spark").unwrap();
+        let gauge = layout.rects.get("gauge").unwrap();
+
+        assert_eq!(spark.h, 44.0);
+        assert_eq!(gauge.h, 52.0);
+        assert!(gauge.y >= spark.y + spark.h);
+        assert!(spark.w > 0.0);
+        assert!(gauge.w > 0.0);
     }
 
     #[test]
@@ -4621,6 +4760,134 @@ mod tests {
         assert!(
             status.y + status.h <= 800.0,
             "status bar overflowed window: status={status:?}"
+        );
+    }
+
+    #[test]
+    fn app_shell_pages_shrink_between_menu_and_status_bars() {
+        let sidebar_items: Vec<WidgetNode> = (0..16)
+            .map(|index| {
+                node(
+                    &format!("nav-{index}"),
+                    WidgetKind::NavItem,
+                    NodeProps {
+                        text: Some(format!("Section {index}")),
+                        ..NodeProps::default()
+                    },
+                    vec![],
+                )
+            })
+            .collect();
+        let sidebar = node(
+            "sidebar",
+            WidgetKind::Sidebar,
+            NodeProps {
+                fixed_width: Some(220.0),
+                ..NodeProps::default()
+            },
+            sidebar_items,
+        );
+
+        let mut cards = Vec::new();
+        for index in 0..12 {
+            cards.push(node(
+                &format!("card-{index}"),
+                WidgetKind::Panel,
+                NodeProps {
+                    text: Some(format!("Card {index}")),
+                    ..NodeProps::default()
+                },
+                vec![node(
+                    &format!("card-label-{index}"),
+                    WidgetKind::Label,
+                    NodeProps {
+                        text: Some("Content".to_string()),
+                        ..NodeProps::default()
+                    },
+                    vec![],
+                )],
+            ));
+        }
+        let mut grid = node(
+            "overview-grid",
+            WidgetKind::GridLayout,
+            NodeProps {
+                grid_columns: Some(2),
+                grid_min_column_width: Some(180.0),
+                ..NodeProps::default()
+            },
+            cards,
+        );
+        grid.style.layout.padding = Some(10.0);
+        grid.style.layout.gap = Some(12.0);
+
+        let page = node(
+            "overview-page",
+            WidgetKind::Page,
+            NodeProps {
+                text: Some("Overview".to_string()),
+                route_value: Some("overview".to_string()),
+                ..NodeProps::default()
+            },
+            vec![grid],
+        );
+        let pages = node(
+            "pages",
+            WidgetKind::Pages,
+            NodeProps {
+                route_value: Some("overview".to_string()),
+                ..NodeProps::default()
+            },
+            vec![page],
+        );
+        let body = node(
+            "body",
+            WidgetKind::HLayout,
+            NodeProps::default(),
+            vec![sidebar, pages],
+        );
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![
+                node("menu", WidgetKind::MenuBar, NodeProps::default(), vec![]),
+                body,
+                node(
+                    "status",
+                    WidgetKind::StatusBar,
+                    NodeProps::default(),
+                    vec![],
+                ),
+            ],
+        );
+
+        let layout = compute_layout(&root, 900.0, 520.0, 1.0, &Theme::dark(), None);
+        let menu = layout.rects.get("menu").unwrap();
+        let body = layout.rects.get("body").unwrap();
+        let sidebar = layout.rects.get("sidebar").unwrap();
+        let pages = layout.rects.get("pages").unwrap();
+        let page = layout.rects.get("overview-page").unwrap();
+        let status = layout.rects.get("status").unwrap();
+
+        let expected_body_h = 520.0 - menu.h - status.h;
+        assert_eq!(body.y, menu.h);
+        assert!((body.h - expected_body_h).abs() <= 0.5, "body={body:?}");
+        assert!(
+            (sidebar.h - body.h).abs() <= 0.5,
+            "sidebar={sidebar:?} body={body:?}"
+        );
+        assert!(
+            (pages.h - body.h).abs() <= 0.5,
+            "pages={pages:?} body={body:?}"
+        );
+        assert!(
+            (page.h - body.h).abs() <= 0.5,
+            "page={page:?} body={body:?}"
+        );
+        assert!(
+            status.y >= body.y + body.h - 0.5 && status.y + status.h <= 520.0,
+            "status should remain below the bounded body: body={body:?} status={status:?}"
         );
     }
 
@@ -5623,6 +5890,67 @@ mod tests {
         assert!(
             input.x + input.w <= row.x + row.w,
             "flex:1-style slot should not overflow row: row={row:?} input={input:?}"
+        );
+    }
+
+    #[test]
+    fn flex_badges_respect_explicit_min_width_zero_in_row() {
+        let mut left = node(
+            "left",
+            WidgetKind::Badge,
+            NodeProps {
+                text: Some("ExtensionWidget".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        left.style.layout.flex_grow = Some(1.0);
+        left.style.layout.flex_shrink = Some(1.0);
+        left.style.layout.flex_basis_value = Some(LayoutLength::LogicalPx(0.0));
+        left.style.layout.min_width = Some(0.0);
+
+        let mut right = node(
+            "right",
+            WidgetKind::Badge,
+            NodeProps {
+                text: Some("CSS type selector".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        right.style.layout.flex_grow = Some(1.0);
+        right.style.layout.flex_shrink = Some(1.0);
+        right.style.layout.flex_basis_value = Some(LayoutLength::LogicalPx(0.0));
+        right.style.layout.min_width = Some(0.0);
+
+        let mut row = node(
+            "row",
+            WidgetKind::HLayout,
+            NodeProps::default(),
+            vec![left, right],
+        );
+        row.style.layout.width = Some(220.0);
+        row.style.layout.gap = Some(8.0);
+        row.style.layout.flex_grow = Some(0.0);
+
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![row],
+        );
+
+        let layout = compute_layout(&root, 320.0, 120.0, 1.0, &Theme::dark(), None);
+        let row = layout.rects.get("row").unwrap();
+        let left = layout.rects.get("left").unwrap();
+        let right = layout.rects.get("right").unwrap();
+
+        assert_eq!(row.w, 220.0);
+        assert!(left.w < 120.0, "left badge should shrink: {left:?}");
+        assert!(right.w < 120.0, "right badge should shrink: {right:?}");
+        assert!(
+            right.x + right.w <= row.x + row.w + 0.5,
+            "flex badges should stay inside row: row={row:?} left={left:?} right={right:?}"
         );
     }
 
@@ -7987,6 +8315,90 @@ mod tests {
         assert!(
             layout.scroll_max_y.get("scroller").copied().unwrap_or(0.0) > 0.0,
             "content rows should overflow the root scroller instead of shrinking"
+        );
+    }
+
+    #[test]
+    fn explicit_window_vertical_scroll_handles_oversized_content() {
+        let mut top = node("top", WidgetKind::Panel, NodeProps::default(), vec![]);
+        top.style.layout.height = Some(120.0);
+        top.style.layout.flex_shrink = Some(0.0);
+        let mut middle = node("middle", WidgetKind::Panel, NodeProps::default(), vec![]);
+        middle.style.layout.height = Some(120.0);
+        middle.style.layout.flex_shrink = Some(0.0);
+        let mut bottom = node("bottom", WidgetKind::Panel, NodeProps::default(), vec![]);
+        bottom.style.layout.height = Some(120.0);
+        bottom.style.layout.flex_shrink = Some(0.0);
+
+        let mut stack = node(
+            "stack",
+            WidgetKind::VLayout,
+            NodeProps::default(),
+            vec![top, middle, bottom],
+        );
+        stack.style.layout.gap = Some(12.0);
+        stack.style.layout.flex_shrink = Some(0.0);
+        let mut root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![stack],
+        );
+        root.style.layout.overflow_y = Some(OverflowStyle::Auto);
+        root.style.layout.overflow_x = Some(OverflowStyle::Hidden);
+
+        let state = WidgetState::default();
+        let layout = compute_layout(&root, 420.0, 240.0, 1.0, &Theme::dark(), Some(&state));
+
+        assert!(
+            layout.scroll_max_y.get("window").copied().unwrap_or(0.0) > 100.0,
+            "explicitly scrollable window should expose a root scroll range when direct content is taller than the viewport"
+        );
+        let bottom_clip = layout.clips.get("bottom").copied().unwrap();
+        assert!(
+            bottom_clip.h < layout.rects.get("bottom").unwrap().h,
+            "overflowing bottom panel should be clipped by the window viewport before scrolling"
+        );
+    }
+
+    #[test]
+    fn explicit_window_vertical_scroll_reveals_bottom_content() {
+        let mut top = node("top", WidgetKind::Panel, NodeProps::default(), vec![]);
+        top.style.layout.height = Some(120.0);
+        top.style.layout.flex_shrink = Some(0.0);
+        let mut middle = node("middle", WidgetKind::Panel, NodeProps::default(), vec![]);
+        middle.style.layout.height = Some(120.0);
+        middle.style.layout.flex_shrink = Some(0.0);
+        let mut bottom = node("bottom", WidgetKind::Panel, NodeProps::default(), vec![]);
+        bottom.style.layout.height = Some(120.0);
+        bottom.style.layout.flex_shrink = Some(0.0);
+
+        let mut stack = node(
+            "stack",
+            WidgetKind::VLayout,
+            NodeProps::default(),
+            vec![top, middle, bottom],
+        );
+        stack.style.layout.gap = Some(12.0);
+        stack.style.layout.flex_shrink = Some(0.0);
+        let mut root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![stack],
+        );
+        root.style.layout.overflow_y = Some(OverflowStyle::Auto);
+        root.style.layout.overflow_x = Some(OverflowStyle::Hidden);
+
+        let mut state = WidgetState::default();
+        state.container_scroll_y.insert("window".to_string(), 999.0);
+        let layout = compute_layout(&root, 420.0, 240.0, 1.0, &Theme::dark(), Some(&state));
+
+        let bottom_clip = layout.clips.get("bottom").copied().unwrap();
+        let bottom_rect = layout.rects.get("bottom").copied().unwrap();
+        assert!(
+            bottom_clip.h > bottom_rect.h - 1.0,
+            "scrolling the window should reveal the bottom panel: rect={bottom_rect:?} clip={bottom_clip:?}"
         );
     }
 

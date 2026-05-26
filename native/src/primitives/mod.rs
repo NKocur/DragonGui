@@ -5,6 +5,7 @@ use std::{
 };
 
 use bytemuck::{Pod, Zeroable};
+use serde_json::Value;
 
 use crate::css_style::{
     computed_style_for_virtual_element_with_media, DgMediaEnvironment, StylesheetStore,
@@ -36,7 +37,7 @@ use crate::style::{
     TOGGLE_SWITCH_TRACK_WIDTH_LP,
 };
 use crate::table;
-use crate::theme::{Color, Theme};
+use crate::theme::{parse_hex_color, parse_web_color, Color, Theme};
 use crate::toast::{toast_colors, toast_rect, toast_stack_index, ToastOverlay};
 
 const SCROLLBAR_VISIBILITY_EPSILON_PX: f32 = 2.0;
@@ -59,6 +60,251 @@ fn raw_prop_bool(node: &WidgetNode, name: &str) -> Option<bool> {
         .raw_props
         .get(name)
         .and_then(|value| value.as_bool())
+}
+
+fn value_f32(value: &Value) -> Option<f32> {
+    value
+        .as_f64()
+        .map(|value| value as f32)
+        .filter(|value| value.is_finite())
+}
+
+fn object_f32(map: &serde_json::Map<String, Value>, name: &str) -> Option<f32> {
+    map.get(name).and_then(value_f32)
+}
+
+fn normalize_color_channel(value: f32) -> f32 {
+    if value > 1.0 {
+        (value / 255.0).clamp(0.0, 1.0)
+    } else {
+        value.clamp(0.0, 1.0)
+    }
+}
+
+fn display_list_color(value: Option<&Value>, theme: &Theme, fallback: Color) -> Color {
+    match value {
+        Some(Value::String(text)) => parse_web_color(text)
+            .or_else(|| parse_hex_color(text))
+            .unwrap_or_else(|| ColorRef::Token(text.trim().to_string()).resolve(theme)),
+        Some(Value::Array(items)) if items.len() == 3 || items.len() == 4 => {
+            let r = items.first().and_then(value_f32).unwrap_or(0.0);
+            let g = items.get(1).and_then(value_f32).unwrap_or(0.0);
+            let b = items.get(2).and_then(value_f32).unwrap_or(0.0);
+            let a = items.get(3).and_then(value_f32).unwrap_or(1.0);
+            [
+                normalize_color_channel(r),
+                normalize_color_channel(g),
+                normalize_color_channel(b),
+                normalize_color_channel(a),
+            ]
+        }
+        _ => fallback,
+    }
+}
+
+fn display_list_scale(node: &WidgetNode, rect: [f32; 4]) -> (f32, f32) {
+    let paint_w = node
+        .props
+        .raw_props
+        .get("paint_width")
+        .and_then(value_f32)
+        .filter(|value| *value > 0.0)
+        .or(node.props.intrinsic_width)
+        .unwrap_or(rect[2].max(1.0));
+    let paint_h = node
+        .props
+        .raw_props
+        .get("paint_height")
+        .and_then(value_f32)
+        .filter(|value| *value > 0.0)
+        .or(node.props.intrinsic_height)
+        .unwrap_or(rect[3].max(1.0));
+    (rect[2] / paint_w.max(1.0), rect[3] / paint_h.max(1.0))
+}
+
+fn emit_extension_display_list(
+    out: &mut Vec<RectInstance>,
+    node: &WidgetNode,
+    theme: &Theme,
+    rect: [f32; 4],
+) {
+    let Some(Value::Array(commands)) = node.props.raw_props.get("display_list") else {
+        return;
+    };
+    let (sx, sy) = display_list_scale(node, rect);
+    let stroke_scale = ((sx.abs() + sy.abs()) * 0.5).max(0.001);
+    for command in commands {
+        let Some(command) = command.as_object() else {
+            continue;
+        };
+        let cmd = command
+            .get("cmd")
+            .or_else(|| command.get("type"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        match cmd {
+            "rect" | "rounded_rect" => {
+                let Some(local_x) = object_f32(command, "x") else {
+                    continue;
+                };
+                let Some(local_y) = object_f32(command, "y") else {
+                    continue;
+                };
+                let Some(local_w) = object_f32(command, "w").or_else(|| object_f32(command, "width"))
+                else {
+                    continue;
+                };
+                let Some(local_h) =
+                    object_f32(command, "h").or_else(|| object_f32(command, "height"))
+                else {
+                    continue;
+                };
+                if local_w <= 0.0 || local_h <= 0.0 {
+                    continue;
+                }
+                let radius = object_f32(command, "radius")
+                    .unwrap_or(0.0)
+                    .max(0.0)
+                    * sx.min(sy).abs();
+                let screen = [
+                    rect[0] + local_x * sx,
+                    rect[1] + local_y * sy,
+                    local_w * sx,
+                    local_h * sy,
+                ];
+                if command.get("fill").is_some() {
+                    let fill = display_list_color(command.get("fill"), theme, theme.surface_alt);
+                    out.push(inst_radii(screen, fill, [radius; 4]));
+                }
+                if command.get("stroke").is_some() {
+                    let stroke = display_list_color(command.get("stroke"), theme, theme.border);
+                    let stroke_width = object_f32(command, "stroke_width")
+                        .or_else(|| object_f32(command, "line_width"))
+                        .unwrap_or(1.0)
+                        .max(0.0)
+                        * stroke_scale;
+                    if stroke_width > 0.0 {
+                        out.push(inst_outline_ring_clipped(
+                            screen,
+                            stroke,
+                            [radius; 4],
+                            stroke_width,
+                            default_local_clip(screen),
+                        ));
+                    }
+                }
+            }
+            "line" => {
+                let Some(x1) = object_f32(command, "x1") else {
+                    continue;
+                };
+                let Some(y1) = object_f32(command, "y1") else {
+                    continue;
+                };
+                let Some(x2) = object_f32(command, "x2") else {
+                    continue;
+                };
+                let Some(y2) = object_f32(command, "y2") else {
+                    continue;
+                };
+                let start = [rect[0] + x1 * sx, rect[1] + y1 * sy];
+                let end = [rect[0] + x2 * sx, rect[1] + y2 * sy];
+                let stroke = display_list_color(command.get("stroke"), theme, theme.accent);
+                let width = object_f32(command, "stroke_width")
+                    .or_else(|| object_f32(command, "width"))
+                    .unwrap_or(1.5)
+                    .max(0.1)
+                    * stroke_scale;
+                if let Some((a, b)) = clip_line_segment_to_rect(start, end, rect) {
+                    push_line_segment(out, a, b, width, stroke);
+                }
+            }
+            "polyline" => {
+                let Some(Value::Array(points)) = command.get("points") else {
+                    continue;
+                };
+                if points.len() < 2 {
+                    continue;
+                }
+                let stroke = display_list_color(command.get("stroke"), theme, theme.accent);
+                let width = object_f32(command, "stroke_width")
+                    .or_else(|| object_f32(command, "width"))
+                    .unwrap_or(1.5)
+                    .max(0.1)
+                    * stroke_scale;
+                let mut previous: Option<[f32; 2]> = None;
+                for point in points {
+                    let Some(items) = point.as_array() else {
+                        previous = None;
+                        continue;
+                    };
+                    if items.len() != 2 {
+                        previous = None;
+                        continue;
+                    }
+                    let Some(px) = items.first().and_then(value_f32) else {
+                        previous = None;
+                        continue;
+                    };
+                    let Some(py) = items.get(1).and_then(value_f32) else {
+                        previous = None;
+                        continue;
+                    };
+                    let current = [rect[0] + px * sx, rect[1] + py * sy];
+                    if let Some(prev) = previous {
+                        if let Some((a, b)) = clip_line_segment_to_rect(prev, current, rect) {
+                            push_line_segment(out, a, b, width, stroke);
+                        }
+                    }
+                    previous = Some(current);
+                }
+            }
+            "circle" => {
+                let Some(cx) = object_f32(command, "cx") else {
+                    continue;
+                };
+                let Some(cy) = object_f32(command, "cy") else {
+                    continue;
+                };
+                let Some(r) = object_f32(command, "r").or_else(|| object_f32(command, "radius"))
+                else {
+                    continue;
+                };
+                if r <= 0.0 {
+                    continue;
+                }
+                let radius = r * sx.min(sy).abs();
+                let screen = [
+                    rect[0] + cx * sx - radius,
+                    rect[1] + cy * sy - radius,
+                    radius * 2.0,
+                    radius * 2.0,
+                ];
+                if command.get("fill").is_some() {
+                    let fill = display_list_color(command.get("fill"), theme, theme.accent);
+                    out.push(inst_radii(screen, fill, [radius; 4]));
+                }
+                if command.get("stroke").is_some() {
+                    let stroke = display_list_color(command.get("stroke"), theme, theme.border);
+                    let stroke_width = object_f32(command, "stroke_width")
+                        .or_else(|| object_f32(command, "line_width"))
+                        .unwrap_or(1.0)
+                        .max(0.0)
+                        * stroke_scale;
+                    if stroke_width > 0.0 {
+                        out.push(inst_outline_ring_clipped(
+                            screen,
+                            stroke,
+                            [radius; 4],
+                            stroke_width,
+                            default_local_clip(screen),
+                        ));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 pub(crate) fn modal_close_button_rect(
@@ -1615,6 +1861,18 @@ fn inst_loading_spinner(
         inner_ratio.clamp(0.0, 0.95),
     ];
     instance.gradient_stops[0] = tail_alpha.clamp(0.0, 1.0);
+    instance
+}
+
+fn inst_progress_fill(
+    rect: [f32; 4],
+    color: [f32; 4],
+    radii: [f32; 4],
+    progress_width: f32,
+) -> RectInstance {
+    let mut instance = inst_radii(rect, color, radii);
+    instance.params[3] = 5.0;
+    instance.paint[3] = progress_width.max(0.0).min(rect[2]);
     instance
 }
 
@@ -4881,8 +5139,8 @@ fn heatmap_cell_stride(node: &WidgetNode, plot: [f32; 4], sf: f32) -> usize {
     }
 
     let sample_px = (4.0 * sf).max(2.0);
-    let screen_target = ((plot[2] * plot[3]) / (sample_px * sample_px))
-        .clamp(2_048.0, 12_000.0) as usize;
+    let screen_target =
+        ((plot[2] * plot[3]) / (sample_px * sample_px)).clamp(2_048.0, 12_000.0) as usize;
     ((total as f32 / screen_target.max(1) as f32).sqrt().ceil() as usize).max(2)
 }
 
@@ -7186,12 +7444,7 @@ fn emit_tool_home_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Color
     let roof_w = (icon * 0.60).max(body_w * 1.24);
     let roof_h = icon * 0.42;
     out.push(inst_rounded_triangle(
-        [
-            cx - roof_w * 0.5,
-            body_top - roof_h * 0.77,
-            roof_w,
-            roof_h,
-        ],
+        [cx - roof_w * 0.5, body_top - roof_h * 0.77, roof_w, roof_h],
         color,
         true,
         (1.0 * sf).max(0.65),
@@ -7272,14 +7525,7 @@ fn emit_tool_warning_icon(out: &mut Vec<RectInstance>, rect: [f32; 4], color: Co
         -side_angle,
         color,
     );
-    emit_tool_bar(
-        out,
-        [cx, left[1]],
-        right[0] - left[0],
-        stroke,
-        0.0,
-        color,
-    );
+    emit_tool_bar(out, [cx, left[1]], right[0] - left[0], stroke, 0.0, color);
 }
 
 fn emit_tool_lock_icon(
@@ -10608,18 +10854,23 @@ fn emit_rects_inner(
                 } else {
                     FillPaint::Solid(fill_solid)
                 };
-                emit_bordered_paint_rect_radii(
-                    out,
-                    [x, y, w, h],
-                    if invalid {
-                        theme.danger
-                    } else {
-                        styled_border.unwrap_or_else(|| control_border(node, theme, state))
-                    },
-                    fill,
-                    radii,
-                    border_w,
-                );
+                let control_rect = [x, y, w, h];
+                let control_border = if invalid {
+                    theme.danger
+                } else {
+                    styled_border.unwrap_or_else(|| control_border(node, theme, state))
+                };
+                let control_border_w = border_w.max(0.0);
+                if control_border_w > 0.0 {
+                    emit_paint_rect_radii(
+                        out,
+                        inset_rect(control_rect, control_border_w),
+                        fill,
+                        inset_radii(radii, control_border_w),
+                    );
+                } else {
+                    emit_paint_rect_radii(out, control_rect, fill, radii);
+                }
                 let step_w = number_stepper_width_for_style(&node.style, w, sf);
                 let left_step_x = x;
                 let right_step_x = x + w - step_w;
@@ -10768,6 +11019,15 @@ fn emit_rects_inner(
                     stepper_divider_color,
                     0.0,
                 ));
+                if control_border_w > 0.0 {
+                    out.push(inst_outline_ring_clipped(
+                        control_rect,
+                        control_border,
+                        radii,
+                        control_border_w,
+                        default_local_clip(control_rect),
+                    ));
+                }
                 emit_stepper_mark(
                     out,
                     step_down_rect,
@@ -11237,10 +11497,11 @@ fn emit_rects_inner(
                         } else {
                             styled_accent.unwrap_or(theme.accent)
                         });
-                    out.push(inst_radii(
-                        [inner[0], fill_y, fill_w, fill_h],
+                    out.push(inst_progress_fill(
+                        [inner[0], fill_y, inner[2], fill_h],
                         fill_color,
-                        visual_radii_with_fallback(&fill_visual, [fill_w.min(fill_h) * 0.5; 4], sf),
+                        visual_radii_with_fallback(&fill_visual, [fill_h * 0.5; 4], sf),
+                        fill_w,
                     ));
                 }
             }
@@ -11326,6 +11587,25 @@ fn emit_rects_inner(
                     radii,
                     border_w,
                 );
+            }
+
+            WidgetKind::Extension => {
+                let fill = if visual.background_paint.is_some() {
+                    resolve_background_paint(&visual, theme, theme.surface_alt)
+                } else {
+                    FillPaint::Solid(styled_bg.unwrap_or_else(|| {
+                        apply_opacity(mix(theme.surface_alt, theme.background, 0.22), Some(0.86))
+                    }))
+                };
+                emit_bordered_paint_rect_radii(
+                    out,
+                    [x, y, w, h],
+                    styled_border.unwrap_or(theme.border),
+                    fill,
+                    radii,
+                    border_w,
+                );
+                emit_extension_display_list(out, node, theme, [x, y, w, h]);
             }
 
             WidgetKind::Slider => {
@@ -12913,6 +13193,62 @@ mod tests {
         (root, layout, state)
     }
 
+    #[test]
+    fn progress_bar_small_fill_uses_stable_radius_with_soft_cutoff() {
+        let mut bar = node("progress", WidgetKind::ProgressBar);
+        bar.props.value = Some(0.03);
+        bar.props.min = Some(0.0);
+        bar.props.max = Some(1.0);
+        bar.style.parts.parts.insert(
+            "fill".to_string(),
+            PartStyle {
+                visual: VisualStyle {
+                    background: Some(rgba(0.0, 1.0, 0.0)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "progress".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 200.0,
+                h: 20.0,
+            },
+        );
+        let state = WidgetState::from_tree(&bar);
+        let mut out = Vec::new();
+
+        emit_rects(
+            &bar,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &state,
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let fill = out
+            .iter()
+            .find(|instance| instance.color == [0.0, 1.0, 0.0, 1.0])
+            .expect("styled progress fill primitive");
+
+        assert_eq!(fill.rect, [3.0, 3.0, 194.0, 14.0]);
+        assert_eq!(fill.clip, default_local_clip(fill.rect));
+        assert_eq!(fill.radii, [7.0; 4]);
+        assert!(
+            (fill.paint[3] - 5.82).abs() < 0.01,
+            "small progress should use a soft cutoff at the progress width, got paint={:?}",
+            fill.paint
+        );
+        assert_eq!(fill.params[3], 5.0);
+    }
+
     fn table_primitive_bench_fixture() -> (WidgetNode, LayoutResult, WidgetState, usize) {
         let rows = env_usize("DRAGONGUI_TABLE_BENCH_ROWS", 100_000);
         let cols = env_usize("DRAGONGUI_TABLE_BENCH_COLS", 64);
@@ -14100,6 +14436,63 @@ mod tests {
         assert_eq!(fill.paint[3], 2.0);
         assert_eq!(fill.gradient_stops, [0.0, 1.0, 1.0, 1.0]);
         assert!((fill.paint[2] - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn extension_display_list_emits_scaled_primitives() {
+        let mut extension = node("paint", WidgetKind::Extension);
+        let props = serde_json::json!({
+            "extension_type": "paint",
+            "paint_width": 100,
+            "paint_height": 50,
+            "display_list": [
+                {"cmd": "rect", "x": 10, "y": 5, "w": 20, "h": 10, "fill": [255, 0, 0, 255], "radius": 2},
+                {"cmd": "line", "x1": 0, "y1": 0, "x2": 100, "y2": 50, "stroke": "accent", "stroke_width": 2},
+                {"cmd": "circle", "cx": 50, "cy": 25, "r": 4, "fill": "success"}
+            ]
+        });
+        extension.props.raw_props = props.as_object().unwrap().clone();
+        extension.props.extension_type = Some("paint".to_string());
+        extension.props.intrinsic_width = Some(100.0);
+        extension.props.intrinsic_height = Some(50.0);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "paint".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 200.0,
+                h: 100.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &extension,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let red_rect = out
+            .iter()
+            .find(|inst| inst.color == [1.0, 0.0, 0.0, 1.0])
+            .expect("display-list rect");
+        assert_eq!(red_rect.rect, [20.0, 10.0, 40.0, 20.0]);
+        assert_eq!(red_rect.radii, [4.0, 4.0, 4.0, 4.0]);
+        assert!(
+            out.iter().any(|inst| (inst.transform2[3] - 1.0).abs() < 0.001),
+            "display-list line should emit a line segment primitive"
+        );
+        assert!(
+            out.iter()
+                .any(|inst| inst.color == Theme::dark().success && inst.rect == [92.0, 42.0, 16.0, 16.0]),
+            "display-list circle should resolve theme token colors"
+        );
     }
 
     #[test]
@@ -17041,6 +17434,63 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn number_input_border_ring_paints_above_stepper_fills() {
+        let mut number = node("amount", WidgetKind::NumberInput);
+        number.style.visual.border_width = Some(2.0);
+        number.style.visual.border_radius = Some(999.0);
+        number.style.visual.border_color = Some(rgba(0.90, 0.10, 0.10));
+        number.style.parts.parts.insert(
+            "stepper".to_string(),
+            PartStyle {
+                visual: VisualStyle {
+                    background: Some(rgba(0.20, 0.30, 0.40)),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "amount".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 120.0,
+                h: 36.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &number,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let last_stepper_fill = out
+            .iter()
+            .rposition(|inst| inst.color == [0.20, 0.30, 0.40, 1.0] && inst.params[2] == 0.0)
+            .expect("number input stepper fill should be emitted");
+        let border = out
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, inst)| inst.color == [0.90, 0.10, 0.10, 1.0] && inst.params[2] == 3.0)
+            .expect("number input border ring should be emitted");
+        assert!(
+            border.0 > last_stepper_fill,
+            "number input border ring should paint above stepper fills so rounded caps stay intact"
+        );
+        assert_eq!(border.1.rect, [0.0, 0.0, 120.0, 36.0]);
+        assert_eq!(border.1.paint[3], 2.0);
     }
 
     #[test]

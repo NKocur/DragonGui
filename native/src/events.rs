@@ -1616,7 +1616,7 @@ fn collect_state(node: &WidgetNode, s: &mut WidgetState, parent: Option<&WidgetN
     if node.props.disabled {
         s.disabled.insert(node.id.clone());
     }
-    if is_interactive(&node.kind) && !node.props.disabled {
+    if is_interactive_node(node) && !node.props.disabled {
         s.focus_order.push(node.id.clone());
     }
     for child in &node.children {
@@ -1689,9 +1689,9 @@ pub fn hit_test(
         if !rect_contains(r, pos) {
             return None;
         }
-        return hit_test_with(modal, layout, pos, |node| is_interactive(&node.kind));
+        return hit_test_with(modal, layout, pos, is_interactive_node);
     }
-    hit_test_with(tree, layout, pos, |node| is_interactive(&node.kind))
+    hit_test_with(tree, layout, pos, is_interactive_node)
 }
 
 pub fn hit_test_hover(
@@ -1705,18 +1705,37 @@ pub fn hit_test_hover(
             return None;
         }
         return hit_test_with(modal, layout, pos, |node| {
-            is_interactive(&node.kind)
+            is_interactive_node(node)
                 || node.props.tooltip.is_some()
                 || has_rich_tooltip_target(tree, &node.id)
                 || has_hover_visual(&node.style.hover)
         });
     }
     hit_test_with(tree, layout, pos, |node| {
-        is_interactive(&node.kind)
+        is_interactive_node(node)
             || node.props.tooltip.is_some()
             || has_rich_tooltip_target(tree, &node.id)
             || has_hover_visual(&node.style.hover)
     })
+}
+
+pub fn hit_test_extension_event(
+    tree: &WidgetNode,
+    layout: &LayoutResult,
+    pos: [f32; 2],
+    event: &str,
+) -> Option<(String, WidgetKind)> {
+    let accepts_event = |node: &WidgetNode| {
+        node.kind == WidgetKind::Extension && node_has_event(node, event)
+    };
+    if let Some(modal) = active_modal(tree) {
+        let r = layout.rects.get(&modal.id)?;
+        if !rect_contains(r, pos) {
+            return None;
+        }
+        return hit_test_with(modal, layout, pos, accepts_event);
+    }
+    hit_test_with(tree, layout, pos, accepts_event)
 }
 
 pub fn modal_blocks_point(tree: &WidgetNode, layout: &LayoutResult, pos: [f32; 2]) -> bool {
@@ -1798,6 +1817,22 @@ where
         }
     }
     None
+}
+
+fn is_interactive_node(node: &WidgetNode) -> bool {
+    is_interactive(&node.kind)
+        || (node.kind == WidgetKind::Extension
+            && ["click", "pointer_down", "pointer_up", "key_down", "change"]
+                .iter()
+                .any(|event| node_has_event(node, event)))
+}
+
+fn node_has_event(node: &WidgetNode, event: &str) -> bool {
+    node.props
+        .raw_props
+        .get("events")
+        .and_then(|value| value.as_array())
+        .is_some_and(|events| events.iter().any(|value| value.as_str() == Some(event)))
 }
 
 fn is_interactive(kind: &WidgetKind) -> bool {
@@ -2094,6 +2129,7 @@ impl DragNumberDrag {
 mod tests {
     use super::*;
     use crate::document::NodeProps;
+    use serde_json::json;
 
     fn node(id: &str, kind: WidgetKind, props: NodeProps, children: Vec<WidgetNode>) -> WidgetNode {
         WidgetNode {
@@ -2197,6 +2233,76 @@ mod tests {
         let hit = hit_test_hover(&root, &layout, [30.0, 30.0]);
 
         assert_eq!(hit, Some(("card".to_string(), WidgetKind::Panel)));
+    }
+
+    #[test]
+    fn hit_test_accepts_extension_with_click_event_only() {
+        let mut clickable_props = NodeProps::default();
+        clickable_props
+            .raw_props
+            .insert("events".to_string(), json!(["click"]));
+        let mut wheel_props = NodeProps::default();
+        wheel_props
+            .raw_props
+            .insert("events".to_string(), json!(["wheel"]));
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![
+                node("plain", WidgetKind::Extension, NodeProps::default(), vec![]),
+                node("paint", WidgetKind::Extension, clickable_props, vec![]),
+                node("wheel", WidgetKind::Extension, wheel_props, vec![]),
+            ],
+        );
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "window".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 400.0,
+                h: 200.0,
+            },
+        );
+        layout.rects.insert(
+            "plain".to_string(),
+            Rect {
+                x: 20.0,
+                y: 20.0,
+                w: 80.0,
+                h: 40.0,
+            },
+        );
+        layout.rects.insert(
+            "paint".to_string(),
+            Rect {
+                x: 120.0,
+                y: 20.0,
+                w: 80.0,
+                h: 40.0,
+            },
+        );
+        layout.rects.insert(
+            "wheel".to_string(),
+            Rect {
+                x: 220.0,
+                y: 20.0,
+                w: 80.0,
+                h: 40.0,
+            },
+        );
+
+        assert_eq!(hit_test(&root, &layout, [30.0, 30.0]), None);
+        assert_eq!(
+            hit_test(&root, &layout, [130.0, 30.0]),
+            Some(("paint".to_string(), WidgetKind::Extension))
+        );
+        assert_eq!(hit_test(&root, &layout, [230.0, 30.0]), None);
+        assert_eq!(
+            hit_test_extension_event(&root, &layout, [230.0, 30.0], "wheel"),
+            Some(("wheel".to_string(), WidgetKind::Extension))
+        );
     }
 
     #[test]

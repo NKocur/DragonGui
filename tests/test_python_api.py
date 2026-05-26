@@ -29,6 +29,23 @@ def _decode_hover_meta(meta: str) -> list[str]:
     return meta[1:].split("\0") if meta.startswith("\0") else json.loads(meta)
 
 
+def _flatten_help_text(node: dict[str, object]) -> str:
+    chunks = [
+        str(node.get("name", "")),
+        str(node.get("path", "")),
+        str(node.get("title", "")),
+        str(node.get("summary", "")),
+        str(node.get("body", "")),
+        json.dumps(node.get("metadata", {}), sort_keys=True),
+    ]
+    children = node.get("children", {})
+    assert isinstance(children, dict)
+    for child in children.values():
+        assert isinstance(child, dict)
+        chunks.append(_flatten_help_text(child))
+    return "\n".join(chunks)
+
+
 def test_declarative_tree_serializes() -> None:
     app = dg.App()
     win = dg.Window("Tool", width=1200, height=800)
@@ -48,6 +65,88 @@ def test_declarative_tree_serializes() -> None:
     assert col.value == "x"
     assert scatter.to_dict()["props"]["frame"]["rows"] == 1_000_000
     assert scatter.to_dict()["props"]["frame"]["dtypes"] == ["", "", ""]
+
+
+def test_builtin_help_manual_exposes_nested_sections() -> None:
+    index = dg.help()
+    assert "DragonGUI Built-In Manual" in index
+    assert "`layout`" in index
+    assert "dg.help.layout.panels()" in index
+
+    panels = dg.help.panels()
+    assert "Panel(title=None" in panels
+    assert dg.help.layout.panels is dg.help.panels
+
+    plots = dg.help("widgets.plots")
+    assert "Scatter3D" in plots
+    assert "LinePlot" in plots
+
+    matches = dg.help.search("scatter streaming")
+    assert any(match["path"] == "widgets.plots.scatter" for match in matches)
+
+    data = dg.help.to_dict()
+    assert data["schema_version"] == 1
+    assert data["library_version"] == dg.__version__
+    assert data["children"]["layout"]["children"]["panels"]["title"] == "Panels"
+    assert data["children"]["reference"]["children"]["widgets"]["children"]["number_input"]["metadata"][
+        "symbol"
+    ] == "NumberInput"
+    assert "NumberInput" in dg.help.widgets.inputs.numeric()
+    assert dg.help.reference.widgets.number_input().startswith("# NumberInput")
+    assert dg.help.find_symbol("NumberInput")["path"] == "reference.widgets.number_input"
+    assert dg.help.dialogs is dg.help.reference.dialogs
+    assert dg.help.reference.css_type_selectors is dg.help.reference.css_selectors
+    assert "CSS Limits" in dg.help.reference.css_limits()
+    assert "Thread-Safe Updates" in dg.help.live_updates.threads()
+    assert dg.help.search("thread safe updates")[0]["path"] == "live_updates.threads"
+    assert "Dashboard Recipe" in dg.help.recipes.dashboard()
+    assert "examples/pytorch_training_dashboard.py" in dg.help.recipes.pytorch_dashboard()
+    assert "LinePlot.append_points" in dg.help.recipes.streaming_line_plot()
+    assert dg.help("styling.parts").startswith("# CSS Parts")
+    assert "DragSource" in dg.help.drag_drop()
+    assert "ctx.rounded_rect" in dg.help.reference.widgets.paint_widget()
+    assert "paint_widget_events_probe.py" in dg.help.reference.widgets.paint_widget()
+    assert "<object object at" not in dg.help.reference.widgets.paint_widget()
+    assert "extension_type: str = 'paint'" in dg.help.reference.widgets.paint_widget()
+    assert "parent: Container | None | object = _AUTO_PARENT" in dg.help.reference.widgets.button()
+    assert "'str'" not in dg.help.reference.dataclasses.paint_key_event()
+    assert "`min`, `max`, and `step`" in dg.help.reference.widgets.number_input()
+    assert "parameter_notes" in data["children"]["reference"]["children"]["widgets"]["children"]["number_input"]["metadata"]
+    assert "PaintPointerEvent" in dg.help.reference.callbacks()
+    assert "local_x" in dg.help.reference.dataclasses.paint_pointer_event()
+    assert "key_down" in dg.help.reference.dataclasses.paint_key_event()
+    assert "GridLayout(masonry=True)" in dg.help.decisions.layout()
+    assert dg.help.choose is dg.help.decisions
+    assert "ScatterPlot2D" in dg.help.decisions.data_visualization()
+    assert "Scroll Owners" in dg.help.troubleshooting.scroll_owners()
+    assert dg.help.trouble is dg.help.troubleshooting
+    assert dg.help.clipping is dg.help.troubleshooting.clipping
+    assert "layout_overlay_collision_probe.py" in dg.help.troubleshooting.overlays()
+    assert "CSS Styling Not Applying" in dg.help.troubleshooting.css()
+    assert "Dropdown`, `RadioGroup`, and `SelectableList` items cannot be empty" in dg.help.validation.choices_ids()
+    assert dg.help.search("dropdown empty items error")[0]["path"] == "validation.choices"
+    assert dg.help.errors is dg.help.validation
+    assert "PaintContext.polyline" in dg.help.validation.custom_widgets()
+    assert "prepared payloads" in dg.help.performance.scatter()
+    assert "repaint()" in dg.help.performance.paint_widgets()
+    grid_metadata = data["children"]["reference"]["children"]["widgets"]["children"]["grid_layout"]["metadata"]
+    assert "examples/css_feature_probes/layout_grid_masonry_probe.py" in grid_metadata["probes"]
+    progress_metadata = data["children"]["reference"]["children"]["widgets"]["children"]["progress_bar"]["metadata"]
+    assert progress_metadata["examples"] == ["examples/pytorch_training_dashboard.py"]
+
+
+def test_builtin_help_manual_reference_covers_public_exports() -> None:
+    text = _flatten_help_text(dg.help.to_dict()).lower()
+    missing = [name for name in dg.__all__ if name.lower() not in text]
+    assert missing == []
+
+
+def test_builtin_help_manual_css_parts_match_widget_registry() -> None:
+    css_parts = dg.help.reference.css_parts()
+    for widget_kind, parts in widgets_module._SUPPORTED_PARTS_BY_KIND.items():
+        assert f"`{widget_kind}`" in css_parts
+        for part in parts:
+            assert f"`::{part}`" in css_parts
 
 
 def test_app_loading_screen_serializes_defaults_and_custom_values() -> None:
@@ -143,6 +242,220 @@ def test_widget_key_serializes_as_stable_metadata() -> None:
 
     with pytest.raises(ValueError, match="non-empty"):
         dg.Button("Bad", key="", parent=None)
+
+
+def test_extension_widget_serializes_supported_metadata() -> None:
+    calls: list[str] = []
+    ext = dg.ExtensionWidget(
+        "sparkline",
+        {"series": [1, 4, 2], "label": "CPU"},
+        intrinsic_width=160,
+        intrinsic_height=44,
+        class_="metric-spark",
+        on_click=lambda: calls.append("clicked"),
+        parent=None,
+    )
+
+    serialized = ext.to_dict()
+
+    assert serialized["type"] == "extension"
+    assert serialized["class"] == "metric-spark"
+    assert serialized["props"] == {
+        "series": [1, 4, 2],
+        "label": "CPU",
+        "extension_type": "sparkline",
+        "intrinsic_width": 160.0,
+        "intrinsic_height": 44.0,
+        "events": ["click"],
+    }
+    click_cbs, _ = _collect_runtime_callbacks(ext)
+    click_cbs[ext.id]()
+    assert calls == ["clicked"]
+
+    disabled = dg.ExtensionWidget(
+        "sparkline",
+        {"series": [1]},
+        on_click=lambda: calls.append("disabled"),
+        disabled=True,
+        parent=None,
+    )
+    assert disabled.to_dict()["props"]["disabled"] is True
+    assert "events" not in disabled.to_dict()["props"]
+
+    pointer_events: list[dg.PaintPointerEvent] = []
+    key_events: list[dg.PaintKeyEvent] = []
+    pointer = dg.ExtensionWidget(
+        "paint",
+        on_pointer_down=pointer_events.append,
+        on_wheel=pointer_events.append,
+        on_key_down=key_events.append,
+        parent=None,
+    )
+    assert pointer.to_dict()["props"]["events"] == ["pointer_down", "wheel", "key_down"]
+    _, change_cbs = _collect_runtime_callbacks(pointer)
+    change_cbs[pointer.id](
+        json.dumps(
+            {
+                "event": "pointer_down",
+                "widget_id": pointer.id,
+                "x": 50,
+                "y": 60,
+                "local_x": 5,
+                "local_y": 6,
+                "button": "left",
+            }
+        )
+    )
+    change_cbs[pointer.id](
+        json.dumps(
+            {
+                "event": "wheel",
+                "widget_id": pointer.id,
+                "x": 50,
+                "y": 60,
+                "local_x": 5,
+                "local_y": 6,
+                "dx": 0,
+                "dy": -1,
+            }
+        )
+    )
+    assert [event.event for event in pointer_events] == ["pointer_down", "wheel"]
+    assert pointer_events[0].local_x == 5.0
+    assert pointer_events[0].button == "left"
+    assert pointer_events[1].dy == -1.0
+    change_cbs[pointer.id](
+        json.dumps(
+            {
+                "event": "key_down",
+                "widget_id": pointer.id,
+                "key": "Enter",
+                "text": None,
+                "shift": True,
+                "ctrl": False,
+                "alt": False,
+                "super": False,
+                "repeat": False,
+            }
+        )
+    )
+    assert key_events == [
+        dg.PaintKeyEvent(
+            widget_id=pointer.id,
+            event="key_down",
+            key="Enter",
+            shift=True,
+        )
+    ]
+
+    with pytest.raises(ValueError, match="extension_type"):
+        dg.ExtensionWidget("", parent=None)
+    with pytest.raises(TypeError, match="JSON serializable"):
+        dg.ExtensionWidget("bad", {"callback": object()}, parent=None)
+
+
+def test_paint_widget_serializes_display_list_and_repaints() -> None:
+    class Sparkline(dg.PaintWidget):
+        def __init__(self, values: list[float], **kwargs: object) -> None:
+            self.values = list(values)
+            super().__init__(extension_type="sparkline", **kwargs)
+
+        def measure(self, constraints: dg.MeasureConstraints) -> dg.Size:
+            return constraints.clamp(dg.Size(120, 36))
+
+        def paint(self, ctx: dg.PaintContext) -> None:
+            ctx.rounded_rect(0, 0, ctx.width, ctx.height, radius=6, fill="surface")
+            if len(self.values) < 2:
+                return
+            lo = min(self.values)
+            hi = max(self.values)
+            span = hi - lo or 1.0
+            step = ctx.width / (len(self.values) - 1)
+            points = [
+                [index * step, ctx.height - ((value - lo) / span) * ctx.height]
+                for index, value in enumerate(self.values)
+            ]
+            ctx.polyline(points, stroke="accent", width=2)
+            ctx.circle(points[-1][0], points[-1][1], 3, fill=(1.0, 0.2, 0.2, 1.0))
+            ctx.text(6, 4, "spark", fill="text", font_size=11, font_weight=700)
+
+    spark = Sparkline([1, 4, 2], class_="metric-spark", parent=None)
+    serialized = spark.to_dict()
+
+    assert serialized["type"] == "extension"
+    assert serialized["class"] == "metric-spark"
+    assert serialized["props"]["extension_type"] == "sparkline"
+    assert "events" not in serialized["props"]
+    assert serialized["props"]["paint_width"] == 120.0
+    assert serialized["props"]["paint_height"] == 36.0
+    assert serialized["props"]["intrinsic_width"] == 120.0
+    assert serialized["props"]["intrinsic_height"] == 36.0
+    commands = serialized["props"]["display_list"]
+    assert [command["cmd"] for command in commands] == ["rect", "polyline", "circle", "text"]
+    assert commands[1]["stroke"] == "accent"
+    assert commands[2]["fill"] == [255, 51, 51, 255]
+    assert commands[3]["text"] == "spark"
+    assert commands[3]["font_weight"] == 700
+
+    clickable = Sparkline([1, 2], on_click=lambda: None, parent=None)
+    assert clickable.to_dict()["props"]["events"] == ["click"]
+
+    spark.values = [2, 1, 5, 3]
+    spark.repaint()
+
+    updated = spark.to_dict()["props"]["display_list"]
+    assert len(updated[1]["points"]) == 4
+
+    with pytest.raises(ValueError, match="positive finite"):
+        dg.Size(0, 10)
+    with pytest.raises(ValueError, match="max_width"):
+        dg.MeasureConstraints(min_width=20, max_width=10)
+    with pytest.raises(TypeError, match="coordinate pairs"):
+        dg.PaintContext(10, 10).polyline("bad")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="align"):
+        dg.PaintContext(10, 10).text(0, 0, "bad", align="middle")
+    ctx = dg.PaintContext(20, 20)
+    ctx.image("examples/logo.png", 1, 2, 10, 8, fit="cover", radius=2)
+    assert ctx.to_list()[0] == {
+        "cmd": "image",
+        "path": "examples/logo.png",
+        "x": 1.0,
+        "y": 2.0,
+        "w": 10.0,
+        "h": 8.0,
+        "fit": "cover",
+        "radius": 2.0,
+    }
+    with pytest.raises(ValueError, match="fit"):
+        dg.PaintContext(10, 10).image("examples/logo.png", 0, 0, 10, 10, fit="tile")
+
+
+def test_component_state_and_keys_survive_normal_updates() -> None:
+    @dg.component
+    def CounterTile(ctx: dg.ComponentCtx, label: str):
+        count = ctx.state("count", 0)
+        with dg.Panel(label, key="tile-root", parent=None) as panel:
+            dg.Label(str(count.value), key="count-label")
+            dg.Button(
+                "Increment",
+                key="increment",
+                on_click=lambda: count.set(int(count.value) + 1),
+            )
+        return panel
+
+    instance = CounterTile("Composite", key="counter")
+    assert isinstance(instance, dg.ComponentInstance)
+    first = instance._runtime.render_initial()
+    first_label = first.children[0]
+    increment = first.children[1]
+
+    increment.click()
+    second = instance._runtime.render_initial()
+
+    assert second.id == first.id
+    assert second.children[0].id == first_label.id
+    assert second.children[0].to_dict()["props"]["text"] == "1"
+    assert second.children[0].key == "count-label"
 
 
 def test_widget_style_and_class_serialize_as_v1_metadata() -> None:

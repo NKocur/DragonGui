@@ -1192,6 +1192,7 @@ pub enum WidgetKind {
     DataFrameTable,
     HtmlReport,
     Image,
+    Extension,
     Unknown,
 }
 
@@ -1261,6 +1262,7 @@ impl WidgetKind {
             "dataframe_table" => WidgetKind::DataFrameTable,
             "html_report" => WidgetKind::HtmlReport,
             "image" => WidgetKind::Image,
+            "extension" => WidgetKind::Extension,
             _ => WidgetKind::Unknown,
         }
     }
@@ -1275,6 +1277,12 @@ pub struct NodeProps {
     pub fixed_width: Option<f32>,
     /// Fixed pixel height.
     pub fixed_height: Option<f32>,
+    /// Extension widget type name for first-class third-party widgets.
+    pub extension_type: Option<String>,
+    /// Extension widget preferred width before explicit CSS constraints.
+    pub intrinsic_width: Option<f32>,
+    /// Extension widget preferred height before explicit CSS constraints.
+    pub intrinsic_height: Option<f32>,
     /// GridLayout: fixed column count (None → auto-fill).
     pub grid_columns: Option<u16>,
     /// GridLayout: minimum column width in logical pixels for minmax tracks.
@@ -1524,6 +1532,26 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         .get("height")
         .and_then(|v| v.as_f64())
         .map(|v| v as f32);
+    let extension_type = if matches!(kind, WidgetKind::Extension) {
+        props
+            .get("extension_type")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    } else {
+        None
+    };
+    let intrinsic_width = props
+        .get("intrinsic_width")
+        .and_then(|v| v.as_f64())
+        .map(|v| v as f32)
+        .filter(|v| v.is_finite() && *v >= 0.0);
+    let intrinsic_height = props
+        .get("intrinsic_height")
+        .and_then(|v| v.as_f64())
+        .map(|v| v as f32)
+        .filter(|v| v.is_finite() && *v >= 0.0);
     let grid_columns = props
         .get("columns")
         .and_then(|v| v.as_u64())
@@ -2203,6 +2231,9 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         raw_props,
         fixed_width,
         fixed_height,
+        extension_type,
+        intrinsic_width,
+        intrinsic_height,
         grid_columns,
         grid_min_column_width,
         grid_template_columns,
@@ -2478,6 +2509,36 @@ mod tests {
         assert_eq!(image.props.image_fit.as_deref(), Some("cover"));
         assert_eq!(image.props.fixed_width, Some(160.0));
         assert_eq!(image.props.fixed_height, Some(90.0));
+    }
+
+    #[test]
+    fn parse_extension_widget_preserves_extension_metadata() {
+        let node = parse_widget_node(&json!({
+            "id": "spark",
+            "type": "extension",
+            "props": {
+                "extension_type": "sparkline",
+                "intrinsic_width": 160,
+                "intrinsic_height": 44,
+                "series": [1, 3, 2]
+            },
+            "class": "metric-spark"
+        }))
+        .unwrap();
+
+        assert_eq!(node.kind, WidgetKind::Extension);
+        assert_eq!(node.class_name.as_deref(), Some("metric-spark"));
+        assert_eq!(node.props.extension_type.as_deref(), Some("sparkline"));
+        assert_eq!(node.props.intrinsic_width, Some(160.0));
+        assert_eq!(node.props.intrinsic_height, Some(44.0));
+        assert_eq!(
+            node.props
+                .raw_props
+                .get("extension_type")
+                .and_then(Value::as_str),
+            Some("sparkline")
+        );
+        assert!(node.props.raw_props.get("series").is_some());
     }
 
     #[test]

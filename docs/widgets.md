@@ -4,6 +4,11 @@ This document catalogs the public DragonGUI Python widgets and the main
 features each one exposes. It complements `docs/css-styling.md`, which covers
 the CSS property and selector model in more detail.
 
+The same information is also available at runtime through `dg.help`. Use
+`dg.help.reference.widgets.number_input()`, `dg.help.reference.css_parts()`, or
+`dg.help.find_symbol("NumberInput")` when an LLM/tool needs structured in-library
+guidance without reading the docs files directly.
+
 ## Common Widget Features
 
 Most widgets accept these keyword arguments:

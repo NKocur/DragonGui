@@ -9,6 +9,7 @@ use bytemuck::{Pod, Zeroable};
 use pyo3::prelude::*;
 use serde_json::{json, Map, Value};
 use winit::application::ApplicationHandler;
+use winit::dpi::LogicalPosition;
 use winit::dpi::LogicalSize;
 use winit::dpi::PhysicalPosition;
 use winit::dpi::PhysicalSize;
@@ -34,8 +35,8 @@ use crate::document::{
 use crate::document::{LinePlotPayloadFormat, ScatterPayloadFormat};
 use crate::error::DragonError;
 use crate::events::{
-    has_active_modal, hit_test, hit_test_hover, modal_blocks_point, ChangeValue, DragNumberDrag,
-    RangeSliderDrag, SliderDrag, TableSortColumn, WidgetState,
+    has_active_modal, hit_test, hit_test_extension_event, hit_test_hover, modal_blocks_point,
+    ChangeValue, DragNumberDrag, RangeSliderDrag, SliderDrag, TableSortColumn, WidgetState,
 };
 use crate::html_report_webview::HtmlReportWebViewManager;
 use crate::image_widget::ImageRenderer;
@@ -2191,7 +2192,29 @@ fn widget_kind_name(kind: &WidgetKind) -> &'static str {
         WidgetKind::DataFrameTable => "dataframe_table",
         WidgetKind::HtmlReport => "html_report",
         WidgetKind::Image => "image",
+        WidgetKind::Extension => "extension",
         WidgetKind::Unknown => "unknown",
+    }
+}
+
+fn mouse_button_name(button: MouseButton) -> &'static str {
+    match button {
+        MouseButton::Left => "left",
+        MouseButton::Right => "right",
+        MouseButton::Middle => "middle",
+        MouseButton::Back => "back",
+        MouseButton::Forward => "forward",
+        MouseButton::Other(_) => "other",
+    }
+}
+
+fn key_name(key: &Key) -> String {
+    match key {
+        Key::Character(text) => text.to_string(),
+        Key::Named(named) => format!("{named:?}"),
+        Key::Dead(Some(ch)) => ch.to_string(),
+        Key::Dead(None) => "Dead".to_string(),
+        Key::Unidentified(_) => "Unidentified".to_string(),
     }
 }
 
@@ -3250,6 +3273,15 @@ fn props_snapshot(node: &WidgetNode) -> Value {
         map.insert("pane_min_size".to_string(), json!(props.pane_min_size));
         map.insert("pane_max_size".to_string(), json!(props.pane_max_size));
         map.insert("pane_flex".to_string(), json!(props.pane_flex));
+        map.insert(
+            "extension_type".to_string(),
+            json!(props.extension_type.as_deref()),
+        );
+        map.insert("intrinsic_width".to_string(), json!(props.intrinsic_width));
+        map.insert(
+            "intrinsic_height".to_string(),
+            json!(props.intrinsic_height),
+        );
     }
     if node.kind == WidgetKind::HtmlReport {
         if let Value::Object(map) = &mut snapshot {
@@ -4188,6 +4220,22 @@ mod style_patch_tests {
     }
 
     #[test]
+    fn startup_window_size_clamps_to_monitor_logical_area() {
+        assert_eq!(
+            clamp_startup_window_size_to_monitor(1280, 820, PhysicalSize::new(1366, 768), 1.0),
+            (1280, 672)
+        );
+    }
+
+    #[test]
+    fn startup_window_size_accounts_for_monitor_scale_factor() {
+        assert_eq!(
+            clamp_startup_window_size_to_monitor(1280, 820, PhysicalSize::new(2560, 1440), 2.0),
+            (1216, 624)
+        );
+    }
+
+    #[test]
     fn command_batch_coalesces_scatter_updates() {
         let mut commands = vec![
             Command::SetScatterPointsPacked {
@@ -4878,6 +4926,67 @@ mod style_patch_tests {
 
         assert_eq!(drag.compute_scroll([92.0, 20.0]), 0.0);
         assert_eq!(drag.compute_scroll([92.0, 95.0]), 300.0);
+    }
+
+    #[test]
+    fn scrollbar_track_click_pages_instead_of_snapping_to_pointer() {
+        let hit = PanelScrollbarHit {
+            widget_id: "panel".to_string(),
+            axis: PanelScrollbarAxis::Vertical,
+            geometry: PanelScrollbarAxisGeometry {
+                track: Rect {
+                    x: 90.0,
+                    y: 10.0,
+                    w: 4.0,
+                    h: 100.0,
+                },
+                thumb: Rect {
+                    x: 90.0,
+                    y: 35.0,
+                    w: 4.0,
+                    h: 25.0,
+                },
+                max_scroll: 300.0,
+            },
+            on_thumb: false,
+        };
+
+        assert_eq!(
+            scrollbar_track_page_destination(&hit, [92.0, 90.0]),
+            Some(200.0),
+            "clicking below the thumb should page down by one viewport, not jump to the click"
+        );
+        assert_eq!(
+            scrollbar_track_page_destination(&hit, [92.0, 20.0]),
+            Some(0.0),
+            "clicking above the thumb should page up by one viewport"
+        );
+    }
+
+    #[test]
+    fn scrollbar_track_click_on_thumb_region_does_not_page() {
+        let hit = PanelScrollbarHit {
+            widget_id: "panel".to_string(),
+            axis: PanelScrollbarAxis::Vertical,
+            geometry: PanelScrollbarAxisGeometry {
+                track: Rect {
+                    x: 90.0,
+                    y: 10.0,
+                    w: 4.0,
+                    h: 100.0,
+                },
+                thumb: Rect {
+                    x: 90.0,
+                    y: 35.0,
+                    w: 4.0,
+                    h: 25.0,
+                },
+                max_scroll: 300.0,
+            },
+            on_thumb: false,
+        };
+
+        assert_eq!(scrollbar_track_page_destination(&hit, [92.0, 45.0]), None);
     }
 
     #[test]
@@ -8698,6 +8807,15 @@ impl WgpuState {
             .filter(|(id, _)| !state.is_disabled(id))
     }
 
+    fn extension_event_at(&self, pos: [f32; 2], event: &str) -> Option<(String, WidgetKind)> {
+        let (tree, layout) = match (self.widget_tree.as_ref(), self.current_layout.as_ref()) {
+            (Some(t), Some(l)) => (t, l),
+            _ => return None,
+        };
+        let state = self.widget_state.as_ref()?;
+        hit_test_extension_event(tree, layout, pos, event).filter(|(id, _)| !state.is_disabled(id))
+    }
+
     fn drag_source_at(&self, pos: [f32; 2]) -> Option<DragSourceHit> {
         let tree = self.widget_tree.as_ref()?;
         let layout = self.current_layout.as_ref()?;
@@ -8893,6 +9011,68 @@ impl WgpuState {
         self.widget_kinds.get(id).cloned()
     }
 
+    fn widget_has_event(&self, id: &str, event: &str) -> bool {
+        self.widget_tree
+            .as_ref()
+            .and_then(|tree| find_widget(tree, id))
+            .and_then(|node| node.props.raw_props.get("events"))
+            .and_then(|value| value.as_array())
+            .is_some_and(|events| events.iter().any(|value| value.as_str() == Some(event)))
+    }
+
+    fn extension_event_payload(
+        &self,
+        id: &str,
+        event: &str,
+        pos: [f32; 2],
+        dx: f32,
+        dy: f32,
+        button: Option<&str>,
+    ) -> Option<String> {
+        if self.widget_kind(id) != Some(WidgetKind::Extension) || !self.widget_has_event(id, event) {
+            return None;
+        }
+        let layout = self.current_layout.as_ref()?;
+        let rect = layout.rects.get(id).copied().or_else(|| layout.visible_rect(id))?;
+        let mut payload = Map::new();
+        payload.insert("event".to_string(), json!(event));
+        payload.insert("widget_id".to_string(), json!(id));
+        payload.insert("x".to_string(), json!(pos[0]));
+        payload.insert("y".to_string(), json!(pos[1]));
+        payload.insert("local_x".to_string(), json!(pos[0] - rect.x));
+        payload.insert("local_y".to_string(), json!(pos[1] - rect.y));
+        payload.insert("dx".to_string(), json!(dx));
+        payload.insert("dy".to_string(), json!(dy));
+        if let Some(button) = button {
+            payload.insert("button".to_string(), json!(button));
+        }
+        Some(Value::Object(payload).to_string())
+    }
+
+    fn extension_key_event_payload(
+        &self,
+        id: &str,
+        event: &winit::event::KeyEvent,
+        modifiers: ModifiersState,
+    ) -> Option<String> {
+        if self.widget_kind(id) != Some(WidgetKind::Extension)
+            || !self.widget_has_event(id, "key_down")
+        {
+            return None;
+        }
+        let mut payload = Map::new();
+        payload.insert("event".to_string(), json!("key_down"));
+        payload.insert("widget_id".to_string(), json!(id));
+        payload.insert("key".to_string(), json!(key_name(&event.logical_key)));
+        payload.insert("text".to_string(), json!(event.text.as_deref()));
+        payload.insert("shift".to_string(), json!(modifiers.shift_key()));
+        payload.insert("ctrl".to_string(), json!(modifiers.control_key()));
+        payload.insert("alt".to_string(), json!(modifiers.alt_key()));
+        payload.insert("super".to_string(), json!(modifiers.super_key()));
+        payload.insert("repeat".to_string(), json!(event.repeat));
+        Some(Value::Object(payload).to_string())
+    }
+
     fn has_widget(&self, id: &str) -> bool {
         self.widget_kinds.contains_key(id)
     }
@@ -8908,6 +9088,47 @@ impl WgpuState {
 
     fn apply_set_prop(&mut self, id: &str, prop: &str, value: CommandValue) -> Option<Dirty> {
         let kind = self.widget_kind(id)?;
+        if matches!(prop, "scroll_x" | "scroll_y") {
+            let CommandValue::Float(target_scroll) = value else {
+                eprintln!(
+                    "DragonGUI: ignoring unsupported live scroll value for widget {id:?} ({kind:?}).{prop}"
+                );
+                return None;
+            };
+            let (max_scroll_x, max_scroll_y) = {
+                let tree = self.widget_tree.as_ref()?;
+                let layout = self.current_layout.as_ref()?;
+                let node = find_widget(tree, id)?;
+                if !is_scroll_container_node(node) {
+                    eprintln!(
+                        "DragonGUI: ignoring unsupported live SetProp for non-scroll widget {id:?} ({kind:?}).{prop}"
+                    );
+                    return None;
+                }
+                let max_scroll_x = layout
+                    .scroll_max_x
+                    .get(id)
+                    .copied()
+                    .unwrap_or_else(|| scroll_container_max_x(node, layout));
+                let max_scroll_y = layout
+                    .scroll_max_y
+                    .get(id)
+                    .copied()
+                    .unwrap_or_else(|| scroll_container_max_y(node, layout));
+                (max_scroll_x, max_scroll_y)
+            };
+            let state = self.widget_state.as_mut()?;
+            let current_x = state.container_scroll_x(id, max_scroll_x);
+            let current_y = state.container_scroll_y(id, max_scroll_y);
+            let (delta_x, delta_y) = if prop == "scroll_x" {
+                (target_scroll - current_x, 0.0)
+            } else {
+                (0.0, target_scroll - current_y)
+            };
+            return state
+                .scroll_container(id, delta_x, delta_y, max_scroll_x, max_scroll_y)
+                .then_some(Dirty::Layout);
+        }
         if prop == "class" {
             let class_name = match value {
                 CommandValue::Text(text) => Some(text),
@@ -11970,8 +12191,7 @@ impl WgpuState {
             json!(if rt.metrics.render_encode_timing.count == 0 {
                 0.0
             } else {
-                rt.metrics.render_cache_hits as f64
-                    / rt.metrics.render_encode_timing.count as f64
+                rt.metrics.render_cache_hits as f64 / rt.metrics.render_encode_timing.count as f64
             }),
         );
         map.insert(
@@ -11988,7 +12208,10 @@ impl WgpuState {
         );
         map.insert(
             "render_cache_revision".to_string(),
-            json!(rt.render_target.as_ref().map(|target| target.scene_revision)),
+            json!(rt
+                .render_target
+                .as_ref()
+                .map(|target| target.scene_revision)),
         );
         map.insert(
             "scene_revision".to_string(),
@@ -13090,8 +13313,7 @@ impl WgpuState {
                 let render_t0 = Instant::now();
                 runtime.widget.prepare_render_pipelines(&self.device);
                 let render_scale = runtime.widget.active_render_scale();
-                let cache_static_full_scale =
-                    render_scale >= 0.999 && !runtime.widget.lod_active;
+                let cache_static_full_scale = render_scale >= 0.999 && !runtime.widget.lod_active;
                 let scene_revision = runtime.widget.scene_revision();
                 let can_render_to_target = runtime.widget.width > 0 && runtime.widget.height > 0;
                 let render_to_target = if can_render_to_target && render_scale < 0.999 {
@@ -13099,13 +13321,10 @@ impl WgpuState {
                 } else if can_render_to_target && cache_static_full_scale {
                     let (target_width, target_height) =
                         runtime.widget.scaled_render_target_size(render_scale);
-                    let cached_matches = runtime
-                        .render_target
-                        .as_ref()
-                        .is_some_and(|target| {
-                            target.matches(target_width, target_height, self.config.format)
-                                && target.scene_revision == scene_revision
-                        });
+                    let cached_matches = runtime.render_target.as_ref().is_some_and(|target| {
+                        target.matches(target_width, target_height, self.config.format)
+                            && target.scene_revision == scene_revision
+                    });
                     cached_matches || runtime.last_direct_scene_revision == scene_revision
                 } else {
                     false
@@ -13256,7 +13475,10 @@ impl WgpuState {
                 runtime.metrics.last_render_redraw_ms = redraw_ms;
                 runtime.metrics.last_render_composite_ms = composite_ms;
                 runtime.metrics.last_render_cache_hit = cache_hit;
-                runtime.metrics.render_encode_timing.record(render_encode_ms);
+                runtime
+                    .metrics
+                    .render_encode_timing
+                    .record(render_encode_ms);
                 runtime.metrics.render_redraw_timing.record(redraw_ms);
                 runtime.metrics.render_composite_timing.record(composite_ms);
                 if cache_hit {
@@ -13646,6 +13868,34 @@ impl ScrollbarDrag {
         let t = ((thumb_start - self.track_start) / travel).clamp(0.0, 1.0);
         t * self.max_scroll.max(0.0)
     }
+}
+
+fn scrollbar_track_page_destination(hit: &PanelScrollbarHit, pos: [f32; 2]) -> Option<f32> {
+    if hit.on_thumb {
+        return None;
+    }
+    let axis_pos = scrollbar_axis_pos(hit.axis, pos);
+    let thumb_start = scrollbar_axis_start(hit.axis, hit.geometry.thumb);
+    let thumb_len = scrollbar_axis_len(hit.axis, hit.geometry.thumb);
+    let thumb_end = thumb_start + thumb_len;
+    let direction = if axis_pos < thumb_start {
+        -1.0
+    } else if axis_pos > thumb_end {
+        1.0
+    } else {
+        return None;
+    };
+    let track_start = scrollbar_axis_start(hit.axis, hit.geometry.track);
+    let track_len = scrollbar_axis_len(hit.axis, hit.geometry.track);
+    let travel = (track_len - thumb_len).max(0.0);
+    let max_scroll = hit.geometry.max_scroll.max(0.0);
+    if travel <= f32::EPSILON || max_scroll <= f32::EPSILON {
+        return None;
+    }
+    let current_t = ((thumb_start - track_start) / travel).clamp(0.0, 1.0);
+    let current_scroll = current_t * max_scroll;
+    let page_scroll = (max_scroll * thumb_len / travel).clamp(1.0, max_scroll);
+    Some((current_scroll + direction * page_scroll).clamp(0.0, max_scroll))
 }
 
 fn scrollbar_axis_pos(axis: PanelScrollbarAxis, pos: [f32; 2]) -> f32 {
@@ -17399,6 +17649,17 @@ impl DragonApp {
     }
 
     fn begin_scrollbar_drag(&mut self, hit: PanelScrollbarHit, pos: [f32; 2]) {
+        if !hit.on_thumb {
+            if let Some(scroll) = scrollbar_track_page_destination(&hit, pos) {
+                let changed = self.gpu.as_mut().is_some_and(|gpu| {
+                    gpu.scroll_container_to_axis(&hit.widget_id, hit.axis, scroll)
+                });
+                if changed {
+                    self.request_redraw();
+                }
+            }
+            return;
+        }
         self.scrollbar_drag = Some(ScrollbarDrag::new(hit, pos));
         self.update_scrollbar_drag(pos);
     }
@@ -17418,6 +17679,12 @@ impl DragonApp {
     }
 
     fn begin_table_scrollbar_drag(&mut self, hit: PanelScrollbarHit, pos: [f32; 2]) {
+        if !hit.on_thumb {
+            if let Some(scroll) = scrollbar_track_page_destination(&hit, pos) {
+                self.scroll_table_to_axis(&hit.widget_id, hit.axis, scroll);
+            }
+            return;
+        }
         self.table_scrollbar_drag = Some(ScrollbarDrag::new(hit, pos));
         self.update_table_scrollbar_drag(pos);
     }
@@ -17667,6 +17934,15 @@ impl DragonApp {
             | WidgetKind::ImageButton
             | WidgetKind::ArrowButton => {
                 self.emit_click(id);
+            }
+            WidgetKind::Extension => {
+                if self
+                    .gpu
+                    .as_ref()
+                    .is_some_and(|gpu| gpu.widget_has_event(id, "click"))
+                {
+                    self.emit_click(id);
+                }
             }
             WidgetKind::Checkbox | WidgetKind::ToggleSwitch => {
                 let new_val = self
@@ -18214,6 +18490,16 @@ impl DragonApp {
                     }
                     _ => {}
                 },
+                WidgetKind::Extension => {
+                    let payload = self
+                        .gpu
+                        .as_ref()
+                        .and_then(|gpu| gpu.extension_key_event_payload(&id, &event, self.modifiers));
+                    if let Some(payload) = payload {
+                        self.emit_change(&id, ChangeValue::Text(payload));
+                        return;
+                    }
+                }
                 WidgetKind::Button
                 | WidgetKind::SmallButton
                 | WidgetKind::IconButton
@@ -18791,6 +19077,68 @@ fn is_insert_multiline_text(text: &str) -> bool {
             .any(|ch| ch == '\r' || ch == '\t' || (ch.is_control() && ch != '\n'))
 }
 
+const STARTUP_WINDOW_MARGIN_X_LP: f64 = 64.0;
+const STARTUP_WINDOW_MARGIN_Y_LP: f64 = 96.0;
+
+fn clamp_startup_window_size_to_monitor(
+    requested_width: u32,
+    requested_height: u32,
+    monitor_size: PhysicalSize<u32>,
+    monitor_scale_factor: f64,
+) -> (u32, u32) {
+    let scale = monitor_scale_factor.max(0.25);
+    let monitor_width_lp = (monitor_size.width.max(1) as f64 / scale).max(1.0);
+    let monitor_height_lp = (monitor_size.height.max(1) as f64 / scale).max(1.0);
+    let max_width = (monitor_width_lp - STARTUP_WINDOW_MARGIN_X_LP)
+        .max(monitor_width_lp * 0.75)
+        .max(1.0)
+        .floor() as u32;
+    let max_height = (monitor_height_lp - STARTUP_WINDOW_MARGIN_Y_LP)
+        .max(monitor_height_lp * 0.75)
+        .max(1.0)
+        .floor() as u32;
+
+    (
+        requested_width.max(1).min(max_width),
+        requested_height.max(1).min(max_height),
+    )
+}
+
+fn startup_window_placement(
+    event_loop: &ActiveEventLoop,
+    requested_width: u32,
+    requested_height: u32,
+) -> (LogicalSize<u32>, Option<LogicalPosition<f64>>) {
+    let monitor = event_loop
+        .primary_monitor()
+        .or_else(|| event_loop.available_monitors().next());
+    let Some(monitor) = monitor else {
+        return (
+            LogicalSize::new(requested_width.max(1), requested_height.max(1)),
+            None,
+        );
+    };
+
+    let scale = monitor.scale_factor().max(0.25);
+    let monitor_size = monitor.size();
+    let (width, height) = clamp_startup_window_size_to_monitor(
+        requested_width,
+        requested_height,
+        monitor_size,
+        scale,
+    );
+    let monitor_width_lp = monitor_size.width as f64 / scale;
+    let monitor_height_lp = monitor_size.height as f64 / scale;
+    let monitor_pos = monitor.position();
+    let x = monitor_pos.x as f64 / scale + ((monitor_width_lp - width as f64) * 0.5).max(0.0);
+    let y = monitor_pos.y as f64 / scale + ((monitor_height_lp - height as f64) * 0.5).max(0.0);
+
+    (
+        LogicalSize::new(width, height),
+        Some(LogicalPosition::new(x, y)),
+    )
+}
+
 impl ApplicationHandler<RuntimeEvent> for DragonApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
@@ -18807,10 +19155,15 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
         self.change_cbs = std::mem::take(&mut spec.change_callbacks);
 
         let hide_until_loading_frame = spec.loading_screen.enabled;
-        let attrs = Window::default_attributes()
+        let (startup_size, startup_position) =
+            startup_window_placement(event_loop, spec.width, spec.height);
+        let mut attrs = Window::default_attributes()
             .with_title(&spec.title)
-            .with_inner_size(LogicalSize::new(spec.width, spec.height))
+            .with_inner_size(startup_size)
             .with_visible(!hide_until_loading_frame);
+        if let Some(position) = startup_position {
+            attrs = attrs.with_position(position);
+        }
 
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
@@ -19161,6 +19514,21 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                     if let Some(kind) =
                                         self.gpu.as_ref().and_then(|g| g.widget_kind(&pid))
                                     {
+                                        if kind == WidgetKind::Extension {
+                                            let payload = self.gpu.as_ref().and_then(|gpu| {
+                                                gpu.extension_event_payload(
+                                                    &pid,
+                                                    "pointer_up",
+                                                    pos,
+                                                    0.0,
+                                                    0.0,
+                                                    Some(mouse_button_name(button)),
+                                                )
+                                            });
+                                            if let Some(payload) = payload {
+                                                self.emit_change(&pid, ChangeValue::Text(payload));
+                                            }
+                                        }
                                         if kind == WidgetKind::TreeNode
                                             && self.gpu.as_ref().is_some_and(|g| {
                                                 g.tree_node_disclosure_contains(&pid, pos)
@@ -19432,6 +19800,21 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                 self.gpu.as_ref().and_then(|g| g.hit_test_ui(pos))
                             {
                                 self.set_focus(Some(id.clone()));
+                                if kind == WidgetKind::Extension {
+                                    let payload = self.gpu.as_ref().and_then(|gpu| {
+                                        gpu.extension_event_payload(
+                                            &id,
+                                            "pointer_down",
+                                            pos,
+                                            0.0,
+                                            0.0,
+                                            Some(mouse_button_name(button)),
+                                        )
+                                    });
+                                    if let Some(payload) = payload {
+                                        self.emit_change(&id, ChangeValue::Text(payload));
+                                    }
+                                }
                                 self.pressed_id = Some(id.clone());
                                 if let Some(gpu) = &mut self.gpu {
                                     if let Some(ws) = &mut gpu.widget_state {
@@ -20010,6 +20393,27 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                     }
                 }
 
+                let move_delta = self
+                    .last_mouse_pos
+                    .map(|old| (new_pos[0] - old[0], new_pos[1] - old[1]))
+                    .unwrap_or((0.0, 0.0));
+                let extension_move_payload = self.gpu.as_ref().and_then(|gpu| {
+                    gpu.extension_event_at(new_pos, "pointer_move").and_then(|(id, _)| {
+                        gpu.extension_event_payload(
+                            &id,
+                            "pointer_move",
+                            new_pos,
+                            move_delta.0,
+                            move_delta.1,
+                            None,
+                        )
+                        .map(|payload| (id, payload))
+                    })
+                });
+                if let Some((id, payload)) = extension_move_payload {
+                    self.emit_change(&id, ChangeValue::Text(payload));
+                }
+
                 self.last_mouse_pos = Some(new_pos);
             }
 
@@ -20127,6 +20531,23 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                         if let Some((id, payload)) = cam_payload {
                             self.emit_change(&id, ChangeValue::Text(payload));
                         }
+                        return;
+                    }
+                    let extension_wheel_payload = self.gpu.as_ref().and_then(|gpu| {
+                        gpu.extension_event_at(pos, "wheel").and_then(|(id, _)| {
+                            gpu.extension_event_payload(
+                                &id,
+                                "wheel",
+                                pos,
+                                scroll_x,
+                                scroll_y,
+                                None,
+                            )
+                            .map(|payload| (id, payload))
+                        })
+                    });
+                    if let Some((id, payload)) = extension_wheel_payload {
+                        self.emit_change(&id, ChangeValue::Text(payload));
                         return;
                     }
                     if let Some(id) = self

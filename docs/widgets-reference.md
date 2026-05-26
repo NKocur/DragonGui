@@ -6,6 +6,11 @@ update methods, callbacks, and CSS styling hooks.
 It is intended as an audit reference. It describes what is currently exposed by
 the implementation, not a future roadmap.
 
+For runtime and LLM-oriented lookup, DragonGUI also exposes this reference
+through `dg.help`. Useful entry points are `dg.help.reference.exports()`,
+`dg.help.reference.widgets.<widget>()`, `dg.help.reference.css_parts()`, and
+`dg.help.find_symbol("Scatter3D")`.
+
 ## Shared Widget Options
 
 Most widgets accept these common keyword arguments:

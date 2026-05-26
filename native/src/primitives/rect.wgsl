@@ -439,6 +439,17 @@ fn fs_main(in: VertOut) -> @location(0) vec4<f32> {
         ) / max(out_a, 0.001);
         return vec4<f32>(out_rgb, out_a);
     }
+    if (in.params.w > 4.5 && in.params.w < 5.5) {
+        let fill_w = clamp(in.paint.w, 0.0, in.half_size.x * 2.0);
+        let shape_sdf = rounded_rect_sdf(p, shape_half_size, in.radii);
+        let shape_mask = 1.0 - smoothstep(0.0, 1.0, shape_sdf);
+        let cutoff_mask = 1.0 - smoothstep(fill_w - 1.0, fill_w, in.local_px.x);
+        let a = shape_mask * cutoff_mask * in.color.a;
+        if (a < 0.001) {
+            discard;
+        }
+        return vec4<f32>(in.color.rgb, a);
+    }
     var sdf: f32;
     if (in.params.w > 1.5 && in.params.w < 2.5) {
         let radius = min(shape_half_size.x, shape_half_size.y);

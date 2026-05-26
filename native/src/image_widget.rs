@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use bytemuck::{Pod, Zeroable};
+use serde_json::Value;
 
 use crate::document::{WidgetKind, WidgetNode};
 use crate::events::WidgetState;
@@ -75,7 +76,7 @@ struct ImageDraw {
     path: String,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum ImageFit {
     Contain,
     Cover,
@@ -373,6 +374,121 @@ struct ImageSpec {
     transform: Option<TransformStyle>,
 }
 
+fn value_f32(value: &Value) -> Option<f32> {
+    value
+        .as_f64()
+        .map(|value| value as f32)
+        .filter(|value| value.is_finite())
+}
+
+fn object_f32(map: &serde_json::Map<String, Value>, name: &str) -> Option<f32> {
+    map.get(name).and_then(value_f32)
+}
+
+fn display_list_scale(node: &WidgetNode, rect: Rect) -> (f32, f32) {
+    let paint_w = node
+        .props
+        .raw_props
+        .get("paint_width")
+        .and_then(value_f32)
+        .filter(|value| *value > 0.0)
+        .or(node.props.intrinsic_width)
+        .unwrap_or(rect.w.max(1.0));
+    let paint_h = node
+        .props
+        .raw_props
+        .get("paint_height")
+        .and_then(value_f32)
+        .filter(|value| *value > 0.0)
+        .or(node.props.intrinsic_height)
+        .unwrap_or(rect.h.max(1.0));
+    (rect.w / paint_w.max(1.0), rect.h / paint_h.max(1.0))
+}
+
+fn image_fit_from_value(value: Option<&Value>) -> ImageFit {
+    match value.and_then(Value::as_str).unwrap_or("contain") {
+        "cover" => ImageFit::Cover,
+        "stretch" => ImageFit::Stretch,
+        _ => ImageFit::Contain,
+    }
+}
+
+fn collect_extension_display_list_image_specs(
+    node: &WidgetNode,
+    layout: &LayoutResult,
+    out: &mut Vec<ImageSpec>,
+) {
+    if node.kind != WidgetKind::Extension {
+        return;
+    }
+    let Some(Value::Array(commands)) = node.props.raw_props.get("display_list") else {
+        return;
+    };
+    let Some(rect) = layout.rects.get(&node.id).copied() else {
+        return;
+    };
+    if rect.w <= 0.0 || rect.h <= 0.0 || layout.visible_rect(&node.id).is_none() {
+        return;
+    }
+    let (sx, sy) = display_list_scale(node, rect);
+    for command in commands {
+        let Some(command) = command.as_object() else {
+            continue;
+        };
+        let cmd = command
+            .get("cmd")
+            .or_else(|| command.get("type"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if cmd != "image" {
+            continue;
+        }
+        let Some(path) = command
+            .get("path")
+            .or_else(|| command.get("src"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        let Some(local_x) = object_f32(command, "x") else {
+            continue;
+        };
+        let Some(local_y) = object_f32(command, "y") else {
+            continue;
+        };
+        let Some(local_w) = object_f32(command, "w").or_else(|| object_f32(command, "width"))
+        else {
+            continue;
+        };
+        let Some(local_h) = object_f32(command, "h").or_else(|| object_f32(command, "height"))
+        else {
+            continue;
+        };
+        if local_w <= 0.0 || local_h <= 0.0 {
+            continue;
+        }
+        let image_rect = Rect {
+            x: rect.x + local_x * sx,
+            y: rect.y + local_y * sy,
+            w: local_w * sx,
+            h: local_h * sy,
+        };
+        let radius = object_f32(command, "radius")
+            .unwrap_or(0.0)
+            .max(0.0)
+            * sx.min(sy).abs();
+        out.push(ImageSpec {
+            path: path.to_string(),
+            rect: image_rect,
+            fit: image_fit_from_value(command.get("fit")),
+            radii: [radius; 4],
+            transform: None,
+        });
+    }
+}
+
 fn collect_image_specs(
     node: &WidgetNode,
     layout: &LayoutResult,
@@ -411,6 +527,7 @@ fn collect_image_specs(
             });
         }
     }
+    collect_extension_display_list_image_specs(node, layout, out);
     for child in &node.children {
         collect_image_specs(child, layout, theme, sf, state, out);
     }
@@ -677,6 +794,46 @@ mod tests {
         let (transform, transform2) = encoded_transform(specs[0].transform, 2.0);
         assert_eq!(transform, [6.0, -4.0, 1.1, 0.9]);
         assert!((transform2[0] - 8.0_f32.to_radians()).abs() < 0.001);
+    }
+
+    #[test]
+    fn extension_display_list_image_emits_scaled_image_spec() {
+        let mut extension = node("paint", WidgetKind::Extension);
+        let props = serde_json::json!({
+            "extension_type": "paint",
+            "paint_width": 100,
+            "paint_height": 50,
+            "display_list": [
+                {"cmd": "image", "path": "examples/logo.png", "x": 10, "y": 5, "w": 40, "h": 20, "fit": "cover", "radius": 3}
+            ]
+        });
+        extension.props.raw_props = props.as_object().unwrap().clone();
+        extension.props.extension_type = Some("paint".to_string());
+        extension.props.intrinsic_width = Some(100.0);
+        extension.props.intrinsic_height = Some(50.0);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "paint".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 200.0,
+                h: 100.0,
+            },
+        );
+
+        let mut specs = Vec::new();
+        collect_image_specs(&extension, &layout, &Theme::dark(), 1.0, None, &mut specs);
+
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].path, "examples/logo.png");
+        assert_eq!(specs[0].rect.x, 20.0);
+        assert_eq!(specs[0].rect.y, 10.0);
+        assert_eq!(specs[0].rect.w, 80.0);
+        assert_eq!(specs[0].rect.h, 40.0);
+        assert_eq!(specs[0].fit, ImageFit::Cover);
+        assert_eq!(specs[0].radii, [6.0; 4]);
     }
 
     #[test]

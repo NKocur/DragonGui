@@ -14,6 +14,7 @@ use glyphon::{
     Style as GlyphStyle, SwashCache, TextArea, TextAtlas, TextBounds, TextRenderer, Viewport,
     Weight, Wrap,
 };
+use serde_json::Value;
 
 use crate::css_style::{
     computed_style_for_virtual_element_with_media, DgFontFaceSourceKind, DgMediaEnvironment,
@@ -34,13 +35,13 @@ use crate::style::{
     expanded_part_style_for_state, number_stepper_width_for_style, open_part_style_for_state,
     selected_part_style_for_state, standalone_badge_horizontal_padding_lp,
     state_part_style_for_state, uniform_layout_padding, FontFamily, FontStyle, FontVariantNumeric,
-    GeneratedContent, LineHeight, NodeStyle, PartLayoutStyle, PartStyle, PositionStyle, TextAlign,
-    TextOverflow, TextSpacing, TextStyle, TextTransform, TransformStyle, VisualStyle, BADGE_GAP_LP,
-    BORDER_WIDTH_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP, DROPDOWN_CHEVRON_WIDTH_LP, TAB_GAP_LP,
-    TOGGLE_SWITCH_TRACK_WIDTH_LP,
+    ColorRef, GeneratedContent, LineHeight, NodeStyle, PartLayoutStyle, PartStyle, PositionStyle,
+    TextAlign, TextOverflow, TextSpacing, TextStyle, TextTransform, TransformStyle, VisualStyle,
+    BADGE_GAP_LP, BORDER_WIDTH_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP,
+    DROPDOWN_CHEVRON_WIDTH_LP, TAB_GAP_LP, TOGGLE_SWITCH_TRACK_WIDTH_LP,
 };
 use crate::table;
-use crate::theme::Theme;
+use crate::theme::{parse_hex_color, parse_web_color, Theme};
 use crate::toast::{toast_colors, toast_padding, toast_rect, toast_stack_index, ToastOverlay};
 
 const LOADING_SPINNER_DEFAULT_SIZE_LP: f32 = 18.0;
@@ -67,6 +68,74 @@ fn raw_prop_str<'a>(node: &'a WidgetNode, name: &str) -> Option<&'a str> {
         .raw_props
         .get(name)
         .and_then(|value| value.as_str())
+}
+
+fn value_f32(value: &Value) -> Option<f32> {
+    value
+        .as_f64()
+        .map(|value| value as f32)
+        .filter(|value| value.is_finite())
+}
+
+fn object_f32(map: &serde_json::Map<String, Value>, name: &str) -> Option<f32> {
+    map.get(name).and_then(value_f32)
+}
+
+fn normalize_color_channel(value: f32) -> f32 {
+    if value > 1.0 {
+        (value / 255.0).clamp(0.0, 1.0)
+    } else {
+        value.clamp(0.0, 1.0)
+    }
+}
+
+fn display_list_color(value: Option<&Value>, theme: &Theme, fallback: [f32; 4]) -> [f32; 4] {
+    match value {
+        Some(Value::String(text)) => parse_web_color(text)
+            .or_else(|| parse_hex_color(text))
+            .unwrap_or_else(|| ColorRef::Token(text.trim().to_string()).resolve(theme)),
+        Some(Value::Array(items)) if items.len() == 3 || items.len() == 4 => {
+            let r = items.first().and_then(value_f32).unwrap_or(0.0);
+            let g = items.get(1).and_then(value_f32).unwrap_or(0.0);
+            let b = items.get(2).and_then(value_f32).unwrap_or(0.0);
+            let a = items.get(3).and_then(value_f32).unwrap_or(1.0);
+            [
+                normalize_color_channel(r),
+                normalize_color_channel(g),
+                normalize_color_channel(b),
+                normalize_color_channel(a),
+            ]
+        }
+        _ => fallback,
+    }
+}
+
+fn display_list_scale(node: &WidgetNode, rect: Rect) -> (f32, f32) {
+    let paint_w = node
+        .props
+        .raw_props
+        .get("paint_width")
+        .and_then(value_f32)
+        .filter(|value| *value > 0.0)
+        .or(node.props.intrinsic_width)
+        .unwrap_or(rect.w.max(1.0));
+    let paint_h = node
+        .props
+        .raw_props
+        .get("paint_height")
+        .and_then(value_f32)
+        .filter(|value| *value > 0.0)
+        .or(node.props.intrinsic_height)
+        .unwrap_or(rect.h.max(1.0));
+    (rect.w / paint_w.max(1.0), rect.h / paint_h.max(1.0))
+}
+
+fn display_list_text_align(value: Option<&Value>) -> TextAlign {
+    match value.and_then(Value::as_str).unwrap_or("left") {
+        "center" => TextAlign::Center,
+        "right" => TextAlign::Right,
+        _ => TextAlign::Left,
+    }
 }
 
 fn icon_button_symbol_text(node: &WidgetNode) -> Option<&'static str> {
@@ -1755,7 +1824,7 @@ fn collect_text(
                     WidgetKind::Dropdown => {
                         let chevron_w = dropdown_chevron_width(node, font_size, theme, sf);
                         let chevron_left = r.x + r.w - pad - chevron_w;
-                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        let top = centered_control_text_top(*r, line_height);
                         (
                             r.x + pad,
                             top,
@@ -2378,6 +2447,17 @@ fn collect_text(
             extra_overlays,
         );
     }
+    emit_extension_display_list_text(
+        node,
+        layout,
+        theme,
+        font_system,
+        font_aliases,
+        sf,
+        cache,
+        caret_positions,
+        out,
+    );
 
     visit_stacking_children(node, |child| {
         collect_text(
@@ -2412,6 +2492,113 @@ fn collect_text(
         &mut out[subtree_text_start..],
         layout.paint_clip_rect(&node.id),
     );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_extension_display_list_text(
+    node: &WidgetNode,
+    layout: &LayoutResult,
+    theme: &Theme,
+    font_system: &mut FontSystem,
+    font_aliases: &FontFamilyAliases,
+    sf: f32,
+    cache: &mut TextBufferCache,
+    caret_positions: &mut HashMap<String, [f32; 2]>,
+    out: &mut Vec<TextEntry>,
+) {
+    if node.kind != WidgetKind::Extension {
+        return;
+    }
+    let Some(Value::Array(commands)) = node.props.raw_props.get("display_list") else {
+        return;
+    };
+    let Some(rect) = layout.rects.get(&node.id).copied() else {
+        return;
+    };
+    if rect.w <= 0.0 || rect.h <= 0.0 {
+        return;
+    }
+    let Some(visible) = layout.visible_rect(&node.id) else {
+        return;
+    };
+    let Some(clip_rect) = rect.intersect(visible) else {
+        return;
+    };
+    let clip = TextBounds {
+        left: clip_rect.x.floor() as i32,
+        top: clip_rect.y.floor() as i32,
+        right: (clip_rect.x + clip_rect.w).ceil() as i32,
+        bottom: (clip_rect.y + clip_rect.h).ceil() as i32,
+    };
+    let (sx, sy) = display_list_scale(node, rect);
+    let text_scale = ((sx.abs() + sy.abs()) * 0.5).max(0.001);
+    let base_font_size = text_font_size(node, theme, sf);
+    let font_family = node.style.text.font_family.as_ref();
+    let default_weight = node.style.text.font_weight.unwrap_or(Weight::NORMAL.0);
+    let options = text_options_from_style(&node.style.text);
+
+    for command in commands {
+        let Some(command) = command.as_object() else {
+            continue;
+        };
+        let cmd = command
+            .get("cmd")
+            .or_else(|| command.get("type"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if cmd != "text" {
+            continue;
+        }
+        let Some(text) = command.get("text").and_then(Value::as_str) else {
+            continue;
+        };
+        if text.is_empty() {
+            continue;
+        }
+        let Some(local_x) = object_f32(command, "x") else {
+            continue;
+        };
+        let Some(local_y) = object_f32(command, "y") else {
+            continue;
+        };
+        let font_size = object_f32(command, "font_size")
+            .map(|size| (size.max(1.0) * text_scale).max(1.0))
+            .unwrap_or(base_font_size);
+        let line_height = object_f32(command, "line_height")
+            .map(|height| (height.max(1.0) * text_scale).max(font_size))
+            .unwrap_or_else(|| text_line_height(font_size, theme, sf));
+        let font_weight = command
+            .get("font_weight")
+            .and_then(Value::as_u64)
+            .map(|weight| weight.clamp(1, 1000) as u16)
+            .unwrap_or(default_weight);
+        let left = rect.x + local_x * sx;
+        let top = rect.y + local_y * sy;
+        let color = glyph_color(display_list_color(
+            command.get("fill").or_else(|| command.get("color")),
+            theme,
+            theme.text,
+        ));
+        push_text_entry(
+            font_system,
+            font_aliases,
+            out,
+            text,
+            font_size,
+            line_height,
+            font_family,
+            font_weight,
+            left,
+            top,
+            clip,
+            color,
+            display_list_text_align(command.get("align")),
+            cache,
+            None,
+            caret_positions,
+            options,
+        );
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2695,6 +2882,7 @@ fn widget_kind_name(kind: WidgetKind) -> &'static str {
         WidgetKind::DataFrameTable => "dataframe_table",
         WidgetKind::HtmlReport => "html_report",
         WidgetKind::Image => "image",
+        WidgetKind::Extension => "extension",
         WidgetKind::Unknown => "unknown",
     }
 }
@@ -2911,12 +3099,7 @@ pub(crate) fn text_line_height(font_size: f32, theme: &Theme, sf: f32) -> f32 {
     (font_size + 5.0 * sf).max((theme.font_size + 3.0) * sf)
 }
 
-fn standalone_badge_line_height(
-    node: &WidgetNode,
-    font_size: f32,
-    theme: &Theme,
-    sf: f32,
-) -> f32 {
+fn standalone_badge_line_height(node: &WidgetNode, font_size: f32, theme: &Theme, sf: f32) -> f32 {
     let height_lp = node
         .style
         .layout
@@ -3567,8 +3750,7 @@ fn collect_dropdown_overlay_text(
             let font_family = node.style.text.font_family.as_ref();
             let font_weight = node.style.text.font_weight.unwrap_or(Weight::NORMAL.0);
             let text_options = text_options_from_style(&node.style.text);
-            let scale = text_scale(font_size, theme);
-            let row_h = theme.control_height() * scale;
+            let row_h = theme.control_height() * sf;
             let selected = state.dropdown_index.get(&node.id).copied().unwrap_or(0);
             let hovered = state
                 .dropdown_hover
@@ -3599,7 +3781,7 @@ fn collect_dropdown_overlay_text(
                     font_family,
                     font_weight,
                     r.x + item_pad,
-                    y + ((row_h - line_height) * 0.5).max(0.0),
+                    (y + ((row_h - line_height) * 0.5).max(0.0)).round(),
                     TextBounds {
                         left: (r.x + item_pad) as i32,
                         top: y as i32,
@@ -5093,6 +5275,68 @@ mod tests {
             .unwrap_or(default)
     }
 
+    #[test]
+    fn extension_display_list_text_emits_text_entry() {
+        let mut extension = node("paint", WidgetKind::Extension);
+        let props = serde_json::json!({
+            "extension_type": "paint",
+            "paint_width": 100,
+            "paint_height": 50,
+            "display_list": [
+                {"cmd": "text", "x": 10, "y": 8, "text": "Loss", "fill": "accent", "font_size": 12, "font_weight": 700}
+            ]
+        });
+        extension.props.raw_props = props.as_object().unwrap().clone();
+        extension.props.extension_type = Some("paint".to_string());
+        extension.props.intrinsic_width = Some(100.0);
+        extension.props.intrinsic_height = Some(50.0);
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "paint".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 200.0,
+                h: 100.0,
+            },
+        );
+        let theme = Theme::dark();
+        let mut font_system = FontSystem::new();
+        let font_aliases = FontFamilyAliases::default();
+        let mut caret_positions = HashMap::new();
+        let mut cache = TextBufferCache::default();
+        let mut out = Vec::new();
+
+        collect_text(
+            &extension,
+            &layout,
+            &WidgetState::default(),
+            &theme,
+            None,
+            None,
+            [None, None],
+            None,
+            &[],
+            true,
+            &mut font_system,
+            &font_aliases,
+            1.0,
+            theme.spacing,
+            &mut cache,
+            &mut caret_positions,
+            &mut out,
+        );
+
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].key.text, "Loss");
+        assert_eq!(out[0].key.font_weight, 700);
+        assert_eq!(out[0].left, 20.0);
+        assert_eq!(out[0].top, 16.0);
+        assert_eq!(out[0].key.font_size_milli, 24000);
+        assert_eq!(out[0].color, glyph_color(theme.accent));
+    }
+
     fn table_text_bench_fixture() -> (
         WidgetNode,
         LayoutResult,
@@ -5483,6 +5727,98 @@ mod tests {
             (entry.top - expected_top).abs() < 0.01,
             "button text should stay vertically centered on a physical pixel: top={} expected={expected_top}",
             entry.top
+        );
+    }
+
+    #[test]
+    fn dropdown_text_centers_field_and_overlay_items_with_custom_font_size() {
+        let mut dropdown = node("precision", WidgetKind::Dropdown);
+        dropdown.props.items = vec![
+            "fp32".to_string(),
+            "amp fp16".to_string(),
+            "bf16".to_string(),
+        ];
+        dropdown.props.text = Some("amp fp16".to_string());
+        dropdown.style.text.font_size = Some(13.0);
+
+        let rect = Rect {
+            x: 20.0,
+            y: 30.0,
+            w: 160.0,
+            h: 33.0,
+        };
+        let mut layout = LayoutResult::default();
+        layout.rects.insert("precision".to_string(), rect);
+
+        let theme = Theme::dark();
+        let mut font_system = FontSystem::new();
+        let font_aliases = FontFamilyAliases::default();
+        let mut cache = TextBufferCache::default();
+        let mut caret_positions = HashMap::new();
+
+        let field_state = WidgetState::from_tree(&dropdown);
+        let mut field_entries = Vec::new();
+        collect_text(
+            &dropdown,
+            &layout,
+            &field_state,
+            &theme,
+            None,
+            None,
+            [None, None],
+            None,
+            &[],
+            false,
+            &mut font_system,
+            &font_aliases,
+            1.0,
+            theme.spacing,
+            &mut cache,
+            &mut caret_positions,
+            &mut field_entries,
+        );
+
+        let font_size = text_font_size(&dropdown, &theme, 1.0);
+        let line_height = text_line_height_for_style(&dropdown.style.text, font_size, &theme, 1.0);
+        let field = field_entries
+            .iter()
+            .find(|entry| entry.key.text == "amp fp16")
+            .expect("selected dropdown field text");
+        let expected_field_top = centered_control_text_top(rect, line_height);
+        assert!(
+            (field.top - expected_field_top).abs() < 0.01,
+            "dropdown field text should be pixel-centered: top={} expected={expected_field_top}",
+            field.top
+        );
+
+        let mut open_state = field_state;
+        open_state.open_dropdown = Some("precision".to_string());
+        let mut overlay_entries = Vec::new();
+        collect_dropdown_overlay_text(
+            &dropdown,
+            &layout,
+            &open_state,
+            &theme,
+            &mut font_system,
+            &font_aliases,
+            1.0,
+            theme.spacing,
+            &mut cache,
+            &mut caret_positions,
+            &mut overlay_entries,
+        );
+
+        let row_h = theme.control_height();
+        let bf16_row_y = rect.y + rect.h + 2.0 * row_h;
+        let expected_bf16_top = (bf16_row_y + ((row_h - line_height) * 0.5).max(0.0)).round();
+        let bf16 = overlay_entries
+            .iter()
+            .find(|entry| entry.key.text == "bf16")
+            .expect("bf16 dropdown overlay text");
+        assert!(
+            (bf16.top - expected_bf16_top).abs() < 0.01,
+            "dropdown overlay text should align with visual row height: top={} expected={expected_bf16_top}",
+            bf16.top
         );
     }
 
