@@ -712,7 +712,9 @@ fn style_for(
         }
 
         // ── plot / table: grow to fill remaining space ────────────────────
-        WidgetKind::PieChart
+        WidgetKind::AttitudeSphere
+        | WidgetKind::TranslationTrace
+        | WidgetKind::PieChart
         | WidgetKind::Histogram
         | WidgetKind::LinePlot
         | WidgetKind::Scatter3D
@@ -745,7 +747,7 @@ fn style_for(
             ..Default::default()
         },
     };
-    apply_intrinsic_leaf_width(&mut style, node, parent_kind, sf, theme);
+    apply_intrinsic_leaf_width(&mut style, node, parent_kind, sf, theme, parent_size);
     if !matches!(node.kind, WidgetKind::Tooltip | WidgetKind::Toast) {
         apply_node_style(&mut style, node, sf, parent_size);
     }
@@ -1053,7 +1055,7 @@ fn flow_layout_row_gap_px(node: &WidgetNode, sf: f32, parent_axis: Option<f32>) 
 }
 
 fn flow_child_width_px(child: &WidgetNode, theme: &Theme, sf: f32, parent_width: f32) -> f32 {
-    layout_dimension(
+    let width = layout_dimension(
         child.style.layout.width_value,
         child.style.layout.width,
         sf,
@@ -1063,7 +1065,12 @@ fn flow_child_width_px(child: &WidgetNode, theme: &Theme, sf: f32, parent_width:
     .or_else(|| child.props.fixed_width.map(|width| width * sf))
     .or_else(|| intrinsic_leaf_width(child, theme).map(|width| width * sf))
     .unwrap_or(0.0)
-    .max(0.0)
+    .max(0.0);
+    if let Some(max_width) = max_width_px(child, sf, Some(parent_width)) {
+        width.min(max_width)
+    } else {
+        width
+    }
 }
 
 fn flow_child_height_px(child: &WidgetNode, theme: &Theme, sf: f32) -> f32 {
@@ -1178,13 +1185,12 @@ fn apply_intrinsic_leaf_width(
     parent_kind: Option<&WidgetKind>,
     sf: f32,
     theme: &Theme,
+    parent_size: Option<(f32, f32)>,
 ) {
     if node.style.layout.width.is_some()
         || node.style.layout.width_value.is_some()
         || node.style.layout.min_width.is_some()
         || node.style.layout.min_width_value.is_some()
-        || node.style.layout.max_width.is_some()
-        || node.style.layout.max_width_value.is_some()
     {
         return;
     }
@@ -1201,7 +1207,21 @@ fn apply_intrinsic_leaf_width(
     let Some(width) = intrinsic_leaf_width(node, theme) else {
         return;
     };
-    style.min_size.width = Dimension::Length(width * sf);
+    let width_px = max_width_px(node, sf, parent_size.map(|size| size.0))
+        .map(|max_width| (width * sf).min(max_width))
+        .unwrap_or(width * sf);
+    style.min_size.width = Dimension::Length(width_px);
+}
+
+fn max_width_px(node: &WidgetNode, sf: f32, parent_width: Option<f32>) -> Option<f32> {
+    layout_dimension(
+        node.style.layout.max_width_value,
+        node.style.layout.max_width,
+        sf,
+        parent_width,
+    )
+    .and_then(|dimension| resolve_dimension_px(dimension, parent_width))
+    .map(|width| width.max(0.0))
 }
 
 fn intrinsic_leaf_width(node: &WidgetNode, theme: &Theme) -> Option<f32> {
@@ -2052,7 +2072,10 @@ fn compute_node_clips(
 }
 
 pub(crate) fn is_scroll_container_kind(kind: &WidgetKind) -> bool {
-    matches!(kind, WidgetKind::Panel)
+    matches!(
+        kind,
+        WidgetKind::Panel | WidgetKind::Page | WidgetKind::Sidebar
+    )
 }
 
 pub(crate) fn is_scroll_container_node(node: &WidgetNode) -> bool {
@@ -2241,10 +2264,10 @@ fn scroll_content_bounds(node: &WidgetNode, result: &LayoutResult) -> Option<Scr
         if is_fixed_positioned_node(child) {
             continue;
         }
-        if let Some(rect) = result.rects.get(&child.id) {
-            right = right.max(rect.x + rect.w);
-            top = top.min(rect.y);
-            bottom = bottom.max(rect.y + rect.h);
+        if let Some(bounds) = scroll_content_subtree_bounds(child, result) {
+            right = right.max(bounds.right);
+            top = top.min(bounds.top);
+            bottom = bottom.max(bounds.bottom);
         }
     }
     if top.is_finite() {
@@ -2259,6 +2282,41 @@ fn scroll_content_bounds(node: &WidgetNode, result: &LayoutResult) -> Option<Scr
     } else {
         None
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ScrollContentSubtreeBounds {
+    right: f32,
+    top: f32,
+    bottom: f32,
+}
+
+fn scroll_content_subtree_bounds(
+    node: &WidgetNode,
+    result: &LayoutResult,
+) -> Option<ScrollContentSubtreeBounds> {
+    let rect = result.rects.get(&node.id)?;
+    let mut bounds = ScrollContentSubtreeBounds {
+        right: rect.x + rect.w,
+        top: rect.y,
+        bottom: rect.y + rect.h,
+    };
+
+    if is_scroll_container_node(node) {
+        return Some(bounds);
+    }
+
+    for child in &node.children {
+        if is_fixed_positioned_node(child) {
+            continue;
+        }
+        if let Some(child_bounds) = scroll_content_subtree_bounds(child, result) {
+            bounds.right = bounds.right.max(child_bounds.right);
+            bounds.top = bounds.top.min(child_bounds.top);
+            bounds.bottom = bounds.bottom.max(child_bounds.bottom);
+        }
+    }
+    Some(bounds)
 }
 
 fn scroll_container_right_padding_lp(node: &WidgetNode) -> f32 {
@@ -2867,6 +2925,8 @@ fn layout_overlay_children(
 mod tests {
     use super::*;
     use crate::document::NodeProps;
+    use std::hint::black_box;
+    use std::time::Instant;
 
     fn node(id: &str, kind: WidgetKind, props: NodeProps, children: Vec<WidgetNode>) -> WidgetNode {
         WidgetNode {
@@ -2880,6 +2940,95 @@ mod tests {
             style: Default::default(),
             children,
         }
+    }
+
+    fn count_widgets(node: &WidgetNode) -> usize {
+        1 + node.children.iter().map(count_widgets).sum::<usize>()
+    }
+
+    fn make_layout_benchmark_tree(rows: usize, cols: usize) -> WidgetNode {
+        let mut panels = Vec::with_capacity(rows);
+        for row in 0..rows {
+            let mut children = Vec::with_capacity(cols);
+            for col in 0..cols {
+                let idx = row * cols + col;
+                let mut props = NodeProps::default();
+                props.text = Some(format!("Metric {idx}: {}", idx % 100));
+                props.value = Some((idx % 100) as f32);
+                props.fixed_height = Some(if idx % 4 == 0 { 24.0 } else { 20.0 });
+                let kind = match idx % 6 {
+                    0 => WidgetKind::Label,
+                    1 => WidgetKind::Button,
+                    2 => WidgetKind::Slider,
+                    3 => WidgetKind::Checkbox,
+                    4 => WidgetKind::Badge,
+                    _ => WidgetKind::ProgressBar,
+                };
+                children.push(node(&format!("control-{idx}"), kind, props, Vec::new()));
+            }
+            panels.push(node(
+                &format!("panel-{row}"),
+                WidgetKind::FlowLayout,
+                NodeProps {
+                    fixed_height: Some(120.0),
+                    flow_align: Some("start".to_string()),
+                    flow_cross_align: Some("start".to_string()),
+                    ..NodeProps::default()
+                },
+                children,
+            ));
+        }
+        node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "main",
+                WidgetKind::HLayout,
+                NodeProps::default(),
+                vec![
+                    node(
+                        "nav",
+                        WidgetKind::ScrollArea,
+                        NodeProps {
+                            fixed_width: Some(220.0),
+                            ..NodeProps::default()
+                        },
+                        panels[..10.min(panels.len())].to_vec(),
+                    ),
+                    node(
+                        "content-scroll",
+                        WidgetKind::ScrollArea,
+                        NodeProps::default(),
+                        panels,
+                    ),
+                ],
+            )],
+        )
+    }
+
+    #[test]
+    #[ignore = "benchmark"]
+    fn bench_layout_many_widgets() {
+        let root = make_layout_benchmark_tree(80, 20);
+        let widget_count = count_widgets(&root);
+        let theme = Theme::dark();
+        let iterations = std::env::var("DRAGONGUI_BENCH_ITERS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(40);
+
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let layout = compute_layout(&root, 1280.0, 720.0, 1.0, &theme, None);
+            black_box(layout);
+        }
+        let elapsed = start.elapsed();
+        let ns_per_widget = elapsed.as_nanos() / (iterations as u128 * widget_count as u128);
+        println!(
+            "layout many widgets: {ns_per_widget} ns/widget ({widget_count} widgets, {iterations} iters, {:?})",
+            elapsed
+        );
     }
 
     #[test]
@@ -3054,6 +3203,41 @@ mod tests {
         assert_eq!(badge.h, 22.0);
         assert!(tag.w > badge.w);
         assert_eq!(tag.h, 22.0);
+    }
+
+    #[test]
+    fn standalone_badge_respects_max_width_intrinsic_cap() {
+        let mut badge = node(
+            "badge",
+            WidgetKind::Badge,
+            NodeProps {
+                text: Some("HtmlReport".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        badge.style.layout.max_width = Some(72.0);
+
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "row",
+                WidgetKind::HLayout,
+                NodeProps::default(),
+                vec![badge],
+            )],
+        );
+
+        let layout = compute_layout(&root, 220.0, 90.0, 1.0, &Theme::dark(), None);
+        let badge = layout.rects.get("badge").unwrap();
+
+        assert!(
+            badge.w <= 72.5,
+            "badge max_width should cap intrinsic pill width, got {badge:?}"
+        );
+        assert_eq!(badge.h, 22.0);
     }
 
     #[test]
@@ -4837,6 +5021,123 @@ mod tests {
     }
 
     #[test]
+    fn page_scroll_range_includes_overflowing_grid_descendants() {
+        let mut tall_panel = node(
+            "tall-panel",
+            WidgetKind::Panel,
+            NodeProps::default(),
+            vec![node(
+                "tall-child",
+                WidgetKind::Label,
+                NodeProps {
+                    text: Some("Tall content".to_string()),
+                    ..NodeProps::default()
+                },
+                vec![],
+            )],
+        );
+        tall_panel.style.layout.height = Some(420.0);
+
+        let mut grid = node(
+            "grid",
+            WidgetKind::GridLayout,
+            NodeProps::default(),
+            vec![tall_panel],
+        );
+        grid.style.layout.height = Some(160.0);
+        grid.style.layout.overflow_y = Some(OverflowStyle::Visible);
+
+        let mut page = node("page", WidgetKind::Page, NodeProps::default(), vec![grid]);
+        page.style.layout.overflow_y = Some(OverflowStyle::Auto);
+        page.style.layout.padding = Some(0.0);
+
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![page],
+        );
+
+        let layout = compute_layout(
+            &root,
+            320.0,
+            240.0,
+            1.0,
+            &Theme::dark(),
+            Some(&WidgetState::default()),
+        );
+        let page_rect = layout.rects.get("page").expect("page rect");
+        let tall_rect = layout.rects.get("tall-panel").expect("tall panel rect");
+        let max_scroll_y = layout.scroll_max_y.get("page").copied().unwrap_or(0.0);
+
+        assert!(
+            tall_rect.y + tall_rect.h > page_rect.y + page_rect.h,
+            "test fixture should overflow through grid descendant: page={page_rect:?} tall={tall_rect:?}"
+        );
+        assert!(
+            max_scroll_y > 0.0,
+            "page should get scroll range from overflowing grid descendants: {:?}",
+            layout.scroll_max_y
+        );
+    }
+
+    #[test]
+    fn parent_scroll_range_stops_at_nested_scroll_container() {
+        let mut inner_rows = Vec::new();
+        for index in 0..12 {
+            inner_rows.push(node(
+                &format!("row-{index}"),
+                WidgetKind::Button,
+                NodeProps {
+                    text: Some(format!("Row {index}")),
+                    ..NodeProps::default()
+                },
+                vec![],
+            ));
+        }
+
+        let mut inner = node(
+            "inner-scroll",
+            WidgetKind::ScrollArea,
+            NodeProps::default(),
+            inner_rows,
+        );
+        inner.style.layout.height = Some(120.0);
+        inner.style.layout.overflow_y = Some(OverflowStyle::Auto);
+
+        let mut page = node("page", WidgetKind::Page, NodeProps::default(), vec![inner]);
+        page.style.layout.overflow_y = Some(OverflowStyle::Auto);
+        page.style.layout.padding = Some(0.0);
+
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![page],
+        );
+
+        let layout = compute_layout(
+            &root,
+            320.0,
+            240.0,
+            1.0,
+            &Theme::dark(),
+            Some(&WidgetState::default()),
+        );
+        assert_eq!(layout.scroll_max_y.get("page").copied(), Some(0.0));
+        assert!(
+            layout
+                .scroll_max_y
+                .get("inner-scroll")
+                .copied()
+                .unwrap_or(0.0)
+                > 0.0,
+            "nested scroll area should own its own overflow: {:?}",
+            layout.scroll_max_y
+        );
+    }
+
+    #[test]
     fn overflow_visible_allows_child_clip_to_escape_parent() {
         let mut child = node("child", WidgetKind::Panel, NodeProps::default(), vec![]);
         child.style.layout.height_value = Some(LayoutLength::LogicalPx(90.0));
@@ -5443,6 +5744,162 @@ mod tests {
         assert!(
             first_rect.x + first_rect.w <= panel_rect.x + panel_rect.w - 24.0 + 0.5,
             "stretched child should leave room for styled scrollbar gutter: panel={panel_rect:?} first={first_rect:?}"
+        );
+    }
+
+    #[test]
+    fn sidebar_flow_badges_respect_scrollbar_gutter_and_max_width() {
+        let mut html = node(
+            "html",
+            WidgetKind::Tag,
+            NodeProps {
+                text: Some("HtmlReport".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        html.style.layout.max_width = Some(74.0);
+
+        let mut badges = node(
+            "badges",
+            WidgetKind::FlowLayout,
+            NodeProps::default(),
+            vec![
+                node(
+                    "grid",
+                    WidgetKind::Badge,
+                    NodeProps {
+                        text: Some("Grid".to_string()),
+                        ..NodeProps::default()
+                    },
+                    vec![],
+                ),
+                html,
+            ],
+        );
+        badges.style.layout.width_value = Some(LayoutLength::Percent(100.0));
+        badges.style.layout.gap = Some(6.0);
+        badges.style.layout.row_gap = Some(4.0);
+
+        let mut sidebar = node(
+            "sidebar",
+            WidgetKind::Sidebar,
+            NodeProps::default(),
+            vec![
+                badges,
+                node("nav", WidgetKind::NavItem, NodeProps::default(), vec![]),
+            ],
+        );
+        sidebar.style.layout.width = Some(184.0);
+        sidebar.style.layout.height = Some(80.0);
+        sidebar.style.layout.padding = Some(8.0);
+        sidebar.style.layout.gap = Some(8.0);
+        sidebar.style.layout.overflow_y = Some(OverflowStyle::Auto);
+
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![sidebar],
+        );
+
+        let layout = compute_layout(&root, 220.0, 120.0, 1.0, &Theme::dark(), None);
+        let sidebar_rect = layout.rects.get("sidebar").unwrap();
+        let html_rect = layout.rects.get("html").unwrap();
+        let reserve = scrollbar_gutter_reserve_px(root.children.first().unwrap(), 1.0);
+
+        assert!(
+            html_rect.w <= 74.5,
+            "long badge should honor max_width inside sidebar flow: {html_rect:?}"
+        );
+        assert!(
+            html_rect.x + html_rect.w <= sidebar_rect.x + sidebar_rect.w - reserve + 0.5,
+            "badge should stay clear of the sidebar scrollbar gutter: sidebar={sidebar_rect:?} html={html_rect:?} reserve={reserve}"
+        );
+    }
+
+    #[test]
+    fn sidebar_scrolls_independently_from_main_content() {
+        let mut nav_items = Vec::new();
+        for index in 0..10 {
+            let mut item = node(
+                &format!("nav-{index}"),
+                WidgetKind::NavItem,
+                NodeProps {
+                    text: Some(format!("Item {index}")),
+                    ..NodeProps::default()
+                },
+                vec![],
+            );
+            item.style.layout.height = Some(30.0);
+            item.style.layout.flex_shrink = Some(0.0);
+            nav_items.push(item);
+        }
+
+        let mut sidebar = node(
+            "sidebar",
+            WidgetKind::Sidebar,
+            NodeProps::default(),
+            nav_items,
+        );
+        sidebar.style.layout.width = Some(160.0);
+        sidebar.style.layout.height = Some(120.0);
+        sidebar.style.layout.padding = Some(8.0);
+        sidebar.style.layout.gap = Some(6.0);
+        sidebar.style.layout.overflow_y = Some(OverflowStyle::Auto);
+        sidebar.style.layout.flex_shrink = Some(0.0);
+
+        let mut main = node(
+            "main",
+            WidgetKind::Page,
+            NodeProps::default(),
+            vec![node(
+                "content",
+                WidgetKind::Panel,
+                NodeProps::default(),
+                vec![],
+            )],
+        );
+        main.style.layout.flex_grow = Some(1.0);
+        main.style.layout.min_width = Some(0.0);
+
+        let mut row = node(
+            "row",
+            WidgetKind::HLayout,
+            NodeProps::default(),
+            vec![sidebar, main],
+        );
+        row.style.layout.height_value = Some(LayoutLength::Percent(100.0));
+        row.style.layout.width_value = Some(LayoutLength::Percent(100.0));
+
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![row],
+        );
+        let mut state = WidgetState::default();
+        state.container_scroll_y.insert("sidebar".to_string(), 42.0);
+
+        let layout = compute_layout(&root, 320.0, 140.0, 1.0, &Theme::dark(), Some(&state));
+        let sidebar_rect = layout.rects.get("sidebar").unwrap();
+        let main_rect = layout.rects.get("main").unwrap();
+        let first_nav = layout.rects.get("nav-0").unwrap();
+        let applied_scroll = layout.scroll_y.get("sidebar").copied().unwrap_or(0.0);
+        let max_scroll = layout.scroll_max_y.get("sidebar").copied().unwrap_or(0.0);
+
+        assert!(max_scroll > 0.0, "sidebar should own overflow scroll range");
+        assert!(
+            applied_scroll > 0.0,
+            "sidebar scroll state should be applied"
+        );
+        assert!(
+            first_nav.y < sidebar_rect.y + 8.0,
+            "sidebar children should move with sidebar scroll: sidebar={sidebar_rect:?} first={first_nav:?} scroll={applied_scroll}"
+        );
+        assert!(
+            main_rect.x >= sidebar_rect.x + sidebar_rect.w - 0.5,
+            "main content should remain beside independently scrolling sidebar: sidebar={sidebar_rect:?} main={main_rect:?}"
         );
     }
 

@@ -12,6 +12,25 @@ pub struct TableMetrics {
     pub col_w: f32,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct TableMetricsProfile {
+    pub header_h: Option<f32>,
+    pub row_h: Option<f32>,
+    pub index_w: Option<f32>,
+    pub col_w: Option<f32>,
+}
+
+impl TableMetricsProfile {
+    pub const fn pi_compact() -> Self {
+        Self {
+            header_h: Some(26.0),
+            row_h: Some(22.0),
+            index_w: Some(48.0),
+            col_w: Some(112.0),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct VisibleTable {
     pub first_row: usize,
@@ -35,8 +54,30 @@ pub fn metrics(theme: &Theme, sf: f32) -> TableMetrics {
     }
 }
 
+#[cfg(test)]
 pub fn metrics_for_node(node: &WidgetNode, theme: &Theme, sf: f32) -> TableMetrics {
+    metrics_for_node_with_profile(node, theme, sf, TableMetricsProfile::default())
+}
+
+pub fn metrics_for_node_with_profile(
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    profile: TableMetricsProfile,
+) -> TableMetrics {
     let mut metrics = metrics(theme, sf);
+    if let Some(header_h) = profile.header_h {
+        metrics.header_h = (header_h * sf).max(1.0);
+    }
+    if let Some(row_h) = profile.row_h {
+        metrics.row_h = (row_h * sf).max(1.0);
+    }
+    if let Some(index_w) = profile.index_w {
+        metrics.index_w = (index_w * sf).max(1.0);
+    }
+    if let Some(col_w) = profile.col_w {
+        metrics.col_w = (col_w * sf).max(1.0);
+    }
     if let Some(header_h) = node.style.widget.table_header_height {
         metrics.header_h = (header_h * sf).max(1.0);
     }
@@ -215,6 +256,55 @@ mod tests {
         assert_eq!(metrics.row_h, 42.0);
         assert_eq!(metrics.index_w, 108.0);
         assert_eq!(metrics.col_w, 270.0);
+    }
+
+    #[test]
+    fn metrics_for_node_profile_compacts_defaults() {
+        let node = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "table",
+            "type": "dataframe_table"
+        }))
+        .unwrap();
+
+        let compact = metrics_for_node_with_profile(
+            &node,
+            &Theme::dark(),
+            1.0,
+            TableMetricsProfile::pi_compact(),
+        );
+        let desktop = metrics_for_node(&node, &Theme::dark(), 1.0);
+
+        assert_eq!(compact.header_h, 26.0);
+        assert_eq!(compact.row_h, 22.0);
+        assert_eq!(compact.index_w, 48.0);
+        assert_eq!(compact.col_w, 112.0);
+        assert!(compact.row_h < desktop.row_h);
+        assert!(compact.col_w < desktop.col_w);
+    }
+
+    #[test]
+    fn metrics_for_node_explicit_style_overrides_profile() {
+        let mut node = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "table",
+            "type": "dataframe_table"
+        }))
+        .unwrap();
+        node.style.widget.table_header_height = Some(40.0);
+        node.style.widget.table_row_height = Some(32.0);
+        node.style.widget.table_index_width = Some(80.0);
+        node.style.widget.table_column_width = Some(180.0);
+
+        let metrics = metrics_for_node_with_profile(
+            &node,
+            &Theme::dark(),
+            1.25,
+            TableMetricsProfile::pi_compact(),
+        );
+
+        assert_eq!(metrics.header_h, 50.0);
+        assert_eq!(metrics.row_h, 40.0);
+        assert_eq!(metrics.index_w, 100.0);
+        assert_eq!(metrics.col_w, 225.0);
     }
 
     #[test]

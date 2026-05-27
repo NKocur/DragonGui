@@ -94,7 +94,7 @@ impl ScatterPayloadFormat {
 // ---------------------------------------------------------------------------
 
 /// Wire format for 2D line plot data embedded in `NodeProps`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum LinePlotPayloadFormat {
     /// Packed little-endian float32 xy pairs, 8 bytes per point.
     #[default]
@@ -175,6 +175,54 @@ pub struct PieChartProp {
     pub show_labels: bool,
     pub selected: Option<String>,
     pub title: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AttitudeSphereProp {
+    pub pitch: f32,
+    pub roll: f32,
+    pub yaw: f32,
+    pub show_grid: bool,
+    pub show_heading: bool,
+    pub show_readout: bool,
+    pub grid_quality: String,
+}
+
+impl Default for AttitudeSphereProp {
+    fn default() -> Self {
+        Self {
+            pitch: 0.0,
+            roll: 0.0,
+            yaw: 0.0,
+            show_grid: false,
+            show_heading: true,
+            show_readout: false,
+            grid_quality: "fast".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TranslationTraceProp {
+    pub x: f32,
+    pub y: f32,
+    pub range_m: f32,
+    pub ring_step_m: f32,
+    pub trail_points: usize,
+    pub trail: Vec<[f32; 2]>,
+}
+
+impl Default for TranslationTraceProp {
+    fn default() -> Self {
+        Self {
+            x: 0.0,
+            y: 0.0,
+            range_m: 12.0,
+            ring_step_m: 2.0,
+            trail_points: 80,
+            trail: vec![[0.0, 0.0]],
+        }
+    }
 }
 
 impl Default for PieChartProp {
@@ -448,7 +496,7 @@ fn parse_histogram_props(props: &serde_json::Value) -> HistogramProp {
         show_grid: props
             .get("show_grid")
             .and_then(Value::as_bool)
-            .unwrap_or(true),
+            .unwrap_or(false),
         show_axes: props
             .get("show_axes")
             .and_then(Value::as_bool)
@@ -532,6 +580,94 @@ fn parse_color_vec(v: Option<&serde_json::Value>) -> Vec<Option<ColorRef>> {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default()
+}
+
+fn parse_attitude_sphere_props(props: &serde_json::Value) -> AttitudeSphereProp {
+    let angle = |name: &str| {
+        props
+            .get(name)
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+            .map(|value| value as f32)
+            .unwrap_or(0.0)
+    };
+    AttitudeSphereProp {
+        pitch: angle("pitch"),
+        roll: angle("roll"),
+        yaw: angle("yaw"),
+        show_grid: props
+            .get("show_grid")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        show_heading: props
+            .get("show_heading")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        show_readout: props
+            .get("show_readout")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        grid_quality: props
+            .get("grid_quality")
+            .and_then(Value::as_str)
+            .filter(|value| matches!(*value, "fast" | "high"))
+            .unwrap_or("fast")
+            .to_string(),
+    }
+}
+
+fn parse_translation_trace_props(props: &serde_json::Value) -> TranslationTraceProp {
+    let finite = |name: &str, default: f32| {
+        props
+            .get(name)
+            .and_then(Value::as_f64)
+            .filter(|value| value.is_finite())
+            .map(|value| value as f32)
+            .unwrap_or(default)
+    };
+    let x = finite("x", 0.0);
+    let y = finite("y", 0.0);
+    let range_m = finite("range_m", 12.0).max(0.5);
+    let ring_step_m = finite("ring_step_m", 2.0).max(0.25);
+    let trail_points = props
+        .get("trail_points")
+        .and_then(Value::as_u64)
+        .map(|value| value.clamp(1, 512) as usize)
+        .unwrap_or(80);
+    let mut trail = props
+        .get("trail")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let pair = item.as_array()?;
+                    let x = pair.get(0)?.as_f64()? as f32;
+                    let y = pair.get(1)?.as_f64()? as f32;
+                    if x.is_finite() && y.is_finite() {
+                        Some([x, y])
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    if trail.is_empty() {
+        trail.push([x, y]);
+    }
+    if trail.len() > trail_points {
+        let drop_count = trail.len() - trail_points;
+        trail.drain(0..drop_count);
+    }
+    TranslationTraceProp {
+        x,
+        y,
+        range_m,
+        ring_step_m,
+        trail_points,
+        trail,
+    }
 }
 
 fn parse_pie_chart_props(props: &serde_json::Value) -> PieChartProp {
@@ -731,6 +867,8 @@ pub enum WidgetKind {
     Page,
     Sidebar,
     NavItem,
+    AttitudeSphere,
+    TranslationTrace,
     PieChart,
     Histogram,
     LinePlot,
@@ -780,6 +918,8 @@ impl WidgetKind {
             "page" => WidgetKind::Page,
             "sidebar" => WidgetKind::Sidebar,
             "nav_item" => WidgetKind::NavItem,
+            "attitude_sphere" => WidgetKind::AttitudeSphere,
+            "translation_trace" => WidgetKind::TranslationTrace,
             "pie_chart" => WidgetKind::PieChart,
             "histogram" => WidgetKind::Histogram,
             "line_plot" => WidgetKind::LinePlot,
@@ -909,6 +1049,10 @@ pub struct NodeProps {
     pub line_plot_interaction: String,
     pub line_plot_selection_rect: Option<[f32; 4]>,
     pub line_plot_hover: Option<LinePlotHoverProp>,
+    /// IMU attitude sphere orientation and chrome props.
+    pub attitude_sphere: AttitudeSphereProp,
+    /// IMU-integrated translational movement trace props.
+    pub translation_trace: TranslationTraceProp,
     /// PieChart normalized slice data and chrome props.
     pub pie_chart: PieChartProp,
     /// Histogram pre-binned startup data and chrome props.
@@ -1371,6 +1515,16 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
             None,
         )
     };
+    let attitude_sphere = if matches!(kind, WidgetKind::AttitudeSphere) {
+        parse_attitude_sphere_props(props)
+    } else {
+        AttitudeSphereProp::default()
+    };
+    let translation_trace = if matches!(kind, WidgetKind::TranslationTrace) {
+        parse_translation_trace_props(props)
+    } else {
+        TranslationTraceProp::default()
+    };
     let pie_chart = if matches!(kind, WidgetKind::PieChart) {
         parse_pie_chart_props(props)
     } else {
@@ -1707,6 +1861,8 @@ fn parse_props(kind: &WidgetKind, props: &serde_json::Value) -> NodeProps {
         line_plot_interaction,
         line_plot_selection_rect,
         line_plot_hover,
+        attitude_sphere,
+        translation_trace,
         pie_chart,
         histogram,
         scatter_colormap,

@@ -38,6 +38,13 @@ Pass criteria:
 - `backend_info()["platform"]["profile"]` is `pi`.
 - `backend_info()["features"]["webview"]` is false on Linux.
 
+For source-tree validation, also run:
+
+```bash
+bash rpi_setup_and_run.sh check-deps
+DRAGONGUI_SMOKE_FRAMES=3 bash rpi_setup_and_run.sh build-smoke benchmarking/rpi_widget_probe.py
+```
+
 ## Minimal Native Smoke
 
 ```bash
@@ -64,6 +71,10 @@ Pass criteria:
 - No panic, device creation failure, or black-window hang.
 
 ## Core Interaction Pass
+
+Use the detailed visual/input checklist in
+[`benchmarking/rpi_visual_smoke.md`](../benchmarking/rpi_visual_smoke.md) for the
+full V3 route sweep, screenshot list, and widget-specific hit-target checks.
 
 Manually verify:
 

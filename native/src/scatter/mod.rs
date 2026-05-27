@@ -8,6 +8,8 @@ use grid::{build_grid, stable_face_bits, sticky_nice_bounds, GridGeometry, LineV
 use std::{borrow::Cow, time::Instant};
 
 const SCATTER_WRITE_BUFFER_CHUNK_BYTES: usize = 4 * 1024 * 1024;
+const POINT_OPAQUE_ALPHA_THRESHOLD: f32 = 0.999;
+const POINT_INSTANCE_ALPHA_OFFSET: usize = 28;
 
 fn write_buffer_chunked(queue: &wgpu::Queue, buffer: &wgpu::Buffer, offset: u64, bytes: &[u8]) {
     if bytes.is_empty() {
@@ -19,6 +21,29 @@ fn write_buffer_chunked(queue: &wgpu::Queue, buffer: &wgpu::Buffer, offset: u64,
         queue.write_buffer(buffer, offset + start as u64, &bytes[start..end]);
         start = end;
     }
+}
+
+fn point_alpha_is_opaque(alpha: f32) -> bool {
+    alpha.is_finite() && alpha >= POINT_OPAQUE_ALPHA_THRESHOLD
+}
+
+fn point_instances_are_opaque(points: &[PointInstance]) -> bool {
+    points.iter().all(|p| point_alpha_is_opaque(p.alpha))
+}
+
+fn point_instance_bytes_are_opaque(bytes: &[u8]) -> Option<bool> {
+    const STRIDE: usize = std::mem::size_of::<PointInstance>();
+    if bytes.len() % STRIDE != 0 {
+        return None;
+    }
+    Some(bytes.chunks_exact(STRIDE).all(|chunk| {
+        let alpha = f32::from_ne_bytes(
+            chunk[POINT_INSTANCE_ALPHA_OFFSET..POINT_INSTANCE_ALPHA_OFFSET + 4]
+                .try_into()
+                .expect("point alpha field is four bytes"),
+        );
+        point_alpha_is_opaque(alpha)
+    }))
 }
 
 // ---------------------------------------------------------------------------
@@ -67,6 +92,26 @@ fn point_instance_layout() -> wgpu::VertexBufferLayout<'static> {
     }
 }
 
+static XYZ_POINT_ATTRS: [wgpu::VertexAttribute; 1] = [wgpu::VertexAttribute {
+    format: wgpu::VertexFormat::Float32x3,
+    offset: 0,
+    shader_location: 0,
+}];
+
+fn xyz_point_layout() -> wgpu::VertexBufferLayout<'static> {
+    wgpu::VertexBufferLayout {
+        array_stride: 12,
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &XYZ_POINT_ATTRS,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PrimaryPointBufferFormat {
+    PointInstance,
+    XyzF32,
+}
+
 // ---------------------------------------------------------------------------
 // Uniform block — matches Uniforms struct in points.wgsl
 // ---------------------------------------------------------------------------
@@ -81,6 +126,10 @@ struct Uniforms {
     point_size_scale: f32,
     _pad0: [f32; 3],
     clip_radii: [f32; 4],
+    xyz_z_range: [f32; 4],
+    colormap_count: u32,
+    _pad1: [u32; 3],
+    colormap_points: [[f32; 4]; 9],
 }
 
 // ---------------------------------------------------------------------------
@@ -456,6 +505,7 @@ pub struct PointActor {
     pub point_count: u32,
     pub points: Vec<PointInstance>,
     pub visible: bool,
+    pub opaque: bool,
     pub data_min: glam::Vec3,
     pub data_max: glam::Vec3,
     /// Set only for stream actors; holds fixed max capacity and ring cursor.
@@ -484,6 +534,7 @@ impl PointActor {
             point_count: 0,
             points: Vec::new(),
             visible: true,
+            opaque: true,
             data_min: glam::Vec3::splat(f32::MAX),
             data_max: glam::Vec3::splat(f32::MIN),
             stream_mode: None,
@@ -505,6 +556,7 @@ impl PointActor {
     ) -> ScatterUploadTimings {
         // Invalidate pick cache whenever point data changes.
         self.pick_cache = None;
+        self.opaque = point_instances_are_opaque(pts);
         let size = (pts.len() * std::mem::size_of::<PointInstance>()) as u64;
         if size == 0 {
             self.point_count = 0;
@@ -1046,12 +1098,19 @@ fn scatter_layout_rect(
 
 pub struct ScatterWidget {
     pipeline: wgpu::RenderPipeline,
+    opaque_pipeline: wgpu::RenderPipeline,
+    xyz_opaque_pipeline: wgpu::RenderPipeline,
     clip_mask_pipeline: wgpu::RenderPipeline,
     vertex_buffer: Option<wgpu::Buffer>,
     vertex_cap: u64,
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     pub point_count: u32,
+    primary_points_opaque: bool,
+    primary_buffer_format: PrimaryPointBufferFormat,
+    primary_colormap: String,
+    primary_z_min: f32,
+    primary_z_max: f32,
     pub camera: Camera,
     /// Viewport offset within the window (pixels, top-left origin).
     pub offset: [f32; 2],
@@ -1066,6 +1125,7 @@ pub struct ScatterWidget {
     pub auto_point_size: bool,
     pub(crate) point_size_scale: f32,
     pub interactive_render_scale: f32,
+    pub static_render_scale: f32,
     pub auto_quality_enabled: bool,
     pub quality_target_frame_ms: f32,
     pub quality_level: u32,
@@ -1335,6 +1395,10 @@ impl ScatterWidget {
             label: Some("scatter-points"),
             source: wgpu::ShaderSource::Wgsl(include_str!("points.wgsl").into()),
         });
+        let xyz_points_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("scatter-xyz-points"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("xyz_points.wgsl").into()),
+        });
         let lines_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("scatter-lines"),
             source: wgpu::ShaderSource::Wgsl(include_str!("lines.wgsl").into()),
@@ -1379,7 +1443,14 @@ impl ScatterWidget {
             stencil: scatter_scene_stencil_state(),
             bias: wgpu::DepthBiasState::default(),
         };
-        let point_depth_stencil = wgpu::DepthStencilState {
+        let opaque_point_depth_stencil = wgpu::DepthStencilState {
+            format: crate::DEPTH_STENCIL_FORMAT,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Less),
+            stencil: scatter_scene_stencil_state(),
+            bias: wgpu::DepthBiasState::default(),
+        };
+        let translucent_point_depth_stencil = wgpu::DepthStencilState {
             format: crate::DEPTH_STENCIL_FORMAT,
             // Scatter point clouds are visually sampled markers, not opaque
             // surfaces. Writing every anti-aliased point sprite into depth makes
@@ -1425,34 +1496,60 @@ impl ScatterWidget {
             cache: None,
         });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("scatter"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &points_shader,
-                entry_point: Some("vs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[point_instance_layout()],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &points_shader,
-                entry_point: Some("fs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleStrip,
-                ..Default::default()
-            },
-            depth_stencil: Some(point_depth_stencil),
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        let make_point_pipeline =
+            |label: &'static str,
+             shader: &wgpu::ShaderModule,
+             buffers: &[wgpu::VertexBufferLayout<'static>],
+             depth_stencil: wgpu::DepthStencilState| {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some(label),
+                    layout: Some(&pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: shader,
+                        entry_point: Some("vs_main"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        buffers,
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: shader,
+                        entry_point: Some("fs_main"),
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: surface_format,
+                            blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleStrip,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(depth_stencil),
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview_mask: None,
+                    cache: None,
+                })
+            };
+        let point_instance_layouts = [point_instance_layout()];
+        let xyz_point_layouts = [xyz_point_layout()];
+        let opaque_pipeline = make_point_pipeline(
+            "scatter-points-opaque",
+            &points_shader,
+            &point_instance_layouts,
+            opaque_point_depth_stencil.clone(),
+        );
+        let xyz_opaque_pipeline = make_point_pipeline(
+            "scatter-xyz-points-opaque",
+            &xyz_points_shader,
+            &xyz_point_layouts,
+            opaque_point_depth_stencil,
+        );
+        let pipeline = make_point_pipeline(
+            "scatter-points-translucent",
+            &points_shader,
+            &point_instance_layouts,
+            translucent_point_depth_stencil,
+        );
 
         let line_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("scatter-lines"),
@@ -1690,12 +1787,19 @@ impl ScatterWidget {
 
         Self {
             pipeline,
+            opaque_pipeline,
+            xyz_opaque_pipeline,
             clip_mask_pipeline,
             vertex_buffer: None,
             vertex_cap: 0,
             uniform_buffer,
             bind_group,
             point_count: 0,
+            primary_points_opaque: true,
+            primary_buffer_format: PrimaryPointBufferFormat::PointInstance,
+            primary_colormap: "viridis".to_string(),
+            primary_z_min: 0.0,
+            primary_z_max: 1.0,
             camera,
             offset: [0.0, 0.0],
             width,
@@ -1708,6 +1812,7 @@ impl ScatterWidget {
             auto_point_size: true,
             point_size_scale: 1.0,
             interactive_render_scale: 1.0,
+            static_render_scale: 1.0,
             auto_quality_enabled: false,
             quality_target_frame_ms: 100.0,
             quality_level: 0,
@@ -1776,6 +1881,8 @@ impl ScatterWidget {
         queue: &wgpu::Queue,
         points: &[PointInstance],
     ) -> ScatterUploadTimings {
+        self.primary_buffer_format = PrimaryPointBufferFormat::PointInstance;
+        self.primary_points_opaque = point_instances_are_opaque(points);
         let size = (points.len() * std::mem::size_of::<PointInstance>()) as u64;
         if size == 0 {
             self.point_count = 0;
@@ -1844,6 +1951,8 @@ impl ScatterWidget {
         if bytes.len() % STRIDE != 0 {
             return None;
         }
+        self.primary_buffer_format = PrimaryPointBufferFormat::PointInstance;
+        self.primary_points_opaque = point_instance_bytes_are_opaque(bytes)?;
         let point_count = bytes.len() / STRIDE;
         if self.should_build_active_lod(point_count as u32) {
             return None;
@@ -1861,6 +1970,61 @@ impl ScatterWidget {
             let cap = (size * 2).max(4 * 1024 * 1024);
             self.vertex_buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("scatter-vb"),
+                size: cap,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+            self.vertex_cap = cap;
+        }
+        let primary_t0 = Instant::now();
+        write_buffer_chunked(queue, self.vertex_buffer.as_ref().unwrap(), 0, bytes);
+        let primary_ms = primary_t0.elapsed().as_secs_f64() * 1000.0;
+        self.point_count = point_count as u32;
+        self.lod_vertex_buffer = None;
+        self.lod_vertex_cap = 0;
+        self.recompute_point_size_scale();
+        self.update_camera(queue);
+        Some(ScatterUploadTimings {
+            primary_ms,
+            lod_ms: 0.0,
+        })
+    }
+
+    pub fn set_xyz_points_raw(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        bytes: &[u8],
+        data_min: glam::Vec3,
+        data_max: glam::Vec3,
+        colormap: &str,
+    ) -> Option<ScatterUploadTimings> {
+        if bytes.len() % 12 != 0 {
+            return None;
+        }
+        let point_count = bytes.len() / 12;
+        if self.should_build_active_lod(point_count as u32) {
+            return None;
+        }
+        self.primary_buffer_format = PrimaryPointBufferFormat::XyzF32;
+        self.primary_points_opaque = true;
+        self.primary_colormap = colormap.to_string();
+        self.primary_z_min = data_min.z;
+        self.primary_z_max = data_max.z;
+
+        let size = bytes.len() as u64;
+        if size == 0 {
+            self.point_count = 0;
+            self.lod_vertex_buffer = None;
+            self.lod_vertex_cap = 0;
+            self.recompute_point_size_scale();
+            self.update_camera(queue);
+            return Some(ScatterUploadTimings::default());
+        }
+        if self.vertex_buffer.is_none() || size > self.vertex_cap {
+            let cap = (size * 2).max(4 * 1024 * 1024);
+            self.vertex_buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("scatter-xyz-vb"),
                 size: cap,
                 usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
@@ -1944,6 +2108,8 @@ impl ScatterWidget {
     /// Write current camera state into the uniform buffer.
     pub fn update_camera(&self, queue: &wgpu::Queue) {
         let vp = self.camera.view_proj();
+        let (colormap_points, colormap_count) = colormap::uniform_points(&self.primary_colormap);
+        let z_range = (self.primary_z_max - self.primary_z_min).max(f32::EPSILON);
         let uniforms = Uniforms {
             view_proj: vp.to_cols_array_2d(),
             screen_size: [self.width as f32, self.height as f32],
@@ -1952,6 +2118,10 @@ impl ScatterWidget {
             point_size_scale: self.point_size_scale,
             _pad0: [0.0; 3],
             clip_radii: self.clip_radii,
+            xyz_z_range: [self.primary_z_min, z_range, 0.0, 0.0],
+            colormap_count,
+            _pad1: [0; 3],
+            colormap_points,
         };
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
     }
@@ -1974,6 +2144,10 @@ impl ScatterWidget {
         self.interactive_render_scale = clamp_interactive_render_scale(scale);
     }
 
+    pub fn set_static_render_scale(&mut self, scale: f32) {
+        self.static_render_scale = clamp_interactive_render_scale(scale);
+    }
+
     pub fn set_auto_quality(&mut self, enabled: bool, target_frame_ms: f32) {
         self.auto_quality_enabled = enabled;
         if target_frame_ms.is_finite() && target_frame_ms > 0.0 {
@@ -1990,7 +2164,7 @@ impl ScatterWidget {
 
     pub fn active_render_scale(&self) -> f32 {
         if self.lod_active {
-            if self.auto_quality_enabled {
+            let interaction_scale = if self.auto_quality_enabled {
                 let budget_scale = match self.quality_level {
                     0 => 1.0,
                     1 => 0.75,
@@ -2000,9 +2174,10 @@ impl ScatterWidget {
                 self.interactive_render_scale.min(budget_scale)
             } else {
                 self.interactive_render_scale
-            }
+            };
+            self.static_render_scale.min(interaction_scale)
         } else {
-            1.0
+            self.static_render_scale
         }
     }
 
@@ -2242,6 +2417,15 @@ impl ScatterWidget {
             point_size_scale: self.point_size_scale,
             _pad0: [0.0; 3],
             clip_radii: self.clip_radii,
+            xyz_z_range: [
+                self.primary_z_min,
+                (self.primary_z_max - self.primary_z_min).max(f32::EPSILON),
+                0.0,
+                0.0,
+            ],
+            colormap_count: colormap::uniform_points(&self.primary_colormap).1,
+            _pad1: [0; 3],
+            colormap_points: colormap::uniform_points(&self.primary_colormap).0,
         };
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
@@ -3304,6 +3488,7 @@ impl ScatterWidget {
         actor.vertex_buffer = vertex_buffer;
         actor.vertex_cap = size;
         actor.stream_mode = Some(mode);
+        actor.opaque = true;
         actor.stream_capacity = max_points;
         actor.stream_write_offset = 0;
         actor.points = vec![
@@ -3370,6 +3555,7 @@ impl ScatterWidget {
                 actor.point_count = cap.min(actor.point_count as usize + src.len()) as u32;
             }
         }
+        actor.opaque = point_instances_are_opaque(&actor.points[..actor.point_count as usize]);
         // Update bounds conservatively from CPU cache
         let (mn, mx) = PointActor::compute_bounds(&actor.points[..actor.point_count as usize]);
         actor.data_min = mn;
@@ -3382,6 +3568,7 @@ impl ScatterWidget {
         if let Some(actor) = self.extra_actors.get_mut(&id) {
             actor.point_count = 0;
             actor.stream_write_offset = 0;
+            actor.opaque = true;
             actor.data_min = glam::Vec3::splat(f32::MAX);
             actor.data_max = glam::Vec3::splat(f32::MIN);
             self.recompute_point_size_scale();
@@ -3678,6 +3865,17 @@ impl ScatterWidget {
         )
     }
 
+    pub fn has_render_work(&self) -> bool {
+        if self.width == 0
+            || self.height == 0
+            || self.scissor_size[0] == 0
+            || self.scissor_size[1] == 0
+        {
+            return false;
+        }
+        self.has_scene_render_work()
+    }
+
     fn scaled_local_scissor(&self, target_width: u32, target_height: u32) -> ([u32; 2], [u32; 2]) {
         if self.width == 0 || self.height == 0 || target_width == 0 || target_height == 0 {
             return ([0, 0], [0, 0]);
@@ -3707,6 +3905,65 @@ impl ScatterWidget {
         )
     }
 
+    fn draw_primary_points<'pass, 'data: 'pass>(
+        &'data self,
+        pass: &mut wgpu::RenderPass<'pass>,
+        pipeline: &'data wgpu::RenderPipeline,
+    ) {
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        let is_lod = self.lod_enabled && self.lod_active && self.point_count > self.lod_threshold;
+        // Use the pre-shuffled LOD buffer when active so the first N instances
+        // are a representative spatial sample rather than a positional prefix.
+        let draw_vb = if is_lod {
+            self.lod_vertex_buffer
+                .as_ref()
+                .or(self.vertex_buffer.as_ref())
+        } else {
+            self.vertex_buffer.as_ref()
+        };
+        if let Some(vb) = draw_vb {
+            pass.set_vertex_buffer(0, vb.slice(..));
+            let draw_count = if is_lod {
+                lod_sample_count(self.point_count as usize, self.lod_factor) as u32
+            } else {
+                self.point_count
+            };
+            pass.draw(0..4, 0..draw_count);
+        }
+    }
+
+    fn draw_actor_points<'pass, 'data: 'pass>(
+        &'data self,
+        pass: &mut wgpu::RenderPass<'pass>,
+        actor: &'data PointActor,
+        pipeline: &'data wgpu::RenderPipeline,
+    ) {
+        if !actor.visible || actor.point_count == 0 {
+            return;
+        }
+        let is_lod = self.lod_enabled && self.lod_active && actor.point_count > self.lod_threshold;
+        let draw_vb = if is_lod {
+            actor
+                .lod_vertex_buffer
+                .as_ref()
+                .or(actor.vertex_buffer.as_ref())
+        } else {
+            actor.vertex_buffer.as_ref()
+        };
+        if let Some(vb) = draw_vb {
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &self.bind_group, &[]);
+            pass.set_vertex_buffer(0, vb.slice(..));
+            let draw_count = if is_lod {
+                lod_sample_count(actor.point_count as usize, self.lod_factor) as u32
+            } else {
+                actor.point_count
+            };
+            pass.draw(0..4, 0..draw_count);
+        }
+    }
+
     fn render_with_viewport<'pass, 'data: 'pass>(
         &'data self,
         pass: &mut wgpu::RenderPass<'pass>,
@@ -3715,18 +3972,12 @@ impl ScatterWidget {
         scissor_offset: [u32; 2],
         scissor_size: [u32; 2],
     ) {
-        let has_grid = self.chrome.grid_visible
-            && self.grid_vertex_count > 0
-            && self.line_vertex_buffer.is_some();
-        let has_user_lines =
-            self.user_line_vertex_count > 0 && self.user_line_vertex_buffer.is_some();
-        let has_points = self.point_count > 0 && self.vertex_buffer.is_some();
-        let has_extra_points = self
-            .extra_actors
-            .values()
-            .any(|actor| actor.visible && actor.point_count > 0 && actor.vertex_buffer.is_some());
-        let has_overlay = self.overlay_vertex_count > 0 && self.overlay_vertex_buffer.is_some();
-        let has_bg = self.bg_vertex_count > 0 && self.bg_vertex_buffer.is_some();
+        let has_grid = self.has_grid_render_work();
+        let has_user_lines = self.has_user_line_render_work();
+        let has_points = self.has_primary_point_render_work();
+        let has_extra_points = self.has_extra_point_render_work();
+        let has_overlay = self.has_overlay_render_work();
+        let has_bg = self.has_background_render_work();
 
         if (!has_bg
             && !has_grid
@@ -3782,56 +4033,22 @@ impl ScatterWidget {
             pass.draw(0..self.user_line_vertex_count, 0..1);
         }
 
-        if has_points {
-            pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
-            let is_lod =
-                self.lod_enabled && self.lod_active && self.point_count > self.lod_threshold;
-            // Use the pre-shuffled LOD buffer when active so the first N instances
-            // are a representative spatial sample rather than a positional prefix.
-            let draw_vb = if is_lod {
-                self.lod_vertex_buffer
-                    .as_ref()
-                    .or(self.vertex_buffer.as_ref())
-            } else {
-                self.vertex_buffer.as_ref()
+        if has_points && self.primary_points_opaque {
+            let pipeline = match self.primary_buffer_format {
+                PrimaryPointBufferFormat::PointInstance => &self.opaque_pipeline,
+                PrimaryPointBufferFormat::XyzF32 => &self.xyz_opaque_pipeline,
             };
-            if let Some(vb) = draw_vb {
-                pass.set_vertex_buffer(0, vb.slice(..));
-                let draw_count = if is_lod {
-                    lod_sample_count(self.point_count as usize, self.lod_factor) as u32
-                } else {
-                    self.point_count
-                };
-                pass.draw(0..4, 0..draw_count);
-            }
+            self.draw_primary_points(pass, pipeline);
+        }
+        for actor in self.extra_actors.values().filter(|actor| actor.opaque) {
+            self.draw_actor_points(pass, actor, &self.opaque_pipeline);
         }
 
-        // Extra actors (Phase 4)
-        for actor in self.extra_actors.values() {
-            if actor.visible && actor.point_count > 0 {
-                let is_lod =
-                    self.lod_enabled && self.lod_active && actor.point_count > self.lod_threshold;
-                let draw_vb = if is_lod {
-                    actor
-                        .lod_vertex_buffer
-                        .as_ref()
-                        .or(actor.vertex_buffer.as_ref())
-                } else {
-                    actor.vertex_buffer.as_ref()
-                };
-                if let Some(vb) = draw_vb {
-                    pass.set_pipeline(&self.pipeline);
-                    pass.set_bind_group(0, &self.bind_group, &[]);
-                    pass.set_vertex_buffer(0, vb.slice(..));
-                    let draw_count = if is_lod {
-                        lod_sample_count(actor.point_count as usize, self.lod_factor) as u32
-                    } else {
-                        actor.point_count
-                    };
-                    pass.draw(0..4, 0..draw_count);
-                }
-            }
+        if has_points && !self.primary_points_opaque {
+            self.draw_primary_points(pass, &self.pipeline);
+        }
+        for actor in self.extra_actors.values().filter(|actor| !actor.opaque) {
+            self.draw_actor_points(pass, actor, &self.pipeline);
         }
 
         // Mesh overlays follow DragonSci's order: wireframes first, then opaque
@@ -3897,6 +4114,48 @@ impl ScatterWidget {
             pass.draw(0..self.overlay_vertex_count, 0..1);
         }
     }
+
+    fn has_scene_render_work(&self) -> bool {
+        self.has_background_render_work()
+            || self.has_grid_render_work()
+            || self.has_user_line_render_work()
+            || self.has_primary_point_render_work()
+            || self.has_extra_point_render_work()
+            || self.has_mesh_render_work()
+            || self.has_overlay_render_work()
+    }
+
+    fn has_background_render_work(&self) -> bool {
+        self.bg_vertex_count > 0 && self.bg_vertex_buffer.is_some()
+    }
+
+    fn has_grid_render_work(&self) -> bool {
+        self.chrome.grid_visible && self.grid_vertex_count > 0 && self.line_vertex_buffer.is_some()
+    }
+
+    fn has_user_line_render_work(&self) -> bool {
+        self.user_line_vertex_count > 0 && self.user_line_vertex_buffer.is_some()
+    }
+
+    fn has_primary_point_render_work(&self) -> bool {
+        self.point_count > 0 && self.vertex_buffer.is_some()
+    }
+
+    fn has_extra_point_render_work(&self) -> bool {
+        self.extra_actors
+            .values()
+            .any(|actor| actor.visible && actor.point_count > 0 && actor.vertex_buffer.is_some())
+    }
+
+    fn has_mesh_render_work(&self) -> bool {
+        self.mesh_actors
+            .values()
+            .any(|actor| actor.visible && actor.index_count > 0)
+    }
+
+    fn has_overlay_render_work(&self) -> bool {
+        self.overlay_vertex_count > 0 && self.overlay_vertex_buffer.is_some()
+    }
 }
 
 #[cfg(test)]
@@ -3960,6 +4219,39 @@ mod tests {
             color: [1.0, 0.0, 0.0],
             alpha: 1.0,
         }
+    }
+
+    #[test]
+    fn point_opacity_detection_accepts_fully_opaque_points() {
+        let points = [make_pt(0.0, 0.0, 0.0), make_pt(1.0, 1.0, 1.0)];
+        assert!(point_instances_are_opaque(&points));
+        assert_eq!(
+            point_instance_bytes_are_opaque(bytemuck::cast_slice(&points)),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn point_opacity_detection_rejects_translucent_or_invalid_alpha() {
+        let mut translucent = make_pt(0.0, 0.0, 0.0);
+        translucent.alpha = 0.998;
+        let mut nan_alpha = make_pt(1.0, 1.0, 1.0);
+        nan_alpha.alpha = f32::NAN;
+
+        assert!(!point_instances_are_opaque(&[translucent]));
+        assert!(!point_instances_are_opaque(&[nan_alpha]));
+        assert_eq!(
+            point_instance_bytes_are_opaque(bytemuck::cast_slice(&[
+                make_pt(0.0, 0.0, 0.0),
+                translucent
+            ])),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn point_opacity_detection_rejects_misaligned_raw_payload() {
+        assert_eq!(point_instance_bytes_are_opaque(&[0_u8; 3]), None);
     }
 
     // With the identity view_proj, position == clip (w=1), so:

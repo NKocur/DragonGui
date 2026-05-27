@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashMap};
+use std::{borrow::Cow, collections::HashMap, time::Instant};
 
 use bytemuck::{Pod, Zeroable};
 
@@ -35,6 +35,33 @@ use crate::toast::{toast_colors, toast_rect, toast_stack_index, ToastOverlay};
 const SCROLLBAR_VISIBILITY_EPSILON_PX: f32 = 2.0;
 const SCROLLBAR_MIN_TRACK_LEN_PX: f32 = 44.0;
 const IMPLICIT_PANEL_SCROLLBAR_MIN_SIZE_PX: f32 = 64.0;
+const DEFAULT_LINE_PLOT_SEGMENT_BUDGET: usize = 4096;
+const HISTOGRAM_COMPACT_TICK_WIDTH_PX: f32 = 360.0;
+const HISTOGRAM_COMPACT_TICK_HEIGHT_PX: f32 = 240.0;
+const LINE_PLOT_GPU_MARKER: f32 = 57_301.0;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PrimitiveRenderProfile {
+    pub(crate) line_plot_segment_budget: usize,
+    pub(crate) line_plot_simplify_styles: bool,
+    pub(crate) histogram_bin_budget: Option<usize>,
+    pub(crate) histogram_compact_tick_count: Option<usize>,
+    pub(crate) table_compact_metrics: bool,
+    pub(crate) pie_chart_compact_labels: bool,
+}
+
+impl Default for PrimitiveRenderProfile {
+    fn default() -> Self {
+        Self {
+            line_plot_segment_budget: DEFAULT_LINE_PLOT_SEGMENT_BUDGET,
+            line_plot_simplify_styles: false,
+            histogram_bin_budget: None,
+            histogram_compact_tick_count: None,
+            table_compact_metrics: false,
+            pie_chart_compact_labels: false,
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Per-instance GPU data
@@ -154,11 +181,153 @@ static RECT_ATTRS: [wgpu::VertexAttribute; 15] = [
     },
 ];
 
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct SimpleRectInstance {
+    rect: [f32; 4],
+    color: [f32; 4],
+    radii: [f32; 4],
+    clip: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct LineSegmentInstance {
+    rect: [f32; 4],
+    color: [f32; 4],
+    clip: [f32; 4],
+    params: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Pod, Zeroable)]
+struct LinePlotSegmentInstance {
+    start: [f32; 2],
+    end: [f32; 2],
+    color: [f32; 4],
+    params: [f32; 4],
+}
+
+impl From<&RectInstance> for SimpleRectInstance {
+    fn from(instance: &RectInstance) -> Self {
+        Self {
+            rect: instance.rect,
+            color: instance.color,
+            radii: instance.radii,
+            clip: instance.clip,
+        }
+    }
+}
+
+impl From<&RectInstance> for LineSegmentInstance {
+    fn from(instance: &RectInstance) -> Self {
+        Self {
+            rect: instance.rect,
+            color: instance.color,
+            clip: instance.clip,
+            params: [instance.rect[3] * 0.5, instance.transform2[0], 0.0, 0.0],
+        }
+    }
+}
+
+static SIMPLE_RECT_ATTRS: [wgpu::VertexAttribute; 4] = [
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 0,
+        shader_location: 0,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 16,
+        shader_location: 1,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 32,
+        shader_location: 2,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 48,
+        shader_location: 3,
+    },
+];
+
+static LINE_SEGMENT_ATTRS: [wgpu::VertexAttribute; 4] = [
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 0,
+        shader_location: 0,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 16,
+        shader_location: 1,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 32,
+        shader_location: 2,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 48,
+        shader_location: 3,
+    },
+];
+
+static LINE_PLOT_SEGMENT_ATTRS: [wgpu::VertexAttribute; 4] = [
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x2,
+        offset: 0,
+        shader_location: 0,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x2,
+        offset: 8,
+        shader_location: 1,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 16,
+        shader_location: 2,
+    },
+    wgpu::VertexAttribute {
+        format: wgpu::VertexFormat::Float32x4,
+        offset: 32,
+        shader_location: 3,
+    },
+];
+
 fn rect_instance_layout() -> wgpu::VertexBufferLayout<'static> {
     wgpu::VertexBufferLayout {
         array_stride: std::mem::size_of::<RectInstance>() as u64,
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: &RECT_ATTRS,
+    }
+}
+
+fn simple_rect_instance_layout() -> wgpu::VertexBufferLayout<'static> {
+    wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<SimpleRectInstance>() as u64,
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &SIMPLE_RECT_ATTRS,
+    }
+}
+
+fn line_segment_instance_layout() -> wgpu::VertexBufferLayout<'static> {
+    wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<LineSegmentInstance>() as u64,
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &LINE_SEGMENT_ATTRS,
+    }
+}
+
+fn line_plot_segment_instance_layout() -> wgpu::VertexBufferLayout<'static> {
+    wgpu::VertexBufferLayout {
+        array_stride: std::mem::size_of::<LinePlotSegmentInstance>() as u64,
+        step_mode: wgpu::VertexStepMode::Instance,
+        attributes: &LINE_PLOT_SEGMENT_ATTRS,
     }
 }
 
@@ -173,19 +342,160 @@ struct Uniforms {
     _pad: [f32; 2],
 }
 
+fn create_rect_pipeline(
+    device: &wgpu::Device,
+    pipeline_layout: &wgpu::PipelineLayout,
+    shader: &wgpu::ShaderModule,
+    vertex_layout: wgpu::VertexBufferLayout<'static>,
+    surface_format: wgpu::TextureFormat,
+    label: &'static str,
+    with_depth: bool,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some(label),
+        layout: Some(pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: shader,
+            entry_point: Some("vs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[vertex_layout],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: shader,
+            entry_point: Some("fs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format: surface_format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        primitive: wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            ..Default::default()
+        },
+        depth_stencil: if with_depth {
+            Some(wgpu::DepthStencilState {
+                format: crate::DEPTH_STENCIL_FORMAT,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            })
+        } else {
+            None
+        },
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+fn upload_primitive_buffer<T: Pod>(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &'static str,
+    buffer: &mut wgpu::Buffer,
+    cap: &mut u64,
+    instances: &[T],
+) -> u64 {
+    if instances.is_empty() {
+        return 0;
+    }
+    let size = std::mem::size_of_val(instances) as u64;
+    if size > *cap {
+        let new_cap = (size * 2).max(4096);
+        *buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size: new_cap,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        *cap = new_cap;
+    }
+    queue.write_buffer(buffer, 0, bytemuck::cast_slice(instances));
+    size
+}
+
 // ---------------------------------------------------------------------------
 // PrimitivesRenderer
 // ---------------------------------------------------------------------------
 
 pub struct PrimitivesRenderer {
     pipeline: wgpu::RenderPipeline,
+    simple_pipeline: wgpu::RenderPipeline,
+    rounded_solid_pipeline: wgpu::RenderPipeline,
+    line_segment_pipeline: wgpu::RenderPipeline,
+    line_plot_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     vertex_cap: u64,
+    simple_vertex_buffer: wgpu::Buffer,
+    simple_vertex_cap: u64,
+    rounded_vertex_buffer: wgpu::Buffer,
+    rounded_vertex_cap: u64,
+    line_segment_vertex_buffer: wgpu::Buffer,
+    line_segment_vertex_cap: u64,
+    line_plot_vertex_buffer: wgpu::Buffer,
+    line_plot_vertex_cap: u64,
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     instances: Vec<RectInstance>,
+    simple_instances: Vec<SimpleRectInstance>,
+    rounded_instances: Vec<SimpleRectInstance>,
+    line_segment_instances: Vec<LineSegmentInstance>,
+    line_plot_instances: Vec<LinePlotSegmentInstance>,
+    general_instances: Vec<RectInstance>,
+    batches: Vec<PrimitiveBatch>,
     pub rect_count: u32,
     overlay_start: u32,
+    overlay_batch_start: usize,
+    last_upload_bytes: u64,
+    last_upload_ms: f64,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct PrimitiveModeStats {
+    pub(crate) count: usize,
+    pub(crate) batches: usize,
+    pub(crate) area_px: f64,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct PrimitiveStats {
+    pub(crate) total_count: usize,
+    pub(crate) total_area_px: f64,
+    pub(crate) base_count: usize,
+    pub(crate) base_area_px: f64,
+    pub(crate) overlay_count: usize,
+    pub(crate) overlay_area_px: f64,
+    pub(crate) base_batches: usize,
+    pub(crate) overlay_batches: usize,
+    pub(crate) total_batches: usize,
+    pub(crate) base_general: PrimitiveModeStats,
+    pub(crate) base_simple_square: PrimitiveModeStats,
+    pub(crate) base_rounded_solid: PrimitiveModeStats,
+    pub(crate) base_line_segment: PrimitiveModeStats,
+    pub(crate) base_line_plot: PrimitiveModeStats,
+    pub(crate) overlay_general: PrimitiveModeStats,
+    pub(crate) overlay_simple_square: PrimitiveModeStats,
+    pub(crate) overlay_rounded_solid: PrimitiveModeStats,
+    pub(crate) overlay_line_segment: PrimitiveModeStats,
+    pub(crate) overlay_line_plot: PrimitiveModeStats,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PrimitiveBatch {
+    mode: RectFastPath,
+    start: u32,
+    end: u32,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PrimitiveRectInfo {
+    pub(crate) rect: [f32; 4],
+    pub(crate) mode: &'static str,
+    pub(crate) area_px: f64,
+    pub(crate) alpha: f32,
 }
 
 impl PrimitivesRenderer {
@@ -199,6 +509,22 @@ impl PrimitivesRenderer {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("prim-rect"),
             source: wgpu::ShaderSource::Wgsl(include_str!("rect.wgsl").into()),
+        });
+        let simple_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("prim-rect-simple"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("rect_simple.wgsl").into()),
+        });
+        let rounded_solid_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("prim-rect-rounded-solid"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("rect_rounded_solid.wgsl").into()),
+        });
+        let line_segment_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("prim-line-segment"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("line_segment.wgsl").into()),
+        });
+        let line_plot_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("line-plot-segments"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("line_plot.wgsl").into()),
         });
 
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -221,41 +547,51 @@ impl PrimitivesRenderer {
             immediate_size: 0,
         });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("prim-rect-pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[rect_instance_layout()],
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
-                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: crate::DEPTH_STENCIL_FORMAT,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::Always),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
-
+        let pipeline = create_rect_pipeline(
+            device,
+            &pipeline_layout,
+            &shader,
+            rect_instance_layout(),
+            surface_format,
+            "prim-rect-pipeline",
+            true,
+        );
+        let simple_pipeline = create_rect_pipeline(
+            device,
+            &pipeline_layout,
+            &simple_shader,
+            simple_rect_instance_layout(),
+            surface_format,
+            "prim-rect-simple-pipeline",
+            true,
+        );
+        let rounded_solid_pipeline = create_rect_pipeline(
+            device,
+            &pipeline_layout,
+            &rounded_solid_shader,
+            simple_rect_instance_layout(),
+            surface_format,
+            "prim-rect-rounded-solid-pipeline",
+            true,
+        );
+        let line_segment_pipeline = create_rect_pipeline(
+            device,
+            &pipeline_layout,
+            &line_segment_shader,
+            line_segment_instance_layout(),
+            surface_format,
+            "prim-line-segment-pipeline",
+            true,
+        );
+        let line_plot_pipeline = create_rect_pipeline(
+            device,
+            &pipeline_layout,
+            &line_plot_shader,
+            line_plot_segment_instance_layout(),
+            surface_format,
+            "line-plot-segment-pipeline",
+            true,
+        );
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("prim-uniforms"),
             size: std::mem::size_of::<Uniforms>() as u64,
@@ -279,16 +615,62 @@ impl PrimitivesRenderer {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let simple_initial_cap = (64 * std::mem::size_of::<SimpleRectInstance>()) as u64;
+        let simple_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("prim-simple-vb"),
+            size: simple_initial_cap,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let rounded_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("prim-rounded-vb"),
+            size: simple_initial_cap,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let line_segment_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("prim-line-segment-vb"),
+            size: simple_initial_cap,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let line_plot_vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("line-plot-segment-vb"),
+            size: simple_initial_cap,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
         let renderer = Self {
             pipeline,
+            simple_pipeline,
+            rounded_solid_pipeline,
+            line_segment_pipeline,
+            line_plot_pipeline,
             vertex_buffer,
             vertex_cap: initial_cap,
+            simple_vertex_buffer,
+            simple_vertex_cap: simple_initial_cap,
+            rounded_vertex_buffer,
+            rounded_vertex_cap: simple_initial_cap,
+            line_segment_vertex_buffer,
+            line_segment_vertex_cap: simple_initial_cap,
+            line_plot_vertex_buffer,
+            line_plot_vertex_cap: simple_initial_cap,
             uniform_buffer,
             bind_group,
             instances: Vec::with_capacity(64),
+            simple_instances: Vec::with_capacity(64),
+            rounded_instances: Vec::with_capacity(64),
+            line_segment_instances: Vec::with_capacity(64),
+            line_plot_instances: Vec::with_capacity(64),
+            general_instances: Vec::with_capacity(64),
+            batches: Vec::with_capacity(64),
             rect_count: 0,
             overlay_start: 0,
+            overlay_batch_start: 0,
+            last_upload_bytes: 0,
+            last_upload_ms: 0.0,
         };
         renderer.update_screen_size(queue, width, height);
         renderer
@@ -313,25 +695,7 @@ impl PrimitivesRenderer {
         self.instances = instances;
         self.rect_count = self.instances.len() as u32;
         self.overlay_start = overlay_start.min(self.rect_count);
-        if self.instances.is_empty() {
-            return;
-        }
-        let size = (self.instances.len() * std::mem::size_of::<RectInstance>()) as u64;
-        if size > self.vertex_cap {
-            let cap = (size * 2).max(4096);
-            self.vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("prim-vb-static"),
-                size: cap,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            self.vertex_cap = cap;
-        }
-        queue.write_buffer(
-            &self.vertex_buffer,
-            0,
-            bytemuck::cast_slice(&self.instances),
-        );
+        self.upload_split_instances(device, queue);
     }
 
     /// Rebuild the instance list from layout, theme, and interactive state.
@@ -348,10 +712,12 @@ impl PrimitivesRenderer {
         toasts: &[ToastOverlay],
         stylesheets: &StylesheetStore,
         media: DgMediaEnvironment,
+        render_profile: PrimitiveRenderProfile,
     ) {
         let window_w = media.width * scale_factor;
         let window_h = media.height * scale_factor;
         self.instances.clear();
+        self.line_plot_instances.clear();
         emit_rects_inner(
             tree,
             layout,
@@ -360,7 +726,9 @@ impl PrimitivesRenderer {
             state,
             caret_positions,
             true,
+            render_profile,
             &mut self.instances,
+            &mut self.line_plot_instances,
         );
         self.overlay_start = self.instances.len() as u32;
         emit_dropdown_overlays(
@@ -386,6 +754,7 @@ impl PrimitivesRenderer {
             scale_factor,
             state,
             caret_positions,
+            render_profile,
             &mut self.instances,
         );
         emit_tooltip_overlay(
@@ -411,50 +780,266 @@ impl PrimitivesRenderer {
         );
 
         self.rect_count = self.instances.len() as u32;
-        if self.instances.is_empty() {
-            return;
-        }
-
-        let size = (self.instances.len() * std::mem::size_of::<RectInstance>()) as u64;
-        if size > self.vertex_cap {
-            let cap = (size * 2).max(4096);
-            self.vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("prim-vb"),
-                size: cap,
-                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
-            self.vertex_cap = cap;
-        }
-        queue.write_buffer(
-            &self.vertex_buffer,
-            0,
-            bytemuck::cast_slice(&self.instances),
-        );
+        self.upload_split_instances(device, queue);
     }
 
     pub fn render_base(&self, pass: &mut wgpu::RenderPass<'_>) {
         if self.rect_count == 0 {
             return;
         }
-        let count = self.overlay_start.min(self.rect_count);
-        if count == 0 {
+        if self.overlay_batch_start == 0 {
             return;
         }
-        pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        pass.draw(0..6, 0..count);
+        self.render_batches(pass, 0, self.overlay_batch_start);
     }
 
     pub fn render_overlays(&self, pass: &mut wgpu::RenderPass<'_>) {
-        if self.rect_count == 0 || self.overlay_start >= self.rect_count {
+        if self.rect_count == 0 || self.overlay_batch_start >= self.batches.len() {
             return;
         }
-        pass.set_pipeline(&self.pipeline);
+        self.render_batches(pass, self.overlay_batch_start, self.batches.len());
+    }
+
+    fn upload_split_instances(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        self.simple_instances.clear();
+        self.rounded_instances.clear();
+        self.line_segment_instances.clear();
+        self.general_instances.clear();
+        self.batches.clear();
+        self.overlay_batch_start = 0;
+
+        if self.instances.is_empty() {
+            self.last_upload_bytes = 0;
+            self.last_upload_ms = 0.0;
+            return;
+        }
+
+        let overlay_start = self.overlay_start.min(self.rect_count) as usize;
+        let mut active: Option<PrimitiveBatch> = None;
+        for (index, instance) in self.instances.iter().enumerate() {
+            if index == overlay_start {
+                if let Some(batch) = active.take() {
+                    self.batches.push(batch);
+                }
+                self.overlay_batch_start = self.batches.len();
+            }
+            let mode = rect_fast_path(instance);
+            let start = match mode {
+                RectFastPath::General => {
+                    let start = self.general_instances.len() as u32;
+                    self.general_instances.push(*instance);
+                    start
+                }
+                RectFastPath::SimpleSquare => {
+                    let start = self.simple_instances.len() as u32;
+                    self.simple_instances
+                        .push(SimpleRectInstance::from(instance));
+                    start
+                }
+                RectFastPath::RoundedSolid => {
+                    let start = self.rounded_instances.len() as u32;
+                    self.rounded_instances
+                        .push(SimpleRectInstance::from(instance));
+                    start
+                }
+                RectFastPath::LineSegment => {
+                    let start = self.line_segment_instances.len() as u32;
+                    self.line_segment_instances
+                        .push(LineSegmentInstance::from(instance));
+                    start
+                }
+                RectFastPath::LinePlot => instance.params[1].max(0.0) as u32,
+            };
+            let end = if mode == RectFastPath::LinePlot {
+                start + instance.params[2].max(0.0) as u32
+            } else {
+                start + 1
+            };
+            match active.as_mut() {
+                Some(batch) if batch.mode == mode && batch.end == start => {
+                    batch.end = end;
+                }
+                _ => {
+                    if let Some(batch) = active.take() {
+                        self.batches.push(batch);
+                    }
+                    active = Some(PrimitiveBatch { mode, start, end });
+                }
+            }
+        }
+        if let Some(batch) = active.take() {
+            self.batches.push(batch);
+        }
+        if overlay_start == self.instances.len() {
+            self.overlay_batch_start = self.batches.len();
+        }
+
+        let upload_t0 = Instant::now();
+        let mut bytes = 0_u64;
+        bytes += upload_primitive_buffer(
+            device,
+            queue,
+            "prim-vb",
+            &mut self.vertex_buffer,
+            &mut self.vertex_cap,
+            &self.general_instances,
+        );
+        bytes += upload_primitive_buffer(
+            device,
+            queue,
+            "prim-simple-vb",
+            &mut self.simple_vertex_buffer,
+            &mut self.simple_vertex_cap,
+            &self.simple_instances,
+        );
+        bytes += upload_primitive_buffer(
+            device,
+            queue,
+            "prim-rounded-vb",
+            &mut self.rounded_vertex_buffer,
+            &mut self.rounded_vertex_cap,
+            &self.rounded_instances,
+        );
+        bytes += upload_primitive_buffer(
+            device,
+            queue,
+            "prim-line-segment-vb",
+            &mut self.line_segment_vertex_buffer,
+            &mut self.line_segment_vertex_cap,
+            &self.line_segment_instances,
+        );
+        bytes += upload_primitive_buffer(
+            device,
+            queue,
+            "line-plot-segment-vb",
+            &mut self.line_plot_vertex_buffer,
+            &mut self.line_plot_vertex_cap,
+            &self.line_plot_instances,
+        );
+        self.last_upload_bytes = bytes;
+        self.last_upload_ms = upload_t0.elapsed().as_secs_f64() * 1000.0;
+    }
+
+    pub(crate) fn last_upload_bytes(&self) -> u64 {
+        self.last_upload_bytes
+    }
+
+    pub(crate) fn last_upload_ms(&self) -> f64 {
+        self.last_upload_ms
+    }
+
+    pub(crate) fn vertex_cap_bytes(&self) -> u64 {
+        self.vertex_cap
+            + self.simple_vertex_cap
+            + self.rounded_vertex_cap
+            + self.line_segment_vertex_cap
+            + self.line_plot_vertex_cap
+    }
+
+    fn render_batches(&self, pass: &mut wgpu::RenderPass<'_>, start: usize, end: usize) {
+        if start >= end {
+            return;
+        }
         pass.set_bind_group(0, &self.bind_group, &[]);
-        pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        pass.draw(0..6, self.overlay_start..self.rect_count);
+        for batch in &self.batches[start..end] {
+            match batch.mode {
+                RectFastPath::General => {
+                    pass.set_pipeline(&self.pipeline);
+                    pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+                }
+                RectFastPath::SimpleSquare => {
+                    pass.set_pipeline(&self.simple_pipeline);
+                    pass.set_vertex_buffer(0, self.simple_vertex_buffer.slice(..));
+                }
+                RectFastPath::RoundedSolid => {
+                    pass.set_pipeline(&self.rounded_solid_pipeline);
+                    pass.set_vertex_buffer(0, self.rounded_vertex_buffer.slice(..));
+                }
+                RectFastPath::LineSegment => {
+                    pass.set_pipeline(&self.line_segment_pipeline);
+                    pass.set_vertex_buffer(0, self.line_segment_vertex_buffer.slice(..));
+                }
+                RectFastPath::LinePlot => {
+                    pass.set_pipeline(&self.line_plot_pipeline);
+                    pass.set_vertex_buffer(0, self.line_plot_vertex_buffer.slice(..));
+                }
+            }
+            pass.draw(0..6, batch.start..batch.end);
+        }
+    }
+
+    pub(crate) fn stats(&self) -> PrimitiveStats {
+        let mut stats = PrimitiveStats::default();
+        let overlay_start = self.overlay_start.min(self.rect_count) as usize;
+        let mut previous_base_mode: Option<RectFastPath> = None;
+        let mut previous_overlay_mode: Option<RectFastPath> = None;
+        for (index, instance) in self.instances.iter().enumerate() {
+            let area = primitive_area_px(instance);
+            let mode = rect_fast_path(instance);
+            stats.total_count += 1;
+            stats.total_area_px += area;
+            if index < overlay_start {
+                let starts_batch = previous_base_mode != Some(mode);
+                previous_base_mode = Some(mode);
+                if starts_batch {
+                    stats.base_batches += 1;
+                }
+                stats.base_count += 1;
+                stats.base_area_px += area;
+                add_mode_stats(
+                    &mut stats.base_general,
+                    &mut stats.base_simple_square,
+                    &mut stats.base_rounded_solid,
+                    &mut stats.base_line_segment,
+                    &mut stats.base_line_plot,
+                    mode,
+                    area,
+                    starts_batch,
+                );
+            } else {
+                let starts_batch = previous_overlay_mode != Some(mode);
+                previous_overlay_mode = Some(mode);
+                if starts_batch {
+                    stats.overlay_batches += 1;
+                }
+                stats.overlay_count += 1;
+                stats.overlay_area_px += area;
+                add_mode_stats(
+                    &mut stats.overlay_general,
+                    &mut stats.overlay_simple_square,
+                    &mut stats.overlay_rounded_solid,
+                    &mut stats.overlay_line_segment,
+                    &mut stats.overlay_line_plot,
+                    mode,
+                    area,
+                    starts_batch,
+                );
+            }
+        }
+        stats.total_batches = stats.base_batches + stats.overlay_batches;
+        stats
+    }
+
+    pub(crate) fn largest_base_rects(&self, limit: usize) -> Vec<PrimitiveRectInfo> {
+        let overlay_start = self.overlay_start.min(self.rect_count) as usize;
+        let mut rects = self
+            .instances
+            .iter()
+            .take(overlay_start)
+            .map(|instance| PrimitiveRectInfo {
+                rect: instance.rect,
+                mode: rect_fast_path(instance).as_str(),
+                area_px: primitive_area_px(instance),
+                alpha: instance.color[3],
+            })
+            .collect::<Vec<_>>();
+        rects.sort_by(|a, b| {
+            b.area_px
+                .partial_cmp(&a.area_px)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        rects.truncate(limit);
+        rects
     }
 }
 
@@ -464,6 +1049,210 @@ impl PrimitivesRenderer {
 
 fn inst(rect: [f32; 4], color: [f32; 4], radius: f32) -> RectInstance {
     inst_radii(rect, color, [radius; 4])
+}
+
+fn approx_eq(a: f32, b: f32) -> bool {
+    (a - b).abs() <= 0.0001
+}
+
+fn all_approx_eq(values: &[f32], expected: &[f32]) -> bool {
+    values
+        .iter()
+        .zip(expected.iter())
+        .all(|(value, expected)| approx_eq(*value, *expected))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RectFastPath {
+    General,
+    SimpleSquare,
+    RoundedSolid,
+    LineSegment,
+    LinePlot,
+}
+
+impl RectFastPath {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::General => "general",
+            Self::SimpleSquare => "simple_square",
+            Self::RoundedSolid => "rounded_solid",
+            Self::LineSegment => "line_segment",
+            Self::LinePlot => "line_plot",
+        }
+    }
+}
+
+fn primitive_area_px(instance: &RectInstance) -> f64 {
+    (instance.rect[2].max(0.0) as f64) * (instance.rect[3].max(0.0) as f64)
+}
+
+fn add_mode_stats(
+    general: &mut PrimitiveModeStats,
+    simple_square: &mut PrimitiveModeStats,
+    rounded_solid: &mut PrimitiveModeStats,
+    line_segment: &mut PrimitiveModeStats,
+    line_plot: &mut PrimitiveModeStats,
+    mode: RectFastPath,
+    area: f64,
+    starts_batch: bool,
+) {
+    let stats = match mode {
+        RectFastPath::General => general,
+        RectFastPath::SimpleSquare => simple_square,
+        RectFastPath::RoundedSolid => rounded_solid,
+        RectFastPath::LineSegment => line_segment,
+        RectFastPath::LinePlot => line_plot,
+    };
+    stats.count += 1;
+    if starts_batch {
+        stats.batches += 1;
+    }
+    stats.area_px += area;
+}
+
+fn rect_fast_path(instance: &RectInstance) -> RectFastPath {
+    if approx_eq(instance.params[0], LINE_PLOT_GPU_MARKER) {
+        return RectFastPath::LinePlot;
+    }
+    if instance.rect[2] <= 0.0 || instance.rect[3] <= 0.0 {
+        return RectFastPath::General;
+    }
+    if instance.color[3] <= 0.0 {
+        return RectFastPath::General;
+    }
+    if !all_approx_eq(&instance.params, &[1.0, 0.0, 0.0, 0.0])
+        || !all_approx_eq(&instance.paint, &[0.0, 0.0, 0.0, 0.0])
+        || !all_approx_eq(&instance.transform, &[0.0, 0.0, 1.0, 1.0])
+        || !all_approx_eq(&instance.transform2[1..], &[0.0, 0.0, 0.0])
+    {
+        return RectFastPath::General;
+    }
+    let radius = instance.rect[3].max(0.0) * 0.5;
+    if instance.rect[2] > 0.0
+        && instance.rect[3] > 0.0
+        && all_approx_eq(&instance.radii, &[radius; 4])
+    {
+        return RectFastPath::LineSegment;
+    }
+    if all_approx_eq(&instance.radii, &[0.0, 0.0, 0.0, 0.0]) {
+        RectFastPath::SimpleSquare
+    } else if simplify_large_rounded_fills_enabled() && should_simplify_large_rounded_fill(instance)
+    {
+        RectFastPath::SimpleSquare
+    } else {
+        RectFastPath::RoundedSolid
+    }
+}
+
+fn simplify_large_rounded_fills_enabled() -> bool {
+    std::env::var("DRAGONGUI_BENCH_SIMPLE_LARGE_ROUNDED_FILLS")
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn should_simplify_large_rounded_fill(instance: &RectInstance) -> bool {
+    let area = instance.rect[2].max(0.0) * instance.rect[3].max(0.0);
+    area >= 65_536.0
+}
+
+fn split_large_rounded_fills_enabled() -> bool {
+    std::env::var("DRAGONGUI_BENCH_SPLIT_LARGE_ROUNDED_FILLS")
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or_else(|_| cfg!(feature = "pi"))
+}
+
+fn emit_large_fill_or_rect(
+    out: &mut Vec<RectInstance>,
+    rect: [f32; 4],
+    color: [f32; 4],
+    radii: [f32; 4],
+) {
+    if split_large_rounded_fills_enabled() && should_split_large_rounded_fill(rect, radii) {
+        emit_split_large_rounded_fill(out, rect, color, radii);
+    } else {
+        out.push(inst_radii(rect, color, radii));
+    }
+}
+
+fn should_split_large_rounded_fill(rect: [f32; 4], radii: [f32; 4]) -> bool {
+    let area = rect[2].max(0.0) * rect[3].max(0.0);
+    area >= 65_536.0 && radii.iter().any(|radius| *radius > 0.5)
+}
+
+fn emit_split_large_rounded_fill(
+    out: &mut Vec<RectInstance>,
+    rect: [f32; 4],
+    color: [f32; 4],
+    radii: [f32; 4],
+) {
+    let x = rect[0];
+    let y = rect[1];
+    let w = rect[2].max(0.0);
+    let h = rect[3].max(0.0);
+    if w <= 0.0 || h <= 0.0 || color[3] <= 0.0 {
+        return;
+    }
+
+    let r = radii
+        .iter()
+        .copied()
+        .fold(0.0_f32, f32::max)
+        .min(w * 0.5)
+        .min(h * 0.5);
+    if r <= 0.5 {
+        out.push(inst_radii(rect, color, [0.0; 4]));
+        return;
+    }
+
+    let center_w = (w - r * 2.0).max(0.0);
+    let center_h = (h - r * 2.0).max(0.0);
+    if center_w > 0.0 && center_h > 0.0 {
+        out.push(inst_radii(
+            [x + r, y + r, center_w, center_h],
+            color,
+            [0.0; 4],
+        ));
+    }
+    if center_w > 0.0 {
+        out.push(inst_radii([x + r, y, center_w, r], color, [0.0; 4]));
+        out.push(inst_radii([x + r, y + h - r, center_w, r], color, [0.0; 4]));
+    }
+    if center_h > 0.0 {
+        out.push(inst_radii([x, y + r, r, center_h], color, [0.0; 4]));
+        out.push(inst_radii([x + w - r, y + r, r, center_h], color, [0.0; 4]));
+    }
+
+    out.push(inst_radii(
+        [x, y, r, r],
+        color,
+        [radii[0].min(r), 0.0, 0.0, 0.0],
+    ));
+    out.push(inst_radii(
+        [x + w - r, y, r, r],
+        color,
+        [0.0, radii[1].min(r), 0.0, 0.0],
+    ));
+    out.push(inst_radii(
+        [x + w - r, y + h - r, r, r],
+        color,
+        [0.0, 0.0, radii[2].min(r), 0.0],
+    ));
+    out.push(inst_radii(
+        [x, y + h - r, r, r],
+        color,
+        [0.0, 0.0, 0.0, radii[3].min(r)],
+    ));
 }
 
 fn inst_radii(rect: [f32; 4], color: [f32; 4], radii: [f32; 4]) -> RectInstance {
@@ -547,6 +1336,85 @@ fn inst_pie_slice(
     instance.params = [1.0, 0.0, 0.0, 2.0];
     instance.paint = [0.0, start_rad, end_rad, inner_ratio.clamp(0.0, 0.9)];
     instance
+}
+
+fn inst_attitude_sphere(
+    rect: [f32; 4],
+    sky: [f32; 4],
+    ground: [f32; 4],
+    line: [f32; 4],
+    marker: [f32; 4],
+    rim: [f32; 4],
+    roll_cos: f32,
+    roll_sin: f32,
+    pitch_cos: f32,
+    pitch_sin: f32,
+    show_grid: bool,
+    high_quality_grid: bool,
+) -> RectInstance {
+    let mut instance = inst_radii(rect, sky, [0.0; 4]);
+    instance.params = [1.0, 0.0, 0.0, 4.0];
+    instance.color2 = ground;
+    instance.color3 = line;
+    instance.color4 = marker;
+    instance.color5 = rim;
+    instance.paint = [
+        if show_grid {
+            if high_quality_grid {
+                2.0
+            } else {
+                1.0
+            }
+        } else {
+            0.0
+        },
+        0.0,
+        0.0,
+        0.0,
+    ];
+    instance.gradient_stops2 = [roll_cos, roll_sin, pitch_cos, pitch_sin];
+    instance
+}
+
+fn emit_attitude_heading_ticks(
+    out: &mut Vec<RectInstance>,
+    sphere: [f32; 4],
+    line: [f32; 4],
+    marker: [f32; 4],
+    yaw_rad: f32,
+    sf: f32,
+) {
+    let cx = sphere[0] + sphere[2] * 0.5;
+    let cy = sphere[1] + sphere[3] * 0.5;
+    let radius = sphere[2].min(sphere[3]) * 0.5;
+    let tau = std::f32::consts::TAU;
+    let tick_radius = radius * 0.90;
+    let minor_len = (radius * 0.075).max(4.0 * sf);
+    let major_len = (radius * 0.13).max(8.0 * sf);
+    let minor_w = (1.4 * sf).max(1.0);
+    let major_w = (2.2 * sf).max(1.5);
+
+    for index in 0..12 {
+        let major = index % 3 == 0;
+        let red_reference = index == 0;
+        let angle = index as f32 * tau / 12.0 - yaw_rad;
+        let len = if major { major_len } else { minor_len };
+        let width = if major { major_w } else { minor_w };
+        let center_r = tick_radius - len * 0.5;
+        let tx = cx + angle.sin() * center_r;
+        let ty = cy - angle.cos() * center_r;
+        let mut tick = inst_radii(
+            [tx - width * 0.5, ty - len * 0.5, width, len],
+            if red_reference { marker } else { line },
+            [width * 0.5; 4],
+        );
+        tick.transform2[0] = angle;
+        // Keep heading ticks on the general rotated-rect path. They are few,
+        // and the compact capsule path is optimized for start/end line
+        // segments rather than radial tick marks.
+        tick.transform2[3] = 1.0;
+        out.push(tick);
+    }
 }
 
 fn inst_outline_ring_clipped(
@@ -1476,7 +2344,6 @@ fn apply_opacity(mut color: [f32; 4], opacity: Option<f32>) -> [f32; 4] {
     color
 }
 
-const LINE_PLOT_MAX_SEGMENTS_PER_SERIES: usize = 4096;
 const LINE_PLOT_AXIS_LABEL_FONT_SIZE_LP: f32 = 14.0;
 const LINE_PLOT_AXIS_LABEL_GUTTER_LP: f32 = 18.0;
 const LINE_PLOT_PALETTE: [[f32; 4]; 6] = [
@@ -1534,6 +2401,8 @@ fn emit_line_plot(
     styled_border: Option<[f32; 4]>,
     radii: [f32; 4],
     border_w: f32,
+    render_profile: PrimitiveRenderProfile,
+    line_plot_instances: &mut Vec<LinePlotSegmentInstance>,
 ) {
     let [_, _, w, h] = rect;
     emit_bordered_rect_radii(
@@ -1602,12 +2471,14 @@ fn emit_line_plot(
             .unwrap_or(LINE_PLOT_PALETTE[series_index % LINE_PLOT_PALETTE.len()]);
         emit_line_plot_series(
             out,
+            line_plot_instances,
             &series.points,
             plot,
             bounds,
             line_width,
             color,
             &series.line_style,
+            render_profile,
         );
     }
     emit_line_plot_legend(out, node, theme, sf, plot);
@@ -1819,6 +2690,7 @@ fn pie_chart_slice_label_layouts(
     node: &WidgetNode,
     sf: f32,
     plot: [f32; 4],
+    render_profile: PrimitiveRenderProfile,
 ) -> Vec<PieChartLabelLayout> {
     let mut labels = Vec::new();
     if !node.props.pie_chart.show_labels || node.props.pie_chart.label_mode == "none" {
@@ -1827,13 +2699,26 @@ fn pie_chart_slice_label_layouts(
 
     let total = node.props.pie_chart.total.max(f32::EPSILON);
     let size = plot[2].min(plot[3]).max(1.0);
+    let compact = render_profile.pie_chart_compact_labels && size <= 220.0 * sf;
+    let min_auto_percent = if compact { 0.12 } else { 0.075 };
+    let max_labels = if compact {
+        if size <= 160.0 * sf {
+            Some(3)
+        } else {
+            Some(5)
+        }
+    } else {
+        None
+    };
     let mut cursor = node.props.pie_chart.start_angle.to_radians();
     for slice in &node.props.pie_chart.slices {
         let percent = slice.value / total;
         let sweep = percent * std::f32::consts::TAU;
         let (_, _, mid, next_cursor) =
             pie_slice_angles(cursor, sweep, node.props.pie_chart.clockwise);
-        if percent < 0.075 && node.props.pie_chart.label_mode == "auto" {
+        if max_labels.is_some_and(|limit| labels.len() >= limit)
+            || (percent < min_auto_percent && node.props.pie_chart.label_mode == "auto")
+        {
             cursor = next_cursor;
             continue;
         }
@@ -1869,6 +2754,202 @@ fn pie_chart_slice_label_layouts(
     labels
 }
 
+fn pie_chart_legend_row_limit(
+    legend: [f32; 4],
+    row_h: f32,
+    render_profile: PrimitiveRenderProfile,
+) -> usize {
+    let height_limit = ((legend[3] - 8.0).max(0.0) / row_h.max(1.0)).floor() as usize;
+    if render_profile.pie_chart_compact_labels && legend[2] <= 220.0 && legend[3] <= 140.0 {
+        height_limit.min(4)
+    } else {
+        height_limit
+    }
+}
+
+fn emit_attitude_sphere(
+    out: &mut Vec<RectInstance>,
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    rect: [f32; 4],
+    styled_bg: Option<[f32; 4]>,
+    styled_border: Option<[f32; 4]>,
+    radii: [f32; 4],
+    border_w: f32,
+) {
+    emit_bordered_rect_radii(
+        out,
+        rect,
+        styled_border.unwrap_or(theme.border),
+        styled_bg.unwrap_or(theme.surface),
+        radii,
+        border_w,
+    );
+
+    let readout_h = if node.props.attitude_sphere.show_readout {
+        (20.0 * sf).min(rect[3] * 0.22).max(14.0)
+    } else {
+        0.0
+    };
+    let sphere_area_h = (rect[3] - readout_h).max(1.0);
+    let pad = (10.0 * sf).min(rect[2].min(sphere_area_h) * 0.12).max(2.0);
+    let size = (rect[2] - pad * 2.0)
+        .min(sphere_area_h - pad * 2.0)
+        .max(1.0);
+    let sphere = [
+        rect[0] + (rect[2] - size) * 0.5,
+        rect[1] + (sphere_area_h - size) * 0.5,
+        size,
+        size,
+    ];
+    let pitch_norm = (node.props.attitude_sphere.pitch / 90.0).clamp(-0.85, 0.85);
+    let pitch_angle = pitch_norm * 1.05;
+    let roll_rad = node.props.attitude_sphere.roll.to_radians();
+    let yaw_rad = node.props.attitude_sphere.yaw.to_radians();
+    let line = [0.94, 0.97, 1.0, 0.82];
+    let marker = [1.0, 0.18, 0.14, 1.0];
+    out.push(inst_attitude_sphere(
+        sphere,
+        [0.12, 0.34, 0.72, 1.0],
+        [0.46, 0.30, 0.16, 1.0],
+        line,
+        marker,
+        theme.border,
+        roll_rad.cos(),
+        roll_rad.sin(),
+        pitch_angle.cos(),
+        pitch_angle.sin(),
+        node.props.attitude_sphere.show_grid,
+        node.props.attitude_sphere.grid_quality == "high",
+    ));
+    if node.props.attitude_sphere.show_heading {
+        emit_attitude_heading_ticks(out, sphere, line, marker, yaw_rad, sf);
+    }
+}
+
+fn emit_translation_trace(
+    out: &mut Vec<RectInstance>,
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    rect: [f32; 4],
+    styled_bg: Option<[f32; 4]>,
+    styled_border: Option<[f32; 4]>,
+    radii: [f32; 4],
+    border_w: f32,
+) {
+    emit_bordered_rect_radii(
+        out,
+        rect,
+        styled_border.unwrap_or(theme.border),
+        styled_bg.unwrap_or(theme.surface),
+        radii,
+        border_w,
+    );
+
+    let pad = (12.0 * sf).min(rect[2].min(rect[3]) * 0.14).max(3.0);
+    let size = (rect[2] - pad * 2.0).min(rect[3] - pad * 2.0).max(1.0);
+    let plot = [
+        rect[0] + (rect[2] - size) * 0.5,
+        rect[1] + (rect[3] - size) * 0.5,
+        size,
+        size,
+    ];
+    let cx = plot[0] + plot[2] * 0.5;
+    let cy = plot[1] + plot[3] * 0.5;
+    let radius = plot[2].min(plot[3]) * 0.5;
+    let range_m = node.props.translation_trace.range_m.max(0.5);
+    let ring_step = node.props.translation_trace.ring_step_m.max(0.25);
+    let axis = [0.70, 0.80, 0.92, 0.42];
+    let ring = [0.50, 0.68, 0.92, 0.36];
+    let trail = [0.15, 0.78, 1.0, 1.0];
+    let current = [1.0, 0.78, 0.16, 1.0];
+
+    push_line_segment(out, [plot[0], cy], [plot[0] + plot[2], cy], 1.2 * sf, axis);
+    push_line_segment(out, [cx, plot[1]], [cx, plot[1] + plot[3]], 1.2 * sf, axis);
+
+    let ring_count = (range_m / ring_step).floor().clamp(1.0, 12.0) as usize;
+    for ring_index in 1..=ring_count {
+        let r = radius * ((ring_index as f32 * ring_step) / range_m).min(1.0);
+        let dots = ((r / (4.5 * sf).max(1.0)).round() as usize).clamp(16, 64);
+        let dot_size = (2.2 * sf).max(1.2);
+        for dot_index in 0..dots {
+            let angle = dot_index as f32 * std::f32::consts::TAU / dots as f32;
+            let x = cx + angle.cos() * r;
+            let y = cy + angle.sin() * r;
+            out.push(inst_radii(
+                [x - dot_size * 0.5, y - dot_size * 0.5, dot_size, dot_size],
+                ring,
+                [dot_size * 0.5; 4],
+            ));
+        }
+    }
+
+    let map_point = |point: [f32; 2]| -> Option<[f32; 2]> {
+        let x = point[0];
+        let y = point[1];
+        if !(x.is_finite() && y.is_finite()) {
+            return None;
+        }
+        Some([
+            cx + (x / range_m).clamp(-1.0, 1.0) * radius,
+            cy - (y / range_m).clamp(-1.0, 1.0) * radius,
+        ])
+    };
+
+    let points = &node.props.translation_trace.trail;
+    let total = points.len().max(1) as f32;
+    let mut prev: Option<[f32; 2]> = None;
+    for (index, point) in points.iter().enumerate() {
+        let Some(mapped) = map_point(*point) else {
+            prev = None;
+            continue;
+        };
+        let age = (index as f32 + 1.0) / total;
+        let mut color = trail;
+        color[3] = (0.12 + age * 0.62).min(0.78);
+        if let Some(previous) = prev {
+            push_line_segment(out, previous, mapped, 1.4 * sf, color);
+        }
+        let dot = (2.2 * sf + age * 2.2 * sf).max(1.5);
+        out.push(inst_radii(
+            [mapped[0] - dot * 0.5, mapped[1] - dot * 0.5, dot, dot],
+            color,
+            [dot * 0.5; 4],
+        ));
+        prev = Some(mapped);
+    }
+
+    let current_point = map_point([
+        node.props.translation_trace.x,
+        node.props.translation_trace.y,
+    ])
+    .unwrap_or([cx, cy]);
+    let current_size = (8.0 * sf).max(5.0);
+    out.push(inst_radii(
+        [
+            current_point[0] - current_size * 0.5,
+            current_point[1] - current_size * 0.5,
+            current_size,
+            current_size,
+        ],
+        current,
+        [current_size * 0.5; 4],
+    ));
+    let halo = current_size * 1.9;
+    out.push(inst_radii(
+        [
+            current_point[0] - halo * 0.5,
+            current_point[1] - halo * 0.5,
+            halo,
+            halo,
+        ],
+        [current[0], current[1], current[2], 0.18],
+        [halo * 0.5; 4],
+    ));
+}
+
 fn emit_pie_chart(
     out: &mut Vec<RectInstance>,
     node: &WidgetNode,
@@ -1879,6 +2960,7 @@ fn emit_pie_chart(
     styled_border: Option<[f32; 4]>,
     radii: [f32; 4],
     border_w: f32,
+    render_profile: PrimitiveRenderProfile,
 ) {
     emit_bordered_rect_radii(
         out,
@@ -1937,13 +3019,14 @@ fn emit_pie_chart(
         cursor = next_cursor;
     }
     let border = styled_border.unwrap_or(theme.border);
-    out.push(inst_outline_ring_clipped(
+    emit_border_outline(
+        out,
         plot,
         [border[0], border[1], border[2], 0.55],
         [size * 0.5; 4],
         1.0 * sf,
         [-1.0, -1.0, plot[2] + 1.0, plot[3] + 1.0],
-    ));
+    );
     if node.props.pie_chart.donut {
         let inner = size * node.props.pie_chart.inner_radius;
         let hole = [
@@ -1958,7 +3041,7 @@ fn emit_pie_chart(
             [inner * 0.5; 4],
         ));
     }
-    for label in pie_chart_slice_label_layouts(node, sf, plot) {
+    for label in pie_chart_slice_label_layouts(node, sf, plot, render_profile) {
         let chip = mix(theme.background, theme.surface, 0.18);
         out.push(inst_radii(
             label.rect,
@@ -1969,7 +3052,15 @@ fn emit_pie_chart(
     if node.props.pie_chart.show_legend && node.props.pie_chart.legend_position != "none" {
         let legend = pie_chart_legend_rect(node, sf, rect, chart_area);
         let row_h = 18.0 * sf;
-        for (index, slice) in node.props.pie_chart.slices.iter().enumerate() {
+        let row_limit = pie_chart_legend_row_limit(legend, row_h, render_profile);
+        for (index, slice) in node
+            .props
+            .pie_chart
+            .slices
+            .iter()
+            .enumerate()
+            .take(row_limit)
+        {
             let y = legend[1] + 6.0 * sf + index as f32 * row_h;
             if y + row_h > legend[1] + legend[3] {
                 break;
@@ -2005,6 +3096,86 @@ fn palette_color(index: usize, theme: &Theme) -> [f32; 4] {
         .unwrap_or(theme.accent)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct RenderedHistogramBin {
+    left: f32,
+    right: f32,
+    value: f32,
+}
+
+fn effective_histogram_tick_count(
+    node: &WidgetNode,
+    rect: [f32; 4],
+    render_profile: PrimitiveRenderProfile,
+) -> usize {
+    let requested = node.props.histogram.tick_count.clamp(2, 9);
+    let Some(compact_cap) = render_profile.histogram_compact_tick_count else {
+        return requested;
+    };
+    if rect[2] <= HISTOGRAM_COMPACT_TICK_WIDTH_PX || rect[3] <= HISTOGRAM_COMPACT_TICK_HEIGHT_PX {
+        requested.min(compact_cap.clamp(2, 9))
+    } else {
+        requested
+    }
+}
+
+fn rendered_histogram_bins(
+    node: &WidgetNode,
+    bounds: LinePlotBounds,
+    plot: [f32; 4],
+    render_profile: PrimitiveRenderProfile,
+) -> Vec<RenderedHistogramBin> {
+    let histogram = &node.props.histogram;
+    let span = (bounds.x_max - bounds.x_min).max(f32::EPSILON);
+    let original = histogram
+        .counts
+        .iter()
+        .copied()
+        .enumerate()
+        .filter_map(|(index, value)| {
+            if !value.is_finite() || value <= 0.0 {
+                return None;
+            }
+            let left = histogram.edges.get(index).copied()?;
+            let right = histogram.edges.get(index + 1).copied()?;
+            if !left.is_finite() || !right.is_finite() || right <= left {
+                return None;
+            }
+            if right < bounds.x_min || left > bounds.x_max {
+                return None;
+            }
+            Some(RenderedHistogramBin {
+                left: left.max(bounds.x_min),
+                right: right.min(bounds.x_max),
+                value,
+            })
+        })
+        .collect::<Vec<_>>();
+    let Some(budget) = render_profile.histogram_bin_budget else {
+        return original;
+    };
+    let bucket_count = budget.min(plot[2].floor().max(1.0) as usize).max(1);
+    if original.len() <= bucket_count {
+        return original;
+    }
+
+    let mut buckets: Vec<Option<RenderedHistogramBin>> = vec![None; bucket_count];
+    for bin in original {
+        let center = (bin.left + bin.right) * 0.5;
+        let t = ((center - bounds.x_min) / span).clamp(0.0, 1.0);
+        let index = ((t * bucket_count as f32).floor() as usize).min(bucket_count - 1);
+        buckets[index] = Some(match buckets[index] {
+            Some(existing) => RenderedHistogramBin {
+                left: existing.left.min(bin.left),
+                right: existing.right.max(bin.right),
+                value: existing.value.max(bin.value),
+            },
+            None => bin,
+        });
+    }
+    buckets.into_iter().flatten().collect()
+}
+
 fn emit_histogram(
     out: &mut Vec<RectInstance>,
     node: &WidgetNode,
@@ -2016,6 +3187,7 @@ fn emit_histogram(
     styled_accent: Option<[f32; 4]>,
     radii: [f32; 4],
     border_w: f32,
+    render_profile: PrimitiveRenderProfile,
 ) {
     emit_bordered_rect_radii(
         out,
@@ -2048,7 +3220,7 @@ fn emit_histogram(
         emit_histogram_toolbar(out, node, theme, sf, rect);
         return;
     };
-    let tick_count = node.props.histogram.tick_count.clamp(2, 9);
+    let tick_count = effective_histogram_tick_count(node, rect, render_profile);
     let x_ticks = line_plot_ticks(bounds.x_min, bounds.x_max, tick_count);
     let y_ticks = line_plot_ticks(bounds.y_min, bounds.y_max, tick_count);
     emit_line_plot_grid(
@@ -2073,21 +3245,9 @@ fn emit_histogram(
         .unwrap_or(styled_accent.unwrap_or(theme.accent));
     let gap = node.props.histogram.bar_gap.max(0.0) * sf;
     let span = (bounds.x_max - bounds.x_min).max(f32::EPSILON);
-    for (index, count) in node.props.histogram.counts.iter().copied().enumerate() {
-        if !count.is_finite() || count <= 0.0 {
-            continue;
-        }
-        let Some(left) = node.props.histogram.edges.get(index).copied() else {
-            continue;
-        };
-        let Some(right) = node.props.histogram.edges.get(index + 1).copied() else {
-            continue;
-        };
-        if right <= left || right < bounds.x_min || left > bounds.x_max {
-            continue;
-        }
-        let clipped_left = left.max(bounds.x_min);
-        let clipped_right = right.min(bounds.x_max);
+    for bin in rendered_histogram_bins(node, bounds, plot, render_profile) {
+        let clipped_left = bin.left.max(bounds.x_min);
+        let clipped_right = bin.right.min(bounds.x_max);
         let x0 = plot[0] + ((clipped_left - bounds.x_min) / span).clamp(0.0, 1.0) * plot[2];
         let x1 = plot[0] + ((clipped_right - bounds.x_min) / span).clamp(0.0, 1.0) * plot[2];
         let width = (x1 - x0).max(0.0);
@@ -2097,7 +3257,7 @@ fn emit_histogram(
         let inset = gap.min(width * 0.42);
         let bar_w = (width - inset * 2.0).max(0.75);
         let visible_bottom = bounds.y_min.max(0.0);
-        let visible_top = count.min(bounds.y_max);
+        let visible_top = bin.value.min(bounds.y_max);
         if visible_top <= visible_bottom {
             continue;
         }
@@ -2227,6 +3387,7 @@ pub(crate) fn histogram_text_labels(
     theme: &Theme,
     sf: f32,
     rect: [f32; 4],
+    render_profile: PrimitiveRenderProfile,
 ) -> Vec<LinePlotTextLabel> {
     let mut labels = Vec::new();
     let plot = histogram_plot_rect(node, sf, rect);
@@ -2266,7 +3427,7 @@ pub(crate) fn histogram_text_labels(
         return labels;
     };
     if histogram_ticks_enabled(node, rect) {
-        let tick_count = node.props.histogram.tick_count.clamp(2, 9);
+        let tick_count = effective_histogram_tick_count(node, rect, render_profile);
         let x_ticks = line_plot_ticks(bounds.x_min, bounds.x_max, tick_count);
         let y_ticks = line_plot_ticks(bounds.y_min, bounds.y_max, tick_count);
         let x_step = x_ticks
@@ -3342,6 +4503,7 @@ pub(crate) fn pie_chart_text_labels(
     theme: &Theme,
     sf: f32,
     rect: [f32; 4],
+    render_profile: PrimitiveRenderProfile,
 ) -> Vec<LinePlotTextLabel> {
     let mut labels = Vec::new();
     let color = mix(theme.muted_text, theme.text, 0.5);
@@ -3368,7 +4530,7 @@ pub(crate) fn pie_chart_text_labels(
     ];
     let total = node.props.pie_chart.total.max(f32::EPSILON);
     if node.props.pie_chart.show_labels && node.props.pie_chart.label_mode != "none" {
-        for label in pie_chart_slice_label_layouts(node, sf, plot) {
+        for label in pie_chart_slice_label_layouts(node, sf, plot, render_profile) {
             labels.push(LinePlotTextLabel {
                 text: label.text,
                 screen_x: label.screen_x,
@@ -3384,7 +4546,15 @@ pub(crate) fn pie_chart_text_labels(
     if node.props.pie_chart.show_legend && node.props.pie_chart.legend_position != "none" {
         let legend = pie_chart_legend_rect(node, sf, rect, chart);
         let row_h = 18.0 * sf;
-        for (index, slice) in node.props.pie_chart.slices.iter().enumerate() {
+        let row_limit = pie_chart_legend_row_limit(legend, row_h, render_profile);
+        for (index, slice) in node
+            .props
+            .pie_chart
+            .slices
+            .iter()
+            .enumerate()
+            .take(row_limit)
+        {
             let y = legend[1] + 4.0 * sf + index as f32 * row_h;
             if y + row_h > legend[1] + legend[3] {
                 break;
@@ -3406,12 +4576,14 @@ pub(crate) fn pie_chart_text_labels(
 
 fn emit_line_plot_series(
     out: &mut Vec<RectInstance>,
+    line_plot_instances: &mut Vec<LinePlotSegmentInstance>,
     points: &[[f32; 2]],
     plot: [f32; 4],
     bounds: LinePlotBounds,
     line_width: f32,
     color: [f32; 4],
     line_style: &str,
+    render_profile: PrimitiveRenderProfile,
 ) {
     let (start, end) = line_plot_visible_point_bounds(points, bounds);
     if end.saturating_sub(start) < 2 {
@@ -3419,36 +4591,236 @@ fn emit_line_plot_series(
     }
     let visible = &points[start..end];
     let segment_count = visible.len().saturating_sub(1).max(1);
-    let stride = ((segment_count + LINE_PLOT_MAX_SEGMENTS_PER_SERIES - 1)
-        / LINE_PLOT_MAX_SEGMENTS_PER_SERIES)
-        .max(1);
+    let budget = render_profile.line_plot_segment_budget.max(1);
+    let effective_line_style =
+        if should_simplify_line_style(segment_count, line_style, render_profile) {
+            "solid"
+        } else {
+            line_style
+        };
+    if matches!(effective_line_style, "solid" | "") {
+        let line_start = line_plot_instances.len();
+        if segment_count <= budget {
+            push_line_plot_segments(
+                line_plot_instances,
+                visible,
+                plot,
+                bounds,
+                line_width,
+                color,
+            );
+        } else {
+            let simplified = line_plot_simplified_screen_points(visible, plot, bounds, budget);
+            push_line_plot_screen_segments(
+                line_plot_instances,
+                &simplified,
+                plot,
+                line_width,
+                color,
+            );
+        }
+        push_line_plot_marker(out, line_start, line_plot_instances.len() - line_start);
+        return;
+    }
+    if segment_count <= budget {
+        let mut prev: Option<[f32; 2]> = None;
+        for point in visible {
+            emit_line_plot_point(
+                out,
+                *point,
+                plot,
+                bounds,
+                line_width,
+                color,
+                effective_line_style,
+                &mut prev,
+            );
+        }
+        return;
+    }
+
+    let simplified = line_plot_simplified_screen_points(visible, plot, bounds, budget);
+    emit_line_plot_screen_points(
+        out,
+        &simplified,
+        plot,
+        line_width,
+        color,
+        effective_line_style,
+    );
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LinePlotBucketPoint {
+    index: usize,
+    point: [f32; 2],
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct LinePlotScreenBucket {
+    first: Option<LinePlotBucketPoint>,
+    min_y: Option<LinePlotBucketPoint>,
+    max_y: Option<LinePlotBucketPoint>,
+    last: Option<LinePlotBucketPoint>,
+}
+
+impl LinePlotScreenBucket {
+    fn push(&mut self, index: usize, point: [f32; 2]) {
+        let bucket_point = LinePlotBucketPoint { index, point };
+        if self.first.is_none() {
+            self.first = Some(bucket_point);
+        }
+        if self
+            .min_y
+            .is_none_or(|candidate| point[1] < candidate.point[1])
+        {
+            self.min_y = Some(bucket_point);
+        }
+        if self
+            .max_y
+            .is_none_or(|candidate| point[1] > candidate.point[1])
+        {
+            self.max_y = Some(bucket_point);
+        }
+        self.last = Some(bucket_point);
+    }
+}
+
+fn line_plot_bucket_count(plot_width: f32, budget: usize) -> usize {
+    let budget_buckets = (budget.max(4) / 4).max(1);
+    let pixel_buckets = plot_width.ceil().max(1.0) as usize;
+    budget_buckets.min(pixel_buckets).max(1)
+}
+
+fn line_plot_simplified_screen_points(
+    points: &[[f32; 2]],
+    plot: [f32; 4],
+    bounds: LinePlotBounds,
+    budget: usize,
+) -> Vec<[f32; 2]> {
+    let bucket_count = line_plot_bucket_count(plot[2], budget);
+    let mut buckets = vec![LinePlotScreenBucket::default(); bucket_count];
+    let width = plot[2].max(1.0);
+    for (index, point) in points.iter().copied().enumerate() {
+        let Some(mapped) = map_line_plot_point(point, plot, bounds) else {
+            continue;
+        };
+        let bucket = (((mapped[0] - plot[0]) / width) * bucket_count as f32)
+            .floor()
+            .clamp(0.0, (bucket_count - 1) as f32) as usize;
+        buckets[bucket].push(index, mapped);
+    }
+
+    let mut simplified = Vec::with_capacity((bucket_count * 4).min(points.len()));
+    for bucket in buckets {
+        let mut candidates = [bucket.first, bucket.min_y, bucket.max_y, bucket.last]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>();
+        candidates.sort_by_key(|candidate| candidate.index);
+        candidates.dedup_by_key(|candidate| candidate.index);
+        for candidate in candidates {
+            if simplified.last().copied() != Some(candidate.point) {
+                simplified.push(candidate.point);
+            }
+        }
+    }
+    simplified
+}
+
+fn emit_line_plot_screen_points(
+    out: &mut Vec<RectInstance>,
+    points: &[[f32; 2]],
+    plot: [f32; 4],
+    line_width: f32,
+    color: [f32; 4],
+    line_style: &str,
+) {
     let mut prev: Option<[f32; 2]> = None;
-    let mut last_index = 0usize;
-    for idx in (0..visible.len()).step_by(stride) {
-        emit_line_plot_point(
-            out,
-            visible[idx],
-            plot,
-            bounds,
-            line_width,
-            color,
-            line_style,
-            &mut prev,
-        );
-        last_index = idx;
+    for mapped in points {
+        if let Some(previous) = prev {
+            if let Some((start, end)) = clip_line_segment_to_rect(previous, *mapped, plot) {
+                push_styled_line_segment(out, start, end, line_width, color, line_style);
+            }
+        }
+        prev = Some(*mapped);
     }
-    if last_index != visible.len() - 1 {
-        emit_line_plot_point(
-            out,
-            visible[visible.len() - 1],
-            plot,
-            bounds,
-            line_width,
-            color,
-            line_style,
-            &mut prev,
-        );
+}
+
+fn push_line_plot_marker(out: &mut Vec<RectInstance>, start: usize, count: usize) {
+    if count == 0 {
+        return;
     }
+    let mut marker = inst([0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 0.0], 0.0);
+    marker.params = [LINE_PLOT_GPU_MARKER, start as f32, count as f32, 0.0];
+    out.push(marker);
+}
+
+fn push_line_plot_segments(
+    out: &mut Vec<LinePlotSegmentInstance>,
+    points: &[[f32; 2]],
+    plot: [f32; 4],
+    bounds: LinePlotBounds,
+    line_width: f32,
+    color: [f32; 4],
+) {
+    let mut prev: Option<[f32; 2]> = None;
+    for point in points {
+        let mapped = map_line_plot_point(*point, plot, bounds);
+        let Some(mapped) = mapped else {
+            prev = None;
+            continue;
+        };
+        if let Some(previous) = prev {
+            if let Some((start, end)) = clip_line_segment_to_rect(previous, mapped, plot) {
+                push_line_plot_screen_segment(out, start, end, line_width, color);
+            }
+        }
+        prev = Some(mapped);
+    }
+}
+
+fn push_line_plot_screen_segments(
+    out: &mut Vec<LinePlotSegmentInstance>,
+    points: &[[f32; 2]],
+    plot: [f32; 4],
+    line_width: f32,
+    color: [f32; 4],
+) {
+    let mut prev: Option<[f32; 2]> = None;
+    for mapped in points {
+        if let Some(previous) = prev {
+            if let Some((start, end)) = clip_line_segment_to_rect(previous, *mapped, plot) {
+                push_line_plot_screen_segment(out, start, end, line_width, color);
+            }
+        }
+        prev = Some(*mapped);
+    }
+}
+
+fn push_line_plot_screen_segment(
+    out: &mut Vec<LinePlotSegmentInstance>,
+    start: [f32; 2],
+    end: [f32; 2],
+    line_width: f32,
+    color: [f32; 4],
+) {
+    out.push(LinePlotSegmentInstance {
+        start,
+        end,
+        color,
+        params: [line_width, 0.0, 0.0, 0.0],
+    });
+}
+
+fn should_simplify_line_style(
+    segment_count: usize,
+    line_style: &str,
+    render_profile: PrimitiveRenderProfile,
+) -> bool {
+    render_profile.line_plot_simplify_styles
+        && !matches!(line_style, "solid" | "")
+        && segment_count > render_profile.line_plot_segment_budget.max(1) / 2
 }
 
 fn emit_line_plot_point(
@@ -4408,7 +5780,7 @@ fn emit_paint_rect_radii(
     radii: [f32; 4],
 ) {
     match paint {
-        FillPaint::Solid(color) => out.push(inst_radii(rect, color, radii)),
+        FillPaint::Solid(color) => emit_large_fill_or_rect(out, rect, color, radii),
         FillPaint::Layers(layers) => {
             for layer in layers.iter().rev() {
                 emit_paint_rect_radii(out, rect, layer.clone(), radii);
@@ -4571,21 +5943,16 @@ fn emit_bordered_rect_radii(
 ) {
     let width = border_w.max(0.0);
     if width <= 0.0 {
-        out.push(inst_radii(rect, fill, radii));
+        emit_large_fill_or_rect(out, rect, fill, radii);
         return;
     }
-    out.push(inst_radii(
+    emit_large_fill_or_rect(
+        out,
         inset_rect(rect, width),
         fill,
         inset_radii(radii, width),
-    ));
-    out.push(inst_outline_ring_clipped(
-        rect,
-        border,
-        radii,
-        width,
-        default_local_clip(rect),
-    ));
+    );
+    emit_border_outline(out, rect, border, radii, width, default_local_clip(rect));
 }
 
 fn emit_bordered_paint_rect_radii(
@@ -4607,13 +5974,7 @@ fn emit_bordered_paint_rect_radii(
         fill,
         inset_radii(radii, width),
     );
-    out.push(inst_outline_ring_clipped(
-        rect,
-        border,
-        radii,
-        width,
-        default_local_clip(rect),
-    ));
+    emit_border_outline(out, rect, border, radii, width, default_local_clip(rect));
 }
 
 fn emit_underpainted_bordered_paint_rect_radii(
@@ -4636,6 +5997,56 @@ fn emit_underpainted_bordered_paint_rect_radii(
         fill,
         inset_radii(radii, width),
     );
+}
+
+fn split_large_outline_rings_enabled() -> bool {
+    std::env::var("DRAGONGUI_BENCH_SPLIT_OUTLINE_RINGS")
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or_else(|_| cfg!(feature = "pi"))
+}
+
+fn emit_border_outline(
+    out: &mut Vec<RectInstance>,
+    rect: [f32; 4],
+    color: [f32; 4],
+    radii: [f32; 4],
+    width: f32,
+    clip: [f32; 4],
+) {
+    if split_large_outline_rings_enabled() && should_split_outline_ring(rect, width) {
+        emit_outline_strips(out, rect, color, width);
+    } else {
+        out.push(inst_outline_ring_clipped(rect, color, radii, width, clip));
+    }
+}
+
+fn should_split_outline_ring(rect: [f32; 4], width: f32) -> bool {
+    let area = rect[2].max(0.0) * rect[3].max(0.0);
+    let thin = width <= 3.0;
+    thin && area >= 16_384.0
+}
+
+fn emit_outline_strips(out: &mut Vec<RectInstance>, rect: [f32; 4], color: [f32; 4], width: f32) {
+    let x = rect[0];
+    let y = rect[1];
+    let w = rect[2].max(0.0);
+    let h = rect[3].max(0.0);
+    let t = width.max(1.0).min(w * 0.5).min(h * 0.5);
+    if w <= 0.0 || h <= 0.0 || t <= 0.0 || color[3] <= 0.0 {
+        return;
+    }
+    out.push(inst_radii([x, y, w, t], color, [0.0; 4]));
+    out.push(inst_radii([x, y + h - t, w, t], color, [0.0; 4]));
+    let side_h = (h - t * 2.0).max(0.0);
+    if side_h > 0.0 {
+        out.push(inst_radii([x, y + t, t, side_h], color, [0.0; 4]));
+        out.push(inst_radii([x + w - t, y + t, t, side_h], color, [0.0; 4]));
+    }
 }
 
 fn emit_box_shadows(
@@ -4779,13 +6190,7 @@ fn emit_outline(
     let Some(local_clip) = local_clip_for_rect(outer, clip) else {
         return;
     };
-    out.push(inst_outline_ring_clipped(
-        outer,
-        color,
-        outer_radii,
-        width,
-        local_clip,
-    ));
+    emit_border_outline(out, outer, color, outer_radii, width, local_clip);
 }
 
 fn emit_focus_ring_radii(
@@ -4821,7 +6226,19 @@ fn emit_rects(
     caret_positions: &HashMap<String, [f32; 2]>,
     out: &mut Vec<RectInstance>,
 ) {
-    emit_rects_inner(node, layout, theme, sf, state, caret_positions, false, out);
+    let mut line_plot_instances = Vec::new();
+    emit_rects_inner(
+        node,
+        layout,
+        theme,
+        sf,
+        state,
+        caret_positions,
+        false,
+        PrimitiveRenderProfile::default(),
+        out,
+        &mut line_plot_instances,
+    );
 }
 
 fn emit_rects_inner(
@@ -4832,7 +6249,9 @@ fn emit_rects_inner(
     state: &WidgetState,
     caret_positions: &HashMap<String, [f32; 2]>,
     skip_open_modals: bool,
+    render_profile: PrimitiveRenderProfile,
     out: &mut Vec<RectInstance>,
+    line_plot_instances: &mut Vec<LinePlotSegmentInstance>,
 ) {
     if node.kind == WidgetKind::Tooltip {
         return;
@@ -5016,13 +6435,14 @@ fn emit_rects_inner(
                     ));
                 }
                 if border_w > 0.0 {
-                    out.push(inst_outline_ring_clipped(
+                    emit_border_outline(
+                        out,
                         [x, y, w, h],
                         border_color,
                         radii,
                         border_w,
                         default_local_clip([x, y, w, h]),
-                    ));
+                    );
                 }
                 let full_rect = layout
                     .rects
@@ -6357,9 +7777,35 @@ fn emit_rects_inner(
                 styled_accent,
                 radii,
                 border_w,
+                render_profile,
             ),
 
             WidgetKind::PieChart => emit_pie_chart(
+                out,
+                node,
+                theme,
+                sf,
+                [x, y, w, h],
+                styled_bg,
+                styled_border,
+                radii,
+                border_w,
+                render_profile,
+            ),
+
+            WidgetKind::AttitudeSphere => emit_attitude_sphere(
+                out,
+                node,
+                theme,
+                sf,
+                [x, y, w, h],
+                styled_bg,
+                styled_border,
+                radii,
+                border_w,
+            ),
+
+            WidgetKind::TranslationTrace => emit_translation_trace(
                 out,
                 node,
                 theme,
@@ -6381,6 +7827,8 @@ fn emit_rects_inner(
                 styled_border,
                 radii,
                 border_w,
+                render_profile,
+                line_plot_instances,
             ),
 
             WidgetKind::Scatter3D => {
@@ -6426,7 +7874,16 @@ fn emit_rects_inner(
                     radii,
                 ));
                 if let Some(table_state) = state.table(&node.id) {
-                    let metrics = table::metrics_for_node(node, theme, sf);
+                    let metrics = table::metrics_for_node_with_profile(
+                        node,
+                        theme,
+                        sf,
+                        if render_profile.table_compact_metrics {
+                            table::TableMetricsProfile::pi_compact()
+                        } else {
+                            table::TableMetricsProfile::default()
+                        },
+                    );
                     let visible = table::visible(table_state, &full_rect, metrics);
                     let table_right = x + w;
                     let table_bottom = y + h;
@@ -6597,13 +8054,14 @@ fn emit_rects_inner(
                 }
                 let border_color = styled_border.unwrap_or(grid_color);
                 if border_w > 0.0 {
-                    out.push(inst_outline_ring_clipped(
+                    emit_border_outline(
+                        out,
                         table_rect,
                         border_color,
                         table_radii,
                         border_w,
                         default_local_clip(table_rect),
-                    ));
+                    );
                 }
             }
 
@@ -6660,7 +8118,9 @@ fn emit_rects_inner(
             state,
             caret_positions,
             skip_open_modals,
+            render_profile,
             out,
+            line_plot_instances,
         );
     }
     if is_scroll_container_node(node) {
@@ -6818,14 +8278,36 @@ fn emit_modal_overlays(
     sf: f32,
     state: &WidgetState,
     caret_positions: &HashMap<String, [f32; 2]>,
+    render_profile: PrimitiveRenderProfile,
     out: &mut Vec<RectInstance>,
 ) {
     if node.kind == WidgetKind::Modal && node.props.open.unwrap_or(false) {
-        emit_rects_inner(node, layout, theme, sf, state, caret_positions, false, out);
+        let mut line_plot_instances = Vec::new();
+        emit_rects_inner(
+            node,
+            layout,
+            theme,
+            sf,
+            state,
+            caret_positions,
+            false,
+            render_profile,
+            out,
+            &mut line_plot_instances,
+        );
         return;
     }
     for child in &node.children {
-        emit_modal_overlays(child, layout, theme, sf, state, caret_positions, out);
+        emit_modal_overlays(
+            child,
+            layout,
+            theme,
+            sf,
+            state,
+            caret_positions,
+            render_profile,
+            out,
+        );
     }
 }
 
@@ -7250,6 +8732,229 @@ mod tests {
     fn has_rect(out: &[RectInstance], color: [f32; 4], rect: [f32; 4]) -> bool {
         out.iter()
             .any(|inst| inst.color == color && inst.rect == rect)
+    }
+
+    fn has_point_near(points: &[[f32; 2]], expected: [f32; 2]) -> bool {
+        points.iter().any(|point| {
+            (point[0] - expected[0]).abs() < 0.001 && (point[1] - expected[1]).abs() < 0.001
+        })
+    }
+
+    #[test]
+    fn line_plot_bucket_count_respects_budget_and_plot_width() {
+        assert_eq!(line_plot_bucket_count(800.0, 4096), 800);
+        assert_eq!(line_plot_bucket_count(800.0, 1536), 384);
+        assert_eq!(line_plot_bucket_count(12.0, 1536), 12);
+    }
+
+    #[test]
+    fn line_plot_bucket_simplification_preserves_extrema() {
+        let points = [[0.0, 0.0], [0.1, 10.0], [0.2, -8.0], [0.3, 1.0], [1.0, 2.0]];
+        let simplified = line_plot_simplified_screen_points(
+            &points,
+            [0.0, 0.0, 2.0, 100.0],
+            LinePlotBounds {
+                x_min: 0.0,
+                x_max: 1.0,
+                y_min: -10.0,
+                y_max: 10.0,
+            },
+            4,
+        );
+
+        assert!(has_point_near(&simplified, [0.2, 0.0]));
+        assert!(has_point_near(&simplified, [0.4, 90.0]));
+        assert!(has_point_near(&simplified, [2.0, 40.0]));
+    }
+
+    #[test]
+    fn line_plot_style_simplification_is_profile_driven() {
+        let desktop = PrimitiveRenderProfile::default();
+        let pi = PrimitiveRenderProfile {
+            line_plot_segment_budget: 1536,
+            line_plot_simplify_styles: true,
+            histogram_bin_budget: Some(384),
+            histogram_compact_tick_count: Some(4),
+            table_compact_metrics: true,
+            pie_chart_compact_labels: true,
+        };
+
+        assert!(!should_simplify_line_style(4000, "dashed", desktop));
+        assert!(!should_simplify_line_style(700, "dashed", pi));
+        assert!(!should_simplify_line_style(4000, "solid", pi));
+        assert!(should_simplify_line_style(4000, "dashed", pi));
+        assert!(should_simplify_line_style(4000, "dotted", pi));
+    }
+
+    #[test]
+    fn histogram_render_bins_are_profile_budgeted_without_mutating_data() {
+        let mut hist = node("hist", WidgetKind::Histogram);
+        hist.props.histogram.edges = (0..=8).map(|value| value as f32).collect();
+        hist.props.histogram.counts = vec![1.0, 3.0, 2.0, 7.0, 4.0, 5.0, 8.0, 6.0];
+        let bounds = histogram_resolved_bounds(&hist).expect("histogram bounds");
+        let desktop_bins = rendered_histogram_bins(
+            &hist,
+            bounds,
+            [0.0, 0.0, 400.0, 120.0],
+            PrimitiveRenderProfile::default(),
+        );
+        let pi_bins = rendered_histogram_bins(
+            &hist,
+            bounds,
+            [0.0, 0.0, 400.0, 120.0],
+            PrimitiveRenderProfile {
+                histogram_bin_budget: Some(4),
+                ..PrimitiveRenderProfile::default()
+            },
+        );
+
+        assert_eq!(desktop_bins.len(), 8);
+        assert_eq!(pi_bins.len(), 4);
+        assert_eq!(pi_bins[0].value, 3.0);
+        assert_eq!(pi_bins[1].value, 7.0);
+        assert_eq!(pi_bins[2].value, 5.0);
+        assert_eq!(pi_bins[3].value, 8.0);
+        assert_eq!(hist.props.histogram.counts.len(), 8);
+    }
+
+    #[test]
+    fn histogram_compact_tick_count_is_profile_gated() {
+        let mut hist = node("hist", WidgetKind::Histogram);
+        hist.props.histogram.tick_count = 8;
+        let pi = PrimitiveRenderProfile {
+            histogram_compact_tick_count: Some(4),
+            ..PrimitiveRenderProfile::default()
+        };
+
+        assert_eq!(
+            effective_histogram_tick_count(&hist, [0.0, 0.0, 320.0, 200.0], pi),
+            4
+        );
+        assert_eq!(
+            effective_histogram_tick_count(&hist, [0.0, 0.0, 600.0, 360.0], pi),
+            8
+        );
+        assert_eq!(
+            effective_histogram_tick_count(
+                &hist,
+                [0.0, 0.0, 320.0, 200.0],
+                PrimitiveRenderProfile::default()
+            ),
+            8
+        );
+    }
+
+    #[test]
+    fn histogram_emit_uses_profile_bin_budget_for_bar_primitives() {
+        let mut hist = node("hist", WidgetKind::Histogram);
+        hist.props.histogram.edges = (0..=12).map(|value| value as f32).collect();
+        hist.props.histogram.counts = vec![1.0; 12];
+        hist.props.histogram.show_grid = false;
+        hist.props.histogram.show_axes = false;
+        hist.props.histogram.show_ticks = false;
+        hist.props.histogram.show_toolbar = false;
+        hist.props.histogram.bar_gap = 0.0;
+        let color = [0.25, 0.5, 0.75, 1.0];
+        hist.props.histogram.color = Some(ColorRef::Rgba(color));
+        let theme = Theme::dark();
+        let mut desktop = Vec::new();
+        emit_histogram(
+            &mut desktop,
+            &hist,
+            &theme,
+            1.0,
+            [0.0, 0.0, 240.0, 180.0],
+            None,
+            None,
+            None,
+            [0.0; 4],
+            1.0,
+            PrimitiveRenderProfile::default(),
+        );
+        let mut pi = Vec::new();
+        emit_histogram(
+            &mut pi,
+            &hist,
+            &theme,
+            1.0,
+            [0.0, 0.0, 240.0, 180.0],
+            None,
+            None,
+            None,
+            [0.0; 4],
+            1.0,
+            PrimitiveRenderProfile {
+                histogram_bin_budget: Some(4),
+                ..PrimitiveRenderProfile::default()
+            },
+        );
+
+        assert_eq!(
+            desktop.iter().filter(|inst| inst.color == color).count(),
+            12
+        );
+        assert_eq!(pi.iter().filter(|inst| inst.color == color).count(), 4);
+    }
+
+    fn test_pie_chart() -> WidgetNode {
+        crate::document::parse_widget_node(&serde_json::json!({
+            "id": "pie",
+            "type": "pie_chart",
+            "props": {
+                "labels": ["A", "B", "C", "D", "E", "F"],
+                "values": [42.0, 24.0, 14.0, 8.0, 7.0, 5.0],
+                "show_labels": true,
+                "label_mode": "auto",
+                "show_legend": true,
+                "legend_position": "right"
+            }
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn pie_chart_compact_profile_caps_slice_labels() {
+        let pie = test_pie_chart();
+        let desktop = pie_chart_slice_label_layouts(
+            &pie,
+            1.0,
+            [0.0, 0.0, 150.0, 150.0],
+            PrimitiveRenderProfile::default(),
+        );
+        let compact = pie_chart_slice_label_layouts(
+            &pie,
+            1.0,
+            [0.0, 0.0, 150.0, 150.0],
+            PrimitiveRenderProfile {
+                pie_chart_compact_labels: true,
+                ..PrimitiveRenderProfile::default()
+            },
+        );
+
+        assert!(desktop.len() > compact.len());
+        assert_eq!(compact.len(), 3);
+    }
+
+    #[test]
+    fn pie_chart_compact_profile_caps_legend_rows() {
+        let legend = [0.0, 0.0, 160.0, 120.0];
+        let row_h = 18.0;
+
+        assert_eq!(
+            pie_chart_legend_row_limit(legend, row_h, PrimitiveRenderProfile::default()),
+            6
+        );
+        assert_eq!(
+            pie_chart_legend_row_limit(
+                legend,
+                row_h,
+                PrimitiveRenderProfile {
+                    pie_chart_compact_labels: true,
+                    ..PrimitiveRenderProfile::default()
+                }
+            ),
+            4
+        );
     }
 
     #[test]
@@ -9137,8 +10842,29 @@ mod tests {
         let theme = Theme::dark();
         let state = WidgetState::default();
         let carets = HashMap::new();
-        emit_rects_inner(&root, &layout, &theme, 1.0, &state, &carets, true, &mut out);
-        emit_modal_overlays(&root, &layout, &theme, 1.0, &state, &carets, &mut out);
+        let mut line_plot_instances = Vec::new();
+        emit_rects_inner(
+            &root,
+            &layout,
+            &theme,
+            1.0,
+            &state,
+            &carets,
+            true,
+            PrimitiveRenderProfile::default(),
+            &mut out,
+            &mut line_plot_instances,
+        );
+        emit_modal_overlays(
+            &root,
+            &layout,
+            &theme,
+            1.0,
+            &state,
+            &carets,
+            PrimitiveRenderProfile::default(),
+            &mut out,
+        );
 
         let panel_index = out
             .iter()
@@ -9226,6 +10952,78 @@ mod tests {
         assert_eq!(thumb.rect[3], 7.0);
         assert!(thumb.rect[0] > track.rect[0]);
         assert!(thumb.rect[0] + thumb.rect[2] <= track.rect[0] + track.rect[2]);
+    }
+
+    #[test]
+    fn sidebar_scroll_container_emits_vertical_scrollbar_indicator() {
+        let mut sidebar = node("sidebar", WidgetKind::Sidebar);
+        sidebar.style.layout.overflow_y = Some(OverflowStyle::Auto);
+        sidebar.style.parts.parts.insert(
+            "scrollbar-track".to_string(),
+            PartStyle {
+                layout: PartLayoutStyle {
+                    width: Some(6.0),
+                    padding: Some(8.0),
+                    ..Default::default()
+                },
+                visual: VisualStyle {
+                    background: Some(ColorRef::Rgba([0.11, 0.21, 0.31, 0.41])),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+        sidebar.style.parts.parts.insert(
+            "scrollbar-thumb".to_string(),
+            PartStyle {
+                layout: PartLayoutStyle {
+                    width: Some(8.0),
+                    ..Default::default()
+                },
+                visual: VisualStyle {
+                    background: Some(ColorRef::Rgba([0.51, 0.61, 0.71, 0.81])),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "sidebar".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 160.0,
+                h: 140.0,
+            },
+        );
+        layout.scroll_max_y.insert("sidebar".to_string(), 240.0);
+        layout.scroll_y.insert("sidebar".to_string(), 60.0);
+        let mut out = Vec::new();
+
+        emit_rects(
+            &sidebar,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let track = out
+            .iter()
+            .find(|inst| inst.color == [0.11, 0.21, 0.31, 0.41])
+            .expect("styled Sidebar scrollbar track");
+        let thumb = out
+            .iter()
+            .find(|inst| inst.color == [0.51, 0.61, 0.71, 0.81])
+            .expect("styled Sidebar scrollbar thumb");
+        assert_eq!(track.rect[2], 6.0);
+        assert_eq!(thumb.rect[2], 8.0);
+        assert!(thumb.rect[1] > track.rect[1]);
+        assert!(thumb.rect[1] + thumb.rect[3] <= track.rect[1] + track.rect[3]);
     }
 
     #[test]

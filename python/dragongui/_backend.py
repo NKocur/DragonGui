@@ -235,7 +235,7 @@ def _runtime_profile() -> str:
 
 
 def _scatter_max_points(profile: str) -> int | None:
-    return 100_000 if profile == "pi" else None
+    return 200_000 if profile == "pi" else None
 
 
 def _scatter_lod_threshold(profile: str) -> int | None:

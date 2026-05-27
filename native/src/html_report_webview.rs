@@ -649,6 +649,7 @@ mod platform {
                 "platform": "unsupported",
                 "enabled": false,
                 "reason": "embedded HTML reports currently require Windows WebView2",
+                "external_fallback_available": true,
             })
         }
     }
@@ -664,6 +665,7 @@ mod platform {
 
             assert_eq!(snapshot["platform"], "unsupported");
             assert_eq!(snapshot["enabled"], false);
+            assert_eq!(snapshot["external_fallback_available"], true);
             assert!(snapshot["reason"]
                 .as_str()
                 .unwrap_or_default()

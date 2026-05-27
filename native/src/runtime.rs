@@ -16,9 +16,9 @@ use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent
 use winit::event_loop::{
     ActiveEventLoop, ControlFlow, EventLoop, EventLoopBuilder, OwnedDisplayHandle,
 };
+use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 #[cfg(target_os = "linux")]
 use winit::platform::{wayland::EventLoopBuilderExtWayland, x11::EventLoopBuilderExtX11};
-use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 use winit::window::{Theme as WinitTheme, Window, WindowId};
 
 use crate::commands::{
@@ -48,8 +48,8 @@ use crate::primitives::{
     histogram_plot_rect, histogram_resolved_bounds, histogram_text_labels, histogram_toolbar_hit,
     interpolate_visual_style, line_plot_plot_rect, line_plot_resolved_bounds,
     line_plot_text_labels, line_plot_toolbar_hit, panel_scrollbar_geometry, pie_chart_text_labels,
-    LinePlotBounds, PanelScrollbarAxis, PanelScrollbarAxisGeometry, PrimitivesRenderer,
-    RectInstance,
+    LinePlotBounds, PanelScrollbarAxis, PanelScrollbarAxisGeometry, PrimitiveRenderProfile,
+    PrimitivesRenderer, RectInstance,
 };
 use crate::resources::ResourceRegistry;
 use crate::runtime_profile::{self, RuntimeProfileSelection};
@@ -134,6 +134,60 @@ fn wgpu_backend_names(backends: wgpu::Backends) -> Vec<&'static str> {
         names.push("noop");
     }
     names
+}
+
+fn present_mode_name(mode: wgpu::PresentMode) -> &'static str {
+    match mode {
+        wgpu::PresentMode::AutoVsync => "auto_vsync",
+        wgpu::PresentMode::AutoNoVsync => "auto_no_vsync",
+        wgpu::PresentMode::Fifo => "fifo",
+        wgpu::PresentMode::FifoRelaxed => "fifo_relaxed",
+        wgpu::PresentMode::Immediate => "immediate",
+        wgpu::PresentMode::Mailbox => "mailbox",
+    }
+}
+
+fn parse_present_mode(value: &str) -> Option<wgpu::PresentMode> {
+    match value.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+        "" | "auto" => None,
+        "auto_vsync" | "vsync" => Some(wgpu::PresentMode::AutoVsync),
+        "auto_no_vsync" | "auto_novsync" | "no_vsync" | "novsync" => {
+            Some(wgpu::PresentMode::AutoNoVsync)
+        }
+        "fifo" => Some(wgpu::PresentMode::Fifo),
+        "fifo_relaxed" => Some(wgpu::PresentMode::FifoRelaxed),
+        "immediate" => Some(wgpu::PresentMode::Immediate),
+        "mailbox" => Some(wgpu::PresentMode::Mailbox),
+        _ => None,
+    }
+}
+
+fn env_present_mode() -> Option<wgpu::PresentMode> {
+    std::env::var("DRAGONGUI_PRESENT_MODE")
+        .ok()
+        .and_then(|value| parse_present_mode(&value))
+}
+
+fn env_max_frame_latency() -> Option<u32> {
+    std::env::var("DRAGONGUI_MAX_FRAME_LATENCY")
+        .ok()
+        .and_then(|value| value.trim().parse::<u32>().ok())
+        .filter(|value| *value > 0)
+}
+
+fn env_flag_enabled(name: &str) -> bool {
+    env_flag_or(name, false)
+}
+
+fn env_flag_or(name: &str, default: bool) -> bool {
+    std::env::var(name)
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(default)
 }
 
 fn parse_wgpu_backend_override(value: &str) -> Result<Option<(String, wgpu::Backends)>, String> {
@@ -380,6 +434,9 @@ fn apply_scatter_profile_defaults(widget: &mut ScatterWidget, profile: &RuntimeP
     if let Some(scale) = profile.scatter_interactive_render_scale() {
         widget.interactive_render_scale = widget.interactive_render_scale.min(scale);
     }
+    if let Some(scale) = profile.scatter_static_render_scale() {
+        widget.set_static_render_scale(scale);
+    }
 }
 
 fn coalesce_runtime_command_batch(commands: &mut Vec<Command>) {
@@ -389,6 +446,9 @@ fn coalesce_runtime_command_batch(commands: &mut Vec<Command>) {
     let mut seen_scatter_updates = HashMap::new();
     let mut seen_scatter_actor_updates = HashMap::new();
     let mut seen_line_plot_updates = HashMap::new();
+    let mut seen_histogram_updates = HashMap::new();
+    let mut seen_attitude_updates = HashMap::new();
+    let mut seen_translation_updates = HashMap::new();
     let mut filtered = Vec::with_capacity(commands.len());
     while let Some(command) = commands.pop() {
         let keep = match &command {
@@ -434,6 +494,32 @@ fn coalesce_runtime_command_batch(commands: &mut Vec<Command>) {
                     true
                 }
             }
+            Command::SetHistogramBinsPacked {
+                id, coalesce: true, ..
+            } => {
+                if seen_histogram_updates.contains_key(id) {
+                    false
+                } else {
+                    seen_histogram_updates.insert(id.clone(), filtered.len());
+                    true
+                }
+            }
+            Command::SetAttitudeOrientation { id, .. } => {
+                if seen_attitude_updates.contains_key(id) {
+                    false
+                } else {
+                    seen_attitude_updates.insert(id.clone(), filtered.len());
+                    true
+                }
+            }
+            Command::SetTranslationPosition { id, .. } => {
+                if seen_translation_updates.contains_key(id) {
+                    false
+                } else {
+                    seen_translation_updates.insert(id.clone(), filtered.len());
+                    true
+                }
+            }
             Command::UpdateScatterActorPacked { id, actor_id, .. } => {
                 let key = (id.clone(), *actor_id);
                 if seen_scatter_actor_updates.contains_key(&key) {
@@ -458,6 +544,7 @@ fn coalesce_adjacent_line_plot_appends(commands: &mut Vec<Command>) {
     if commands.len() < 2 {
         return;
     }
+    let mut append_indexes = HashMap::new();
     let mut merged: Vec<Command> = Vec::with_capacity(commands.len());
     for command in commands.drain(..) {
         match command {
@@ -468,23 +555,16 @@ fn coalesce_adjacent_line_plot_appends(commands: &mut Vec<Command>) {
                 max_points,
                 payload_format,
             } => {
-                if let Some(Command::AppendLinePlotPointsPacked {
-                    id: prev_id,
-                    series: prev_series,
-                    xy: prev_xy,
-                    max_points: prev_max_points,
-                    payload_format: prev_payload_format,
-                }) = merged.last_mut()
-                {
-                    if *prev_id == id
-                        && *prev_series == series
-                        && *prev_max_points == max_points
-                        && *prev_payload_format == payload_format
+                let key = (id.clone(), series.clone(), max_points, payload_format);
+                if let Some(index) = append_indexes.get(&key).copied() {
+                    if let Command::AppendLinePlotPointsPacked { xy: prev_xy, .. } =
+                        &mut merged[index]
                     {
                         prev_xy.extend(xy);
                         continue;
                     }
                 }
+                append_indexes.insert(key, merged.len());
                 merged.push(Command::AppendLinePlotPointsPacked {
                     id,
                     series,
@@ -493,7 +573,10 @@ fn coalesce_adjacent_line_plot_appends(commands: &mut Vec<Command>) {
                     payload_format,
                 });
             }
-            other => merged.push(other),
+            other => {
+                append_indexes.clear();
+                merged.push(other);
+            }
         }
     }
     *commands = merged;
@@ -755,6 +838,50 @@ fn decode_line_plot_points_bytes_limited(
     }
 }
 
+fn decode_f32_values(bytes: &[u8], context: &str) -> Result<Vec<f32>, DragonError> {
+    if bytes.len() % 4 != 0 {
+        return Err(DragonError::ParseError(format!(
+            "{context} length {} is not a multiple of 4",
+            bytes.len()
+        )));
+    }
+    Ok(bytes
+        .chunks_exact(4)
+        .map(|chunk| f32::from_le_bytes(chunk.try_into().unwrap()))
+        .collect())
+}
+
+fn validate_histogram_bins(edges: &[f32], counts: &[f32]) -> Result<(), DragonError> {
+    if edges.len() != counts.len().saturating_add(1) {
+        return Err(DragonError::ParseError(format!(
+            "histogram requires edges length to equal counts length + 1, got {} edges and {} counts",
+            edges.len(),
+            counts.len()
+        )));
+    }
+    if edges.len() < 2 {
+        return Err(DragonError::ParseError(
+            "histogram requires at least two edges".to_string(),
+        ));
+    }
+    if edges.iter().any(|edge| !edge.is_finite()) {
+        return Err(DragonError::ParseError(
+            "histogram edges must be finite".to_string(),
+        ));
+    }
+    if edges.windows(2).any(|pair| pair[1] <= pair[0]) {
+        return Err(DragonError::ParseError(
+            "histogram edges must be strictly increasing".to_string(),
+        ));
+    }
+    if counts.iter().any(|count| !count.is_finite()) {
+        return Err(DragonError::ParseError(
+            "histogram counts must be finite".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 fn parse_line_plot_color(value: Option<String>) -> Option<ColorRef> {
     let text = value?;
     if text.trim().is_empty() {
@@ -795,6 +922,43 @@ fn limit_line_plot_points(points: &mut Vec<[f32; 2]>, max_points: Option<usize>)
     let drain = points.len() - max_points;
     points.drain(0..drain);
     true
+}
+
+fn append_line_plot_points_limited(
+    existing: &mut Vec<[f32; 2]>,
+    mut points: Vec<[f32; 2]>,
+    prior_bounds: Option<[f32; 4]>,
+    appended_bounds: Option<[f32; 4]>,
+    max_points: Option<usize>,
+) -> Option<[f32; 4]> {
+    let Some(max_points) = max_points.filter(|value| *value > 0) else {
+        existing.append(&mut points);
+        return merge_line_plot_bounds(prior_bounds, appended_bounds);
+    };
+    if points.len() >= max_points {
+        if points.len() > max_points {
+            let drain = points.len() - max_points;
+            points.drain(0..drain);
+            let bounds = document::line_plot_points_bounds(&points);
+            *existing = points;
+            return bounds;
+        }
+        *existing = points;
+        return appended_bounds;
+    }
+    let total = existing.len().saturating_add(points.len());
+    if total > max_points {
+        let excess = total - max_points;
+        if excess >= existing.len() {
+            existing.clear();
+        } else {
+            existing.drain(0..excess);
+        }
+        existing.append(&mut points);
+        return document::line_plot_points_bounds(existing);
+    }
+    existing.append(&mut points);
+    merge_line_plot_bounds(prior_bounds, appended_bounds)
 }
 
 fn merge_line_plot_bounds(current: Option<[f32; 4]>, next: Option<[f32; 4]>) -> Option<[f32; 4]> {
@@ -860,6 +1024,30 @@ fn line_plot_hover_x_range(
         return (start - 1, start + 1);
     }
     (start, end)
+}
+
+fn line_plot_toolbar_dirty(action: &str) -> Option<Dirty> {
+    match action {
+        "Fit" | "Pan" | "Zoom" | "Box" | "Grid" => Some(Dirty::Visual),
+        "Axes" => Some(Dirty::Text),
+        _ => None,
+    }
+}
+
+fn histogram_toolbar_dirty(action: &str) -> Option<Dirty> {
+    match action {
+        "Fit" | "Pan" | "Zoom" | "Box" | "Grid" => Some(Dirty::Visual),
+        "Axes" => Some(Dirty::Text),
+        _ => None,
+    }
+}
+
+fn table_selection_dirty() -> Dirty {
+    Dirty::Visual
+}
+
+fn table_viewport_dirty() -> Dirty {
+    Dirty::Text
 }
 
 fn apply_line_plot_window_to_node(node: &mut WidgetNode) -> bool {
@@ -1046,7 +1234,7 @@ fn decode_scatter_points_bytes_into_colormap(
             position: [x, y, z],
             size: 3.0,
             color: [0.0, 0.0, 0.0],
-            alpha: 0.85,
+            alpha: 1.0,
         });
     }
     let z_range = if z_max > z_min { z_max - z_min } else { 1.0 };
@@ -1123,6 +1311,34 @@ fn bounds_from_scatter_point_instances_v1(
     for chunk in bytes.chunks_exact(STRIDE) {
         let point = bytemuck::pod_read_unaligned::<PointInstance>(chunk);
         let [x, y, z] = point.position;
+        if x.is_finite() && y.is_finite() && z.is_finite() {
+            let p = glam::Vec3::new(x, y, z);
+            min = min.min(p);
+            max = max.max(p);
+        }
+    }
+    if min.x > max.x {
+        Ok(None)
+    } else {
+        Ok(Some((min, max)))
+    }
+}
+
+fn bounds_from_scatter_xyz_f32_v0(
+    bytes: &[u8],
+) -> Result<Option<(glam::Vec3, glam::Vec3)>, DragonError> {
+    if bytes.len() % 12 != 0 {
+        return Err(DragonError::ParseError(format!(
+            "scatter data length {} is not a multiple of 12 (xyz float32)",
+            bytes.len()
+        )));
+    }
+    let mut min = glam::Vec3::splat(f32::INFINITY);
+    let mut max = glam::Vec3::splat(f32::NEG_INFINITY);
+    for chunk in bytes.chunks_exact(12) {
+        let x = f32::from_le_bytes(chunk[0..4].try_into().unwrap());
+        let y = f32::from_le_bytes(chunk[4..8].try_into().unwrap());
+        let z = f32::from_le_bytes(chunk[8..12].try_into().unwrap());
         if x.is_finite() && y.is_finite() && z.is_finite() {
             let p = glam::Vec3::new(x, y, z);
             min = min.min(p);
@@ -1459,6 +1675,10 @@ struct FrameRenderTimings {
     prepare_ms: f64,
     acquire_ms: f64,
     encode_ms: f64,
+    base_pass_encode_ms: f64,
+    scatter_pass_encode_ms: f64,
+    overlay_pass_encode_ms: f64,
+    encoder_finish_ms: f64,
     submit_ms: f64,
     present_ms: f64,
 }
@@ -1890,6 +2110,8 @@ fn widget_kind_name(kind: &WidgetKind) -> &'static str {
         WidgetKind::Page => "page",
         WidgetKind::Sidebar => "sidebar",
         WidgetKind::NavItem => "nav_item",
+        WidgetKind::AttitudeSphere => "attitude_sphere",
+        WidgetKind::TranslationTrace => "translation_trace",
         WidgetKind::PieChart => "pie_chart",
         WidgetKind::Histogram => "histogram",
         WidgetKind::LinePlot => "line_plot",
@@ -3513,8 +3735,11 @@ fn pseudo_style_value_changes_text(key: &str, value: &Value) -> bool {
 mod style_patch_tests {
     use super::*;
     use crate::css_style::apply_stylesheets_to_tree;
+    use crate::document::line_plot_points_bounds;
     use crate::style::TransformStyle;
     use serde_json::json;
+    use std::hint::black_box;
+    use std::time::Instant;
 
     fn test_profile(profile: runtime_profile::RuntimeProfile) -> RuntimeProfileSelection {
         RuntimeProfileSelection {
@@ -3534,6 +3759,15 @@ mod style_patch_tests {
         assert_eq!(format_4g(1234.0), "1234");
         assert_eq!(format_4g(12_345.0), "1.234e4");
         assert_eq!(format_4g(0.0000123), "1.230e-5");
+    }
+
+    #[test]
+    fn histogram_bin_validation_matches_startup_rules() {
+        assert!(validate_histogram_bins(&[0.0, 1.0, 2.0], &[3.0, 4.0]).is_ok());
+        assert!(validate_histogram_bins(&[0.0, 1.0], &[1.0, 2.0]).is_err());
+        assert!(validate_histogram_bins(&[0.0, 0.0, 1.0], &[1.0, 2.0]).is_err());
+        assert!(validate_histogram_bins(&[0.0, f32::NAN], &[1.0]).is_err());
+        assert!(validate_histogram_bins(&[0.0, 1.0], &[f32::INFINITY]).is_err());
     }
 
     #[test]
@@ -3821,6 +4055,298 @@ mod style_patch_tests {
             }
             other => panic!("expected pressure append, got {other:?}"),
         }
+    }
+
+    fn benchmark_iters(default: usize) -> usize {
+        std::env::var("DRAGONGUI_BENCH_ITERS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(default)
+    }
+
+    fn make_xyz_payload(points: usize) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(points * 12);
+        for i in 0..points {
+            let x = (i % 640) as f32;
+            let y = ((i / 640) % 480) as f32;
+            let z = ((i % 2048) as f32 * 0.003).sin();
+            bytes.extend_from_slice(&x.to_le_bytes());
+            bytes.extend_from_slice(&y.to_le_bytes());
+            bytes.extend_from_slice(&z.to_le_bytes());
+        }
+        bytes
+    }
+
+    fn make_point_instance_payload(points: usize) -> Vec<u8> {
+        let mut instances = Vec::with_capacity(points);
+        for i in 0..points {
+            instances.push(PointInstance {
+                position: [
+                    (i % 640) as f32,
+                    ((i / 640) % 480) as f32,
+                    ((i % 2048) as f32 * 0.003).cos(),
+                ],
+                size: 1.0,
+                color: [0.2, 0.7, 1.0],
+                alpha: 1.0,
+            });
+        }
+        bytemuck::cast_slice(&instances).to_vec()
+    }
+
+    fn make_xy_payload(points: usize) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(points * 8);
+        for i in 0..points {
+            let x = i as f32 * 0.01;
+            let y = (x * 0.2).sin() + (x * 0.013).cos() * 0.25;
+            bytes.extend_from_slice(&x.to_le_bytes());
+            bytes.extend_from_slice(&y.to_le_bytes());
+        }
+        bytes
+    }
+
+    #[test]
+    #[ignore = "benchmark"]
+    fn bench_scatter_decode_and_bounds_paths() {
+        let points = std::env::var("DRAGONGUI_BENCH_POINTS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(150_000);
+        let iterations = benchmark_iters(12);
+        let xyz = make_xyz_payload(points);
+        let instances = make_point_instance_payload(points);
+
+        let mut decoded = Vec::new();
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let bounds = bounds_from_scatter_xyz_f32_v0(&xyz).unwrap();
+            black_box(bounds);
+        }
+        let xyz_bounds_elapsed = start.elapsed();
+
+        let start = Instant::now();
+        for _ in 0..iterations {
+            decode_scatter_points_bytes_into_colormap(&xyz, &mut decoded, "hsv").unwrap();
+            black_box(&decoded);
+        }
+        let decode_elapsed = start.elapsed();
+
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let bounds = bounds_from_scatter_point_instances_v1(&instances).unwrap();
+            black_box(bounds);
+        }
+        let bounds_elapsed = start.elapsed();
+
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let bounds = compute_scatter_bounds(&decoded);
+            black_box(bounds);
+        }
+        let decoded_bounds_elapsed = start.elapsed();
+
+        let decode_ns = decode_elapsed.as_nanos() / (iterations as u128 * points as u128);
+        let xyz_bounds_ns = xyz_bounds_elapsed.as_nanos() / (iterations as u128 * points as u128);
+        let instance_bounds_ns = bounds_elapsed.as_nanos() / (iterations as u128 * points as u128);
+        let decoded_bounds_ns =
+            decoded_bounds_elapsed.as_nanos() / (iterations as u128 * points as u128);
+        println!(
+            "scatter xyz compact bounds scan: {xyz_bounds_ns} ns/point ({points} points, {iterations} iters, {:?})",
+            xyz_bounds_elapsed
+        );
+        println!(
+            "scatter xyz decode+color+bounds: {decode_ns} ns/point ({points} points, {iterations} iters, {:?})",
+            decode_elapsed
+        );
+        println!(
+            "scatter point_instance_v1 bounds scan: {instance_bounds_ns} ns/point ({points} points, {iterations} iters, {:?})",
+            bounds_elapsed
+        );
+        println!(
+            "scatter decoded PointInstance bounds scan: {decoded_bounds_ns} ns/point ({points} points, {iterations} iters, {:?})",
+            decoded_bounds_elapsed
+        );
+    }
+
+    #[test]
+    #[ignore = "benchmark"]
+    fn bench_line_plot_decode_and_window_paths() {
+        let points = std::env::var("DRAGONGUI_BENCH_POINTS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(200_000);
+        let keep = std::env::var("DRAGONGUI_BENCH_KEEP_POINTS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(50_000);
+        let iterations = benchmark_iters(30);
+        let xy = make_xy_payload(points);
+
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let decoded = decode_line_plot_points_bytes_limited(
+                &xy,
+                LinePlotPayloadFormat::XyF32V0,
+                Some(keep),
+            )
+            .unwrap();
+            black_box(decoded);
+        }
+        let limited_decode_elapsed = start.elapsed();
+        let ns_per_kept = limited_decode_elapsed.as_nanos() / (iterations as u128 * keep as u128);
+
+        let mut retained =
+            decode_line_plot_points_bytes_limited(&xy, LinePlotPayloadFormat::XyF32V0, Some(keep))
+                .unwrap();
+        let append_payload = make_xy_payload(2048);
+        let append_points =
+            decode_line_plot_points_bytes(&append_payload, LinePlotPayloadFormat::XyF32V0).unwrap();
+        let append_bounds = line_plot_points_bounds(&append_points);
+        let retained_bounds = line_plot_points_bounds(&retained);
+        let start = Instant::now();
+        for _ in 0..iterations {
+            let mut local = retained.clone();
+            let bounds = append_line_plot_points_limited(
+                &mut local,
+                append_points.clone(),
+                retained_bounds,
+                append_bounds,
+                Some(keep),
+            );
+            black_box((local, bounds));
+        }
+        let append_elapsed = start.elapsed();
+        let append_ns = append_elapsed.as_nanos() / iterations as u128;
+        black_box(&mut retained);
+
+        println!(
+            "line plot packed limited decode: {ns_per_kept} ns/kept-point ({points} source, {keep} kept, {iterations} iters, {:?})",
+            limited_decode_elapsed
+        );
+        println!(
+            "line plot bounded append+trim: {append_ns} ns/op ({keep} retained + 2048 append, {iterations} iters, {:?})",
+            append_elapsed
+        );
+    }
+
+    #[test]
+    #[ignore = "benchmark"]
+    fn bench_runtime_command_coalescing() {
+        let updates = std::env::var("DRAGONGUI_BENCH_COMMANDS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(20_000);
+        let iterations = benchmark_iters(50);
+        let mut template = Vec::with_capacity(updates);
+        for i in 0..updates {
+            match i % 4 {
+                0 => template.push(Command::SetScatterPointsPacked {
+                    id: "scatter".to_string(),
+                    xyz: vec![0; 12],
+                    telemetry: None,
+                    colormap: "hsv".to_string(),
+                    payload_format: ScatterPayloadFormat::XyzF32V0,
+                    fit: i % 16 == 0,
+                    coalesce: true,
+                }),
+                1 => template.push(Command::AppendLinePlotPointsPacked {
+                    id: "line".to_string(),
+                    series: "imu".to_string(),
+                    xy: vec![0; 16],
+                    max_points: Some(50_000),
+                    payload_format: LinePlotPayloadFormat::XyF32V0,
+                }),
+                2 => template.push(Command::SetTranslationPosition {
+                    id: "translation".to_string(),
+                    x: i as f32,
+                    y: -(i as f32),
+                }),
+                _ => template.push(Command::SetAttitudeOrientation {
+                    id: "attitude".to_string(),
+                    pitch: i as f32,
+                    roll: i as f32 * 0.5,
+                    yaw: i as f32 * 0.25,
+                }),
+            }
+        }
+
+        let start = Instant::now();
+        let mut retained = 0usize;
+        for _ in 0..iterations {
+            let mut commands = template.clone();
+            coalesce_runtime_command_batch(&mut commands);
+            retained += commands.len();
+            black_box(commands);
+        }
+        let elapsed = start.elapsed();
+        let ns_per_command = elapsed.as_nanos() / (iterations as u128 * updates as u128);
+        println!(
+            "runtime command coalescing: {ns_per_command} ns/input-command ({updates} input, avg retained {}, {iterations} iters, {:?})",
+            retained / iterations,
+            elapsed
+        );
+    }
+
+    #[test]
+    fn line_plot_limited_append_replaces_with_large_batch_tail() {
+        let mut existing = vec![[0.0, 4.0], [1.0, 3.0], [2.0, 2.0]];
+        let points = vec![[3.0, 7.0], [4.0, 6.0], [5.0, 5.0], [6.0, 4.0]];
+        let bounds = append_line_plot_points_limited(
+            &mut existing,
+            points,
+            Some([0.0, 2.0, 2.0, 4.0]),
+            Some([3.0, 6.0, 4.0, 7.0]),
+            Some(4),
+        );
+
+        assert_eq!(
+            existing,
+            vec![[3.0, 7.0], [4.0, 6.0], [5.0, 5.0], [6.0, 4.0]]
+        );
+        assert_eq!(bounds, Some([3.0, 6.0, 4.0, 7.0]));
+    }
+
+    #[test]
+    fn line_plot_limited_append_trims_before_extending() {
+        let mut existing = vec![[0.0, 10.0], [1.0, -1.0], [2.0, 2.0]];
+        let points = vec![[3.0, 3.0], [4.0, 4.0]];
+        let bounds = append_line_plot_points_limited(
+            &mut existing,
+            points,
+            Some([0.0, 2.0, -1.0, 10.0]),
+            Some([3.0, 4.0, 3.0, 4.0]),
+            Some(4),
+        );
+
+        assert_eq!(
+            existing,
+            vec![[1.0, -1.0], [2.0, 2.0], [3.0, 3.0], [4.0, 4.0]]
+        );
+        assert_eq!(bounds, Some([1.0, 4.0, -1.0, 4.0]));
+    }
+
+    #[test]
+    fn line_plot_toolbar_actions_classify_dirty_work() {
+        for action in ["Fit", "Pan", "Zoom", "Box", "Grid"] {
+            assert_eq!(line_plot_toolbar_dirty(action), Some(Dirty::Visual));
+        }
+        assert_eq!(line_plot_toolbar_dirty("Axes"), Some(Dirty::Text));
+        assert_eq!(line_plot_toolbar_dirty("unknown"), None);
+    }
+
+    #[test]
+    fn histogram_toolbar_actions_classify_dirty_work() {
+        for action in ["Fit", "Pan", "Zoom", "Box", "Grid"] {
+            assert_eq!(histogram_toolbar_dirty(action), Some(Dirty::Visual));
+        }
+        assert_eq!(histogram_toolbar_dirty("Axes"), Some(Dirty::Text));
+        assert_eq!(histogram_toolbar_dirty("unknown"), None);
+    }
+
+    #[test]
+    fn table_interactions_classify_dirty_work() {
+        assert_eq!(table_selection_dirty(), Dirty::Visual);
+        assert_eq!(table_viewport_dirty(), Dirty::Text);
     }
 
     #[test]
@@ -4711,6 +5237,8 @@ mod style_patch_tests {
         assert!(out.capacity() >= 8);
         assert_eq!(out[0].position, [1.0, 2.0, 3.0]);
         assert_eq!(out[1].position, [4.0, 5.0, 6.0]);
+        assert_eq!(out[0].alpha, 1.0);
+        assert_eq!(out[1].alpha, 1.0);
     }
 
     #[test]
@@ -4889,6 +5417,11 @@ struct WgpuState {
     defer_rebuilds: bool,
     deferred_dirty: Option<Dirty>,
     deferred_scatter_style_sync: bool,
+    last_dirty: Option<Dirty>,
+    last_primitive_rebuild_ms: f64,
+    last_text_rebuild_ms: f64,
+    last_primitive_instance_count: usize,
+    last_text_entry_count: usize,
     animation_epoch: Instant,
     loading_screen: LoadingScreenRuntime,
 }
@@ -5710,6 +6243,7 @@ fn push_plot_overlay_labels(
     layout: &crate::layout::LayoutResult,
     theme: &Theme,
     sf: f32,
+    render_profile: PrimitiveRenderProfile,
 ) {
     if matches!(
         node.kind,
@@ -5723,12 +6257,20 @@ fn push_plot_overlay_labels(
                 bottom: (rect.y + rect.h) as i32,
             };
             let labels = match node.kind {
-                WidgetKind::Histogram => {
-                    histogram_text_labels(node, theme, sf, [rect.x, rect.y, rect.w, rect.h])
-                }
-                WidgetKind::PieChart => {
-                    pie_chart_text_labels(node, theme, sf, [rect.x, rect.y, rect.w, rect.h])
-                }
+                WidgetKind::Histogram => histogram_text_labels(
+                    node,
+                    theme,
+                    sf,
+                    [rect.x, rect.y, rect.w, rect.h],
+                    render_profile,
+                ),
+                WidgetKind::PieChart => pie_chart_text_labels(
+                    node,
+                    theme,
+                    sf,
+                    [rect.x, rect.y, rect.w, rect.h],
+                    render_profile,
+                ),
                 _ => line_plot_text_labels(node, theme, sf, [rect.x, rect.y, rect.w, rect.h]),
             };
             for label in labels {
@@ -5741,7 +6283,7 @@ fn push_plot_overlay_labels(
                         bottom: (clip_rect[1] + clip_rect[3]).ceil() as i32,
                     })
                     .unwrap_or(clip);
-                text.push_scatter_label(
+                text.push_scatter_label_with_font_family(
                     &label.text,
                     label.screen_x,
                     label.screen_y,
@@ -5751,12 +6293,13 @@ fn push_plot_overlay_labels(
                     label.color,
                     label.font_size,
                     label.anchor,
+                    node.style.text.font_family.as_ref(),
                 );
             }
         }
     }
     for child in &node.children {
-        push_plot_overlay_labels(text, child, layout, theme, sf);
+        push_plot_overlay_labels(text, child, layout, theme, sf, render_profile);
     }
 }
 
@@ -6016,6 +6559,26 @@ impl WgpuState {
         let config = surface
             .get_default_config(&adapter, width, height)
             .ok_or_else(|| DragonError::GpuInit("unsupported surface format".into()))?;
+        let capabilities = surface.get_capabilities(&adapter);
+        let mut config = config;
+        if let Some(mode) = env_present_mode() {
+            if matches!(
+                mode,
+                wgpu::PresentMode::AutoVsync | wgpu::PresentMode::AutoNoVsync
+            ) || capabilities.present_modes.contains(&mode)
+            {
+                config.present_mode = mode;
+            } else {
+                debug_log(format!(
+                    "requested present_mode={} unsupported by surface; keeping {}",
+                    present_mode_name(mode),
+                    present_mode_name(config.present_mode)
+                ));
+            }
+        }
+        if let Some(latency) = env_max_frame_latency() {
+            config.desired_maximum_frame_latency = latency;
+        }
         surface.configure(&device, &config);
 
         let (depth_texture, depth_view) = create_depth_texture(&device, width, height);
@@ -6262,6 +6825,11 @@ impl WgpuState {
             defer_rebuilds: false,
             deferred_dirty: None,
             deferred_scatter_style_sync: false,
+            last_dirty: None,
+            last_primitive_rebuild_ms: 0.0,
+            last_text_rebuild_ms: 0.0,
+            last_primitive_instance_count: 0,
+            last_text_entry_count: 0,
             animation_epoch: Instant::now(),
             loading_screen,
         };
@@ -6315,6 +6883,17 @@ impl WgpuState {
         self.styles_dirty = true;
     }
 
+    fn primitive_render_profile(&self) -> PrimitiveRenderProfile {
+        PrimitiveRenderProfile {
+            line_plot_segment_budget: self.runtime_profile.line_plot_segment_budget(),
+            line_plot_simplify_styles: self.runtime_profile.line_plot_simplify_styles(),
+            histogram_bin_budget: self.runtime_profile.histogram_bin_budget(),
+            histogram_compact_tick_count: self.runtime_profile.histogram_compact_tick_count(),
+            table_compact_metrics: self.runtime_profile.table_compact_metrics(),
+            pie_chart_compact_labels: self.runtime_profile.pie_chart_compact_labels(),
+        }
+    }
+
     fn set_platform_color_scheme(&mut self, scheme: DgMediaColorScheme) {
         if self.platform_color_scheme == Some(scheme) {
             return;
@@ -6334,6 +6913,7 @@ impl WgpuState {
         self.sync_selected_transitions();
         self.sync_expanded_transitions();
         let media = self.media_environment();
+        let render_profile = self.primitive_render_profile();
         // Destructure to get separate borrows of each field.
         let WgpuState {
             widget_tree,
@@ -6354,6 +6934,10 @@ impl WgpuState {
             theme,
             scale_factor,
             stylesheets,
+            last_text_rebuild_ms,
+            last_text_entry_count,
+            last_primitive_rebuild_ms,
+            last_primitive_instance_count,
             ..
         } = self;
 
@@ -6455,7 +7039,13 @@ impl WgpuState {
         let new_caret_positions =
             if let (Some(t), Some(state)) = (text.as_mut(), widget_state.as_ref()) {
                 t.update_screen(queue, config.width, config.height);
-                t.rebuild(
+                let text_start = Instant::now();
+                let table_metrics_profile = if render_profile.table_compact_metrics {
+                    table::TableMetricsProfile::pi_compact()
+                } else {
+                    table::TableMetricsProfile::default()
+                };
+                let positions = t.rebuild(
                     tree,
                     &layout,
                     theme,
@@ -6465,14 +7055,21 @@ impl WgpuState {
                     toast_overlays,
                     stylesheets,
                     media,
-                )
+                    table_metrics_profile,
+                );
+                *last_text_rebuild_ms = text_start.elapsed().as_secs_f64() * 1000.0;
+                *last_text_entry_count = t.entry_count();
+                positions
             } else {
+                *last_text_rebuild_ms = 0.0;
+                *last_text_entry_count = 0;
                 HashMap::new()
             };
         *caret_positions = new_caret_positions;
 
         if let (Some(prims), Some(state)) = (primitives.as_mut(), widget_state.as_ref()) {
             prims.update_screen_size(queue, config.width, config.height);
+            let primitive_start = Instant::now();
             prims.rebuild(
                 device,
                 queue,
@@ -6485,7 +7082,13 @@ impl WgpuState {
                 toast_overlays,
                 stylesheets,
                 media,
+                render_profile,
             );
+            *last_primitive_rebuild_ms = primitive_start.elapsed().as_secs_f64() * 1000.0;
+            *last_primitive_instance_count = prims.rect_count as usize;
+        } else {
+            *last_primitive_rebuild_ms = 0.0;
+            *last_primitive_instance_count = 0;
         }
 
         *current_layout = Some(layout);
@@ -6498,6 +7101,7 @@ impl WgpuState {
 
     fn rebuild_primitives(&mut self) {
         let media = self.media_environment();
+        let render_profile = self.primitive_render_profile();
         let WgpuState {
             widget_tree,
             current_layout,
@@ -6510,6 +7114,8 @@ impl WgpuState {
             caret_positions,
             toast_overlays,
             stylesheets,
+            last_primitive_rebuild_ms,
+            last_primitive_instance_count,
             ..
         } = self;
 
@@ -6519,6 +7125,7 @@ impl WgpuState {
             widget_state.as_ref(),
             primitives.as_mut(),
         ) {
+            let primitive_start = Instant::now();
             prims.rebuild(
                 device,
                 queue,
@@ -6531,7 +7138,13 @@ impl WgpuState {
                 toast_overlays,
                 stylesheets,
                 media,
+                render_profile,
             );
+            *last_primitive_rebuild_ms = primitive_start.elapsed().as_secs_f64() * 1000.0;
+            *last_primitive_instance_count = prims.rect_count as usize;
+        } else {
+            *last_primitive_rebuild_ms = 0.0;
+            *last_primitive_instance_count = 0;
         }
     }
 
@@ -6548,6 +7161,8 @@ impl WgpuState {
             resources,
             toast_overlays,
             stylesheets,
+            last_text_rebuild_ms,
+            last_text_entry_count,
             ..
         } = self;
 
@@ -6557,6 +7172,12 @@ impl WgpuState {
             widget_state.as_ref(),
             text.as_mut(),
         ) {
+            let text_start = Instant::now();
+            let table_metrics_profile = if self.runtime_profile.table_compact_metrics() {
+                table::TableMetricsProfile::pi_compact()
+            } else {
+                table::TableMetricsProfile::default()
+            };
             *caret_positions = t.rebuild(
                 tree,
                 layout,
@@ -6567,9 +7188,14 @@ impl WgpuState {
                 toast_overlays,
                 stylesheets,
                 media,
+                table_metrics_profile,
             );
+            *last_text_rebuild_ms = text_start.elapsed().as_secs_f64() * 1000.0;
+            *last_text_entry_count = t.entry_count();
         } else {
             caret_positions.clear();
+            *last_text_rebuild_ms = 0.0;
+            *last_text_entry_count = 0;
         }
     }
 
@@ -7914,6 +8540,113 @@ impl WgpuState {
                 }
             }
         }
+        if kind == WidgetKind::AttitudeSphere {
+            let Some(tree) = self.widget_tree.as_mut() else {
+                return None;
+            };
+            let Some(node) = find_widget_mut(tree, id) else {
+                return None;
+            };
+            match (prop, value) {
+                ("pitch", CommandValue::Float(value)) => {
+                    if value.is_finite() {
+                        node.props.attitude_sphere.pitch = value;
+                        return Some(Dirty::Visual);
+                    }
+                    return None;
+                }
+                ("roll", CommandValue::Float(value)) => {
+                    if value.is_finite() {
+                        node.props.attitude_sphere.roll = value;
+                        return Some(Dirty::Visual);
+                    }
+                    return None;
+                }
+                ("yaw", CommandValue::Float(value)) => {
+                    if value.is_finite() {
+                        node.props.attitude_sphere.yaw = value;
+                        return Some(Dirty::Visual);
+                    }
+                    return None;
+                }
+                ("show_grid", CommandValue::Bool(visible)) => {
+                    node.props.attitude_sphere.show_grid = visible;
+                    return Some(Dirty::Visual);
+                }
+                ("show_heading", CommandValue::Bool(visible)) => {
+                    node.props.attitude_sphere.show_heading = visible;
+                    return Some(Dirty::Visual);
+                }
+                ("show_readout", CommandValue::Bool(visible)) => {
+                    node.props.attitude_sphere.show_readout = visible;
+                    return Some(Dirty::Visual);
+                }
+                ("grid_quality", CommandValue::Text(value)) => {
+                    if value == "fast" || value == "high" {
+                        node.props.attitude_sphere.grid_quality = value;
+                        return Some(Dirty::Visual);
+                    }
+                    return None;
+                }
+                (_, _) => {
+                    eprintln!(
+                        "DragonGUI: ignoring unsupported live SetProp for widget {id:?} ({kind:?}).{prop}"
+                    );
+                    return None;
+                }
+            }
+        }
+        if kind == WidgetKind::TranslationTrace {
+            let Some(tree) = self.widget_tree.as_mut() else {
+                return None;
+            };
+            let Some(node) = find_widget_mut(tree, id) else {
+                return None;
+            };
+            match (prop, value) {
+                ("x", CommandValue::Float(value)) => {
+                    if value.is_finite() {
+                        node.props.translation_trace.x = value;
+                        return Some(Dirty::Visual);
+                    }
+                    return None;
+                }
+                ("y", CommandValue::Float(value)) => {
+                    if value.is_finite() {
+                        node.props.translation_trace.y = value;
+                        return Some(Dirty::Visual);
+                    }
+                    return None;
+                }
+                ("range_m", CommandValue::Float(value)) => {
+                    if value.is_finite() && value > 0.0 {
+                        node.props.translation_trace.range_m = value.max(0.5);
+                        return Some(Dirty::Visual);
+                    }
+                    return None;
+                }
+                ("ring_step_m", CommandValue::Float(value)) => {
+                    if value.is_finite() && value > 0.0 {
+                        node.props.translation_trace.ring_step_m = value.max(0.25);
+                        return Some(Dirty::Visual);
+                    }
+                    return None;
+                }
+                ("clear_trail", CommandValue::Bool(true)) => {
+                    let x = node.props.translation_trace.x;
+                    let y = node.props.translation_trace.y;
+                    node.props.translation_trace.trail.clear();
+                    node.props.translation_trace.trail.push([x, y]);
+                    return Some(Dirty::Visual);
+                }
+                (_, _) => {
+                    eprintln!(
+                        "DragonGUI: ignoring unsupported live SetProp for widget {id:?} ({kind:?}).{prop}"
+                    );
+                    return None;
+                }
+            }
+        }
         if matches!(
             kind,
             WidgetKind::Button | WidgetKind::Tab | WidgetKind::NavItem
@@ -8060,6 +8793,47 @@ impl WgpuState {
                 None
             }
         }
+    }
+
+    fn apply_set_attitude_orientation(
+        &mut self,
+        id: &str,
+        pitch: f32,
+        roll: f32,
+        yaw: f32,
+    ) -> Option<Dirty> {
+        if self.widget_kind(id)? != WidgetKind::AttitudeSphere {
+            return None;
+        }
+        if !(pitch.is_finite() && roll.is_finite() && yaw.is_finite()) {
+            return None;
+        }
+        let tree = self.widget_tree.as_mut()?;
+        let node = find_widget_mut(tree, id)?;
+        node.props.attitude_sphere.pitch = pitch;
+        node.props.attitude_sphere.roll = roll;
+        node.props.attitude_sphere.yaw = yaw;
+        Some(Dirty::Visual)
+    }
+
+    fn apply_set_translation_position(&mut self, id: &str, x: f32, y: f32) -> Option<Dirty> {
+        if self.widget_kind(id)? != WidgetKind::TranslationTrace {
+            return None;
+        }
+        if !(x.is_finite() && y.is_finite()) {
+            return None;
+        }
+        let tree = self.widget_tree.as_mut()?;
+        let node = find_widget_mut(tree, id)?;
+        node.props.translation_trace.x = x;
+        node.props.translation_trace.y = y;
+        node.props.translation_trace.trail.push([x, y]);
+        let limit = node.props.translation_trace.trail_points.max(1);
+        if node.props.translation_trace.trail.len() > limit {
+            let drop_count = node.props.translation_trace.trail.len() - limit;
+            node.props.translation_trace.trail.drain(0..drop_count);
+        }
+        Some(Dirty::Visual)
     }
 
     fn apply_set_style_patch(
@@ -8630,7 +9404,7 @@ impl WgpuState {
             return Ok(false);
         }
         let effective_max_points = self.effective_line_plot_max_points(max_points);
-        let mut points =
+        let points =
             decode_line_plot_points_bytes_limited(&xy, payload_format, effective_max_points)?;
         let appended_bounds = document::line_plot_points_bounds(&points);
         let Some(tree) = self.widget_tree.as_mut() else {
@@ -8646,13 +9420,13 @@ impl WgpuState {
             .find(|item| item.label.as_deref() == Some(series.as_str()))
         {
             let prior_bounds = existing.bounds;
-            existing.points.append(&mut points);
-            let trimmed = limit_line_plot_points(&mut existing.points, effective_max_points);
-            existing.bounds = if trimmed {
-                document::line_plot_points_bounds(&existing.points)
-            } else {
-                merge_line_plot_bounds(prior_bounds, appended_bounds)
-            };
+            existing.bounds = append_line_plot_points_limited(
+                &mut existing.points,
+                points,
+                prior_bounds,
+                appended_bounds,
+                effective_max_points,
+            );
             existing.declared_point_count = Some(existing.points.len());
         } else {
             let bounds = document::line_plot_points_bounds(&points);
@@ -8671,6 +9445,33 @@ impl WgpuState {
         }
         node.props.line_plot_max_points = effective_max_points;
         apply_line_plot_window_to_node(node);
+        Ok(true)
+    }
+
+    fn set_histogram_bins_packed(
+        &mut self,
+        id: &str,
+        edges: Vec<u8>,
+        counts: Vec<u8>,
+    ) -> Result<bool, DragonError> {
+        if self.widget_kind(id) != Some(WidgetKind::Histogram) {
+            return Ok(false);
+        }
+        let edges = decode_f32_values(&edges, "histogram edge payload")?;
+        let counts = decode_f32_values(&counts, "histogram count payload")?;
+        validate_histogram_bins(&edges, &counts)?;
+        let Some(tree) = self.widget_tree.as_mut() else {
+            return Ok(false);
+        };
+        let Some(node) = find_widget_mut(tree, id) else {
+            return Ok(false);
+        };
+        if node.kind != WidgetKind::Histogram {
+            return Ok(false);
+        }
+        node.props.histogram.edges = edges;
+        node.props.histogram.counts = counts;
+        node.props.histogram.selection_rect = None;
         Ok(true)
     }
 
@@ -8729,6 +9530,9 @@ impl WgpuState {
         let Some(action) = hit else {
             return false;
         };
+        let Some(dirty) = line_plot_toolbar_dirty(action) else {
+            return false;
+        };
         let Some(tree) = self.widget_tree.as_mut() else {
             return false;
         };
@@ -8779,7 +9583,7 @@ impl WgpuState {
             }
             _ => return false,
         }
-        self.rebuild_primitives();
+        self.rebuild_for_dirty(dirty);
         true
     }
 
@@ -8808,6 +9612,9 @@ impl WgpuState {
             )
         };
         let Some(action) = hit else {
+            return false;
+        };
+        let Some(dirty) = histogram_toolbar_dirty(action) else {
             return false;
         };
         let Some(tree) = self.widget_tree.as_mut() else {
@@ -8861,7 +9668,7 @@ impl WgpuState {
             }
             _ => return false,
         }
-        self.rebuild_primitives();
+        self.rebuild_for_dirty(dirty);
         true
     }
 
@@ -8995,7 +9802,7 @@ impl WgpuState {
         node.props.histogram.x_max = Some(bounds.x_max);
         node.props.histogram.y_min = Some(bounds.y_min.max(0.0));
         node.props.histogram.y_max = Some(bounds.y_max);
-        self.rebuild_visuals();
+        self.rebuild_for_dirty(Dirty::Text);
         true
     }
 
@@ -9015,7 +9822,7 @@ impl WgpuState {
             return false;
         }
         node.props.histogram.selection_rect = Some([start[0], start[1], current[0], current[1]]);
-        self.rebuild_visuals();
+        self.rebuild_for_dirty(Dirty::Visual);
         true
     }
 
@@ -9064,7 +9871,7 @@ impl WgpuState {
             return false;
         }
         node.props.histogram.selection_rect = None;
-        self.rebuild_visuals();
+        self.rebuild_for_dirty(Dirty::Visual);
         true
     }
 
@@ -9144,7 +9951,7 @@ impl WgpuState {
         node.props.line_plot_x_max = Some(bounds.x_max);
         node.props.line_plot_y_min = Some(bounds.y_min);
         node.props.line_plot_y_max = Some(bounds.y_max);
-        self.rebuild_visuals();
+        self.rebuild_for_dirty(Dirty::Text);
         true
     }
 
@@ -9164,7 +9971,7 @@ impl WgpuState {
             return false;
         }
         node.props.line_plot_selection_rect = Some([start[0], start[1], current[0], current[1]]);
-        self.rebuild_visuals();
+        self.rebuild_for_dirty(Dirty::Visual);
         true
     }
 
@@ -9213,7 +10020,7 @@ impl WgpuState {
             return false;
         }
         node.props.line_plot_selection_rect = None;
-        self.rebuild_visuals();
+        self.rebuild_for_dirty(Dirty::Visual);
         true
     }
 
@@ -9247,7 +10054,7 @@ impl WgpuState {
             }
         }
         if changed {
-            self.rebuild_visuals();
+            self.rebuild_for_dirty(Dirty::Text);
         }
         changed
     }
@@ -9259,7 +10066,7 @@ impl WgpuState {
         let mut changed = false;
         clear_line_plot_hover_except(tree, None, &mut changed);
         if changed {
-            self.rebuild_visuals();
+            self.rebuild_for_dirty(Dirty::Text);
         }
         changed
     }
@@ -9346,6 +10153,164 @@ impl WgpuState {
             .as_ref()
             .map(|t| (now_epoch_ms() - t.enqueue_epoch_ms).max(0.0))
             .unwrap_or(0.0);
+
+        if data_format == ScatterPayloadFormat::XyzF32V0 {
+            let telemetry_bounds = telemetry.as_ref().and_then(|t| t.bounds);
+            let bounds_t0 = Instant::now();
+            let maybe_bounds = if let Some((min, max)) = telemetry_bounds {
+                Some((glam::Vec3::from_array(min), glam::Vec3::from_array(max)))
+            } else {
+                match bounds_from_scatter_xyz_f32_v0(&xyz) {
+                    Ok(bounds) => bounds,
+                    Err(e) => {
+                        let msg = e.to_string();
+                        eprintln!("DragonGUI: {msg}");
+                        runtime.payload_status = ScatterPayloadStatus::DecodeError(msg.clone());
+                        return Err(DragonError::Runtime(msg));
+                    }
+                }
+            };
+            let bounds_ms = if telemetry_bounds.is_some() {
+                0.0
+            } else {
+                bounds_t0.elapsed().as_secs_f64() * 1000.0
+            };
+            if maybe_bounds.is_none() && point_count > 0 {
+                runtime.payload_format = data_format;
+                runtime.points.clear();
+                runtime.primary_pick_cache = None;
+                runtime.payload_status = ScatterPayloadStatus::AllNonFinite;
+                runtime.primary_hover_meta = Vec::new();
+                let cleared_hover_label = runtime.widget.hover_label.take().is_some();
+                runtime.data_min = glam::Vec3::ZERO;
+                runtime.data_max = glam::Vec3::ZERO;
+                let upload_timings = runtime
+                    .widget
+                    .set_xyz_points_raw(
+                        &self.device,
+                        &self.queue,
+                        &[],
+                        glam::Vec3::ZERO,
+                        glam::Vec3::ZERO,
+                        &colormap,
+                    )
+                    .unwrap_or_default();
+                let grid_t0 = Instant::now();
+                runtime.widget.refresh_grid(
+                    glam::Vec3::ZERO,
+                    glam::Vec3::ZERO,
+                    &self.device,
+                    &self.queue,
+                );
+                let grid_ms = grid_t0.elapsed().as_secs_f64() * 1000.0;
+                let overlay_t0 = Instant::now();
+                let overlay_ms = if cleared_hover_label {
+                    runtime.widget.refresh_overlays(&self.device, &self.queue);
+                    overlay_t0.elapsed().as_secs_f64() * 1000.0
+                } else {
+                    0.0
+                };
+                let pack_ms = telemetry.as_ref().map(|t| t.pack_ms).unwrap_or(0.0);
+                let reported_payload_bytes = telemetry
+                    .as_ref()
+                    .map(|t| t.payload_bytes)
+                    .unwrap_or(xyz.len());
+                runtime.metrics = ScatterMetrics {
+                    updates: runtime.metrics.updates + 1,
+                    last_point_count: 0,
+                    last_payload_bytes: reported_payload_bytes,
+                    last_pack_ms: pack_ms,
+                    last_queue_latency_ms: queue_latency_ms,
+                    last_decode_ms: 0.0,
+                    last_bounds_ms: bounds_ms,
+                    last_upload_ms: upload_timings.primary_ms
+                        + upload_timings.lod_ms
+                        + grid_ms
+                        + overlay_ms,
+                    last_primary_upload_ms: upload_timings.primary_ms,
+                    last_lod_ms: upload_timings.lod_ms,
+                    last_grid_ms: grid_ms,
+                    last_overlay_ms: overlay_ms,
+                    last_total_native_ms: total_t0.elapsed().as_secs_f64() * 1000.0,
+                    last_render_encode_ms: runtime.metrics.last_render_encode_ms,
+                };
+                return Ok(true);
+            }
+            let (data_min, data_max) = maybe_bounds.unwrap_or((glam::Vec3::ZERO, glam::Vec3::ZERO));
+            if let Some(upload_timings) = runtime.widget.set_xyz_points_raw(
+                &self.device,
+                &self.queue,
+                &xyz,
+                data_min,
+                data_max,
+                &colormap,
+            ) {
+                runtime.payload_format = data_format;
+                runtime.points.clear();
+                runtime.primary_pick_cache = None;
+                runtime.primary_hover_meta = Vec::new();
+                let cleared_hover_label = runtime.widget.hover_label.take().is_some();
+                runtime.data_min = data_min;
+                runtime.data_max = data_max;
+                runtime.payload_status = ScatterPayloadStatus::Ok;
+
+                let mut camera_fitted = false;
+                if (fit || !runtime.fitted_once)
+                    && point_count > 0
+                    && runtime.widget.has_visible_viewport()
+                {
+                    runtime
+                        .widget
+                        .fit_to_bounds(data_min, data_max, &self.queue);
+                    runtime.fitted_once = true;
+                    camera_fitted = true;
+                } else if fit {
+                    runtime.fitted_once = false;
+                }
+                let grid_t0 = Instant::now();
+                runtime
+                    .widget
+                    .refresh_grid(data_min, data_max, &self.device, &self.queue);
+                let grid_ms = grid_t0.elapsed().as_secs_f64() * 1000.0;
+                let overlay_t0 = Instant::now();
+                let overlay_ms = if camera_fitted || cleared_hover_label {
+                    runtime.widget.refresh_overlays(&self.device, &self.queue);
+                    overlay_t0.elapsed().as_secs_f64() * 1000.0
+                } else {
+                    0.0
+                };
+
+                let pack_ms = telemetry.as_ref().map(|t| t.pack_ms).unwrap_or(0.0);
+                let reported_point_count = telemetry
+                    .as_ref()
+                    .map(|t| t.point_count)
+                    .unwrap_or(point_count);
+                let reported_payload_bytes = telemetry
+                    .as_ref()
+                    .map(|t| t.payload_bytes)
+                    .unwrap_or(xyz.len());
+                runtime.metrics = ScatterMetrics {
+                    updates: runtime.metrics.updates + 1,
+                    last_point_count: reported_point_count,
+                    last_payload_bytes: reported_payload_bytes,
+                    last_pack_ms: pack_ms,
+                    last_queue_latency_ms: queue_latency_ms,
+                    last_decode_ms: 0.0,
+                    last_bounds_ms: bounds_ms,
+                    last_upload_ms: upload_timings.primary_ms
+                        + upload_timings.lod_ms
+                        + grid_ms
+                        + overlay_ms,
+                    last_primary_upload_ms: upload_timings.primary_ms,
+                    last_lod_ms: upload_timings.lod_ms,
+                    last_grid_ms: grid_ms,
+                    last_overlay_ms: overlay_ms,
+                    last_total_native_ms: total_t0.elapsed().as_secs_f64() * 1000.0,
+                    last_render_encode_ms: runtime.metrics.last_render_encode_ms,
+                };
+                return Ok(true);
+            }
+        }
 
         if data_format == ScatterPayloadFormat::PointInstanceV1 {
             let telemetry_bounds = telemetry.as_ref().and_then(|t| t.bounds);
@@ -9711,6 +10676,7 @@ impl WgpuState {
             self.deferred_dirty = Some(merge_dirty(self.deferred_dirty, dirty));
             return;
         }
+        self.last_dirty = Some(dirty);
         if matches!(dirty, Dirty::Layout | Dirty::Full) {
             self.cancel_hover_transitions();
         }
@@ -9912,6 +10878,10 @@ impl WgpuState {
             json!(rt.widget.interactive_render_scale),
         );
         map.insert(
+            "static_render_scale".to_string(),
+            json!(rt.widget.static_render_scale),
+        );
+        map.insert(
             "active_render_scale".to_string(),
             json!(rt.widget.active_render_scale()),
         );
@@ -9993,6 +10963,8 @@ impl WgpuState {
             "toasts": self.toast_snapshot(),
             "renderer": {
                 "surface_format": format!("{:?}", self.config.format),
+                "present_mode": present_mode_name(self.config.present_mode),
+                "desired_maximum_frame_latency": self.config.desired_maximum_frame_latency,
                 "requested_backends": wgpu_backend_names(self.requested_backends),
                 "adapter": wgpu_adapter_info_snapshot(&self.adapter_info),
                 "limits": {
@@ -10010,6 +10982,7 @@ impl WgpuState {
                 "widget_count": self.widget_kinds.len(),
                 "caret_positions": &self.caret_positions,
             },
+            "performance": self.performance_snapshot(),
             "resources": {
                 "scatter": scatter,
                 "scatters": scatters,
@@ -10025,6 +10998,152 @@ impl WgpuState {
         })
     }
 
+    fn performance_snapshot(&self) -> Value {
+        let primitive_stats = self.primitives.as_ref().map(|prims| {
+            let stats = prims.stats();
+            let largest_base = prims
+                .largest_base_rects(8)
+                .into_iter()
+                .map(|rect| {
+                    let layout_matches = self.primitive_layout_matches(rect.rect, 5);
+                    json!({
+                        "rect": rect.rect,
+                        "mode": rect.mode,
+                        "area_px": rect.area_px,
+                        "alpha": rect.alpha,
+                        "layout_matches": layout_matches,
+                    })
+                })
+                .collect::<Vec<_>>();
+            json!({
+                "total_count": stats.total_count,
+                "total_area_px": stats.total_area_px,
+                "base_count": stats.base_count,
+                "base_area_px": stats.base_area_px,
+                "overlay_count": stats.overlay_count,
+                "overlay_area_px": stats.overlay_area_px,
+                "total_batches": stats.total_batches,
+                "base_batches": stats.base_batches,
+                "overlay_batches": stats.overlay_batches,
+                "last_upload_bytes": prims.last_upload_bytes(),
+                "last_upload_ms": prims.last_upload_ms(),
+                "vertex_cap_bytes": prims.vertex_cap_bytes(),
+                "rect_instance_bytes": std::mem::size_of::<RectInstance>(),
+                "simple_rect_instance_bytes": 64,
+                "base_general": {
+                    "count": stats.base_general.count,
+                    "batches": stats.base_general.batches,
+                    "area_px": stats.base_general.area_px,
+                },
+                "base_simple_square": {
+                    "count": stats.base_simple_square.count,
+                    "batches": stats.base_simple_square.batches,
+                    "area_px": stats.base_simple_square.area_px,
+                },
+                "base_rounded_solid": {
+                    "count": stats.base_rounded_solid.count,
+                    "batches": stats.base_rounded_solid.batches,
+                    "area_px": stats.base_rounded_solid.area_px,
+                },
+                "base_line_segment": {
+                    "count": stats.base_line_segment.count,
+                    "batches": stats.base_line_segment.batches,
+                    "area_px": stats.base_line_segment.area_px,
+                },
+                "base_line_plot": {
+                    "count": stats.base_line_plot.count,
+                    "batches": stats.base_line_plot.batches,
+                    "area_px": stats.base_line_plot.area_px,
+                },
+                "overlay_general": {
+                    "count": stats.overlay_general.count,
+                    "batches": stats.overlay_general.batches,
+                    "area_px": stats.overlay_general.area_px,
+                },
+                "overlay_simple_square": {
+                    "count": stats.overlay_simple_square.count,
+                    "batches": stats.overlay_simple_square.batches,
+                    "area_px": stats.overlay_simple_square.area_px,
+                },
+                "overlay_rounded_solid": {
+                    "count": stats.overlay_rounded_solid.count,
+                    "batches": stats.overlay_rounded_solid.batches,
+                    "area_px": stats.overlay_rounded_solid.area_px,
+                },
+                "overlay_line_segment": {
+                    "count": stats.overlay_line_segment.count,
+                    "batches": stats.overlay_line_segment.batches,
+                    "area_px": stats.overlay_line_segment.area_px,
+                },
+                "overlay_line_plot": {
+                    "count": stats.overlay_line_plot.count,
+                    "batches": stats.overlay_line_plot.batches,
+                    "area_px": stats.overlay_line_plot.area_px,
+                },
+                "largest_base_rects": largest_base,
+            })
+        });
+        json!({
+            "last_dirty": self.last_dirty.map(dirty_name),
+            "last_primitive_rebuild_ms": self.last_primitive_rebuild_ms,
+            "last_text_rebuild_ms": self.last_text_rebuild_ms,
+            "last_primitive_instance_count": self.last_primitive_instance_count,
+            "last_text_entry_count": self.last_text_entry_count,
+            "primitive_stats": primitive_stats,
+        })
+    }
+
+    fn primitive_layout_matches(&self, rect: [f32; 4], limit: usize) -> Vec<Value> {
+        let Some(layout) = self.current_layout.as_ref() else {
+            return Vec::new();
+        };
+        let primitive = crate::layout::Rect {
+            x: rect[0],
+            y: rect[1],
+            w: rect[2].max(0.0),
+            h: rect[3].max(0.0),
+        };
+        let primitive_area = (primitive.w * primitive.h).max(1.0);
+        let mut matches = Vec::new();
+        for (id, widget_rect) in &layout.rects {
+            if widget_rect.w <= 0.0 || widget_rect.h <= 0.0 {
+                continue;
+            }
+            let Some(overlap) = primitive.intersect(*widget_rect) else {
+                continue;
+            };
+            let overlap_area = overlap.w * overlap.h;
+            let widget_area = (widget_rect.w * widget_rect.h).max(1.0);
+            let primitive_coverage = overlap_area / primitive_area;
+            let widget_coverage = overlap_area / widget_area;
+            if primitive_coverage < 0.85 && widget_coverage < 0.85 {
+                continue;
+            }
+            let kind = self
+                .widget_kinds
+                .get(id)
+                .map(|kind| format!("{kind:?}"))
+                .unwrap_or_else(|| "Unknown".to_string());
+            let score = primitive_coverage.max(widget_coverage);
+            matches.push((
+                score,
+                json!({
+                    "id": id,
+                    "kind": kind,
+                    "rect": [widget_rect.x, widget_rect.y, widget_rect.w, widget_rect.h],
+                    "primitive_coverage": primitive_coverage,
+                    "widget_coverage": widget_coverage,
+                }),
+            ));
+        }
+        matches.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        matches
+            .into_iter()
+            .take(limit)
+            .map(|(_, value)| value)
+            .collect()
+    }
+
     fn platform_snapshot(&self) -> Value {
         json!({
             "os": runtime_profile::target_os(),
@@ -10038,11 +11157,19 @@ impl WgpuState {
             "scatter_max_points": self.runtime_profile.scatter_max_points(),
             "scatter_lod_threshold": self.runtime_profile.scatter_lod_threshold(),
             "line_plot_max_points": self.runtime_profile.line_plot_max_points(),
+            "line_plot_segment_budget": self.runtime_profile.line_plot_segment_budget(),
+            "line_plot_simplify_styles": self.runtime_profile.line_plot_simplify_styles(),
+            "histogram_bin_budget": self.runtime_profile.histogram_bin_budget(),
+            "histogram_compact_tick_count": self.runtime_profile.histogram_compact_tick_count(),
             "table_page_size": self.runtime_profile.table_page_size(),
             "table_sample_rows": self.runtime_profile.table_sample_rows(),
             "table_column_buffer_rows": self.runtime_profile.table_column_buffer_rows(),
+            "table_compact_metrics": self.runtime_profile.table_compact_metrics(),
+            "pie_chart_compact_labels": self.runtime_profile.pie_chart_compact_labels(),
             "gpu_ready": true,
             "wgpu_backend": self.adapter_info.backend.to_string(),
+            "present_mode": present_mode_name(self.config.present_mode),
+            "desired_maximum_frame_latency": self.config.desired_maximum_frame_latency,
             "adapter": self.adapter_info.name.as_str(),
             "driver": self.adapter_info.driver.as_str(),
             "driver_info": self.adapter_info.driver_info.as_str(),
@@ -10140,7 +11267,7 @@ impl WgpuState {
             || state.open_context_menu.is_some();
         state.close_popups();
         if had_popup {
-            self.rebuild_visuals();
+            self.rebuild_for_dirty(Dirty::Text);
         }
         had_popup
     }
@@ -10152,7 +11279,7 @@ impl WgpuState {
             .map(|state| state.open_context_menu(menu_id, pos))
             .unwrap_or(false);
         if opened {
-            self.rebuild_visuals();
+            self.rebuild_for_dirty(Dirty::Text);
         }
         opened
     }
@@ -10438,7 +11565,18 @@ impl WgpuState {
             .widget_tree
             .as_ref()
             .and_then(|root| crate::overlays::find_node(root, &id))
-            .map(|node| table::metrics_for_node(node, &self.theme, self.scale_factor))
+            .map(|node| {
+                table::metrics_for_node_with_profile(
+                    node,
+                    &self.theme,
+                    self.scale_factor,
+                    if self.runtime_profile.table_compact_metrics() {
+                        table::TableMetricsProfile::pi_compact()
+                    } else {
+                        table::TableMetricsProfile::default()
+                    },
+                )
+            })
             .unwrap_or_else(|| table::metrics(&self.theme, self.scale_factor));
         table::hit(table_state, rect, metrics, pos).map(|hit| (id, hit))
     }
@@ -10468,7 +11606,18 @@ impl WgpuState {
             .widget_tree
             .as_ref()
             .and_then(|root| crate::overlays::find_node(root, id))
-            .map(|node| table::metrics_for_node(node, &self.theme, self.scale_factor))
+            .map(|node| {
+                table::metrics_for_node_with_profile(
+                    node,
+                    &self.theme,
+                    self.scale_factor,
+                    if self.runtime_profile.table_compact_metrics() {
+                        table::TableMetricsProfile::pi_compact()
+                    } else {
+                        table::TableMetricsProfile::default()
+                    },
+                )
+            })
             .unwrap_or_else(|| table::metrics(&self.theme, self.scale_factor));
         let visible = table::visible(table_state, rect, metrics);
         Some((visible.row_count, visible.col_count))
@@ -10513,6 +11662,7 @@ impl WgpuState {
         // Prepare text glyph uploads before acquiring the render pass (avoids
         // borrow conflicts with depth_view which is borrowed by the pass).
         {
+            let render_profile = self.primitive_render_profile();
             let WgpuState {
                 text,
                 scatters,
@@ -10530,10 +11680,14 @@ impl WgpuState {
                 t.clear_scatter_labels();
                 if let (Some(tree), Some(layout)) = (widget_tree.as_ref(), current_layout.as_ref())
                 {
-                    push_plot_overlay_labels(t, tree, layout, theme, *scale_factor);
+                    push_plot_overlay_labels(t, tree, layout, theme, *scale_factor, render_profile);
                 }
                 for id in visible_scatter_order.iter() {
                     if let Some(rt) = scatters.get(id) {
+                        let scatter_font_family = widget_tree
+                            .as_ref()
+                            .and_then(|tree| crate::overlays::find_node(tree, id))
+                            .and_then(|node| node.style.text.font_family.as_ref());
                         let [vl, vt, vr, vb] = rt.widget.viewport_clip();
                         let clip = glyphon::TextBounds {
                             left: vl as i32,
@@ -10542,7 +11696,7 @@ impl WgpuState {
                             bottom: vb as i32,
                         };
                         for lbl in &rt.widget.pending_labels {
-                            t.push_scatter_label(
+                            t.push_scatter_label_with_font_family(
                                 &lbl.text,
                                 lbl.screen_x,
                                 lbl.screen_y,
@@ -10552,6 +11706,7 @@ impl WgpuState {
                                 lbl.color,
                                 lbl.font_size,
                                 lbl.anchor.as_ref(),
+                                scatter_font_family,
                             );
                         }
                     }
@@ -10585,6 +11740,19 @@ impl WgpuState {
         timings.acquire_ms = acquire_t0.elapsed().as_secs_f64() * 1000.0;
 
         let encode_t0 = Instant::now();
+        let disable_base_primitives = env_flag_enabled("DRAGONGUI_BENCH_DISABLE_BASE_PRIMITIVES");
+        let disable_scatter_render = env_flag_enabled("DRAGONGUI_BENCH_DISABLE_SCATTER_RENDER");
+        let disable_text_render = env_flag_enabled("DRAGONGUI_BENCH_DISABLE_TEXT");
+        let disable_overlay_primitives =
+            env_flag_enabled("DRAGONGUI_BENCH_DISABLE_OVERLAY_PRIMITIVES");
+        let discard_depth_stores =
+            env_flag_or("DRAGONGUI_BENCH_DISCARD_DEPTH_STORES", cfg!(feature = "pi"));
+        let depth_store = if discard_depth_stores {
+            wgpu::StoreOp::Discard
+        } else {
+            wgpu::StoreOp::Store
+        };
+        let scatter_depth_store = wgpu::StoreOp::Store;
         let view = texture
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -10595,6 +11763,7 @@ impl WgpuState {
             });
 
         // Pass 1: base primitives and images — clear color and depth.
+        let base_pass_t0 = Instant::now();
         {
             let bg = self.theme.background;
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -10617,104 +11786,134 @@ impl WgpuState {
                     view: &self.depth_view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
+                        store: depth_store,
                     }),
                     stencil_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(0),
-                        store: wgpu::StoreOp::Store,
+                        store: depth_store,
                     }),
                 }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            if let Some(prims) = &self.primitives {
-                prims.render_base(&mut pass);
+            if !disable_base_primitives {
+                if let Some(prims) = &self.primitives {
+                    prims.render_base(&mut pass);
+                }
             }
             if let Some(images) = &self.images {
                 images.render(&mut pass);
             }
         }
+        timings.base_pass_encode_ms = base_pass_t0.elapsed().as_secs_f64() * 1000.0;
 
         // Pass 2: one render pass per visible scatter with its own depth clear
         // to prevent cross-widget depth contamination.
-        let scatter_order = self.visible_scatter_order.clone();
-        for scatter_id in &scatter_order {
-            if let Some(runtime) = self.scatters.get_mut(scatter_id) {
-                let render_t0 = Instant::now();
-                let render_scale = runtime.widget.active_render_scale();
-                if render_scale < 0.999 && runtime.widget.width > 0 && runtime.widget.height > 0 {
-                    let (target_width, target_height) =
-                        runtime.widget.scaled_render_target_size(render_scale);
-                    let recreate = runtime
-                        .render_target
-                        .as_ref()
-                        .map(|target| {
-                            !target.matches(target_width, target_height, self.config.format)
-                        })
-                        .unwrap_or(true);
-                    if recreate {
-                        runtime.render_target = Some(ScatterRenderTarget::new(
-                            &self.device,
-                            &self.scatter_compositor,
-                            target_width,
-                            target_height,
-                            self.config.format,
-                        ));
+        let scatter_pass_t0 = Instant::now();
+        if !disable_scatter_render {
+            let scatter_order = self.visible_scatter_order.clone();
+            for scatter_id in &scatter_order {
+                if let Some(runtime) = self.scatters.get_mut(scatter_id) {
+                    if !runtime.widget.has_render_work() {
+                        runtime.metrics.last_render_encode_ms = 0.0;
+                        continue;
                     }
-                    let target = runtime.render_target.as_ref().unwrap();
+                    let render_t0 = Instant::now();
+                    let render_scale = runtime.widget.active_render_scale();
+                    if render_scale < 0.999 && runtime.widget.width > 0 && runtime.widget.height > 0
                     {
-                        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                            label: Some("dragongui-scatter-scaled"),
-                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                view: &target.color_view,
-                                resolve_target: None,
-                                depth_slice: None,
-                                ops: wgpu::Operations {
-                                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                                        r: 0.0,
-                                        g: 0.0,
-                                        b: 0.0,
-                                        a: 0.0,
-                                    }),
-                                    store: wgpu::StoreOp::Store,
-                                },
-                            })],
-                            depth_stencil_attachment: Some(
-                                wgpu::RenderPassDepthStencilAttachment {
-                                    view: &target.depth_view,
-                                    depth_ops: Some(wgpu::Operations {
-                                        load: wgpu::LoadOp::Clear(1.0),
+                        let (target_width, target_height) =
+                            runtime.widget.scaled_render_target_size(render_scale);
+                        let recreate = runtime
+                            .render_target
+                            .as_ref()
+                            .map(|target| {
+                                !target.matches(target_width, target_height, self.config.format)
+                            })
+                            .unwrap_or(true);
+                        if recreate {
+                            runtime.render_target = Some(ScatterRenderTarget::new(
+                                &self.device,
+                                &self.scatter_compositor,
+                                target_width,
+                                target_height,
+                                self.config.format,
+                            ));
+                        }
+                        let target = runtime.render_target.as_ref().unwrap();
+                        {
+                            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                label: Some("dragongui-scatter-scaled"),
+                                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                    view: &target.color_view,
+                                    resolve_target: None,
+                                    depth_slice: None,
+                                    ops: wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                                            r: 0.0,
+                                            g: 0.0,
+                                            b: 0.0,
+                                            a: 0.0,
+                                        }),
                                         store: wgpu::StoreOp::Store,
-                                    }),
-                                    stencil_ops: Some(wgpu::Operations {
-                                        load: wgpu::LoadOp::Clear(0),
+                                    },
+                                })],
+                                depth_stencil_attachment: Some(
+                                    wgpu::RenderPassDepthStencilAttachment {
+                                        view: &target.depth_view,
+                                        depth_ops: Some(wgpu::Operations {
+                                            load: wgpu::LoadOp::Clear(1.0),
+                                            store: scatter_depth_store,
+                                        }),
+                                        stencil_ops: Some(wgpu::Operations {
+                                            load: wgpu::LoadOp::Clear(0),
+                                            store: scatter_depth_store,
+                                        }),
+                                    },
+                                ),
+                                timestamp_writes: None,
+                                occlusion_query_set: None,
+                                multiview_mask: None,
+                            });
+                            runtime
+                                .widget
+                                .render_offscreen(&mut pass, target_width, target_height);
+                        }
+                        self.scatter_compositor.update_uniforms(
+                            &self.queue,
+                            [
+                                runtime.widget.offset[0],
+                                runtime.widget.offset[1],
+                                runtime.widget.width as f32,
+                                runtime.widget.height as f32,
+                            ],
+                            self.config.width,
+                            self.config.height,
+                        );
+                        {
+                            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                label: Some("dragongui-scatter-composite"),
+                                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                    view: &view,
+                                    resolve_target: None,
+                                    depth_slice: None,
+                                    ops: wgpu::Operations {
+                                        load: wgpu::LoadOp::Load,
                                         store: wgpu::StoreOp::Store,
-                                    }),
-                                },
-                            ),
-                            timestamp_writes: None,
-                            occlusion_query_set: None,
-                            multiview_mask: None,
-                        });
-                        runtime
-                            .widget
-                            .render_offscreen(&mut pass, target_width, target_height);
-                    }
-                    self.scatter_compositor.update_uniforms(
-                        &self.queue,
-                        [
-                            runtime.widget.offset[0],
-                            runtime.widget.offset[1],
-                            runtime.widget.width as f32,
-                            runtime.widget.height as f32,
-                        ],
-                        self.config.width,
-                        self.config.height,
-                    );
-                    {
+                                    },
+                                })],
+                                depth_stencil_attachment: None,
+                                timestamp_writes: None,
+                                occlusion_query_set: None,
+                                multiview_mask: None,
+                            });
+                            self.scatter_compositor
+                                .render(&mut pass, &target.bind_group);
+                        }
+                    } else {
                         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                            label: Some("dragongui-scatter-composite"),
+                            label: Some("dragongui-scatter"),
                             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                                 view: &view,
                                 resolve_target: None,
@@ -10724,50 +11923,34 @@ impl WgpuState {
                                     store: wgpu::StoreOp::Store,
                                 },
                             })],
-                            depth_stencil_attachment: None,
+                            depth_stencil_attachment: Some(
+                                wgpu::RenderPassDepthStencilAttachment {
+                                    view: &self.depth_view,
+                                    depth_ops: Some(wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(1.0),
+                                        store: scatter_depth_store,
+                                    }),
+                                    stencil_ops: Some(wgpu::Operations {
+                                        load: wgpu::LoadOp::Clear(0),
+                                        store: scatter_depth_store,
+                                    }),
+                                },
+                            ),
                             timestamp_writes: None,
                             occlusion_query_set: None,
                             multiview_mask: None,
                         });
-                        self.scatter_compositor
-                            .render(&mut pass, &target.bind_group);
+                        runtime.widget.render(&mut pass);
                     }
-                } else {
-                    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("dragongui-scatter"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: &view,
-                            resolve_target: None,
-                            depth_slice: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Load,
-                                store: wgpu::StoreOp::Store,
-                            },
-                        })],
-                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                            view: &self.depth_view,
-                            depth_ops: Some(wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(1.0),
-                                store: wgpu::StoreOp::Store,
-                            }),
-                            stencil_ops: Some(wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(0),
-                                store: wgpu::StoreOp::Store,
-                            }),
-                        }),
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                        multiview_mask: None,
-                    });
-                    runtime.widget.render(&mut pass);
+                    runtime.metrics.last_render_encode_ms =
+                        render_t0.elapsed().as_secs_f64() * 1000.0;
                 }
-                runtime.metrics.last_render_encode_ms = render_t0.elapsed().as_secs_f64() * 1000.0;
             }
         }
+        timings.scatter_pass_encode_ms = scatter_pass_t0.elapsed().as_secs_f64() * 1000.0;
 
-        // Pass 3: text and overlay primitives. The overlay pipelines do not
-        // write depth and always pass, but wgpu still requires a depth
-        // attachment because those pipelines were created with a depth-stencil state.
+        // Pass 3: text and overlay primitives.
+        let overlay_pass_t0 = Instant::now();
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("dragongui-overlay"),
@@ -10783,12 +11966,20 @@ impl WgpuState {
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &self.depth_view,
                     depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
+                        load: if discard_depth_stores {
+                            wgpu::LoadOp::Clear(1.0)
+                        } else {
+                            wgpu::LoadOp::Load
+                        },
+                        store: depth_store,
                     }),
                     stencil_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
+                        load: if discard_depth_stores {
+                            wgpu::LoadOp::Clear(0)
+                        } else {
+                            wgpu::LoadOp::Load
+                        },
+                        store: depth_store,
                     }),
                 }),
                 timestamp_writes: None,
@@ -10804,20 +11995,30 @@ impl WgpuState {
                 1.0,
             );
             pass.set_scissor_rect(0, 0, self.config.width, self.config.height);
-            if let Some(t) = &self.text {
-                t.render_base(&mut pass);
+            if !disable_text_render {
+                if let Some(t) = &self.text {
+                    t.render_base(&mut pass);
+                }
             }
-            if let Some(prims) = &self.primitives {
-                prims.render_overlays(&mut pass);
+            if !disable_overlay_primitives {
+                if let Some(prims) = &self.primitives {
+                    prims.render_overlays(&mut pass);
+                }
             }
-            if let Some(t) = &self.text {
-                t.render_overlays(&mut pass);
+            if !disable_text_render {
+                if let Some(t) = &self.text {
+                    t.render_overlays(&mut pass);
+                }
             }
         }
+        timings.overlay_pass_encode_ms = overlay_pass_t0.elapsed().as_secs_f64() * 1000.0;
         timings.encode_ms = encode_t0.elapsed().as_secs_f64() * 1000.0;
 
         let submit_t0 = Instant::now();
-        self.queue.submit(std::iter::once(encoder.finish()));
+        let encoder_finish_t0 = Instant::now();
+        let command_buffer = encoder.finish();
+        timings.encoder_finish_ms = encoder_finish_t0.elapsed().as_secs_f64() * 1000.0;
+        self.queue.submit(std::iter::once(command_buffer));
         timings.submit_ms = submit_t0.elapsed().as_secs_f64() * 1000.0;
         let present_t0 = Instant::now();
         texture.present();
@@ -11023,6 +12224,7 @@ struct DragonApp {
     gpu: Option<WgpuState>,
     error: Option<DragonError>,
     smoke_frames: Option<u32>,
+    smoke_frame_interval: Option<Duration>,
     frames_rendered: u32,
     upload_ms: f64,
     frame_ms_total: f64,
@@ -11031,6 +12233,10 @@ struct DragonApp {
     last_frame_prepare_ms: f64,
     last_frame_acquire_ms: f64,
     last_frame_encode_ms: f64,
+    last_frame_base_pass_encode_ms: f64,
+    last_frame_scatter_pass_encode_ms: f64,
+    last_frame_overlay_pass_encode_ms: f64,
+    last_frame_encoder_finish_ms: f64,
     last_frame_submit_ms: f64,
     last_frame_present_ms: f64,
     frame_timestamps: VecDeque<Instant>,
@@ -11071,13 +12277,20 @@ struct DragonApp {
     deferred_python_task_drain: bool,
     /// A coalesced Scatter3D frame upload was applied and should be presented before another one.
     scatter_upload_redraw_pending: bool,
+    last_drained_command_count: usize,
+    last_raw_drained_command_count: usize,
+    last_coalesced_command_count: usize,
     command_seq: u64,
     command_history: VecDeque<RuntimeCommandRecord>,
     startup_real_redraw_deadline: Option<Instant>,
 }
 
 impl DragonApp {
-    fn new(mut spec: AppSpec, smoke_frames: Option<u32>) -> Self {
+    fn new(
+        mut spec: AppSpec,
+        smoke_frames: Option<u32>,
+        smoke_frame_interval: Option<Duration>,
+    ) -> Self {
         let command_bridge = spec.command_bridge.take();
         let python_runtime = spec.python_runtime.take();
         Self {
@@ -11088,6 +12301,7 @@ impl DragonApp {
             gpu: None,
             error: None,
             smoke_frames,
+            smoke_frame_interval,
             frames_rendered: 0,
             upload_ms: 0.0,
             frame_ms_total: 0.0,
@@ -11096,6 +12310,10 @@ impl DragonApp {
             last_frame_prepare_ms: 0.0,
             last_frame_acquire_ms: 0.0,
             last_frame_encode_ms: 0.0,
+            last_frame_base_pass_encode_ms: 0.0,
+            last_frame_scatter_pass_encode_ms: 0.0,
+            last_frame_overlay_pass_encode_ms: 0.0,
+            last_frame_encoder_finish_ms: 0.0,
             last_frame_submit_ms: 0.0,
             last_frame_present_ms: 0.0,
             frame_timestamps: VecDeque::with_capacity(120),
@@ -11120,6 +12338,9 @@ impl DragonApp {
             modifiers: ModifiersState::empty(),
             deferred_python_task_drain: false,
             scatter_upload_redraw_pending: false,
+            last_drained_command_count: 0,
+            last_raw_drained_command_count: 0,
+            last_coalesced_command_count: 0,
             command_seq: 0,
             command_history: VecDeque::with_capacity(COMMAND_HISTORY_LIMIT),
             startup_real_redraw_deadline: None,
@@ -11149,6 +12370,10 @@ impl DragonApp {
         self.last_frame_prepare_ms = timings.prepare_ms;
         self.last_frame_acquire_ms = timings.acquire_ms;
         self.last_frame_encode_ms = timings.encode_ms;
+        self.last_frame_base_pass_encode_ms = timings.base_pass_encode_ms;
+        self.last_frame_scatter_pass_encode_ms = timings.scatter_pass_encode_ms;
+        self.last_frame_overlay_pass_encode_ms = timings.overlay_pass_encode_ms;
+        self.last_frame_encoder_finish_ms = timings.encoder_finish_ms;
         self.last_frame_submit_ms = timings.submit_ms;
         self.last_frame_present_ms = timings.present_ms;
         self.frame_ms_total += timings.total_ms;
@@ -11255,11 +12480,13 @@ impl DragonApp {
         } else {
             0.0
         };
-        let queue_depth = self
+        let queue_stats = self
             .command_bridge
             .as_ref()
-            .map(|bridge| bridge.len())
-            .unwrap_or(0);
+            .map(|bridge| bridge.stats())
+            .unwrap_or_default();
+        let queue_depth = queue_stats.depth;
+        let performance = self.performance_snapshot(queue_stats);
         json!({
             "schema": 1,
             "runtime": {
@@ -11278,11 +12505,16 @@ impl DragonApp {
                 "frame_prepare_ms": self.last_frame_prepare_ms,
                 "frame_acquire_ms": self.last_frame_acquire_ms,
                 "frame_encode_ms": self.last_frame_encode_ms,
+                "frame_base_pass_encode_ms": self.last_frame_base_pass_encode_ms,
+                "frame_scatter_pass_encode_ms": self.last_frame_scatter_pass_encode_ms,
+                "frame_overlay_pass_encode_ms": self.last_frame_overlay_pass_encode_ms,
+                "frame_encoder_finish_ms": self.last_frame_encoder_finish_ms,
                 "frame_submit_ms": self.last_frame_submit_ms,
                 "frame_present_ms": self.last_frame_present_ms,
                 "wall_fps": self.wall_fps(),
                 "frame_window_count": self.frame_timestamps.len(),
                 "command_queue_depth": queue_depth,
+                "performance": performance,
                 "loading_screen": self.gpu.as_ref().map(|gpu| {
                     let loading = &gpu.loading_screen;
                     json!({
@@ -11329,6 +12561,32 @@ impl DragonApp {
                 "commands": self.command_history_snapshot(),
             },
             "gpu": self.gpu.as_ref().map(WgpuState::debug_snapshot_value),
+        })
+    }
+
+    fn performance_snapshot(&self, queue_stats: crate::commands::CommandQueueStats) -> Value {
+        let gpu_performance = self
+            .gpu
+            .as_ref()
+            .map(WgpuState::performance_snapshot)
+            .unwrap_or_else(|| {
+                json!({
+                    "last_dirty": null,
+                    "last_primitive_rebuild_ms": 0.0,
+                    "last_text_rebuild_ms": 0.0,
+                    "last_primitive_instance_count": 0,
+                    "last_text_entry_count": 0,
+                })
+            });
+        json!({
+            "command_queue_depth": queue_stats.depth,
+            "command_queue_oldest_age_ms": queue_stats.oldest_age_ms,
+            "command_queue_max_depth_observed": queue_stats.max_depth_observed,
+            "last_drained_command_count": self.last_drained_command_count,
+            "last_raw_drained_command_count": self.last_raw_drained_command_count,
+            "last_coalesced_command_count": self.last_coalesced_command_count,
+            "total_queue_coalesced_command_count": queue_stats.total_coalesced_commands,
+            "gpu": gpu_performance,
         })
     }
 
@@ -11412,27 +12670,44 @@ impl DragonApp {
 
     fn drain_runtime_commands(&mut self) {
         if self.window.is_none() || self.gpu.is_none() {
+            self.last_drained_command_count = 0;
+            self.last_raw_drained_command_count = 0;
+            self.last_coalesced_command_count = 0;
             return;
         }
         let Some(bridge) = self.command_bridge.as_ref().cloned() else {
+            self.last_drained_command_count = 0;
+            self.last_raw_drained_command_count = 0;
+            self.last_coalesced_command_count = 0;
             return;
         };
         bridge.clear_wake_pending();
         if self.scatter_upload_redraw_pending {
+            self.last_drained_command_count = 0;
+            self.last_raw_drained_command_count = 0;
+            self.last_coalesced_command_count = 0;
             return;
         }
 
         let mut request_redraw = false;
         let mut commands = Vec::new();
         let mut batches = 0_usize;
+        let mut drained_count = 0_usize;
+        let mut raw_drained_count = 0_usize;
+        let mut coalesced_count = 0_usize;
         let drain_start = Instant::now();
         loop {
             commands.clear();
             bridge.drain_limited_into(&mut commands, MAX_COMMANDS_PER_DRAIN_BATCH);
+            let raw_batch_len = commands.len();
+            raw_drained_count += raw_batch_len;
             coalesce_runtime_command_batch(&mut commands);
             if commands.is_empty() {
+                coalesced_count += raw_batch_len;
                 break;
             }
+            coalesced_count += raw_batch_len.saturating_sub(commands.len());
+            drained_count += commands.len();
             let batch_had_scatter_points = commands.iter().any(command_is_coalesced_scatter_points);
             batches += 1;
             if let Some(gpu) = self.gpu.as_mut() {
@@ -11468,6 +12743,9 @@ impl DragonApp {
                 break;
             }
         }
+        self.last_drained_command_count = drained_count;
+        self.last_raw_drained_command_count = raw_drained_count;
+        self.last_coalesced_command_count = coalesced_count;
 
         request_redraw |= self.flush_deferred_popup_commands();
 
@@ -11559,6 +12837,89 @@ impl DragonApp {
                     }
                 };
                 self.record_runtime_command("SetProp", Some(id), detail, dirty, &outcome, redraw)
+            }
+            Command::SetAttitudeOrientation {
+                id,
+                pitch,
+                roll,
+                yaw,
+            } => {
+                let detail = Some("orientation=pitch_roll_yaw".to_string());
+                let (dirty, outcome, redraw) = {
+                    let Some(gpu) = &mut self.gpu else {
+                        return self.record_runtime_command(
+                            "SetAttitudeOrientation",
+                            Some(id),
+                            detail,
+                            None,
+                            "gpu_not_ready",
+                            false,
+                        );
+                    };
+                    match gpu.apply_set_attitude_orientation(&id, pitch, roll, yaw) {
+                        Some(dirty) => {
+                            gpu.rebuild_for_dirty(dirty);
+                            (Some(dirty), "applied".to_string(), true)
+                        }
+                        None => {
+                            if !gpu.has_widget(&id) {
+                                eprintln!(
+                                    "DragonGUI: dropping stale AttitudeSphere orientation command for widget {id:?}"
+                                );
+                                (None, "stale_widget".to_string(), false)
+                            } else {
+                                (None, "unsupported_or_noop".to_string(), false)
+                            }
+                        }
+                    }
+                };
+                self.record_runtime_command(
+                    "SetAttitudeOrientation",
+                    Some(id),
+                    detail,
+                    dirty,
+                    &outcome,
+                    redraw,
+                )
+            }
+            Command::SetTranslationPosition { id, x, y } => {
+                let detail = Some("position=x_y".to_string());
+                let (dirty, outcome, redraw) = {
+                    let Some(gpu) = &mut self.gpu else {
+                        return self.record_runtime_command(
+                            "SetTranslationPosition",
+                            Some(id),
+                            detail,
+                            None,
+                            "gpu_not_ready",
+                            false,
+                        );
+                    };
+                    match gpu.apply_set_translation_position(&id, x, y) {
+                        Some(dirty) => {
+                            gpu.rebuild_for_dirty(dirty);
+                            (Some(dirty), "applied".to_string(), true)
+                        }
+                        None => {
+                            if !gpu.has_widget(&id) {
+                                eprintln!(
+                                    "DragonGUI: dropping stale TranslationTrace position command for widget {id:?}"
+                                );
+                                (None, "stale_widget".to_string(), false)
+                            } else {
+                                (None, "unsupported_or_noop".to_string(), false)
+                            }
+                        }
+                    }
+                };
+                self.record_runtime_command(
+                    "SetTranslationPosition",
+                    Some(id),
+                    detail,
+                    dirty,
+                    &outcome,
+                    redraw,
+                )
             }
             Command::SetStyle { id, patch_json } => {
                 let detail = Some(format!("patch_bytes={}", patch_json.len()));
@@ -11775,7 +13136,7 @@ impl DragonApp {
                         payload_format,
                     ) {
                         Ok(true) => {
-                            gpu.rebuild_primitives();
+                            gpu.rebuild_for_dirty(Dirty::Visual);
                             (Some(Dirty::Visual), "applied".to_string(), true)
                         }
                         Ok(false) => {
@@ -11829,7 +13190,7 @@ impl DragonApp {
                         payload_format,
                     ) {
                         Ok(true) => {
-                            gpu.rebuild_primitives();
+                            gpu.rebuild_for_dirty(Dirty::Visual);
                             (Some(Dirty::Visual), "applied".to_string(), true)
                         }
                         Ok(false) => {
@@ -11853,6 +13214,54 @@ impl DragonApp {
                     redraw,
                 )
             }
+            Command::SetHistogramBinsPacked {
+                id,
+                edges,
+                counts,
+                coalesce: _,
+            } => {
+                let detail = Some(format!(
+                    "edges={}, bins={}",
+                    edges.len() / 4,
+                    counts.len() / 4
+                ));
+                let (dirty, outcome, redraw) = {
+                    let Some(gpu) = &mut self.gpu else {
+                        return self.record_runtime_command(
+                            "SetHistogramBinsPacked",
+                            Some(id),
+                            detail,
+                            None,
+                            "gpu_not_ready",
+                            false,
+                        );
+                    };
+                    match gpu.set_histogram_bins_packed(&id, edges, counts) {
+                        Ok(true) => {
+                            gpu.rebuild_for_dirty(Dirty::Text);
+                            (Some(Dirty::Text), "applied".to_string(), true)
+                        }
+                        Ok(false) => {
+                            eprintln!(
+                                "DragonGUI: dropping stale histogram update for widget {id:?}"
+                            );
+                            (None, "stale_widget".to_string(), false)
+                        }
+                        Err(err) => {
+                            eprintln!("DragonGUI: failed to apply histogram update: {err}");
+                            (None, format!("error: {err}"), false)
+                        }
+                    }
+                };
+                self.record_runtime_command(
+                    "SetHistogramBinsPacked",
+                    Some(id),
+                    detail,
+                    dirty,
+                    &outcome,
+                    redraw,
+                )
+            }
             Command::ClearLinePlotSeries { id, series } => {
                 let detail = Some(format!("series={}", series.as_deref().unwrap_or("*")));
                 let (dirty, outcome, redraw) = {
@@ -11867,7 +13276,7 @@ impl DragonApp {
                         );
                     };
                     if gpu.clear_line_plot_series(&id, series) {
-                        gpu.rebuild_primitives();
+                        gpu.rebuild_for_dirty(Dirty::Visual);
                         (Some(Dirty::Visual), "applied".to_string(), true)
                     } else {
                         (None, "stale_widget".to_string(), false)
@@ -14089,7 +15498,7 @@ impl DragonApp {
                     .unwrap_or(true);
             }
             if changed {
-                gpu.rebuild_primitives();
+                gpu.rebuild_for_dirty(Dirty::Visual);
             }
         }
 
@@ -14217,11 +15626,11 @@ impl DragonApp {
             if needs_layout_rebuild {
                 gpu.apply_layout();
             } else if needs_text_rebuild {
-                gpu.rebuild_visuals();
+                gpu.rebuild_for_dirty(Dirty::Text);
             } else {
                 // Activation happens while hover/tooltip state may still be visible.
                 // Keep the text layer synchronized with primitive state changes.
-                gpu.rebuild_visuals();
+                gpu.rebuild_for_dirty(Dirty::Text);
             }
         }
         self.request_redraw();
@@ -14237,7 +15646,7 @@ impl DragonApp {
             self.emit_change(id, ChangeValue::Text(value));
         }
         if let Some(gpu) = &mut self.gpu {
-            gpu.rebuild_visuals();
+            gpu.rebuild_for_dirty(Dirty::Text);
         }
         self.request_redraw();
     }
@@ -14261,7 +15670,7 @@ impl DragonApp {
                 ws.select_table_cell(id, row, col);
             }
             payload = gpu.table_selection_payload(id, row, col);
-            gpu.rebuild_visuals();
+            gpu.rebuild_for_dirty(table_selection_dirty());
         }
         if let Some(payload) = payload {
             self.emit_change(id, ChangeValue::Text(payload));
@@ -14308,7 +15717,7 @@ impl DragonApp {
                 })
                 .unwrap_or(false);
             if changed {
-                gpu.rebuild_visuals();
+                gpu.rebuild_for_dirty(table_selection_dirty());
             }
         }
         if changed {
@@ -14326,7 +15735,7 @@ impl DragonApp {
                 .map(|ws| ws.move_table_selection_to_col_edge(id, end))
                 .unwrap_or(false);
             if changed {
-                gpu.rebuild_visuals();
+                gpu.rebuild_for_dirty(table_selection_dirty());
             }
         }
         if changed {
@@ -14344,7 +15753,7 @@ impl DragonApp {
                 .unwrap_or(false);
             if changed {
                 gpu.refresh_table_sort(id);
-                gpu.rebuild_visuals();
+                gpu.rebuild_for_dirty(table_viewport_dirty());
             }
         }
         self.request_redraw();
@@ -14358,7 +15767,7 @@ impl DragonApp {
                 .map(|ws| ws.scroll_table(id, row_delta, col_delta))
                 .unwrap_or(false);
             if changed {
-                gpu.rebuild_visuals();
+                gpu.rebuild_for_dirty(table_viewport_dirty());
                 self.request_redraw();
             }
         }
@@ -14485,7 +15894,7 @@ impl DragonApp {
                             self.emit_change(&id, ChangeValue::Float(value));
                         }
                         if let Some(gpu) = &mut self.gpu {
-                            gpu.rebuild_primitives();
+                            gpu.rebuild_for_dirty(Dirty::Visual);
                         }
                         self.request_redraw();
                         return;
@@ -14501,7 +15910,7 @@ impl DragonApp {
                             if let Some(ws) = &mut gpu.widget_state {
                                 ws.set_dropdown_open(None);
                             }
-                            gpu.rebuild_visuals();
+                            gpu.rebuild_for_dirty(Dirty::Text);
                         }
                         self.request_redraw();
                         return;
@@ -14525,7 +15934,7 @@ impl DragonApp {
                             self.emit_change(&id, ChangeValue::Text(value));
                         }
                         if let Some(gpu) = &mut self.gpu {
-                            gpu.rebuild_visuals();
+                            gpu.rebuild_for_dirty(Dirty::Text);
                         }
                         self.request_redraw();
                         return;
@@ -16250,6 +17659,9 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                     if self.frames_rendered >= limit {
                         event_loop.exit();
                     } else {
+                        if let Some(interval) = self.smoke_frame_interval {
+                            std::thread::sleep(interval);
+                        }
                         self.request_redraw();
                     }
                 }
@@ -16339,6 +17751,11 @@ pub fn run_event_loop(spec: AppSpec) -> Result<RunResult, DragonError> {
     let smoke_frames = std::env::var("DRAGONGUI_SMOKE_FRAMES")
         .ok()
         .and_then(|v| v.parse::<u32>().ok());
+    let smoke_frame_interval = std::env::var("DRAGONGUI_SMOKE_FRAME_INTERVAL_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|ms| *ms > 0)
+        .map(Duration::from_millis);
 
     let runtime_profile = RuntimeProfileSelection::current();
     let (effective_backends, _) =
@@ -16359,7 +17776,7 @@ pub fn run_event_loop(spec: AppSpec) -> Result<RunResult, DragonError> {
         .map_err(|e| DragonError::GpuInit(format!("event loop: {e}")))?;
     event_loop.set_control_flow(ControlFlow::Wait);
 
-    let mut app = DragonApp::new(spec, smoke_frames);
+    let mut app = DragonApp::new(spec, smoke_frames, smoke_frame_interval);
     if let Some(bridge) = &app.command_bridge {
         bridge.install_proxy(event_loop.create_proxy());
     }

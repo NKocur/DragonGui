@@ -9,6 +9,15 @@ pub fn resolve(name: &str) -> &'static [[f32; 3]] {
     control_points(name)
 }
 
+pub fn uniform_points(name: &str) -> ([[f32; 4]; 9], u32) {
+    let cpts = control_points(name);
+    let mut out = [[0.0; 4]; 9];
+    for (idx, color) in cpts.iter().take(9).enumerate() {
+        out[idx] = [color[0], color[1], color[2], 1.0];
+    }
+    (out, cpts.len().min(9) as u32)
+}
+
 /// Sample a pre-resolved control-point table at normalised `t` in [0, 1].
 #[inline(always)]
 pub fn sample(cpts: &[[f32; 3]], t: f32) -> [f32; 3] {

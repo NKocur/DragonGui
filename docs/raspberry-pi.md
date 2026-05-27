@@ -24,6 +24,11 @@ Unsupported for the first release:
 - SSH-only GUI forwarding as a supported path.
 - Embedded `HtmlReport` WebView. Use `HtmlReport.open_external()` on Linux.
 
+`HtmlReport` remains useful on Pi as a report launcher/source preview surface,
+but embedded rendering is reported as unsupported in the native debug snapshot.
+Keep `external_fallback=True` and expose an external-open action for Pi-facing
+apps.
+
 ## Install Dependencies
 
 For a developer source build on Pi OS:
@@ -51,6 +56,7 @@ From the DragonGUI repo root:
 
 ```bash
 bash rpi_setup_and_run.sh deps
+bash rpi_setup_and_run.sh check-deps
 bash rpi_setup_and_run.sh build-smoke
 ```
 
@@ -58,6 +64,22 @@ Then run the V3 demo normally:
 
 ```bash
 bash rpi_setup_and_run.sh run
+```
+
+Run an individual V3 page directly:
+
+```bash
+DRAGONGUI_DEMO_PAGE=scatter bash rpi_setup_and_run.sh run
+DRAGONGUI_DEMO_PAGE=lineplots bash rpi_setup_and_run.sh run
+DRAGONGUI_DEMO_PAGE=histograms bash rpi_setup_and_run.sh run
+DRAGONGUI_DEMO_PAGE=data bash rpi_setup_and_run.sh run
+```
+
+Run the validated page-fit smoke for one route:
+
+```bash
+DRAGONGUI_DEMO_PAGE=data DRAGONGUI_SMOKE_FRAMES=3 \
+  bash rpi_setup_and_run.sh smoke benchmarking/rpi_v3_viewport_fit_check.py
 ```
 
 If startup fails before a window appears, capture a full display/GPU report:
@@ -132,13 +154,22 @@ The Pi profile currently applies:
 - wgpu GL/GLES backend selection by default.
 - low-power adapter preference.
 - downlevel wgpu limits.
-- scatter point cap: 100,000 points.
+- scatter point cap: 200,000 points.
 - scatter LOD threshold: 50,000 points.
 - scatter interactive render scale: 0.75.
 - line plot retained cap: 50,000 points per series.
+- line plot primitive segment budget: 1,536 segments per series.
+- line plot dense dashed/dotted styles simplify to solid during primitive
+  emission.
+- histogram render budget: 384 rendered bar buckets.
+- compact histogram tick cap: 4 ticks for compact histogram rects.
 - table page size cap: 64 rows.
 - table startup sample cap: 512 rows.
 - table packed column buffer cap: 10,000 rows.
+- compact table metrics: 26 px header, 22 px rows, 48 px index column, and
+  112 px data columns unless explicit table style values override them.
+- compact PieChart labels: small Pi plots raise the automatic slice-label
+  threshold and cap visible slice/legend labels to keep compact panels readable.
 
 Backend triage can force wgpu backend selection:
 
@@ -177,6 +208,21 @@ python examples/css_feature_probes/line_plot_probe.py
 python examples/css_feature_probes/thread_monitor_probe.py
 python examples/css_feature_probes/scatter3d_frame_benchmark_probe.py
 ```
+
+To capture a compact widget baseline with the native performance counters:
+
+```bash
+DRAGONGUI_SMOKE_FRAMES=3 \
+  bash rpi_setup_and_run.sh smoke benchmarking/rpi_widget_probe.py
+```
+
+The probe defaults to `DRAGONGUI_PROFILE=pi`, `DRAGONGUI_WGPU_BACKEND=gl`,
+`DRAGONGUI_WINDOW_BACKEND=x11`, and `DRAGONGUI_SMOKE_FRAMES=10` when those
+variables are not already set. It prints snapshot values for primitive/text
+counts, primitive/text rebuild time, dirty kind, queue depth, and drained command
+count without enforcing thresholds before real Pi baseline data exists. If
+`native_performance_counters` is `false`, rebuild/copy the native extension with
+`bash rpi_setup_and_run.sh build-smoke` before recording the baseline.
 
 Use [raspberry-pi-release-checklist.md](raspberry-pi-release-checklist.md) for
 the full pre-release gate.
@@ -227,6 +273,6 @@ If file dialogs do not open:
 If startup is slow:
 
 - Use `DRAGONGUI_PROFILE=pi`.
-- Keep scatter examples at 25k to 100k points.
+- Keep scatter examples at 25k to 200k points.
 - Keep table samples small.
 - Prefer prepacked scatter and line plot payloads for live updates.

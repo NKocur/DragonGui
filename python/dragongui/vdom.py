@@ -9,7 +9,7 @@ _MISSING = object()
 _SCALAR_TYPES = (str, int, float, bool, type(None))
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class ResourceRef:
     """Opaque identity/version handle for data that must not be deep-compared."""
 
@@ -54,7 +54,7 @@ class ResourceRef:
         return data
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class VNode:
     """Typed virtual node used by the future component diff layer."""
 
@@ -89,7 +89,7 @@ class VNode:
         return data
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class Patch:
     """Internal patch emitted by VNode diffing before native command mapping."""
 
@@ -221,7 +221,7 @@ def _diff_node(old: VNode, new: VNode, *, path: tuple[str, ...]) -> list[Patch]:
         )
         return patches
 
-    for old_child, new_child in zip(old.children, new.children, strict=True):
+    for old_child, new_child in zip(old.children, new.children):
         patches.extend(
             _diff_node(
                 old_child,
@@ -235,7 +235,7 @@ def _diff_node(old: VNode, new: VNode, *, path: tuple[str, ...]) -> list[Patch]:
 def _child_identities_equal(left: Sequence[VNode], right: Sequence[VNode]) -> bool:
     if len(left) != len(right):
         return False
-    return all(old.identity() == new.identity() for old, new in zip(left, right, strict=True))
+    return all(old.identity() == new.identity() for old, new in zip(left, right))
 
 
 def _diff_props(old: VNode, new: VNode, path: tuple[str, ...]) -> list[Patch]:

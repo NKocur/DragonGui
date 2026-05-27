@@ -8,7 +8,7 @@ MAX_CELL_CHARS = 80
 _MISSING = object()
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class DataFrameSummary:
     kind: str
     columns: tuple[str, ...]

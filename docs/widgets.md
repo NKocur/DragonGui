@@ -131,7 +131,7 @@ The Pi profile keeps desktop APIs intact but lowers expensive retained data:
 
 | Area | Pi Profile Behavior |
 | --- | --- |
-| `Scatter3D` | Caps scatter payloads at 100,000 points and rejects larger startup/live/actor/stream payloads with a clear runtime error before GPU allocation. Default LOD threshold is 50,000 points and interactive render scale is capped at 0.75. |
+| `Scatter3D` | Caps scatter payloads at 200,000 points and rejects larger startup/live/actor/stream payloads with a clear runtime error before GPU allocation. Default LOD threshold is 50,000 points and interactive render scale is capped at 0.75. |
 | `LinePlot` | Caps retained data at 50,000 points per series. Startup and live payloads keep the newest points. Rendering still down-samples visible geometry internally. |
 | `DataFrameTable` | Caps default `page_size` to 64 rows, startup `sample_rows` to 512 rows, and packed column buffers to the first 10,000 rows. Rows beyond the packed buffer remain virtualized and show placeholders unless sampled cell text is available. |
 | `HtmlReport` | Embedded WebView is unsupported on Linux in this release. Use `HtmlReport.open_external()` for Plotly or other full HTML reports on Pi. |

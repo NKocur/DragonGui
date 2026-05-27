@@ -18,7 +18,7 @@ from .widgets import (
 )
 
 
-@dataclass(slots=True)
+@dataclass
 class LoadingScreen:
     """Native startup loading screen configuration."""
 
@@ -70,7 +70,7 @@ def _loading_color_value(
     return (channels[0], channels[1], channels[2], alpha)
 
 
-@dataclass(slots=True)
+@dataclass
 class App:
     """Top-level application object."""
 

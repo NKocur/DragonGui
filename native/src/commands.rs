@@ -5,10 +5,9 @@ use std::sync::{
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use pyo3::buffer::PyBuffer;
 use pyo3::exceptions::{PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyAny;
+use pyo3::types::{PyAny, PyBytes};
 use winit::event_loop::EventLoopProxy;
 
 use crate::css_style::{parse_stylesheet, StylesheetOrigin};
@@ -62,6 +61,17 @@ pub enum Command {
         prop: String,
         value: CommandValue,
     },
+    SetAttitudeOrientation {
+        id: String,
+        pitch: f32,
+        roll: f32,
+        yaw: f32,
+    },
+    SetTranslationPosition {
+        id: String,
+        x: f32,
+        y: f32,
+    },
     SetStyle {
         id: String,
         patch_json: String,
@@ -107,6 +117,12 @@ pub enum Command {
         xy: Vec<u8>,
         max_points: Option<usize>,
         payload_format: LinePlotPayloadFormat,
+    },
+    SetHistogramBinsPacked {
+        id: String,
+        edges: Vec<u8>,
+        counts: Vec<u8>,
+        coalesce: bool,
     },
     ClearLinePlotSeries {
         id: String,
@@ -524,6 +540,17 @@ pub enum CommandQueueError {
 #[derive(Debug, Default)]
 struct CommandQueueInner {
     items: VecDeque<Command>,
+    oldest_enqueued_at: Option<Instant>,
+    total_coalesced_commands: u64,
+    max_depth_observed: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct CommandQueueStats {
+    pub depth: usize,
+    pub oldest_age_ms: f64,
+    pub total_coalesced_commands: u64,
+    pub max_depth_observed: usize,
 }
 
 /// Thread-safe command queue shared by Python-facing senders and the future UI
@@ -566,6 +593,8 @@ impl CommandQueue {
                 };
                 if remove {
                     inner.items.remove(index);
+                    inner.total_coalesced_commands =
+                        inner.total_coalesced_commands.saturating_add(1);
                 }
             }
             *fit = fit_after_upload;
@@ -599,9 +628,94 @@ impl CommandQueue {
                 };
                 if remove {
                     inner.items.remove(index);
+                    inner.total_coalesced_commands =
+                        inner.total_coalesced_commands.saturating_add(1);
                 }
             }
             *fit = fit_after_upload;
+        }
+        if let Command::AppendLinePlotPointsPacked {
+            id,
+            series,
+            xy,
+            max_points,
+            payload_format,
+        } = &mut command
+        {
+            if let Some(Command::AppendLinePlotPointsPacked {
+                id: queued_id,
+                series: queued_series,
+                xy: queued_xy,
+                max_points: queued_max_points,
+                payload_format: queued_payload_format,
+            }) = inner.items.back_mut()
+            {
+                if queued_id == id
+                    && queued_series == series
+                    && *queued_max_points == *max_points
+                    && *queued_payload_format == *payload_format
+                {
+                    queued_xy.extend(std::mem::take(xy));
+                    inner.total_coalesced_commands =
+                        inner.total_coalesced_commands.saturating_add(1);
+                    return Ok(());
+                }
+            }
+        }
+        if let Command::SetHistogramBinsPacked {
+            id, coalesce: true, ..
+        } = &command
+        {
+            let target_id = id.clone();
+            let mut index = inner.items.len();
+            while index > 0 {
+                index -= 1;
+                let remove = matches!(
+                    &inner.items[index],
+                    Command::SetHistogramBinsPacked {
+                        id: queued_id,
+                        coalesce: true,
+                        ..
+                    } if queued_id == &target_id
+                );
+                if remove {
+                    inner.items.remove(index);
+                    inner.total_coalesced_commands =
+                        inner.total_coalesced_commands.saturating_add(1);
+                }
+            }
+        }
+        if let Command::SetAttitudeOrientation { id, .. } = &command {
+            let target_id = id.clone();
+            let mut index = inner.items.len();
+            while index > 0 {
+                index -= 1;
+                let remove = matches!(
+                    &inner.items[index],
+                    Command::SetAttitudeOrientation { id: queued_id, .. } if queued_id == &target_id
+                );
+                if remove {
+                    inner.items.remove(index);
+                    inner.total_coalesced_commands =
+                        inner.total_coalesced_commands.saturating_add(1);
+                }
+            }
+        }
+        if let Command::SetTranslationPosition { id, .. } = &command {
+            let target_id = id.clone();
+            let mut index = inner.items.len();
+            while index > 0 {
+                index -= 1;
+                let remove = matches!(
+                    &inner.items[index],
+                    Command::SetTranslationPosition { id: queued_id, .. } if queued_id == &target_id
+                );
+                if remove {
+                    inner.items.remove(index);
+                    inner.total_coalesced_commands =
+                        inner.total_coalesced_commands.saturating_add(1);
+                }
+            }
         }
         if let Command::UpdateScatterActorPacked { id, actor_id, .. } = &command {
             let target_id = id.clone();
@@ -619,21 +733,30 @@ impl CommandQueue {
                 );
                 if remove {
                     inner.items.remove(index);
+                    inner.total_coalesced_commands =
+                        inner.total_coalesced_commands.saturating_add(1);
                 }
             }
         }
+        if inner.items.is_empty() {
+            inner.oldest_enqueued_at = Some(Instant::now());
+        }
         inner.items.push_back(command);
+        inner.max_depth_observed = inner.max_depth_observed.max(inner.items.len());
         Ok(())
     }
 
     pub fn drain(&self) -> Vec<Command> {
         let mut inner = self.inner.lock().expect("command queue mutex poisoned");
-        inner.items.drain(..).collect()
+        let drained = inner.items.drain(..).collect();
+        inner.oldest_enqueued_at = None;
+        drained
     }
 
     pub fn drain_into(&self, out: &mut Vec<Command>) {
         let mut inner = self.inner.lock().expect("command queue mutex poisoned");
         out.extend(inner.items.drain(..));
+        inner.oldest_enqueued_at = None;
     }
 
     pub fn drain_limited_into(&self, out: &mut Vec<Command>, limit: usize) {
@@ -647,6 +770,9 @@ impl CommandQueue {
             };
             out.push(command);
         }
+        if inner.items.is_empty() {
+            inner.oldest_enqueued_at = None;
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -659,6 +785,19 @@ impl CommandQueue {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    pub fn stats(&self) -> CommandQueueStats {
+        let inner = self.inner.lock().expect("command queue mutex poisoned");
+        CommandQueueStats {
+            depth: inner.items.len(),
+            oldest_age_ms: inner
+                .oldest_enqueued_at
+                .map(|at| at.elapsed().as_secs_f64() * 1000.0)
+                .unwrap_or(0.0),
+            total_coalesced_commands: inner.total_coalesced_commands,
+            max_depth_observed: inner.max_depth_observed,
+        }
     }
 
     pub fn close(&self) {
@@ -706,6 +845,10 @@ impl CommandBridge {
 
     pub fn len(&self) -> usize {
         self.queue.len()
+    }
+
+    pub fn stats(&self) -> CommandQueueStats {
+        self.queue.stats()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -943,6 +1086,25 @@ impl NativeCommandSender {
         })
     }
 
+    fn enqueue_set_attitude_orientation(
+        &self,
+        id: String,
+        pitch: f32,
+        roll: f32,
+        yaw: f32,
+    ) -> PyResult<()> {
+        self.enqueue(Command::SetAttitudeOrientation {
+            id,
+            pitch,
+            roll,
+            yaw,
+        })
+    }
+
+    fn enqueue_set_translation_position(&self, id: String, x: f32, y: f32) -> PyResult<()> {
+        self.enqueue(Command::SetTranslationPosition { id, x, y })
+    }
+
     fn enqueue_set_style(&self, id: String, patch_json: String) -> PyResult<()> {
         let parsed: serde_json::Value = serde_json::from_str(&patch_json)
             .map_err(|e| PyValueError::new_err(format!("invalid style patch JSON: {e}")))?;
@@ -1100,6 +1262,43 @@ impl NativeCommandSender {
             xy,
             max_points,
             payload_format: LinePlotPayloadFormat::XyF32V0,
+        })
+    }
+
+    #[pyo3(signature = (id, edges, counts, coalesce=true))]
+    fn enqueue_set_histogram_bins_packed(
+        &self,
+        id: String,
+        edges: &Bound<'_, PyAny>,
+        counts: &Bound<'_, PyAny>,
+        coalesce: bool,
+    ) -> PyResult<()> {
+        let edges = byte_buffer_from_py(edges, "histogram edge payload")?;
+        let counts = byte_buffer_from_py(counts, "histogram count payload")?;
+        if edges.len() % 4 != 0 {
+            return Err(PyValueError::new_err(format!(
+                "histogram edge payload length {} is not a multiple of 4",
+                edges.len()
+            )));
+        }
+        if counts.len() % 4 != 0 {
+            return Err(PyValueError::new_err(format!(
+                "histogram count payload length {} is not a multiple of 4",
+                counts.len()
+            )));
+        }
+        let edge_count = edges.len() / 4;
+        let bin_count = counts.len() / 4;
+        if edge_count != bin_count.saturating_add(1) {
+            return Err(PyValueError::new_err(format!(
+                "histogram requires edges length to equal counts length + 1, got {edge_count} edges and {bin_count} counts"
+            )));
+        }
+        self.enqueue(Command::SetHistogramBinsPacked {
+            id,
+            edges,
+            counts,
+            coalesce,
         })
     }
 
@@ -2113,16 +2312,22 @@ fn byte_buffers_from_py_iterable(
 }
 
 fn byte_buffer_from_py(value: &Bound<'_, PyAny>, context: &str) -> PyResult<Vec<u8>> {
-    let buffer = PyBuffer::<u8>::get(value).map_err(|_| {
+    let bytes_ctor = value
+        .py()
+        .import("builtins")?
+        .getattr("bytes")
+        .map_err(|_| PyRuntimeError::new_err("failed to load Python bytes constructor"))?;
+    let bytes_obj = bytes_ctor.call1((value,)).map_err(|_| {
         PyTypeError::new_err(format!(
-            "{context} must expose the Python buffer protocol as unsigned bytes; pass bytes, bytearray, or memoryview(...).cast('B')"
+            "{context} must expose the Python buffer protocol; pass bytes, bytearray, memoryview, or a contiguous NumPy byte view"
         ))
     })?;
-    buffer.to_vec(value.py()).map_err(|err| {
+    let bytes = bytes_obj.downcast::<PyBytes>().map_err(|err| {
         PyTypeError::new_err(format!(
             "failed to copy {context} into native memory: {err}"
         ))
-    })
+    })?;
+    Ok(bytes.as_bytes().to_vec())
 }
 
 fn command_value_from_py(value: &Bound<'_, PyAny>) -> PyResult<CommandValue> {
@@ -2354,6 +2559,63 @@ mod tests {
     }
 
     #[test]
+    fn queue_stats_track_depth_and_coalescing() {
+        let queue = CommandQueue::default();
+
+        let stats = queue.stats();
+        assert_eq!(stats.depth, 0);
+        assert_eq!(stats.oldest_age_ms, 0.0);
+        assert_eq!(stats.total_coalesced_commands, 0);
+        assert_eq!(stats.max_depth_observed, 0);
+
+        queue.push(Command::DrainPythonTasks).unwrap();
+        queue
+            .push(Command::Invalidate {
+                id: "a".to_string(),
+                dirty: Dirty::Visual,
+            })
+            .unwrap();
+
+        let stats = queue.stats();
+        assert_eq!(stats.depth, 2);
+        assert!(stats.oldest_age_ms >= 0.0);
+        assert_eq!(stats.total_coalesced_commands, 0);
+        assert_eq!(stats.max_depth_observed, 2);
+
+        let mut out = Vec::new();
+        queue.drain_limited_into(&mut out, 1);
+        let stats = queue.stats();
+        assert_eq!(stats.depth, 1);
+        assert_eq!(stats.max_depth_observed, 2);
+
+        queue.drain();
+        let stats = queue.stats();
+        assert_eq!(stats.depth, 0);
+        assert_eq!(stats.oldest_age_ms, 0.0);
+        assert_eq!(stats.max_depth_observed, 2);
+    }
+
+    #[test]
+    fn queue_stats_count_coalesced_line_plot_appends() {
+        let queue = CommandQueue::default();
+        let append = |xy| Command::AppendLinePlotPointsPacked {
+            id: "line".to_string(),
+            series: "temperature".to_string(),
+            xy,
+            max_points: Some(1024),
+            payload_format: LinePlotPayloadFormat::XyF32V0,
+        };
+
+        queue.push(append(vec![1; 8])).unwrap();
+        queue.push(append(vec![2; 8])).unwrap();
+
+        let stats = queue.stats();
+        assert_eq!(stats.depth, 1);
+        assert_eq!(stats.total_coalesced_commands, 1);
+        assert_eq!(queue.drain().len(), 1);
+    }
+
+    #[test]
     fn queue_coalesces_pending_scatter_updates_by_widget() {
         let queue = CommandQueue::default();
 
@@ -2472,6 +2734,49 @@ mod tests {
     }
 
     #[test]
+    fn queue_coalesces_pending_histogram_updates_by_widget() {
+        let queue = CommandQueue::default();
+        let update = |id: &str, value: u8| Command::SetHistogramBinsPacked {
+            id: id.to_string(),
+            edges: vec![value; 8],
+            counts: vec![value; 4],
+            coalesce: true,
+        };
+
+        queue.push(update("hist", 1)).unwrap();
+        queue.push(Command::DrainPythonTasks).unwrap();
+        queue.push(update("other", 2)).unwrap();
+        queue.push(update("hist", 3)).unwrap();
+
+        assert_eq!(
+            queue.drain(),
+            vec![
+                Command::DrainPythonTasks,
+                update("other", 2),
+                update("hist", 3),
+            ]
+        );
+    }
+
+    #[test]
+    fn queue_preserves_noncoalesced_histogram_updates() {
+        let queue = CommandQueue::default();
+
+        for value in [1_u8, 2, 3] {
+            queue
+                .push(Command::SetHistogramBinsPacked {
+                    id: "hist".to_string(),
+                    edges: vec![value; 8],
+                    counts: vec![value; 4],
+                    coalesce: false,
+                })
+                .unwrap();
+        }
+
+        assert_eq!(queue.drain().len(), 3);
+    }
+
+    #[test]
     fn queue_coalesces_scatter_updates_across_debug_snapshot() {
         let queue = CommandQueue::default();
 
@@ -2563,6 +2868,168 @@ mod tests {
             }
             other => panic!("expected actor update, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn queue_does_not_coalesce_line_plot_appends_across_set_prop() {
+        let queue = CommandQueue::default();
+
+        queue
+            .push(Command::AppendLinePlotPointsPacked {
+                id: "line".to_string(),
+                series: "temperature".to_string(),
+                xy: vec![1; 8],
+                max_points: Some(1024),
+                payload_format: LinePlotPayloadFormat::XyF32V0,
+            })
+            .unwrap();
+        queue
+            .push(Command::SetProp {
+                id: "line".to_string(),
+                prop: "window_size".to_string(),
+                value: CommandValue::Float(50.0),
+            })
+            .unwrap();
+        queue
+            .push(Command::AppendLinePlotPointsPacked {
+                id: "line".to_string(),
+                series: "temperature".to_string(),
+                xy: vec![2; 8],
+                max_points: Some(1024),
+                payload_format: LinePlotPayloadFormat::XyF32V0,
+            })
+            .unwrap();
+
+        let commands = queue.drain();
+        assert_eq!(commands.len(), 3);
+        assert!(matches!(
+            commands[0],
+            Command::AppendLinePlotPointsPacked { .. }
+        ));
+        assert!(matches!(commands[1], Command::SetProp { .. }));
+        assert!(matches!(
+            commands[2],
+            Command::AppendLinePlotPointsPacked { .. }
+        ));
+    }
+
+    #[test]
+    fn queue_coalesces_immediately_adjacent_line_plot_appends() {
+        let queue = CommandQueue::default();
+
+        queue
+            .push(Command::AppendLinePlotPointsPacked {
+                id: "line".to_string(),
+                series: "temperature".to_string(),
+                xy: vec![1; 8],
+                max_points: Some(1024),
+                payload_format: LinePlotPayloadFormat::XyF32V0,
+            })
+            .unwrap();
+        queue
+            .push(Command::AppendLinePlotPointsPacked {
+                id: "line".to_string(),
+                series: "temperature".to_string(),
+                xy: vec![2; 16],
+                max_points: Some(1024),
+                payload_format: LinePlotPayloadFormat::XyF32V0,
+            })
+            .unwrap();
+
+        let commands = queue.drain();
+        assert_eq!(commands.len(), 1);
+        match &commands[0] {
+            Command::AppendLinePlotPointsPacked { xy, .. } => {
+                assert_eq!(xy.len(), 24);
+                assert_eq!(&xy[..8], &[1; 8]);
+                assert_eq!(&xy[8..], &[2; 16]);
+            }
+            other => panic!("expected coalesced line plot append, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn queue_does_not_coalesce_line_plot_appends_across_set_style() {
+        let queue = CommandQueue::default();
+
+        queue
+            .push(Command::AppendLinePlotPointsPacked {
+                id: "line".to_string(),
+                series: "temperature".to_string(),
+                xy: vec![1; 8],
+                max_points: Some(1024),
+                payload_format: LinePlotPayloadFormat::XyF32V0,
+            })
+            .unwrap();
+        queue
+            .push(Command::SetStyle {
+                id: "line".to_string(),
+                patch_json: r#"{"line_width":3}"#.to_string(),
+            })
+            .unwrap();
+        queue
+            .push(Command::AppendLinePlotPointsPacked {
+                id: "line".to_string(),
+                series: "temperature".to_string(),
+                xy: vec![2; 8],
+                max_points: Some(1024),
+                payload_format: LinePlotPayloadFormat::XyF32V0,
+            })
+            .unwrap();
+
+        let commands = queue.drain();
+        assert_eq!(commands.len(), 3);
+        assert!(matches!(
+            commands[0],
+            Command::AppendLinePlotPointsPacked { .. }
+        ));
+        assert!(matches!(commands[1], Command::SetStyle { .. }));
+        assert!(matches!(
+            commands[2],
+            Command::AppendLinePlotPointsPacked { .. }
+        ));
+    }
+
+    #[test]
+    fn queue_does_not_coalesce_line_plot_appends_across_debug_snapshot() {
+        let queue = CommandQueue::default();
+
+        queue
+            .push(Command::AppendLinePlotPointsPacked {
+                id: "line".to_string(),
+                series: "temperature".to_string(),
+                xy: vec![1; 8],
+                max_points: Some(1024),
+                payload_format: LinePlotPayloadFormat::XyF32V0,
+            })
+            .unwrap();
+        queue
+            .push(Command::DebugSnapshot { request_id: 7 })
+            .unwrap();
+        queue
+            .push(Command::AppendLinePlotPointsPacked {
+                id: "line".to_string(),
+                series: "temperature".to_string(),
+                xy: vec![2; 16],
+                max_points: Some(1024),
+                payload_format: LinePlotPayloadFormat::XyF32V0,
+            })
+            .unwrap();
+
+        let commands = queue.drain();
+        assert_eq!(commands.len(), 3);
+        assert!(matches!(
+            commands[0],
+            Command::AppendLinePlotPointsPacked { .. }
+        ));
+        assert!(matches!(
+            commands[1],
+            Command::DebugSnapshot { request_id: 7 }
+        ));
+        assert!(matches!(
+            commands[2],
+            Command::AppendLinePlotPointsPacked { .. }
+        ));
     }
 
     #[test]

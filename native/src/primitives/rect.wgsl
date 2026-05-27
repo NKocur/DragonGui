@@ -48,11 +48,10 @@ struct VertOut {
     @location(8) @interpolate(flat) color3: vec4<f32>,
     @location(9) @interpolate(flat) color4: vec4<f32>,
     @location(10) @interpolate(flat) gradient_stops: vec4<f32>,
-    @location(11) @interpolate(flat) noise: f32,
+    @location(11) @interpolate(flat) effects: vec2<f32>,
     @location(12) @interpolate(flat) color5: vec4<f32>,
     @location(13) @interpolate(flat) color6: vec4<f32>,
     @location(14) @interpolate(flat) gradient_stops2: vec4<f32>,
-    @location(15) @interpolate(flat) interpolation_mode: f32,
 }
 
 // Two-triangle unit quad (CCW).
@@ -102,12 +101,19 @@ fn vs_main(
     out.color3 = inst.color3;
     out.color4 = inst.color4;
     out.gradient_stops = inst.gradient_stops;
-    out.noise = inst.transform2.y;
+    out.effects = inst.transform2.yz;
     out.color5 = inst.color5;
     out.color6 = inst.color6;
     out.gradient_stops2 = inst.gradient_stops2;
-    out.interpolation_mode = inst.transform2.z;
     return out;
+}
+
+fn background_noise_strength(in: VertOut) -> f32 {
+    return in.effects.x;
+}
+
+fn gradient_interpolation_mode(in: VertOut) -> f32 {
+    return in.effects.y;
 }
 
 fn corner_radius(p: vec2<f32>, half_size: vec2<f32>, radii: vec4<f32>) -> f32 {
@@ -289,24 +295,25 @@ fn blob_color_at(in: VertOut) -> vec4<f32> {
         let influence = exp(-d2 / max(r * r, 0.001));
         let alpha = clamp(color.a, 0.0, 1.0);
         field += influence * alpha;
-        color_sum += gradient_color_to_space(color.rgb, in.interpolation_mode) * influence * alpha;
+        color_sum += gradient_color_to_space(color.rgb, gradient_interpolation_mode(in)) * influence * alpha;
         alpha_sum += influence * alpha;
     }
     if (alpha_sum <= 0.0001) {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
     let thresholded_alpha = smoothstep(0.18, 0.82, field);
-    let color = gradient_color_from_space(color_sum / alpha_sum, in.interpolation_mode);
+    let color = gradient_color_from_space(color_sum / alpha_sum, gradient_interpolation_mode(in));
     return vec4<f32>(color, thresholded_alpha);
 }
 
 fn mesh_color_at(in: VertOut) -> vec4<f32> {
     let size = max(in.half_size * 2.0, vec2<f32>(1.0, 1.0));
     let uv = clamp(in.local_px / size, vec2<f32>(0.0), vec2<f32>(1.0));
-    let tl = gradient_color_to_space(in.color.rgb, in.interpolation_mode) * in.color.a;
-    let tr = gradient_color_to_space(in.color2.rgb, in.interpolation_mode) * in.color2.a;
-    let bl = gradient_color_to_space(in.color3.rgb, in.interpolation_mode) * in.color3.a;
-    let br = gradient_color_to_space(in.color4.rgb, in.interpolation_mode) * in.color4.a;
+    let mode = gradient_interpolation_mode(in);
+    let tl = gradient_color_to_space(in.color.rgb, mode) * in.color.a;
+    let tr = gradient_color_to_space(in.color2.rgb, mode) * in.color2.a;
+    let bl = gradient_color_to_space(in.color3.rgb, mode) * in.color3.a;
+    let br = gradient_color_to_space(in.color4.rgb, mode) * in.color4.a;
     let top_alpha = mix(in.color.a, in.color2.a, uv.x);
     let bottom_alpha = mix(in.color3.a, in.color4.a, uv.x);
     let alpha = mix(top_alpha, bottom_alpha, uv.y);
@@ -315,12 +322,13 @@ fn mesh_color_at(in: VertOut) -> vec4<f32> {
     }
     let top = mix(tl, tr, uv.x);
     let bottom = mix(bl, br, uv.x);
-    let color = gradient_color_from_space(mix(top, bottom, uv.y) / alpha, in.interpolation_mode);
+    let color = gradient_color_from_space(mix(top, bottom, uv.y) / alpha, mode);
     return vec4<f32>(color, alpha);
 }
 
 fn gradient_color_at(in: VertOut, t: f32) -> vec4<f32> {
     let raw_count = in.paint.w;
+    let mode = gradient_interpolation_mode(in);
     let count = max(abs(raw_count), 2.0);
     let s0 = clamp(in.gradient_stops.x, 0.0, 1.0);
     let s1 = clamp(max(in.gradient_stops.y, s0), 0.0, 1.0);
@@ -346,30 +354,30 @@ fn gradient_color_at(in: VertOut, t: f32) -> vec4<f32> {
     }
 
     if (count < 2.5) {
-        return gradient_segment_color(local_t, s0, s1, in.color, in.color2, in.interpolation_mode);
+        return gradient_segment_color(local_t, s0, s1, in.color, in.color2, mode);
     }
     if (local_t <= s1) {
-        return gradient_segment_color(local_t, s0, s1, in.color, in.color2, in.interpolation_mode);
+        return gradient_segment_color(local_t, s0, s1, in.color, in.color2, mode);
     }
     if (count < 3.5) {
-        return gradient_segment_color(local_t, s1, s2, in.color2, in.color3, in.interpolation_mode);
+        return gradient_segment_color(local_t, s1, s2, in.color2, in.color3, mode);
     }
     if (local_t <= s2) {
-        return gradient_segment_color(local_t, s1, s2, in.color2, in.color3, in.interpolation_mode);
+        return gradient_segment_color(local_t, s1, s2, in.color2, in.color3, mode);
     }
     if (count < 4.5) {
-        return gradient_segment_color(local_t, s2, s3, in.color3, in.color4, in.interpolation_mode);
+        return gradient_segment_color(local_t, s2, s3, in.color3, in.color4, mode);
     }
     if (local_t <= s3) {
-        return gradient_segment_color(local_t, s2, s3, in.color3, in.color4, in.interpolation_mode);
+        return gradient_segment_color(local_t, s2, s3, in.color3, in.color4, mode);
     }
     if (count < 5.5) {
-        return gradient_segment_color(local_t, s3, s4, in.color4, in.color5, in.interpolation_mode);
+        return gradient_segment_color(local_t, s3, s4, in.color4, in.color5, mode);
     }
     if (local_t <= s4) {
-        return gradient_segment_color(local_t, s3, s4, in.color4, in.color5, in.interpolation_mode);
+        return gradient_segment_color(local_t, s3, s4, in.color4, in.color5, mode);
     }
-    return gradient_segment_color(local_t, s4, s5, in.color5, in.color6, in.interpolation_mode);
+    return gradient_segment_color(local_t, s4, s5, in.color5, in.color6, mode);
 }
 
 fn hash_noise(p: vec2<f32>) -> f32 {
@@ -389,6 +397,64 @@ fn fs_main(in: VertOut) -> @location(0) vec4<f32> {
     let shape_inset = max(in.params.y, 0.0);
     let shape_half_size = max(in.half_size - vec2<f32>(shape_inset, shape_inset), vec2<f32>(0.5, 0.5));
     let p = in.local_px - in.half_size; // centered coords
+    if (in.params.w > 3.5 && in.params.w < 4.5) {
+        let radius = min(in.half_size.x, in.half_size.y);
+        let n = p / max(radius, 0.001);
+        let dist = length(n);
+        if (dist > 1.0) {
+            discard;
+        }
+
+        let cr = in.gradient_stops2.x;
+        let sr = in.gradient_stops2.y;
+        let body = vec2<f32>(
+            n.x * cr - n.y * sr,
+            n.x * sr + n.y * cr,
+        );
+        let z = sqrt(max(1.0 - dist * dist, 0.0));
+        let cp = in.gradient_stops2.z;
+        let sp = in.gradient_stops2.w;
+        let sphere_p = vec3<f32>(
+            body.x,
+            body.y * cp - z * sp,
+            body.y * sp + z * cp,
+        );
+        let horizon = sphere_p.y;
+        let blend = smoothstep(-0.018, 0.018, horizon);
+        var color = mix(in.color, in.color2, blend);
+
+        if (in.paint.x > 1.5) {
+            let lat = asin(clamp(sphere_p.y, -1.0, 1.0));
+            let lon = atan2(sphere_p.x, sphere_p.z);
+            let lat_band = abs(fract((lat + 8.0) / 0.42) - 0.5) * 0.42;
+            let lon_band = abs(fract((lon + 8.0) / 0.52) - 0.5) * 0.52;
+            let rim_fade = 1.0 - smoothstep(0.86, 0.99, dist);
+            let grid = (1.0 - smoothstep(0.008, 0.016, min(lat_band, lon_band))) * rim_fade;
+            color = mix(color, in.color3, grid * 0.16);
+        } else if (in.paint.x > 0.5) {
+            let lat_band = abs(fract((sphere_p.y + 4.0) / 0.22) - 0.5) * 0.22;
+            let meridian_a = min(abs(sphere_p.x), abs(sphere_p.z));
+            let meridian_b = min(
+                abs((sphere_p.x + sphere_p.z) * 0.70710678),
+                abs((sphere_p.x - sphere_p.z) * 0.70710678),
+            );
+            let rim_fade = 1.0 - smoothstep(0.84, 0.98, dist);
+            let grid = (1.0 - smoothstep(0.006, 0.014, min(lat_band, min(meridian_a, meridian_b)))) * rim_fade;
+            color = mix(color, in.color3, grid * 0.15);
+        }
+
+        let horizon_line = 1.0 - smoothstep(0.010, 0.030, abs(horizon));
+        color = mix(color, in.color3, horizon_line * 0.36);
+        let rim = smoothstep(0.82, 1.0, dist);
+        let shade = 0.74 + 0.26 * clamp(1.0 - dist * 0.72 - n.x * 0.10 - n.y * 0.18, 0.0, 1.0);
+        color = vec4<f32>(color.rgb * shade, color.a);
+        color = mix(color, in.color5, rim * 0.72);
+        let alpha = (1.0 - smoothstep(0.985, 1.0, dist)) * color.a;
+        if (alpha < 0.001) {
+            discard;
+        }
+        return vec4<f32>(color.rgb, alpha);
+    }
     var sdf: f32;
     if (in.params.w > 1.5 && in.params.w < 2.5) {
         let radius = min(shape_half_size.x, shape_half_size.y);
@@ -454,10 +520,11 @@ fn fs_main(in: VertOut) -> @location(0) vec4<f32> {
     } else if (in.paint.x > 3.5 && in.paint.x < 4.5 && in.params.z < 0.5) {
         color = mesh_color_at(in);
     }
-    if (in.noise > 0.0001 && in.params.z < 0.5) {
+    let noise = background_noise_strength(in);
+    if (noise > 0.0001 && in.params.z < 0.5) {
         let n = hash_noise(floor(in.local_px + in.clip_bounds.xy * 0.173)) - 0.5;
         color = vec4<f32>(
-            clamp(color.rgb + vec3<f32>(n * in.noise * 0.45), vec3<f32>(0.0), vec3<f32>(1.0)),
+            clamp(color.rgb + vec3<f32>(n * noise * 0.45), vec3<f32>(0.0), vec3<f32>(1.0)),
             color.a,
         );
     }

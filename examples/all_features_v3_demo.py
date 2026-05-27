@@ -59,12 +59,37 @@ TABLE_ROWS = 10_000 if IS_PI_PROFILE else 50_000
 LINE_ROWS = 720
 HISTOGRAM_ROWS = 8_000
 STREAM_FRAME_COUNT = 8 if IS_PI_PROFILE else 24
+LINE_STREAM_INTERVAL_SEC = 0.12
+LINE_STREAM_BATCH_SAMPLES = 28
+AUTO_STATS_INTERVAL_SEC = 2.0 if IS_PI_PROFILE else 1.0
+STATS_SNAPSHOT_TIMEOUT_MS = 250 if IS_PI_PROFILE else 500
+DEFAULT_WINDOW_WIDTH = 800 if IS_PI_PROFILE else 1440
+DEFAULT_WINDOW_HEIGHT = 480 if IS_PI_PROFILE else 900
+MENU_BAR_HEIGHT = 28 if IS_PI_PROFILE else 34
+STATUS_BAR_HEIGHT = 32 if IS_PI_PROFILE else 40
+SIDEBAR_WIDTH = 184 if IS_PI_PROFILE else 238
+SIDEBAR_PADDING = 6 if IS_PI_PROFILE else 12
+SIDEBAR_GAP = 5 if IS_PI_PROFILE else 8
+CONTROL_PANEL_WIDTH = 240 if IS_PI_PROFILE else 280
+OVERVIEW_MIN_COLUMN_WIDTH = 190 if IS_PI_PROFILE else 270
+SCATTER_MIN_COLUMN_WIDTH = 260 if IS_PI_PROFILE else 380
+CARD_MIN_COLUMN_WIDTH = 240 if IS_PI_PROFILE else 380
+MEDIUM_CARD_MIN_COLUMN_WIDTH = 240 if IS_PI_PROFILE else 360
+WIDE_CARD_MIN_COLUMN_WIDTH = 260 if IS_PI_PROFILE else 420
+LAYOUT_MIN_COLUMN_WIDTH = 210 if IS_PI_PROFILE else 300
 GRID_GAP = 12
+PI_SCATTER_MIN_HEIGHT = 330
+PI_LINE_MIN_HEIGHT = 110
+PI_LINE_STREAM_MIN_HEIGHT = 122
+PI_HISTOGRAM_MIN_HEIGHT = 150
+PI_REPORT_MIN_HEIGHT = 300
+PI_SCROLL_CARD_HEIGHT = 210
 REPORT_DIR = Path(tempfile.gettempdir()) / "dragongui_all_features_v3_reports"
 REPORT_OVERVIEW = REPORT_DIR / "plotly_style_sensor_report.html"
 REPORT_DETAIL = REPORT_DIR / "plotly_style_failure_report.html"
 REPORT_INLINE = REPORT_DIR / "plotly_style_inline_report.html"
 REPORT_BACKEND_LABEL = "Real Plotly" if go is not None else "Self-contained fallback"
+INITIAL_PAGE = os.environ.get("DRAGONGUI_DEMO_PAGE", "overview")
 GRID_STYLE = {"padding": 10, "align_items": "start", "flex_grow": 0, "flex_shrink": 1}
 CARD_STYLE = {
     "padding": 10,
@@ -115,7 +140,7 @@ LINE_LAYOUT_STYLE = {
     "overflow_y": "hidden",
 }
 LINE_CONTROLS_PANEL_STYLE = {
-    "width": 280,
+    "width": CONTROL_PANEL_WIDTH,
     "padding": 10,
     "gap": 8,
     "font_size": 14,
@@ -155,7 +180,7 @@ HISTOGRAM_LAYOUT_STYLE = {
     "overflow_y": "hidden",
 }
 HISTOGRAM_CONTROLS_PANEL_STYLE = {
-    "width": 280,
+    "width": CONTROL_PANEL_WIDTH,
     "padding": 10,
     "gap": 8,
     "font_size": 14,
@@ -185,12 +210,64 @@ HISTOGRAM_SCROLL_STYLE = {
     "overflow_y": "auto",
 }
 DEBUG_MONITOR_STYLE = {
-    "height": 540,
+    "height": 320 if IS_PI_PROFILE else 540,
     "min_height": 0,
     "flex_grow": 1,
     "flex_shrink": 1,
     "align_self": "stretch",
 }
+MAIN_LAYOUT_STYLE = {
+    "gap": 0,
+    "min_height": 0,
+    "flex_grow": 1,
+    "flex_shrink": 1,
+    "overflow_y": "hidden",
+}
+SIDEBAR_STYLE = {
+    "padding": SIDEBAR_PADDING,
+    "gap": SIDEBAR_GAP,
+    "min_height": 0,
+    "overflow_y": "auto",
+}
+SIDEBAR_BADGES_STYLE = {
+    "width": "100%",
+    "flex_grow": 0,
+    "flex_shrink": 1,
+}
+MAIN_PAGES_STYLE = {
+    "min_width": 0,
+    "min_height": 0,
+    "flex_grow": 1,
+    "flex_shrink": 1,
+    "overflow_y": "hidden",
+}
+PAGE_SCROLL_STYLE = {
+    "padding": 0,
+    "min_width": 0,
+    "min_height": 0,
+    "overflow_y": "auto",
+}
+PAGE_FILL_STYLE = {
+    "padding": 0,
+    "min_width": 0,
+    "min_height": 0,
+    "overflow_y": "hidden",
+}
+
+
+def _demo_window_dimension(env_name: str, fallback: int, *, minimum: int) -> int:
+    raw = os.environ.get(env_name)
+    if raw is None:
+        return fallback
+    try:
+        value = int(raw)
+    except ValueError:
+        return fallback
+    return max(minimum, value)
+
+
+WINDOW_WIDTH = _demo_window_dimension("DRAGONGUI_DEMO_WIDTH", DEFAULT_WINDOW_WIDTH, minimum=640)
+WINDOW_HEIGHT = _demo_window_dimension("DRAGONGUI_DEMO_HEIGHT", DEFAULT_WINDOW_HEIGHT, minimum=360)
 
 
 def make_demo_image() -> str:
@@ -810,7 +887,29 @@ CSS_MIDNIGHT = """
 Window {
     background: #0c111d;
     color: rgba(245, 248, 255, 0.94);
+    font-family: "Piboto";
     font-size: 14px;
+}
+
+Panel,
+Modal,
+Label,
+Button,
+Dropdown,
+TextInput,
+TextArea,
+NumberInput,
+Checkbox,
+Slider,
+NavItem,
+Menu,
+MenuItem,
+StatusBar,
+Button::badge,
+Button::before,
+Button::after {
+    font-family: "Piboto";
+    font-weight: 400;
 }
 
 MenuBar,
@@ -846,7 +945,7 @@ Panel.scroll-card {
 Label.brand {
     color: #ffffff;
     font-size: 21px;
-    font-weight: 850;
+    font-weight: 400;
 }
 
 Label.subtle,
@@ -857,7 +956,7 @@ Label.stat-label {
 Label.stat-value {
     color: #ffffff;
     font-size: 19px;
-    font-weight: 850;
+    font-weight: 400;
 }
 
 Button,
@@ -872,7 +971,7 @@ NumberInput {
 }
 
 Button {
-    font-weight: 750;
+    font-weight: 400;
 }
 
 Button.primary {
@@ -1555,6 +1654,26 @@ Window {
     font-family: "Consolas";
 }
 
+Panel,
+Modal,
+Label,
+Button,
+Dropdown,
+TextInput,
+TextArea,
+NumberInput,
+Checkbox,
+Slider,
+NavItem,
+Menu,
+MenuItem,
+StatusBar,
+Button::badge,
+Button::before,
+Button::after {
+    font-family: "Consolas";
+}
+
 MenuBar,
 StatusBar {
     background: #020617;
@@ -1831,6 +1950,47 @@ CSS_THEMES = {
     "terminal": CSS_TERMINAL,
 }
 
+CSS_PI_COMPACT = f"""
+Panel.scroll-card {{
+    height: {PI_SCROLL_CARD_HEIGHT}px;
+}}
+
+LinePlot {{
+    min-height: {PI_LINE_MIN_HEIGHT}px;
+}}
+
+LinePlot.stream-plot {{
+    min-height: {PI_LINE_STREAM_MIN_HEIGHT}px;
+}}
+
+Histogram {{
+    min-height: {PI_HISTOGRAM_MIN_HEIGHT}px;
+}}
+
+Scatter3D {{
+    min-height: {PI_SCATTER_MIN_HEIGHT}px;
+}}
+
+Scatter3D.main-scatter {{
+    min-height: {PI_SCATTER_MIN_HEIGHT}px;
+}}
+
+GridLayout.scatter-grid {{
+    grid-template-columns: minmax({SCATTER_MIN_COLUMN_WIDTH}px, 0.9fr) minmax(0, 1.4fr);
+}}
+
+HtmlReport {{
+    min-height: {PI_REPORT_MIN_HEIGHT}px;
+}}
+
+HtmlReport.report-viewer {{
+    height: {PI_REPORT_MIN_HEIGHT}px;
+    min-height: {PI_REPORT_MIN_HEIGHT}px;
+}}
+""" if IS_PI_PROFILE else ""
+
+CSS_THEMES = {name: css + CSS_PI_COMPACT for name, css in CSS_THEMES.items()}
+
 
 app = dg.App(
     theme=dg.Theme.dark(accent="#5aa9ff", radius=8, focus="#ffd36a"),
@@ -1852,6 +2012,7 @@ stats_thread: threading.Thread | None = None
 stream_cancel = threading.Event()
 line_stream_stop = threading.Event()
 stats_stop = threading.Event()
+stats_snapshot_pending = threading.Event()
 state_lock = threading.Lock()
 demo_state = {
     "mode": "lidar",
@@ -2004,12 +2165,18 @@ def update_scatter_stats(snapshot: dict[str, object], observed_fps: float | None
 
 
 def refresh_scatter_stats() -> None:
+    if stats_snapshot_pending.is_set():
+        return
+    stats_snapshot_pending.set()
+
     def worker() -> None:
         try:
-            snapshot = app.debug_snapshot(timeout_ms=500)
+            snapshot = app.debug_snapshot(timeout_ms=STATS_SNAPSHOT_TIMEOUT_MS)
             app.call_soon_threadsafe(lambda s=snapshot: update_scatter_stats(s))
         except RuntimeError:
             pass
+        finally:
+            stats_snapshot_pending.clear()
 
     threading.Thread(target=worker, daemon=True).start()
 
@@ -2104,11 +2271,18 @@ def scatter_stats_worker() -> None:
         if not enabled:
             stats_stop.wait(0.25)
             continue
-        try:
-            snapshot = app.debug_snapshot(timeout_ms=500)
-        except RuntimeError:
+        if stats_snapshot_pending.is_set():
             stats_stop.wait(0.25)
             continue
+        stats_snapshot_pending.set()
+        try:
+            snapshot = app.debug_snapshot(timeout_ms=STATS_SNAPSHOT_TIMEOUT_MS)
+        except RuntimeError:
+            stats_snapshot_pending.clear()
+            stats_stop.wait(0.25)
+            continue
+        finally:
+            stats_snapshot_pending.clear()
         runtime = snapshot.get("runtime", {})
         frames = 0
         if isinstance(runtime, dict):
@@ -2130,7 +2304,7 @@ def scatter_stats_worker() -> None:
             )
         except RuntimeError:
             break
-        stats_stop.wait(1.0)
+        stats_stop.wait(AUTO_STATS_INTERVAL_SEC)
 
 
 def apply_theme(name: str) -> None:
@@ -2522,7 +2696,9 @@ def reset_line_plots() -> None:
     set_status("Line plots reset")
 
 
-def generated_line_batch(samples: int = 28) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def generated_line_batch(
+    samples: int = LINE_STREAM_BATCH_SAMPLES,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     start = float(demo_state["line_stream_t"])
     end = start + 1.35
     t = np.linspace(start, end, samples, dtype=np.float32)
@@ -2547,7 +2723,7 @@ def generated_line_batch(samples: int = 28) -> tuple[np.ndarray, np.ndarray, np.
     return t, temperature, pressure, vibration, events.astype(np.float32)
 
 
-def append_line_batch() -> None:
+def append_line_batch(*, announce: bool = True) -> None:
     if line_plot_top is None or line_plot_mid is None or line_plot_bottom is None:
         return
     t, temperature, pressure, vibration, events = generated_line_batch()
@@ -2556,7 +2732,8 @@ def append_line_batch() -> None:
     line_plot_mid.append_points(t, vibration, series="Vibration")
     line_plot_mid.append_points(t, events, series="Events")
     line_plot_bottom.append_points(t, temperature, series="Live Temperature")
-    set_status(f"Line stream appended through t={float(t[-1]):.1f}s")
+    if announce:
+        set_status(f"Line stream appended through t={float(t[-1]):.1f}s")
 
 
 def start_line_stream() -> None:
@@ -2567,9 +2744,9 @@ def start_line_stream() -> None:
     line_stream_stop.clear()
 
     def worker() -> None:
-        while not line_stream_stop.wait(0.12):
+        while not line_stream_stop.wait(LINE_STREAM_INTERVAL_SEC):
             try:
-                app.call_soon_threadsafe(append_line_batch)
+                app.call_soon_threadsafe(lambda: append_line_batch(announce=False))
             except RuntimeError:
                 break
 
@@ -2685,7 +2862,7 @@ def print_snapshot() -> None:
 
 def make_summary_children() -> list[object]:
     return [
-        dg.Label("Dynamic Summary", parent=None, style={"font_size": 18, "font_weight": "bold"}),
+        dg.Label("Dynamic Summary", parent=None, style={"font_size": 18, "font_weight": 400}),
         dg.Separator(parent=None),
         dg.Label(f"Scatter rows: {POINT_ROWS:,}", parent=None),
         dg.Label("Layout: GridLayout + FlowLayout", parent=None),
@@ -2695,7 +2872,7 @@ def make_summary_children() -> list[object]:
 
 def make_pipeline_children() -> list[object]:
     return [
-        dg.Label("Pipeline Status", parent=None, style={"font_size": 18, "font_weight": "bold"}),
+        dg.Label("Pipeline Status", parent=None, style={"font_size": 18, "font_weight": 400}),
         dg.Separator(parent=None),
         dg.Label("Load: complete", parent=None, style={"color": "success"}),
         dg.Label("Transform: queued", parent=None, style={"color": "warning"}),
@@ -2714,12 +2891,12 @@ def swap_children() -> None:
 styles = [
     {
         "panel": {"background": "#172235", "border_color": "accent", "border_radius": 12},
-        "label": {"color": "#b9f6ff", "font_weight": "bold"},
+        "label": {"color": "#b9f6ff", "font_weight": 400},
         "button": {"background": "#24314a", "border_color": "accent", "text_align": "center"},
     },
     {
         "panel": {"background": "#211a27", "border_color": "warning", "border_radius": 14},
-        "label": {"color": "warning", "font_weight": "bold"},
+        "label": {"color": "warning", "font_weight": 400},
         "button": {"background": "#3a2932", "border_color": "warning", "text_align": "center"},
     },
 ]
@@ -2746,9 +2923,9 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
     global histogram_tick_label
     global confirm_modal, about_modal
 
-    win = dg.Window("DragonGUI All Features V3 Demo", width=1440, height=900)
+    win = dg.Window("DragonGUI All Features V3 Demo", width=WINDOW_WIDTH, height=WINDOW_HEIGHT)
 
-    with dg.MenuBar(height=34, tooltip="Menus render as native overlays."):
+    with dg.MenuBar(height=MENU_BAR_HEIGHT, tooltip="Menus render as native overlays."):
         with dg.Menu("File"):
             dg.MenuItem("Open CSV...", on_click=choose_csv)
             dg.MenuItem("Print Snapshot", on_click=print_snapshot)
@@ -2769,13 +2946,17 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
             dg.MenuItem("About", on_click=lambda: about_modal.show())
 
 
-    with dg.HLayout(style={"gap": 0}):
-        with dg.Sidebar(width=238, style={"padding": 12, "gap": 8}):
+    with dg.HLayout(style=MAIN_LAYOUT_STYLE):
+        with dg.Sidebar(width=SIDEBAR_WIDTH, style=SIDEBAR_STYLE):
             dg.Label("DragonGUI", class_="brand")
             dg.Label("All features V3", class_="subtle")
-            with dg.FlowLayout(gap=6, row_gap=4):
+            with dg.FlowLayout(gap=6, row_gap=4, style=SIDEBAR_BADGES_STYLE):
                 dg.LED(True, tooltip="Renderer online")
-                dg.LED("stream", states={"stream": "warning"}, tooltip="Custom stream state")
+                dg.LED(
+                    "stream",
+                    states={"stream": "warning"},
+                    tooltip="Custom stream state",
+                )
                 dg.Badge("Grid", level="success")
                 dg.Tag("Scatter3D", level="info")
                 dg.Tag("LinePlot", level="info")
@@ -2797,9 +2978,9 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
             dg.Separator()
             dg.Label("Responsive grids, CSS, overlays, tables, and live native commands.", class_="subtle")
 
-        with dg.Pages(value="overview", on_change=set_page, key="main-pages"):
-            with dg.Page("overview", title="Overview"):
-                with dg.GridLayout(columns=3, min_column_width=270, gap=GRID_GAP, style=GRID_STYLE):
+        with dg.Pages(value=INITIAL_PAGE, on_change=set_page, key="main-pages", style=MAIN_PAGES_STYLE):
+            with dg.Page("overview", title="Overview", style=PAGE_SCROLL_STYLE):
+                with dg.GridLayout(columns=3, min_column_width=OVERVIEW_MIN_COLUMN_WIDTH, gap=GRID_GAP, style=GRID_STYLE):
                     with dg.Panel("Frame", class_="highlight", style=CARD_STYLE):
                         dg.Label(f"{POINT_ROWS:,}", class_="stat-value")
                         dg.Label("Scatter points per generated frame", class_="stat-label")
@@ -2828,10 +3009,10 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                         dg.Button("Neon", on_click=lambda: apply_theme("neon"))
                         dg.Button("Terminal", on_click=lambda: apply_theme("terminal"))
 
-            with dg.Page("scatter", title="Scatter3D"):
+            with dg.Page("scatter", title="Scatter3D", style=PAGE_FILL_STYLE):
                 with dg.GridLayout(
                     columns=2,
-                    min_column_width=380,
+                    min_column_width=SCATTER_MIN_COLUMN_WIDTH,
                     gap=GRID_GAP,
                     class_="scatter-grid",
                     style=SCATTER_GRID_STYLE,
@@ -2879,21 +3060,18 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                                 dg.Button("Fit camera", on_click=lambda: scatter.fit())
                             dg.Label("View")
                             dg.Dropdown(("Isometric", "XY", "XZ", "YZ"), value="Isometric", on_change=set_scatter_view)
-                            with dg.FlowLayout(gap=8, row_gap=6):
-                                dg.Checkbox("Grid", checked=True, on_change=toggle_grid)
-                                dg.Checkbox("Grid planes", checked=True, on_change=toggle_planes)
-                                dg.Checkbox("Orientation", checked=True, on_change=toggle_orientation)
-                            with dg.FlowLayout(gap=8, row_gap=6):
-                                dg.Checkbox("Sticky grid", checked=True, on_change=toggle_grid_sticky)
-                                dg.Checkbox("All edges", checked=False, on_change=toggle_grid_all_edges)
+                            dg.Checkbox("Grid", checked=True, on_change=toggle_grid, style={"height": 30})
+                            dg.Checkbox("Grid planes", checked=True, on_change=toggle_planes, style={"height": 30})
+                            dg.Checkbox("Orientation", checked=True, on_change=toggle_orientation, style={"height": 30})
+                            dg.Checkbox("Sticky grid", checked=True, on_change=toggle_grid_sticky, style={"height": 30})
+                            dg.Checkbox("All edges", checked=False, on_change=toggle_grid_all_edges, style={"height": 30})
                             dg.Label("Axis labels")
                             dg.TextInput("x", placeholder="X label", on_change=lambda value: update_axis_label("x", value))
                             dg.TextInput("y", placeholder="Y label", on_change=lambda value: update_axis_label("y", value))
                             dg.TextInput("z", placeholder="Z label", on_change=lambda value: update_axis_label("z", value))
-                            with dg.FlowLayout(gap=8, row_gap=6):
-                                dg.Checkbox("X axis", checked=True, on_change=lambda value: toggle_axis_visibility("x", value))
-                                dg.Checkbox("Y axis", checked=True, on_change=lambda value: toggle_axis_visibility("y", value))
-                                dg.Checkbox("Z axis", checked=True, on_change=lambda value: toggle_axis_visibility("z", value))
+                            dg.Checkbox("X axis", checked=True, on_change=lambda value: toggle_axis_visibility("x", value), style={"height": 30})
+                            dg.Checkbox("Y axis", checked=True, on_change=lambda value: toggle_axis_visibility("y", value), style={"height": 30})
+                            dg.Checkbox("Z axis", checked=True, on_change=lambda value: toggle_axis_visibility("z", value), style={"height": 30})
                             x_tick_label = dg.Label("X ticks: 5")
                             dg.Slider(5, min=2, max=12, step=1, on_change=lambda value: set_tick_count("x", value))
                             y_tick_label = dg.Label("Y ticks: 5")
@@ -2935,7 +3113,7 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                         key="main-scatter",
                     )
 
-            with dg.Page("lineplots", title="Line plots"):
+            with dg.Page("lineplots", title="Line plots", style=PAGE_FILL_STYLE):
                 with dg.HLayout(class_="line-layout", style=LINE_LAYOUT_STYLE):
                     with dg.Panel("Line plot controls", class_="line-controls", style=LINE_CONTROLS_PANEL_STYLE):
                         with dg.ScrollArea(
@@ -3062,7 +3240,7 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                                 key="v3-line-bottom",
                             )
 
-            with dg.Page("histograms", title="Histograms"):
+            with dg.Page("histograms", title="Histograms", style=PAGE_FILL_STYLE):
                 with dg.HLayout(class_="histogram-layout", style=HISTOGRAM_LAYOUT_STYLE):
                     with dg.Panel(
                         "Histogram controls",
@@ -3109,8 +3287,8 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                         style=HISTOGRAM_SCROLL_STYLE,
                     ):
                         with dg.GridLayout(
-                            columns=2,
-                            min_column_width=420,
+                            columns=1 if IS_PI_PROFILE else 2,
+                            min_column_width=WIDE_CARD_MIN_COLUMN_WIDTH,
                             gap=GRID_GAP,
                             row_gap=GRID_GAP,
                             class_="histogram-grid",
@@ -3186,8 +3364,8 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                                     key="v3-hist-residual",
                                 )
 
-            with dg.Page("piecharts", title="Pie charts"):
-                with dg.GridLayout(columns=2, min_column_width=380, gap=GRID_GAP, style=GRID_STYLE):
+            with dg.Page("piecharts", title="Pie charts", style=PAGE_SCROLL_STYLE):
+                with dg.GridLayout(columns=2, min_column_width=CARD_MIN_COLUMN_WIDTH, gap=GRID_GAP, style=GRID_STYLE):
                     with dg.Panel("Direct pie values", style=CARD_STYLE):
                         dg.Label("Static share-of-total data with custom slice colors and labels.", class_="subtle")
                         dg.PieChart(
@@ -3234,8 +3412,8 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                             key="v3-pie-revenue",
                         )
 
-            with dg.Page("controls", title="Controls"):
-                with dg.GridLayout(columns=2, min_column_width=360, gap=GRID_GAP, style=GRID_STYLE):
+            with dg.Page("controls", title="Controls", style=PAGE_SCROLL_STYLE):
+                with dg.GridLayout(columns=2, min_column_width=MEDIUM_CARD_MIN_COLUMN_WIDTH, gap=GRID_GAP, style=GRID_STYLE):
                     with dg.Panel("Form controls", style=CARD_STYLE):
                         with dg.FlowLayout(gap=8, row_gap=6, cross_align="center"):
                             dg.LED(True, tooltip="Boolean on state")
@@ -3275,8 +3453,8 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                         with dg.Collapsible("Advanced notes", expanded=False):
                             dg.TextArea("Extra notes\nstay scrollable\ninside the panel", rows=3)
 
-            with dg.Page("data", title="Data"):
-                with dg.GridLayout(columns=2, min_column_width=390, gap=GRID_GAP, style=GRID_STYLE):
+            with dg.Page("data", title="Data", style=PAGE_SCROLL_STYLE):
+                with dg.GridLayout(columns=2, min_column_width=CARD_MIN_COLUMN_WIDTH, gap=GRID_GAP, style=GRID_STYLE):
                     with dg.Panel("Data controls", style=CARD_STYLE):
                         dg.Button("Load LiDAR Table", on_click=lambda: update_table("lidar"))
                         dg.Button("Load Helix Table", on_click=lambda: update_table("helix"))
@@ -3295,8 +3473,8 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                         key="main-table",
                     )
 
-            with dg.Page("runtime", title="Runtime"):
-                with dg.GridLayout(columns=2, min_column_width=360, gap=GRID_GAP, style=GRID_STYLE):
+            with dg.Page("runtime", title="Runtime", style=PAGE_SCROLL_STYLE):
+                with dg.GridLayout(columns=2, min_column_width=MEDIUM_CARD_MIN_COLUMN_WIDTH, gap=GRID_GAP, style=GRID_STYLE):
                     with dg.Panel("Live commands", style=CARD_STYLE):
                         dg.Button("Replace children", on_click=swap_children)
                         dg.Button("Cycle style", on_click=cycle_style)
@@ -3309,8 +3487,8 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                             for child in make_summary_children():
                                 dynamic_panel.add(child)
 
-            with dg.Page("debug", title="Debug"):
-                with dg.GridLayout(columns=2, min_column_width=420, gap=GRID_GAP, style=GRID_STYLE):
+            with dg.Page("debug", title="Debug", style=PAGE_SCROLL_STYLE):
+                with dg.GridLayout(columns=2, min_column_width=WIDE_CARD_MIN_COLUMN_WIDTH, gap=GRID_GAP, style=GRID_STYLE):
                     dg.ThreadMonitor(
                         key="debug-thread-monitor",
                         show_threads=True,
@@ -3349,7 +3527,7 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                             report_overview_path,
                             class_="report-viewer",
                             key="debug-html-report",
-                            height=540,
+                            height=PI_REPORT_MIN_HEIGHT if IS_PI_PROFILE else 540,
                         )
                         html_report_status = dg.Label(
                             f"{REPORT_BACKEND_LABEL}: {Path(report_overview_path).name}",
@@ -3363,8 +3541,8 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                         dg.Label("ThreadMonitor shows Python task queue, producer threads, and task failures.", class_="subtle")
                         dg.Label("Use the scatter controls or background stream to create live task traffic.", class_="subtle")
 
-            with dg.Page("styling", title="Styling"):
-                with dg.GridLayout(columns=2, min_column_width=360, gap=GRID_GAP, style=GRID_STYLE):
+            with dg.Page("styling", title="Styling", style=PAGE_SCROLL_STYLE):
+                with dg.GridLayout(columns=2, min_column_width=MEDIUM_CARD_MIN_COLUMN_WIDTH, gap=GRID_GAP, style=GRID_STYLE):
                     with dg.Panel("CSS themes", style=CARD_STYLE):
                         dg.Button("Midnight CSS", on_click=lambda: apply_theme("midnight"))
                         dg.Button("Paper CSS", on_click=lambda: apply_theme("paper"))
@@ -3385,8 +3563,8 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                         dg.Image(demo_image_path, fit="cover", height=170, style={"border_color": "accent", "border_radius": 10})
                         dg.Label("CSS, inline style, pseudo states, and live style patches.", class_="subtle")
 
-            with dg.Page("layout", title="Layout"):
-                with dg.GridLayout(columns=3, min_column_width=300, gap=GRID_GAP, style=GRID_STYLE):
+            with dg.Page("layout", title="Layout", style=PAGE_SCROLL_STYLE):
+                with dg.GridLayout(columns=3, min_column_width=LAYOUT_MIN_COLUMN_WIDTH, gap=GRID_GAP, style=GRID_STYLE):
                     with dg.Panel("Flow wrap", style=CARD_STYLE):
                         with dg.FlowLayout(gap=8, row_gap=8):
                             for label in ["Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta", "Eta"]:
@@ -3403,7 +3581,7 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                         dg.ProgressBar(0.72, show_value=True)
 
 
-    with dg.StatusBar(height=40):
+    with dg.StatusBar(height=STATUS_BAR_HEIGHT):
         status = dg.TextInput("Ready", placeholder="status", style={"width": 360})
         dg.Separator(orientation="vertical")
         dg.Label(f"{POINT_ROWS:,} points")
@@ -3443,8 +3621,8 @@ def main() -> None:
         result = app.run_with_loading(
             AllFeaturesV3,
             title="DragonGUI All Features V3 Demo",
-            width=1440,
-            height=900,
+            width=WINDOW_WIDTH,
+            height=WINDOW_HEIGHT,
         )
     except dg.BackendUnavailableError:
         print("DragonGUI source import works.")

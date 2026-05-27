@@ -82,6 +82,7 @@ type FontFamilyAliases = HashMap<String, String>;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct AxisLabelGlyphKey {
     text: String,
+    font_family: String,
     font_size_milli: i32,
     rotate_ccw: bool,
 }
@@ -242,6 +243,7 @@ impl TextRendererDg {
         toasts: &[ToastOverlay],
         stylesheets: &StylesheetStore,
         media: DgMediaEnvironment,
+        table_metrics_profile: table::TableMetricsProfile,
     ) -> HashMap<String, [f32; 2]> {
         let pad = theme.spacing * sf;
         let open_dropdown = state.open_dropdown.as_deref();
@@ -298,6 +300,7 @@ impl TextRendererDg {
             &mut cache,
             &mut caret_positions,
             &mut entries,
+            table_metrics_profile,
         );
         self.overlay_entry_start = entries.len();
         if let Some(modal) = active_modal {
@@ -339,6 +342,7 @@ impl TextRendererDg {
                 &mut cache,
                 &mut caret_positions,
                 &mut entries,
+                table_metrics_profile,
             );
         } else {
             collect_dropdown_overlay_text(
@@ -437,6 +441,34 @@ impl TextRendererDg {
         font_size_override: Option<f32>,
         anchor: &str,
     ) {
+        self.push_scatter_label_with_font_family(
+            text,
+            screen_x,
+            screen_y,
+            is_title,
+            clip,
+            scale,
+            color_override,
+            font_size_override,
+            anchor,
+            None,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn push_scatter_label_with_font_family(
+        &mut self,
+        text: &str,
+        screen_x: f32,
+        screen_y: f32,
+        is_title: bool,
+        clip: TextBounds,
+        scale: f32,
+        color_override: Option<[f32; 3]>,
+        font_size_override: Option<f32>,
+        anchor: &str,
+        font_family: Option<&FontFamily>,
+    ) {
         if matches!(anchor, "plot-x-label" | "plot-y-label") {
             self.push_axis_label_glyph(
                 text,
@@ -447,6 +479,7 @@ impl TextRendererDg {
                 color_override,
                 font_size_override,
                 anchor,
+                font_family,
             );
             return;
         }
@@ -551,7 +584,7 @@ impl TextRendererDg {
             text,
             font_size,
             line_height,
-            None,
+            font_family,
             weight,
             left,
             top,
@@ -576,6 +609,7 @@ impl TextRendererDg {
         color_override: Option<[f32; 3]>,
         font_size_override: Option<f32>,
         anchor: &str,
+        font_family: Option<&FontFamily>,
     ) {
         let text = text.trim();
         if text.is_empty() || clip.right <= clip.left || clip.bottom <= clip.top {
@@ -584,8 +618,10 @@ impl TextRendererDg {
 
         let font_size = font_size_override.unwrap_or(14.0) * scale;
         let rotate_ccw = anchor == "plot-y-label";
+        let font_family_key = font_family_key(font_family, &self.font_aliases);
         let key = AxisLabelGlyphKey {
             text: text.to_string(),
+            font_family: font_family_key,
             font_size_milli: (font_size * 1000.0).round() as i32,
             rotate_ccw,
         };
@@ -595,7 +631,11 @@ impl TextRendererDg {
             };
             (id, image)
         } else {
-            let Some(image) = rasterize_axis_label_glyph(text, font_size, rotate_ccw) else {
+            let font =
+                axis_label_font_for_family(&self.font_system, &self.font_aliases, font_family);
+            let Some(image) =
+                rasterize_axis_label_glyph(text, font_size, rotate_ccw, font.as_ref())
+            else {
                 return;
             };
             let Some(id) = self.register_axis_label_glyph(key, image.clone()) else {
@@ -762,6 +802,10 @@ impl TextRendererDg {
         &self.font_warnings
     }
 
+    pub(crate) fn entry_count(&self) -> usize {
+        self.entries.len()
+    }
+
     /// Upload glyph data to the GPU.  Call this once per frame before `render`.
     pub fn prepare(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         if self.entries.is_empty() {
@@ -915,12 +959,36 @@ fn line_plot_axis_font() -> Option<&'static FontArc> {
     .as_ref()
 }
 
+fn axis_label_font_for_family(
+    font_system: &FontSystem,
+    font_aliases: &FontFamilyAliases,
+    font_family: Option<&FontFamily>,
+) -> Option<FontArc> {
+    let requested = match font_family {
+        Some(FontFamily::Name(name)) => font_aliases.get(name).map(String::as_str).unwrap_or(name),
+        _ => return None,
+    };
+    let face_id = font_system.db().faces().find_map(|face| {
+        face.families
+            .iter()
+            .any(|(name, _)| font_family_name_matches(name, requested))
+            .then_some(face.id)
+    })?;
+    font_system
+        .db()
+        .with_face_data(face_id, |bytes, _face_index| {
+            FontArc::try_from_vec(bytes.to_vec()).ok()
+        })
+        .flatten()
+}
+
 fn rasterize_axis_label_glyph(
     label: &str,
     font_size_px: f32,
     rotate_ccw: bool,
+    font_override: Option<&FontArc>,
 ) -> Option<AxisLabelGlyphImage> {
-    let mask = rasterize_axis_label_mask(label, font_size_px)?;
+    let mask = rasterize_axis_label_mask(label, font_size_px, font_override)?;
     let (width, height, data) = if rotate_ccw {
         let width = mask.height;
         let height = mask.width;
@@ -943,13 +1011,20 @@ fn rasterize_axis_label_glyph(
     })
 }
 
-fn rasterize_axis_label_mask(label: &str, font_size_px: f32) -> Option<AxisLabelMask> {
+fn rasterize_axis_label_mask(
+    label: &str,
+    font_size_px: f32,
+    font_override: Option<&FontArc>,
+) -> Option<AxisLabelMask> {
     let text = label.trim();
     if text.is_empty() {
         return None;
     }
 
-    let font = line_plot_axis_font()?;
+    let font = match font_override {
+        Some(font) => font,
+        None => line_plot_axis_font()?,
+    };
     let font_size_px = font_size_px.max(6.0);
     let scaled = font.as_scaled(font_size_px);
     let baseline = scaled.ascent().ceil() + 1.0;
@@ -1888,6 +1963,26 @@ fn collect_text(
         );
     }
 
+    if node.kind == WidgetKind::AttitudeSphere && node.props.attitude_sphere.show_readout {
+        collect_attitude_sphere_readout(
+            node,
+            layout,
+            state,
+            theme,
+            open_dropdown,
+            dropdown_overlay,
+            menu_overlays,
+            tooltip_overlay,
+            extra_overlays,
+            font_system,
+            font_aliases,
+            sf,
+            cache,
+            caret_positions,
+            out,
+        );
+    }
+
     for (_, child) in stacking_children(node) {
         collect_text(
             child,
@@ -1920,6 +2015,93 @@ fn collect_text(
     apply_paint_clip_to_text_entries(
         &mut out[subtree_text_start..],
         layout.paint_clip_rect(&node.id),
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_attitude_sphere_readout(
+    node: &WidgetNode,
+    layout: &LayoutResult,
+    state: &WidgetState,
+    theme: &Theme,
+    open_dropdown: Option<&str>,
+    dropdown_overlay: Option<Rect>,
+    menu_overlays: [Option<Rect>; 2],
+    tooltip_overlay: Option<Rect>,
+    extra_overlays: &[Rect],
+    font_system: &mut FontSystem,
+    font_aliases: &FontFamilyAliases,
+    sf: f32,
+    cache: &mut TextBufferCache,
+    caret_positions: &mut HashMap<String, [f32; 2]>,
+    out: &mut Vec<TextEntry>,
+) {
+    let Some(r) = layout.rects.get(&node.id).copied() else {
+        return;
+    };
+    if r.w <= 0.0 || r.h <= 0.0 {
+        return;
+    }
+    let font_size = node
+        .style
+        .text
+        .font_size
+        .map(|font_size| font_size.max(8.0) * sf)
+        .unwrap_or_else(|| (11.0 * sf).max(text_font_size(node, theme, sf).min(12.0 * sf)));
+    let line_height = text_line_height_from_styles(None, &node.style.text, font_size, theme, sf)
+        .max(font_size * 1.18);
+    let band_h = (line_height + 6.0 * sf).min(r.h * 0.24).max(line_height);
+    let pad_x = (6.0 * sf).max(2.0);
+    let top = r.y + r.h - band_h + ((band_h - line_height) * 0.5).max(0.0);
+    let clip_rect = Rect {
+        x: r.x + pad_x,
+        y: r.y + r.h - band_h,
+        w: (r.w - pad_x * 2.0).max(0.0),
+        h: band_h,
+    };
+    let Some(clip_rect) = clip_rect.intersect(layout.visible_rect(&node.id).unwrap_or(r)) else {
+        return;
+    };
+    if is_obscured_by_overlay(
+        node,
+        &clip_rect,
+        open_dropdown,
+        dropdown_overlay,
+        menu_overlays,
+        tooltip_overlay,
+        extra_overlays,
+    ) {
+        return;
+    }
+    let yaw = node.props.attitude_sphere.yaw.rem_euclid(360.0).round() as i32 % 360;
+    let text = format!(
+        "P {:+.0}  R {:+.0}  Y {:03}",
+        node.props.attitude_sphere.pitch, node.props.attitude_sphere.roll, yaw
+    );
+    let bounds = TextBounds {
+        left: clip_rect.x as i32,
+        top: clip_rect.y as i32,
+        right: (clip_rect.x + clip_rect.w) as i32,
+        bottom: (clip_rect.y + clip_rect.h) as i32,
+    };
+    push_text_entry(
+        font_system,
+        font_aliases,
+        out,
+        &text,
+        font_size,
+        line_height,
+        node.style.text.font_family.as_ref(),
+        node.style.text.font_weight.unwrap_or(Weight::MEDIUM.0),
+        r.x + pad_x,
+        top,
+        bounds,
+        text_color(node, state, theme, false),
+        TextAlign::Center,
+        cache,
+        None,
+        caret_positions,
+        text_options_from_style(&node.style.text),
     );
 }
 
@@ -2177,6 +2359,8 @@ fn widget_kind_name(kind: WidgetKind) -> &'static str {
         WidgetKind::Page => "page",
         WidgetKind::Sidebar => "sidebar",
         WidgetKind::NavItem => "nav_item",
+        WidgetKind::AttitudeSphere => "attitude_sphere",
+        WidgetKind::TranslationTrace => "translation_trace",
         WidgetKind::PieChart => "pie_chart",
         WidgetKind::Histogram => "histogram",
         WidgetKind::LinePlot => "line_plot",
@@ -3397,6 +3581,7 @@ fn collect_table_text(
     cache: &mut TextBufferCache,
     caret_positions: &mut HashMap<String, [f32; 2]>,
     out: &mut Vec<TextEntry>,
+    table_metrics_profile: table::TableMetricsProfile,
 ) {
     if node.kind == WidgetKind::Tooltip {
         return;
@@ -3418,7 +3603,8 @@ fn collect_table_text(
                 let font_size = text_font_size(node, theme, sf);
                 let font_family = node.style.text.font_family.as_ref();
                 let font_weight = node.style.text.font_weight.unwrap_or(Weight::NORMAL.0);
-                let metrics = table::metrics_for_node(node, theme, sf);
+                let metrics =
+                    table::metrics_for_node_with_profile(node, theme, sf, table_metrics_profile);
                 let visible = table::visible(table_state, &r, metrics);
                 let table_text_color = text_color(node, state, theme, false);
                 let muted = glyph_color(theme.muted_text);
@@ -3680,6 +3866,7 @@ fn collect_table_text(
             cache,
             caret_positions,
             out,
+            table_metrics_profile,
         );
     }
     if let Some(r) = layout.rects.get(&node.id) {
@@ -4312,6 +4499,36 @@ mod tests {
             generated_content_text(&badge, &GeneratedContent::Attr("class".to_string())).as_deref(),
             Some("metric")
         );
+    }
+
+    #[test]
+    fn named_font_family_key_uses_resolved_name() {
+        assert_eq!(
+            font_family_key(
+                Some(&FontFamily::Name("Piboto".to_string())),
+                &HashMap::new()
+            ),
+            "name:Piboto"
+        );
+    }
+
+    #[test]
+    fn axis_label_glyph_key_tracks_font_family() {
+        let piboto = AxisLabelGlyphKey {
+            text: "Value".to_string(),
+            font_family: font_family_key(
+                Some(&FontFamily::Name("Piboto".to_string())),
+                &HashMap::new(),
+            ),
+            font_size_milli: 14000,
+            rotate_ccw: false,
+        };
+        let fallback = AxisLabelGlyphKey {
+            font_family: font_family_key(None, &HashMap::new()),
+            ..piboto.clone()
+        };
+
+        assert_ne!(piboto, fallback);
     }
 
     #[test]
@@ -5353,6 +5570,7 @@ mod tests {
             &mut cache,
             &mut caret_positions,
             &mut unobscured,
+            table::TableMetricsProfile::default(),
         );
 
         let metrics = table::metrics_for_node(&table, &theme, 1.0);
@@ -5381,6 +5599,7 @@ mod tests {
             &mut cache,
             &mut caret_positions,
             &mut partially_obscured,
+            table::TableMetricsProfile::default(),
         );
 
         assert!(unobscured.len() > partially_obscured.len());
@@ -5450,6 +5669,7 @@ mod tests {
             &mut cache,
             &mut caret_positions,
             &mut entries,
+            table::TableMetricsProfile::default(),
         );
 
         let metrics = table::metrics_for_node(&table, &theme, 1.0);

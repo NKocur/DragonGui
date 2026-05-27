@@ -65,7 +65,7 @@ class ComponentDefinition:
         return ComponentInstance(self, args=args, kwargs=kwargs, key=key)
 
 
-@dataclass(slots=True)
+@dataclass
 class ComponentInstance:
     definition: ComponentDefinition
     args: tuple[object, ...] = ()
@@ -235,7 +235,7 @@ def _sync_widget_tree_from_vnode(widget: Widget, vnode: VNode) -> bool:
         return changed
     if len(widget.children) != len(vnode.children):
         raise RuntimeError("component widget tree and VNode tree diverged")
-    for child, child_vnode in zip(widget.children, vnode.children, strict=True):
+    for child, child_vnode in zip(widget.children, vnode.children):
         changed = _sync_widget_tree_from_vnode(child, child_vnode) or changed
     return changed
 

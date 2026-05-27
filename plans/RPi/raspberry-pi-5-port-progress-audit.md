@@ -47,7 +47,7 @@ The next meaningful step is running the release checklist on real Raspberry Pi
   - adapter/backend/driver details after GPU init.
   - effective scatter, line plot, and table caps.
 - Scatter protections:
-  - Pi scatter payload cap: 100,000 points.
+  - Pi scatter payload cap: 200,000 points.
   - deterministic errors for payloads above the profile cap or device buffer
     size.
   - payload stride validation.

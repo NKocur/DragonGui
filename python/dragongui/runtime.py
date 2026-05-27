@@ -104,6 +104,14 @@ class LiveWidgetHandle:
         self.ensure_open()
         self.app.enqueue_set_prop(self.id, prop, value)
 
+    def enqueue_set_attitude_orientation(self, pitch: float, roll: float, yaw: float) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_attitude_orientation(self.id, pitch, roll, yaw)
+
+    def enqueue_set_translation_position(self, x: float, y: float) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_translation_position(self.id, x, y)
+
     def enqueue_invalidate(self, dirty: str) -> None:
         self.ensure_open()
         self.app.enqueue_invalidate(self.id, dirty)
@@ -191,6 +199,21 @@ class LiveWidgetHandle:
             series,
             xy,
             max_points=max_points,
+        )
+
+    def enqueue_set_histogram_bins_packed(
+        self,
+        edges: bytes,
+        counts: bytes,
+        *,
+        coalesce: bool = True,
+    ) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_histogram_bins_packed(
+            self.id,
+            edges,
+            counts,
+            coalesce=coalesce,
         )
 
     def enqueue_clear_line_plot_series(self, series: str | None = None) -> None:
@@ -626,6 +649,29 @@ class AppHandle:
     def enqueue_set_prop(self, widget_id: str, prop: str, value: object) -> None:
         self._send_or_queue_native("enqueue_set_prop", widget_id, prop, value)
 
+    def enqueue_set_attitude_orientation(
+        self,
+        widget_id: str,
+        pitch: float,
+        roll: float,
+        yaw: float,
+    ) -> None:
+        self._send_or_queue_native(
+            "enqueue_set_attitude_orientation",
+            widget_id,
+            float(pitch),
+            float(roll),
+            float(yaw),
+        )
+
+    def enqueue_set_translation_position(self, widget_id: str, x: float, y: float) -> None:
+        self._send_or_queue_native(
+            "enqueue_set_translation_position",
+            widget_id,
+            float(x),
+            float(y),
+        )
+
     def enqueue_invalidate(self, widget_id: str, dirty: str) -> None:
         self._send_or_queue_native("enqueue_invalidate", widget_id, dirty)
 
@@ -716,6 +762,22 @@ class AppHandle:
 
     def enqueue_clear_line_plot_series(self, widget_id: str, series: str | None = None) -> None:
         self._send_or_queue_native("enqueue_clear_line_plot_series", widget_id, series)
+
+    def enqueue_set_histogram_bins_packed(
+        self,
+        widget_id: str,
+        edges: bytes,
+        counts: bytes,
+        *,
+        coalesce: bool = True,
+    ) -> None:
+        self._send_or_queue_native(
+            "enqueue_set_histogram_bins_packed",
+            widget_id,
+            _byte_view(edges, "histogram edge payload"),
+            _byte_view(counts, "histogram count payload"),
+            bool(coalesce),
+        )
 
     def enqueue_reset_scatter_camera(self, widget_id: str) -> None:
         self._send_or_queue_native("enqueue_reset_scatter_camera", widget_id)

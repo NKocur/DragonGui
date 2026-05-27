@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 import threading
-from typing import TypeVar
+from typing import Optional, TypeVar
 
 from . import _backend
 
 
-PathCallback = Callable[[str | None], None]
-PathsCallback = Callable[[list[str] | None], None]
+PathCallback = Callable[[Optional[str]], None]
+PathsCallback = Callable[[Optional[list[str]]], None]
 T = TypeVar("T")
 
 

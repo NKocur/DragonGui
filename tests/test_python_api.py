@@ -1728,6 +1728,60 @@ def test_histogram_serializes_binned_data() -> None:
     assert props["color"] == "#42a5ff"
 
 
+def test_histogram_live_set_data_enqueues_packed_bins() -> None:
+    np = pytest.importorskip("numpy")
+
+    class NumericFrame:
+        columns = ("latency",)
+        dtypes = ("float32",)
+        shape = (4, 1)
+
+        def __init__(self, values: object) -> None:
+            self.latency = np.asarray(values, dtype=np.float32)
+
+        def __getitem__(self, column: str) -> object:
+            return getattr(self, column)
+
+    class Sender:
+        def __init__(self) -> None:
+            self.histograms: list[tuple[str, memoryview, memoryview, bool]] = []
+
+        def enqueue_set_histogram_bins_packed(
+            self,
+            widget_id: str,
+            edges: memoryview,
+            counts: memoryview,
+            coalesce: bool,
+        ) -> None:
+            self.histograms.append((widget_id, edges, counts, coalesce))
+
+        def close(self) -> None:
+            pass
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+    hist = dg.Histogram(
+        NumericFrame([0.0, 1.0, 2.0, 3.0]),
+        value="latency",
+        bins=2,
+        range=(0.0, 4.0),
+        id="hist",
+        parent=None,
+    )
+    hist._bind_live(handle.widget_handle(hist.id))
+
+    hist.set_data(NumericFrame([0.0, 1.0, 1.5, 3.5]))
+
+    assert len(sender.histograms) == 1
+    widget_id, edges, counts, coalesce = sender.histograms[0]
+    assert widget_id == "hist"
+    assert len(edges) == 3 * 4
+    assert len(counts) == 2 * 4
+    assert coalesce is True
+    assert hist.to_dict()["props"]["counts"] == [3.0, 1.0]
+
+
 def test_pie_chart_serializes_direct_and_frame_data() -> None:
     chart = dg.PieChart(
         labels=["A", "B", "C"],

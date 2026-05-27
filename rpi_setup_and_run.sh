@@ -7,6 +7,7 @@ Usage: bash rpi_setup_and_run.sh <command> [python-example]
 
 Commands:
   deps         Install Raspberry Pi OS build/runtime apt packages.
+  check-deps   Report missing build/runtime commands and pkg-config libraries.
   setup        Create the USB-backed Rust/Cargo dirs and Python venv.
   build        Build the native wheel, install it, and copy _dragongui*.so into python/dragongui.
   diag         Print Pi display/GPU diagnostics and run one-frame backend probes.
@@ -25,6 +26,7 @@ Useful overrides:
 
 Examples:
   bash rpi_setup_and_run.sh full
+  bash rpi_setup_and_run.sh check-deps
   bash rpi_setup_and_run.sh diag
   bash rpi_setup_and_run.sh build-smoke
   bash rpi_setup_and_run.sh run examples/css_feature_probes/line_plot_probe.py
@@ -81,6 +83,52 @@ install_deps() {
   log "Installing Raspberry Pi OS packages"
   sudo apt update
   sudo apt install -y "${apt_packages[@]}"
+}
+
+check_deps() {
+  log "Checking Raspberry Pi OS command dependencies"
+  local missing_commands=()
+  local commands=(
+    cmake
+    curl
+    glxinfo
+    pkg-config
+    python3
+    rustc
+    cargo
+    vulkaninfo
+  )
+  for cmd in "${commands[@]}"; do
+    if command -v "$cmd" >/dev/null 2>&1; then
+      printf 'ok: %s\n' "$cmd"
+    else
+      printf 'missing: %s\n' "$cmd"
+      missing_commands+=("$cmd")
+    fi
+  done
+
+  log "Checking pkg-config libraries"
+  local missing_libs=()
+  local libs=(
+    wayland-client
+    x11
+    xcb
+    xkbcommon
+  )
+  for lib in "${libs[@]}"; do
+    if pkg-config --exists "$lib" 2>/dev/null; then
+      printf 'ok: %s\n' "$lib"
+    else
+      printf 'missing: %s\n' "$lib"
+      missing_libs+=("$lib")
+    fi
+  done
+
+  if (( ${#missing_commands[@]} || ${#missing_libs[@]} )); then
+    printf '\nInstall or refresh dependencies with:\n'
+    printf '  bash rpi_setup_and_run.sh deps\n'
+    return 1
+  fi
 }
 
 prepare_usb_dirs() {
@@ -296,6 +344,7 @@ run_diag() {
   optional_command "OpenGL renderer" glxinfo -B
   optional_shell "EGL info first 180 lines" "command -v eglinfo >/dev/null 2>&1 && eglinfo 2>&1 | sed -n '1,180p' || echo 'missing command: eglinfo'"
   optional_shell "GPU library resolution" "ldconfig -p 2>/dev/null | grep -E 'libEGL|libGLES|libGLX|libGL\\.so|libvulkan' || true"
+  check_deps || true
 
   if [[ -n "${VIRTUAL_ENV:-}" ]]; then
     run_gpu_probe gl x11
@@ -344,6 +393,9 @@ case "$command_name" in
     ;;
   deps)
     install_deps
+    ;;
+  check-deps)
+    check_deps
     ;;
   setup)
     ensure_rust

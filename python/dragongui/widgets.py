@@ -13,10 +13,11 @@ import os
 import platform
 from pathlib import Path
 import re
+import struct
 import tempfile
 import threading
 import time
-from typing import Any, ClassVar, Self
+from typing import Any, ClassVar, TypeVar, Union
 import webbrowser
 
 from .dataframe import (
@@ -25,6 +26,8 @@ from .dataframe import (
     extract_table_sample,
     summarize_frame,
 )
+
+Self = TypeVar("Self")
 
 _INCLUDE_STARTUP_RESOURCE_PAYLOADS: ContextVar[bool] = ContextVar(
     "dragongui_include_startup_resource_payloads",
@@ -601,8 +604,8 @@ BoolCallback = Callable[[bool], None]
 FloatCallback = Callable[[float], None]
 StringCallback = Callable[[str], None]
 ColorCallback = Callable[[tuple[int, ...]], None]
-BadgeValue = str | int | None
-LedColorValue = str | Sequence[object]
+BadgeValue = Union[str, int, None]
+LedColorValue = Union[str, Sequence[object]]
 
 
 @dataclass(frozen=True)
@@ -1320,8 +1323,8 @@ class ScrollArea(Container):
         super().__init__(id=id, key=key, class_=class_, style=merged, tooltip=tooltip, parent=parent)
 
 
-GridTrackValue = int | float | str | Mapping[str, object]
-GridTrackTemplate = Sequence[GridTrackValue] | str
+GridTrackValue = Union[int, float, str, Mapping[str, object]]
+GridTrackTemplate = Union[Sequence[GridTrackValue], str]
 
 
 def _grid_track_number(value: object, name: str, *, positive: bool = False) -> int | float:
@@ -3271,6 +3274,18 @@ def _pack_xy_values(x_values: Any, y_values: Any | None = None) -> bytes | None:
         return None
 
 
+def _pack_f32_values(values: Sequence[float]) -> bytes:
+    if not values:
+        return b""
+    try:
+        import numpy as np
+
+        arr = np.asarray(values, dtype="<f4").reshape(-1)
+        return memoryview(arr.view(np.uint8).reshape(-1)).tobytes()
+    except (ImportError, TypeError, ValueError):
+        return struct.pack(f"<{len(values)}f", *(float(value) for value in values))
+
+
 _PIE_DEFAULT_COLORS: tuple[str, ...] = (
     "#5aa9ff",
     "#74ddb0",
@@ -3314,7 +3329,7 @@ def _normalize_pie_data(
 
     pairs: list[tuple[str, float]] = []
     finite_count = 0
-    for label, value in zip(label_items, value_items, strict=True):
+    for label, value in zip(label_items, value_items):
         if not math.isfinite(value):
             continue
         finite_count += 1
@@ -3348,6 +3363,20 @@ def _normalize_pie_data(
     )
 
 
+def _finite_float(value: object, name: str) -> float:
+    result = float(value)
+    if not math.isfinite(result):
+        raise ValueError(f"{name} must be finite")
+    return result
+
+
+def _positive_float(value: object, name: str) -> float:
+    result = _finite_float(value, name)
+    if result <= 0:
+        raise ValueError(f"{name} must be positive")
+    return result
+
+
 def _pie_from_frame(
     data: Any,
     *,
@@ -3370,7 +3399,7 @@ def _pie_from_frame(
         raise ValueError("PieChart category and value columns must have the same length")
 
     grouped: dict[str, list[float]] = {}
-    for label, number in zip(categories, values, strict=True):
+    for label, number in zip(categories, values):
         if not math.isfinite(number):
             continue
         if number < 0:
@@ -3550,7 +3579,7 @@ class Histogram(Widget):
         x_label: str | None = None,
         y_label: str | None = None,
         color: str | Sequence[object] | None = None,
-        show_grid: bool = True,
+        show_grid: bool = False,
         show_axes: bool = True,
         show_ticks: bool = True,
         show_toolbar: bool = False,
@@ -3641,8 +3670,11 @@ class Histogram(Widget):
             mode=self.mode,
             cumulative=self.cumulative,
         )
-        if self.is_live:
-            raise RuntimeError("live Histogram.set_data is not implemented yet")
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_histogram_bins_packed(
+                _pack_f32_values(self._bins.edges),
+                _pack_f32_values(self._bins.counts),
+            )
 
     def set_grid_visible(self, visible: bool) -> None:
         self.show_grid = bool(visible)
@@ -4145,6 +4177,169 @@ class LinePlot(Widget):
             "window_size": self.window_size,
             "max_points": self.max_points,
             "series": series_items,
+        }
+
+
+class AttitudeSphere(Widget):
+    """Lightweight IMU orientation sphere driven by pitch, roll, and yaw degrees."""
+
+    kind = "attitude_sphere"
+
+    def __init__(
+        self,
+        *,
+        pitch: int | float = 0.0,
+        roll: int | float = 0.0,
+        yaw: int | float = 0.0,
+        show_grid: bool = True,
+        show_heading: bool = True,
+        show_readout: bool = False,
+        grid_quality: str = "fast",
+        size: int | float | None = 180,
+        width: int | float | None = None,
+        height: int | float | None = None,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.pitch = _finite_float(pitch, "AttitudeSphere pitch")
+        self.roll = _finite_float(roll, "AttitudeSphere roll")
+        self.yaw = _finite_float(yaw, "AttitudeSphere yaw")
+        self.show_grid = bool(show_grid)
+        self.show_heading = bool(show_heading)
+        self.show_readout = bool(show_readout)
+        if grid_quality not in {"fast", "high"}:
+            raise ValueError("AttitudeSphere grid_quality must be 'fast' or 'high'")
+        self.grid_quality = grid_quality
+        self.width = _positive_float(width if width is not None else size, "AttitudeSphere width")
+        self.height = _positive_float(height if height is not None else size, "AttitudeSphere height")
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def set_orientation(
+        self,
+        *,
+        pitch: int | float | None = None,
+        roll: int | float | None = None,
+        yaw: int | float | None = None,
+    ) -> None:
+        if pitch is not None:
+            self.pitch = _finite_float(pitch, "AttitudeSphere pitch")
+        if roll is not None:
+            self.roll = _finite_float(roll, "AttitudeSphere roll")
+        if yaw is not None:
+            self.yaw = _finite_float(yaw, "AttitudeSphere yaw")
+        if (handle := self._live()) is not None:
+            if hasattr(handle, "enqueue_set_attitude_orientation"):
+                handle.enqueue_set_attitude_orientation(self.pitch, self.roll, self.yaw)
+            else:
+                handle.enqueue_set_prop("pitch", self.pitch)
+                handle.enqueue_set_prop("roll", self.roll)
+                handle.enqueue_set_prop("yaw", self.yaw)
+
+    def set_pitch_roll_yaw(self, pitch: int | float, roll: int | float, yaw: int | float) -> None:
+        self.set_orientation(pitch=pitch, roll=roll, yaw=yaw)
+
+    def set_chrome(
+        self,
+        *,
+        show_grid: bool | None = None,
+        show_heading: bool | None = None,
+        show_readout: bool | None = None,
+        grid_quality: str | None = None,
+    ) -> None:
+        if show_grid is not None:
+            self.show_grid = bool(show_grid)
+        if show_heading is not None:
+            self.show_heading = bool(show_heading)
+        if show_readout is not None:
+            self.show_readout = bool(show_readout)
+        if grid_quality is not None:
+            if grid_quality not in {"fast", "high"}:
+                raise ValueError("AttitudeSphere grid_quality must be 'fast' or 'high'")
+            self.grid_quality = grid_quality
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("show_grid", self.show_grid)
+            handle.enqueue_set_prop("show_heading", self.show_heading)
+            handle.enqueue_set_prop("show_readout", self.show_readout)
+            handle.enqueue_set_prop("grid_quality", self.grid_quality)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "pitch": self.pitch,
+            "roll": self.roll,
+            "yaw": self.yaw,
+            "show_grid": self.show_grid,
+            "show_heading": self.show_heading,
+            "show_readout": self.show_readout,
+            "grid_quality": self.grid_quality,
+            "width": self.width,
+            "height": self.height,
+        }
+
+
+class TranslationTrace(Widget):
+    """Lightweight 2D translational movement trace for IMU-integrated position."""
+
+    kind = "translation_trace"
+
+    def __init__(
+        self,
+        *,
+        x: int | float = 0.0,
+        y: int | float = 0.0,
+        range_m: int | float = 12.0,
+        ring_step_m: int | float = 2.0,
+        trail_points: int = 80,
+        size: int | float | None = 180,
+        width: int | float | None = None,
+        height: int | float | None = None,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.x = _finite_float(x, "TranslationTrace x")
+        self.y = _finite_float(y, "TranslationTrace y")
+        self.range_m = max(0.5, _finite_float(range_m, "TranslationTrace range_m"))
+        self.ring_step_m = max(0.25, _finite_float(ring_step_m, "TranslationTrace ring_step_m"))
+        self.trail_points = max(1, min(512, int(trail_points)))
+        self.width = _positive_float(width if width is not None else size, "TranslationTrace width")
+        self.height = _positive_float(height if height is not None else size, "TranslationTrace height")
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def set_position(self, x: int | float, y: int | float) -> None:
+        self.x = _finite_float(x, "TranslationTrace x")
+        self.y = _finite_float(y, "TranslationTrace y")
+        if (handle := self._live()) is not None:
+            if hasattr(handle, "enqueue_set_translation_position"):
+                handle.enqueue_set_translation_position(self.x, self.y)
+            else:
+                handle.enqueue_set_prop("x", self.x)
+                handle.enqueue_set_prop("y", self.y)
+
+    def clear_trail(self) -> None:
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("clear_trail", True)
+
+    def set_range(self, range_m: int | float) -> None:
+        self.range_m = max(0.5, _finite_float(range_m, "TranslationTrace range_m"))
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("range_m", self.range_m)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "x": self.x,
+            "y": self.y,
+            "range_m": self.range_m,
+            "ring_step_m": self.ring_step_m,
+            "trail_points": self.trail_points,
+            "width": self.width,
+            "height": self.height,
         }
 
 

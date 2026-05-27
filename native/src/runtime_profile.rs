@@ -57,7 +57,7 @@ impl RuntimeProfileSelection {
     pub(crate) const fn scatter_max_points(&self) -> Option<usize> {
         match self.profile {
             RuntimeProfile::Desktop => None,
-            RuntimeProfile::Pi => Some(100_000),
+            RuntimeProfile::Pi => Some(200_000),
         }
     }
 
@@ -75,10 +75,43 @@ impl RuntimeProfileSelection {
         }
     }
 
+    pub(crate) fn scatter_static_render_scale(&self) -> Option<f32> {
+        std::env::var("DRAGONGUI_SCATTER_STATIC_RENDER_SCALE")
+            .ok()
+            .and_then(|value| value.trim().parse::<f32>().ok())
+            .filter(|value| value.is_finite() && *value > 0.0)
+            .map(|value| value.clamp(0.25, 1.0))
+    }
+
     pub(crate) const fn line_plot_max_points(&self) -> Option<usize> {
         match self.profile {
             RuntimeProfile::Desktop => None,
             RuntimeProfile::Pi => Some(50_000),
+        }
+    }
+
+    pub(crate) const fn line_plot_segment_budget(&self) -> usize {
+        match self.profile {
+            RuntimeProfile::Desktop => 4096,
+            RuntimeProfile::Pi => 1536,
+        }
+    }
+
+    pub(crate) const fn line_plot_simplify_styles(&self) -> bool {
+        matches!(self.profile, RuntimeProfile::Pi)
+    }
+
+    pub(crate) const fn histogram_bin_budget(&self) -> Option<usize> {
+        match self.profile {
+            RuntimeProfile::Desktop => None,
+            RuntimeProfile::Pi => Some(384),
+        }
+    }
+
+    pub(crate) const fn histogram_compact_tick_count(&self) -> Option<usize> {
+        match self.profile {
+            RuntimeProfile::Desktop => None,
+            RuntimeProfile::Pi => Some(4),
         }
     }
 
@@ -101,6 +134,14 @@ impl RuntimeProfileSelection {
             RuntimeProfile::Desktop => None,
             RuntimeProfile::Pi => Some(10_000),
         }
+    }
+
+    pub(crate) const fn table_compact_metrics(&self) -> bool {
+        matches!(self.profile, RuntimeProfile::Pi)
+    }
+
+    pub(crate) const fn pie_chart_compact_labels(&self) -> bool {
+        matches!(self.profile, RuntimeProfile::Pi)
     }
 }
 
@@ -150,11 +191,17 @@ mod tests {
 
         assert_eq!(profile.profile, RuntimeProfile::Pi);
         assert_eq!(profile.source, "env");
-        assert_eq!(profile.scatter_max_points(), Some(100_000));
+        assert_eq!(profile.scatter_max_points(), Some(200_000));
         assert_eq!(profile.line_plot_max_points(), Some(50_000));
+        assert_eq!(profile.line_plot_segment_budget(), 1536);
+        assert!(profile.line_plot_simplify_styles());
+        assert_eq!(profile.histogram_bin_budget(), Some(384));
+        assert_eq!(profile.histogram_compact_tick_count(), Some(4));
         assert_eq!(profile.table_page_size(), Some(64));
         assert_eq!(profile.table_sample_rows(), Some(512));
         assert_eq!(profile.table_column_buffer_rows(), Some(10_000));
+        assert!(profile.table_compact_metrics());
+        assert!(profile.pie_chart_compact_labels());
 
         if let Some(previous) = previous {
             std::env::set_var("DRAGONGUI_PROFILE", previous);
@@ -175,9 +222,15 @@ mod tests {
         assert_eq!(profile.source, "env");
         assert_eq!(profile.scatter_max_points(), None);
         assert_eq!(profile.line_plot_max_points(), None);
+        assert_eq!(profile.line_plot_segment_budget(), 4096);
+        assert!(!profile.line_plot_simplify_styles());
+        assert_eq!(profile.histogram_bin_budget(), None);
+        assert_eq!(profile.histogram_compact_tick_count(), None);
         assert_eq!(profile.table_page_size(), None);
         assert_eq!(profile.table_sample_rows(), None);
         assert_eq!(profile.table_column_buffer_rows(), None);
+        assert!(!profile.table_compact_metrics());
+        assert!(!profile.pie_chart_compact_labels());
 
         if let Some(previous) = previous {
             std::env::set_var("DRAGONGUI_PROFILE", previous);
