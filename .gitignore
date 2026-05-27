@@ -1,6 +1,7 @@
 target/
 dist/
 build/
+docs/sphinx/_build/
 *.egg-info/
 *.pyd
 *.so

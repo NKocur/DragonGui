@@ -38,6 +38,12 @@ dev = [
   "pytest>=8",
   "ruff>=0.8",
 ]
+docs = [
+  "furo>=2024.8",
+  "myst-parser>=4",
+  "sphinx>=8",
+  "sphinx-autodoc-typehints>=3",
+]
 
 [project.urls]
 Homepage = "https://github.com/dragonframe/dragongui"
@@ -54,6 +60,7 @@ include = [
   { path = "THIRD_PARTY_NOTICES.md", format = "sdist" },
   { path = "THIRD_PARTY_NOTICES.md", format = "wheel" },
   { path = "docs/*.md", format = "sdist" },
+  { path = "docs/sphinx/**", format = "sdist" },
   { path = "examples/*.py", format = "sdist" },
   { path = "plans/*.md", format = "sdist" },
   { path = "plans/V2/*.md", format = "sdist" },
@@ -66,6 +73,7 @@ include = [
 exclude = [
   "**/__pycache__/**",
   "**/*.pyc",
+  "docs/sphinx/_build/**",
 ]
 
 [tool.pytest.ini_options]

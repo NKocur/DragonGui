@@ -9426,9 +9426,13 @@ class Scatter3D(Widget):
     ) -> None:
         """Show or hide the color legend overlay.
 
-        entries: list of (label, r, g, b) tuples (0.0–1.0 per channel).
-        position: 'top-right', 'top-left', 'bottom-right', 'bottom-left'. When None,
-                  the current legend_position is kept.
+        Args:
+            visible: Whether the legend is visible.
+            position: One of ``"top-right"``, ``"top-left"``, ``"bottom-right"``,
+                or ``"bottom-left"``. When ``None``, the current
+                ``legend_position`` is kept.
+            entries: Optional ``(label, r, g, b)`` tuples with color channels in
+                the ``0.0`` to ``1.0`` range.
         """
         self._legend_visible = bool(visible)
         if entries is not None:
