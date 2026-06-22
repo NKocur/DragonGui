@@ -3744,6 +3744,10 @@ fn histogram_data_bounds(node: &WidgetNode) -> Option<LinePlotBounds> {
     })
 }
 
+fn pie_chart_toolbar_enabled(node: &WidgetNode, rect: [f32; 4]) -> bool {
+    node.props.pie_chart.show_toolbar && rect[2] >= 260.0 && rect[3] >= 170.0
+}
+
 fn pie_chart_chart_rect(node: &WidgetNode, sf: f32, rect: [f32; 4]) -> [f32; 4] {
     let pad = 14.0 * sf;
     let title_h = if node.props.pie_chart.title.is_some() {
@@ -3751,13 +3755,18 @@ fn pie_chart_chart_rect(node: &WidgetNode, sf: f32, rect: [f32; 4]) -> [f32; 4] 
     } else {
         0.0
     };
+    let toolbar_h = if pie_chart_toolbar_enabled(node, rect) {
+        34.0 * sf
+    } else {
+        0.0
+    };
     let legend = node.props.pie_chart.show_legend
         && node.props.pie_chart.legend_position != "none"
         && !node.props.pie_chart.slices.is_empty();
     let mut x = rect[0] + pad;
-    let mut y = rect[1] + pad + title_h;
+    let mut y = rect[1] + pad + title_h + toolbar_h;
     let mut w = (rect[2] - pad * 2.0).max(1.0);
-    let mut h = (rect[3] - pad * 2.0 - title_h).max(1.0);
+    let mut h = (rect[3] - pad * 2.0 - title_h - toolbar_h).max(1.0);
     if legend {
         match node.props.pie_chart.legend_position.as_str() {
             "right" if w > 320.0 * sf => w -= (150.0 * sf).min(w * 0.36),
@@ -3851,7 +3860,8 @@ fn pie_chart_slice_label_layouts(
     plot: [f32; 4],
 ) -> Vec<PieChartLabelLayout> {
     let mut labels = Vec::new();
-    if !node.props.pie_chart.show_labels || node.props.pie_chart.label_mode == "none" {
+    let label_mode = node.props.pie_chart.label_mode.as_str();
+    if !node.props.pie_chart.show_labels || matches!(label_mode, "none" | "legend") {
         return labels;
     }
 
@@ -3863,7 +3873,7 @@ fn pie_chart_slice_label_layouts(
         let sweep = percent * std::f32::consts::TAU;
         let (_, _, mid, next_cursor) =
             pie_slice_angles(cursor, sweep, node.props.pie_chart.clockwise);
-        if percent < 0.075 && node.props.pie_chart.label_mode == "auto" {
+        if percent < 0.075 && label_mode == "auto" {
             cursor = next_cursor;
             continue;
         }
@@ -3874,7 +3884,11 @@ fn pie_chart_slice_label_layouts(
         } else {
             0.0
         };
-        let r = inner + (outer - inner) * 0.58;
+        let r = if label_mode == "outside" {
+            inner + (outer - inner) * 0.88
+        } else {
+            inner + (outer - inner) * 0.58
+        };
         let text = pie_chart_slice_label_text(slice, percent, &node.props.pie_chart.value_mode);
         let screen_x = plot[0] + plot[2] * 0.5 + mid.cos() * r;
         let screen_y = plot[1] + plot[3] * 0.5 + mid.sin() * r;
@@ -3899,6 +3913,19 @@ fn pie_chart_slice_label_layouts(
     labels
 }
 
+fn pie_chart_plot_rect(chart_area: [f32; 4], sf: f32) -> [f32; 4] {
+    let pie_pad = (8.0 * sf).min(chart_area[2].min(chart_area[3]) * 0.12);
+    let size = (chart_area[2] - pie_pad * 2.0)
+        .min(chart_area[3] - pie_pad * 2.0)
+        .max(1.0);
+    [
+        chart_area[0] + (chart_area[2] - size) * 0.5,
+        chart_area[1] + (chart_area[3] - size) * 0.5,
+        size,
+        size,
+    ]
+}
+
 fn emit_pie_chart(
     out: &mut Vec<RectInstance>,
     node: &WidgetNode,
@@ -3919,17 +3946,13 @@ fn emit_pie_chart(
         border_w,
     );
     let chart_area = pie_chart_chart_rect(node, sf, rect);
-    let size = chart_area[2].min(chart_area[3]).max(1.0);
-    let plot = [
-        chart_area[0] + (chart_area[2] - size) * 0.5,
-        chart_area[1] + (chart_area[3] - size) * 0.5,
-        size,
-        size,
-    ];
-    let plot_fill = mix(styled_bg.unwrap_or(theme.surface), theme.background, 0.16);
-    out.push(inst_radii(plot, plot_fill, [size * 0.5; 4]));
+    let plot_fill = mix(styled_bg.unwrap_or(theme.surface), theme.background, 0.12);
+
+    let plot = pie_chart_plot_rect(chart_area, sf);
+    let size = plot[2].min(plot[3]).max(1.0);
     let total = node.props.pie_chart.total;
     if total <= 0.0 || node.props.pie_chart.slices.is_empty() {
+        emit_pie_chart_toolbar(out, node, theme, sf, rect);
         return;
     }
     let tau = std::f32::consts::TAU;
@@ -3982,11 +4005,7 @@ fn emit_pie_chart(
             inner,
             inner,
         ];
-        out.push(inst_radii(
-            hole,
-            styled_bg.unwrap_or(theme.surface),
-            [inner * 0.5; 4],
-        ));
+        out.push(inst_radii(hole, plot_fill, [inner * 0.5; 4]));
     }
     for label in pie_chart_slice_label_layouts(node, sf, plot) {
         let chip = mix(theme.background, theme.surface, 0.18);
@@ -3998,9 +4017,12 @@ fn emit_pie_chart(
     }
     if node.props.pie_chart.show_legend && node.props.pie_chart.legend_position != "none" {
         let legend = pie_chart_legend_rect(node, sf, rect, chart_area);
-        let row_h = 18.0 * sf;
+        let legend_font_size = pie_chart_label_font_size(node).unwrap_or(10.0).max(10.0);
+        let line_h = legend_font_size * 1.3 * sf;
+        let row_h = (line_h + 6.0 * sf).max(20.0 * sf);
+        let swatch = 10.0 * sf;
         for (index, slice) in node.props.pie_chart.slices.iter().enumerate() {
-            let y = legend[1] + 6.0 * sf + index as f32 * row_h;
+            let y = legend[1] + 8.0 * sf + index as f32 * row_h;
             if y + row_h > legend[1] + legend[3] {
                 break;
             }
@@ -4010,11 +4032,71 @@ fn emit_pie_chart(
                 .map(|color| color.resolve(theme))
                 .unwrap_or_else(|| palette_color(index, theme));
             out.push(inst_radii(
-                [legend[0] + 2.0 * sf, y + 3.0 * sf, 10.0 * sf, 10.0 * sf],
+                [
+                    legend[0] + 7.0 * sf,
+                    y + (row_h - swatch).max(0.0) * 0.5,
+                    swatch,
+                    swatch,
+                ],
                 color,
                 [3.0 * sf; 4],
             ));
         }
+    }
+    emit_pie_chart_toolbar(out, node, theme, sf, rect);
+}
+
+fn pie_chart_toolbar_buttons(
+    node: &WidgetNode,
+    sf: f32,
+    rect: [f32; 4],
+) -> Vec<(&'static str, [f32; 4], bool)> {
+    if !pie_chart_toolbar_enabled(node, rect) {
+        return Vec::new();
+    }
+    let pad = 10.0 * sf;
+    let button = 24.0 * sf;
+    let gap = 5.0 * sf;
+    let labels = ["Fit", "Pan", "Zoom", "Box", "Grid", "Axes"];
+    let total = button * labels.len() as f32 + gap * (labels.len().saturating_sub(1)) as f32;
+    let y = rect[1] + pad;
+    let mut x = rect[0] + rect[2] - pad - total;
+    let mut buttons = Vec::with_capacity(labels.len());
+    for label in labels {
+        buttons.push((label, [x, y, button, button], true));
+        x += button + gap;
+    }
+    buttons
+}
+
+fn emit_pie_chart_toolbar(
+    out: &mut Vec<RectInstance>,
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    rect: [f32; 4],
+) {
+    for (label, button, active) in pie_chart_toolbar_buttons(node, sf, rect) {
+        let mut fill = if active {
+            mix(theme.surface_alt, theme.accent, 0.18)
+        } else {
+            mix(theme.surface_alt, theme.surface, 0.45)
+        };
+        fill[3] = fill[3].min(0.88);
+        let mut border = if active {
+            mix(theme.border, theme.accent, 0.50)
+        } else {
+            mix(theme.border, theme.muted_text, 0.20)
+        };
+        border[3] = border[3].min(0.68);
+        emit_bordered_rect_radii(out, button, border, fill, [4.0 * sf; 4], 1.0 * sf);
+        let mut icon = if active {
+            mix(theme.text, theme.accent, 0.24)
+        } else {
+            mix(theme.muted_text, theme.text, 0.20)
+        };
+        icon[3] = icon[3].min(0.92);
+        emit_line_plot_toolbar_icon(out, label, button, icon, sf);
     }
 }
 
@@ -4681,6 +4763,16 @@ fn bar_chart_value_label_font_size(node: &WidgetNode) -> Option<f32> {
             .and_then(|style| style.text.font_size)
             .map(|size| size.max(8.0))
     })
+}
+
+fn pie_chart_label_text_color(node: &WidgetNode, theme: &Theme) -> Option<[f32; 3]> {
+    base_part_style(&node.style, "label").and_then(|style| part_style_text_rgb(style, theme))
+}
+
+fn pie_chart_label_font_size(node: &WidgetNode) -> Option<f32> {
+    base_part_style(&node.style, "label")
+        .and_then(|style| style.text.font_size)
+        .map(|size| size.max(8.0))
 }
 
 fn emit_bar_chart(
@@ -6542,14 +6634,56 @@ pub(crate) fn pie_chart_text_labels(
         });
     }
     let chart = pie_chart_chart_rect(node, sf, rect);
-    let size = chart[2].min(chart[3]).max(1.0);
-    let plot = [
-        chart[0] + (chart[2] - size) * 0.5,
-        chart[1] + (chart[3] - size) * 0.5,
-        size,
-        size,
-    ];
+    let plot = pie_chart_plot_rect(chart, sf);
     let total = node.props.pie_chart.total.max(f32::EPSILON);
+    let label_color = pie_chart_label_text_color(node, theme);
+    let label_font_size = pie_chart_label_font_size(node).unwrap_or(10.0);
+    if node.props.pie_chart.donut
+        && (node.props.pie_chart.center_value.is_some()
+            || node.props.pie_chart.center_label.is_some())
+    {
+        let size = plot[2].min(plot[3]).max(1.0);
+        let inner = (size * node.props.pie_chart.inner_radius).max(34.0 * sf);
+        let cx = plot[0] + plot[2] * 0.5;
+        let cy = plot[1] + plot[3] * 0.5;
+        if let Some(value) = node.props.pie_chart.center_value.as_deref() {
+            let center_color = mix(theme.text, theme.accent, 0.06);
+            let font_size = (inner * 0.18).clamp(14.0, 24.0);
+            labels.push(LinePlotTextLabel {
+                text: value.to_string(),
+                screen_x: cx,
+                screen_y: cy - 13.0 * sf,
+                is_title: true,
+                anchor: "box-center",
+                color: Some([center_color[0], center_color[1], center_color[2]]),
+                font_size: Some(font_size),
+                clip_rect: Some([
+                    cx - inner * 0.48,
+                    cy - 23.0 * sf,
+                    inner * 0.96,
+                    26.0 * sf,
+                ]),
+            });
+        }
+        if let Some(caption) = node.props.pie_chart.center_label.as_deref() {
+            let caption_color = mix(theme.muted_text, theme.text, 0.32);
+            labels.push(LinePlotTextLabel {
+                text: caption.to_string(),
+                screen_x: cx,
+                screen_y: cy + 9.0 * sf,
+                is_title: false,
+                anchor: "box-center",
+                color: Some([caption_color[0], caption_color[1], caption_color[2]]),
+                font_size: Some(10.5),
+                clip_rect: Some([
+                    cx - inner * 0.50,
+                    cy + 4.0 * sf,
+                    inner,
+                    18.0 * sf,
+                ]),
+            });
+        }
+    }
     if node.props.pie_chart.show_labels && node.props.pie_chart.label_mode != "none" {
         for label in pie_chart_slice_label_layouts(node, sf, plot) {
             labels.push(LinePlotTextLabel {
@@ -6558,29 +6692,54 @@ pub(crate) fn pie_chart_text_labels(
                 screen_y: label.screen_y,
                 is_title: false,
                 anchor: "box-center",
-                color: Some([0.98, 0.99, 1.0]),
-                font_size: Some(10.0),
+                color: label_color.or(Some([0.98, 0.99, 1.0])),
+                font_size: Some(label_font_size),
                 clip_rect: Some(label.rect),
             });
         }
     }
     if node.props.pie_chart.show_legend && node.props.pie_chart.legend_position != "none" {
         let legend = pie_chart_legend_rect(node, sf, rect, chart);
-        let row_h = 18.0 * sf;
+        let legend_font_size = label_font_size.max(10.0);
+        let line_h = legend_font_size * 1.3 * sf;
+        let row_h = (line_h + 6.0 * sf).max(20.0 * sf);
         for (index, slice) in node.props.pie_chart.slices.iter().enumerate() {
-            let y = legend[1] + 4.0 * sf + index as f32 * row_h;
+            let y = legend[1] + 8.0 * sf + index as f32 * row_h;
             if y + row_h > legend[1] + legend[3] {
                 break;
             }
+            let row_color = label_color.or(color);
+            let percent = format!("{:.0}%", slice.value / total * 100.0);
+            let text_y = y + (row_h - line_h).max(0.0) * 0.5;
             labels.push(LinePlotTextLabel {
-                text: format!("{}  {:.0}%", slice.label, slice.value / total * 100.0),
-                screen_x: legend[0] + 20.0 * sf,
-                screen_y: y,
+                text: slice.label.clone(),
+                screen_x: legend[0] + 24.0 * sf,
+                screen_y: text_y,
                 is_title: false,
                 anchor: "top-left",
-                color,
-                font_size: Some(10.5),
-                clip_rect: Some(legend),
+                color: row_color,
+                font_size: Some(legend_font_size),
+                clip_rect: Some([
+                    legend[0] + 23.0 * sf,
+                    y,
+                    (legend[2] - 70.0 * sf).max(12.0 * sf),
+                    row_h,
+                ]),
+            });
+            labels.push(LinePlotTextLabel {
+                text: percent,
+                screen_x: legend[0] + legend[2] - 43.0 * sf,
+                screen_y: text_y,
+                is_title: false,
+                anchor: "top-left",
+                color: row_color,
+                font_size: Some(legend_font_size),
+                clip_rect: Some([
+                    legend[0] + legend[2] - 44.0 * sf,
+                    y,
+                    40.0 * sf,
+                    row_h,
+                ]),
             });
         }
     }
@@ -13148,6 +13307,55 @@ mod tests {
             .iter()
             .find(|label| label.text == "10.00")
             .expect("styled bar value label");
+
+        assert_eq!(value.color, Some([0.18, 0.24, 0.32]));
+        assert_eq!(value.font_size, Some(12.0));
+
+        let legend_label = labels
+            .iter()
+            .find(|label| label.text == "North")
+            .expect("styled pie legend label");
+        assert!(
+            legend_label.clip_rect.is_some_and(|clip| clip[3] >= 21.0),
+            "pie legend label clip should fit styled text"
+        );
+    }
+
+    #[test]
+    fn pie_chart_labels_accept_style_part_color() {
+        let mut chart = node("pie", WidgetKind::PieChart);
+        chart.props.pie_chart.total = 4.0;
+        chart.props.pie_chart.slices = vec![
+            crate::document::PieChartSliceProp {
+                label: "North".to_string(),
+                value: 3.0,
+                color: None,
+            },
+            crate::document::PieChartSliceProp {
+                label: "South".to_string(),
+                value: 1.0,
+                color: None,
+            },
+        ];
+        chart.props.pie_chart.show_labels = true;
+        chart.props.pie_chart.label_mode = "inside".to_string();
+        chart.style.parts.parts.insert(
+            "label".to_string(),
+            PartStyle {
+                text: TextStyle {
+                    color: Some(ColorRef::Rgba([0.18, 0.24, 0.32, 1.0])),
+                    font_size: Some(12.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let labels = pie_chart_text_labels(&chart, &Theme::dark(), 1.0, [0.0, 0.0, 260.0, 190.0]);
+        let value = labels
+            .iter()
+            .find(|label| label.text == "North 75%")
+            .expect("styled pie slice label");
 
         assert_eq!(value.color, Some([0.18, 0.24, 0.32]));
         assert_eq!(value.font_size, Some(12.0));

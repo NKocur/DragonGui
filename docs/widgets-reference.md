@@ -1672,6 +1672,7 @@ Notable non-selectors:
 | `Tabs` | `header` |
 | `Tab` | `tab`, `accent`, `badge` |
 | `NavItem` | `item`, `accent`, `badge` |
+| `PieChart` | `label` |
 | `DataFrameTable` | `header`, `row`, `row-selected`, `grid-line` |
 
 Widgets without parts still support normal type/class/id CSS styling.

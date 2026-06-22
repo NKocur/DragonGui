@@ -119,7 +119,7 @@ def test_thread_monitor_uses_custom_header_shell() -> None:
     assert data["props"]["title"] == ""
     assert data["style"]["padding"] == 0
     assert [child["type"] for child in data["children"][:3]] == [
-        "grid_layout",
+        "h_layout",
         "separator",
         "scroll_area",
     ]
@@ -127,7 +127,9 @@ def test_thread_monitor_uses_custom_header_shell() -> None:
     assert header["style"]["flex_grow"] == 0
     assert header["children"][0]["type"] == "led"
     assert header["children"][0]["style"]["align_self"] == "center"
-    assert header["children"][0]["style"]["transform"] == {"translate_y": 15}
+    assert "transform" not in header["children"][0]["style"]
+    assert header["children"][1]["style"]["flex_grow"] == 1
+    assert header["children"][1]["style"]["min_width"] == 0
     assert header["children"][1]["children"][0]["style"]["height"] == 20
     assert header["children"][1]["children"][0]["style"]["line_height"] == "18px"
     assert header["children"][2]["type"] == "tag"
@@ -185,22 +187,75 @@ def test_thread_monitor_compact_thread_rows_center_leds() -> None:
         style=None,
     )
     body = panel.to_dict()["children"][2]["children"][0]
-    thread_grid = next(
+    thread_table = next(
         child
         for child in body["children"]
-        if child["type"] == "grid_layout"
-        and any(grand.get("props", {}).get("text") == "THREAD / ROLE" for grand in child["children"])
+        if child["type"] == "v_layout" and child.get("key") == "threads-table"
     )
+    header_row = thread_table["children"][0]
+    data_row = thread_table["children"][1]
 
-    row_led = thread_grid["children"][5]
-    status = thread_grid["children"][6]
-    name = thread_grid["children"][8]
+    row_led = data_row["children"][0]
+    status = data_row["children"][1]
+    name = data_row["children"][3]
 
+    assert header_row["type"] == "h_layout"
+    assert header_row["style"]["align_items"] == "center"
+    assert header_row["children"][3]["props"]["text"] == "THREAD / ROLE"
     assert row_led["type"] == "led"
-    assert row_led["style"]["transform"] == {"translate_y": 5}
+    assert "transform" not in row_led["style"]
+    assert row_led["style"]["height"] == 18
     assert status["style"]["height"] == 18
     assert status["style"]["line_height"] == "17px"
     assert name["style"]["height"] == 18
+    assert name["style"]["min_width"] == 0
+    assert name["style"]["flex_grow"] == 1
+
+
+def test_thread_monitor_failure_rows_keep_columns_bounded() -> None:
+    snap = DiagnosticsSnapshot()
+    snap.failure_count = 1
+    snap.recent_failures = [
+        SimpleNamespace(
+            ts_ms=int(time.time() * 1000),
+            callable_repr="worker_task",
+            thread_name="worker",
+            thread_role="producer",
+            exc_type="RuntimeError",
+            exc_msg="failed",
+        )
+    ]
+    panel = thread_monitor_module._build_panel(
+        snap,
+        show_threads=False,
+        show_queue=False,
+        show_failures=True,
+        id=None,
+        class_=None,
+        style=None,
+    )
+    body = panel.to_dict()["children"][2]["children"][0]
+    failure_table = next(
+        child
+        for child in body["children"]
+        if child["type"] == "v_layout" and child.get("key") == "failures-table"
+    )
+    failure_row = failure_table["children"][0]
+    led = failure_row["children"][0]
+    copy = failure_row["children"][1]
+    age = failure_row["children"][2]
+
+    assert failure_row["type"] == "h_layout"
+    assert failure_row["style"]["align_items"] == "center"
+    assert led["type"] == "led"
+    assert "transform" not in led["style"]
+    assert led["style"]["height"] == 18
+    assert copy["style"]["width"] == 0
+    assert copy["style"]["min_width"] == 0
+    assert copy["style"]["flex_grow"] == 1
+    assert copy["style"]["flex_shrink"] == 1
+    assert age["style"]["width"] == 54
+    assert age["style"]["flex_shrink"] == 0
 
 
 def test_thread_monitor_refresh_diff_uses_stable_widget_keys() -> None:

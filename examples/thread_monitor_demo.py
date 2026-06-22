@@ -53,15 +53,52 @@ def _make_scatter_data(n: int = 5000) -> pd.DataFrame:
 
 app = dg.App(theme=dg.Theme.dark())
 app.stylesheet("""
-    Panel.controls { gap: 8px; padding: 12px; width: 260px; flex-shrink: 0; }
-    Panel.monitor  { flex-grow: 1; min-width: 240px; padding: 0; }
+    Window {
+        padding: 12px;
+        overflow-x: hidden;
+        overflow-y: hidden;
+    }
+    Panel.controls {
+        gap: 8px;
+        padding: 12px;
+        padding-right: 24px;
+        width: 260px;
+        height: 100%;
+        min-height: 0;
+        flex-shrink: 0;
+        overflow-y: auto;
+    }
+    Panel.monitor  {
+        width: 100%;
+        min-width: 320px;
+        min-height: 240px;
+        padding: 0;
+    }
+    Splitter.content-stack {
+        width: 100%;
+        height: 100%;
+        min-width: 0;
+        min-height: 0;
+    }
+    Pane.content-pane {
+        min-width: 0;
+        min-height: 0;
+    }
     Label.heading  { font-weight: 700; font-size: 13px; }
     Button.danger  { border-color: danger; color: danger; }
 """)
 
 win = dg.Window("Thread Monitor Demo", width=1100, height=680)
 
-with dg.HLayout():
+with dg.HLayout(
+    style={
+        "width": "100%",
+        "height": "100%",
+        "min_width": 0,
+        "min_height": 0,
+        "gap": 12,
+    }
+):
 
     # ── Controls ────────────────────────────────────────────────────────────
     with dg.Panel("Controls", class_="controls"):
@@ -116,25 +153,34 @@ with dg.HLayout():
         status_label = dg.Label("Idle", style={"color": "muted_text", "font_size": 12})
 
     # ── Scatter + monitor ────────────────────────────────────────────────────
-    with dg.VLayout(style={"flex_grow": 1, "gap": 8}):
+    with dg.Splitter(
+        orientation="vertical",
+        sizes=("1fr", 268),
+        min_sizes=(300, 240),
+        class_="content-stack",
+        gutter_size=8,
+        style={"flex_grow": 1, "flex_shrink": 1},
+    ):
+        with dg.Pane(class_="content-pane"):
+            scatter = dg.Scatter3D(
+                _make_scatter_data(),
+                x="x", y="y", z="z",
+                scalars="v",
+                colormap="viridis",
+                style={"width": "100%", "height": "100%", "min_width": 0, "min_height": 0},
+            )
 
-        scatter = dg.Scatter3D(
-            _make_scatter_data(),
-            x="x", y="y", z="z",
-            scalars="v",
-            colormap="viridis",
-            style={"flex_grow": 1, "min_height": 300},
-        )
+        with dg.Pane(class_="content-pane"):
+            dg.ThreadMonitor(
+                key="monitor",
+                show_threads=True,
+                show_queue=True,
+                show_failures=True,
+                refresh_hz=4,
+                history_seconds=30,
+                class_="monitor",
+                style={"width": "100%", "height": "100%"},
+            )
 
-        dg.ThreadMonitor(
-            key="monitor",
-            show_threads=True,
-            show_queue=True,
-            show_failures=True,
-            refresh_hz=4,
-            history_seconds=30,
-            class_="monitor",
-            style={"height": 260, "flex_shrink": 0},
-        )
-
-app.run(win)
+if __name__ == "__main__":
+    print(app.run(win))

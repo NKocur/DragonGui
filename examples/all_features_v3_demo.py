@@ -161,10 +161,18 @@ HISTOGRAM_SCROLL_STYLE = {
 }
 DEBUG_MONITOR_STYLE = {
     "height": 540,
-    "min_height": 0,
+    "min_height": 360,
+    "min_width": 0,
+    "width": "100%",
     "flex_grow": 1,
     "flex_shrink": 1,
     "align_self": "stretch",
+}
+DEBUG_GRID_STYLE = {
+    **GRID_STYLE,
+    "align_items": "stretch",
+    "min_width": 0,
+    "min_height": 0,
 }
 V4_SCROLL_STYLE = {
     "width": "100%",
@@ -1307,7 +1315,8 @@ LoadingSpinner::arc {
 }
 
 BarChart,
-Heatmap {
+Heatmap,
+PieChart {
     width: 100%;
     min-height: 180px;
     background: var(--v4-plot-bg);
@@ -1318,8 +1327,19 @@ Heatmap {
 
 BarChart::label,
 BarChart::value-label,
-Heatmap::label {
+Heatmap::label,
+PieChart::label {
     color: var(--v4-text);
+    font-size: 13px;
+    font-weight: 650;
+}
+
+PieChart.dashboard {
+    min-height: 300px;
+    background:
+        linear-gradient(145deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.018)),
+        var(--v4-plot-bg);
+    border-color: var(--v4-border-strong);
 }
 
 DataFrameTable {
@@ -2308,6 +2328,7 @@ pie_segment_frame = type(
         "__getitem__": lambda self, column: getattr(self, column),
     },
 )()
+PIE_DASHBOARD_COLORS = ["#2f6fb3", "#247a59", "#a97413", "#ad4058", "#6d4fb0"]
 v4_scatter_frame = DemoFrame(mode="cloud", rows=12_000)
 v4_table_frame = DemoFrame(mode="wave", rows=420)
 v4_heatmap_matrix = (
@@ -3750,50 +3771,73 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                                 )
 
             with dg.Page("piecharts", title="Pie charts"):
-                with dg.GridLayout(columns=2, min_column_width=380, gap=GRID_GAP, style=GRID_STYLE):
-                    with dg.Panel("Direct pie values", style=CARD_STYLE):
-                        dg.Label("Static share-of-total data with custom slice colors and labels.", class_="subtle")
+                with dg.GridLayout(columns=2, min_column_width=520, gap=GRID_GAP, style=GRID_STYLE):
+                    with dg.Panel("Cloud spend by category", style=CARD_STYLE):
+                        dg.Label("Share of total cloud expenditure by category.", class_="subtle")
                         dg.PieChart(
                             labels=["Compute", "Storage", "Network", "Support"],
                             values=[42, 27, 18, 13],
-                            title="Cloud Spend",
-                            colors=["#69b7ff", "#76e0b1", "#ffd36a", "#f36b7f"],
-                            show_labels=True,
-                            key="v3-pie-spend",
-                        )
-                    with dg.Panel("Donut summary", style=CARD_STYLE):
-                        dg.Label("Donut mode uses the same native wedge renderer with a center hole.", class_="subtle")
-                        dg.PieChart(
-                            labels=["North", "South", "East", "West"],
-                            values=[31, 26, 22, 21],
-                            title="Regional Mix",
+                            colors=PIE_DASHBOARD_COLORS,
                             donut=True,
                             inner_radius=0.58,
+                            label_mode="legend",
+                            center_value="$58.4k",
+                            center_label="Total spend",
+                            show_toolbar=True,
+                            class_="dashboard",
+                            key="v3-pie-spend",
+                        )
+                    with dg.Panel("Regional mix", style=CARD_STYLE):
+                        dg.Label("Distribution of accounts by region.", class_="subtle")
+                        dg.PieChart(
+                            labels=["Americas", "EMEA", "APAC", "Other"],
+                            values=[38, 29, 21, 12],
+                            colors=PIE_DASHBOARD_COLORS,
+                            donut=True,
+                            inner_radius=0.58,
+                            label_mode="legend",
+                            center_value="1,842",
+                            center_label="Total accounts",
+                            show_toolbar=True,
+                            class_="dashboard",
                             key="v3-pie-regions",
                         )
-                    with dg.Panel("Frame count aggregation", style=CARD_STYLE):
-                        dg.Label("Counts category rows and groups the long tail into Other.", class_="subtle")
+                    with dg.Panel("Accounts by segment", style=CARD_STYLE):
+                        dg.Label("Frame-backed account totals grouped by segment.", class_="subtle")
                         dg.PieChart(
                             pie_segment_frame,
                             category="segment",
-                            aggregate="count",
-                            title="Accounts By Segment",
+                            value="accounts",
+                            aggregate="sum",
                             top_n=4,
-                            other_label="Other",
+                            other_label="Long tail",
+                            colors=PIE_DASHBOARD_COLORS,
+                            donut=True,
+                            inner_radius=0.58,
+                            label_mode="legend",
+                            center_value="92",
+                            center_label="Total accounts",
+                            show_toolbar=True,
+                            class_="dashboard",
                             key="v3-pie-accounts",
                         )
-                    with dg.Panel("Frame sum aggregation", style=CARD_STYLE):
-                        dg.Label("Sums a numeric value column by category.", class_="subtle")
+                    with dg.Panel("Revenue by segment", style=CARD_STYLE):
+                        dg.Label("Frame-backed revenue totals with top-N grouping.", class_="subtle")
                         dg.PieChart(
                             pie_segment_frame,
                             category="segment",
                             value="revenue",
                             aggregate="sum",
-                            title="Revenue By Segment",
                             top_n=3,
+                            other_label="Other",
+                            colors=PIE_DASHBOARD_COLORS,
                             donut=True,
-                            show_labels=True,
-                            colors=["#7ab8ff", "#8be7bd", "#ffe083", "#ff8aa1"],
+                            inner_radius=0.58,
+                            label_mode="legend",
+                            center_value="$178k",
+                            center_label="Total revenue",
+                            show_toolbar=True,
+                            class_="dashboard",
                             key="v3-pie-revenue",
                         )
 
@@ -4164,7 +4208,13 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                                 dynamic_panel.add(child)
 
             with dg.Page("debug", title="Debug"):
-                with dg.GridLayout(columns=2, min_column_width=420, gap=GRID_GAP, style=GRID_STYLE):
+                with dg.GridLayout(
+                    columns=2,
+                    min_column_width=420,
+                    masonry=True,
+                    gap=GRID_GAP,
+                    style=DEBUG_GRID_STYLE,
+                ):
                     dg.ThreadMonitor(
                         key="debug-thread-monitor",
                         show_threads=True,

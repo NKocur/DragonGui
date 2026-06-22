@@ -318,8 +318,11 @@ pub struct PieChartProp {
     pub show_legend: bool,
     pub legend_position: String,
     pub show_labels: bool,
+    pub show_toolbar: bool,
     pub selected: Option<String>,
     pub title: Option<String>,
+    pub center_value: Option<String>,
+    pub center_label: Option<String>,
 }
 
 impl Default for PieChartProp {
@@ -336,8 +339,11 @@ impl Default for PieChartProp {
             show_legend: true,
             legend_position: "right".to_string(),
             show_labels: false,
+            show_toolbar: false,
             selected: None,
             title: None,
+            center_value: None,
+            center_label: None,
         }
     }
 }
@@ -1045,9 +1051,23 @@ fn parse_pie_chart_props(props: &serde_json::Value) -> PieChartProp {
             .get("show_labels")
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        show_toolbar: props
+            .get("show_toolbar")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         selected,
         title: props
             .get("title")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        center_value: props
+            .get("center_value")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        center_label: props
+            .get("center_label")
             .and_then(Value::as_str)
             .filter(|s| !s.is_empty())
             .map(str::to_string),
@@ -2728,7 +2748,10 @@ mod tests {
                 "donut": true,
                 "inner_radius": 0.6,
                 "title": "Mix",
+                "center_value": "5",
+                "center_label": "total",
                 "show_legend": true,
+                "show_toolbar": true,
                 "legend_position": "bottom"
             }
         });
@@ -2741,6 +2764,9 @@ mod tests {
         assert!(node.props.pie_chart.donut);
         assert_eq!(node.props.pie_chart.inner_radius, 0.6);
         assert_eq!(node.props.pie_chart.title.as_deref(), Some("Mix"));
+        assert_eq!(node.props.pie_chart.center_value.as_deref(), Some("5"));
+        assert_eq!(node.props.pie_chart.center_label.as_deref(), Some("total"));
+        assert!(node.props.pie_chart.show_toolbar);
         assert_eq!(node.props.pie_chart.legend_position, "bottom");
     }
 

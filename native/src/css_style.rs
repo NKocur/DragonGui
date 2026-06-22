@@ -4434,6 +4434,7 @@ fn widget_kind_supports_part(kind: WidgetKind, part: &str) -> bool {
         }
         WidgetKind::ProgressBar => matches!(part, "track" | "fill" | "label"),
         WidgetKind::LoadingSpinner => matches!(part, "track" | "arc" | "label"),
+        WidgetKind::PieChart => matches!(part, "label"),
         WidgetKind::Heatmap => matches!(part, "cell" | "grid" | "hover" | "scalar-bar" | "label"),
         WidgetKind::BarChart => matches!(part, "label" | "value-label"),
         WidgetKind::Extension => false,
@@ -18670,6 +18671,42 @@ mod tests {
             Some(ColorRef::Token("warning".to_string()))
         );
         assert_eq!(value_label_style.text.font_size, Some(11.0));
+        assert!(store.warnings().is_empty());
+    }
+
+    #[test]
+    fn stylesheet_cascade_applies_pie_chart_label_part_styles() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "pie",
+                "type": "pie_chart"
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                r#"
+                PieChart::label {
+                    color: accent;
+                    font-size: 12px;
+                }
+                "#,
+            )
+            .unwrap();
+
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+        let chart = &tree.children[0];
+        let label_style = chart.style.parts.parts.get("label").unwrap();
+
+        assert_eq!(
+            label_style.text.color,
+            Some(ColorRef::Token("accent".to_string()))
+        );
+        assert_eq!(label_style.text.font_size, Some(12.0));
         assert!(store.warnings().is_empty());
     }
 

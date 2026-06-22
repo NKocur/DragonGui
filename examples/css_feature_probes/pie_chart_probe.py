@@ -9,39 +9,13 @@ if __name__ == "__main__" and __package__ is None:
 
 import dragongui as dg
 
-from probe_helpers import probe_card, probe_grid, probe_header
+from probe_helpers import probe_card, probe_grid
 
-
-class SegmentFrame:
-    columns = ("segment", "revenue", "tickets")
-    dtypes = ("object", "float32", "int32")
-    shape = (10, 3)
-    segment = [
-        "Enterprise",
-        "Team",
-        "Enterprise",
-        "Free",
-        "Team",
-        "Trial",
-        "Enterprise",
-        "Free",
-        "Partner",
-        "Team",
-    ]
-    revenue = [42.0, 18.0, 35.0, 3.0, 22.0, 6.0, 48.0, 4.0, 14.0, 21.0]
-    tickets = [11, 7, 9, 24, 8, 3, 10, 18, 5, 6]
-
-    def __getitem__(self, column: str) -> object:
-        return getattr(self, column)
-
-
-frame = SegmentFrame()
-
-app = dg.App(theme=dg.Theme.dark(accent="#69b7ff", radius=8, focus="#ffd36a"))
+app = dg.App(theme=dg.Theme.dark(accent="#9dccff", radius=10, focus="#ffd36a"))
 app.stylesheet(
     """
     Window {
-        background: #0b1020;
+        background: #07111f;
         color: rgba(246, 249, 255, 0.94);
         padding: 18px;
         gap: 12px;
@@ -51,7 +25,7 @@ app.stylesheet(
     VLayout.root {
         width: 100%;
         height: 100%;
-        gap: 12px;
+        gap: 14px;
         overflow-y: auto;
         padding-right: 20px;
     }
@@ -76,9 +50,9 @@ app.stylesheet(
     }
 
     Label.caption {
-        color: rgba(214, 224, 242, 0.76);
+        color: rgba(218, 227, 244, 0.82);
+        font-size: 14px;
         line-height: 1.25;
-        text-wrap: wrap;
     }
 
     GridLayout.grid {
@@ -88,85 +62,95 @@ app.stylesheet(
     }
 
     Panel.case {
-        min-height: 305px;
-        padding: 12px;
-        gap: 10px;
-        background: linear-gradient(145deg, rgba(26, 37, 62, 0.96), rgba(13, 19, 34, 0.98));
-        border: 1px solid rgba(121, 155, 205, 0.28);
+        min-height: 448px;
+        padding: 20px;
+        gap: 14px;
+        background: linear-gradient(145deg, rgba(31, 48, 74, 0.98), rgba(12, 24, 40, 0.98));
+        border: 1px solid rgba(136, 171, 218, 0.38);
+        border-radius: 12px;
+        box-shadow: 0 18px 40px rgba(0, 0, 0, 0.30);
+    }
+
+    PieChart.dashboard {
+        min-height: 320px;
+        background: linear-gradient(145deg, rgba(8, 19, 33, 0.94), rgba(10, 24, 42, 0.88));
+        border: 1px solid rgba(132, 166, 211, 0.42);
         border-radius: 10px;
-        box-shadow: 0 14px 34px rgba(0, 0, 0, 0.26);
     }
 
-    PieChart {
-        min-height: 238px;
-        background: rgba(6, 10, 20, 0.58);
-        border: 1px solid rgba(130, 165, 215, 0.24);
-        border-radius: 8px;
-    }
-
-    PieChart.clean {
-        background: linear-gradient(145deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.025));
-        border-color: rgba(255, 255, 255, 0.16);
-    }
-
-    PieChart.donut {
-        background: radial-gradient(circle at 30% 20%, rgba(105, 183, 255, 0.12), transparent 42%),
-                    rgba(6, 10, 20, 0.58);
+    PieChart::label {
+        color: rgba(237, 243, 255, 0.92);
+        font-size: 13px;
+        font-weight: 650;
     }
     """
 )
 
-win = dg.Window("Pie Chart Probe", width=980, height=760)
+PALETTE = ["#2f6fb3", "#247a59", "#a97413", "#ad4058", "#6d4fb0"]
+
+win = dg.Window("Pie Chart Probe", width=1520, height=1000)
 
 with win:
     with dg.VLayout(class_="root"):
-        probe_header(
-            "Pie Chart Probe",
-            "Checks direct slices, frame aggregation, donut mode, top-N grouping, custom colors, legends, and optional slice labels.",
-        )
-
-        with probe_grid(columns=2, min_column_width=420, gap=12, row_gap=12):
-            with probe_card("Direct Slice Values"):
+        with probe_grid(columns=2, min_column_width=620, gap=14, row_gap=14):
+            with probe_card("Cloud spend by category"):
+                dg.Label("Share of total cloud expenditure by category.", class_="caption")
                 dg.PieChart(
                     labels=["Compute", "Storage", "Network", "Support"],
                     values=[42, 27, 18, 13],
-                    title="Cloud Spend",
-                    colors=["#69b7ff", "#76e0b1", "#ffd36a", "#f36b7f"],
-                    class_="clean",
-                    show_labels=True,
-                )
-
-            with probe_card("Donut With Legend"):
-                dg.PieChart(
-                    labels=["North", "South", "East", "West"],
-                    values=[31, 26, 22, 21],
-                    title="Regional Mix",
+                    colors=PALETTE,
                     donut=True,
                     inner_radius=0.58,
-                    class_="donut",
+                    label_mode="legend",
+                    center_value="$58.4k",
+                    center_label="Total spend",
+                    show_toolbar=True,
+                    class_="dashboard",
                 )
 
-            with probe_card("Frame Count Aggregation"):
+            with probe_card("Regional mix"):
+                dg.Label("Distribution of accounts by region.", class_="caption")
                 dg.PieChart(
-                    frame,
-                    category="segment",
-                    aggregate="count",
-                    title="Accounts By Segment",
-                    top_n=4,
-                    other_label="Long tail",
-                )
-
-            with probe_card("Frame Sum Aggregation"):
-                dg.PieChart(
-                    frame,
-                    category="segment",
-                    value="revenue",
-                    aggregate="sum",
-                    title="Revenue By Segment",
-                    top_n=3,
+                    labels=["Americas", "EMEA", "APAC", "Other"],
+                    values=[38, 29, 21, 12],
+                    colors=PALETTE,
                     donut=True,
-                    show_labels=True,
-                    colors=["#7ab8ff", "#8be7bd", "#ffe083", "#ff8aa1"],
+                    inner_radius=0.58,
+                    label_mode="legend",
+                    center_value="1,842",
+                    center_label="Total accounts",
+                    show_toolbar=True,
+                    class_="dashboard",
+                )
+
+            with probe_card("Accounts by segment"):
+                dg.Label("Share of customer accounts by segment.", class_="caption")
+                dg.PieChart(
+                    labels=["Enterprise", "Team", "Free", "Trial", "Long tail"],
+                    values=[30, 30, 20, 10, 10],
+                    colors=PALETTE,
+                    donut=True,
+                    inner_radius=0.58,
+                    label_mode="legend",
+                    center_value="100%",
+                    center_label="of accounts",
+                    show_toolbar=True,
+                    class_="dashboard",
+                )
+
+            with probe_card("Revenue by segment"):
+                dg.Label("Share of total revenue by customer segment.", class_="caption")
+                dg.PieChart(
+                    labels=["Enterprise", "Team", "Partner", "Other"],
+                    values=[59, 29, 7, 5.8],
+                    colors=PALETTE,
+                    donut=True,
+                    inner_radius=0.58,
+                    label_mode="legend",
+                    center_value="$212k",
+                    center_label="Total revenue",
+                    show_toolbar=True,
+                    class_="dashboard",
                 )
 
 

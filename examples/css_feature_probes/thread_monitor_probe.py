@@ -216,4 +216,4 @@ def ThreadMonitorProbe(_ctx: dg.ComponentCtx) -> dg.Window:
 
 
 if __name__ == "__main__":
-    app.run(ThreadMonitorProbe())
+    print(app.run(ThreadMonitorProbe()))

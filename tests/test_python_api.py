@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import inspect
 import json
 import struct
 import threading
@@ -44,6 +45,41 @@ def _flatten_help_text(node: dict[str, object]) -> str:
         assert isinstance(child, dict)
         chunks.append(_flatten_help_text(child))
     return "\n".join(chunks)
+
+
+def _help_symbol_paths(node: dict[str, object]) -> dict[str, str]:
+    paths: dict[str, str] = {}
+    for symbol, symbol_node in _help_symbol_nodes(node).items():
+        paths[symbol] = str(symbol_node.get("path", ""))
+    return paths
+
+
+def _help_symbol_nodes(node: dict[str, object]) -> dict[str, dict[str, object]]:
+    nodes: dict[str, dict[str, object]] = {}
+    metadata = node.get("metadata", {})
+    if isinstance(metadata, dict) and "symbol" in metadata:
+        nodes[str(metadata["symbol"])] = node
+    children = node.get("children", {})
+    assert isinstance(children, dict)
+    for child in children.values():
+        assert isinstance(child, dict)
+        nodes.update(_help_symbol_nodes(child))
+    return nodes
+
+
+def _public_class_members(obj: object) -> tuple[list[str], list[str]]:
+    if not inspect.isclass(obj):
+        return [], []
+    methods: list[str] = []
+    properties: list[str] = []
+    for name, value in obj.__dict__.items():
+        if name.startswith("_"):
+            continue
+        if isinstance(value, property):
+            properties.append(name)
+        elif isinstance(value, (staticmethod, classmethod)) or inspect.isfunction(value):
+            methods.append(name)
+    return sorted(methods), sorted(properties)
 
 
 def test_declarative_tree_serializes() -> None:
@@ -136,9 +172,37 @@ def test_builtin_help_manual_exposes_nested_sections() -> None:
 
 
 def test_builtin_help_manual_reference_covers_public_exports() -> None:
-    text = _flatten_help_text(dg.help.to_dict()).lower()
-    missing = [name for name in dg.__all__ if name.lower() not in text]
+    symbol_paths = _help_symbol_paths(dg.help.to_dict())
+    missing = [name for name in dg.__all__ if name not in symbol_paths]
     assert missing == []
+
+
+def test_builtin_help_manual_reference_covers_exported_class_members() -> None:
+    symbol_nodes = _help_symbol_nodes(dg.help.to_dict())
+    missing: dict[str, dict[str, list[str]]] = {}
+    for name in dg.__all__:
+        obj = getattr(dg, name)
+        methods, properties = _public_class_members(obj)
+        if not methods and not properties:
+            continue
+
+        node = symbol_nodes[name]
+        metadata = node.get("metadata", {})
+        assert isinstance(metadata, dict)
+        indexed_methods = set(metadata.get("methods", []))
+        indexed_properties = set(metadata.get("properties", []))
+
+        missing_methods = [method for method in methods if method not in indexed_methods]
+        missing_properties = [
+            property_name for property_name in properties if property_name not in indexed_properties
+        ]
+        if missing_methods or missing_properties:
+            missing[name] = {
+                "methods": missing_methods,
+                "properties": missing_properties,
+            }
+
+    assert missing == {}
 
 
 def test_builtin_help_manual_css_parts_match_widget_registry() -> None:
@@ -2528,6 +2592,9 @@ def test_pie_chart_serializes_direct_and_frame_data() -> None:
         colors=["#111111", "#222222", "#333333"],
         donut=True,
         title="Mix",
+        center_value="6",
+        center_label="total",
+        show_toolbar=True,
         parent=None,
     )
     data = chart.to_dict()
@@ -2540,6 +2607,9 @@ def test_pie_chart_serializes_direct_and_frame_data() -> None:
     assert props["total"] == 6.0
     assert props["donut"] is True
     assert props["title"] == "Mix"
+    assert props["center_value"] == "6"
+    assert props["center_label"] == "total"
+    assert props["show_toolbar"] is True
 
     class SegmentFrame:
         segment = ["Team", "Free", "Team", "Enterprise"]
@@ -2561,6 +2631,86 @@ def test_pie_chart_serializes_direct_and_frame_data() -> None:
     assert frame_props["labels"] == ["Enterprise", "Team", "Other"]
     assert frame_props["values"] == [30.0, 22.0, 1.0]
     assert frame_props["total"] == 53.0
+
+
+def test_pie_chart_update_methods_serialize() -> None:
+    chart = dg.PieChart(
+        labels=["A", "B", "C"],
+        values=[1, 2, 3],
+        top_n=2,
+        parent=None,
+    )
+
+    chart.set_data(["North", "South", "East"], [4, 9, 2], top_n=2, other_label="Rest")
+    props = chart.to_dict()["props"]
+    assert props["labels"] == ["South", "North", "Rest"]
+    assert props["values"] == [9.0, 4.0, 2.0]
+    assert props["total"] == 15.0
+
+    chart.set_title("Regional Mix")
+    chart.set_center_text("15", "accounts")
+    chart.set_donut(True, inner_radius=0.9)
+    chart.set_labels_visible(True)
+    chart.set_toolbar_visible(True)
+    chart.set_legend_visible(False)
+    chart.set_legend_position("bottom")
+    chart.set_label_mode("inside")
+    chart.set_value_mode("both")
+    chart.set_start_angle(180)
+    chart.set_clockwise(False)
+    chart.set_selected(1)
+    props = chart.to_dict()["props"]
+
+    assert props["title"] == "Regional Mix"
+    assert props["center_value"] == "15"
+    assert props["center_label"] == "accounts"
+    assert props["donut"] is True
+    assert props["inner_radius"] == 0.82
+    assert props["show_labels"] is True
+    assert props["show_toolbar"] is True
+    assert props["show_legend"] is False
+    assert props["legend_position"] == "bottom"
+    assert props["label_mode"] == "inside"
+    assert props["value_mode"] == "both"
+    assert props["start_angle"] == 180.0
+    assert props["clockwise"] is False
+    assert props["selected"] == 1
+
+    chart.clear_selection()
+    assert chart.to_dict()["props"]["selected"] is None
+
+
+def test_pie_chart_set_frame_data_serializes() -> None:
+    class SegmentFrame:
+        segment = ["Team", "Free", "Team", "Enterprise"]
+        revenue = [10.0, 1.0, 12.0, 30.0]
+
+        def __getitem__(self, column: str) -> object:
+            return getattr(self, column)
+
+    chart = dg.PieChart(
+        labels=["placeholder"],
+        values=[1],
+        parent=None,
+    )
+    chart.set_frame_data(
+        SegmentFrame(),
+        category="segment",
+        value="revenue",
+        aggregate="mean",
+    )
+    props = chart.to_dict()["props"]
+
+    assert props["labels"] == ["Enterprise", "Team", "Free"]
+    assert props["values"] == [30.0, 11.0, 1.0]
+    assert props["total"] == 42.0
+
+    with pytest.raises(ValueError, match="legend_position"):
+        chart.set_legend_position("center")
+    with pytest.raises(ValueError, match="label_mode"):
+        chart.set_label_mode("callout")
+    with pytest.raises(ValueError, match="value_mode"):
+        chart.set_value_mode("ratio")
 
 
 def test_line_plot_y_only_uses_sample_index() -> None:

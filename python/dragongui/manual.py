@@ -224,6 +224,8 @@ _NAVIGATION_WIDGETS = (
     "SearchBox",
     "Command",
     "CommandPalette",
+    "TreeNode",
+    "TreeView",
 )
 
 _CONTROL_WIDGETS = (
@@ -439,7 +441,13 @@ _SYMBOL_NOTES = {
     "ScatterPlot2D": "2D point cloud widget for dense scalar/color plots.",
     "Heatmap": "Matrix visualization with scalar color and optional cell labels.",
     "BarChart": "Categorical bar chart with vertical and horizontal modes.",
+    "PieChart": (
+        "Categorical composition chart with direct slices, frame aggregation, "
+        "donut mode, legends, and labels."
+    ),
     "CommandPalette": "Searchable command overlay backed by `Command` entries.",
+    "TreeNode": "Hierarchical row used inside `TreeView`, with expansion and selection state.",
+    "TreeView": "Selectable hierarchical tree for project browsers, scene graphs, and nested navigation.",
     "ExtensionWidget": "Renderer extension leaf for third-party or custom native widget hooks.",
     "PaintWidget": "Pure-Python custom widget base that records a native display list through `PaintContext`.",
     "PaintContext": "Records display-list commands such as rects, lines, polylines, circles, text, and images for a `PaintWidget`.",
@@ -674,10 +682,27 @@ _PARAMETER_NOTES = {
         "`orientation='horizontal'` needs enough left label margin.",
         "`on_hover(BarChartBar | None)` receives bar hover updates.",
     ),
+    "PieChart": (
+        "Use `labels`/`values` for direct slices or `data` plus `category` for frame aggregation.",
+        "`aggregate` supports `count`, `sum`, `mean`, `min`, and `max`.",
+        "`top_n`, `donut`, `legend_position`, `label_mode`, and `value_mode` "
+        "control summarization and presentation.",
+        "`center_value`, `center_label`, and `show_toolbar=True` support dashboard-style donuts.",
+    ),
     "CommandPalette": (
         "`commands` is a list of `Command` entries.",
         "`open` controls overlay visibility.",
         "`on_run(command)` can centralize command execution.",
+    ),
+    "TreeNode": (
+        "`label` and `node_id` must be non-empty.",
+        "`expanded`, `selected`, and `leaf` describe the row state.",
+        "`on_select(selected)` and `on_expand(expanded)` receive boolean row changes.",
+    ),
+    "TreeView": (
+        "`items` accepts mappings, `(label, id)` tuples, or strings.",
+        "`selected` must match an existing node id when provided.",
+        "`on_select(node_id)` receives the selected node id.",
     ),
     "ExtensionWidget": (
         "`extension_type` is required and should be stable.",
@@ -733,6 +758,18 @@ _EXAMPLE_METADATA: dict[str, dict[str, tuple[str, ...]]] = {
     "CommandPalette": {
         "probes": ("examples/css_feature_probes/command_palette_probe.py",)
     },
+    "TreeNode": {
+        "probes": (
+            "examples/css_feature_probes/tree_view_probe.py",
+            "examples/css_feature_probes/layout_scrollable_composites_probe.py",
+        )
+    },
+    "TreeView": {
+        "probes": (
+            "examples/css_feature_probes/tree_view_probe.py",
+            "examples/css_feature_probes/layout_scrollable_composites_probe.py",
+        )
+    },
     "PropertyGrid": {"probes": ("examples/css_feature_probes/property_grid_probe.py",)},
     "CodeEditor": {
         "probes": (
@@ -769,6 +806,7 @@ _EXAMPLE_METADATA: dict[str, dict[str, tuple[str, ...]]] = {
         )
     },
     "BarChart": {"probes": ("examples/css_feature_probes/bar_chart_probe.py",)},
+    "PieChart": {"probes": ("examples/css_feature_probes/pie_chart_probe.py",)},
     "DragSource": {"probes": ("examples/css_feature_probes/drag_drop_probe.py",)},
     "DropTarget": {"probes": ("examples/css_feature_probes/drag_drop_probe.py",)},
     "DropZone": {"probes": ("examples/css_feature_probes/drag_drop_probe.py",)},
@@ -851,8 +889,8 @@ def _annotation_text(annotation: object) -> str:
 def _default_text(name: str, default: object) -> str | None:
     if default is inspect.Signature.empty:
         return None
-    if name == "parent" and type(default) is object:
-        return "_AUTO_PARENT"
+    if type(default) is object:
+        return "_AUTO_PARENT" if name == "parent" else "_UNSET"
     if default is None or isinstance(default, (bool, int, float, str)):
         return repr(default)
     if default is Ellipsis:
@@ -921,6 +959,46 @@ def _signature_for_symbol(name: str) -> str:
         return name
 
 
+def _public_members_for_symbol(name: str) -> tuple[list[tuple[str, str]], list[str]]:
+    obj = _object_for_symbol(name)
+    if obj is None or not inspect.isclass(obj):
+        return [], []
+
+    methods: list[tuple[str, str]] = []
+    properties: list[str] = []
+    for member_name, raw_member in obj.__dict__.items():
+        if member_name.startswith("_"):
+            continue
+        if isinstance(raw_member, property):
+            properties.append(member_name)
+            continue
+
+        target: object | None = None
+        drop_first_parameter = True
+        if isinstance(raw_member, staticmethod):
+            target = raw_member.__func__
+            drop_first_parameter = False
+        elif isinstance(raw_member, classmethod):
+            target = raw_member.__func__
+        elif inspect.isfunction(raw_member):
+            target = raw_member
+
+        if target is None:
+            continue
+        try:
+            signature = inspect.signature(target)
+        except (TypeError, ValueError):
+            methods.append((member_name, member_name))
+            continue
+        if drop_first_parameter:
+            parameters = list(signature.parameters.values())
+            if parameters and parameters[0].name in {"self", "cls"}:
+                signature = signature.replace(parameters=parameters[1:])
+        methods.append((member_name, _format_signature(member_name, signature)))
+
+    return sorted(methods), sorted(properties)
+
+
 def _css_parts_for_symbol(name: str) -> tuple[str, tuple[str, ...]]:
     from .widgets import _SUPPORTED_PARTS_BY_KIND
 
@@ -949,6 +1027,7 @@ def _reference_leaf(
     related: tuple[str, ...] = (),
 ) -> HelpSection:
     signature = _signature_for_symbol(symbol)
+    public_methods, public_properties = _public_members_for_symbol(symbol)
     summary = _summary_for_symbol(symbol, category)
     css_kind = ""
     css_parts: tuple[str, ...] = ()
@@ -973,6 +1052,14 @@ def _reference_leaf(
                 *(f"- {note}" for note in parameter_notes),
             ]
         )
+    if public_methods or public_properties:
+        lines.extend(["", "Public members:"])
+        if public_methods:
+            lines.append("Methods:")
+            lines.extend(f"- `{method_signature}`" for _name, method_signature in public_methods)
+        if public_properties:
+            lines.append("Properties:")
+            lines.extend(f"- `{property_name}`" for property_name in public_properties)
     if category == "widget":
         lines.extend(
             [
@@ -1013,6 +1100,13 @@ def _reference_leaf(
         "category": category,
         "signature": signature,
     }
+    if public_methods:
+        metadata["methods"] = [name for name, _signature in public_methods]
+        metadata["method_signatures"] = {
+            name: method_signature for name, method_signature in public_methods
+        }
+    if public_properties:
+        metadata["properties"] = list(public_properties)
     if css_kind:
         metadata["css_type"] = css_kind
         metadata["css_parts"] = list(css_parts)
@@ -2089,6 +2183,7 @@ Common parts:
 - `LoadingSpinner::track`, `arc`, `label`
 - `Heatmap::cell`, `grid`, `hover`, `scalar-bar`, `label`
 - `BarChart::label`, `value-label`
+- `PieChart::label`
 - `Tab::tab`, `accent`, `badge`
 - `NavItem::item`, `accent`, `badge`
 - `DataFrameTable::header`, `row`, `row-selected`, `grid-line`,
@@ -2222,8 +2317,9 @@ Use:
 - `LinePlot.set_data(...)`, `LinePlot.append_points(...)`, `LinePlot.clear(...)`
 - `Scatter3D.set_points(...)`, `Scatter3D.set_prepared_points(...)`,
   `Scatter3D.enqueue_prepared_points(...)`, `Scatter3D.create_live_frame(...)`
-- Chart-specific setters such as `Heatmap.set_data(...)`, `BarChart.fit()`,
-  `Histogram.fit()`
+- Chart-specific setters such as `Heatmap.set_data(...)`,
+  `PieChart.set_data(...)`, `PieChart.set_frame_data(...)`,
+  `BarChart.fit()`, and `Histogram.fit()`
 
 Keep large data on the dedicated widget methods so the native backend can use
 packed resource paths and avoid full document rebuilds.
