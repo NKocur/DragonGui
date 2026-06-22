@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import inspect
 from importlib import metadata as importlib_metadata
@@ -268,6 +268,7 @@ _DATA_WIDGETS = (
     "Image",
     "HtmlReport",
     "Terminal",
+    "NodeGraph",
     "DataFrameTable",
     "Histogram",
     "BarChart",
@@ -298,6 +299,9 @@ _DATACLASS_SYMBOLS = (
     "HistogramBins",
     "LinePlotPayload",
     "MeasureConstraints",
+    "NodeGraphEdge",
+    "NodeGraphNode",
+    "NodeGraphPort",
     "PaintContext",
     "PaintKeyEvent",
     "PaintPointerEvent",
@@ -453,6 +457,10 @@ _SYMBOL_NOTES = {
     "PaintWidget": "Pure-Python custom widget base that records a native display list through `PaintContext`.",
     "PaintContext": "Records display-list commands such as rects, lines, polylines, circles, text, and images for a `PaintWidget`.",
     "MeasureConstraints": "Constraint object passed to `PaintWidget.measure(...)`.",
+    "NodeGraph": "Canvas-backed node editor for routing graphs, agent workflows, and visual pipelines.",
+    "NodeGraphNode": "Node model for `NodeGraph`, including position, ports, status, and color.",
+    "NodeGraphPort": "Input or output socket model used by `NodeGraphNode`.",
+    "NodeGraphEdge": "Directed connection between `NodeGraph` ports.",
     "Size": "Logical width/height object returned from `PaintWidget.measure(...)`.",
     "PaintKeyEvent": "Event object delivered to focused extension widget key callbacks.",
     "PaintPointerEvent": "Event object delivered to extension widget pointer and wheel callbacks.",
@@ -680,6 +688,11 @@ _PARAMETER_NOTES = {
         "`schema` describes labels/editors/sections.",
         "`on_change(PropertyChange)` receives edited keys and values.",
     ),
+    "NodeGraph": (
+        "`nodes` accepts `NodeGraphNode` instances or mappings. "
+        "Use `NodeGraphEdge` to connect output ports to input ports. "
+        "`on_node_select(node_id)` and `on_node_move(node_id, x, y)` receive canvas interactions."
+    ),
     "DataFrameTable": (
         "`frame` can be a pandas/polars-like object or DragonGUI table payload.",
         "`page_size` bounds visible row work.",
@@ -879,6 +892,7 @@ def _object_for_symbol(name: str) -> Any | None:
     from . import diagnostics as diagnostics_module
     from . import dialogs as dialogs_module
     from . import notifications as notifications_module
+    from . import node_graph as node_graph_module
     from . import runtime as runtime_module
     from . import theme as theme_module
     from . import terminal as terminal_module
@@ -893,6 +907,7 @@ def _object_for_symbol(name: str) -> Any | None:
         dialogs_module,
         diagnostics_module,
         notifications_module,
+        node_graph_module,
         runtime_module,
         theme_module,
         terminal_module,
@@ -3506,3 +3521,4 @@ help = _build_manual()
 
 
 __all__ = ["HelpSection", "help"]
+

@@ -1,4 +1,4 @@
-"""Python API for DragonGUI."""
+﻿"""Python API for DragonGUI."""
 
 from ._backend import BackendUnavailableError, backend_info, native_backend_available
 from .app import App, LoadingScreen, run_with_loading
@@ -13,6 +13,7 @@ from .dialogs import (
 from .diagnostics import register_thread_role, thread_role
 from .manual import HelpSection, help
 from .notifications import toast
+from .node_graph import NodeGraph, NodeGraphEdge, NodeGraphNode, NodeGraphPort
 from .runtime import ToastHandle
 from .thread_monitor import ThreadMonitor
 from .theme import Theme
@@ -201,6 +202,10 @@ __all__ = [
     "MenuItem",
     "Modal",
     "NavItem",
+    "NodeGraph",
+    "NodeGraphEdge",
+    "NodeGraphNode",
+    "NodeGraphPort",
     "NumberInput",
     "Page",
     "Pages",
