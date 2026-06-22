@@ -275,9 +275,18 @@ def _node_graph_html(
       return {{ sx, sy, x: (sx - state.viewX) / state.zoom, y: (sy - state.viewY) / state.zoom }};
     }}
 
+    const PORT_STEP = 22;
+    const PORT_TOP_PAD = 22;
+    const PORT_BOTTOM_PAD = 22;
+    const SUBTITLE_SPACE = 18;
+
+    function portTop(node) {{
+      return HEADER + PORT_TOP_PAD + (config.showSubtitles && node.subtitle ? SUBTITLE_SPACE : 0);
+    }}
+
     function nodeHeight(node) {{
       const ports = Math.max(node.inputs.length, node.outputs.length, 1);
-      return HEADER + 16 + (config.showSubtitles && node.subtitle ? 18 : 0) + ports * 22;
+      return portTop(node) + Math.max(0, ports - 1) * PORT_STEP + PORT_BOTTOM_PAD;
     }}
 
     function textWidth(text, size, minSize = 0) {{
@@ -333,7 +342,7 @@ def _node_graph_html(
       const ports = side === 'input' ? node.inputs : node.outputs;
       const index = ports.findIndex(p => p.id === portId);
       if (index < 0) return null;
-      return screen(side === 'input' ? node.x : node.x + nodeWidth(node), node.y + HEADER + 22 + index * 22);
+      return screen(side === 'input' ? node.x : node.x + nodeWidth(node), node.y + portTop(node) + index * PORT_STEP);
     }}
     function allPorts(node, side) {{ return side === 'input' ? node.inputs : node.outputs; }}
 
@@ -737,6 +746,7 @@ def _port_payload(port: NodeGraphPort) -> dict[str, object]:
 
 
 __all__ = ["NodeGraph", "NodeGraphEdge", "NodeGraphNode", "NodeGraphPort"]
+
 
 
 
