@@ -324,6 +324,8 @@
   "tests/test_python_api.py::test_splitter_and_pane_serialize_size_defaults",
   "tests/test_python_api.py::test_temporal_input_callbacks_commit_only_valid_values",
   "tests/test_python_api.py::test_temporal_inputs_serialize_normalize_and_validate",
+  "tests/test_python_api.py::test_terminal_widget_is_in_help_reference",
+  "tests/test_python_api.py::test_terminal_widget_serializes_as_html_report",
   "tests/test_python_api.py::test_toggle_switch_serializes_and_validates",
   "tests/test_python_api.py::test_tool_buttons_serialize_and_validate",
   "tests/test_python_api.py::test_toolbar_and_toolbar_separator_serialize",

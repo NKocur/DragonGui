@@ -17,8 +17,15 @@ Requires-Dist: polars>=1 ; extra == 'dataframe'
 Requires-Dist: maturin>=1.8,<2 ; extra == 'dev'
 Requires-Dist: pytest>=8 ; extra == 'dev'
 Requires-Dist: ruff>=0.8 ; extra == 'dev'
+Requires-Dist: furo>=2024.8 ; extra == 'docs'
+Requires-Dist: myst-parser>=4 ; extra == 'docs'
+Requires-Dist: sphinx>=8 ; extra == 'docs'
+Requires-Dist: sphinx-autodoc-typehints>=3 ; extra == 'docs'
+Requires-Dist: pywinpty>=2 ; platform_system == 'Windows' and extra == 'terminal'
 Provides-Extra: dataframe
 Provides-Extra: dev
+Provides-Extra: docs
+Provides-Extra: terminal
 License-File: LICENSE
 Summary: A Python application toolkit for GPU-native data tools.
 Keywords: gui,gpu,dataframe,wgpu,visualization,rust
@@ -26,8 +33,8 @@ Author: DragonFrame contributors
 Requires-Python: >=3.11
 Description-Content-Type: text/markdown; charset=UTF-8; variant=GFM
 Project-URL: Homepage, https://github.com/dragonframe/dragongui
-Project-URL: Source, https://github.com/dragonframe/dragongui
 Project-URL: Issues, https://github.com/dragonframe/dragongui/issues
+Project-URL: Source, https://github.com/dragonframe/dragongui
 
 # DragonGUI
 

@@ -3107,9 +3107,9 @@ def test_scatter_colormap_module_samples_correctly() -> None:
     rgb = sample_colormap_numpy("viridis", t)
     assert rgb.shape == (3, 3)
     assert rgb.dtype == np.float32
-    # t=0 → first control point [0.267, 0.005, 0.329]
+    # t=0 â†’ first control point [0.267, 0.005, 0.329]
     assert rgb[0, 0] == pytest.approx(0.267, abs=0.01)
-    # t=1 → last control point [0.993, 0.906, 0.144]
+    # t=1 â†’ last control point [0.993, 0.906, 0.144]
     assert rgb[2, 0] == pytest.approx(0.993, abs=0.01)
 
 
@@ -3273,7 +3273,7 @@ def test_scatter_scalars_nan_maps_to_zero_t() -> None:
     rgb = _scalars_to_rgb(scalars, "viridis", None, False)
     assert rgb.shape == (3, 3)
     # NaN maps to t=0.0, same color as the lo end of the colormap.
-    # Use a 2-element range so t=0.0 reliably maps to index 0 (collapsed range → t=0.5).
+    # Use a 2-element range so t=0.0 reliably maps to index 0 (collapsed range â†’ t=0.5).
     lo_color = _scalars_to_rgb(np.array([0.0, 1.0], dtype=np.float32), "viridis", None, False)
     np.testing.assert_allclose(rgb[1], lo_color[0], atol=1e-5)
 
@@ -3286,7 +3286,7 @@ def test_scatter_all_equal_scalars_uniform_color() -> None:
     scalars = np.full(5, 3.0, dtype=np.float32)
     rgb = _scalars_to_rgb(scalars, "viridis", None, False)
     assert rgb.shape == (5, 3)
-    # All rows should be identical (uniform t=0 color — DragonSci collapsed linear → lo end)
+    # All rows should be identical (uniform t=0 color â€” DragonSci collapsed linear â†’ lo end)
     assert np.all(rgb == rgb[0])
     # Must equal the lo-end colormap color (t=0)
     lo_color = _scalars_to_rgb(np.array([0.0, 1.0], dtype=np.float32), "viridis", None, False)
@@ -3473,7 +3473,7 @@ def test_scatter_size_range_normalizes_to_pixel_range() -> None:
     buf = _pack_point_instances(F(), "x", "y", "z", point_sizes="s", size_range=(2.0, 8.0))
     assert buf is not None
     pts = np.frombuffer(buf, dtype="<f4").reshape(-1, 8)
-    # s=10 → t=0 → 2px; s=30 → t=1 → 8px; s=20 → t=0.5 → 5px
+    # s=10 â†’ t=0 â†’ 2px; s=30 â†’ t=1 â†’ 8px; s=20 â†’ t=0.5 â†’ 5px
     assert abs(pts[0, 3] - 2.0) < 1e-4
     assert abs(pts[2, 3] - 8.0) < 1e-4
     assert abs(pts[1, 3] - 5.0) < 1e-4
@@ -5729,10 +5729,10 @@ def test_scatter_props_equal_detects_legend_title_change() -> None:
     }
     with_title = {**base, "legend_title": "Species"}
     without_title = {**base}
-    # Same token but different legend_title — must compare unequal.
+    # Same token but different legend_title â€” must compare unequal.
     assert not _scatter_props_equal(with_title, without_title)
     assert not _scatter_props_equal(without_title, with_title)
-    # Same on both sides — equal.
+    # Same on both sides â€” equal.
     assert _scatter_props_equal(with_title, {**with_title})
     assert _scatter_props_equal(without_title, {**without_title})
 
@@ -6109,7 +6109,7 @@ def test_scatter_actor_and_label_handles_use_separate_counters() -> None:
     assert h_stream == 2  # shares actor ID counter with add_points
 
 
-# ── Phase 5: LOD and Picking ──────────────────────────────────────────────────
+# â”€â”€ Phase 5: LOD and Picking â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_scatter_lod_defaults() -> None:
     s = dg.Scatter3D(DemoFrame(), x="x", y="y", z="z", parent=None)
@@ -6222,7 +6222,7 @@ def test_scatter_enable_rectangle_picking_stores_callback() -> None:
     assert s._on_select is cb
 
 
-# ── Phase 6: Mesh and Statistical Overlays ────────────────────────────────────
+# â”€â”€ Phase 6: Mesh and Statistical Overlays â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_scatter_pack_mesh_payload_roundtrip() -> None:
     import struct, base64
@@ -6230,12 +6230,12 @@ def test_scatter_pack_mesh_payload_roundtrip() -> None:
     tris = [[0, 1, 0]]
     pos_b64, idx_b64 = dg.Scatter3D._pack_mesh_payload(positions, tris)
     pos_bytes = base64.b64decode(pos_b64)
-    assert len(pos_bytes) == 2 * 3 * 4  # 2 verts × 3 floats × 4 bytes
+    assert len(pos_bytes) == 2 * 3 * 4  # 2 verts Ã— 3 floats Ã— 4 bytes
     x0, y0, z0, x1, y1, z1 = struct.unpack("<6f", pos_bytes)
     assert abs(x0 - 1.0) < 1e-5
     assert abs(y1 - 5.0) < 1e-5
     idx_bytes = base64.b64decode(idx_b64)
-    assert len(idx_bytes) == 3 * 4  # 1 triangle × 3 uint32
+    assert len(idx_bytes) == 3 * 4  # 1 triangle Ã— 3 uint32
     a, b, c = struct.unpack("<3I", idx_bytes)
     assert (a, b, c) == (0, 1, 0)
 
@@ -6648,7 +6648,7 @@ def test_scatter_save_png_raises_when_screenshot_is_none(tmp_path) -> None:
         s.save_png(str(tmp_path / "out.png"))
 
 
-# ── hover_tooltip tests ───────────────────────────────────────────────────────
+# â”€â”€ hover_tooltip tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_scatter_hover_tooltip_default_is_true() -> None:
     s = dg.Scatter3D(DemoFrame(), x="x", y="y", z="z", parent=None)
@@ -6956,7 +6956,7 @@ def test_scatter_extract_hover_meta_raises_on_missing_column() -> None:
         dg.Scatter3D._extract_hover_meta(SmallFrame(), "nonexistent")
 
 
-# ── clear() lifecycle tests ───────────────────────────────────────────────────
+# â”€â”€ clear() lifecycle tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_scatter_clear_resets_hover_and_selection_state() -> None:
     """clear() must reset hover, selection, and actor label metadata on the Python side."""
@@ -6993,7 +6993,7 @@ def test_scatter_clear_drops_pending_scene_ops() -> None:
     assert s._pending_scene_ops == []
 
 
-# ── selection parity tests ────────────────────────────────────────────────────
+# â”€â”€ selection parity tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_scatter_selection_flat_indices_no_labels() -> None:
     """selected_indices is flat across all actors; selected_index_values is None when no labels."""
@@ -7044,7 +7044,7 @@ def test_scatter_selection_primary_only_actor_zero() -> None:
     assert scatter.selected_index_values is None
 
 
-# ── actor metadata lifecycle tests ───────────────────────────────────────────
+# â”€â”€ actor metadata lifecycle tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_scatter_update_actor_updates_row_labels() -> None:
     """update_actor() must refresh _actor_row_labels for the handle."""
@@ -7157,7 +7157,7 @@ def test_scatter_prelive_set_visibility_replayed_on_startup() -> None:
     assert ("sv", h, False) in sender.visibility_calls
 
 
-# ── startup replay tests ──────────────────────────────────────────────────────
+# â”€â”€ startup replay tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _make_full_startup_sender():
     """Return a Sender stub that silently accepts all startup-related calls."""
@@ -7219,7 +7219,7 @@ def test_scatter_startup_replays_picking_mode() -> None:
     assert ("pm1", "rectangle") in sender.picking_calls
 
 
-# ── on_hover clear crash fix ──────────────────────────────────────────────────
+# â”€â”€ on_hover clear crash fix â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_scatter_on_hover_clear_fourarg_callback_gets_nones() -> None:
     """A 4-arg on_hover callback must receive (None, None, None, None) on hover clear."""
@@ -7253,17 +7253,17 @@ def test_scatter_on_hover_clear_fourarg_callback_gets_nones() -> None:
     assert received[1] == (None, None, None, None)
 
 
-# ── actor ID reservation / collision regression ───────────────────────────────
+# â”€â”€ actor ID reservation / collision regression â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_scatter_first_add_points_id_is_not_zero() -> None:
-    """add_points() must never return 0 — that ID is reserved for the primary actor."""
+    """add_points() must never return 0 â€” that ID is reserved for the primary actor."""
     s = dg.Scatter3D(DemoFrame(), x="x", y="y", z="z", parent=None)
     h = s.add_points(DemoFrame(), x="x", y="y", z="z")
     assert h != 0, "actor ID 0 is reserved for the primary scatter buffer"
 
 
 def test_scatter_first_add_stream_id_is_not_zero() -> None:
-    """add_stream() must never return 0 — that ID is reserved for the primary actor."""
+    """add_stream() must never return 0 â€” that ID is reserved for the primary actor."""
     s = dg.Scatter3D(DemoFrame(), x="x", y="y", z="z", parent=None)
     h = s.add_stream(max_points=100)
     assert h != 0, "stream ID 0 is reserved for the primary scatter buffer"
@@ -7277,7 +7277,7 @@ def test_scatter_clear_resets_actor_id_to_one() -> None:
     assert s._next_actor_id == 1
 
 
-# ── add_stream mode validation ────────────────────────────────────────────────
+# â”€â”€ add_stream mode validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_scatter_add_stream_invalid_mode_raises() -> None:
     """add_stream() must raise ValueError for an unrecognised mode string."""
@@ -7286,7 +7286,7 @@ def test_scatter_add_stream_invalid_mode_raises() -> None:
         s.add_stream(max_points=100, mode="sliding")
 
 
-# ── scene clear — ClearScatterScene command ───────────────────────────────────
+# â”€â”€ scene clear â€” ClearScatterScene command â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_scatter_clear_sends_clear_scatter_scene() -> None:
     """clear() must enqueue ClearScatterScene, not the individual clear commands."""
@@ -7326,7 +7326,7 @@ def test_scatter_clear_sends_clear_scatter_scene() -> None:
     assert sender.individual_clears == []
 
 
-# ── mixed labeled/unlabeled selection parity ─────────────────────────────────
+# â”€â”€ mixed labeled/unlabeled selection parity â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_scatter_selection_mixed_unlabeled_actor_contributes_none() -> None:
     """When actor 0 has labels but actor 1 doesn't, actor 1 hits must be None in index_values."""
@@ -7353,7 +7353,7 @@ def test_scatter_selection_mixed_unlabeled_actor_contributes_none() -> None:
     assert scatter.selected_index_values == ["row_a", None]
 
 
-# ── set_points() clears point-layer state ─────────────────────────────────────
+# â”€â”€ set_points() clears point-layer state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_scatter_set_points_clears_prelive_actor_ops(monkeypatch) -> None:
     """set_points() pre-live must discard pending add_points/add_stream ops."""
@@ -7393,7 +7393,7 @@ def test_scatter_set_points_resets_next_actor_id(monkeypatch) -> None:
     assert s._next_actor_id == 1
 
 
-# ── update_actor() pre-live clears stale hover metadata ──────────────────────
+# â”€â”€ update_actor() pre-live clears stale hover metadata â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_scatter_prelive_update_actor_clears_hover_meta(monkeypatch) -> None:
     """Pre-live update_actor() must discard old hover_meta from the pending add_points op."""
@@ -7423,7 +7423,7 @@ def test_scatter_prelive_update_actor_clears_hover_meta(monkeypatch) -> None:
     assert updated and updated[0][1][4] is None
 
 
-# ── add_stream() with initial data ────────────────────────────────────────────
+# â”€â”€ add_stream() with initial data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_scatter_add_stream_with_initial_data_enqueues_stream_live(monkeypatch) -> None:
     """add_stream(frame, x, y, z) while live must enqueue AddScatterStream + StreamScatterActor."""
@@ -7513,7 +7513,7 @@ def test_scatter_add_stream_with_initial_data_pending_replayed(monkeypatch) -> N
     assert ("stq", h) in sender.stream_data
 
 
-# ── set_colormap() re-sends hover metadata ───────────────────────────────────
+# â”€â”€ set_colormap() re-sends hover metadata â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_scatter_set_colormap_resends_hover_meta(monkeypatch) -> None:
     """set_colormap() must re-send primary hover meta after enqueuing the new packed points."""
@@ -7650,7 +7650,7 @@ def test_scatter_set_colormap_preserves_different_explicit_scalar_bar(monkeypatc
     assert scatter.props()["scalar_bar_colormap"] == "viridis"
 
 
-# ── add_stream() new positional API ──────────────────────────────────────────
+# â”€â”€ add_stream() new positional API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_scatter_add_stream_legacy_int_first_arg() -> None:
     """add_stream(500) and add_stream(max_points=500) must both produce the same result."""
@@ -7736,7 +7736,7 @@ def test_scatter_add_stream_numpy_array_packs_xyz(monkeypatch) -> None:
     h = s.add_stream(pts, max_points=100)
 
     assert ("sn", h) in sender.creates
-    # Payload should be non-empty (2 points × 3 floats × 4 bytes = 24 bytes, b64-encoded).
+    # Payload should be non-empty (2 points Ã— 3 floats Ã— 4 bytes = 24 bytes, b64-encoded).
     data_entries = [d for d in sender.data_calls if d[1] == h]
     assert data_entries, "initial stream data must be enqueued for numpy array input"
     import base64 as _b64
@@ -7786,7 +7786,7 @@ def test_scatter_add_stream_numpy_array_2d_packs_zeros_for_z(monkeypatch) -> Non
     assert z0 == 0.0 and z1 == 0.0
 
 
-# ── stream() DragonSci compatibility ─────────────────────────────────────────
+# â”€â”€ stream() DragonSci compatibility â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_scatter_stream_numpy_3d_array(monkeypatch) -> None:
     """stream(handle, (N,3) array) must push data without x/y/z kwargs."""
@@ -7911,7 +7911,7 @@ def test_scatter_stream_invalid_shape_raises() -> None:
         s.stream(sh, pts)
 
 
-# ── set_colormap() refreshes _cached_payload_b64 ─────────────────────────────
+# â”€â”€ set_colormap() refreshes _cached_payload_b64 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_scatter_set_colormap_refreshes_cached_b64(monkeypatch) -> None:
     """props()['data_b64'] must change after set_colormap() for a scalar-colored widget."""
@@ -7945,7 +7945,7 @@ def test_scatter_set_colormap_refreshes_cached_b64(monkeypatch) -> None:
         "data_b64 must change after set_colormap() invalidates the v1 payload"
 
 
-# ── clear() resets all Python mirror state ────────────────────────────────────
+# â”€â”€ clear() resets all Python mirror state â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_scatter_clear_resets_all_mirror_state(monkeypatch) -> None:
     """clear() must reset counters, labels, cached payload, and ellipsoid params."""
@@ -7983,7 +7983,7 @@ def test_scatter_clear_resets_all_mirror_state(monkeypatch) -> None:
     assert s._pending_scene_ops == [], "_pending_scene_ops must be cleared"
 
 
-# ── clear() does not resurrect old primary data via props() ──────────────────
+# â”€â”€ clear() does not resurrect old primary data via props() â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_scatter_clear_props_returns_empty_b64(monkeypatch) -> None:
     """After clear(), props()['data_b64'] must be '' and must not repack the old frame."""
@@ -8024,7 +8024,7 @@ def test_scatter_set_points_after_clear_re_enables_primary(monkeypatch) -> None:
     assert b64 != "", "data_b64 must be non-empty after set_points() following clear()"
 
 
-# ── add_stream() accepts list-of-lists initial data ──────────────────────────
+# â”€â”€ add_stream() accepts list-of-lists initial data â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_scatter_add_stream_list_of_lists_initial_data(monkeypatch) -> None:
     """add_stream([[x,y,z], ...], max_points=N) must pack initial data via coercion."""
@@ -8064,7 +8064,7 @@ def test_scatter_add_stream_frame_without_columns_raises() -> None:
         s.add_stream(DemoFrame(), max_points=100)
 
 
-# ── _coerce_point_input() validates frame inputs ──────────────────────────────
+# â”€â”€ _coerce_point_input() validates frame inputs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_scatter_stream_frame_without_columns_raises() -> None:
     """stream(handle, frame) without x/y/z must raise ValueError."""
@@ -8078,12 +8078,12 @@ def test_scatter_coerce_empty_list_raises() -> None:
     """_coerce_point_input with an empty list must raise ValueError (no valid columns)."""
     s = dg.Scatter3D(DemoFrame(), x="x", y="y", z="z", parent=None)
     sh = s.add_stream(max_points=100)
-    # Empty list is not array-like with shape, falls through to frame path → missing x/y/z
+    # Empty list is not array-like with shape, falls through to frame path â†’ missing x/y/z
     with pytest.raises(ValueError, match="x, y, and z"):
         s.stream(sh, [])
 
 
-# ── add_points() / update_actor() DragonSci-style raw positions ──────────────
+# â”€â”€ add_points() / update_actor() DragonSci-style raw positions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_scatter_add_points_list_of_lists(monkeypatch) -> None:
     """add_points([[x,y,z], ...]) must pack data without x/y/z kwargs."""
@@ -8341,7 +8341,7 @@ def test_scatter_live_frame_primary_uses_prepared_points(monkeypatch) -> None:
     )
 
 
-# ── pre-live clear() does not replay stale primary metadata on startup ────────
+# â”€â”€ pre-live clear() does not replay stale primary metadata on startup â”€â”€â”€â”€â”€â”€â”€â”€
 
 def test_scatter_live_frame_enqueue_prepared_uses_primary_direct_path() -> None:
     class Sender:
@@ -9054,3 +9054,27 @@ def test_scroll_area_axis_modes() -> None:
 
     with pytest.raises(ValueError):
         dg.ScrollArea(axis="diagonal")
+
+
+def test_terminal_widget_serializes_as_html_report() -> None:
+    terminal = dg.Terminal("cmd.exe", prefer_pty=False, height=360, parent=None)
+    try:
+        node = terminal.to_dict()
+        props = node["props"]
+        assert node["type"] == "html_report"
+        assert props["allow_scripts"] is True
+        assert props["external_fallback"] is False
+        assert props["height"] == 360.0
+        assert "xterm" in props["html"]
+        assert "cdn.jsdelivr" not in props["html"]
+        assert "ws://127.0.0.1:" in props["html"]
+        assert terminal.bridge.url.startswith("ws://127.0.0.1:")
+    finally:
+        terminal.stop()
+
+
+def test_terminal_widget_is_in_help_reference() -> None:
+    match = dg.help.find_symbol("Terminal")
+    assert match is not None
+    assert match["path"] == "reference.widgets.terminal"
+    assert "interactive command-line" in dg.help.reference.widgets.terminal()

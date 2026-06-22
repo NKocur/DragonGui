@@ -267,6 +267,7 @@ _CONTROL_WIDGETS = (
 _DATA_WIDGETS = (
     "Image",
     "HtmlReport",
+    "Terminal",
     "DataFrameTable",
     "Histogram",
     "BarChart",
@@ -460,6 +461,27 @@ _SYMBOL_NOTES = {
 }
 
 _REFERENCE_DETAILS = {
+    "Terminal": """
+Use `Terminal` to embed an interactive command-line program in a DragonGUI app.
+It renders xterm.js inside `HtmlReport` and connects it to a localhost WebSocket
+bridge. On Windows, install `pywinpty` for true ConPTY behavior; without it the
+widget falls back to ordinary subprocess pipes, which are useful for simple
+commands but not reliable for full-screen CLIs.
+
+Typical use:
+```python
+dg.Terminal("powershell.exe", height=520)
+dg.Terminal("codex", height=640)
+dg.Terminal("claude", height=640)
+```
+
+Runtime rules:
+- The widget starts a localhost bridge when it is constructed.
+- Call `terminal.stop()` when manually tearing down long-lived instances.
+- Interactive tools such as Codex and Claude Code need `pywinpty` on Windows.
+- The first implementation depends on WebView2 script support and CDN-hosted
+  xterm.js assets.
+""",
     "ExtensionWidget": """
 Use `ExtensionWidget` when a third-party/native leaf needs a stable serialized
 extension type and JSON-compatible props. It is lower level than
@@ -569,6 +591,11 @@ must be positive finite logical pixel values.
 }
 
 _PARAMETER_NOTES = {
+    "Terminal": (
+        "`command` is the executable or argv sequence to wrap.",
+        "Install `pywinpty` on Windows for Codex/Claude-style interactive PTY behavior.",
+        "The widget uses a localhost WebSocket bridge and xterm.js inside HtmlReport.",
+    ),
     "App": (
         "`theme` sets the starting colors/radii/fonts.",
         "`loading_screen` accepts `LoadingScreen` for native startup progress.",
@@ -717,6 +744,7 @@ _PARAMETER_NOTES = {
 }
 
 _EXAMPLE_METADATA: dict[str, dict[str, tuple[str, ...]]] = {
+    "Terminal": {"examples": ("examples/terminal_wrapper_demo.py",)},
     "Panel": {
         "probes": (
             "examples/css_feature_probes/layout_panel_bounds_probe.py",
@@ -853,6 +881,7 @@ def _object_for_symbol(name: str) -> Any | None:
     from . import notifications as notifications_module
     from . import runtime as runtime_module
     from . import theme as theme_module
+    from . import terminal as terminal_module
     from . import thread_monitor as thread_monitor_module
     from . import vdom as vdom_module
     from . import widgets as widgets_module
@@ -866,6 +895,7 @@ def _object_for_symbol(name: str) -> Any | None:
         notifications_module,
         runtime_module,
         theme_module,
+        terminal_module,
         thread_monitor_module,
         vdom_module,
         backend_module,

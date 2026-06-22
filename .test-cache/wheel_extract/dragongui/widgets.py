@@ -544,6 +544,7 @@ _SUPPORTED_PARTS_BY_KIND: dict[str, set[str]] = {
     "range_slider": {"track", "range", "thumb-min", "thumb-max", "label"},
     "progress_bar": {"track", "fill", "label"},
     "loading_spinner": {"track", "arc", "label"},
+    "pie_chart": {"label"},
     "heatmap": {"cell", "grid", "hover", "scalar-bar", "label"},
     "bar_chart": {"label", "value-label"},
     "tabs": {"header"},
@@ -7084,14 +7085,14 @@ def _pack_xy_values(x_values: Any, y_values: Any | None = None) -> bytes | None:
 
 
 _PIE_DEFAULT_COLORS: tuple[str, ...] = (
-    "#5aa9ff",
-    "#74ddb0",
-    "#ffd36a",
-    "#f36b7f",
-    "#b388ff",
-    "#ff9f43",
-    "#4dd0e1",
-    "#a3e635",
+    "#2f6fb3",
+    "#247a59",
+    "#a97413",
+    "#ad4058",
+    "#6d4fb0",
+    "#b45d1f",
+    "#227f8f",
+    "#5f8f24",
 )
 
 
@@ -7170,9 +7171,7 @@ def _pie_from_frame(
     top_n: int | None = None,
     other_label: str = "Other",
 ) -> PieChartData:
-    aggregate = str(aggregate).strip().lower()
-    if aggregate not in {"count", "sum", "mean", "min", "max"}:
-        raise ValueError("PieChart aggregate must be one of: count, sum, mean, min, max")
+    aggregate = _pie_aggregate(aggregate)
     categories = list(_get_frame_col(data, category))
     if value is None:
         values = [1.0] * len(categories)
@@ -7205,6 +7204,40 @@ def _pie_from_frame(
         labels.append(label)
         totals.append(result)
     return _normalize_pie_data(labels, totals, colors=colors, top_n=top_n, other_label=other_label)
+
+
+def _pie_aggregate(value: str) -> str:
+    aggregate = str(value).strip().lower()
+    if aggregate not in {"count", "sum", "mean", "min", "max"}:
+        raise ValueError("PieChart aggregate must be one of: count, sum, mean, min, max")
+    return aggregate
+
+
+def _pie_label_mode(value: str) -> str:
+    mode = str(value).strip().lower()
+    if mode not in {"auto", "inside", "outside", "legend", "none"}:
+        raise ValueError("PieChart label_mode must be auto, inside, outside, legend, or none")
+    return mode
+
+
+def _pie_value_mode(value: str) -> str:
+    mode = str(value).strip().lower()
+    if mode not in {"percent", "value", "both", "none"}:
+        raise ValueError("PieChart value_mode must be percent, value, both, or none")
+    return mode
+
+
+def _pie_legend_position(value: str) -> str:
+    position = str(value).strip().lower()
+    if position not in {"right", "left", "bottom", "top", "none"}:
+        raise ValueError("PieChart legend_position must be right, left, bottom, top, or none")
+    return position
+
+
+def _pie_top_n(value: object) -> int | None:
+    if value is None:
+        return None
+    return max(1, int(value))
 
 
 def _histogram_column_values(data: Any, value: str | None) -> Any:
@@ -8494,7 +8527,10 @@ class PieChart(Widget):
         show_legend: bool = True,
         legend_position: str = "right",
         show_labels: bool = False,
+        show_toolbar: bool = False,
         selected: str | int | None = None,
+        center_value: str | None = None,
+        center_label: str | None = None,
         colors: Sequence[object] | Mapping[str, object] | None = None,
         title: str | None = None,
         id: str | None = None,
@@ -8527,27 +8563,24 @@ class PieChart(Widget):
                 other_label=other_label,
             )
         self.data = data
-        self.category = category
-        self.value = value
-        self.aggregate = aggregate
-        self.top_n = top_n
+        self.category = None if category is None else str(category)
+        self.value = None if value is None else str(value)
+        self.aggregate = _pie_aggregate(aggregate)
+        self.top_n = _pie_top_n(top_n)
         self.other_label = str(other_label)
         self.donut = bool(donut)
         self.inner_radius = max(0.18, min(0.82, float(inner_radius)))
         self.start_angle = float(start_angle)
         self.clockwise = bool(clockwise)
-        self.label_mode = str(label_mode).strip().lower()
-        if self.label_mode not in {"auto", "inside", "outside", "legend", "none"}:
-            raise ValueError("PieChart label_mode must be auto, inside, outside, legend, or none")
-        self.value_mode = str(value_mode).strip().lower()
-        if self.value_mode not in {"percent", "value", "both", "none"}:
-            raise ValueError("PieChart value_mode must be percent, value, both, or none")
+        self.label_mode = _pie_label_mode(label_mode)
+        self.value_mode = _pie_value_mode(value_mode)
         self.show_legend = bool(show_legend)
-        self.legend_position = str(legend_position).strip().lower()
-        if self.legend_position not in {"right", "left", "bottom", "top", "none"}:
-            raise ValueError("PieChart legend_position must be right, left, bottom, top, or none")
+        self.legend_position = _pie_legend_position(legend_position)
         self.show_labels = bool(show_labels)
+        self.show_toolbar = bool(show_toolbar)
         self.selected = selected
+        self.center_value = None if center_value is None else str(center_value)
+        self.center_label = None if center_label is None else str(center_label)
         self.title = None if title is None else str(title)
         self._payload = payload
         super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
@@ -8558,10 +8591,129 @@ class PieChart(Widget):
         values: Sequence[object],
         *,
         colors: Sequence[object] | Mapping[str, object] | None = None,
+        top_n: int | None | object = _UNSET,
+        other_label: str | object = _UNSET,
     ) -> None:
-        self._payload = _normalize_pie_data(labels, values, colors=colors)
+        self.data = None
+        self.category = None
+        self.value = None
+        effective_top_n = self.top_n if top_n is _UNSET else _pie_top_n(top_n)
+        effective_other_label = (
+            self.other_label if other_label is _UNSET else str(other_label)
+        )
+        self.top_n = effective_top_n
+        self.other_label = effective_other_label
+        self._payload = _normalize_pie_data(
+            labels,
+            values,
+            colors=colors,
+            top_n=effective_top_n,
+            other_label=effective_other_label,
+        )
+        self._replace_live_node()
+
+    def set_frame_data(
+        self,
+        data: Any,
+        *,
+        category: str | None = None,
+        value: str | None | object = _UNSET,
+        aggregate: str | None = None,
+        colors: Sequence[object] | Mapping[str, object] | None = None,
+        top_n: int | None | object = _UNSET,
+        other_label: str | object = _UNSET,
+    ) -> None:
+        effective_category = self.category if category is None else str(category)
+        if effective_category is None:
+            raise ValueError("PieChart frame data requires category=")
+        effective_value = (
+            self.value if value is _UNSET else None if value is None else str(value)
+        )
+        effective_aggregate = self.aggregate if aggregate is None else _pie_aggregate(aggregate)
+        effective_top_n = self.top_n if top_n is _UNSET else _pie_top_n(top_n)
+        effective_other_label = (
+            self.other_label if other_label is _UNSET else str(other_label)
+        )
+
+        self.data = data
+        self.category = effective_category
+        self.value = effective_value
+        self.aggregate = effective_aggregate
+        self.top_n = effective_top_n
+        self.other_label = effective_other_label
+        self._payload = _pie_from_frame(
+            data,
+            category=effective_category,
+            value=effective_value,
+            aggregate=effective_aggregate,
+            colors=colors,
+            top_n=effective_top_n,
+            other_label=effective_other_label,
+        )
+        self._replace_live_node()
+
+    def set_selected(self, selected: str | int | None) -> None:
+        self.selected = selected
+        self._replace_live_node()
+
+    def clear_selection(self) -> None:
+        self.set_selected(None)
+
+    def set_title(self, title: str | None) -> None:
+        self.title = None if title is None else str(title)
+        self._replace_live_node()
+
+    def set_center_text(
+        self,
+        value: str | None | object = _UNSET,
+        label: str | None | object = _UNSET,
+    ) -> None:
+        if value is not _UNSET:
+            self.center_value = None if value is None else str(value)
+        if label is not _UNSET:
+            self.center_label = None if label is None else str(label)
+        self._replace_live_node()
+
+    def set_donut(self, donut: bool = True, *, inner_radius: float | object = _UNSET) -> None:
+        self.donut = bool(donut)
+        if inner_radius is not _UNSET:
+            self.inner_radius = max(0.18, min(0.82, float(inner_radius)))
+        self._replace_live_node()
+
+    def set_labels_visible(self, visible: bool) -> None:
+        self.show_labels = bool(visible)
+        self._replace_live_node()
+
+    def set_toolbar_visible(self, visible: bool) -> None:
+        self.show_toolbar = bool(visible)
+        self._replace_live_node()
+
+    def set_legend_visible(self, visible: bool) -> None:
+        self.show_legend = bool(visible)
+        self._replace_live_node()
+
+    def set_legend_position(self, position: str) -> None:
+        self.legend_position = _pie_legend_position(position)
+        self._replace_live_node()
+
+    def set_label_mode(self, mode: str) -> None:
+        self.label_mode = _pie_label_mode(mode)
+        self._replace_live_node()
+
+    def set_value_mode(self, mode: str) -> None:
+        self.value_mode = _pie_value_mode(mode)
+        self._replace_live_node()
+
+    def set_start_angle(self, angle: float) -> None:
+        self.start_angle = float(angle)
+        self._replace_live_node()
+
+    def set_clockwise(self, clockwise: bool) -> None:
+        self.clockwise = bool(clockwise)
+        self._replace_live_node()
+
+    def _replace_live_node(self) -> None:
         if (handle := self._live()) is not None:
-            handle.enqueue_set_prop("pie_data_token", self._data_token())
             handle.enqueue_replace_node(self.to_dict())
 
     def _data_token(self) -> float:
@@ -8584,7 +8736,10 @@ class PieChart(Widget):
             "show_legend": self.show_legend,
             "legend_position": self.legend_position,
             "show_labels": self.show_labels,
+            "show_toolbar": self.show_toolbar,
             "selected": self.selected,
+            "center_value": self.center_value,
+            "center_label": self.center_label,
             "title": self.title,
             "_data_token": self._data_token(),
         }
@@ -9426,9 +9581,13 @@ class Scatter3D(Widget):
     ) -> None:
         """Show or hide the color legend overlay.
 
-        entries: list of (label, r, g, b) tuples (0.0–1.0 per channel).
-        position: 'top-right', 'top-left', 'bottom-right', 'bottom-left'. When None,
-                  the current legend_position is kept.
+        Args:
+            visible: Whether the legend is visible.
+            position: One of ``"top-right"``, ``"top-left"``, ``"bottom-right"``,
+                or ``"bottom-left"``. When ``None``, the current
+                ``legend_position`` is kept.
+            entries: Optional ``(label, r, g, b)`` tuples with color channels in
+                the ``0.0`` to ``1.0`` range.
         """
         self._legend_visible = bool(visible)
         if entries is not None:

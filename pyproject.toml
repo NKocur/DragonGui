@@ -29,6 +29,9 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
+terminal = [
+  "pywinpty>=2; platform_system == 'Windows'",
+]
 dataframe = [
   "pandas>=2",
   "polars>=1",

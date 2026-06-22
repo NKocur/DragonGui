@@ -12,6 +12,7 @@ from .diagnostics import DiagnosticsSnapshot, _get_collector
 from .widgets import (
     Button,
     GridLayout,
+    HLayout,
     LED,
     Label,
     Panel,
@@ -215,14 +216,16 @@ _S_HEADER_BAR = {
     "flex_shrink": 0,
     "align_items": "center",
     "background": "surface_alt",
+    "min_height": 53,
 }
 _S_HEADER_TEXT = {
     "gap": 1,
     "min_width": 0,
-    "width": "100%",
+    "width": 0,
     "height": 38,
-    "flex_grow": 0,
-    "flex_shrink": 0,
+    "flex": 1,
+    "flex_grow": 1,
+    "flex_shrink": 1,
 }
 _S_TITLE = {
     "color": "text",
@@ -248,12 +251,13 @@ _S_BODY = {
     "width": "100%",
 }
 _S_SECTION = {
-    "gap": 6,
+    "gap": 8,
     "width": "100%",
     "height": 18,
     "flex_grow": 0,
     "flex_shrink": 0,
     "align_items": "center",
+    "min_width": 0,
 }
 _S_SECTION_TITLE = {
     "color": "muted_text",
@@ -287,7 +291,14 @@ _S_METRIC_VAL = {
 _S_STATUS = {"font_size": 12, "font_weight": 600, "height": 18, "line_height": "17px"}
 _S_DAEMON = {"font_size": 10, "color": "muted_text", "height": 16, "line_height": "15px"}
 _S_STAT = {"font_size": 12, "color": "muted_text", "height": 18, "line_height": "17px"}
-_S_NAME = {"font_size": 12, "height": 18, "line_height": "17px", "min_width": 0}
+_S_NAME = {
+    "font_size": 12,
+    "height": 18,
+    "line_height": "17px",
+    "min_width": 0,
+    "flex_grow": 1,
+    "flex_shrink": 1,
+}
 _S_FAILURE_META = {
     "color": "muted_text",
     "font_size": 11,
@@ -295,10 +306,53 @@ _S_FAILURE_META = {
     "line_height": "16px",
     "min_width": 0,
 }
+_S_FAILURE_COPY = {
+    "gap": 1,
+    "min_width": 0,
+    "width": 0,
+    "flex": 1,
+    "flex_grow": 1,
+    "flex_shrink": 1,
+}
+_S_FAILURE_AGE = {
+    "width": 54,
+    "text_align": "right",
+    "flex_grow": 0,
+    "flex_shrink": 0,
+}
 _S_TAG = {
     "font_size": 10,
     "height": 18,
     "line_height": "14px",
+    "flex_grow": 0,
+    "flex_shrink": 0,
+}
+_S_CELL_LED = {"width": 10, "height": 18, "flex_grow": 0, "flex_shrink": 0}
+_S_CELL_STATE = {"width": 44, "flex_grow": 0, "flex_shrink": 0}
+_S_CELL_DAEMON = {"width": 16, "flex_grow": 0, "flex_shrink": 0}
+_S_CELL_TASKS = {"width": 84, "text_align": "right", "flex_grow": 0, "flex_shrink": 0}
+_S_ROW = {
+    "width": "100%",
+    "min_width": 0,
+    "height": 20,
+    "gap": 5,
+    "align_items": "center",
+    "flex_grow": 0,
+    "flex_shrink": 0,
+}
+_S_TABLE = {
+    "width": "100%",
+    "min_width": 0,
+    "gap": 2,
+    "flex_grow": 0,
+    "flex_shrink": 0,
+}
+_S_FAILURE_ROW = {
+    "width": "100%",
+    "min_width": 0,
+    "min_height": 38,
+    "gap": 6,
+    "align_items": "center",
     "flex_grow": 0,
     "flex_shrink": 0,
 }
@@ -317,25 +371,18 @@ _S_HEADER_LED = {
     "align_self": "center",
     "flex_grow": 0,
     "flex_shrink": 0,
-    "transform": {"translate_y": 15},
 }
 _S_ROW_LED = {
     "align_self": "center",
     "flex_grow": 0,
     "flex_shrink": 0,
-    "transform": {"translate_y": 5},
 }
 _S_FAILURE_LED = {
     "align_self": "center",
     "flex_grow": 0,
     "flex_shrink": 0,
-    "transform": {"translate_y": 11},
 }
-_HEADER_COLUMNS = (10, "1fr", "auto", "auto")
-_SECTION_COLUMNS = ("1fr", "auto")
 _METRIC_COLUMNS = (52, "1fr", 52, "1fr")
-_THREAD_COLUMNS = (10, 44, 16, "1fr", 84)
-_FAILURE_COLUMNS = (10, "1fr", "auto")
 
 
 def _overall_status(snap: DiagnosticsSnapshot, monitoring_enabled: bool) -> tuple[str, str, str]:
@@ -378,7 +425,7 @@ def _header(
     on_toggle: Callable[[], None] | None,
 ) -> None:
     status, level, led_state = _overall_status(snap, monitoring_enabled)
-    with GridLayout(template_columns=_HEADER_COLUMNS, gap=8, key="header", style=_S_HEADER_BAR):
+    with HLayout(key="header", style=_S_HEADER_BAR):
         LED(
             led_state,
             states={"success": "success", "warning": "warning", "danger": "danger"},
@@ -411,12 +458,7 @@ def _section(
     level: str = "neutral",
     key: str,
 ) -> None:
-    with GridLayout(
-        template_columns=_SECTION_COLUMNS,
-        gap=8,
-        key=f"{key}-section",
-        style=_S_SECTION,
-    ):
+    with HLayout(key=f"{key}-section", style=_S_SECTION):
         Label(title, key=f"{key}-section-title", style=_S_SECTION_TITLE, wrap=False)
         if meta:
             Tag(meta, level=level, key=f"{key}-section-meta", style=_S_TAG)
@@ -453,96 +495,105 @@ def _thread_tasks_text(count: int, rate: float) -> str:
 
 
 def _thread_table(snap: DiagnosticsSnapshot) -> None:
-    with GridLayout(
-        template_columns=_THREAD_COLUMNS,
-        gap=5,
-        row_gap=2,
-        key="threads-table",
-        style={
-            "width": "100%",
-            "min_width": 0,
-            "flex_grow": 0,
-            "flex_shrink": 0,
-            "align_items": "center",
-        },
-    ):
-        Label("", key="threads-head-led", style=_S_COL_HDR, wrap=False)
-        Label("STATE", key="threads-head-state", style=_S_COL_HDR, wrap=False)
-        Label("D", key="threads-head-daemon", style=_S_COL_HDR, wrap=False)
-        Label("THREAD / ROLE", key="threads-head-name", style=_S_COL_HDR, wrap=False)
-        Label("TASKS", key="threads-head-tasks", style=_S_COL_HDR, wrap=False)
+    with VLayout(key="threads-table", style=_S_TABLE):
+        with HLayout(key="threads-head", style=_S_ROW):
+            Label(
+                "",
+                key="threads-head-led",
+                style={**_S_COL_HDR, **_S_CELL_LED},
+                wrap=False,
+            )
+            Label(
+                "STATE",
+                key="threads-head-state",
+                style={**_S_COL_HDR, **_S_CELL_STATE},
+                wrap=False,
+            )
+            Label(
+                "D",
+                key="threads-head-daemon",
+                style={**_S_COL_HDR, **_S_CELL_DAEMON},
+                wrap=False,
+            )
+            Label(
+                "THREAD / ROLE",
+                key="threads-head-name",
+                style={**_S_NAME, **_S_COL_HDR},
+                wrap=False,
+            )
+            Label(
+                "TASKS",
+                key="threads-head-tasks",
+                style={**_S_COL_HDR, **_S_CELL_TASKS},
+                wrap=False,
+            )
         for index, thread in enumerate(snap.threads):
             row_key = f"thread-{thread.ident if thread.ident is not None else index}"
             state = "alive" if thread.alive else "dead"
             color = "text" if thread.alive else "danger"
-            LED(
-                state,
-                states={"alive": "success", "dead": "danger"},
-                size=8,
-                key=f"{row_key}-led",
-                style=_S_ROW_LED,
-            )
-            Label(state, key=f"{row_key}-state", style={**_S_STATUS, "color": color}, wrap=False)
-            Label(
-                "D" if thread.daemon else "",
-                key=f"{row_key}-daemon",
-                style=_S_DAEMON,
-                wrap=False,
-            )
-            Label(thread.role or thread.name, key=f"{row_key}-name", style=_S_NAME, wrap=False)
-            Label(
-                _thread_tasks_text(thread.cmd_count, thread.cmd_per_sec),
-                key=f"{row_key}-tasks",
-                style=_S_STAT,
-                wrap=False,
-            )
+            with HLayout(key=f"{row_key}-row", style=_S_ROW):
+                LED(
+                    state,
+                    states={"alive": "success", "dead": "danger"},
+                    size=8,
+                    key=f"{row_key}-led",
+                    style={**_S_ROW_LED, **_S_CELL_LED},
+                )
+                Label(
+                    state,
+                    key=f"{row_key}-state",
+                    style={**_S_STATUS, **_S_CELL_STATE, "color": color},
+                    wrap=False,
+                )
+                Label(
+                    "D" if thread.daemon else "",
+                    key=f"{row_key}-daemon",
+                    style={**_S_DAEMON, **_S_CELL_DAEMON},
+                    wrap=False,
+                )
+                Label(thread.role or thread.name, key=f"{row_key}-name", style=_S_NAME, wrap=False)
+                Label(
+                    _thread_tasks_text(thread.cmd_count, thread.cmd_per_sec),
+                    key=f"{row_key}-tasks",
+                    style={**_S_STAT, **_S_CELL_TASKS},
+                    wrap=False,
+                )
 
 
 def _failure_table(snap: DiagnosticsSnapshot) -> None:
-    with GridLayout(
-        template_columns=_FAILURE_COLUMNS,
-        gap=6,
-        row_gap=4,
-        key="failures-table",
-        style={
-            "width": "100%",
-            "min_width": 0,
-            "flex_grow": 0,
-            "flex_shrink": 0,
-            "align_items": "center",
-        },
-    ):
+    with VLayout(key="failures-table", style={**_S_TABLE, "gap": 4}):
         for index, failure in enumerate(snap.recent_failures):
             row_key = f"failure-{failure.ts_ms}-{index}"
-            LED(
-                "failure",
-                states={"failure": "danger"},
-                size=8,
-                key=f"{row_key}-led",
-                style=_S_FAILURE_LED,
-            )
-            with VLayout(
-                key=f"{row_key}-copy",
-                style={"gap": 1, "min_width": 0, "width": "100%", "flex_grow": 0},
-            ):
+            with HLayout(key=f"{row_key}-row", style=_S_FAILURE_ROW):
+                LED(
+                    "failure",
+                    states={"failure": "danger"},
+                    size=8,
+                    key=f"{row_key}-led",
+                    style={**_S_FAILURE_LED, **_S_CELL_LED},
+                )
+                with VLayout(
+                    key=f"{row_key}-copy",
+                    style=_S_FAILURE_COPY,
+                ):
+                    Label(
+                        f"{failure.exc_type}: {failure.exc_msg}",
+                        key=f"{row_key}-message",
+                        style=_S_DANGER,
+                        wrap=False,
+                    )
+                    Label(
+                        f"{failure.callable_repr} | {failure.thread_role or failure.thread_name}",
+                        key=f"{row_key}-meta",
+                        style=_S_FAILURE_META,
+                        wrap=False,
+                    )
                 Label(
-                    f"{failure.exc_type}: {failure.exc_msg}",
-                    key=f"{row_key}-message",
-                    style=_S_DANGER,
+                    _fmt_age(failure.ts_ms),
+                    key=f"{row_key}-age",
+                    style={**_S_FAILURE_META, **_S_FAILURE_AGE},
                     wrap=False,
                 )
-                Label(
-                    f"{failure.callable_repr} | {failure.thread_role or failure.thread_name}",
-                    key=f"{row_key}-meta",
-                    style=_S_FAILURE_META,
-                    wrap=False,
-                )
-            Label(
-                _fmt_age(failure.ts_ms),
-                key=f"{row_key}-age",
-                style=_S_FAILURE_META,
-                wrap=False,
-            )
 
 
 def _build_panel(

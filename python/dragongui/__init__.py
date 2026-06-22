@@ -16,6 +16,7 @@ from .notifications import toast
 from .runtime import ToastHandle
 from .thread_monitor import ThreadMonitor
 from .theme import Theme
+from .terminal import Terminal
 from .vdom import Patch, ResourceRef, VNode
 from .widgets import (
     Badge,
@@ -244,6 +245,7 @@ __all__ = [
     "TableSelection",
     "TableSort",
     "Tag",
+    "Terminal",
     "TextArea",
     "TextInput",
     "TimeInput",
