@@ -1822,6 +1822,7 @@ def _table_column_payload(columns: object) -> tuple[list[dict[str, object]], lis
 def _collect_runtime_callbacks(
     widget: object,
 ) -> tuple[dict[str, Callable[[], None]], dict[str, Callable[[object], None]]]:
+    from .node_graph import NodeGraph
     from .widgets import BarChart, BarChartBar, Button, Checkbox, CodeEditor, Collapsible, Container, DataFrameTable, DateInput, DateTimeInput, DragDropPayload, DragNumber, DropTarget, Dropdown, ExtensionWidget, Heatmap, HeatmapCell, MenuItem, NumberInput, Pages, PaintKeyEvent, PaintPointerEvent, RadioButton, RangeSlider, Scatter3D, ScatterHit, ScatterPick, Selectable, Slider, TableSelection, TableSort, Tabs, TextArea, TextInput, TimeInput, ToggleSwitch, TreeNode, TreeView, Widget
 
     click_callbacks: dict[str, Callable[[], None]] = {}
@@ -2082,6 +2083,8 @@ def _collect_runtime_callbacks(
                     widget.on_select(selection)
 
             change_callbacks[node.id] = table_changed
+        if isinstance(node, NodeGraph):
+            change_callbacks[node.id] = node._handle_graph_event
         if isinstance(node, Heatmap) and node.on_hover is not None:
             def heatmap_hover_changed(value: object, widget: Heatmap = node) -> None:
                 payload = json.loads(value) if isinstance(value, str) else value

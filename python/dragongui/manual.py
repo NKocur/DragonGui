@@ -290,6 +290,11 @@ _WIDGET_SYMBOLS = (
 )
 
 _DATACLASS_SYMBOLS = (
+    "AgentEnvelopeParseEvent",
+    "AgentMessage",
+    "AgentRouterQueueItem",
+    "AgentSessionLogEntry",
+    "AgentSessionRecord",
     "BarChartBar",
     "BarChartData",
     "BreadcrumbItem",
@@ -302,6 +307,7 @@ _DATACLASS_SYMBOLS = (
     "NodeGraphEdge",
     "NodeGraphNode",
     "NodeGraphPort",
+    "NodeGraphTemplate",
     "PaintContext",
     "PaintKeyEvent",
     "PaintPointerEvent",
@@ -314,7 +320,14 @@ _DATACLASS_SYMBOLS = (
     "ScatterStreamMetrics",
     "TableSelection",
     "TableSort",
+    "TerminalEvent",
     "Size",
+)
+
+_MODEL_SYMBOLS = (
+    "AgentEnvelopeParser",
+    "AgentRouterQueue",
+    "AgentSession",
 )
 
 _DIALOG_SYMBOLS = (
@@ -352,12 +365,14 @@ _RUNTIME_SYMBOLS = (
     "thread_role",
     "link_cameras",
     "unlink_cameras",
+    "multi_agent_node_templates",
     "help",
     "HelpSection",
 )
 
 _PUBLIC_EXPORT_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("runtime", _RUNTIME_SYMBOLS),
+    ("models", _MODEL_SYMBOLS),
     ("components", _COMPONENT_SYMBOLS),
     ("dialogs", _DIALOG_SYMBOLS),
     ("widgets.layout", _LAYOUT_WIDGETS),
@@ -461,6 +476,17 @@ _SYMBOL_NOTES = {
     "NodeGraphNode": "Node model for `NodeGraph`, including position, ports, status, and color.",
     "NodeGraphPort": "Input or output socket model used by `NodeGraphNode`.",
     "NodeGraphEdge": "Directed connection between `NodeGraph` ports.",
+    "NodeGraphTemplate": "Palette template model used by `NodeGraph` for canvas-created nodes.",
+    "multi_agent_node_templates": "Factory for typed runtime-oriented `NodeGraphTemplate` values for multi-agent workflows.",
+    "AgentMessage": "Parsed schema-versioned text envelope with routing fields, optional metadata, and body text.",
+    "AgentEnvelopeParser": "Incremental parser for terminal transcript message envelopes with partial buffering and deduplication.",
+    "AgentEnvelopeParseEvent": "Parser event payload for parsed, partial, malformed, and duplicate envelope outcomes.",
+    "AgentRouterQueue": "Model-level target queue for parsed agent messages with delivery status tracking.",
+    "AgentRouterQueueItem": "Queue record pairing one parsed agent message with queued, held, delivered, or failed state.",
+    "AgentSession": "Python-side model that binds a graph node to a terminal-backed agent session record and append-only logs.",
+    "AgentSessionRecord": "Serializable ownership, command metadata, status, capabilities, and safety policy for an agent session.",
+    "AgentSessionLogEntry": "Schema-versioned append-only event or transcript entry for an agent session.",
+    "TerminalEvent": "Schema-versioned terminal bridge lifecycle or output event payload.",
     "Size": "Logical width/height object returned from `PaintWidget.measure(...)`.",
     "PaintKeyEvent": "Event object delivered to focused extension widget key callbacks.",
     "PaintPointerEvent": "Event object delivered to extension widget pointer and wheel callbacks.",
@@ -887,6 +913,8 @@ def _object_for_symbol(name: str) -> Any | None:
         return None
 
     from . import _backend as backend_module
+    from . import agent_messages as agent_messages_module
+    from . import agent_session as agent_session_module
     from . import app as app_module
     from . import components as components_module
     from . import diagnostics as diagnostics_module
@@ -902,6 +930,8 @@ def _object_for_symbol(name: str) -> Any | None:
 
     modules = (
         widgets_module,
+        agent_messages_module,
+        agent_session_module,
         app_module,
         components_module,
         dialogs_module,
@@ -1376,6 +1406,13 @@ def _build_reference_sections() -> HelpSection:
         _RUNTIME_SYMBOLS,
         "runtime",
     )
+    models = _group_section(
+        "models",
+        "Models Reference",
+        "Python-side agent session, message parser, and router queue models.",
+        _MODEL_SYMBOLS,
+        "runtime",
+    )
     components = _group_section(
         "components",
         "Components Reference",
@@ -1432,6 +1469,7 @@ you need a specific symbol.
         [
             exports,
             runtime,
+            models,
             components,
             dialogs,
             dataclasses,

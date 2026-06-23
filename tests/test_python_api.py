@@ -14,9 +14,12 @@ from pathlib import Path
 import pytest
 
 import dragongui as dg
+import dragongui.agent_messages as agent_messages_module
+import dragongui.agent_session as agent_session_module
 import dragongui.app as app_module
 import dragongui.dataframe as dataframe_module
 import dragongui.dialogs as dialogs_module
+import dragongui.terminal as terminal_module
 import dragongui.widgets as widgets_module
 from dragongui.runtime import AppHandle, _collect_runtime_callbacks, _set_active_app_handle
 
@@ -9069,8 +9072,85 @@ def test_terminal_widget_serializes_as_html_report() -> None:
         assert "cdn.jsdelivr" not in props["html"]
         assert "ws://127.0.0.1:" in props["html"]
         assert terminal.bridge.url.startswith("ws://127.0.0.1:")
+        assert terminal.send_text("noop") is False
+        assert terminal.transcript == []
+        assert any(event["event"] == "bridge_started" for event in terminal.events)
+        drained = terminal.drain_events()
+        assert any(event["event"] == "bridge_started" for event in drained)
+        assert terminal.drain_events() == []
     finally:
         terminal.stop()
+
+
+def test_terminal_bridge_control_surface_records_events_and_transcript() -> None:
+    outputs: list[str] = []
+    events: list[terminal_module.TerminalEvent] = []
+    bridge = terminal_module.TerminalBridge(
+        "cmd.exe",
+        prefer_pty=False,
+        on_output=outputs.append,
+        on_event=events.append,
+    )
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.writes: list[str] = []
+            self.alive = True
+
+        def write(self, data: str) -> None:
+            self.writes.append(data)
+
+        def is_alive(self) -> bool:
+            return self.alive
+
+        def terminate(self) -> None:
+            self.alive = False
+
+    fake = FakeSession()
+    with bridge._session_lock:
+        bridge._session = fake
+        bridge._session_id = 7
+
+    assert bridge.send_text("hello") is True
+    assert fake.writes == ["hello"]
+    assert bridge.transcript[-1]["stream"] == "input"
+    assert bridge.transcript[-1]["data"] == "hello"
+
+    bridge._record_transcript("output", "world", 7)
+    assert outputs == ["world"]
+    assert bridge.transcript[-1]["stream"] == "output"
+    assert bridge.transcript[-1]["data"] == "world"
+    assert bridge.events[-1]["event"] == "output"
+    assert bridge.events[-1]["data"] == "world"
+
+    drained = bridge.drain_events()
+    assert drained[-1]["event"] == "output"
+    assert bridge.drain_events() == []
+
+    bridge.stop()
+    assert fake.alive is False
+    assert events[-1].event == "bridge_stopped"
+    assert bridge.send_text("after stop") is False
+
+
+def test_terminal_event_is_public_and_serializes_compact_shape() -> None:
+    event = dg.TerminalEvent("output", session_id=3, data="chunk", timestamp=123.5)
+
+    assert isinstance(event, terminal_module.TerminalEvent)
+    assert event.to_dict() == {
+        "schema_version": 1,
+        "event": "output",
+        "timestamp": 123.5,
+        "session_id": 3,
+        "data": "chunk",
+    }
+
+    minimal = dg.TerminalEvent("bridge_started", timestamp=124.0).to_dict()
+    assert minimal == {
+        "schema_version": 1,
+        "event": "bridge_started",
+        "timestamp": 124.0,
+    }
 
 
 def test_terminal_widget_is_in_help_reference() -> None:
@@ -9078,6 +9158,157 @@ def test_terminal_widget_is_in_help_reference() -> None:
     assert match is not None
     assert match["path"] == "reference.widgets.terminal"
     assert "interactive command-line" in dg.help.reference.widgets.terminal()
+
+
+def test_agent_session_record_serializes_terminal_metadata() -> None:
+    session = dg.AgentSession(
+        "session-1",
+        "node-implementer",
+        "codex",
+        command=("codex", "--full-auto"),
+        cwd="J:\\Projects\\DragonFrame",
+        env={"CODEX_HOME": "C:\\Users\\nashk\\.codex"},
+        capabilities={"terminal": True},
+        safety_policy={"approvals": "manual"},
+    )
+
+    assert isinstance(session.record, agent_session_module.AgentSessionRecord)
+    snapshot = session.to_dict()
+    json.loads(json.dumps(snapshot))
+
+    record = snapshot["record"]
+    assert record["schema_version"] == 1
+    assert record["session_id"] == "session-1"
+    assert record["node_id"] == "node-implementer"
+    assert record["agent_type"] == "codex"
+    assert record["command"] == "codex"
+    assert record["args"] == ["--full-auto"]
+    assert record["cwd"] == "J:\\Projects\\DragonFrame"
+    assert record["env"] == {"CODEX_HOME": "C:\\Users\\nashk\\.codex"}
+    assert record["status"] == "created"
+    assert record["capabilities"] == {"terminal": True}
+    assert record["safety_policy"] == {"approvals": "manual"}
+
+
+def test_agent_session_applies_terminal_events_to_status_logs_and_transcript() -> None:
+    session = dg.AgentSession("session-2", "node-reviewer", "shell", command="cmd.exe")
+
+    session.apply_terminal_event(dg.TerminalEvent("bridge_started", timestamp=10.0))
+    assert session.status == "starting"
+    assert session.record.status_reason == "terminal bridge started"
+
+    session.apply_terminal_event(dg.TerminalEvent("session_started", session_id=4, timestamp=11.0))
+    assert session.status == "running"
+    assert session.events[-1]["data"] == {"terminal_session_id": 4}
+
+    session.apply_terminal_event(dg.TerminalEvent("output", session_id=4, data="ready", timestamp=12.0))
+    assert session.status == "running"
+    assert session.events[-1]["event"] == "output"
+    assert session.events[-1]["data"] == {"terminal_session_id": 4, "data": "ready"}
+    assert session.transcript[-1]["kind"] == "transcript"
+    assert session.transcript[-1]["event"] == "output"
+    assert session.transcript[-1]["data"] == "ready"
+    assert session.record.transcript_cursors == {"output": 1}
+
+    session.apply_terminal_event({"event": "session_ended", "session_id": 4, "timestamp": 13.0})
+    assert session.status == "exited"
+    assert session.record.status_reason == "terminal session ended"
+    assert session.snapshot()["events"][-1]["event"] == "session_ended"
+    json.loads(json.dumps(session.snapshot()))
+
+
+def test_agent_envelope_parser_parses_complete_and_partial_messages() -> None:
+    parser = dg.AgentEnvelopeParser()
+
+    partial = parser.feed("@to reviewer\n@from implementer\n@type review_request\n")
+    assert partial == []
+    assert parser.pending_text.startswith("@to reviewer")
+    assert parser.events[-1]["event"] == "partial"
+
+    messages = parser.feed(
+        "@id DG-142-R2\n"
+        "@reply_to DG-142\n"
+        "@priority high\n"
+        "Please review the latest patch.\n"
+        "Focus on regressions.\n"
+        "@end\n"
+    )
+
+    assert len(messages) == 1
+    message = messages[0]
+    assert isinstance(message, agent_messages_module.AgentMessage)
+    assert message.to == "reviewer"
+    assert message.sender == "implementer"
+    assert message.type == "review_request"
+    assert message.id == "DG-142-R2"
+    assert message.fields == {"reply_to": "DG-142", "priority": "high"}
+    assert message.body == "Please review the latest patch.\nFocus on regressions."
+    assert parser.pending_text == ""
+    assert parser.events[-1]["event"] == "parsed"
+    assert parser.events[-1]["message_id"] == "DG-142-R2"
+    json.loads(json.dumps(message.to_dict()))
+
+
+def test_agent_envelope_parser_rejects_duplicates_and_malformed_messages() -> None:
+    parser = dg.AgentEnvelopeParser()
+    envelope = (
+        "@to reviewer\n"
+        "@from implementer\n"
+        "@type review_request\n"
+        "@id DG-142-R2\n"
+        "Body\n"
+        "@end\n"
+    )
+
+    assert len(parser.feed(envelope)) == 1
+    assert parser.feed(envelope) == []
+    duplicate_event = parser.events[-1]
+    assert duplicate_event["event"] == "duplicate"
+    assert duplicate_event["message_id"] == "DG-142-R2"
+    assert "duplicate" in duplicate_event["reason"]
+
+    malformed = parser.feed("@to reviewer\n@from implementer\n@id missing-type\nBody\n@end\n")
+    assert malformed == []
+    malformed_event = parser.events[-1]
+    assert malformed_event["event"] == "malformed"
+    assert "type" in malformed_event["reason"]
+    json.loads(json.dumps(parser.drain_events()))
+    assert parser.drain_events() == []
+
+
+def test_agent_router_queue_tracks_targets_and_delivery_state() -> None:
+    message = dg.AgentMessage(
+        to="reviewer",
+        from_="implementer",
+        type="review_request",
+        id="DG-142-R2",
+        fields={"priority": "high"},
+        body="Please review.",
+    )
+    queue = dg.AgentRouterQueue()
+
+    item = queue.enqueue(message)
+    assert isinstance(item, agent_messages_module.AgentRouterQueueItem)
+    assert item.status == "queued"
+    assert queue.for_target("reviewer") == [item]
+    assert queue.for_target("reviewer", status="queued") == [item]
+
+    assert queue.mark_held("DG-142-R2", "approval required") is True
+    assert item.status == "held"
+    assert item.reason == "approval required"
+    assert queue.for_target("reviewer", status="held") == [item]
+
+    assert queue.mark_delivered("DG-142-R2") is True
+    assert item.status == "delivered"
+    assert queue.mark_failed("missing", "unknown") is False
+
+    duplicate = queue.enqueue(message)
+    assert duplicate is item
+    assert queue.events[-1]["event"] == "duplicate"
+    snapshot = queue.snapshot()
+    assert snapshot["items"][0]["message_id"] == "DG-142-R2"
+    assert snapshot["by_target"]["reviewer"][0]["status"] == "delivered"
+    json.loads(json.dumps(snapshot))
 
 
 def test_node_graph_serializes_canvas_editor() -> None:
@@ -9134,6 +9365,87 @@ def test_node_graph_serializes_canvas_editor() -> None:
     assert '"x": 80.0' in graph.to_dict()["props"]["html"]
 
 
+def test_node_graph_data_round_trips_versioned_schema() -> None:
+    graph = dg.NodeGraph(
+        [
+            dg.NodeGraphNode(
+                "source",
+                "Source",
+                12,
+                34,
+                outputs=(dg.NodeGraphPort("out", "records", {"mime": "jsonl"}),),
+                status="ready",
+                color="#43c6ac",
+                width=210,
+                data={"agent": "collector", "retries": 2},
+            ),
+            {
+                "id": "sink",
+                "label": "Sink",
+                "position": {"x": 320, "y": 48},
+                "inputs": [{"id": "in", "label": "input", "custom_data": {"kind": "stream"}}],
+                "status": "idle",
+                "color": "#7aa2f7",
+                "width": 180,
+                "custom_data": {"agent": "writer"},
+            },
+        ],
+        [
+            dg.NodeGraphEdge(
+                "source",
+                "out",
+                "sink",
+                "in",
+                label="records",
+                color="#9ece6a",
+                id="edge-records",
+                data={"required": True},
+            )
+        ],
+        selected_node="source",
+        parent=None,
+    )
+
+    data = graph.to_graph_data()
+    assert data == json.loads(json.dumps(data))
+    assert data["schema_version"] == 1
+    assert data["nodes"][0]["position"] == {"x": 12.0, "y": 34.0}
+    assert data["nodes"][0]["width"] == 210.0
+    assert data["nodes"][0]["status"] == "ready"
+    assert data["nodes"][0]["label"] == "Source"
+    assert data["nodes"][0]["outputs"][0]["data"] == {"mime": "jsonl"}
+    assert data["nodes"][1]["title"] == "Sink"
+    assert data["nodes"][1]["inputs"][0]["data"] == {"kind": "stream"}
+    assert data["edges"][0]["id"] == "edge-records"
+    assert data["edges"][0]["source"] == {"node": "source", "port": "out"}
+    assert data["edges"][0]["target"] == {"node": "sink", "port": "in"}
+    assert data["edges"][0]["data"] == {"required": True}
+
+    restored = dg.NodeGraph.from_graph_data(data, parent=None)
+    assert restored.to_graph_data() == data
+    assert restored.node_position("sink") == (320.0, 48.0)
+
+    unnamed_edge = dg.NodeGraph(
+        [{"id": "a", "title": "A", "outputs": ["out"]}, {"id": "b", "title": "B", "inputs": ["in"]}],
+        [dg.NodeGraphEdge("a", "out", "b", "in")],
+        parent=None,
+    ).to_graph_data()["edges"][0]
+    assert unnamed_edge["id"] == "edge-1"
+
+    graph.set_graph_data(
+        {
+            "schema_version": 1,
+            "nodes": [{"id": "replacement", "title": "Replacement", "position": {"x": 1, "y": 2}}],
+            "edges": [],
+        }
+    )
+    assert graph.node_position("replacement") == (1.0, 2.0)
+    assert graph.selected_node is None
+
+    with pytest.raises(ValueError, match="schema_version"):
+        graph.set_graph_data({"schema_version": 999, "nodes": [], "edges": []})
+
+
 def test_node_graph_mapping_inputs_and_help_reference() -> None:
     graph = dg.NodeGraph(
         [
@@ -9152,5 +9464,671 @@ def test_node_graph_mapping_inputs_and_help_reference() -> None:
     assert match["path"] == "reference.widgets.node_graph"
 
 
+def test_node_graph_event_bridge_dispatches_structured_payloads() -> None:
+    events: list[dict[str, object]] = []
+    legacy_moves: list[tuple[object, object, object]] = []
+    graph = dg.NodeGraph(
+        [
+            {"id": "a", "title": "A", "x": 0, "y": 0, "outputs": ["out"]},
+            {"id": "b", "title": "B", "x": 220, "y": 0, "inputs": ["in"]},
+        ],
+        parent=None,
+        on_graph_event=events.append,
+        on_node_move=lambda node, x, y: legacy_moves.append((node, x, y)),
+    )
+
+    node = graph.to_dict()
+    assert node["props"]["events"] == ["change"]
+    assert '"emitEvents": true' in node["props"]["html"]
+    assert "window.chrome.webview.postMessage" in node["props"]["html"]
+    assert "graph_changed" in node["props"]["html"]
+    assert "node_duplicated" in node["props"]["html"]
+
+    _, change_cbs = _collect_runtime_callbacks(graph)
+    change_cbs[graph.id](
+        json.dumps(
+            {
+                "schema_version": 1,
+                "event": "node_moved",
+                "node": "a",
+                "position": {"x": 42, "y": 64},
+            }
+        )
+    )
+
+    assert graph.node_position("a") == (42.0, 64.0)
+    assert events[-1]["event"] == "node_moved"
+    assert legacy_moves == [("a", 42, 64)]
+
+    change_cbs[graph.id](
+        json.dumps(
+            {
+                "schema_version": 1,
+                "event": "edge_created",
+                "edge": {
+                    "id": "edge-a-b",
+                    "source_node": "a",
+                    "source_port": "out",
+                    "target_node": "b",
+                    "target_port": "in",
+                },
+            }
+        )
+    )
+
+    assert graph.to_graph_data()["edges"][0]["id"] == "edge-a-b"
+
+    change_cbs[graph.id](json.dumps({"schema_version": 1, "event": "graph_changed"}))
+    assert events[-1]["event"] == "graph_changed"
 
 
+def test_node_graph_registers_change_callback_without_user_callbacks() -> None:
+    graph = dg.NodeGraph(
+        [{"id": "a", "title": "A", "x": 0, "y": 0, "outputs": ["out"]}],
+        parent=None,
+    )
+
+    node = graph.to_dict()
+    assert node["props"]["events"] == ["change"]
+    assert '"emitEvents": true' in node["props"]["html"]
+
+    _, change_cbs = _collect_runtime_callbacks(graph)
+    assert graph.id in change_cbs
+
+
+def test_node_graph_canvas_events_sync_state_without_user_callbacks() -> None:
+    graph = dg.NodeGraph(
+        [
+            {"id": "a", "title": "A", "x": 0, "y": 0, "outputs": ["out"]},
+            {"id": "b", "title": "B", "x": 200, "y": 0, "inputs": ["in"]},
+        ],
+        parent=None,
+    )
+    _, change_cbs = _collect_runtime_callbacks(graph)
+    emit = change_cbs[graph.id]
+
+    emit(json.dumps({"schema_version": 1, "event": "node_moved", "node": "a", "position": {"x": 11, "y": 22}}))
+    data = graph.to_graph_data()
+    assert data["nodes"][0]["position"] == {"x": 11.0, "y": 22.0}
+
+    emit(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "event": "node_created",
+                "node": {"id": "c", "title": "C", "position": {"x": 30, "y": 40}, "inputs": ["in"]},
+            }
+        )
+    )
+    assert [node["id"] for node in graph.to_graph_data()["nodes"]] == ["a", "b", "c"]
+    assert graph.selected_node == "c"
+
+    emit(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "event": "node_duplicated",
+                "source": "c",
+                "node": {"id": "c-copy", "title": "C Copy", "position": {"x": 64, "y": 74}},
+            }
+        )
+    )
+    data = graph.to_graph_data()
+    assert [node["id"] for node in data["nodes"]] == ["a", "b", "c", "c-copy"]
+    assert data["nodes"][-1]["position"] == {"x": 64.0, "y": 74.0}
+    assert graph.selected_node == "c-copy"
+
+    emit(json.dumps({"schema_version": 1, "event": "node_deleted", "node": "c"}))
+    assert [node["id"] for node in graph.to_graph_data()["nodes"]] == ["a", "b", "c-copy"]
+
+    emit(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "event": "edge_created",
+                "edge": {
+                    "id": "edge-a-b",
+                    "source_node": "a",
+                    "source_port": "out",
+                    "target_node": "b",
+                    "target_port": "in",
+                },
+            }
+        )
+    )
+    assert graph.to_graph_data()["edges"][0]["id"] == "edge-a-b"
+
+    emit(json.dumps({"schema_version": 1, "event": "edge_deleted", "edge": "edge-a-b"}))
+    assert graph.to_graph_data()["edges"] == []
+
+
+def test_node_graph_undo_redo_history_syncs_canvas_mutations() -> None:
+    events: list[dict[str, object]] = []
+    graph = dg.NodeGraph(
+        [
+            {"id": "a", "title": "A", "x": 0, "y": 0, "outputs": ["out"]},
+            {"id": "b", "title": "B", "x": 200, "y": 0, "inputs": ["in"]},
+        ],
+        parent=None,
+        on_graph_event=events.append,
+    )
+    _, change_cbs = _collect_runtime_callbacks(graph)
+    emit = change_cbs[graph.id]
+
+    assert graph.history_state() == {
+        "schema_version": 1,
+        "can_undo": False,
+        "can_redo": False,
+        "dirty": False,
+        "undo_depth": 0,
+        "redo_depth": 0,
+    }
+
+    emit(json.dumps({"schema_version": 1, "event": "node_moved", "node": "a", "position": {"x": 40, "y": 50}}))
+    assert graph.node_position("a") == (40.0, 50.0)
+    assert graph.history_state()["can_undo"] is True
+    assert graph.history_state()["dirty"] is True
+    assert events[-1]["history"]["undo_depth"] == 1
+
+    emit(json.dumps({"schema_version": 1, "event": "undo"}))
+    assert graph.node_position("a") == (0.0, 0.0)
+    assert graph.history_state()["can_redo"] is True
+    assert graph.history_state()["dirty"] is False
+    assert events[-2]["event"] == "undo"
+    assert events[-1]["event"] == "graph_changed"
+
+    emit(json.dumps({"schema_version": 1, "event": "redo"}))
+    assert graph.node_position("a") == (40.0, 50.0)
+    assert graph.history_state()["can_undo"] is True
+    assert graph.history_state()["can_redo"] is False
+
+    emit(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "event": "node_created",
+                "node": {"id": "c", "title": "C", "position": {"x": 30, "y": 40}},
+            }
+        )
+    )
+    assert [node["id"] for node in graph.to_graph_data()["nodes"]] == ["a", "b", "c"]
+    emit(json.dumps({"schema_version": 1, "event": "undo"}))
+    assert [node["id"] for node in graph.to_graph_data()["nodes"]] == ["a", "b"]
+    emit(json.dumps({"schema_version": 1, "event": "redo"}))
+    assert [node["id"] for node in graph.to_graph_data()["nodes"]] == ["a", "b", "c"]
+
+    emit(json.dumps({"schema_version": 1, "event": "node_deleted", "node": "c"}))
+    assert [node["id"] for node in graph.to_graph_data()["nodes"]] == ["a", "b"]
+    emit(json.dumps({"schema_version": 1, "event": "undo"}))
+    assert [node["id"] for node in graph.to_graph_data()["nodes"]] == ["a", "b", "c"]
+
+    emit(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "event": "edge_created",
+                "edge": {
+                    "id": "edge-a-b",
+                    "source_node": "a",
+                    "source_port": "out",
+                    "target_node": "b",
+                    "target_port": "in",
+                },
+            }
+        )
+    )
+    assert graph.to_graph_data()["edges"][0]["id"] == "edge-a-b"
+    emit(json.dumps({"schema_version": 1, "event": "undo"}))
+    assert graph.to_graph_data()["edges"] == []
+    emit(json.dumps({"schema_version": 1, "event": "redo"}))
+    assert graph.to_graph_data()["edges"][0]["id"] == "edge-a-b"
+
+    emit(json.dumps({"schema_version": 1, "event": "edge_deleted", "edge": "edge-a-b"}))
+    assert graph.to_graph_data()["edges"] == []
+    emit(json.dumps({"schema_version": 1, "event": "undo"}))
+    assert graph.to_graph_data()["edges"][0]["id"] == "edge-a-b"
+
+
+def test_node_graph_dirty_uses_baseline_snapshot_not_undo_depth() -> None:
+    graph = dg.NodeGraph(
+        [{"id": "a", "title": "A", "x": 0, "y": 0}],
+        parent=None,
+    )
+    _, change_cbs = _collect_runtime_callbacks(graph)
+    emit = change_cbs[graph.id]
+
+    emit(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "event": "node_created",
+                "node": {"id": "b", "title": "B", "position": {"x": 24, "y": 36}},
+            }
+        )
+    )
+    assert graph.history_state()["dirty"] is True
+    assert graph.history_state()["undo_depth"] == 1
+
+    emit(json.dumps({"schema_version": 1, "event": "node_deleted", "node": "b"}))
+    state = graph.history_state()
+    assert graph.to_graph_data()["nodes"] == [
+        {
+            "id": "a",
+            "title": "A",
+            "position": {"x": 0.0, "y": 0.0},
+            "width": 190.0,
+            "color": "#43c6ac",
+            "status": None,
+            "label": "A",
+            "subtitle": None,
+            "inputs": [],
+            "outputs": [],
+        }
+    ]
+    assert state["dirty"] is False
+    assert state["can_undo"] is True
+    assert state["undo_depth"] == 2
+
+
+def test_node_graph_templates_create_nodes_with_metadata() -> None:
+    graph = dg.NodeGraph(
+        [],
+        templates=[
+            dg.NodeGraphTemplate(
+                "agent",
+                "Agent",
+                inputs=(dg.NodeGraphPort("in", "messages"),),
+                outputs=(dg.NodeGraphPort("out", "results"),),
+                subtitle="terminal backed",
+                status="ready",
+                color="#7aa2f7",
+                width=220,
+                data={"agent_type": "codex"},
+            )
+        ],
+        parent=None,
+    )
+
+    html = graph.to_dict()["props"]["html"]
+    assert '"templates":' in html
+    assert '"id": "agent"' in html
+    assert "function drawPalette" in html
+    assert "editSelectedNodeTitle" in html
+
+    _, change_cbs = _collect_runtime_callbacks(graph)
+    change_cbs[graph.id](
+        json.dumps(
+            {
+                "schema_version": 1,
+                "event": "node_created",
+                "node": {
+                    "id": "node-1",
+                    "title": "Agent",
+                    "position": {"x": 44, "y": 55},
+                    "inputs": [{"id": "in", "label": "messages"}],
+                    "outputs": [{"id": "out", "label": "results"}],
+                    "subtitle": "terminal backed",
+                    "status": "ready",
+                    "color": "#7aa2f7",
+                    "width": 220,
+                    "data": {"agent_type": "codex", "template_id": "agent", "template_title": "Agent"},
+                },
+            }
+        )
+    )
+
+    data = graph.to_graph_data()
+    created = data["nodes"][0]
+    assert created["title"] == "Agent"
+    assert created["inputs"][0]["label"] == "messages"
+    assert created["outputs"][0]["label"] == "results"
+    assert created["data"] == {"agent_type": "codex", "template_id": "agent", "template_title": "Agent"}
+    assert graph.history_state()["can_undo"] is True
+
+
+def test_node_graph_property_updates_sync_history_and_undo_redo() -> None:
+    events: list[dict[str, object]] = []
+    graph = dg.NodeGraph(
+        [{"id": "a", "title": "A", "x": 0, "y": 0, "subtitle": "old", "status": "idle"}],
+        parent=None,
+        on_graph_event=events.append,
+    )
+    _, change_cbs = _collect_runtime_callbacks(graph)
+    emit = change_cbs[graph.id]
+
+    emit(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "event": "node_updated",
+                "node": "a",
+                "updates": {
+                    "title": "Renamed",
+                    "subtitle": "new",
+                    "status": "running",
+                    "color": "#7aa2f7",
+                },
+            }
+        )
+    )
+
+    node = graph.to_graph_data()["nodes"][0]
+    assert node["title"] == "Renamed"
+    assert node["subtitle"] == "new"
+    assert node["status"] == "running"
+    assert node["color"] == "#7aa2f7"
+    assert events[-1]["event"] == "node_updated"
+    assert events[-1]["history"]["undo_depth"] == 1
+
+    emit(json.dumps({"schema_version": 1, "event": "undo"}))
+    node = graph.to_graph_data()["nodes"][0]
+    assert node["title"] == "A"
+    assert node["subtitle"] == "old"
+    assert node["status"] == "idle"
+
+    emit(json.dumps({"schema_version": 1, "event": "redo"}))
+    node = graph.to_graph_data()["nodes"][0]
+    assert node["title"] == "Renamed"
+    assert node["status"] == "running"
+
+    graph.update_node("a", title="Programmatic", notify=True)
+    assert graph.to_graph_data()["nodes"][0]["title"] == "Programmatic"
+    assert graph.history_state()["undo_depth"] == 2
+    assert events[-2]["event"] == "node_updated"
+    assert events[-1]["event"] == "graph_changed"
+
+
+def test_node_graph_typed_ports_round_trip_and_validate_connections() -> None:
+    events: list[dict[str, object]] = []
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "source",
+                "title": "Source",
+                "outputs": [{"id": "json", "label": "JSON", "port_type": "json"}],
+            },
+            {
+                "id": "sink",
+                "title": "Sink",
+                "inputs": [{"id": "json_in", "label": "JSON", "type": "json"}],
+            },
+            {
+                "id": "text_sink",
+                "title": "Text Sink",
+                "inputs": [{"id": "text_in", "label": "Text", "port_type": "text"}],
+            },
+        ],
+        parent=None,
+        on_graph_event=events.append,
+    )
+    _, change_cbs = _collect_runtime_callbacks(graph)
+    emit = change_cbs[graph.id]
+
+    data = graph.to_graph_data()
+    assert data["nodes"][0]["outputs"][0]["port_type"] == "json"
+    assert data["nodes"][0]["outputs"][0]["type"] == "json"
+    assert data["nodes"][1]["inputs"][0]["port_type"] == "json"
+    assert data["nodes"][1]["inputs"][0]["type"] == "json"
+    restored = dg.NodeGraph.from_graph_data(data, parent=None)
+    assert restored.to_graph_data() == data
+
+    emit(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "event": "edge_created",
+                "edge": {
+                    "id": "edge-json",
+                    "source_node": "source",
+                    "source_port": "json",
+                    "target_node": "sink",
+                    "target_port": "json_in",
+                },
+            }
+        )
+    )
+    assert graph.to_graph_data()["edges"][0]["id"] == "edge-json"
+    assert events[-1]["event"] == "edge_created"
+
+    emit(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "event": "edge_created",
+                "edge": {
+                    "id": "edge-bad-type",
+                    "source_node": "source",
+                    "source_port": "json",
+                    "target_node": "text_sink",
+                    "target_port": "text_in",
+                },
+            }
+        )
+    )
+    assert len(graph.to_graph_data()["edges"]) == 1
+    assert events[-1]["event"] == "connection_rejected"
+    assert "incompatible port types" in events[-1]["reason"]
+
+    emit(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "event": "edge_created",
+                "edge": {
+                    "id": "edge-duplicate",
+                    "source_node": "source",
+                    "source_port": "json",
+                    "target_node": "sink",
+                    "target_port": "json_in",
+                },
+            }
+        )
+    )
+    assert len(graph.to_graph_data()["edges"]) == 1
+    assert events[-1]["event"] == "connection_rejected"
+    assert events[-1]["reason"] == "duplicate edge"
+
+    emit(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "event": "edge_created",
+                "edge": {
+                    "id": "edge-wrong-direction",
+                    "source_node": "sink",
+                    "source_port": "json_in",
+                    "target_node": "source",
+                    "target_port": "json",
+                },
+            }
+        )
+    )
+    assert len(graph.to_graph_data()["edges"]) == 1
+    assert events[-1]["event"] == "connection_rejected"
+    assert events[-1]["reason"] == "source port must be an output"
+
+    emit(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "event": "edge_created",
+                "edge": {
+                    "id": "edge-missing",
+                    "source_node": "source",
+                    "source_port": "missing",
+                    "target_node": "sink",
+                    "target_port": "json_in",
+                },
+            }
+        )
+    )
+    assert len(graph.to_graph_data()["edges"]) == 1
+    assert events[-1]["event"] == "connection_rejected"
+    assert "unknown source port" in events[-1]["reason"]
+
+
+def test_node_graph_multi_agent_templates_serialize_and_round_trip() -> None:
+    templates = dg.multi_agent_node_templates()
+    template_ids = {template.id for template in templates}
+    assert {
+        "agent",
+        "terminal",
+        "parser",
+        "approval_gate",
+        "tester",
+        "artifact",
+        "human_input",
+        "rule",
+    } <= template_ids
+
+    terminal_template = next(template for template in templates if template.id == "terminal")
+    assert terminal_template.inputs[0].port_type == "terminal_input"
+    assert terminal_template.outputs[0].port_type == "terminal_output"
+    assert terminal_template.data["node_type"] == "terminal"
+    assert terminal_template.data["session"]["agent_type"] == "terminal"
+
+    graph = dg.NodeGraph([], templates=templates, parent=None)
+    html = graph.to_dict()["props"]["html"]
+    assert '"templates":' in html
+    assert '"id": "agent"' in html
+    assert '"port_type": "approval_request"' in html
+    assert '"node_type": "agent"' in html
+    assert json.loads(json.dumps([template.data for template in templates]))
+
+    agent_template = next(template for template in templates if template.id == "agent")
+    rule_template = next(template for template in templates if template.id == "rule")
+    _, change_cbs = _collect_runtime_callbacks(graph)
+    emit = change_cbs[graph.id]
+
+    emit(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "event": "node_created",
+                "node": {
+                    "id": "agent-1",
+                    "title": agent_template.title,
+                    "position": {"x": 40, "y": 50},
+                    "inputs": [
+                        {"id": port.id, "label": port.label, "port_type": port.port_type}
+                        for port in agent_template.inputs
+                    ],
+                    "outputs": [
+                        {"id": port.id, "label": port.label, "type": port.port_type}
+                        for port in agent_template.outputs
+                    ],
+                    "subtitle": agent_template.subtitle,
+                    "status": agent_template.status,
+                    "color": agent_template.color,
+                    "width": agent_template.width,
+                    "data": {
+                        **agent_template.data,
+                        "template_id": agent_template.id,
+                        "template_title": agent_template.title,
+                    },
+                },
+            }
+        )
+    )
+    emit(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "event": "node_created",
+                "node": {
+                    "id": "rule-1",
+                    "title": rule_template.title,
+                    "position": {"x": 320, "y": 50},
+                    "inputs": [
+                        {"id": port.id, "label": port.label, "port_type": port.port_type}
+                        for port in rule_template.inputs
+                    ],
+                    "outputs": [
+                        {"id": port.id, "label": port.label, "port_type": port.port_type}
+                        for port in rule_template.outputs
+                    ],
+                    "subtitle": rule_template.subtitle,
+                    "status": rule_template.status,
+                    "color": rule_template.color,
+                    "width": rule_template.width,
+                    "data": {
+                        **rule_template.data,
+                        "template_id": rule_template.id,
+                        "template_title": rule_template.title,
+                    },
+                },
+            }
+        )
+    )
+    emit(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "event": "edge_created",
+                "edge": {
+                    "id": "edge-agent-rule",
+                    "source_node": "agent-1",
+                    "source_port": "out",
+                    "target_node": "rule-1",
+                    "target_port": "in",
+                },
+            }
+        )
+    )
+
+    data = graph.to_graph_data()
+    assert data == json.loads(json.dumps(data))
+    agent_node = data["nodes"][0]
+    assert agent_node["data"]["node_type"] == "agent"
+    assert agent_node["data"]["default_status"] == "idle"
+    assert agent_node["data"]["session"]["agent_type"] == "codex"
+    assert agent_node["data"]["template_id"] == "agent"
+    assert agent_node["inputs"][0]["port_type"] == "message"
+    assert agent_node["outputs"][1]["type"] == "approval_request"
+    assert data["edges"][0]["id"] == "edge-agent-rule"
+
+    restored = dg.NodeGraph.from_graph_data(data, templates=templates, parent=None)
+    assert restored.to_graph_data() == data
+
+
+def test_node_graph_navigation_events_do_not_mutate_graph_history() -> None:
+    events: list[dict[str, object]] = []
+    graph = dg.NodeGraph(
+        [
+            {"id": "a", "title": "A", "x": 0, "y": 0, "outputs": ["out"]},
+            {"id": "b", "title": "B", "x": 420, "y": 180, "inputs": ["in"]},
+        ],
+        parent=None,
+        on_graph_event=events.append,
+    )
+
+    html = graph.to_dict()["props"]["html"]
+    assert "function fitToView" in html
+    assert "function drawToolbar" in html
+    assert "function drawMinimap" in html
+    assert "viewport_changed" in html
+    assert "zoom_in" in html
+
+    before_data = graph.to_graph_data()
+    before_history = graph.history_state()
+    _, change_cbs = _collect_runtime_callbacks(graph)
+    change_cbs[graph.id](
+        json.dumps(
+            {
+                "schema_version": 1,
+                "event": "viewport_changed",
+                "action": "fit_to_view",
+                "viewport": {"x": 12.5, "y": 24.5, "zoom": 1.25},
+            }
+        )
+    )
+
+    assert graph.to_graph_data() == before_data
+    assert graph.history_state() == before_history
+    assert graph.navigation_state() == {"schema_version": 1, "x": 12.5, "y": 24.5, "zoom": 1.25}
+    assert events[-1]["event"] == "viewport_changed"
+    assert events[-1]["viewport"] == graph.navigation_state()
+
+    payload = graph.fit_to_view()
+    assert payload == {"schema_version": 1, "event": "fit_to_view", "viewport": graph.navigation_state()}
+    assert events[-1] == payload

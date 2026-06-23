@@ -30,41 +30,57 @@ Implemented in the current prototype:
 - Double-clicking empty canvas adds a basic node.
 - Ctrl+D duplicates the selected node.
 - Escape clears selection or cancels the active drag.
+- Versioned graph persistence is available through `NodeGraph.to_graph_data()`,
+  `NodeGraph.set_graph_data(...)`, and `NodeGraph.from_graph_data(...)`.
+- Graph data schema version `1` round-trips nodes, edges, port metadata, custom
+  data, colors, statuses, positions, and width hints.
 - Focused Python tests verify the widget serializes as an interactive canvas
-  editor and exposes the expected editing functions.
-- `examples/node_graph_editor_probe.py` demonstrates the current editor.
+  editor, exposes the expected editing functions, and round-trips persisted
+  graph data.
+- `examples/node_graph_editor_probe.py` demonstrates the current editor and
+  exercises the persistence API by loading graph data from a saved snapshot.
 
 Known limitations:
 
 - Edits currently live inside the canvas runtime and are not synchronized back to
   Python.
-- There is no save/load format yet.
+- There is no Python event bridge for canvas-side edits yet, so callback
+  arguments such as `on_node_select` and `on_node_move` are still compatibility
+  placeholders rather than live callbacks.
 - There is no undo/redo stack.
 - New nodes are generic and not created from a palette.
 - Ports are untyped, so connection validation is minimal.
 - There is no side panel for editing node or port properties.
-- Existing Python callbacks passed to `NodeGraph` are accepted for compatibility
-  but not wired to canvas-side edits yet.
 - The current implementation is canvas-backed rather than native Rust-rendered.
 
 ## Immediate Next Slice
 
-### 1. Persistence
+### 1. Persistence - Complete
 
-Add graph import/export so users can keep edits across sessions.
+Graph import/export now exists so Python-side graph snapshots can be kept across
+sessions.
 
-Required pieces:
+Implemented pieces:
 
 - `NodeGraph.to_graph_data()` returning a serializable schema.
-- `NodeGraph.from_graph_data(...)` or `set_graph_data(...)`.
-- Versioned JSON schema with `schema_version`.
+- `NodeGraph.from_graph_data(...)` and `NodeGraph.set_graph_data(...)`.
+- Versioned JSON schema with `schema_version: 1`.
 - Nodes with IDs, titles, positions, width hints, colors, statuses, inputs,
   outputs, and custom data.
 - Edges with IDs, source node/port, target node/port, label, color, and custom
   data.
-- Example save/load buttons in the probe or a dedicated example.
+- `examples/node_graph_editor_probe.py` constructs a saved graph snapshot and
+  reloads it through `NodeGraph.from_graph_data(...)`.
+- `tests/test_python_api.py` covers JSON-serializable round-trip behavior,
+  mapping inputs, generated edge IDs, unsupported schema versions, and selected
+  node cleanup after replacing graph data.
 
-### 2. Python Event Bridge
+Remaining persistence polish:
+
+- Add actual save/load controls once a live event bridge or app-level file flow
+  can keep canvas edits synchronized with Python state.
+
+### 2. Python Event Bridge - Current Pipeline Fix
 
 Canvas edits need to become DragonGUI events.
 
@@ -87,6 +103,10 @@ Implementation questions:
   scripts.
 - Keep events compact and schema-stable.
 - Let Python callbacks update labels, logs, side panels, and saved graph state.
+- Make canvas-side edits update Python-side `NodeGraph.nodes` and
+  `NodeGraph.edges`, so `to_graph_data()` reflects the current edited graph.
+- Preserve existing callback keyword compatibility while adding a clear primary
+  callback such as `on_graph_event(payload)`.
 
 ### 3. Editor State API
 
@@ -480,14 +500,15 @@ Manual probe checks:
 
 ## Suggested Implementation Order
 
-1. Add graph data export/import and schema versioning.
-2. Add Python event bridge for canvas-side graph changes.
-3. Add terminal session control APIs: send input, capture output, lifecycle events.
-4. Add an agent session model and transcript/event log.
-5. Add the first message envelope parser and router queue.
-6. Add undo/redo history.
-7. Add a simple node palette and property editor.
-8. Add typed ports and connection validation.
-9. Add runtime-oriented node templates for the multi-agent workflow app.
-10. Add layout tools, minimap, and larger graph navigation polish.
+1. [x] Add graph data export/import and schema versioning.
+2. [ ] Add Python event bridge for canvas-side graph changes.
+3. [ ] Add terminal session control APIs: send input, capture output, lifecycle
+   events.
+4. [ ] Add an agent session model and transcript/event log.
+5. [ ] Add the first message envelope parser and router queue.
+6. [ ] Add undo/redo history.
+7. [ ] Add a simple node palette and property editor.
+8. [ ] Add typed ports and connection validation.
+9. [ ] Add runtime-oriented node templates for the multi-agent workflow app.
+10. [ ] Add layout tools, minimap, and larger graph navigation polish.
 
