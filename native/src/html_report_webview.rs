@@ -1,21 +1,25 @@
 use serde_json::Value;
-use winit::window::Window;
+use winit::{event_loop::EventLoopProxy, window::Window};
 
-use crate::{document::WidgetNode, layout::LayoutResult};
+use crate::{commands::RuntimeEvent, document::WidgetNode, layout::LayoutResult};
 
 pub(crate) struct HtmlReportWebViewManager {
     inner: platform::PlatformHtmlReportWebViewManager,
 }
 
 impl HtmlReportWebViewManager {
-    pub(crate) fn new(window: &Window) -> Self {
+    pub(crate) fn new(window: &Window, wake_proxy: EventLoopProxy<RuntimeEvent>) -> Self {
         Self {
-            inner: platform::PlatformHtmlReportWebViewManager::new(window),
+            inner: platform::PlatformHtmlReportWebViewManager::new(window, wake_proxy),
         }
     }
 
     pub(crate) fn sync(&mut self, tree: Option<&WidgetNode>, layout: Option<&LayoutResult>) {
         self.inner.sync(tree, layout);
+    }
+
+    pub(crate) fn drain_messages(&mut self) -> Vec<(String, String)> {
+        self.inner.drain_messages()
     }
 
     pub(crate) fn hide_all(&mut self) {
@@ -34,7 +38,7 @@ mod platform {
         ffi::c_void,
         fs,
         path::{Path, PathBuf},
-        process,
+        process, ptr,
         sync::mpsc,
     };
 
@@ -47,20 +51,23 @@ mod platform {
             CreateCoreWebView2EnvironmentWithOptions, ICoreWebView2, ICoreWebView2Controller,
             ICoreWebView2Environment, ICoreWebView2EnvironmentOptions,
         },
+        WebMessageReceivedEventHandler,
     };
     use windows::{
-        core::Error as WindowsError,
+        core::{Error as WindowsError, PWSTR},
         Win32::{
             Foundation::{E_POINTER, HWND, RECT},
             System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED},
         },
     };
     use winit::{
+        event_loop::EventLoopProxy,
         raw_window_handle::{HasWindowHandle, RawWindowHandle},
         window::Window,
     };
 
     use crate::{
+        commands::RuntimeEvent,
         document::{WidgetKind, WidgetNode},
         layout::{LayoutResult, Rect},
     };
@@ -75,6 +82,9 @@ mod platform {
         user_data_dir: Option<PathBuf>,
         profile_generation: u32,
         profile_recovered: bool,
+        message_tx: mpsc::Sender<(String, String)>,
+        message_rx: mpsc::Receiver<(String, String)>,
+        wake_proxy: EventLoopProxy<RuntimeEvent>,
     }
 
     struct HtmlReportView {
@@ -85,6 +95,7 @@ mod platform {
         visible: bool,
         allow_scripts: Option<bool>,
         status: String,
+        message_token: Option<i64>,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,9 +107,10 @@ mod platform {
     }
 
     impl PlatformHtmlReportWebViewManager {
-        pub(crate) fn new(window: &Window) -> Self {
+        pub(crate) fn new(window: &Window, wake_proxy: EventLoopProxy<RuntimeEvent>) -> Self {
             let forced = std::env::var("DRAGONGUI_HTMLREPORT_WEBVIEW2").ok();
             let smoke = std::env::var("DRAGONGUI_SMOKE_FRAMES").is_ok();
+            let (message_tx, message_rx) = mpsc::channel();
             if forced.as_deref() == Some("0") || (smoke && forced.as_deref() != Some("1")) {
                 return Self {
                     hwnd: None,
@@ -115,6 +127,9 @@ mod platform {
                     user_data_dir: None,
                     profile_generation: 0,
                     profile_recovered: false,
+                    message_tx,
+                    message_rx,
+                    wake_proxy,
                 };
             }
 
@@ -131,6 +146,9 @@ mod platform {
                 user_data_dir: None,
                 profile_generation: 0,
                 profile_recovered: false,
+                message_tx,
+                message_rx,
+                wake_proxy,
             }
         }
 
@@ -155,7 +173,7 @@ mod platform {
             }
 
             let mut active = HashSet::new();
-            for (id, source, rect, allow_scripts) in reports.into_iter().take(1) {
+            for (id, source, rect, allow_scripts) in reports {
                 active.insert(id.clone());
                 if let Err(error) = self.sync_one(&id, source, rect, allow_scripts) {
                     if is_webview_initialization_error(&error) {
@@ -178,6 +196,14 @@ mod platform {
             for id in stale {
                 self.hide_view(&id);
             }
+        }
+
+        pub(crate) fn drain_messages(&mut self) -> Vec<(String, String)> {
+            let mut messages = Vec::new();
+            while let Ok(message) = self.message_rx.try_recv() {
+                messages.push(message);
+            }
+            messages
         }
 
         pub(crate) fn hide_all(&mut self) {
@@ -228,7 +254,7 @@ mod platform {
 
             self.ensure_environment()?;
             if !self.views.contains_key(id) {
-                let view = self.create_view_with_profile_recovery()?;
+                let view = self.create_view_with_profile_recovery(id)?;
                 self.views.insert(id.to_string(), view);
             }
 
@@ -292,8 +318,11 @@ mod platform {
             Ok(())
         }
 
-        fn create_view_with_profile_recovery(&mut self) -> Result<HtmlReportView, String> {
-            match self.create_view() {
+        fn create_view_with_profile_recovery(
+            &mut self,
+            id: &str,
+        ) -> Result<HtmlReportView, String> {
+            match self.create_view(id) {
                 Ok(view) => Ok(view),
                 Err(first_error)
                     if should_retry_with_fresh_profile(&first_error)
@@ -303,7 +332,7 @@ mod platform {
                     self.profile_generation = 1;
                     self.profile_recovered = true;
                     self.ensure_environment()?;
-                    self.create_view().map_err(|second_error| {
+                    self.create_view(id).map_err(|second_error| {
                         format!("{second_error}; first attempt failed with: {first_error}")
                     })
                 }
@@ -311,7 +340,7 @@ mod platform {
             }
         }
 
-        fn create_view(&self) -> Result<HtmlReportView, String> {
+        fn create_view(&self, id: &str) -> Result<HtmlReportView, String> {
             let Some(parent) = self.hwnd else {
                 return Err("missing Win32 parent HWND".to_string());
             };
@@ -356,6 +385,12 @@ mod platform {
                     let _ = settings.SetAreDevToolsEnabled(true);
                 }
             }
+            let message_token = Self::register_message_handler(
+                &webview,
+                id,
+                self.message_tx.clone(),
+                self.wake_proxy.clone(),
+            )?;
             Ok(HtmlReportView {
                 controller,
                 webview,
@@ -364,7 +399,38 @@ mod platform {
                 visible: false,
                 allow_scripts: None,
                 status: "created".to_string(),
+                message_token: Some(message_token),
             })
+        }
+
+        fn register_message_handler(
+            webview: &ICoreWebView2,
+            id: &str,
+            message_tx: mpsc::Sender<(String, String)>,
+            wake_proxy: EventLoopProxy<RuntimeEvent>,
+        ) -> Result<i64, String> {
+            let widget_id = id.to_string();
+            let mut token = 0;
+            unsafe {
+                webview
+                    .add_WebMessageReceived(
+                        &WebMessageReceivedEventHandler::create(Box::new(move |_webview, args| {
+                            if let Some(args) = args {
+                                let mut message = PWSTR(ptr::null_mut());
+                                if args.WebMessageAsJson(&mut message).is_ok() {
+                                    let message = CoTaskMemPWSTR::from(message);
+                                    let _ =
+                                        message_tx.send((widget_id.clone(), message.to_string()));
+                                    let _ = wake_proxy.send_event(RuntimeEvent::Wake);
+                                }
+                            }
+                            Ok(())
+                        })),
+                        &mut token,
+                    )
+                    .map_err(|error| format!("WebView2 message handler failed: {error}"))?;
+            }
+            Ok(token)
         }
 
         fn hide_view(&mut self, id: &str) {
@@ -451,6 +517,9 @@ mod platform {
     impl Drop for HtmlReportView {
         fn drop(&mut self) {
             unsafe {
+                if let Some(token) = self.message_token.take() {
+                    let _ = self.webview.remove_WebMessageReceived(token);
+                }
                 let _ = self.controller.Close();
             }
         }
@@ -629,18 +698,22 @@ mod platform {
 #[cfg(not(windows))]
 mod platform {
     use serde_json::{json, Value};
-    use winit::window::Window;
+    use winit::{event_loop::EventLoopProxy, window::Window};
 
-    use crate::{document::WidgetNode, layout::LayoutResult};
+    use crate::{commands::RuntimeEvent, document::WidgetNode, layout::LayoutResult};
 
     pub(crate) struct PlatformHtmlReportWebViewManager;
 
     impl PlatformHtmlReportWebViewManager {
-        pub(crate) fn new(_window: &Window) -> Self {
+        pub(crate) fn new(_window: &Window, _wake_proxy: EventLoopProxy<RuntimeEvent>) -> Self {
             Self
         }
 
         pub(crate) fn sync(&mut self, _tree: Option<&WidgetNode>, _layout: Option<&LayoutResult>) {}
+
+        pub(crate) fn drain_messages(&mut self) -> Vec<(String, String)> {
+            Vec::new()
+        }
 
         pub(crate) fn hide_all(&mut self) {}
 

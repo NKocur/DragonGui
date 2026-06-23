@@ -1725,9 +1725,8 @@ pub fn hit_test_extension_event(
     pos: [f32; 2],
     event: &str,
 ) -> Option<(String, WidgetKind)> {
-    let accepts_event = |node: &WidgetNode| {
-        node.kind == WidgetKind::Extension && node_has_event(node, event)
-    };
+    let accepts_event =
+        |node: &WidgetNode| node.kind == WidgetKind::Extension && node_has_event(node, event);
     if let Some(modal) = active_modal(tree) {
         let r = layout.rects.get(&modal.id)?;
         if !rect_contains(r, pos) {

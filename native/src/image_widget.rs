@@ -475,10 +475,7 @@ fn collect_extension_display_list_image_specs(
             w: local_w * sx,
             h: local_h * sy,
         };
-        let radius = object_f32(command, "radius")
-            .unwrap_or(0.0)
-            .max(0.0)
-            * sx.min(sy).abs();
+        let radius = object_f32(command, "radius").unwrap_or(0.0).max(0.0) * sx.min(sy).abs();
         out.push(ImageSpec {
             path: path.to_string(),
             rect: image_rect,

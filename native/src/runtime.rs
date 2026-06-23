@@ -14,7 +14,7 @@ use winit::dpi::LogicalSize;
 use winit::dpi::PhysicalPosition;
 use winit::dpi::PhysicalSize;
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy};
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 use winit::window::{Theme as WinitTheme, Window, WindowId};
 
@@ -6996,7 +6996,11 @@ impl WgpuState {
         Ok((true, t0.elapsed().as_secs_f64() * 1000.0))
     }
 
-    async fn new(window: Arc<Window>, spec: AppSpec) -> Result<(Self, f64), DragonError> {
+    async fn new(
+        window: Arc<Window>,
+        spec: AppSpec,
+        wake_proxy: EventLoopProxy<RuntimeEvent>,
+    ) -> Result<(Self, f64), DragonError> {
         let size = window.inner_size();
         let width = size.width.max(1);
         let height = size.height.max(1);
@@ -7298,7 +7302,7 @@ impl WgpuState {
             line_plots,
             images,
             scatter_compositor,
-            html_reports: HtmlReportWebViewManager::new(window.as_ref()),
+            html_reports: HtmlReportWebViewManager::new(window.as_ref(), wake_proxy),
             widget_tree: spec.widget_tree,
             widget_kinds,
             caret_positions: HashMap::new(),
@@ -7669,6 +7673,10 @@ impl WgpuState {
     fn sync_html_reports(&mut self) {
         self.html_reports
             .sync(self.widget_tree.as_ref(), self.current_layout.as_ref());
+    }
+
+    fn drain_html_report_messages(&mut self) -> Vec<(String, String)> {
+        self.html_reports.drain_messages()
     }
 
     fn rebuild_primitives(&mut self) {
@@ -9029,11 +9037,16 @@ impl WgpuState {
         dy: f32,
         button: Option<&str>,
     ) -> Option<String> {
-        if self.widget_kind(id) != Some(WidgetKind::Extension) || !self.widget_has_event(id, event) {
+        if self.widget_kind(id) != Some(WidgetKind::Extension) || !self.widget_has_event(id, event)
+        {
             return None;
         }
         let layout = self.current_layout.as_ref()?;
-        let rect = layout.rects.get(id).copied().or_else(|| layout.visible_rect(id))?;
+        let rect = layout
+            .rects
+            .get(id)
+            .copied()
+            .or_else(|| layout.visible_rect(id))?;
         let mut payload = Map::new();
         payload.insert("event".to_string(), json!(event));
         payload.insert("widget_id".to_string(), json!(id));
@@ -14103,6 +14116,7 @@ struct DragonApp {
     spec: Option<AppSpec>,
     command_bridge: Option<Arc<CommandBridge>>,
     python_runtime: Option<Py<PyAny>>,
+    wake_proxy: EventLoopProxy<RuntimeEvent>,
     window: Option<Arc<Window>>,
     gpu: Option<WgpuState>,
     error: Option<DragonError>,
@@ -14193,13 +14207,18 @@ struct DragonApp {
 }
 
 impl DragonApp {
-    fn new(mut spec: AppSpec, smoke_frames: Option<u32>) -> Self {
+    fn new(
+        mut spec: AppSpec,
+        smoke_frames: Option<u32>,
+        wake_proxy: EventLoopProxy<RuntimeEvent>,
+    ) -> Self {
         let command_bridge = spec.command_bridge.take();
         let python_runtime = spec.python_runtime.take();
         Self {
             spec: Some(spec),
             command_bridge,
             python_runtime,
+            wake_proxy,
             window: None,
             gpu: None,
             error: None,
@@ -14645,6 +14664,17 @@ impl DragonApp {
     fn request_redraw(&self) {
         if let Some(w) = &self.window {
             w.request_redraw();
+        }
+    }
+
+    fn drain_html_report_messages(&mut self) {
+        let messages = self
+            .gpu
+            .as_mut()
+            .map(WgpuState::drain_html_report_messages)
+            .unwrap_or_default();
+        for (id, message) in messages {
+            self.emit_change(&id, ChangeValue::Text(message));
         }
     }
 
@@ -18491,10 +18521,9 @@ impl DragonApp {
                     _ => {}
                 },
                 WidgetKind::Extension => {
-                    let payload = self
-                        .gpu
-                        .as_ref()
-                        .and_then(|gpu| gpu.extension_key_event_payload(&id, &event, self.modifiers));
+                    let payload = self.gpu.as_ref().and_then(|gpu| {
+                        gpu.extension_key_event_payload(&id, &event, self.modifiers)
+                    });
                     if let Some(payload) = payload {
                         self.emit_change(&id, ChangeValue::Text(payload));
                         return;
@@ -19174,7 +19203,11 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
             }
         };
 
-        match pollster::block_on(WgpuState::new(Arc::clone(&window), spec)) {
+        match pollster::block_on(WgpuState::new(
+            Arc::clone(&window),
+            spec,
+            self.wake_proxy.clone(),
+        )) {
             Ok((gpu, upload_ms)) => {
                 self.upload_ms = upload_ms;
                 self.gpu = Some(gpu);
@@ -19206,7 +19239,12 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: RuntimeEvent) {
         match event {
-            RuntimeEvent::Wake => self.drain_runtime_commands(),
+            RuntimeEvent::Wake => {
+                self.drain_runtime_commands();
+                self.drain_html_report_messages();
+                self.drain_runtime_commands();
+                self.request_redraw();
+            }
         }
     }
 
@@ -20398,17 +20436,18 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                     .map(|old| (new_pos[0] - old[0], new_pos[1] - old[1]))
                     .unwrap_or((0.0, 0.0));
                 let extension_move_payload = self.gpu.as_ref().and_then(|gpu| {
-                    gpu.extension_event_at(new_pos, "pointer_move").and_then(|(id, _)| {
-                        gpu.extension_event_payload(
-                            &id,
-                            "pointer_move",
-                            new_pos,
-                            move_delta.0,
-                            move_delta.1,
-                            None,
-                        )
-                        .map(|payload| (id, payload))
-                    })
+                    gpu.extension_event_at(new_pos, "pointer_move")
+                        .and_then(|(id, _)| {
+                            gpu.extension_event_payload(
+                                &id,
+                                "pointer_move",
+                                new_pos,
+                                move_delta.0,
+                                move_delta.1,
+                                None,
+                            )
+                            .map(|payload| (id, payload))
+                        })
                 });
                 if let Some((id, payload)) = extension_move_payload {
                     self.emit_change(&id, ChangeValue::Text(payload));
@@ -20535,15 +20574,8 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                     }
                     let extension_wheel_payload = self.gpu.as_ref().and_then(|gpu| {
                         gpu.extension_event_at(pos, "wheel").and_then(|(id, _)| {
-                            gpu.extension_event_payload(
-                                &id,
-                                "wheel",
-                                pos,
-                                scroll_x,
-                                scroll_y,
-                                None,
-                            )
-                            .map(|payload| (id, payload))
+                            gpu.extension_event_payload(&id, "wheel", pos, scroll_x, scroll_y, None)
+                                .map(|payload| (id, payload))
                         })
                     });
                     if let Some((id, payload)) = extension_wheel_payload {
@@ -20635,6 +20667,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
             }
 
             WindowEvent::RedrawRequested => {
+                let mut html_report_messages = Vec::new();
                 if let Some(gpu) = &mut self.gpu {
                     let timings = match gpu.render() {
                         Ok(timings) => timings,
@@ -20644,6 +20677,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                             return;
                         }
                     };
+                    html_report_messages = gpu.drain_html_report_messages();
                     let quality_budget_ms = timings.work_ms();
                     self.record_frame_telemetry(timings);
                     if self.update_scatter_quality_budgets(quality_budget_ms) {
@@ -20659,6 +20693,9 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                             bridge.wake();
                         }
                     }
+                }
+                for (id, message) in html_report_messages {
+                    self.emit_change(&id, ChangeValue::Text(message));
                 }
                 if let Some(limit) = self.smoke_frames {
                     if self.frames_rendered >= limit {
@@ -20688,9 +20725,10 @@ pub fn run_event_loop(spec: AppSpec) -> Result<RunResult, DragonError> {
         .map_err(|e| DragonError::GpuInit(format!("event loop: {e}")))?;
     event_loop.set_control_flow(ControlFlow::Wait);
 
-    let mut app = DragonApp::new(spec, smoke_frames);
+    let wake_proxy = event_loop.create_proxy();
+    let mut app = DragonApp::new(spec, smoke_frames, wake_proxy.clone());
     if let Some(bridge) = &app.command_bridge {
-        bridge.install_proxy(event_loop.create_proxy());
+        bridge.install_proxy(wake_proxy);
     }
     let event_loop_result = event_loop
         .run_app(&mut app)

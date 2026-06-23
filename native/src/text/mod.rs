@@ -34,10 +34,10 @@ use crate::style::{
     collapsed_part_style_for_state, collapsible_header_height_for_style,
     expanded_part_style_for_state, number_stepper_width_for_style, open_part_style_for_state,
     selected_part_style_for_state, standalone_badge_horizontal_padding_lp,
-    state_part_style_for_state, uniform_layout_padding, FontFamily, FontStyle, FontVariantNumeric,
-    ColorRef, GeneratedContent, LineHeight, NodeStyle, PartLayoutStyle, PartStyle, PositionStyle,
-    TextAlign, TextOverflow, TextSpacing, TextStyle, TextTransform, TransformStyle, VisualStyle,
-    BADGE_GAP_LP, BORDER_WIDTH_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP,
+    state_part_style_for_state, uniform_layout_padding, ColorRef, FontFamily, FontStyle,
+    FontVariantNumeric, GeneratedContent, LineHeight, NodeStyle, PartLayoutStyle, PartStyle,
+    PositionStyle, TextAlign, TextOverflow, TextSpacing, TextStyle, TextTransform, TransformStyle,
+    VisualStyle, BADGE_GAP_LP, BORDER_WIDTH_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP,
     DROPDOWN_CHEVRON_WIDTH_LP, TAB_GAP_LP, TOGGLE_SWITCH_TRACK_WIDTH_LP,
 };
 use crate::table;

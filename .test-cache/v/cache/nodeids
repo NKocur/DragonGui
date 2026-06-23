@@ -128,6 +128,7 @@
   "tests/test_python_api.py::test_navigation_validation",
   "tests/test_python_api.py::test_navigation_widgets_serialize_and_register_callbacks",
   "tests/test_python_api.py::test_node_graph_canvas_events_sync_state_without_user_callbacks",
+  "tests/test_python_api.py::test_node_graph_create_node_from_template_updates_model_and_notifies",
   "tests/test_python_api.py::test_node_graph_data_round_trips_versioned_schema",
   "tests/test_python_api.py::test_node_graph_dirty_uses_baseline_snapshot_not_undo_depth",
   "tests/test_python_api.py::test_node_graph_event_bridge_dispatches_structured_payloads",

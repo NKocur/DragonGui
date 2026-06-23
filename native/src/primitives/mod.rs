@@ -150,7 +150,8 @@ fn emit_extension_display_list(
                 let Some(local_y) = object_f32(command, "y") else {
                     continue;
                 };
-                let Some(local_w) = object_f32(command, "w").or_else(|| object_f32(command, "width"))
+                let Some(local_w) =
+                    object_f32(command, "w").or_else(|| object_f32(command, "width"))
                 else {
                     continue;
                 };
@@ -162,10 +163,8 @@ fn emit_extension_display_list(
                 if local_w <= 0.0 || local_h <= 0.0 {
                     continue;
                 }
-                let radius = object_f32(command, "radius")
-                    .unwrap_or(0.0)
-                    .max(0.0)
-                    * sx.min(sy).abs();
+                let radius =
+                    object_f32(command, "radius").unwrap_or(0.0).max(0.0) * sx.min(sy).abs();
                 let screen = [
                     rect[0] + local_x * sx,
                     rect[1] + local_y * sy,
@@ -6657,12 +6656,7 @@ pub(crate) fn pie_chart_text_labels(
                 anchor: "box-center",
                 color: Some([center_color[0], center_color[1], center_color[2]]),
                 font_size: Some(font_size),
-                clip_rect: Some([
-                    cx - inner * 0.48,
-                    cy - 23.0 * sf,
-                    inner * 0.96,
-                    26.0 * sf,
-                ]),
+                clip_rect: Some([cx - inner * 0.48, cy - 23.0 * sf, inner * 0.96, 26.0 * sf]),
             });
         }
         if let Some(caption) = node.props.pie_chart.center_label.as_deref() {
@@ -6675,12 +6669,7 @@ pub(crate) fn pie_chart_text_labels(
                 anchor: "box-center",
                 color: Some([caption_color[0], caption_color[1], caption_color[2]]),
                 font_size: Some(10.5),
-                clip_rect: Some([
-                    cx - inner * 0.50,
-                    cy + 4.0 * sf,
-                    inner,
-                    18.0 * sf,
-                ]),
+                clip_rect: Some([cx - inner * 0.50, cy + 4.0 * sf, inner, 18.0 * sf]),
             });
         }
     }
@@ -6734,12 +6723,7 @@ pub(crate) fn pie_chart_text_labels(
                 anchor: "top-left",
                 color: row_color,
                 font_size: Some(legend_font_size),
-                clip_rect: Some([
-                    legend[0] + legend[2] - 44.0 * sf,
-                    y,
-                    40.0 * sf,
-                    row_h,
-                ]),
+                clip_rect: Some([legend[0] + legend[2] - 44.0 * sf, y, 40.0 * sf, row_h]),
             });
         }
     }
@@ -14693,12 +14677,14 @@ mod tests {
         assert_eq!(red_rect.rect, [20.0, 10.0, 40.0, 20.0]);
         assert_eq!(red_rect.radii, [4.0, 4.0, 4.0, 4.0]);
         assert!(
-            out.iter().any(|inst| (inst.transform2[3] - 1.0).abs() < 0.001),
+            out.iter()
+                .any(|inst| (inst.transform2[3] - 1.0).abs() < 0.001),
             "display-list line should emit a line segment primitive"
         );
         assert!(
             out.iter()
-                .any(|inst| inst.color == Theme::dark().success && inst.rect == [92.0, 42.0, 16.0, 16.0]),
+                .any(|inst| inst.color == Theme::dark().success
+                    && inst.rect == [92.0, 42.0, 16.0, 16.0]),
             "display-list circle should resolve theme token colors"
         );
     }

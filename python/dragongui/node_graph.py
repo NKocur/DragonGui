@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -246,6 +246,58 @@ class NodeGraph(HtmlReport):
     def node_position(self, node_id: str) -> tuple[float, float]:
         node = self._node_by_id(node_id)
         return node.x, node.y
+
+    def create_node_from_template(
+        self,
+        template_id: str,
+        x: float,
+        y: float,
+        *,
+        node_id: str | None = None,
+        notify: bool = False,
+    ) -> NodeGraphNode:
+        """Create a node from a registered template at graph coordinates."""
+
+        template = self._template_by_id(template_id)
+        new_id = self._text(node_id, "node id") if node_id is not None else self._next_node_id(template.id)
+        if new_id in self._node_ids():
+            raise ValueError(f"NodeGraph node id {new_id!r} already exists")
+        data = _json_copy(template.data or {}, "template custom data")
+        data["template_id"] = template.id
+        data["template_title"] = template.title
+        node = NodeGraphNode(
+            id=new_id,
+            title=template.title,
+            x=self._finite(x, "node x"),
+            y=self._finite(y, "node y"),
+            inputs=self._clone_ports(template.inputs),
+            outputs=self._clone_ports(template.outputs),
+            subtitle=template.subtitle,
+            status=template.status,
+            color=template.color,
+            width=template.width,
+            data=data,
+        )
+        before = self.to_graph_data()
+        self.nodes = (*self.nodes, node)
+        self.selected_node = node.id
+        if self.to_graph_data() != before:
+            self._undo_stack.append(before)
+            self._redo_stack.clear()
+        self.set_html(self._html())
+        if notify:
+            self._dispatch_graph_event(
+                {
+                    "schema_version": _GRAPH_SCHEMA_VERSION,
+                    "event": "node_created",
+                    "node": _node_graph_data(node),
+                    "history": self.history_state(),
+                }
+            )
+            self._dispatch_graph_event(
+                {"schema_version": _GRAPH_SCHEMA_VERSION, "event": "graph_changed", "history": self.history_state()}
+            )
+        return node
 
     def history_state(self) -> dict[str, object]:
         """Return compact undo/redo and dirty state for the graph editor."""
@@ -516,6 +568,8 @@ class NodeGraph(HtmlReport):
         target_node = self._node_by_id_or_none(edge.target_node)
         if target_node is None:
             return f"unknown target node {edge.target_node!r}"
+        if source_node.id == target_node.id:
+            return "self connection rejected"
         source_port = _port_by_id(source_node.outputs, edge.source_port)
         if source_port is None:
             if _port_by_id(source_node.inputs, edge.source_port) is not None:
@@ -558,6 +612,35 @@ class NodeGraph(HtmlReport):
             if node.id == node_id:
                 return node
         return None
+
+    def _template_by_id(self, template_id: str) -> NodeGraphTemplate:
+        normalized = self._text(template_id, "template id")
+        template = next((template for template in self.templates if template.id == normalized), None)
+        if template is None:
+            raise ValueError(f"unknown NodeGraph template {normalized!r}")
+        return template
+
+    def _next_node_id(self, template_id: str) -> str:
+        prefix = "".join(ch.lower() if ch.isalnum() else "-" for ch in template_id).strip("-") or "node"
+        existing = self._node_ids()
+        index = 1
+        while f"{prefix}-{index}" in existing:
+            index += 1
+        return f"{prefix}-{index}"
+
+    @classmethod
+    def _clone_ports(cls, ports: Sequence[NodeGraphPort]) -> tuple[NodeGraphPort, ...]:
+        cloned: list[NodeGraphPort] = []
+        for port in ports:
+            cloned.append(
+                NodeGraphPort(
+                    port.id,
+                    port.label,
+                    None if port.data is None else _json_copy(port.data, "port custom data"),
+                    port.port_type,
+                )
+            )
+        return tuple(cloned)
 
     @classmethod
     def _graph_items_from_data(
@@ -761,6 +844,7 @@ def _node_graph_html(
     const PALETTE_Y = 10;
     const PALETTE_H = 28;
     const palette = {{ selected: config.templates[0] ? config.templates[0].id : null, items: [] }};
+    const nodePicker = {{ open: false, x: 0, y: 0, graphX: 0, graphY: 0, query: '', selected: 0, rect: null, items: [] }};
     const TOOLBAR_Y = 10;
     const TOOLBAR_H = 28;
     const TOOLBAR_W = 34;
@@ -804,6 +888,81 @@ def _node_graph_html(
       return null;
     }}
 
+    function templateSearchText(template) {{
+      const parts = [template.id, template.title, template.subtitle, template.status];
+      for (const port of [...(template.inputs || []), ...(template.outputs || [])]) parts.push(port.id, port.label, port.port_type || port.type);
+      if (template.data) for (const value of Object.values(template.data)) parts.push(value);
+      return parts.filter(value => value !== undefined && value !== null).join(' ').toLowerCase();
+    }}
+
+    function nodePickerItems() {{
+      const query = nodePicker.query.trim().toLowerCase();
+      const items = query
+        ? config.templates.filter(template => templateSearchText(template).includes(query))
+        : config.templates.slice();
+      return items.slice(0, 12);
+    }}
+
+    function clampNodePicker() {{
+      const rect = canvas.getBoundingClientRect();
+      const width = Math.min(420, Math.max(280, rect.width - 24));
+      const maxRows = Math.max(1, Math.min(8, nodePickerItems().length || 1));
+      const height = 72 + maxRows * 44 + 14;
+      nodePicker.x = Math.max(12, Math.min(nodePicker.x, rect.width - width - 12));
+      nodePicker.y = Math.max(12, Math.min(nodePicker.y, rect.height - Math.min(height, rect.height - 24) - 12));
+      nodePicker.rect = {{ x: nodePicker.x, y: nodePicker.y, w: width, h: Math.min(height, rect.height - 24) }};
+    }}
+
+    function openNodePicker(point) {{
+      if (!config.templates.length) {{
+        addNode(point.x, point.y);
+        draw();
+        return;
+      }}
+      nodePicker.open = true;
+      nodePicker.x = point.sx + 10;
+      nodePicker.y = point.sy + 10;
+      nodePicker.graphX = point.x;
+      nodePicker.graphY = point.y;
+      nodePicker.query = '';
+      nodePicker.selected = Math.max(0, config.templates.findIndex(template => template.id === palette.selected));
+      clampNodePicker();
+      emitGraphEvent({{ event: 'node_picker_opened', position: {{ x: point.x, y: point.y }}, template: palette.selected || null }});
+      draw();
+    }}
+
+    function closeNodePicker(notify = true) {{
+      if (!nodePicker.open) return;
+      nodePicker.open = false;
+      nodePicker.items = [];
+      if (notify) emitGraphEvent({{ event: 'node_picker_closed' }});
+      draw();
+    }}
+
+    function chooseNodePickerSelection(index = nodePicker.selected) {{
+      const items = nodePickerItems();
+      if (!items.length) return false;
+      const bounded = Math.max(0, Math.min(index, items.length - 1));
+      const template = items[bounded];
+      palette.selected = template.id;
+      addNode(nodePicker.graphX, nodePicker.graphY, template);
+      emitGraphEvent({{ event: 'node_picker_selected', template: template.id, position: {{ x: nodePicker.graphX, y: nodePicker.graphY }} }});
+      closeNodePicker(false);
+      draw();
+      return true;
+    }}
+
+    function hitNodePicker(sx, sy) {{
+      if (!nodePicker.open || !nodePicker.rect) return null;
+      const rect = nodePicker.rect;
+      if (sx < rect.x || sx > rect.x + rect.w || sy < rect.y || sy > rect.y + rect.h) return {{ kind: 'outside' }};
+      const closeRect = {{ x: rect.x + rect.w - 34, y: rect.y + 10, w: 22, h: 22 }};
+      if (sx >= closeRect.x && sx <= closeRect.x + closeRect.w && sy >= closeRect.y && sy <= closeRect.y + closeRect.h) return {{ kind: 'close' }};
+      for (const item of nodePicker.items) {{
+        if (sx >= item.x && sx <= item.x + item.w && sy >= item.y && sy <= item.y + item.h) return {{ kind: 'item', index: item.index, template: item.template }};
+      }}
+      return {{ kind: 'inside' }};
+    }}
     const PORT_STEP = 22;
     const PORT_TOP_PAD = 22;
     const PORT_BOTTOM_PAD = 22;
@@ -1336,6 +1495,79 @@ def _node_graph_html(
       ctx.restore();
     }}
 
+    function drawNodePicker() {{
+      if (!nodePicker.open) return;
+      clampNodePicker();
+      const rect = nodePicker.rect;
+      const items = nodePickerItems();
+      nodePicker.selected = Math.max(0, Math.min(nodePicker.selected, Math.max(0, items.length - 1)));
+      nodePicker.items = [];
+      ctx.save();
+      ctx.globalAlpha = 0.96;
+      roundedRect(rect.x, rect.y, rect.w, rect.h, 8);
+      ctx.fillStyle = '#111821';
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = '#43c6ac';
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+      ctx.fillStyle = '#eef4ff';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.font = '700 13px Segoe UI';
+      ctx.fillText('Add Node', rect.x + 14, rect.y + 22);
+      ctx.textAlign = 'center';
+      ctx.font = '15px Segoe UI';
+      ctx.fillStyle = '#9aa8b8';
+      ctx.fillText('x', rect.x + rect.w - 23, rect.y + 22);
+
+      const inputX = rect.x + 14;
+      const inputY = rect.y + 44;
+      const inputW = rect.w - 28;
+      roundedRect(inputX, inputY, inputW, 28, 6);
+      ctx.fillStyle = '#0b1017';
+      ctx.fill();
+      ctx.strokeStyle = '#26384a';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.textAlign = 'left';
+      ctx.font = '12px Segoe UI';
+      ctx.fillStyle = nodePicker.query ? '#eef4ff' : '#738296';
+      ctx.fillText(nodePicker.query || 'Type to filter templates...', inputX + 10, inputY + 14);
+
+      let y = rect.y + 82;
+      if (!items.length) {{
+        ctx.fillStyle = '#9aa8b8';
+        ctx.fillText('No matching templates', rect.x + 16, y + 18);
+      }}
+      for (let index = 0; index < items.length; index++) {{
+        const template = items[index];
+        const selected = index === nodePicker.selected;
+        const rowH = 40;
+        roundedRect(rect.x + 10, y, rect.w - 20, rowH, 6);
+        ctx.fillStyle = selected ? '#26384a' : '#151c26';
+        ctx.fill();
+        ctx.strokeStyle = selected ? '#eef4ff' : '#26384a';
+        ctx.lineWidth = selected ? 1.2 : 1;
+        ctx.stroke();
+        ctx.fillStyle = template.color || '#43c6ac';
+        ctx.beginPath();
+        ctx.arc(rect.x + 26, y + rowH / 2, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#eef4ff';
+        ctx.font = '12px Segoe UI';
+        ctx.fillText(templateLabel(template), rect.x + 40, y + 14);
+        if (template.subtitle || template.status) {{
+          ctx.fillStyle = '#9aa8b8';
+          ctx.font = '10.5px Segoe UI';
+          ctx.fillText(template.subtitle || template.status, rect.x + 40, y + 29);
+        }}
+        nodePicker.items.push({{ template, index, x: rect.x + 10, y, w: rect.w - 20, h: rowH }});
+        y += rowH + 4;
+      }}
+      ctx.restore();
+    }}
     function drawToolbar(width) {{
       toolbar.items = [];
       const actions = [
@@ -1473,6 +1705,7 @@ def _node_graph_html(
       drawPalette();
       drawMinimap(rect.width, rect.height);
       drawToolbar(rect.width);
+      drawNodePicker();
       ctx.fillStyle = '#8b98a8'; ctx.font = '11px Segoe UI'; ctx.textAlign = 'left';
       ctx.fillText(`${{state.nodes.length}} nodes / ${{state.edges.length}} edges`, 12, rect.height - 16);
     }}
@@ -1480,7 +1713,14 @@ def _node_graph_html(
     canvas.addEventListener('mousedown', event => {{
       canvas.focus();
       const p = graphPoint(event);
-      const toolbarAction = hitToolbar(p.sx, p.sy);
+      if (nodePicker.open) {{
+        const pickerHit = hitNodePicker(p.sx, p.sy);
+        if (pickerHit && pickerHit.kind === 'item') chooseNodePickerSelection(pickerHit.index);
+        else if (pickerHit && pickerHit.kind === 'close') closeNodePicker();
+        else if (pickerHit && pickerHit.kind === 'outside') closeNodePicker();
+        event.preventDefault();
+        return;
+      }}      const toolbarAction = hitToolbar(p.sx, p.sy);
       if (toolbarAction) {{
         runToolbarAction(toolbarAction);
         state.drag = null;
@@ -1580,11 +1820,43 @@ def _node_graph_html(
     canvas.addEventListener('dblclick', event => {{
       const p = graphPoint(event);
       if (hitPort(p.sx, p.sy) || hitEdge(p.sx, p.sy) || hitNode(p.x, p.y)) return;
-      addNode(p.x, p.y);
-      draw();
+      if (!config.emitEvents) {{
+        addNode(p.x, p.y);
+        draw();
+        return;
+      }}
+      openNodePicker(p);
     }});
 
     canvas.addEventListener('keydown', event => {{
+      if (nodePicker.open) {{
+        if (event.key === 'Escape') {{
+          event.preventDefault();
+          closeNodePicker();
+        }} else if (event.key === 'Enter') {{
+          event.preventDefault();
+          chooseNodePickerSelection();
+        }} else if (event.key === 'ArrowDown') {{
+          event.preventDefault();
+          nodePicker.selected = Math.min(nodePicker.selected + 1, Math.max(0, nodePickerItems().length - 1));
+          draw();
+        }} else if (event.key === 'ArrowUp') {{
+          event.preventDefault();
+          nodePicker.selected = Math.max(0, nodePicker.selected - 1);
+          draw();
+        }} else if (event.key === 'Backspace') {{
+          event.preventDefault();
+          nodePicker.query = nodePicker.query.slice(0, -1);
+          nodePicker.selected = 0;
+          draw();
+        }} else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {{
+          event.preventDefault();
+          nodePicker.query += event.key;
+          nodePicker.selected = 0;
+          draw();
+        }}
+        return;
+      }}
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && !event.shiftKey) {{
         event.preventDefault();
         undoGraph();
@@ -1619,6 +1891,7 @@ def _node_graph_html(
         state.drag = null;
         state.selected = null;
         state.selectedEdge = null;
+        emitGraphEvent({{ event: 'selection_cleared' }});
         draw();
       }}
     }});
@@ -1931,6 +2204,10 @@ __all__ = [
     "NodeGraphTemplate",
     "multi_agent_node_templates",
 ]
+
+
+
+
 
 
 

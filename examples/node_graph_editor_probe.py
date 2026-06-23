@@ -284,10 +284,19 @@ counts_label: dg.Label | None = None
 event_log: dg.LogView | None = None
 selected_node_id: str | None = None
 
-
 def log(line: object = "") -> None:
     if event_log is not None:
         event_log.append_line(line)
+
+
+def add_toolbar_node() -> None:
+    global selected_node_id
+    if graph is None:
+        return
+    node = graph.create_node_from_template(TEMPLATES[0].id, 120, 120, notify=True)
+    selected_node_id = node.id
+    log(f"toolbar created {node.id} from {TEMPLATES[0].id} at 120,120")
+    refresh_state()
 
 
 def refresh_state() -> None:
@@ -317,6 +326,19 @@ def on_graph_event(payload: dict[str, object]) -> None:
         selected_node_id = None if node is None else str(node)
         if selection_label is not None:
             selection_label.set_value(f"Selected: {selected_node_id or 'none'}")
+    elif event == "node_created":
+        node = payload.get("node")
+        if isinstance(node, dict):
+            selected_node_id = None if node.get("id") is None else str(node.get("id"))
+            if selection_label is not None:
+                selection_label.set_value(f"Selected: {selected_node_id or 'none'}")
+    elif event == "node_picker_opened":
+        position = payload.get("position")
+        if isinstance(position, dict) and status_label is not None:
+            status_label.set_value(f"Choose node for {float(position.get('x', 0.0)):.0f},{float(position.get('y', 0.0)):.0f}")
+    elif event == "node_picker_selected":
+        if status_label is not None:
+            status_label.set_value(f"Added template: {payload.get('template')}")
     elif event in {"selection_cleared", "edge_selected"}:
         selected_node_id = None
         if selection_label is not None:
@@ -440,8 +462,8 @@ with dg.HLayout(class_="root"):
     with dg.Panel("Probe Controls", class_="side"):
         dg.Label("Canvas Checks", class_="section")
         dg.Label(
-            "Use the palette at top-left, double-click to create, drag typed pins, press Enter/F2 "
-            "to rename, Ctrl+Z/Ctrl+Y for history, F to fit, +/- to zoom, G for grid.",
+            "Double-click empty canvas to choose a node from the command palette. Drag typed pins, "
+            "press Enter/F2 to rename, Ctrl+Z/Ctrl+Y for history, F to fit, +/- to zoom, G for grid.",
             class_="muted",
         )
         history_label = dg.Label("History: loading", class_="status")
@@ -453,6 +475,7 @@ with dg.HLayout(class_="root"):
             dg.Button("Fit Request", on_click=request_fit)
             dg.Button("Snapshot", on_click=log_snapshot)
             dg.Button("Model Smoke", on_click=run_model_smoke)
+            dg.Button("Add Agent Node", on_click=add_toolbar_node)
         dg.Label("Event Log", class_="section")
         event_log = dg.LogView(
             [
@@ -468,3 +491,5 @@ refresh_state()
 
 if __name__ == "__main__":
     print(app.run(win))
+
+
