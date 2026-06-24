@@ -686,9 +686,22 @@ impl WidgetState {
             return false;
         };
         let max_scroll = text_area_max_scroll(value, visible_h, line_h);
+        self.scroll_text_area_with_max_scroll(id, delta_x, delta_y, max_scroll)
+    }
+
+    pub fn scroll_text_area_with_max_scroll(
+        &mut self,
+        id: &str,
+        delta_x: f32,
+        delta_y: f32,
+        max_scroll: f32,
+    ) -> bool {
+        if !self.text_val.contains_key(id) {
+            return false;
+        }
         let current_y = self.text_scroll_y.get(id).copied().unwrap_or(0.0);
         let current_x = self.text_area_scroll_x(id);
-        let next_y = (current_y + delta_y).clamp(0.0, max_scroll);
+        let next_y = (current_y + delta_y).clamp(0.0, max_scroll.max(0.0));
         let next_x = (current_x + delta_x).max(0.0);
         let changed =
             (next_y - current_y).abs() > f32::EPSILON || (next_x - current_x).abs() > f32::EPSILON;

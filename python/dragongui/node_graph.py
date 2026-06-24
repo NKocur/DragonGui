@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import json
 import math
 
+from .agent_messages import AgentEnvelopeParser, AgentMessage
 from .widgets import Container, HtmlReport, _AUTO_PARENT
 
 
@@ -17,7 +18,235 @@ _GRAPH_MUTATION_EVENTS = {
     "node_updated",
     "edge_created",
     "edge_deleted",
+    "section_created",
+    "section_updated",
+    "section_moved",
+    "section_resized",
+    "section_deleted",
 }
+
+
+@dataclass(frozen=True, slots=True)
+class NodeGraphRuntimeObject:
+    """Registry record for a graph-owned runtime object."""
+
+    object_id: str
+    object_type: str
+    owner_node_id: str | None = None
+    status: str | None = None
+    config: dict[str, object] | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "object_id": self.object_id,
+            "object_type": self.object_type,
+            "owner_node_id": self.owner_node_id,
+            "status": self.status,
+        }
+        if self.config is not None:
+            payload["config"] = _json_copy(self.config, "runtime object config")
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
+class NodeGraphRuntimeObjectRef:
+    """Reference from a graph node to a named runtime object."""
+
+    node_id: str
+    object_id: str
+    object_type: str | None = None
+    key: str | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "node_id": self.node_id,
+            "object_id": self.object_id,
+            "object_type": self.object_type,
+            "key": self.key,
+        }
+
+
+class NodeGraphObjectRegistry:
+    """In-memory registry of named runtime objects used by a node graph."""
+
+    def __init__(self, objects: Sequence[NodeGraphRuntimeObject | Mapping[str, object]] = ()) -> None:
+        self._objects: dict[str, NodeGraphRuntimeObject] = {}
+        for value in objects:
+            if isinstance(value, NodeGraphRuntimeObject):
+                obj = value
+            elif isinstance(value, Mapping):
+                obj = NodeGraphRuntimeObject(
+                    object_id=_required_text(value.get("object_id", value.get("id")), "object_id"),
+                    object_type=_required_text(value.get("object_type", value.get("type")), "object_type"),
+                    owner_node_id=None if value.get("owner_node_id") is None else str(value.get("owner_node_id")),
+                    status=None if value.get("status") is None else str(value.get("status")),
+                    config=_mapping_copy(value.get("config"), "runtime object config"),
+                )
+            else:
+                raise TypeError("registry objects must be runtime object records or mappings")
+            self.register(obj)
+
+    def register(
+        self,
+        obj: NodeGraphRuntimeObject | None = None,
+        *,
+        object_id: str | None = None,
+        object_type: str | None = None,
+        owner_node_id: str | None = None,
+        status: str | None = None,
+        config: Mapping[str, object] | None = None,
+    ) -> NodeGraphRuntimeObject:
+        if obj is None:
+            obj = NodeGraphRuntimeObject(
+                object_id=_required_text(object_id, "object_id"),
+                object_type=_required_text(object_type, "object_type"),
+                owner_node_id=None if owner_node_id is None else str(owner_node_id),
+                status=None if status is None else str(status),
+                config=_mapping_copy(config, "runtime object config"),
+            )
+        if obj.object_id in self._objects:
+            raise ValueError(f"duplicate runtime object id {obj.object_id!r}")
+        self._objects[obj.object_id] = obj
+        return obj
+
+    def object_ref(self, object_id: str) -> NodeGraphRuntimeObject | None:
+        return self._objects.get(str(object_id))
+
+    def objects_for_type(self, object_type: str) -> tuple[NodeGraphRuntimeObject, ...]:
+        normalized = str(object_type)
+        return tuple(obj for obj in self._objects.values() if obj.object_type == normalized)
+
+    def missing_object_refs(self, refs: Sequence[NodeGraphRuntimeObjectRef | Mapping[str, object]]) -> tuple[NodeGraphRuntimeObjectRef, ...]:
+        missing: list[NodeGraphRuntimeObjectRef] = []
+        for value in refs:
+            ref = _missing_ref_from_value(value)
+            obj = self.object_ref(ref.object_id)
+            if obj is None or (ref.object_type is not None and obj.object_type != ref.object_type):
+                missing.append(ref)
+        return tuple(missing)
+
+    def to_list(self) -> list[dict[str, object]]:
+        return [obj.to_dict() for obj in self._objects.values()]
+
+    def __contains__(self, object_id: object) -> bool:
+        return str(object_id) in self._objects
+
+    def __iter__(self):
+        return iter(self._objects.values())
+
+    def __len__(self) -> int:
+        return len(self._objects)
+
+
+@dataclass(frozen=True, slots=True)
+class NodeGraphNodeBinding:
+    """Runtime-facing description of one graph node."""
+
+    node_id: str
+    node_type: str
+    title: str
+    status: str | None = None
+    config: dict[str, object] | None = None
+    owned_object_id: str | None = None
+    object_refs: tuple[NodeGraphRuntimeObjectRef, ...] = ()
+
+    def to_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "node_id": self.node_id,
+            "node_type": self.node_type,
+            "title": self.title,
+            "status": self.status,
+            "owned_object_id": self.owned_object_id,
+            "object_refs": [ref.to_dict() for ref in self.object_refs],
+        }
+        if self.config is not None:
+            payload["config"] = _json_copy(self.config, "node binding config")
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
+class NodeGraphSectionBinding:
+    """Runtime-facing description of one graph section."""
+
+    section_id: str
+    title: str
+    node_ids: tuple[str, ...]
+    purpose: str | None = None
+    trigger: str | None = None
+    config: dict[str, object] | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "section_id": self.section_id,
+            "title": self.title,
+            "node_ids": list(self.node_ids),
+            "purpose": self.purpose,
+            "trigger": self.trigger,
+        }
+        if self.config is not None:
+            payload["config"] = _json_copy(self.config, "section binding config")
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
+class NodeGraphRuntimeBinding:
+    """Static binding plan that maps graph structure to runtime objects."""
+
+    nodes: tuple[NodeGraphNodeBinding, ...]
+    sections: tuple[NodeGraphSectionBinding, ...]
+    registry: NodeGraphObjectRegistry
+    missing_refs: tuple[NodeGraphRuntimeObjectRef, ...] = ()
+
+    @property
+    def valid(self) -> bool:
+        return not self.missing_refs
+
+    def node_binding(self, node_id: str) -> NodeGraphNodeBinding | None:
+        normalized = str(node_id)
+        return next((binding for binding in self.nodes if binding.node_id == normalized), None)
+
+    def section_binding(self, section_id: str) -> NodeGraphSectionBinding | None:
+        normalized = str(section_id)
+        return next((binding for binding in self.sections if binding.section_id == normalized), None)
+
+    def validate(self) -> dict[str, object]:
+        return {
+            "valid": self.valid,
+            "missing_refs": [ref.to_dict() for ref in self.missing_refs],
+        }
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "valid": self.valid,
+            "nodes": [binding.to_dict() for binding in self.nodes],
+            "sections": [binding.to_dict() for binding in self.sections],
+            "registry": self.registry.to_list(),
+            "missing_refs": [ref.to_dict() for ref in self.missing_refs],
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class NodeGraphFlowRun:
+    """Result of a non-destructive primitive node graph flow run."""
+
+    values: dict[str, list[object]]
+    log: tuple[dict[str, object], ...]
+    binding: NodeGraphRuntimeBinding
+
+    @property
+    def valid(self) -> bool:
+        return self.binding.valid
+
+    def port_values(self, node_id: str, port_id: str) -> list[object]:
+        return list(self.values.get(f"{node_id}.{port_id}", []))
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "valid": self.valid,
+            "values": _json_safe_value(self.values),
+            "log": list(self.log),
+            "binding": self.binding.to_dict(),
+        }
 
 
 @dataclass(slots=True)
@@ -76,6 +305,24 @@ class NodeGraphTemplate:
     data: dict[str, object] | None = None
 
 
+
+@dataclass(slots=True)
+class NodeGraphSection:
+    """Visual section region that groups nodes by purpose or runtime scope."""
+
+    id: str
+    title: str
+    x: float
+    y: float
+    width: float
+    height: float
+    purpose: str | None = None
+    trigger: str | None = None
+    color: str = "#43c6ac"
+    collapsed: bool = False
+    locked: bool = False
+    data: dict[str, object] | None = None
+
 class NodeGraph(HtmlReport):
     """Interactive node editor surface for routing graphs and agent workflows.
 
@@ -90,6 +337,7 @@ class NodeGraph(HtmlReport):
         nodes: Sequence[NodeGraphNode | Mapping[str, object]],
         edges: Sequence[NodeGraphEdge | Mapping[str, object]] = (),
         *,
+        sections: Sequence[NodeGraphSection | Mapping[str, object]] = (),
         selected_node: str | None = None,
         show_edge_labels: bool = False,
         show_port_labels: bool = True,
@@ -110,6 +358,7 @@ class NodeGraph(HtmlReport):
     ) -> None:
         self.nodes = tuple(self._node_from_value(node) for node in nodes)
         self.edges = tuple(self._edge_from_value(edge) for edge in edges)
+        self.sections = tuple(self._section_from_value(section) for section in sections)
         self.selected_node = selected_node if selected_node in self._node_ids() else None
         self.show_edge_labels = bool(show_edge_labels)
         self.show_port_labels = bool(show_port_labels)
@@ -163,6 +412,7 @@ class NodeGraph(HtmlReport):
                 "schema_version": _GRAPH_SCHEMA_VERSION,
                 "nodes": [_node_graph_data(node) for node in self.nodes],
                 "edges": [_edge_graph_data(edge, index) for index, edge in enumerate(self.edges)],
+                "sections": [_section_graph_data(section) for section in self.sections],
             },
             "NodeGraph graph data",
         )
@@ -170,9 +420,10 @@ class NodeGraph(HtmlReport):
     def set_graph_data(self, data: Mapping[str, object]) -> None:
         """Replace graph contents from :meth:`to_graph_data` data."""
 
-        nodes, edges = self._graph_items_from_data(data)
+        nodes, edges, sections = self._graph_items_from_data(data)
         self.nodes = nodes
         self.edges = edges
+        self.sections = sections
         if self.selected_node not in self._node_ids():
             self.selected_node = None
         self._clear_history()
@@ -182,8 +433,60 @@ class NodeGraph(HtmlReport):
     def from_graph_data(cls, data: Mapping[str, object], **kwargs: object) -> NodeGraph:
         """Create a :class:`NodeGraph` from versioned graph data."""
 
-        nodes, edges = cls._graph_items_from_data(data)
-        return cls(nodes, edges, **kwargs)
+        nodes, edges, sections = cls._graph_items_from_data(data)
+        return cls(nodes, edges, sections=sections, **kwargs)
+
+    def runtime_object_registry(self) -> NodeGraphObjectRegistry:
+        """Return registry records for runtime objects declared by graph nodes."""
+
+        registry = NodeGraphObjectRegistry()
+        for node in self.nodes:
+            obj = _runtime_object_from_node(node)
+            if obj is not None:
+                registry.register(obj)
+        return registry
+
+    def run_text_flow(
+        self,
+        initial_inputs: Mapping[str, object] | None = None,
+        *,
+        max_steps: int = 128,
+        registry: NodeGraphObjectRegistry | None = None,
+    ) -> NodeGraphFlowRun:
+        """Run a small non-destructive text/message flow through primitive nodes."""
+
+        return _run_node_graph_text_flow(self, initial_inputs or {}, max_steps=max_steps, registry=registry)
+
+
+    def runtime_binding(self, registry: NodeGraphObjectRegistry | None = None) -> NodeGraphRuntimeBinding:
+        """Return a static binding plan for graph runtime execution."""
+
+        active_registry = self.runtime_object_registry() if registry is None else registry
+        refs = self.runtime_object_refs()
+        return NodeGraphRuntimeBinding(
+            nodes=tuple(_node_runtime_binding(node) for node in self.nodes),
+            sections=tuple(_section_runtime_binding(section, self.section_nodes(section.id)) for section in self.sections),
+            registry=active_registry,
+            missing_refs=active_registry.missing_object_refs(refs),
+        )
+
+
+    def runtime_object_refs(self) -> tuple[NodeGraphRuntimeObjectRef, ...]:
+        """Return runtime object references declared by graph nodes."""
+
+        refs: list[NodeGraphRuntimeObjectRef] = []
+        for node in self.nodes:
+            refs.extend(_runtime_refs_from_node(node))
+        return tuple(refs)
+
+    def missing_runtime_object_refs(
+        self, registry: NodeGraphObjectRegistry | None = None
+    ) -> tuple[NodeGraphRuntimeObjectRef, ...]:
+        """Return graph runtime references that are absent from the registry."""
+
+        active_registry = self.runtime_object_registry() if registry is None else registry
+        return active_registry.missing_object_refs(self.runtime_object_refs())
+
 
     def set_node_position(self, node_id: str, x: float, y: float, *, notify: bool = False) -> None:
         node = self._node_by_id(node_id)
@@ -246,6 +549,14 @@ class NodeGraph(HtmlReport):
     def node_position(self, node_id: str) -> tuple[float, float]:
         node = self._node_by_id(node_id)
         return node.x, node.y
+
+    def section_nodes(self, section_id: str) -> tuple[str, ...]:
+        """Return node IDs whose centers are currently inside a section."""
+
+        section = next((existing for existing in self.sections if existing.id == section_id), None)
+        if section is None:
+            raise KeyError(f"Unknown NodeGraph section {section_id!r}")
+        return tuple(node.id for node in self.nodes if _node_center_in_section(node, section))
 
     def create_node_from_template(
         self,
@@ -377,6 +688,7 @@ class NodeGraph(HtmlReport):
             show_subtitles=self.show_subtitles,
             enable_zoom=self.enable_zoom,
             templates=self.templates,
+            sections=self.sections,
             emit_events=True,
         )
 
@@ -496,6 +808,14 @@ class NodeGraph(HtmlReport):
                 node.status = None if value is None or str(value) == "" else str(value)
             if "color" in updates:
                 node.color = str(updates.get("color"))
+            if "data" in updates:
+                value = updates.get("data")
+                if value is None:
+                    node.data = None
+                elif isinstance(value, Mapping):
+                    node.data = _json_copy(value, "node custom data")
+                else:
+                    raise TypeError("NodeGraph node_updated data must be a mapping or None")
             self.selected_node = node.id
         elif event == "node_deleted":
             node_id = self._text(payload.get("node"), "node id")
@@ -517,11 +837,82 @@ class NodeGraph(HtmlReport):
                 for index, edge in enumerate(self.edges)
                 if (edge.id or f"edge-{index + 1}") != edge_id
             )
+        elif event == "section_created":
+            section_data = payload.get("section")
+            if not isinstance(section_data, Mapping):
+                raise TypeError("NodeGraph section_created section must be a mapping")
+            section = self._section_from_value(section_data)
+            if any(existing.id == section.id for existing in self.sections):
+                raise ValueError(f"NodeGraph section {section.id!r} already exists")
+            self.sections = (*self.sections, section)
+            self.selected_node = None
+        elif event == "section_selected":
+            section_id = self._text(payload.get("section"), "section id")
+            if any(section.id == section_id for section in self.sections):
+                self.selected_node = None
+        elif event == "section_updated":
+            section_id = self._text(payload.get("section"), "section id")
+            updates = payload.get("updates", {})
+            if not isinstance(updates, Mapping):
+                raise TypeError("NodeGraph section_updated updates must be a mapping")
+            section = next((existing for existing in self.sections if existing.id == section_id), None)
+            if section is None:
+                raise ValueError(f"NodeGraph section {section_id!r} does not exist")
+            if "title" in updates:
+                section.title = self._text(updates.get("title"), "section title")
+            if "purpose" in updates:
+                value = updates.get("purpose")
+                section.purpose = None if value is None or str(value) == "" else str(value)
+            if "trigger" in updates:
+                value = updates.get("trigger")
+                section.trigger = None if value is None or str(value) == "" else str(value)
+            if "color" in updates:
+                section.color = str(updates.get("color"))
+            if "collapsed" in updates:
+                section.collapsed = bool(updates.get("collapsed"))
+            if "locked" in updates:
+                section.locked = bool(updates.get("locked"))
+            if "data" in updates:
+                value = updates.get("data")
+                if value is None:
+                    section.data = None
+                elif isinstance(value, Mapping):
+                    section.data = _json_copy(value, "section custom data")
+                else:
+                    raise TypeError("NodeGraph section_updated data must be a mapping or None")
+            self.selected_node = None
+        elif event in {"section_moved", "section_resized"}:
+            section_data = payload.get("section")
+            if not isinstance(section_data, Mapping):
+                raise TypeError(f"NodeGraph {event} section must be a mapping")
+            section = self._section_from_value(section_data)
+            if not any(existing.id == section.id for existing in self.sections):
+                raise ValueError(f"NodeGraph section {section.id!r} does not exist")
+            self.sections = tuple(section if existing.id == section.id else existing for existing in self.sections)
+            moved_nodes = payload.get("nodes", ())
+            if moved_nodes is not None:
+                if isinstance(moved_nodes, (str, bytes, bytearray)) or not isinstance(moved_nodes, Sequence):
+                    raise TypeError(f"NodeGraph {event} nodes must be a sequence")
+                for node_data in moved_nodes:
+                    if not isinstance(node_data, Mapping):
+                        raise TypeError(f"NodeGraph {event} node positions must be mappings")
+                    node = self._node_by_id(self._text(node_data.get("id"), "node id"))
+                    position = node_data.get("position", {})
+                    if not isinstance(position, Mapping):
+                        raise TypeError(f"NodeGraph {event} node position must be a mapping")
+                    node.x = self._finite(position.get("x"), "node x")
+                    node.y = self._finite(position.get("y"), "node y")
+            self.selected_node = None
+        elif event == "section_deleted":
+            section_id = self._text(payload.get("section"), "section id")
+            self.sections = tuple(section for section in self.sections if section.id != section_id)
+            self.selected_node = None
 
     def _restore_graph_data(self, data: Mapping[str, object]) -> None:
-        nodes, edges = self._graph_items_from_data(data)
+        nodes, edges, sections = self._graph_items_from_data(data)
         self.nodes = nodes
         self.edges = edges
+        self.sections = sections
         if self.selected_node not in self._node_ids():
             self.selected_node = None
 
@@ -645,7 +1036,7 @@ class NodeGraph(HtmlReport):
     @classmethod
     def _graph_items_from_data(
         cls, data: Mapping[str, object]
-    ) -> tuple[tuple[NodeGraphNode, ...], tuple[NodeGraphEdge, ...]]:
+    ) -> tuple[tuple[NodeGraphNode, ...], tuple[NodeGraphEdge, ...], tuple[NodeGraphSection, ...]]:
         if not isinstance(data, Mapping):
             raise TypeError("NodeGraph graph data must be a mapping")
         version = data.get("schema_version")
@@ -653,13 +1044,50 @@ class NodeGraph(HtmlReport):
             raise ValueError(f"unsupported NodeGraph schema_version {version!r}")
         nodes = data.get("nodes", ())
         edges = data.get("edges", ())
+        sections = data.get("sections", ())
         if isinstance(nodes, (str, bytes, bytearray)) or not isinstance(nodes, Sequence):
             raise TypeError("NodeGraph graph data nodes must be a sequence")
         if isinstance(edges, (str, bytes, bytearray)) or not isinstance(edges, Sequence):
             raise TypeError("NodeGraph graph data edges must be a sequence")
+        if isinstance(sections, (str, bytes, bytearray)) or not isinstance(sections, Sequence):
+            raise TypeError("NodeGraph graph data sections must be a sequence")
         return (
             tuple(cls._node_from_value(node) for node in nodes),
             tuple(cls._edge_from_value(edge) for edge in edges),
+            tuple(cls._section_from_value(section) for section in sections),
+        )
+
+    @classmethod
+    def _section_from_value(cls, value: NodeGraphSection | Mapping[str, object]) -> NodeGraphSection:
+        if isinstance(value, NodeGraphSection):
+            return value
+        if not isinstance(value, Mapping):
+            raise TypeError("NodeGraph sections must be NodeGraphSection instances or mappings")
+        section_id = cls._text(value.get("id", value.get("section_id")), "section id")
+        title = cls._text(value.get("title", value.get("label", section_id)), "section title")
+        position = value.get("position", {})
+        if position is None:
+            position = {}
+        if not isinstance(position, Mapping):
+            raise TypeError("section position must be a mapping")
+        size = value.get("size", {})
+        if size is None:
+            size = {}
+        if not isinstance(size, Mapping):
+            raise TypeError("section size must be a mapping")
+        return NodeGraphSection(
+            id=section_id,
+            title=title,
+            x=cls._finite(value.get("x", position.get("x", 0.0)), "section x"),
+            y=cls._finite(value.get("y", position.get("y", 0.0)), "section y"),
+            width=cls._positive(value.get("width", size.get("width", 320.0)), "section width"),
+            height=cls._positive(value.get("height", size.get("height", 220.0)), "section height"),
+            purpose=None if value.get("purpose") is None else str(value.get("purpose")),
+            trigger=None if value.get("trigger") is None else str(value.get("trigger")),
+            color=str(value.get("color", "#43c6ac")),
+            collapsed=bool(value.get("collapsed", False)),
+            locked=bool(value.get("locked", False)),
+            data=cls._data_from_value(value),
         )
 
     @classmethod
@@ -796,6 +1224,7 @@ def _node_graph_html(
     nodes: Sequence[NodeGraphNode],
     edges: Sequence[NodeGraphEdge],
     templates: Sequence[NodeGraphTemplate],
+    sections: Sequence[NodeGraphSection],
     selected_node: str | None,
     show_edge_labels: bool,
     show_port_labels: bool,
@@ -808,6 +1237,7 @@ def _node_graph_html(
         "nodes": [_node_payload(node) for node in nodes],
         "edges": [_edge_payload(edge) for edge in edges],
         "templates": [_template_payload(template) for template in templates],
+        "sections": [_section_payload(section) for section in sections],
         "selectedNode": selected_node,
         "showEdgeLabels": bool(show_edge_labels),
         "showPortLabels": bool(show_port_labels),
@@ -833,10 +1263,15 @@ def _node_graph_html(
     const config = {payload};
     const canvas = document.getElementById('graph');
     const ctx = canvas.getContext('2d');
-    const state = {{ nodes: config.nodes, edges: config.edges, selected: config.selectedNode, selectedEdge: null, viewX: 34, viewY: 32, zoom: 1, drag: null, hoverPort: null, showGrid: true }};
+    const state = {{ nodes: config.nodes, edges: config.edges, sections: config.sections || [], selected: config.selectedNode, selectedEdge: null, selectedSection: null, viewX: 34, viewY: 32, zoom: 1, drag: null, hoverPort: null, showGrid: true }};
     let nodeSerial = state.nodes.length;
     let edgeSerial = state.edges.length;
+    let sectionSerial = state.sections.length;
     for (const edge of state.edges) if (!edge.id) edge.id = `edge-${{++edgeSerial}}`;
+    for (const section of state.sections) {{
+      const match = String(section.id || '').match(/(\\d+)$/);
+      if (match) sectionSerial = Math.max(sectionSerial, Number(match[1]));
+    }}
     const history = {{ undo: [], redo: [], initial: null }};
     const HEADER = 36;
     const HEADER_PAD = 10;
@@ -844,7 +1279,9 @@ def _node_graph_html(
     const PALETTE_Y = 10;
     const PALETTE_H = 28;
     const palette = {{ selected: config.templates[0] ? config.templates[0].id : null, items: [] }};
-    const nodePicker = {{ open: false, x: 0, y: 0, graphX: 0, graphY: 0, query: '', selected: 0, rect: null, items: [] }};
+    const nodePicker = {{ open: false, x: 0, y: 0, graphX: 0, graphY: 0, query: '', selected: 0, scroll: 0, scrollDrag: null, rect: null, listRect: null, scrollBar: null, items: [] }};
+    const renameEditor = {{ open: false, kind: null, id: null, value: '', original: '', selectAll: false, rect: null, buttons: [] }};
+    const propertyEditor = {{ open: false, kind: null, id: null, fields: [], active: 0, scroll: 0, scrollDrag: null, rect: null, listRect: null, scrollBar: null, buttons: [] }};
     const TOOLBAR_Y = 10;
     const TOOLBAR_H = 28;
     const TOOLBAR_W = 34;
@@ -875,9 +1312,6 @@ def _node_graph_html(
     }}
 
     function hitPalette(sx, sy) {{
-      for (const item of palette.items) {{
-        if (sx >= item.x && sx <= item.x + item.w && sy >= item.y && sy <= item.y + item.h) return item.template;
-      }}
       return null;
     }}
 
@@ -900,7 +1334,7 @@ def _node_graph_html(
       const items = query
         ? config.templates.filter(template => templateSearchText(template).includes(query))
         : config.templates.slice();
-      return items.slice(0, 12);
+      return items;
     }}
 
     function clampNodePicker() {{
@@ -911,6 +1345,31 @@ def _node_graph_html(
       nodePicker.x = Math.max(12, Math.min(nodePicker.x, rect.width - width - 12));
       nodePicker.y = Math.max(12, Math.min(nodePicker.y, rect.height - Math.min(height, rect.height - 24) - 12));
       nodePicker.rect = {{ x: nodePicker.x, y: nodePicker.y, w: width, h: Math.min(height, rect.height - 24) }};
+      clampNodePickerScroll();
+    }}
+
+    function nodePickerListHeight() {{
+      return nodePicker.rect ? Math.max(40, nodePicker.rect.h - 96) : 40;
+    }}
+
+    function nodePickerContentHeight(items = nodePickerItems()) {{
+      return Math.max(0, items.length * 44 - 4);
+    }}
+
+    function clampNodePickerScroll(items = nodePickerItems()) {{
+      const maxScroll = Math.max(0, nodePickerContentHeight(items) - nodePickerListHeight());
+      nodePicker.scroll = Math.max(0, Math.min(nodePicker.scroll || 0, maxScroll));
+      return maxScroll;
+    }}
+
+    function ensureNodePickerSelectionVisible(items = nodePickerItems()) {{
+      if (!nodePicker.rect || !items.length) return;
+      const listH = nodePickerListHeight();
+      const rowTop = nodePicker.selected * 44;
+      const rowBottom = rowTop + 40;
+      if (rowTop < nodePicker.scroll) nodePicker.scroll = rowTop;
+      else if (rowBottom > nodePicker.scroll + listH) nodePicker.scroll = rowBottom - listH;
+      clampNodePickerScroll(items);
     }}
 
     function openNodePicker(point) {{
@@ -919,12 +1378,14 @@ def _node_graph_html(
         draw();
         return;
       }}
+      closeRenameEditor(false);
       nodePicker.open = true;
       nodePicker.x = point.sx + 10;
       nodePicker.y = point.sy + 10;
       nodePicker.graphX = point.x;
       nodePicker.graphY = point.y;
       nodePicker.query = '';
+      nodePicker.scroll = 0;
       nodePicker.selected = Math.max(0, config.templates.findIndex(template => template.id === palette.selected));
       clampNodePicker();
       emitGraphEvent({{ event: 'node_picker_opened', position: {{ x: point.x, y: point.y }}, template: palette.selected || null }});
@@ -934,6 +1395,7 @@ def _node_graph_html(
     function closeNodePicker(notify = true) {{
       if (!nodePicker.open) return;
       nodePicker.open = false;
+      nodePicker.scrollDrag = null;
       nodePicker.items = [];
       if (notify) emitGraphEvent({{ event: 'node_picker_closed' }});
       draw();
@@ -958,10 +1420,45 @@ def _node_graph_html(
       if (sx < rect.x || sx > rect.x + rect.w || sy < rect.y || sy > rect.y + rect.h) return {{ kind: 'outside' }};
       const closeRect = {{ x: rect.x + rect.w - 34, y: rect.y + 10, w: 22, h: 22 }};
       if (sx >= closeRect.x && sx <= closeRect.x + closeRect.w && sy >= closeRect.y && sy <= closeRect.y + closeRect.h) return {{ kind: 'close' }};
+      if (nodePicker.scrollBar) {{
+        const bar = nodePicker.scrollBar;
+        if (sx >= bar.x - 5 && sx <= bar.x + bar.w + 5 && sy >= bar.y && sy <= bar.y + bar.h) {{
+          return {{ kind: 'scrollbar', onThumb: sy >= bar.thumbY && sy <= bar.thumbY + bar.thumbH }};
+        }}
+      }}
       for (const item of nodePicker.items) {{
         if (sx >= item.x && sx <= item.x + item.w && sy >= item.y && sy <= item.y + item.h) return {{ kind: 'item', index: item.index, template: item.template }};
       }}
       return {{ kind: 'inside' }};
+    }}
+    function hitRenameEditor(sx, sy) {{
+      if (!renameEditor.open || !renameEditor.rect) return null;
+      const rect = renameEditor.rect;
+      for (const button of renameEditor.buttons) {{
+        if (sx >= button.x && sx <= button.x + button.w && sy >= button.y && sy <= button.y + button.h) return {{ kind: button.action }};
+      }}
+      if (sx >= rect.x && sx <= rect.x + rect.w && sy >= rect.y && sy <= rect.y + rect.h) return {{ kind: 'inside' }};
+      return {{ kind: 'outside' }};
+    }}
+
+    function hitPropertyEditor(sx, sy) {{
+      if (!propertyEditor.open || !propertyEditor.rect) return null;
+      const rect = propertyEditor.rect;
+      for (const button of propertyEditor.buttons) {{
+        if (sx >= button.x && sx <= button.x + button.w && sy >= button.y && sy <= button.y + button.h) return {{ kind: button.action }};
+      }}
+      if (propertyEditor.scrollBar) {{
+        const bar = propertyEditor.scrollBar;
+        if (sx >= bar.x - 5 && sx <= bar.x + bar.w + 5 && sy >= bar.y && sy <= bar.y + bar.h) {{
+          return {{ kind: 'scrollbar', onThumb: sy >= bar.thumbY && sy <= bar.thumbY + bar.thumbH }};
+        }}
+      }}
+      for (let index = 0; index < propertyEditor.fields.length; index++) {{
+        const field = propertyEditor.fields[index];
+        if (field.rect && sx >= field.rect.x && sx <= field.rect.x + field.rect.w && sy >= field.rect.y && sy <= field.rect.y + field.rect.h) return {{ kind: 'field', index }};
+      }}
+      if (sx >= rect.x && sx <= rect.x + rect.w && sy >= rect.y && sy <= rect.y + rect.h) return {{ kind: 'inside' }};
+      return {{ kind: 'outside' }};
     }}
     const PORT_STEP = 22;
     const PORT_TOP_PAD = 22;
@@ -1142,6 +1639,104 @@ def _node_graph_html(
       return payload;
     }}
 
+    function sectionMemberIds(section) {{
+      return state.nodes
+        .filter(node => {{
+          const cx = node.x + nodeWidth(node) / 2;
+          const cy = node.y + nodeHeight(node) / 2;
+          return cx >= section.x && cx <= section.x + section.width && cy >= section.y && cy <= section.y + section.height;
+        }})
+        .map(node => node.id);
+    }}
+
+    function nodePositionPayloads(nodeIds) {{
+      return nodeIds
+        .map(id => state.nodes.find(node => node.id === id))
+        .filter(Boolean)
+        .map(node => ({{ id: node.id, position: {{ x: node.x, y: node.y }} }}));
+    }}
+
+    function sectionEventPayload(section) {{
+      const payload = {{
+        id: section.id,
+        title: section.title,
+        position: {{ x: section.x, y: section.y }},
+        size: {{ width: section.width, height: section.height }},
+        purpose: section.purpose || null,
+        trigger: section.trigger || null,
+        color: section.color || '#43c6ac',
+        collapsed: !!section.collapsed,
+        locked: !!section.locked,
+        members: sectionMemberIds(section)
+      }};
+      if (section.data) payload.data = {{ ...section.data }};
+      return payload;
+    }}
+    function sectionDraftRect(drag) {{
+      const x1 = Math.min(drag.startX, drag.currentX);
+      const y1 = Math.min(drag.startY, drag.currentY);
+      const x2 = Math.max(drag.startX, drag.currentX);
+      const y2 = Math.max(drag.startY, drag.currentY);
+      return {{ x: x1, y: y1, width: Math.max(1, x2 - x1), height: Math.max(1, y2 - y1) }};
+    }}
+
+    function createSectionFromRect(rect, before) {{
+      if (rect.width < 72 || rect.height < 54) return false;
+      const id = `section-${{++sectionSerial}}`;
+      const section = {{
+        id,
+        title: `Section ${{sectionSerial}}`,
+        x: rect.x,
+        y: rect.y,
+        width: Math.max(140, rect.width),
+        height: Math.max(90, rect.height),
+        purpose: null,
+        trigger: null,
+        color: '#7aa2f7',
+        collapsed: false,
+        locked: false,
+        data: {{ created_via: 'canvas_shift_drag' }}
+      }};
+      state.sections.push(section);
+      state.selected = null;
+      state.selectedEdge = null;
+      state.selectedSection = section.id;
+      emitGraphMutation({{ event: 'section_created', section: sectionEventPayload(section) }}, before);
+      return true;
+    }}
+
+    function sectionHandleSize() {{ return Math.max(10, 14 / state.zoom); }}
+
+    function hitSectionResize(x, y) {{
+      for (let i = state.sections.length - 1; i >= 0; i--) {{
+        const section = state.sections[i];
+        const handle = sectionHandleSize();
+        if (x >= section.x + section.width - handle && x <= section.x + section.width + handle && y >= section.y + section.height - handle && y <= section.y + section.height + handle) return section;
+      }}
+      return null;
+    }}
+
+    function hitSectionMove(x, y) {{
+      for (let i = state.sections.length - 1; i >= 0; i--) {{
+        const section = state.sections[i];
+        const border = Math.max(8, 10 / state.zoom);
+        const inBounds = x >= section.x && x <= section.x + section.width && y >= section.y && y <= section.y + section.height;
+        if (!inBounds) continue;
+        const inHeader = y <= section.y + Math.max(42, 44 / state.zoom);
+        const nearBorder = x <= section.x + border || x >= section.x + section.width - border || y <= section.y + border || y >= section.y + section.height - border;
+        if (inHeader || nearBorder) return section;
+      }}
+      return null;
+    }}
+
+    function hitSection(x, y) {{
+      for (let i = state.sections.length - 1; i >= 0; i--) {{
+        const section = state.sections[i];
+        if (x >= section.x && x <= section.x + section.width && y >= section.y && y <= section.y + section.height) return section;
+      }}
+      return null;
+    }}
+
     function emitGraphEvent(payload) {{
       if (!config.emitEvents) return;
       const eventPayload = {{ schema_version: 1, ...payload }};
@@ -1166,8 +1761,10 @@ def _node_graph_html(
           outputs: node.outputs.map(port => ({{ ...port }}))
         }})),
         edges: state.edges.map(edge => ({{ ...edge }})),
+        sections: state.sections.map(section => ({{ ...section, data: section.data ? {{ ...section.data }} : undefined }})),
         selected: state.selected,
-        selectedEdge: state.selectedEdge
+        selectedEdge: state.selectedEdge,
+        selectedSection: state.selectedSection
       }};
     }}
 
@@ -1178,10 +1775,13 @@ def _node_graph_html(
         outputs: node.outputs.map(port => ({{ ...port }}))
       }}));
       state.edges = snapshot.edges.map(edge => ({{ ...edge }}));
+      state.sections = (snapshot.sections || []).map(section => ({{ ...section, data: section.data ? {{ ...section.data }} : undefined }}));
       state.selected = snapshot.selected || null;
       state.selectedEdge = snapshot.selectedEdge || null;
+      state.selectedSection = snapshot.selectedSection || null;
       nodeSerial = state.nodes.length;
       edgeSerial = state.edges.length;
+      sectionSerial = state.sections.length;
       for (const node of state.nodes) {{
         const match = String(node.id || '').match(/(\\d+)$/);
         if (match) nodeSerial = Math.max(nodeSerial, Number(match[1]));
@@ -1190,10 +1790,14 @@ def _node_graph_html(
         const match = String(edge.id || '').match(/(\\d+)$/);
         if (match) edgeSerial = Math.max(edgeSerial, Number(match[1]));
       }}
+      for (const section of state.sections) {{
+        const match = String(section.id || '').match(/(\\d+)$/);
+        if (match) sectionSerial = Math.max(sectionSerial, Number(match[1]));
+      }}
     }}
 
     function snapshotCore(snapshot) {{
-      return JSON.stringify({{ nodes: snapshot.nodes, edges: snapshot.edges }});
+      return JSON.stringify({{ nodes: snapshot.nodes, edges: snapshot.edges, sections: snapshot.sections }});
     }}
 
     function historyStatePayload() {{
@@ -1245,8 +1849,14 @@ def _node_graph_html(
     history.initial = snapshotCore(graphSnapshot());
 
     function graphBounds() {{
-      if (!state.nodes.length) return null;
+      if (!state.nodes.length && !state.sections.length) return null;
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const section of state.sections) {{
+        minX = Math.min(minX, section.x);
+        minY = Math.min(minY, section.y);
+        maxX = Math.max(maxX, section.x + section.width);
+        maxY = Math.max(maxY, section.y + section.height);
+      }}
       for (const node of state.nodes) {{
         minX = Math.min(minX, node.x);
         minY = Math.min(minY, node.y);
@@ -1348,21 +1958,383 @@ def _node_graph_html(
       }});
       state.selected = id;
       state.selectedEdge = null;
+      state.selectedSection = null;
       emitGraphMutation({{ event: 'node_created', node: nodeEventPayload(state.nodes[state.nodes.length - 1]) }}, before);
+    }}
+
+    function openRenameEditor(kind, id, value) {{
+      closeNodePicker(false);
+      renameEditor.open = true;
+      renameEditor.kind = kind;
+      renameEditor.id = id;
+      renameEditor.value = String(value || '');
+      renameEditor.original = renameEditor.value;
+      renameEditor.selectAll = true;
+      renameEditor.rect = null;
+      renameEditor.buttons = [];
+      emitGraphEvent({{ event: 'rename_editor_opened', target_type: kind, target: id }});
+      draw();
+      return true;
+    }}
+
+    function closeRenameEditor(notify = true) {{
+      if (!renameEditor.open) return false;
+      const kind = renameEditor.kind;
+      const id = renameEditor.id;
+      renameEditor.open = false;
+      renameEditor.kind = null;
+      renameEditor.id = null;
+      renameEditor.value = '';
+      renameEditor.original = '';
+      renameEditor.selectAll = false;
+      renameEditor.rect = null;
+      renameEditor.buttons = [];
+      if (notify) emitGraphEvent({{ event: 'rename_editor_closed', target_type: kind, target: id }});
+      draw();
+      return true;
+    }}
+
+
+    function selectedPropertyTarget() {{
+      if (state.selected) {{
+        const node = state.nodes.find(n => n.id === state.selected);
+        if (node) return {{ kind: 'node', target: node }};
+      }}
+      if (state.selectedSection) {{
+        const section = state.sections.find(s => s.id === state.selectedSection);
+        if (section) return {{ kind: 'section', target: section }};
+      }}
+      return null;
+    }}
+
+    function runtimeId(target) {{
+      return target.data && target.data.runtime_id !== undefined && target.data.runtime_id !== null ? String(target.data.runtime_id) : '';
+    }}
+
+    function makePropertyField(key, label, value, type = 'text', options = {{}}) {{
+      const normalizedType = ['bool', 'number', 'select', 'json', 'textarea'].includes(type) ? type : 'text';
+      let normalizedValue = value;
+      if (normalizedType === 'bool') normalizedValue = !!value;
+      else if (normalizedType === 'number') normalizedValue = value === undefined || value === null || value === '' ? '' : String(value);
+      else if (normalizedType === 'json' && value !== undefined && value !== null && typeof value !== 'string') normalizedValue = JSON.stringify(value);
+      else normalizedValue = String(value || '');
+      return {{
+        key,
+        label,
+        value: normalizedValue,
+        type: normalizedType,
+        options: Array.isArray(options.options) ? options.options.map(option => String(option)) : [],
+        placeholder: options.placeholder ? String(options.placeholder) : '',
+        help: options.help || options.description ? String(options.help || options.description) : '',
+        required: !!options.required,
+        rect: null
+      }};
+    }}
+
+    function nodeConfig(target) {{
+      return target.data && target.data.config && typeof target.data.config === 'object' && !Array.isArray(target.data.config) ? target.data.config : {{}};
+    }}
+
+    function configSchemaFields(target) {{
+      if (!target.data || !target.data.config_schema) return null;
+      const schema = target.data.config_schema;
+      if (Array.isArray(schema)) return schema;
+      if (schema && Array.isArray(schema.fields)) return schema.fields;
+      return null;
+    }}
+
+    function schemaFieldType(spec) {{
+      const type = String(spec.type || 'text').toLowerCase();
+      if (['bool', 'number', 'select', 'json', 'textarea'].includes(type)) return type;
+      if (type === 'boolean') return 'bool';
+      if (type === 'integer' || type === 'float') return 'number';
+      return 'text';
+    }}
+
+    function schemaFieldValue(target, spec, storage) {{
+      const key = String(spec.key);
+      const config = nodeConfig(target);
+      if (storage === 'config' && Object.prototype.hasOwnProperty.call(config, key)) return config[key];
+      if (target.data && Object.prototype.hasOwnProperty.call(target.data, key)) return target.data[key];
+      if (Object.prototype.hasOwnProperty.call(spec, 'default')) return spec.default;
+      return '';
+    }}
+
+    function schemaPropertyFields(target) {{
+      const schemaFields = configSchemaFields(target);
+      const storage = schemaFields ? 'config' : 'data';
+      const schema = schemaFields || (target.data && Array.isArray(target.data.property_fields) ? target.data.property_fields : []);
+      return schema
+        .filter(spec => spec && spec.key)
+        .map(spec => {{
+          const key = String(spec.key);
+          const type = schemaFieldType(spec);
+          const value = schemaFieldValue(target, spec, storage);
+          const fieldKey = storage === 'config' ? `config:${{key}}` : `data:${{key}}`;
+          const field = makePropertyField(fieldKey, String(spec.label || key), value, type, spec);
+          field.dataKey = key;
+          field.storage = storage;
+          return field;
+        }});
+    }}
+
+    function fieldStorageValue(field) {{
+      if (field.type === 'bool') return !!field.value;
+      const raw = String(field.value || '').trim();
+      if (!raw) return field.required ? '' : undefined;
+      if (field.type === 'number') {{
+        const parsed = Number(raw);
+        return Number.isFinite(parsed) ? parsed : raw;
+      }}
+      if (field.type === 'json') {{
+        try {{ return JSON.parse(raw); }} catch (error) {{ return raw; }}
+      }}
+      return raw;
+    }}
+
+    function applySchemaPropertyFields(data) {{
+      let config = data.config && typeof data.config === 'object' && !Array.isArray(data.config) ? {{ ...data.config }} : {{}};
+      let touchedConfig = false;
+      for (const field of propertyEditor.fields) {{
+        const fieldKey = String(field.key || '');
+        if (!fieldKey.startsWith('data:') && !fieldKey.startsWith('config:')) continue;
+        const key = field.dataKey || fieldKey.slice(fieldKey.indexOf(':') + 1);
+        if (!key || key === 'property_fields' || key === 'config_schema') continue;
+        const value = fieldStorageValue(field);
+        if (fieldKey.startsWith('config:')) {{
+          touchedConfig = true;
+          if (value === undefined) delete config[key];
+          else config[key] = value;
+        }} else {{
+          if (value === undefined) delete data[key];
+          else data[key] = value;
+        }}
+      }}
+      if (touchedConfig) {{
+        if (Object.keys(config).length) data.config = config;
+        else delete data.config;
+      }}
+    }}
+
+    function openPropertyEditor() {{
+      const selected = selectedPropertyTarget();
+      if (!selected) return false;
+      closeNodePicker(false);
+      closeRenameEditor(false);
+      const target = selected.target;
+      propertyEditor.open = true;
+      propertyEditor.kind = selected.kind;
+      propertyEditor.id = target.id;
+      propertyEditor.active = 0;
+      propertyEditor.fields = selected.kind === 'node'
+        ? [
+            makePropertyField('title', 'Title', target.title || target.id),
+            makePropertyField('subtitle', 'Subtitle', target.subtitle || ''),
+            makePropertyField('status', 'Status', target.status || ''),
+            makePropertyField('color', 'Color', target.color || '#43c6ac'),
+            makePropertyField('runtime_id', 'Runtime ID', runtimeId(target))
+          ].concat(schemaPropertyFields(target))
+        : [
+            makePropertyField('title', 'Title', target.title || target.id),
+            makePropertyField('purpose', 'Purpose', target.purpose || ''),
+            makePropertyField('trigger', 'Trigger', target.trigger || ''),
+            makePropertyField('color', 'Color', target.color || '#43c6ac'),
+            makePropertyField('runtime_id', 'Runtime ID', runtimeId(target)),
+            makePropertyField('locked', 'Locked', !!target.locked, 'bool'),
+            makePropertyField('collapsed', 'Collapsed', !!target.collapsed, 'bool')
+          ];
+      propertyEditor.scroll = 0;
+      propertyEditor.scrollDrag = null;
+      propertyEditor.rect = null;
+      propertyEditor.listRect = null;
+      propertyEditor.scrollBar = null;
+      propertyEditor.buttons = [];
+      emitGraphEvent({{ event: 'property_editor_opened', target_type: propertyEditor.kind, target: propertyEditor.id }});
+      draw();
+      return true;
+    }}
+
+    function closePropertyEditor(notify = true) {{
+      if (!propertyEditor.open) return false;
+      const kind = propertyEditor.kind;
+      const id = propertyEditor.id;
+      propertyEditor.open = false;
+      propertyEditor.kind = null;
+      propertyEditor.id = null;
+      propertyEditor.fields = [];
+      propertyEditor.active = 0;
+      propertyEditor.scroll = 0;
+      propertyEditor.scrollDrag = null;
+      propertyEditor.rect = null;
+      propertyEditor.listRect = null;
+      propertyEditor.scrollBar = null;
+      propertyEditor.buttons = [];
+      if (notify) emitGraphEvent({{ event: 'property_editor_closed', target_type: kind, target: id }});
+      draw();
+      return true;
+    }}
+
+    function propertyField(key) {{
+      return propertyEditor.fields.find(field => field.key === key);
+    }}
+
+    function textProperty(key, fallback = '') {{
+      const field = propertyField(key);
+      return field ? String(field.value || '').trim() : fallback;
+    }}
+
+    function commitPropertyEditor() {{
+      if (!propertyEditor.open) return false;
+      const before = graphSnapshot();
+      if (propertyEditor.kind === 'node') {{
+        const node = state.nodes.find(n => n.id === propertyEditor.id);
+        if (!node) return closePropertyEditor(false);
+        const data = node.data ? {{ ...node.data }} : {{}};
+        const runtime = textProperty('runtime_id');
+        if (runtime) data.runtime_id = runtime; else delete data.runtime_id;
+        applySchemaPropertyFields(data);
+        const updates = {{
+          title: textProperty('title', node.id) || node.id,
+          subtitle: textProperty('subtitle') || null,
+          status: textProperty('status') || null,
+          color: textProperty('color', node.color || '#43c6ac') || '#43c6ac',
+          data: Object.keys(data).length ? data : null
+        }};
+        node.title = updates.title;
+        node.subtitle = updates.subtitle;
+        node.status = updates.status;
+        node.color = updates.color;
+        node.data = updates.data;
+        propertyEditor.open = false;
+        emitGraphMutation({{ event: 'node_updated', node: node.id, updates }}, before);
+      }} else if (propertyEditor.kind === 'section') {{
+        const section = state.sections.find(s => s.id === propertyEditor.id);
+        if (!section) return closePropertyEditor(false);
+        const data = section.data ? {{ ...section.data }} : {{}};
+        const runtime = textProperty('runtime_id');
+        if (runtime) data.runtime_id = runtime; else delete data.runtime_id;
+        const lockedField = propertyField('locked');
+        const collapsedField = propertyField('collapsed');
+        const updates = {{
+          title: textProperty('title', section.id) || section.id,
+          purpose: textProperty('purpose') || null,
+          trigger: textProperty('trigger') || null,
+          color: textProperty('color', section.color || '#43c6ac') || '#43c6ac',
+          locked: lockedField ? !!lockedField.value : !!section.locked,
+          collapsed: collapsedField ? !!collapsedField.value : !!section.collapsed,
+          data: Object.keys(data).length ? data : null
+        }};
+        section.title = updates.title;
+        section.purpose = updates.purpose;
+        section.trigger = updates.trigger;
+        section.color = updates.color;
+        section.locked = updates.locked;
+        section.collapsed = updates.collapsed;
+        section.data = updates.data;
+        propertyEditor.open = false;
+        emitGraphMutation({{ event: 'section_updated', section: section.id, updates }}, before);
+      }} else {{
+        return closePropertyEditor(false);
+      }}
+      propertyEditor.kind = null;
+      propertyEditor.id = null;
+      propertyEditor.fields = [];
+      propertyEditor.active = 0;
+      propertyEditor.scroll = 0;
+      propertyEditor.scrollDrag = null;
+      propertyEditor.rect = null;
+      propertyEditor.listRect = null;
+      propertyEditor.scrollBar = null;
+      propertyEditor.buttons = [];
+      draw();
+      return true;
+    }}
+
+    function editPropertyField(index) {{
+      if (!propertyEditor.open || index < 0 || index >= propertyEditor.fields.length) return false;
+      propertyEditor.active = index;
+      const field = propertyEditor.fields[index];
+      if (field.type === 'bool') field.value = !field.value;
+      draw();
+      return true;
+    }}
+
+    function activePropertyField() {{
+      return propertyEditor.fields[propertyEditor.active] || null;
+    }}
+
+    function propertyEditorRowHeight() {{
+      return 48;
+    }}
+
+    function propertyEditorListHeight() {{
+      return propertyEditor.listRect ? propertyEditor.listRect.h : (propertyEditor.rect ? Math.max(40, propertyEditor.rect.h - 122) : 40);
+    }}
+
+    function propertyEditorContentHeight() {{
+      return Math.max(0, propertyEditor.fields.length * propertyEditorRowHeight());
+    }}
+
+    function clampPropertyEditorScroll() {{
+      const maxScroll = Math.max(0, propertyEditorContentHeight() - propertyEditorListHeight());
+      propertyEditor.scroll = Math.max(0, Math.min(propertyEditor.scroll || 0, maxScroll));
+      return maxScroll;
+    }}
+
+    function ensurePropertyFieldVisible() {{
+      if (!propertyEditor.open || !propertyEditor.fields.length) return;
+      const rowH = propertyEditorRowHeight();
+      const listH = propertyEditorListHeight();
+      const rowTop = propertyEditor.active * rowH;
+      const rowBottom = rowTop + rowH;
+      if (rowTop < propertyEditor.scroll) propertyEditor.scroll = rowTop;
+      else if (rowBottom > propertyEditor.scroll + listH) propertyEditor.scroll = rowBottom - listH;
+      clampPropertyEditorScroll();
+    }}
+    function commitRenameEditor() {{
+      if (!renameEditor.open) return false;
+      const title = renameEditor.value.trim();
+      if (!title) return false;
+      const kind = renameEditor.kind;
+      const id = renameEditor.id;
+      if (title === renameEditor.original) return closeRenameEditor(false);
+      const before = graphSnapshot();
+      if (kind === 'node') {{
+        const node = state.nodes.find(n => n.id === id);
+        if (!node) return closeRenameEditor(false);
+        node.title = title;
+        renameEditor.open = false;
+        emitGraphMutation({{ event: 'node_updated', node: node.id, updates: {{ title }} }}, before);
+      }} else if (kind === 'section') {{
+        const section = state.sections.find(s => s.id === id);
+        if (!section) return closeRenameEditor(false);
+        section.title = title;
+        renameEditor.open = false;
+        emitGraphMutation({{ event: 'section_updated', section: section.id, updates: {{ title }} }}, before);
+      }} else {{
+        return closeRenameEditor(false);
+      }}
+      renameEditor.kind = null;
+      renameEditor.id = null;
+      renameEditor.value = '';
+      renameEditor.original = '';
+      renameEditor.selectAll = false;
+      renameEditor.rect = null;
+      renameEditor.buttons = [];
+      draw();
+      return true;
     }}
 
     function editSelectedNodeTitle() {{
       const node = state.nodes.find(n => n.id === state.selected);
       if (!node) return false;
-      const value = window.prompt('Node title', node.title || '');
-      if (value === null) return false;
-      const title = String(value).trim();
-      if (!title || title === node.title) return false;
-      const before = graphSnapshot();
-      node.title = title;
-      emitGraphMutation({{ event: 'node_updated', node: node.id, updates: {{ title }} }}, before);
-      draw();
-      return true;
+      return openRenameEditor('node', node.id, node.title || '');
+    }}
+
+    function editSelectedSectionTitle() {{
+      const section = state.sections.find(s => s.id === state.selectedSection);
+      if (!section) return false;
+      return openRenameEditor('section', section.id, section.title || section.id || '');
     }}
 
     function duplicateSelectedNode() {{
@@ -1381,6 +2353,7 @@ def _node_graph_html(
       }});
       state.selected = id;
       state.selectedEdge = null;
+      state.selectedSection = null;
       emitGraphMutation({{ event: 'node_duplicated', node: nodeEventPayload(state.nodes[state.nodes.length - 1]), source: node.id }}, before);
     }}
 
@@ -1397,11 +2370,17 @@ def _node_graph_html(
         const edgeId = state.selectedEdge;
         state.edges = state.edges.filter(edge => edge.id !== edgeId);
         state.selectedEdge = null;
+        state.selectedSection = null;
         emitGraphMutation({{ event: 'edge_deleted', edge: edgeId }}, before);
+      }} else if (state.selectedSection) {{
+        const before = graphSnapshot();
+        const sectionId = state.selectedSection;
+        state.sections = state.sections.filter(section => section.id !== sectionId);
+        state.selectedSection = null;
+        emitGraphMutation({{ event: 'section_deleted', section: sectionId }}, before);
       }}
       draw();
     }}
-
     function drawGrid(width, height) {{
       if (!state.showGrid) return;
       const step = Math.max(18, 32 * state.zoom);
@@ -1432,6 +2411,72 @@ def _node_graph_html(
       ctx.lineTo(x, y + rr);
       ctx.arcTo(x, y, x + rr, y, rr);
       ctx.closePath();
+    }}
+
+    function drawSections() {{
+      if (!state.sections.length) return;
+      ctx.save();
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      for (const section of state.sections) {{
+        const p = screen(section.x, section.y);
+        const w = Math.max(1, section.width * state.zoom);
+        const h = Math.max(1, section.height * state.zoom);
+        const color = section.color || '#43c6ac';
+        const selected = state.selectedSection === section.id;
+        ctx.globalAlpha = section.collapsed ? 0.10 : 0.13;
+        roundedRect(p.x, p.y, w, h, 10);
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.globalAlpha = selected ? 1 : 0.88;
+        ctx.setLineDash(selected ? [] : [7, 6]);
+        ctx.strokeStyle = selected ? '#eef4ff' : color;
+        ctx.lineWidth = selected ? Math.max(1.5, 1.9 * state.zoom) : Math.max(1, 1.2 * state.zoom);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.globalAlpha = 1;
+        if (selected && !section.locked) {{
+          const handle = Math.max(8, 10 * state.zoom);
+          ctx.fillStyle = '#eef4ff';
+          roundedRect(p.x + w - handle - 4, p.y + h - handle - 4, handle, handle, 3);
+          ctx.fill();
+        }}
+        ctx.fillStyle = '#eef4ff';
+        ctx.font = `${{Math.max(10, 12 * state.zoom)}}px Segoe UI`;
+        ctx.fillText(section.title || section.id, p.x + 12 * state.zoom, p.y + 18 * state.zoom);
+        const meta = [section.purpose, section.trigger ? `trigger: ${{section.trigger}}` : null].filter(Boolean).join(' | ');
+        if (meta) {{
+          ctx.fillStyle = '#9aa8b8';
+          ctx.font = `${{Math.max(9, 10.5 * state.zoom)}}px Segoe UI`;
+          ctx.fillText(meta, p.x + 12 * state.zoom, p.y + 36 * state.zoom);
+        }}
+      }}
+      ctx.restore();
+    }}
+
+    function drawSectionDraft() {{
+      if (!state.drag || state.drag.kind !== 'section-create') return;
+      const rect = sectionDraftRect(state.drag);
+      const p = screen(rect.x, rect.y);
+      const w = rect.width * state.zoom;
+      const h = rect.height * state.zoom;
+      ctx.save();
+      ctx.globalAlpha = 0.16;
+      roundedRect(p.x, p.y, w, h, 10);
+      ctx.fillStyle = '#7aa2f7';
+      ctx.fill();
+      ctx.globalAlpha = 0.95;
+      ctx.setLineDash([7, 6]);
+      ctx.strokeStyle = '#eef4ff';
+      ctx.lineWidth = Math.max(1.5, 1.8 * state.zoom);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = '#eef4ff';
+      ctx.font = `${{Math.max(10, 12 * state.zoom)}}px Segoe UI`;
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      ctx.fillText('New Section', p.x + 12 * state.zoom, p.y + 18 * state.zoom);
+      ctx.restore();
     }}
 
     function drawEdge(edge) {{
@@ -1471,28 +2516,6 @@ def _node_graph_html(
 
     function drawPalette() {{
       palette.items = [];
-      if (!config.templates.length) return;
-      let x = PALETTE_X;
-      ctx.save();
-      ctx.textBaseline = 'middle';
-      ctx.font = '12px Segoe UI';
-      for (const template of config.templates) {{
-        const label = templateLabel(template);
-        const w = Math.max(74, ctx.measureText(label).width + 22);
-        const selected = template.id === palette.selected;
-        ctx.fillStyle = selected ? '#26384a' : '#171d27';
-        ctx.strokeStyle = selected ? '#eef4ff' : '#354255';
-        ctx.lineWidth = selected ? 1.6 : 1;
-        roundedRect(x, PALETTE_Y, w, PALETTE_H, 6);
-        ctx.fill();
-        ctx.stroke();
-        ctx.fillStyle = selected ? '#eef4ff' : '#cbd6e2';
-        ctx.textAlign = 'center';
-        ctx.fillText(label, x + w / 2, PALETTE_Y + PALETTE_H / 2);
-        palette.items.push({{ template, x, y: PALETTE_Y, w, h: PALETTE_H }});
-        x += w + 8;
-      }}
-      ctx.restore();
     }}
 
     function drawNodePicker() {{
@@ -1501,15 +2524,19 @@ def _node_graph_html(
       const rect = nodePicker.rect;
       const items = nodePickerItems();
       nodePicker.selected = Math.max(0, Math.min(nodePicker.selected, Math.max(0, items.length - 1)));
+      const maxScroll = clampNodePickerScroll(items);
       nodePicker.items = [];
+      nodePicker.scrollBar = null;
+
       ctx.save();
-      ctx.globalAlpha = 0.96;
+      ctx.shadowColor = 'rgba(0,0,0,0.35)';
+      ctx.shadowBlur = 18;
       roundedRect(rect.x, rect.y, rect.w, rect.h, 8);
-      ctx.fillStyle = '#111821';
+      ctx.fillStyle = '#101721';
       ctx.fill();
-      ctx.globalAlpha = 1;
-      ctx.strokeStyle = '#43c6ac';
-      ctx.lineWidth = 1.4;
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = '#33465c';
+      ctx.lineWidth = 1;
       ctx.stroke();
       ctx.fillStyle = '#eef4ff';
       ctx.textAlign = 'left';
@@ -1535,16 +2562,33 @@ def _node_graph_html(
       ctx.fillStyle = nodePicker.query ? '#eef4ff' : '#738296';
       ctx.fillText(nodePicker.query || 'Type to filter templates...', inputX + 10, inputY + 14);
 
-      let y = rect.y + 82;
+      const listX = rect.x + 10;
+      const listY = rect.y + 82;
+      const listW = rect.w - 20;
+      const listH = nodePickerListHeight();
+      const contentH = nodePickerContentHeight(items);
+      const needsScrollbar = maxScroll > 0;
+      const rowW = listW - (needsScrollbar ? 14 : 0);
+      nodePicker.listRect = {{ x: listX, y: listY, w: listW, h: listH }};
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(listX, listY, listW, listH);
+      ctx.clip();
+
       if (!items.length) {{
         ctx.fillStyle = '#9aa8b8';
-        ctx.fillText('No matching templates', rect.x + 16, y + 18);
+        ctx.fillText('No matching templates', listX + 6, listY + 18);
       }}
-      for (let index = 0; index < items.length; index++) {{
+
+      const startIndex = Math.max(0, Math.floor(nodePicker.scroll / 44));
+      const endIndex = Math.min(items.length, Math.ceil((nodePicker.scroll + listH) / 44) + 1);
+      for (let index = startIndex; index < endIndex; index++) {{
         const template = items[index];
         const selected = index === nodePicker.selected;
         const rowH = 40;
-        roundedRect(rect.x + 10, y, rect.w - 20, rowH, 6);
+        const y = listY + index * 44 - nodePicker.scroll;
+        roundedRect(listX, y, rowW, rowH, 6);
         ctx.fillStyle = selected ? '#26384a' : '#151c26';
         ctx.fill();
         ctx.strokeStyle = selected ? '#eef4ff' : '#26384a';
@@ -1552,19 +2596,34 @@ def _node_graph_html(
         ctx.stroke();
         ctx.fillStyle = template.color || '#43c6ac';
         ctx.beginPath();
-        ctx.arc(rect.x + 26, y + rowH / 2, 5, 0, Math.PI * 2);
+        ctx.arc(listX + 16, y + rowH / 2, 5, 0, Math.PI * 2);
         ctx.fill();
         ctx.textAlign = 'left';
         ctx.fillStyle = '#eef4ff';
         ctx.font = '12px Segoe UI';
-        ctx.fillText(templateLabel(template), rect.x + 40, y + 14);
+        ctx.fillText(templateLabel(template), listX + 30, y + 14);
         if (template.subtitle || template.status) {{
           ctx.fillStyle = '#9aa8b8';
           ctx.font = '10.5px Segoe UI';
-          ctx.fillText(template.subtitle || template.status, rect.x + 40, y + 29);
+          ctx.fillText(template.subtitle || template.status, listX + 30, y + 29);
         }}
-        nodePicker.items.push({{ template, index, x: rect.x + 10, y, w: rect.w - 20, h: rowH }});
-        y += rowH + 4;
+        nodePicker.items.push({{ template, index, x: listX, y, w: rowW, h: rowH }});
+      }}
+      ctx.restore();
+
+      if (needsScrollbar) {{
+        const trackX = rect.x + rect.w - 14;
+        const trackY = listY;
+        const trackH = listH;
+        const thumbH = Math.max(24, listH * listH / Math.max(listH, contentH));
+        const thumbY = trackY + (nodePicker.scroll / maxScroll) * (trackH - thumbH);
+        roundedRect(trackX, trackY, 6, trackH, 3);
+        ctx.fillStyle = '#0b1017';
+        ctx.fill();
+        roundedRect(trackX, thumbY, 6, thumbH, 3);
+        ctx.fillStyle = '#6f849d';
+        ctx.fill();
+        nodePicker.scrollBar = {{ x: trackX, y: trackY, w: 6, h: trackH, thumbY, thumbH }};
       }}
       ctx.restore();
     }}
@@ -1574,7 +2633,8 @@ def _node_graph_html(
         {{ action: 'fit', label: '[]' }},
         {{ action: 'zoom_in', label: '+' }},
         {{ action: 'zoom_out', label: '-' }},
-        {{ action: 'grid', label: '#' }}
+        {{ action: 'grid', label: '#' }},
+        {{ action: 'inspect', label: 'i' }}
       ];
       let x = width - actions.length * (TOOLBAR_W + 6) - 6;
       ctx.save();
@@ -1601,6 +2661,7 @@ def _node_graph_html(
       if (action === 'fit') return fitToView();
       if (action === 'zoom_in') return zoomBy(1.16, 'zoom_in');
       if (action === 'zoom_out') return zoomBy(0.86, 'zoom_out');
+      if (action === 'inspect') return openPropertyEditor();
       if (action === 'grid') {{
         state.showGrid = !state.showGrid;
         emitViewportChanged('grid_toggled');
@@ -1694,11 +2755,219 @@ def _node_graph_html(
       }}
     }}
 
+    function drawRenameEditor(width, height) {{
+      if (!renameEditor.open) return;
+      const panelW = Math.min(420, Math.max(300, width - 32));
+      const panelH = 154;
+      const x = Math.max(16, (width - panelW) / 2);
+      const y = Math.max(16, (height - panelH) / 2);
+      renameEditor.rect = {{ x, y, w: panelW, h: panelH }};
+      renameEditor.buttons = [
+        {{ action: 'cancel', x: x + panelW - 164, y: y + panelH - 44, w: 68, h: 30 }},
+        {{ action: 'commit', x: x + panelW - 86, y: y + panelH - 44, w: 70, h: 30 }}
+      ];
+      ctx.save();
+      ctx.fillStyle = 'rgba(7, 11, 17, 0.58)';
+      ctx.fillRect(0, 0, width, height);
+      roundedRect(x, y, panelW, panelH, 8);
+      ctx.fillStyle = '#111821';
+      ctx.fill();
+      ctx.strokeStyle = '#43c6ac';
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#eef4ff';
+      ctx.font = '700 13px Segoe UI';
+      ctx.fillText(renameEditor.kind === 'section' ? 'Rename Section' : 'Rename Node', x + 16, y + 22);
+      ctx.fillStyle = '#9aa8b8';
+      ctx.font = '11px Segoe UI';
+      ctx.fillText(renameEditor.id || '', x + 16, y + 45);
+      const inputX = x + 16;
+      const inputY = y + 64;
+      const inputW = panelW - 32;
+      roundedRect(inputX, inputY, inputW, 34, 6);
+      ctx.fillStyle = '#0b1017';
+      ctx.fill();
+      ctx.strokeStyle = '#354255';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = renameEditor.value ? '#eef4ff' : '#738296';
+      ctx.font = '13px Segoe UI';
+      const visible = renameEditor.value || 'Title';
+      const cursor = Math.floor(Date.now() / 530) % 2 === 0 ? '|' : '';
+      if (renameEditor.selectAll && renameEditor.value) {{
+        ctx.fillStyle = 'rgba(67, 198, 172, 0.28)';
+        roundedRect(inputX + 7, inputY + 7, Math.min(inputW - 14, ctx.measureText(renameEditor.value).width + 8), 20, 4);
+        ctx.fill();
+        ctx.fillStyle = '#eef4ff';
+      }}
+      ctx.fillText(visible + (renameEditor.selectAll ? '' : cursor), inputX + 10, inputY + 17);
+      for (const button of renameEditor.buttons) {{
+        const primary = button.action === 'commit';
+        roundedRect(button.x, button.y, button.w, button.h, 6);
+        ctx.fillStyle = primary ? '#26384a' : '#171d27';
+        ctx.fill();
+        ctx.strokeStyle = primary ? '#43c6ac' : '#354255';
+        ctx.stroke();
+        ctx.fillStyle = '#eef4ff';
+        ctx.textAlign = 'center';
+        ctx.font = '12px Segoe UI';
+        ctx.fillText(primary ? 'Save' : 'Cancel', button.x + button.w / 2, button.y + button.h / 2);
+      }}
+      ctx.restore();
+    }}
+
+
+    function drawPropertyEditor(width, height) {{
+      if (!propertyEditor.open) return;
+      const panelW = Math.min(520, Math.max(340, width - 32));
+      const rowH = propertyEditorRowHeight();
+      const idealH = 78 + propertyEditor.fields.length * rowH + 54;
+      const panelH = Math.min(height - 32, idealH);
+      const x = Math.max(16, (width - panelW) / 2);
+      const y = Math.max(16, (height - panelH) / 2);
+      propertyEditor.rect = {{ x, y, w: panelW, h: panelH }};
+      propertyEditor.buttons = [
+        {{ action: 'cancel', x: x + panelW - 164, y: y + panelH - 44, w: 68, h: 30 }},
+        {{ action: 'commit', x: x + panelW - 86, y: y + panelH - 44, w: 70, h: 30 }}
+      ];
+      const listX = x + 16;
+      const listY = y + 68;
+      const listW = panelW - 32;
+      const listH = Math.max(40, panelH - 122);
+      propertyEditor.listRect = {{ x: listX, y: listY, w: listW, h: listH }};
+      const maxScroll = clampPropertyEditorScroll();
+      propertyEditor.scrollBar = null;
+      for (const field of propertyEditor.fields) field.rect = null;
+
+      ctx.save();
+      ctx.fillStyle = 'rgba(7, 11, 17, 0.58)';
+      ctx.fillRect(0, 0, width, height);
+      roundedRect(x, y, panelW, panelH, 8);
+      ctx.fillStyle = '#111821';
+      ctx.fill();
+      ctx.strokeStyle = '#43c6ac';
+      ctx.lineWidth = 1.4;
+      ctx.stroke();
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#eef4ff';
+      ctx.font = '700 13px Segoe UI';
+      ctx.fillText(propertyEditor.kind === 'section' ? 'Section Properties' : 'Node Properties', x + 16, y + 22);
+      ctx.fillStyle = '#9aa8b8';
+      ctx.font = '11px Segoe UI';
+      ctx.fillText(propertyEditor.id || '', x + 16, y + 45);
+
+      const needsScrollbar = maxScroll > 0;
+      const labelX = listX;
+      const labelW = 104;
+      const inputX = x + 124;
+      const inputW = panelW - 140 - (needsScrollbar ? 14 : 0);
+      const startIndex = Math.max(0, Math.floor(propertyEditor.scroll / rowH));
+      const endIndex = Math.min(propertyEditor.fields.length, Math.ceil((propertyEditor.scroll + listH) / rowH) + 1);
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(listX, listY, listW, listH);
+      ctx.clip();
+      for (let index = startIndex; index < endIndex; index++) {{
+        const field = propertyEditor.fields[index];
+        const rowY = listY + index * rowH - propertyEditor.scroll;
+        field.rect = {{ x: inputX, y: rowY + 4, w: inputW, h: 30 }};
+        ctx.fillStyle = '#9aa8b8';
+        ctx.font = '11px Segoe UI';
+        ctx.textAlign = 'left';
+        ctx.fillText(field.label + (field.required ? ' *' : ''), labelX, rowY + 16);
+        if (field.help) {{
+          ctx.fillStyle = '#607086';
+          ctx.font = '9.5px Segoe UI';
+          ctx.fillText(field.help, labelX, rowY + 31);
+        }}
+        if (field.type === 'bool') {{
+          const box = {{ x: inputX, y: rowY + 8, w: 22, h: 22 }};
+          field.rect = box;
+          roundedRect(box.x, box.y, box.w, box.h, 5);
+          ctx.fillStyle = field.value ? '#26384a' : '#0b1017';
+          ctx.fill();
+          ctx.strokeStyle = index === propertyEditor.active ? '#eef4ff' : '#354255';
+          ctx.lineWidth = 1.2;
+          ctx.stroke();
+          if (field.value) {{
+            ctx.strokeStyle = '#43c6ac';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(box.x + 5, box.y + 12);
+            ctx.lineTo(box.x + 10, box.y + 17);
+            ctx.lineTo(box.x + 18, box.y + 6);
+            ctx.stroke();
+          }}
+        }} else {{
+          roundedRect(inputX, rowY + 4, inputW, 30, 6);
+          ctx.fillStyle = '#0b1017';
+          ctx.fill();
+          ctx.strokeStyle = index === propertyEditor.active ? '#eef4ff' : '#354255';
+          ctx.lineWidth = index === propertyEditor.active ? 1.4 : 1;
+          ctx.stroke();
+          const text = String(field.value || '');
+          const visible = text || field.placeholder || (field.type === 'select' && field.options.length ? field.options[0] : '');
+          ctx.fillStyle = text ? '#eef4ff' : '#738296';
+          ctx.font = '12px Segoe UI';
+          const cursor = index === propertyEditor.active && Math.floor(Date.now() / 530) % 2 === 0 && field.type !== 'select' ? '|' : '';
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(inputX + 8, rowY + 5, inputW - 16, 28);
+          ctx.clip();
+          ctx.fillText(visible + cursor, inputX + 10, rowY + 19);
+          if (field.type === 'select' && field.options.length) {{
+            ctx.fillStyle = '#607086';
+            ctx.font = '10px Segoe UI';
+            ctx.textAlign = 'right';
+            ctx.fillText(field.options.join(' / '), inputX + inputW - 10, rowY + 19);
+            ctx.textAlign = 'left';
+          }}
+          ctx.restore();
+        }}
+      }}
+      ctx.restore();
+
+      if (needsScrollbar) {{
+        const trackX = x + panelW - 14;
+        const trackY = listY;
+        const trackH = listH;
+        const contentH = propertyEditorContentHeight();
+        const thumbH = Math.max(24, listH * listH / Math.max(listH, contentH));
+        const thumbY = trackY + (propertyEditor.scroll / maxScroll) * (trackH - thumbH);
+        roundedRect(trackX, trackY, 6, trackH, 3);
+        ctx.fillStyle = '#0b1017';
+        ctx.fill();
+        roundedRect(trackX, thumbY, 6, thumbH, 3);
+        ctx.fillStyle = '#6f849d';
+        ctx.fill();
+        propertyEditor.scrollBar = {{ x: trackX, y: trackY, w: 6, h: trackH, thumbY, thumbH }};
+      }}
+
+      for (const button of propertyEditor.buttons) {{
+        const primary = button.action === 'commit';
+        roundedRect(button.x, button.y, button.w, button.h, 6);
+        ctx.fillStyle = primary ? '#26384a' : '#171d27';
+        ctx.fill();
+        ctx.strokeStyle = primary ? '#43c6ac' : '#354255';
+        ctx.stroke();
+        ctx.fillStyle = '#eef4ff';
+        ctx.textAlign = 'center';
+        ctx.font = '12px Segoe UI';
+        ctx.fillText(primary ? 'Save' : 'Cancel', button.x + button.w / 2, button.y + button.h / 2);
+      }}
+      ctx.restore();
+    }}
     function draw() {{
       const rect = canvas.getBoundingClientRect();
       ctx.clearRect(0, 0, rect.width, rect.height);
       ctx.fillStyle = '#0d1117'; ctx.fillRect(0, 0, rect.width, rect.height);
       drawGrid(rect.width, rect.height);
+      drawSections();
+      drawSectionDraft();
       for (const edge of state.edges) drawEdge(edge);
       if (state.drag && state.drag.kind === 'edge') drawTempEdge(state.drag.from, state.drag.to);
       for (const node of state.nodes) drawNode(node);
@@ -1708,19 +2977,63 @@ def _node_graph_html(
       drawNodePicker();
       ctx.fillStyle = '#8b98a8'; ctx.font = '11px Segoe UI'; ctx.textAlign = 'left';
       ctx.fillText(`${{state.nodes.length}} nodes / ${{state.edges.length}} edges`, 12, rect.height - 16);
+      drawRenameEditor(rect.width, rect.height);
+      drawPropertyEditor(rect.width, rect.height);
     }}
 
     canvas.addEventListener('mousedown', event => {{
       canvas.focus();
       const p = graphPoint(event);
+      if (propertyEditor.open) {{
+        const propertyHit = hitPropertyEditor(p.sx, p.sy);
+        if (propertyHit && propertyHit.kind === 'commit') commitPropertyEditor();
+        else if (propertyHit && propertyHit.kind === 'scrollbar' && propertyEditor.scrollBar) {{
+          const bar = propertyEditor.scrollBar;
+          const maxScroll = clampPropertyEditorScroll();
+          if (!propertyHit.onThumb && maxScroll > 0) {{
+            const trackTravel = Math.max(1, bar.h - bar.thumbH);
+            propertyEditor.scroll = ((p.sy - bar.y - bar.thumbH / 2) / trackTravel) * maxScroll;
+            clampPropertyEditorScroll();
+          }}
+          propertyEditor.scrollDrag = {{ startY: p.sy, startScroll: propertyEditor.scroll, maxScroll, trackH: bar.h, thumbH: bar.thumbH }};
+          canvas.style.cursor = 'grabbing';
+        }}
+        else if (propertyHit && (propertyHit.kind === 'cancel' || propertyHit.kind === 'outside')) closePropertyEditor();
+        else if (propertyHit && propertyHit.kind === 'field') editPropertyField(propertyHit.index);
+        event.preventDefault();
+        draw();
+        return;
+      }}
+      if (renameEditor.open) {{
+        const renameHit = hitRenameEditor(p.sx, p.sy);
+        if (renameHit && renameHit.kind === 'commit') commitRenameEditor();
+        else if (renameHit && (renameHit.kind === 'cancel' || renameHit.kind === 'outside')) closeRenameEditor();
+        else if (renameHit && renameHit.kind === 'inside') renameEditor.selectAll = false;
+        event.preventDefault();
+        draw();
+        return;
+      }}
       if (nodePicker.open) {{
         const pickerHit = hitNodePicker(p.sx, p.sy);
         if (pickerHit && pickerHit.kind === 'item') chooseNodePickerSelection(pickerHit.index);
+        else if (pickerHit && pickerHit.kind === 'scrollbar' && nodePicker.scrollBar) {{
+          const bar = nodePicker.scrollBar;
+          const maxScroll = clampNodePickerScroll();
+          if (!pickerHit.onThumb && maxScroll > 0) {{
+            const trackTravel = Math.max(1, bar.h - bar.thumbH);
+            nodePicker.scroll = ((p.sy - bar.y - bar.thumbH / 2) / trackTravel) * maxScroll;
+            clampNodePickerScroll();
+          }}
+          nodePicker.scrollDrag = {{ startY: p.sy, startScroll: nodePicker.scroll, maxScroll, trackH: bar.h, thumbH: bar.thumbH }};
+          canvas.style.cursor = 'grabbing';
+          draw();
+        }}
         else if (pickerHit && pickerHit.kind === 'close') closeNodePicker();
         else if (pickerHit && pickerHit.kind === 'outside') closeNodePicker();
         event.preventDefault();
         return;
-      }}      const toolbarAction = hitToolbar(p.sx, p.sy);
+      }}
+      const toolbarAction = hitToolbar(p.sx, p.sy);
       if (toolbarAction) {{
         runToolbarAction(toolbarAction);
         state.drag = null;
@@ -1738,6 +3051,7 @@ def _node_graph_html(
       if (output) {{
         state.selected = null;
         state.selectedEdge = null;
+        state.selectedSection = null;
         state.drag = {{ kind: 'edge', from: output, to: {{ x: p.sx, y: p.sy }} }};
         canvas.style.cursor = 'crosshair';
         draw();
@@ -1747,6 +3061,7 @@ def _node_graph_html(
       if (header) {{
         state.selected = header.id;
         state.selectedEdge = null;
+        state.selectedSection = null;
         state.drag = {{ kind: 'node', id: header.id, ox: p.x - header.x, oy: p.y - header.y, before: graphSnapshot() }};
         canvas.style.cursor = 'grabbing';
         emitGraphEvent({{ event: 'node_selected', node: header.id }});
@@ -1755,6 +3070,7 @@ def _node_graph_html(
         if (body) {{
           state.selected = body.id;
           state.selectedEdge = null;
+        state.selectedSection = null;
           state.drag = null;
           emitGraphEvent({{ event: 'node_selected', node: body.id }});
           draw();
@@ -1764,13 +3080,70 @@ def _node_graph_html(
         if (edge) {{
           state.selected = null;
           state.selectedEdge = edge.id;
+          state.selectedSection = null;
           state.drag = null;
           emitGraphEvent({{ event: 'edge_selected', edge: edge.id }});
           draw();
           return;
         }}
+        if (event.shiftKey && !hitSection(p.x, p.y)) {{
+          state.selected = null;
+          state.selectedEdge = null;
+          state.selectedSection = null;
+          state.drag = {{ kind: 'section-create', startX: p.x, startY: p.y, currentX: p.x, currentY: p.y, before: graphSnapshot() }};
+          canvas.style.cursor = 'crosshair';
+          emitGraphEvent({{ event: 'section_create_started', position: {{ x: p.x, y: p.y }} }});
+          draw();
+          return;
+        }}
+        const resizeSection = hitSectionResize(p.x, p.y);
+        if (resizeSection) {{
+          state.selected = null;
+          state.selectedEdge = null;
+          state.selectedSection = resizeSection.id;
+          if (!resizeSection.locked) {{
+            state.drag = {{ kind: 'section-resize', id: resizeSection.id, startX: p.x, startY: p.y, startW: resizeSection.width, startH: resizeSection.height, before: graphSnapshot() }};
+            canvas.style.cursor = 'nwse-resize';
+          }} else {{
+            state.drag = null;
+          }}
+          emitGraphEvent({{ event: 'section_selected', section: resizeSection.id }});
+          draw();
+          return;
+        }}
+        const moveSection = hitSectionMove(p.x, p.y);
+        const section = moveSection || hitSection(p.x, p.y);
+        if (section) {{
+          state.selected = null;
+          state.selectedEdge = null;
+          state.selectedSection = section.id;
+          if (moveSection && !section.locked) {{
+            const members = sectionMemberIds(section);
+            state.drag = {{
+              kind: 'section',
+              id: section.id,
+              ox: p.x - section.x,
+              oy: p.y - section.y,
+              startX: section.x,
+              startY: section.y,
+              members,
+              memberStarts: members.map(id => {{
+                const node = state.nodes.find(candidate => candidate.id === id);
+                return node ? {{ id, x: node.x, y: node.y }} : null;
+              }}).filter(Boolean),
+              before: graphSnapshot()
+            }};
+            canvas.style.cursor = 'grabbing';
+          }} else {{
+            state.drag = null;
+          }}
+          emitGraphEvent({{ event: 'section_selected', section: section.id }});
+          draw();
+          return;
+        }}
         state.selected = null;
         state.selectedEdge = null;
+        state.selectedSection = null;
         state.drag = {{ kind: 'pan', sx: p.sx, sy: p.sy, vx: state.viewX, vy: state.viewY }};
         canvas.style.cursor = 'grabbing';
         emitGraphEvent({{ event: 'selection_cleared' }});
@@ -1780,15 +3153,57 @@ def _node_graph_html(
 
     window.addEventListener('mousemove', event => {{
       const p = graphPoint(event);
+      if (propertyEditor.scrollDrag) {{
+        const drag = propertyEditor.scrollDrag;
+        const trackTravel = Math.max(1, drag.trackH - drag.thumbH);
+        propertyEditor.scroll = drag.startScroll + (p.sy - drag.startY) * (drag.maxScroll / trackTravel);
+        clampPropertyEditorScroll();
+        canvas.style.cursor = 'grabbing';
+        draw();
+        return;
+      }}
+      if (nodePicker.scrollDrag) {{
+        const drag = nodePicker.scrollDrag;
+        const trackTravel = Math.max(1, drag.trackH - drag.thumbH);
+        nodePicker.scroll = drag.startScroll + (p.sy - drag.startY) * (drag.maxScroll / trackTravel);
+        clampNodePickerScroll();
+        canvas.style.cursor = 'grabbing';
+        draw();
+        return;
+      }}
       state.hoverPort = hitPort(p.sx, p.sy);
       if (!state.drag) {{
-        canvas.style.cursor = state.hoverPort && state.hoverPort.side === 'output' ? 'crosshair' : (hitHeader(p.x, p.y) ? 'grab' : (hitEdge(p.sx, p.sy) ? 'pointer' : (hitNode(p.x, p.y) ? 'default' : 'move')));
+
+        const resizeSection = hitSectionResize(p.x, p.y);
+        const movableSection = hitSectionMove(p.x, p.y);
+        const section = movableSection || hitSection(p.x, p.y);
+        canvas.style.cursor = state.hoverPort && state.hoverPort.side === 'output' ? 'crosshair' : (hitHeader(p.x, p.y) ? 'grab' : (hitEdge(p.sx, p.sy) ? 'pointer' : (hitNode(p.x, p.y) ? 'default' : (resizeSection && !resizeSection.locked ? 'nwse-resize' : (movableSection && !movableSection.locked ? 'grab' : (section ? 'pointer' : 'move'))))));
         draw();
         return;
       }}
       if (state.drag.kind === 'node') {{
         const node = state.nodes.find(n => n.id === state.drag.id);
         if (node) {{ node.x = p.x - state.drag.ox; node.y = p.y - state.drag.oy; }}
+      }} else if (state.drag.kind === 'section-create') {{
+        state.drag.currentX = p.x;
+        state.drag.currentY = p.y;
+      }} else if (state.drag.kind === 'section') {{
+        const section = state.sections.find(s => s.id === state.drag.id);
+        if (section) {{
+          const nextX = p.x - state.drag.ox;
+          const nextY = p.y - state.drag.oy;
+          const dx = nextX - state.drag.startX;
+          const dy = nextY - state.drag.startY;
+          section.x = nextX;
+          section.y = nextY;
+          for (const memberStart of state.drag.memberStarts || []) {{
+            const node = state.nodes.find(candidate => candidate.id === memberStart.id);
+            if (node) {{ node.x = memberStart.x + dx; node.y = memberStart.y + dy; }}
+          }}
+        }}
+      }} else if (state.drag.kind === 'section-resize') {{
+        const section = state.sections.find(s => s.id === state.drag.id);
+        if (section) {{ section.width = Math.max(140, state.drag.startW + p.x - state.drag.startX); section.height = Math.max(90, state.drag.startH + p.y - state.drag.startY); }}
       }} else if (state.drag.kind === 'edge') {{
         state.drag.to = {{ x: p.sx, y: p.sy }};
       }} else {{
@@ -1799,16 +3214,39 @@ def _node_graph_html(
     }});
 
     window.addEventListener('mouseup', event => {{
+      if (propertyEditor.scrollDrag) {{
+        propertyEditor.scrollDrag = null;
+        canvas.style.cursor = 'default';
+        draw();
+        return;
+      }}
+      if (nodePicker.scrollDrag) {{
+        nodePicker.scrollDrag = null;
+        canvas.style.cursor = 'default';
+        draw();
+        return;
+      }}
       if (state.drag && state.drag.kind === 'edge') {{
         const p = graphPoint(event);
         const target = hitPort(p.sx, p.sy, 'input');
         if (createEdge(state.drag.from, target)) {{
           state.selected = null;
           state.selectedEdge = state.edges[state.edges.length - 1].id;
+          state.selectedSection = null;
         }}
+      }} else if (state.drag && state.drag.kind === 'section-create') {{
+        state.drag.currentX = graphPoint(event).x;
+        state.drag.currentY = graphPoint(event).y;
+        createSectionFromRect(sectionDraftRect(state.drag), state.drag.before);
       }} else if (state.drag && state.drag.kind === 'node') {{
         const node = state.nodes.find(n => n.id === state.drag.id);
         if (node && snapshotCore(state.drag.before) !== snapshotCore(graphSnapshot())) emitGraphMutation({{ event: 'node_moved', node: node.id, position: {{ x: node.x, y: node.y }} }}, state.drag.before);
+      }} else if (state.drag && state.drag.kind === 'section') {{
+        const section = state.sections.find(s => s.id === state.drag.id);
+        if (section && snapshotCore(state.drag.before) !== snapshotCore(graphSnapshot())) emitGraphMutation({{ event: 'section_moved', section: sectionEventPayload(section), nodes: nodePositionPayloads(state.drag.members || []) }}, state.drag.before);
+      }} else if (state.drag && state.drag.kind === 'section-resize') {{
+        const section = state.sections.find(s => s.id === state.drag.id);
+        if (section && snapshotCore(state.drag.before) !== snapshotCore(graphSnapshot())) emitGraphMutation({{ event: 'section_resized', section: sectionEventPayload(section) }}, state.drag.before);
       }} else if (state.drag && state.drag.kind === 'pan') {{
         emitViewportChanged('pan');
       }}
@@ -1820,6 +3258,14 @@ def _node_graph_html(
     canvas.addEventListener('dblclick', event => {{
       const p = graphPoint(event);
       if (hitPort(p.sx, p.sy) || hitEdge(p.sx, p.sy) || hitNode(p.x, p.y)) return;
+      const section = hitSection(p.x, p.y);
+      if (section) {{
+        state.selected = null;
+        state.selectedEdge = null;
+        state.selectedSection = section.id;
+        editSelectedSectionTitle();
+        return;
+      }}
       if (!config.emitEvents) {{
         addNode(p.x, p.y);
         draw();
@@ -1827,8 +3273,79 @@ def _node_graph_html(
       }}
       openNodePicker(p);
     }});
-
     canvas.addEventListener('keydown', event => {{
+      if (propertyEditor.open) {{
+        const field = activePropertyField();
+        const cycleSelectField = direction => {{
+          if (!field || field.type !== 'select' || !field.options.length) return false;
+          const current = field.options.indexOf(String(field.value || ''));
+          const next = (current + direction + field.options.length) % field.options.length;
+          field.value = field.options[next];
+          draw();
+          return true;
+        }};
+        if (event.key === 'Escape') {{
+          event.preventDefault();
+          closePropertyEditor();
+        }} else if (event.key === 'Enter') {{
+          event.preventDefault();
+          commitPropertyEditor();
+        }} else if (event.key === 'Tab') {{
+          event.preventDefault();
+          const direction = event.shiftKey ? -1 : 1;
+          propertyEditor.active = (propertyEditor.active + direction + propertyEditor.fields.length) % propertyEditor.fields.length;
+          ensurePropertyFieldVisible();
+          draw();
+        }} else if ((event.key === ' ' || event.key === 'ArrowDown' || event.key === 'ArrowRight') && field && field.type === 'select') {{
+          event.preventDefault();
+          cycleSelectField(1);
+        }} else if ((event.key === 'ArrowUp' || event.key === 'ArrowLeft') && field && field.type === 'select') {{
+          event.preventDefault();
+          cycleSelectField(-1);
+        }} else if (event.key === ' ' && field && field.type === 'bool') {{
+          event.preventDefault();
+          field.value = !field.value;
+          draw();
+        }} else if (event.key === 'Backspace' && field && field.type !== 'bool' && field.type !== 'select') {{
+          event.preventDefault();
+          field.value = String(field.value || '').slice(0, -1);
+          draw();
+        }} else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a' && field && field.type !== 'bool' && field.type !== 'select') {{
+          event.preventDefault();
+          field.value = '';
+          draw();
+        }} else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey && field && field.type !== 'bool' && field.type !== 'select') {{
+          event.preventDefault();
+          field.value = String(field.value || '') + event.key;
+          draw();
+        }}
+        return;
+      }}
+      if (renameEditor.open) {{
+        if (event.key === 'Escape') {{
+          event.preventDefault();
+          closeRenameEditor();
+        }} else if (event.key === 'Enter') {{
+          event.preventDefault();
+          commitRenameEditor();
+        }} else if (event.key === 'Backspace') {{
+          event.preventDefault();
+          renameEditor.value = renameEditor.selectAll ? '' : renameEditor.value.slice(0, -1);
+          renameEditor.selectAll = false;
+          draw();
+        }} else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {{
+          event.preventDefault();
+          renameEditor.value = '';
+          renameEditor.selectAll = false;
+          draw();
+        }} else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {{
+          event.preventDefault();
+          renameEditor.value = renameEditor.selectAll ? event.key : renameEditor.value + event.key;
+          renameEditor.selectAll = false;
+          draw();
+        }}
+        return;
+      }}
       if (nodePicker.open) {{
         if (event.key === 'Escape') {{
           event.preventDefault();
@@ -1839,20 +3356,24 @@ def _node_graph_html(
         }} else if (event.key === 'ArrowDown') {{
           event.preventDefault();
           nodePicker.selected = Math.min(nodePicker.selected + 1, Math.max(0, nodePickerItems().length - 1));
+          ensureNodePickerSelectionVisible();
           draw();
         }} else if (event.key === 'ArrowUp') {{
           event.preventDefault();
           nodePicker.selected = Math.max(0, nodePicker.selected - 1);
+          ensureNodePickerSelectionVisible();
           draw();
         }} else if (event.key === 'Backspace') {{
           event.preventDefault();
           nodePicker.query = nodePicker.query.slice(0, -1);
           nodePicker.selected = 0;
+          nodePicker.scroll = 0;
           draw();
         }} else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {{
           event.preventDefault();
           nodePicker.query += event.key;
           nodePicker.selected = 0;
+          nodePicker.scroll = 0;
           draw();
         }}
         return;
@@ -1868,11 +3389,14 @@ def _node_graph_html(
         deleteSelection();
       }} else if (event.key === 'Enter' || event.key === 'F2') {{
         event.preventDefault();
-        editSelectedNodeTitle();
+        if (!editSelectedNodeTitle()) editSelectedSectionTitle();
       }} else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd') {{
         event.preventDefault();
         duplicateSelectedNode();
         draw();
+      }} else if (event.key.toLowerCase() === 'i') {{
+        event.preventDefault();
+        openPropertyEditor();
       }} else if (event.key.toLowerCase() === 'f') {{
         event.preventDefault();
         fitToView();
@@ -1891,15 +3415,36 @@ def _node_graph_html(
         state.drag = null;
         state.selected = null;
         state.selectedEdge = null;
+        state.selectedSection = null;
         emitGraphEvent({{ event: 'selection_cleared' }});
         draw();
       }}
     }});
 
     canvas.addEventListener('wheel', event => {{
+      const p = graphPoint(event);
+      if (propertyEditor.open && propertyEditor.rect) {{
+        const hit = hitPropertyEditor(p.sx, p.sy);
+        if (hit && hit.kind !== 'outside') {{
+          event.preventDefault();
+          propertyEditor.scroll += event.deltaY;
+          clampPropertyEditorScroll();
+          draw();
+          return;
+        }}
+      }}
+      if (nodePicker.open && nodePicker.rect) {{
+        const hit = hitNodePicker(p.sx, p.sy);
+        if (hit && hit.kind !== 'outside') {{
+          event.preventDefault();
+          nodePicker.scroll += event.deltaY;
+          clampNodePickerScroll();
+          draw();
+          return;
+        }}
+      }}
       if (!config.enableZoom) return;
       event.preventDefault();
-      const p = graphPoint(event);
       const factor = event.deltaY < 0 ? 1.08 : 0.92;
       setZoom(state.zoom * factor, p, event.deltaY < 0 ? 'zoom_in' : 'zoom_out');
     }}, {{ passive: false }});
@@ -1908,6 +3453,25 @@ def _node_graph_html(
   </script>
 </body>
 </html>"""
+
+
+def _section_payload(section: NodeGraphSection) -> dict[str, object]:
+    payload = {
+        "id": section.id,
+        "title": section.title,
+        "x": section.x,
+        "y": section.y,
+        "width": section.width,
+        "height": section.height,
+        "purpose": section.purpose,
+        "trigger": section.trigger,
+        "color": section.color,
+        "collapsed": section.collapsed,
+        "locked": section.locked,
+    }
+    if section.data is not None:
+        payload["data"] = _json_copy(section.data, "section custom data")
+    return payload
 
 
 def _node_payload(node: NodeGraphNode) -> dict[str, object]:
@@ -1967,6 +3531,34 @@ def _port_payload(port: NodeGraphPort) -> dict[str, object]:
         payload["type"] = port.port_type
     if port.data is not None:
         payload["data"] = _json_copy(port.data, "port custom data")
+    return payload
+
+
+def _node_center_in_section(node: NodeGraphNode, section: NodeGraphSection) -> bool:
+    width = max(float(node.width), 1.0)
+    ports = max(len(node.inputs), len(node.outputs), 1)
+    height = 36.0 + 22.0 + max(0, ports - 1) * 22.0 + 22.0
+    center_x = node.x + width / 2.0
+    center_y = node.y + height / 2.0
+    return section.x <= center_x <= section.x + section.width and section.y <= center_y <= section.y + section.height
+
+
+
+def _section_graph_data(section: NodeGraphSection) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "id": section.id,
+        "title": section.title,
+        "label": section.title,
+        "position": {"x": section.x, "y": section.y},
+        "size": {"width": section.width, "height": section.height},
+        "purpose": section.purpose,
+        "trigger": section.trigger,
+        "color": section.color,
+        "collapsed": section.collapsed,
+        "locked": section.locked,
+    }
+    if section.data is not None:
+        payload["data"] = section.data
     return payload
 
 
@@ -2041,10 +3633,251 @@ def _default_templates() -> tuple[NodeGraphTemplate, ...]:
     )
 
 
+def _template_data(
+    node_type: str,
+    default_status: str | None = None,
+    property_fields: Sequence[Mapping[str, object]] | None = None,
+    **extra: object,
+) -> dict[str, object]:
+    data: dict[str, object] = {"node_type": node_type}
+    if default_status is not None:
+        data["default_status"] = default_status
+    if property_fields is not None:
+        fields = [dict(field) for field in property_fields]
+        data["property_fields"] = fields
+        data["config_schema"] = {"version": 1, "fields": [dict(field) for field in fields]}
+    data.update(extra)
+    return data
+
+
 def multi_agent_node_templates() -> tuple[NodeGraphTemplate, ...]:
-    """Return runtime-oriented templates for multi-agent workflow graphs."""
+    """Return primitive and workflow templates for multi-agent graphs."""
 
     return (
+        NodeGraphTemplate(
+            "terminal",
+            "Terminal Session",
+            inputs=(
+                NodeGraphPort("stdin", "stdin", port_type="terminal_input"),
+                NodeGraphPort("control", "control", port_type="control"),
+                NodeGraphPort("cwd", "cwd", port_type="file:path"),
+                NodeGraphPort("env", "env", port_type="json"),
+            ),
+            outputs=(
+                NodeGraphPort("stdout", "stdout", port_type="terminal_output"),
+                NodeGraphPort("stderr", "stderr", port_type="terminal_error"),
+                NodeGraphPort("transcript", "transcript", port_type="stream:text"),
+                NodeGraphPort("status", "status", port_type="status"),
+                NodeGraphPort("exit_code", "exit_code", port_type="number"),
+            ),
+            subtitle="persistent process",
+            status="stopped",
+            color="#43c6ac",
+            width=250,
+            data=_template_data(
+                "terminal",
+                "stopped",
+                [
+                    {"key": "session_id", "label": "Session ID"},
+                    {"key": "command", "label": "Command", "default": "codex"},
+                    {"key": "args", "label": "Args", "placeholder": "--model gpt-5"},
+                    {"key": "cwd", "label": "Working Dir"},
+                    {"key": "auto_start", "label": "Auto Start", "type": "bool", "default": False},
+                    {"key": "restart_policy", "label": "Restart", "type": "select", "options": ["never", "on_exit", "on_error"], "default": "never"},
+                ],
+                session={"agent_type": "terminal", "command": None, "args": [], "cwd": None, "environment": {}},
+                runtime_object="terminal_session",
+            ),
+        ),
+        NodeGraphTemplate(
+            "text_input",
+            "Text Input",
+            outputs=(NodeGraphPort("text", "text", port_type="text"),),
+            subtitle="static text source",
+            status="ready",
+            color="#7aa2f7",
+            width=210,
+            data=_template_data(
+                "text_input",
+                "ready",
+                [
+                    {"key": "text", "label": "Text"},
+                    {"key": "emit_on_start", "label": "Emit On Start", "type": "bool", "default": False},
+                    {"key": "output_mode", "label": "Mode", "type": "select", "options": ["once", "manual"], "default": "manual"},
+                ],
+            ),
+        ),
+        NodeGraphTemplate(
+            "append_text",
+            "Append Text",
+            inputs=(
+                NodeGraphPort("text", "text", port_type="text"),
+                NodeGraphPort("appendix", "appendix", port_type="text"),
+            ),
+            outputs=(NodeGraphPort("text", "text", port_type="text"),),
+            subtitle="add suffix",
+            status="idle",
+            color="#9ece6a",
+            width=210,
+            data=_template_data(
+                "append_text",
+                "idle",
+                [
+                    {"key": "appendix", "label": "Appendix"},
+                    {"key": "separator", "label": "Separator", "default": "\n"},
+                ],
+            ),
+        ),
+        NodeGraphTemplate(
+            "extract_between_markers",
+            "Extract Between Markers",
+            inputs=(
+                NodeGraphPort("text", "text", port_type="text"),
+                NodeGraphPort("start_marker", "start_marker", port_type="text"),
+                NodeGraphPort("end_marker", "end_marker", port_type="text"),
+            ),
+            outputs=(
+                NodeGraphPort("match", "match", port_type="text"),
+                NodeGraphPort("matches", "matches", port_type="text:list"),
+                NodeGraphPort("before", "before", port_type="text"),
+                NodeGraphPort("after", "after", port_type="text"),
+                NodeGraphPort("found", "found", port_type="bool"),
+            ),
+            subtitle="marker parser",
+            status="idle",
+            color="#9ece6a",
+            width=270,
+            data=_template_data(
+                "extract_between_markers",
+                "idle",
+                [
+                    {"key": "start_marker", "label": "Start Marker", "default": "@to"},
+                    {"key": "end_marker", "label": "End Marker", "default": "@end"},
+                    {"key": "include_markers", "label": "Include Markers", "type": "bool", "default": False},
+                    {"key": "max_matches", "label": "Max Matches", "type": "number", "default": 1},
+                ],
+            ),
+        ),
+        NodeGraphTemplate(
+            "envelope_parser",
+            "Envelope Parser",
+            inputs=(NodeGraphPort("text", "text", port_type="text"),),
+            outputs=(
+                NodeGraphPort("message", "message", port_type="message"),
+                NodeGraphPort("to", "to", port_type="text"),
+                NodeGraphPort("from", "from", port_type="text"),
+                NodeGraphPort("type", "type", port_type="text"),
+                NodeGraphPort("body", "body", port_type="text"),
+                NodeGraphPort("id", "id", port_type="text"),
+                NodeGraphPort("fields", "fields", port_type="json"),
+                NodeGraphPort("malformed", "malformed", port_type="bool"),
+                NodeGraphPort("duplicate", "duplicate", port_type="bool"),
+            ),
+            subtitle="structured messages",
+            status="idle",
+            color="#9ece6a",
+            width=260,
+            data=_template_data(
+                "envelope_parser",
+                "idle",
+                [
+                    {"key": "start_marker", "label": "Start Marker", "default": "@to"},
+                    {"key": "end_marker", "label": "End Marker", "default": "@end"},
+                    {"key": "streaming", "label": "Streaming", "type": "bool", "default": True},
+                ],
+            ),
+        ),
+        NodeGraphTemplate(
+            "message_router",
+            "Message Router",
+            inputs=(
+                NodeGraphPort("message", "message", port_type="message"),
+                NodeGraphPort("rules", "rules", port_type="json"),
+            ),
+            outputs=(
+                NodeGraphPort("default", "default", port_type="message"),
+                NodeGraphPort("route_1", "route 1", port_type="message"),
+                NodeGraphPort("route_2", "route 2", port_type="message"),
+                NodeGraphPort("route_3", "route 3", port_type="message"),
+            ),
+            subtitle="field-based routing",
+            status="idle",
+            color="#ff9e64",
+            width=250,
+            data=_template_data(
+                "message_router",
+                "idle",
+                [
+                    {"key": "rules", "label": "Rules", "type": "json", "default": []},
+                    {"key": "default_target", "label": "Default Target", "default": "default"},
+                ],
+            ),
+        ),
+        NodeGraphTemplate(
+            "approval_gate",
+            "Approval Gate",
+            inputs=(
+                NodeGraphPort("message", "message", port_type="message"),
+                NodeGraphPort("summary", "summary", port_type="text"),
+                NodeGraphPort("risk", "risk", port_type="text"),
+            ),
+            outputs=(
+                NodeGraphPort("approved", "approved", port_type="message"),
+                NodeGraphPort("rejected", "rejected", port_type="message"),
+                NodeGraphPort("edited", "edited", port_type="message"),
+                NodeGraphPort("needs_user", "needs_user", port_type="event"),
+            ),
+            subtitle="human checkpoint",
+            status="waiting",
+            color="#e0af68",
+            width=240,
+            data=_template_data(
+                "approval_gate",
+                "waiting",
+                [
+                    {"key": "requires_human", "label": "Requires Human", "type": "bool", "default": True},
+                    {"key": "risk_label", "label": "Risk Label", "default": "review"},
+                    {"key": "allow_edit", "label": "Allow Edit", "type": "bool", "default": True},
+                ],
+                safety_policy={"requires_human": True},
+            ),
+        ),
+        NodeGraphTemplate(
+            "log",
+            "Log",
+            inputs=(NodeGraphPort("value", "value", port_type="json"),),
+            outputs=(NodeGraphPort("value", "value", port_type="json"),),
+            subtitle="show value",
+            status="recording",
+            color="#2ac3de",
+            width=190,
+            data=_template_data(
+                "log",
+                "recording",
+                [
+                    {"key": "label", "label": "Label", "default": "Log"},
+                    {"key": "persist", "label": "Persist", "type": "bool", "default": False},
+                ],
+            ),
+        ),
+        NodeGraphTemplate(
+            "probe",
+            "Probe",
+            inputs=(NodeGraphPort("value", "value", port_type="json"),),
+            outputs=(NodeGraphPort("value", "value", port_type="json"),),
+            subtitle="wire monitor",
+            status="watching",
+            color="#2ac3de",
+            width=190,
+            data=_template_data(
+                "probe",
+                "watching",
+                [
+                    {"key": "label", "label": "Label", "default": "Probe"},
+                    {"key": "show_inline", "label": "Show Inline", "type": "bool", "default": True},
+                ],
+            ),
+        ),
         NodeGraphTemplate(
             "agent",
             "Agent",
@@ -2064,33 +3897,21 @@ def multi_agent_node_templates() -> tuple[NodeGraphTemplate, ...]:
             status="idle",
             color="#7aa2f7",
             width=230,
-            data={
-                "node_type": "agent",
-                "default_status": "idle",
-                "session": {
+            data=_template_data(
+                "agent",
+                "idle",
+                [
+                    {"key": "agent_type", "label": "Agent Type", "default": "codex"},
+                    {"key": "role", "label": "Role"},
+                    {"key": "model", "label": "Model"},
+                    {"key": "requires_approval", "label": "Requires Approval", "type": "bool", "default": True},
+                ],
+                session={
                     "agent_type": "codex",
                     "capabilities": {"terminal": True, "tools": True},
                     "safety_policy": {"requires_approval": True},
                 },
-            },
-        ),
-        NodeGraphTemplate(
-            "terminal",
-            "Terminal",
-            inputs=(NodeGraphPort("stdin", "terminal_input", port_type="terminal_input"),),
-            outputs=(
-                NodeGraphPort("stdout", "terminal_output", port_type="terminal_output"),
-                NodeGraphPort("error", "error", port_type="error"),
             ),
-            subtitle="process bridge",
-            status="stopped",
-            color="#43c6ac",
-            width=220,
-            data={
-                "node_type": "terminal",
-                "default_status": "stopped",
-                "session": {"agent_type": "terminal", "command": None, "args": [], "cwd": None, "environment": {}},
-            },
         ),
         NodeGraphTemplate(
             "parser",
@@ -2103,25 +3924,14 @@ def multi_agent_node_templates() -> tuple[NodeGraphTemplate, ...]:
             subtitle="envelope parser",
             status="idle",
             color="#9ece6a",
-            data={"node_type": "parser", "default_status": "idle"},
-        ),
-        NodeGraphTemplate(
-            "approval_gate",
-            "Approval Gate",
-            inputs=(NodeGraphPort("request", "approval_request", port_type="approval_request"),),
-            outputs=(
-                NodeGraphPort("result", "approval_result", port_type="approval_result"),
-                NodeGraphPort("error", "error", port_type="error"),
+            data=_template_data(
+                "parser",
+                "idle",
+                [
+                    {"key": "start_marker", "label": "Start Marker", "default": "@to"},
+                    {"key": "end_marker", "label": "End Marker", "default": "@end"},
+                ],
             ),
-            subtitle="safety checkpoint",
-            status="waiting",
-            color="#e0af68",
-            width=220,
-            data={
-                "node_type": "approval_gate",
-                "default_status": "waiting",
-                "safety_policy": {"requires_human": True},
-            },
         ),
         NodeGraphTemplate(
             "tester",
@@ -2137,7 +3947,14 @@ def multi_agent_node_templates() -> tuple[NodeGraphTemplate, ...]:
             subtitle="verification",
             status="idle",
             color="#bb9af7",
-            data={"node_type": "tester", "default_status": "idle"},
+            data=_template_data(
+                "tester",
+                "idle",
+                [
+                    {"key": "command", "label": "Test Command", "default": "py -3 -m pytest"},
+                    {"key": "cwd", "label": "Working Dir"},
+                ],
+            ),
         ),
         NodeGraphTemplate(
             "artifact",
@@ -2147,7 +3964,11 @@ def multi_agent_node_templates() -> tuple[NodeGraphTemplate, ...]:
             subtitle="produced file",
             status="ready",
             color="#f7768e",
-            data={"node_type": "artifact", "default_status": "ready"},
+            data=_template_data(
+                "artifact",
+                "ready",
+                [{"key": "output_path", "label": "Output Path"}],
+            ),
         ),
         NodeGraphTemplate(
             "human_input",
@@ -2161,7 +3982,11 @@ def multi_agent_node_templates() -> tuple[NodeGraphTemplate, ...]:
             status="waiting",
             color="#2ac3de",
             width=220,
-            data={"node_type": "human_input", "default_status": "waiting"},
+            data=_template_data(
+                "human_input",
+                "waiting",
+                [{"key": "prompt", "label": "Prompt", "default": "What should happen next?"}],
+            ),
         ),
         NodeGraphTemplate(
             "rule",
@@ -2174,16 +3999,454 @@ def multi_agent_node_templates() -> tuple[NodeGraphTemplate, ...]:
             subtitle="policy",
             status="active",
             color="#ff9e64",
-            data={"node_type": "rule", "default_status": "active"},
+            data=_template_data(
+                "rule",
+                "active",
+                [
+                    {"key": "match_type", "label": "Match Type"},
+                    {"key": "target", "label": "Target"},
+                ],
+            ),
         ),
     )
-
 
 def _port_by_id(ports: Sequence[NodeGraphPort], port_id: str) -> NodeGraphPort | None:
     for port in ports:
         if port.id == port_id:
             return port
     return None
+
+
+_RUNTIME_OBJECT_ID_KEYS: tuple[tuple[str, str | None], ...] = (
+    ("object_id", None),
+    ("session_id", "terminal_session"),
+    ("queue_id", "message_queue"),
+    ("store_id", "memory_store"),
+    ("watcher_id", "file_watcher"),
+    ("recorder_id", "transcript_recorder"),
+)
+
+_RUNTIME_OBJECT_REF_KEYS: tuple[tuple[str, str | None], ...] = (
+    ("object_ref", None),
+    ("session_ref", "terminal_session"),
+    ("queue_ref", "message_queue"),
+    ("store_ref", "memory_store"),
+    ("watcher_ref", "file_watcher"),
+    ("recorder_ref", "transcript_recorder"),
+)
+
+
+def _required_text(value: object, name: str) -> str:
+    if value is None:
+        raise ValueError(f"{name} is required")
+    text = str(value).strip()
+    if not text:
+        raise ValueError(f"{name} is required")
+    return text
+
+
+def _mapping_copy(value: object, context: str) -> dict[str, object] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise TypeError(f"{context} must be a mapping")
+    return _json_copy(dict(value), context)
+
+
+def _node_config(node: NodeGraphNode) -> dict[str, object]:
+    data = node.data or {}
+    config = data.get("config") if isinstance(data, Mapping) else None
+    return _mapping_copy(config, "node config") or {}
+
+
+def _node_type(node: NodeGraphNode) -> str:
+    data = node.data or {}
+    if isinstance(data, Mapping):
+        for key in ("node_type", "template_id", "kind"):
+            value = data.get(key)
+            if value is not None and str(value).strip():
+                return str(value).strip()
+    return "node"
+
+
+def _section_config(section: NodeGraphSection) -> dict[str, object]:
+    data = section.data or {}
+    if not isinstance(data, Mapping):
+        return {}
+    config = data.get("config")
+    if isinstance(config, Mapping):
+        return _json_copy(dict(config), "section config")
+    return _json_copy(dict(data), "section data") if data else {}
+
+
+def _node_runtime_binding(node: NodeGraphNode) -> NodeGraphNodeBinding:
+    config = _node_config(node)
+    owned = _runtime_object_from_node(node)
+    refs = _runtime_refs_from_node(node)
+    return NodeGraphNodeBinding(
+        node_id=node.id,
+        node_type=_node_type(node),
+        title=node.title,
+        status=node.status,
+        config=config or None,
+        owned_object_id=None if owned is None else owned.object_id,
+        object_refs=refs,
+    )
+
+
+def _section_runtime_binding(section: NodeGraphSection, node_ids: Sequence[str]) -> NodeGraphSectionBinding:
+    config = _section_config(section)
+    return NodeGraphSectionBinding(
+        section_id=section.id,
+        title=section.title,
+        node_ids=tuple(str(node_id) for node_id in node_ids),
+        purpose=section.purpose,
+        trigger=section.trigger,
+        config=config or None,
+    )
+
+
+def _runtime_object_type_from_key(key_type: str | None, explicit_type: object) -> str | None:
+    if explicit_type is not None:
+        text = str(explicit_type).strip()
+        if text:
+            return text
+    return key_type
+
+
+def _runtime_object_id_from_sources(
+    config: Mapping[str, object], data: Mapping[str, object]
+) -> tuple[str | None, str | None, str | None]:
+    for key, key_type in _RUNTIME_OBJECT_ID_KEYS:
+        value = config.get(key, data.get(key))
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text, key, key_type
+    return None, None, None
+
+
+def _runtime_object_from_node(node: NodeGraphNode) -> NodeGraphRuntimeObject | None:
+    data = node.data or {}
+    if not isinstance(data, Mapping):
+        return None
+    config = _node_config(node)
+    object_id, _, key_type = _runtime_object_id_from_sources(config, data)
+    if object_id is None:
+        return None
+    object_type = _runtime_object_type_from_key(key_type, data.get("runtime_object", data.get("object_type")))
+    if object_type is None:
+        object_type = str(data.get("node_type", "runtime_object"))
+    status = node.status or (None if data.get("default_status") is None else str(data.get("default_status")))
+    return NodeGraphRuntimeObject(
+        object_id=object_id,
+        object_type=object_type,
+        owner_node_id=node.id,
+        status=status,
+        config=config or None,
+    )
+
+
+def _missing_ref_from_value(value: NodeGraphRuntimeObjectRef | Mapping[str, object]) -> NodeGraphRuntimeObjectRef:
+    if isinstance(value, NodeGraphRuntimeObjectRef):
+        return value
+    if not isinstance(value, Mapping):
+        raise TypeError("runtime object refs must be reference records or mappings")
+    return NodeGraphRuntimeObjectRef(
+        node_id=_required_text(value.get("node_id", value.get("node")), "node_id"),
+        object_id=_required_text(value.get("object_id", value.get("id")), "object_id"),
+        object_type=None if value.get("object_type", value.get("type")) is None else str(value.get("object_type", value.get("type"))),
+        key=None if value.get("key") is None else str(value.get("key")),
+    )
+
+
+def _runtime_ref_from_mapping(
+    node: NodeGraphNode, key: str, value: Mapping[str, object], fallback_type: str | None = None
+) -> NodeGraphRuntimeObjectRef | None:
+    object_id = value.get("object_id", value.get("id"))
+    if object_id is None:
+        return None
+    object_text = str(object_id).strip()
+    if not object_text:
+        return None
+    object_type = _runtime_object_type_from_key(fallback_type, value.get("object_type", value.get("type")))
+    return NodeGraphRuntimeObjectRef(node.id, object_text, object_type, key)
+
+
+def _runtime_refs_from_node(node: NodeGraphNode) -> tuple[NodeGraphRuntimeObjectRef, ...]:
+    data = node.data or {}
+    if not isinstance(data, Mapping):
+        return ()
+    config = _node_config(node)
+    refs: list[NodeGraphRuntimeObjectRef] = []
+    for key in ("runtime_ref", "object_ref"):
+        value = data.get(key, config.get(key))
+        if isinstance(value, Mapping):
+            ref = _runtime_ref_from_mapping(node, key, value)
+            if ref is not None:
+                refs.append(ref)
+    explicit_ref_type = data.get("runtime_ref_type", data.get("object_ref_type"))
+    for key, key_type in _RUNTIME_OBJECT_REF_KEYS:
+        value = config.get(key, data.get(key))
+        if value is None or isinstance(value, Mapping):
+            continue
+        text = str(value).strip()
+        if not text:
+            continue
+        object_type = _runtime_object_type_from_key(key_type, explicit_ref_type)
+        refs.append(NodeGraphRuntimeObjectRef(node.id, text, object_type, key))
+    return tuple(refs)
+
+
+def _run_node_graph_text_flow(
+    graph: NodeGraph,
+    initial_inputs: Mapping[str, object],
+    *,
+    max_steps: int,
+    registry: NodeGraphObjectRegistry | None,
+) -> NodeGraphFlowRun:
+    if max_steps <= 0:
+        raise ValueError("max_steps must be positive")
+    binding = graph.runtime_binding(registry)
+    input_values: dict[tuple[str, str], list[object]] = {}
+    output_values: dict[tuple[str, str], list[object]] = {}
+    consumed: dict[tuple[str, str], int] = {}
+    edge_consumed: dict[tuple[str, str, str, str], int] = {}
+    log: list[dict[str, object]] = []
+    parser_state: dict[str, AgentEnvelopeParser] = {}
+
+    for key, value in initial_inputs.items():
+        if "." not in str(key):
+            raise ValueError("initial input keys must use node_id.port_id format")
+        node_id, port_id = str(key).split(".", 1)
+        _append_flow_value(input_values, node_id, port_id, value)
+
+    for node in graph.nodes:
+        if _node_type(node) == "text_input":
+            emitted = _execute_flow_node(node, {}, parser_state, log)
+            _record_flow_outputs(output_values, node, emitted, log)
+
+    edge_map = _flow_edge_map(graph.edges)
+    for step in range(max_steps):
+        progressed = False
+        _propagate_flow_edges(output_values, input_values, edge_map, edge_consumed)
+        for node in graph.nodes:
+            inputs = _pending_flow_inputs(node, input_values, consumed)
+            if not inputs:
+                continue
+            emitted = _execute_flow_node(node, inputs, parser_state, log)
+            if emitted:
+                _record_flow_outputs(output_values, node, emitted, log)
+                progressed = True
+        if not progressed:
+            _propagate_flow_edges(output_values, input_values, edge_map, edge_consumed)
+            break
+    else:
+        log.append({"event": "max_steps_reached", "max_steps": max_steps})
+
+    return NodeGraphFlowRun(
+        values={f"{node}.{port}": [_json_safe_value(item) for item in items] for (node, port), items in output_values.items()},
+        log=tuple(log),
+        binding=binding,
+    )
+
+
+def _flow_edge_map(edges: Sequence[NodeGraphEdge]) -> dict[tuple[str, str], list[tuple[str, str]]]:
+    edge_map: dict[tuple[str, str], list[tuple[str, str]]] = {}
+    for edge in edges:
+        edge_map.setdefault((edge.source_node, edge.source_port), []).append((edge.target_node, edge.target_port))
+    return edge_map
+
+
+def _append_flow_value(values: dict[tuple[str, str], list[object]], node_id: str, port_id: str, value: object) -> None:
+    values.setdefault((node_id, port_id), []).append(value)
+
+
+def _record_flow_outputs(
+    values: dict[tuple[str, str], list[object]], node: NodeGraphNode, outputs: Mapping[str, list[object]], log: list[dict[str, object]]
+) -> None:
+    for port_id, items in outputs.items():
+        for item in items:
+            _append_flow_value(values, node.id, port_id, item)
+            log.append({"event": "emit", "node": node.id, "port": port_id, "value": _json_safe_value(item)})
+
+
+def _propagate_flow_edges(
+    output_values: dict[tuple[str, str], list[object]],
+    input_values: dict[tuple[str, str], list[object]],
+    edge_map: Mapping[tuple[str, str], Sequence[tuple[str, str]]],
+    consumed: dict[tuple[str, str, str, str], int],
+) -> None:
+    for source, targets in edge_map.items():
+        source_values = output_values.get(source, [])
+        if not source_values:
+            continue
+        for target in targets:
+            edge_key = (source[0], source[1], target[0], target[1])
+            start = consumed.get(edge_key, 0)
+            if len(source_values) <= start:
+                continue
+            input_values.setdefault(target, []).extend(source_values[start:])
+            consumed[edge_key] = len(source_values)
+
+
+def _pending_flow_inputs(
+    node: NodeGraphNode, values: Mapping[tuple[str, str], list[object]], consumed: dict[tuple[str, str], int]
+) -> dict[str, list[object]]:
+    pending: dict[str, list[object]] = {}
+    for port in node.inputs:
+        key = (node.id, port.id)
+        items = values.get(key, [])
+        start = consumed.get(key, 0)
+        if len(items) > start:
+            pending[port.id] = items[start:]
+            consumed[key] = len(items)
+    return pending
+
+
+def _execute_flow_node(
+    node: NodeGraphNode,
+    inputs: Mapping[str, list[object]],
+    parser_state: dict[str, AgentEnvelopeParser],
+    log: list[dict[str, object]],
+) -> dict[str, list[object]]:
+    node_type = _node_type(node)
+    config = _node_config(node)
+    if node_type == "text_input":
+        text = str(config.get("text", ""))
+        return {"text": [text]} if text else {}
+    if node_type == "append_text":
+        appendix = str(config.get("appendix", ""))
+        separator = str(config.get("separator", ""))
+        return {"text": [str(value) + (separator if appendix else "") + appendix for value in _flow_input_values(inputs, "text", "in")]}
+    if node_type == "extract_between_markers":
+        return _execute_extract_between_markers(inputs, config)
+    if node_type in {"envelope_parser", "parser"}:
+        return _execute_envelope_parser(node, inputs, parser_state, log)
+    if node_type == "message_router":
+        return _execute_message_router(inputs, config, log)
+    if node_type == "log":
+        items = _flow_input_values(inputs, "value", "in", "message", "text")
+        for item in items:
+            log.append({"event": "log", "node": node.id, "value": _json_safe_value(item)})
+        return {"value": list(items)}
+    if node_type == "probe":
+        items = _flow_input_values(inputs, "value", "in", "message", "text")
+        for item in items:
+            log.append({"event": "probe", "node": node.id, "value": _json_safe_value(item)})
+        return {"value": list(items)}
+    if inputs:
+        log.append({"event": "node_skipped", "node": node.id, "node_type": node_type})
+    return {}
+
+
+def _flow_input_values(inputs: Mapping[str, list[object]], *ports: str) -> list[object]:
+    result: list[object] = []
+    for port in ports:
+        result.extend(inputs.get(port, []))
+    return result
+
+
+def _execute_extract_between_markers(inputs: Mapping[str, list[object]], config: Mapping[str, object]) -> dict[str, list[object]]:
+    start = str(config.get("start_marker", "@to"))
+    end = str(config.get("end_marker", "@end"))
+    max_matches = int(config.get("max_matches", 1) or 1)
+    include = bool(config.get("include_markers", False))
+    outputs: dict[str, list[object]] = {"match": [], "matches": [], "before": [], "after": [], "found": []}
+    for value in _flow_input_values(inputs, "text", "in"):
+        text = str(value)
+        matches: list[str] = []
+        cursor = 0
+        first_before = ""
+        last_after = ""
+        while len(matches) < max_matches:
+            start_index = text.find(start, cursor)
+            if start_index < 0:
+                break
+            body_start = start_index + len(start)
+            end_index = text.find(end, body_start)
+            if end_index < 0:
+                break
+            if not matches:
+                first_before = text[:start_index]
+            last_after = text[end_index + len(end):]
+            matches.append(text[start_index:end_index + len(end)] if include else text[body_start:end_index])
+            cursor = end_index + len(end)
+        outputs["found"].append(bool(matches))
+        outputs["matches"].append(matches)
+        if matches:
+            outputs["match"].append(matches[0])
+            outputs["before"].append(first_before)
+            outputs["after"].append(last_after)
+    return outputs
+
+
+def _execute_envelope_parser(
+    node: NodeGraphNode, inputs: Mapping[str, list[object]], parser_state: dict[str, AgentEnvelopeParser], log: list[dict[str, object]]
+) -> dict[str, list[object]]:
+    parser = parser_state.setdefault(node.id, AgentEnvelopeParser())
+    outputs: dict[str, list[object]] = {"message": [], "to": [], "from": [], "type": [], "body": [], "id": [], "fields": []}
+    for value in _flow_input_values(inputs, "text", "in"):
+        for message in parser.feed(value):
+            message_dict = message.to_dict()
+            outputs["message"].append(message_dict)
+            outputs["to"].append(message.to)
+            outputs["from"].append(message.from_)
+            outputs["type"].append(message.type)
+            outputs["body"].append(message.body)
+            outputs["id"].append(message.id)
+            outputs["fields"].append(dict(message.fields))
+    for event in parser.drain_events():
+        log.append({"event": "parser", "node": node.id, "parser_event": event})
+    return outputs
+
+
+def _execute_message_router(inputs: Mapping[str, list[object]], config: Mapping[str, object], log: list[dict[str, object]]) -> dict[str, list[object]]:
+    outputs: dict[str, list[object]] = {}
+    rules = config.get("rules", [])
+    if not isinstance(rules, Sequence) or isinstance(rules, (str, bytes, bytearray)):
+        rules = []
+    default_output = str(config.get("default_target", "default") or "default")
+    for message in _flow_input_values(inputs, "message", "in"):
+        message_map = _message_mapping(message)
+        output = _route_message_output(message_map, rules, default_output)
+        outputs.setdefault(output, []).append(message)
+        log.append({"event": "route", "node_type": "message_router", "message_id": message_map.get("id"), "output": output})
+    return outputs
+
+
+def _message_mapping(message: object) -> dict[str, object]:
+    if isinstance(message, AgentMessage):
+        return message.to_dict()
+    if isinstance(message, Mapping):
+        return dict(message)
+    return {"body": str(message)}
+
+
+def _route_message_output(message: Mapping[str, object], rules: Sequence[object], default_output: str) -> str:
+    for rule in rules:
+        if not isinstance(rule, Mapping):
+            continue
+        field = str(rule.get("field", "to"))
+        expected = rule.get("equals", rule.get("value", rule.get("is")))
+        if expected is None:
+            continue
+        if str(message.get(field, "")) == str(expected):
+            return str(rule.get("output", rule.get("target", default_output)) or default_output)
+    return default_output
+
+
+def _json_safe_value(value: object) -> object:
+    if isinstance(value, AgentMessage):
+        return value.to_dict()
+    if isinstance(value, Mapping):
+        return {str(key): _json_safe_value(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe_value(item) for item in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
 
 
 def _json_copy(value: object, context: str) -> dict[str, object]:
@@ -2198,12 +4461,22 @@ def _json_copy(value: object, context: str) -> dict[str, object]:
 
 __all__ = [
     "NodeGraph",
+    "NodeGraphFlowRun",
+    "NodeGraphNodeBinding",
+    "NodeGraphRuntimeBinding",
+    "NodeGraphSectionBinding",
     "NodeGraphEdge",
     "NodeGraphNode",
+    "NodeGraphObjectRegistry",
     "NodeGraphPort",
+    "NodeGraphRuntimeObject",
+    "NodeGraphRuntimeObjectRef",
+    "NodeGraphSection",
     "NodeGraphTemplate",
     "multi_agent_node_templates",
 ]
+
+
 
 
 

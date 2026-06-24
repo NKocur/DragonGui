@@ -54,7 +54,6 @@
   "tests/test_python_api.py::test_app_buffer_resource_methods_require_running_app": true,
   "tests/test_python_api.py::test_live_widget_setter_survives_unbind_during_closed_check": true,
   "tests/test_python_api.py::test_live_widget_setters_enqueue_native_props": true,
-  "tests/test_python_api.py::test_log_view_append_trim_clear_and_live_updates": true,
   "tests/test_python_api.py::test_scatter_colormap_serializes_and_live_update_reuploads_points": true,
   "tests/test_python_api.py::test_scatter_live_set_points_requires_packable_data": true,
   "tests/test_python_api.py::test_dataframe_table_live_set_frame_enqueues_bounded_table_update": true,
@@ -307,5 +306,17 @@
   "tests/test_python_api.py::test_flow_layout_alignment_props": true,
   "tests/test_python_api.py::test_flow_layout_no_extra_props": true,
   "tests/test_python_api.py::test_scroll_area_default_serialization": true,
-  "tests/test_python_api.py::test_scroll_area_axis_modes": true
+  "tests/test_python_api.py::test_scroll_area_axis_modes": true,
+  "tests/test_python_api.py::test_modal_serializes_and_live_open_updates": true,
+  "tests/test_python_api.py::test_alert_and_confirm_build_modal_helpers": true,
+  "tests/test_python_api.py::test_html_report_serializes_validates_and_updates_live_props": true,
+  "tests/test_python_api.py::test_terminal_widget_serializes_as_html_report": true,
+  "tests/test_python_api.py::test_terminal_bridge_control_surface_records_events_and_transcript": true,
+  "tests/test_python_api.py::test_terminal_event_is_public_and_serializes_compact_shape": true,
+  "tests/test_python_api.py::test_terminal_widget_is_in_help_reference": true,
+  "tests/test_python_api.py::test_agent_session_record_serializes_terminal_metadata": true,
+  "tests/test_python_api.py::test_agent_session_applies_terminal_events_to_status_logs_and_transcript": true,
+  "tests/test_python_api.py::test_agent_envelope_parser_parses_complete_and_partial_messages": true,
+  "tests/test_python_api.py::test_agent_envelope_parser_rejects_duplicates_and_malformed_messages": true,
+  "tests/test_python_api.py::test_agent_router_queue_tracks_targets_and_delivery_state": true
 }

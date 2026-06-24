@@ -2247,17 +2247,12 @@ fn collect_text(
                             bottom: (clip_rect.y + clip_rect.h) as i32,
                         };
                         if node.kind == WidgetKind::LogView {
-                            let scroll_y = layout
-                                .rects
+                            let scroll_y = state
+                                .text_scroll_y
                                 .get(&node.id)
-                                .map(|r| {
-                                    state.text_area_scroll_y(
-                                        &node.id,
-                                        (r.h - pad * 2.0).max(1.0),
-                                        line_height,
-                                    )
-                                })
-                                .unwrap_or(0.0);
+                                .copied()
+                                .unwrap_or(0.0)
+                                .max(0.0);
                             emit_log_view_lines(
                                 node,
                                 state,
@@ -4582,14 +4577,7 @@ fn emit_log_view_lines(
         bottom: ((text_bounds.bottom as f32 + bottom_bleed).min(rect.y + rect.h)) as i32,
         ..text_bounds
     };
-    let total_lines = text.split('\n').count().max(1);
-    let first = (scroll_y / line_height).floor().max(0.0) as usize;
-    let visible_h = (bounds.bottom - bounds.top).max(1) as f32;
-    let count = ((visible_h / line_height).ceil() as usize).saturating_add(2);
-    let last = first.saturating_add(count).min(total_lines);
-    if first >= last {
-        return;
-    }
+
     let line_font_size = part_font_size(node, &["line"], font_size, sf);
     let line_font_family = part_font_family(node, &["line"], font_family);
     let line_font_weight = part_font_weight(node, &["line"], font_weight);
@@ -4602,27 +4590,76 @@ fn emit_log_view_lines(
     );
     let line_options = text_options_from_styles(part_text_style(node, &["line"]), &node.style.text);
     let left = bounds.left as f32;
+    let wrap = node.props.wrap.unwrap_or(false);
+    let available_w = (bounds.right - bounds.left).max(1) as f32;
+    let approx_char_w = (line_font_size * 0.62).max(1.0);
+    let wrap_cols = if wrap {
+        ((available_w / approx_char_w).floor() as usize).max(8)
+    } else {
+        usize::MAX
+    };
+
+    let mut visual_rows: Vec<(Cow<'_, str>, &'static str)> = Vec::new();
+    for line in text.split('\n') {
+        let part = log_line_level_part(line);
+        if wrap {
+            for chunk in wrap_log_line(line, wrap_cols) {
+                visual_rows.push((chunk, part));
+            }
+        } else {
+            visual_rows.push((Cow::Borrowed(line), part));
+        }
+    }
+    if visual_rows.is_empty() {
+        visual_rows.push((Cow::Borrowed(""), "line"));
+    }
+    let visible_h = (bounds.bottom - bounds.top).max(1) as f32;
+    let content_h = visual_rows.len().max(1) as f32 * line_height.max(1.0);
+    let max_scroll = if content_h <= visible_h {
+        0.0
+    } else {
+        (content_h - visible_h + line_height.max(1.0)).max(0.0)
+    };
+    let scroll_y = scroll_y.clamp(0.0, max_scroll);
+
+    let total_lines = visual_rows.len().max(1);
+    let first = (scroll_y / line_height).floor().max(0.0) as usize;
+    let count = ((visible_h / line_height).ceil() as usize).saturating_add(2);
+    let last = first.saturating_add(count).min(total_lines);
+    if first >= last {
+        return;
+    }
+
     let top_base = text_bounds.top as f32 - scroll_y;
-    for (index, line) in text.split('\n').enumerate().skip(first).take(last - first) {
+    for (index, (line, part)) in visual_rows
+        .iter()
+        .enumerate()
+        .skip(first)
+        .take(last - first)
+    {
         let top = top_base + index as f32 * line_height;
         if top + line_height < bounds.top as f32 || top > bounds.bottom as f32 {
             continue;
         }
-        let part = log_line_level_part(line);
-        let color = if part == "line" {
+        let color = if *part == "line" {
             base_color
         } else {
-            part_text_color(node, state, theme, &[part, "line"], base_color)
+            part_text_color(node, state, theme, &[*part, "line"], base_color)
         };
         let options = text_options_from_styles(
-            part_text_style(node, &[part, "line"]),
+            part_text_style(node, &[*part, "line"]),
             part_text_style(node, &["line"]).unwrap_or(&node.style.text),
         );
+        let render_options = if *part == "line" {
+            line_options
+        } else {
+            options
+        };
         push_text_entry(
             font_system,
             font_aliases,
             out,
-            line,
+            line.as_ref(),
             line_font_size,
             line_height,
             line_font_family,
@@ -4635,13 +4672,38 @@ fn emit_log_view_lines(
             cache,
             None,
             caret_positions,
-            if part == "line" {
-                line_options
-            } else {
-                options
-            },
+            render_options,
         );
     }
+}
+
+fn wrap_log_line(line: &str, max_cols: usize) -> Vec<Cow<'_, str>> {
+    if max_cols == usize::MAX || line.chars().count() <= max_cols {
+        return vec![Cow::Borrowed(line)];
+    }
+    let mut rows: Vec<Cow<'_, str>> = Vec::new();
+    let mut current = String::new();
+    for word in line.split_inclusive(' ') {
+        let word_len = word.chars().count();
+        let current_len = current.chars().count();
+        if current_len > 0 && current_len + word_len > max_cols {
+            rows.push(Cow::Owned(std::mem::take(&mut current)));
+        }
+        if word_len > max_cols {
+            for ch in word.chars() {
+                if current.chars().count() >= max_cols {
+                    rows.push(Cow::Owned(std::mem::take(&mut current)));
+                }
+                current.push(ch);
+            }
+        } else {
+            current.push_str(word);
+        }
+    }
+    if !current.is_empty() || rows.is_empty() {
+        rows.push(Cow::Owned(current));
+    }
+    rows
 }
 
 fn log_line_level_part(line: &str) -> &'static str {

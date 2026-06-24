@@ -124,7 +124,32 @@ NODES = [
         data={"node_type": "artifact", "template_id": "artifact"},
     ),
 ]
-
+SECTIONS = [
+    dg.NodeGraphSection(
+        "initialization",
+        "Initialization",
+        -18,
+        48,
+        570,
+        230,
+        purpose="create terminal + parse startup output",
+        trigger="app_start",
+        color="#43c6ac",
+        data={"runtime_scope": "startup", "owns": ["implementer_terminal"]},
+    ),
+    dg.NodeGraphSection(
+        "review-loop",
+        "Review Loop",
+        570,
+        0,
+        640,
+        510,
+        purpose="route review, approval, tests, artifacts",
+        trigger="message_received",
+        color="#7aa2f7",
+        data={"runtime_scope": "work_loop", "refs": ["implementer_terminal"]},
+    ),
+]
 EDGES = [
     dg.NodeGraphEdge(
         "implementer_terminal",
@@ -182,7 +207,7 @@ EDGES = [
     ),
 ]
 
-SAVED_GRAPH_DATA = dg.NodeGraph(NODES, EDGES, templates=TEMPLATES, parent=None).to_graph_data()
+SAVED_GRAPH_DATA = dg.NodeGraph(NODES, EDGES, sections=SECTIONS, templates=TEMPLATES, parent=None).to_graph_data()
 LOADED_GRAPH = dg.NodeGraph.from_graph_data(SAVED_GRAPH_DATA, templates=TEMPLATES, parent=None)
 
 
@@ -202,13 +227,15 @@ app.stylesheet(
         height: 100%;
         min-width: 0;
         min-height: 0;
+        height: 230px;
         gap: 10px;
     }
 
     Panel.canvas {
-        flex-grow: 1;
+        flex-grow: 0;
         min-width: 0;
         min-height: 0;
+        height: 230px;
         padding: 10px;
         gap: 8px;
     }
@@ -255,8 +282,8 @@ app.stylesheet(
 
     LogView {
         width: 100%;
-        flex-grow: 1;
-        min-height: 0;
+        flex-grow: 0;
+        min-height: 0;`r`n        height: 230px;
         background: #070a0f;
         border: 1px solid rgba(255, 255, 255, 0.11);
         border-radius: 6px;
@@ -432,6 +459,85 @@ def run_model_smoke() -> None:
     log(json.dumps(session.snapshot()["record"], sort_keys=True))
 
 
+
+def run_text_flow_demo() -> None:
+    demo = dg.NodeGraph(
+        [
+            {
+                "id": "input",
+                "title": "Demo Envelope",
+                "x": 0,
+                "y": 0,
+                "outputs": [dg.NodeGraphPort("text", "text", port_type="text")],
+                "data": {
+                    "node_type": "text_input",
+                    "config": {
+                        "text": (
+                            "@to reviewer\n"
+                            "@from implementer\n"
+                            "@type review_request\n"
+                            "@id DG-flow-1\n"
+                            "Please inspect the non-destructive flow demo.\n"
+                            "@end\n"
+                        )
+                    },
+                },
+            },
+            {
+                "id": "parser",
+                "title": "Envelope Parser",
+                "x": 240,
+                "y": 0,
+                "inputs": [dg.NodeGraphPort("text", "text", port_type="text")],
+                "outputs": [dg.NodeGraphPort("message", "message", port_type="message")],
+                "data": {"node_type": "envelope_parser"},
+            },
+            {
+                "id": "router",
+                "title": "Message Router",
+                "x": 480,
+                "y": 0,
+                "inputs": [dg.NodeGraphPort("message", "message", port_type="message")],
+                "outputs": [
+                    dg.NodeGraphPort("reviewer", "reviewer", port_type="message"),
+                    dg.NodeGraphPort("default", "default", port_type="message"),
+                ],
+                "data": {
+                    "node_type": "message_router",
+                    "config": {
+                        "rules": [{"field": "to", "equals": "reviewer", "output": "reviewer"}],
+                        "default_target": "default",
+                    },
+                },
+            },
+            {
+                "id": "log",
+                "title": "Log",
+                "x": 720,
+                "y": 0,
+                "inputs": [dg.NodeGraphPort("value", "value", port_type="json")],
+                "outputs": [dg.NodeGraphPort("value", "value", port_type="json")],
+                "data": {"node_type": "log"},
+            },
+        ],
+        [
+            dg.NodeGraphEdge("input", "text", "parser", "text"),
+            dg.NodeGraphEdge("parser", "message", "router", "message"),
+            dg.NodeGraphEdge("router", "reviewer", "log", "value"),
+        ],
+        parent=None,
+    )
+    run = demo.run_text_flow()
+    routed = run.port_values("router", "reviewer")
+    log(f"text flow demo valid={run.valid} routed={len(routed)} logged={len(run.port_values('log', 'value'))}")
+    if routed:
+        message = routed[0]
+        log(f"text flow message {message.get('id')} -> {message.get('to')}: {message.get('body')}")
+    events = [str(entry["event"]) for entry in run.log]
+    counts = {name: events.count(name) for name in sorted(set(events))}
+    trace = " -> ".join(event for event in events if event != "emit")
+    log(f"text flow trace {trace}")
+    log(f"text flow event counts {json.dumps(counts, sort_keys=True)}")
 with dg.HLayout(class_="root"):
     with dg.Panel("Node Canvas", class_="canvas"):
         with dg.FlowLayout(gap=8, row_gap=6, style={"width": "100%", "height": "auto", "flex_shrink": 0}):
@@ -447,6 +553,7 @@ with dg.HLayout(class_="root"):
         graph = dg.NodeGraph(
             LOADED_GRAPH.nodes,
             LOADED_GRAPH.edges,
+            sections=LOADED_GRAPH.sections,
             templates=TEMPLATES,
             on_graph_event=on_graph_event,
             on_node_select=on_select,
@@ -475,6 +582,7 @@ with dg.HLayout(class_="root"):
             dg.Button("Fit Request", on_click=request_fit)
             dg.Button("Snapshot", on_click=log_snapshot)
             dg.Button("Model Smoke", on_click=run_model_smoke)
+            dg.Button("Text Flow Demo", on_click=run_text_flow_demo)
             dg.Button("Add Agent Node", on_click=add_toolbar_node)
         dg.Label("Event Log", class_="section")
         event_log = dg.LogView(
@@ -483,13 +591,17 @@ with dg.HLayout(class_="root"):
                 "Try dragging Agent.message -> Rule.message.",
                 "Try dragging Terminal.stdout -> Agent.message to see type rejection.",
             ],
-            rows=24,
-            wrap=False,
+            follow=False,
+            rows=6,
+            wrap=True,
         )
 
 refresh_state()
 
 if __name__ == "__main__":
     print(app.run(win))
+
+
+
 
 

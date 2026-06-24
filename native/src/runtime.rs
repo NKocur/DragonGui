@@ -6821,6 +6821,36 @@ fn push_plot_overlay_labels(
     }
 }
 
+fn wrapped_log_visual_rows(line: &str, max_cols: usize) -> usize {
+    if max_cols == usize::MAX || line.chars().count() <= max_cols {
+        return 1;
+    }
+    let mut rows = 0usize;
+    let mut current_len = 0usize;
+    for word in line.split_inclusive(' ') {
+        let word_len = word.chars().count();
+        if current_len > 0 && current_len + word_len > max_cols {
+            rows = rows.saturating_add(1);
+            current_len = 0;
+        }
+        if word_len > max_cols {
+            for _ in word.chars() {
+                if current_len >= max_cols {
+                    rows = rows.saturating_add(1);
+                    current_len = 0;
+                }
+                current_len = current_len.saturating_add(1);
+            }
+        } else {
+            current_len = current_len.saturating_add(word_len);
+        }
+    }
+    if current_len > 0 || rows == 0 {
+        rows = rows.saturating_add(1);
+    }
+    rows
+}
+
 impl WgpuState {
     fn render_startup_loading_frame(
         surface: &wgpu::Surface<'static>,
@@ -12953,20 +12983,57 @@ impl WgpuState {
     }
 
     fn scroll_text_area(&mut self, id: &str, wheel_x: f32, wheel_y: f32) -> bool {
-        let Some((_visible_w, visible_h, line_h)) = self.text_area_scroll_geometry(id) else {
+        let Some((visible_w, visible_h, line_h)) = self.text_area_scroll_geometry(id) else {
             return false;
         };
         let delta_x = -wheel_x * line_h * 3.0;
         let delta_y = -wheel_y * line_h * 3.0;
+        let max_scroll = self.log_view_max_scroll_y(id, visible_w, visible_h, line_h);
         let changed = self
             .widget_state
             .as_mut()
-            .map(|state| state.scroll_text_area(id, delta_x, delta_y, visible_h, line_h))
+            .map(|state| {
+                if let Some(max_scroll) = max_scroll {
+                    state.scroll_text_area_with_max_scroll(id, delta_x, delta_y, max_scroll)
+                } else {
+                    state.scroll_text_area(id, delta_x, delta_y, visible_h, line_h)
+                }
+            })
             .unwrap_or(false);
         if changed {
             self.rebuild_visuals();
         }
         changed
+    }
+
+    fn log_view_max_scroll_y(
+        &self,
+        id: &str,
+        visible_w: f32,
+        visible_h: f32,
+        line_h: f32,
+    ) -> Option<f32> {
+        let tree = self.widget_tree.as_ref()?;
+        let node = crate::overlays::find_node(tree, id)?;
+        if node.kind != WidgetKind::LogView || !node.props.wrap.unwrap_or(false) {
+            return None;
+        }
+        let value = self.widget_state.as_ref()?.text_val.get(id)?;
+        let font_size = crate::text::text_font_size(node, &self.theme, self.scale_factor);
+        let approx_char_w = (font_size * 0.62).max(1.0);
+        let wrap_cols = ((visible_w / approx_char_w).floor() as usize).max(8);
+        let mut visual_rows = 0usize;
+        for line in value.split('\n') {
+            visual_rows = visual_rows.saturating_add(wrapped_log_visual_rows(line, wrap_cols));
+        }
+        let line_h = line_h.max(1.0);
+        let visible_h = visible_h.max(1.0);
+        let content_h = visual_rows.max(1) as f32 * line_h;
+        if content_h <= visible_h {
+            Some(0.0)
+        } else {
+            Some((content_h - visible_h + line_h).max(0.0))
+        }
     }
 
     fn scroll_container(&mut self, id: &str, wheel_x: f32, wheel_y: f32) -> bool {

@@ -9359,6 +9359,26 @@ def test_node_graph_serializes_canvas_editor() -> None:
     assert "function deleteSelection" in html
     assert "dblclick" in html
     assert "keydown" in html
+    assert "nodePicker.scroll" in html
+    assert "nodePicker.scrollBar" in html
+    assert "nodePicker.scrollDrag" in html
+    assert "function drawPropertyEditor" in html
+    assert "propertyEditor.scroll" in html
+    assert "propertyEditor.scrollBar" in html
+    assert "propertyEditor.scrollDrag" in html
+    assert "function clampPropertyEditorScroll" in html
+    assert "function ensurePropertyFieldVisible" in html
+    assert "function openPropertyEditor" in html
+    assert "function commitPropertyEditor" in html
+    assert "function schemaPropertyFields" in html
+    assert "function applySchemaPropertyFields" in html
+    assert "function configSchemaFields" in html
+    assert "config_schema" in html
+    assert "config:" in html
+    assert "data:" in html
+    assert "property_editor_opened" in html
+    assert "Runtime ID" in html
+    assert "action: 'inspect'" in html
 
     graph.set_node_position("implementer", 80, 90)
     assert graph.node_position("implementer") == (80.0, 90.0)
@@ -9445,6 +9465,169 @@ def test_node_graph_data_round_trips_versioned_schema() -> None:
     with pytest.raises(ValueError, match="schema_version"):
         graph.set_graph_data({"schema_version": 999, "nodes": [], "edges": []})
 
+
+
+
+def test_node_graph_runtime_object_registry_derives_objects_and_missing_refs() -> None:
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "terminal-owner",
+                "title": "Terminal",
+                "status": "running",
+                "data": {
+                    "runtime_object": "terminal_session",
+                    "config": {"session_id": "codex-impl", "command": "codex"},
+                },
+            },
+            {
+                "id": "terminal-ref",
+                "title": "Terminal Ref",
+                "data": {"config": {"session_ref": "codex-impl"}},
+            },
+            {
+                "id": "queue-ref",
+                "title": "Queue Ref",
+                "data": {"config": {"queue_ref": "reviewer-inbox"}},
+            },
+        ],
+        parent=None,
+    )
+
+    registry = graph.runtime_object_registry()
+    assert len(registry) == 1
+    terminal = registry.object_ref("codex-impl")
+    assert terminal is not None
+    assert terminal.object_type == "terminal_session"
+    assert terminal.owner_node_id == "terminal-owner"
+    assert terminal.status == "running"
+    assert terminal.config == {"session_id": "codex-impl", "command": "codex"}
+    assert registry.objects_for_type("terminal_session") == (terminal,)
+    assert registry.to_list()[0]["object_id"] == "codex-impl"
+
+    refs = graph.runtime_object_refs()
+    assert [ref.object_id for ref in refs] == ["codex-impl", "reviewer-inbox"]
+    missing = graph.missing_runtime_object_refs()
+    assert len(missing) == 1
+    assert missing[0].node_id == "queue-ref"
+    assert missing[0].object_id == "reviewer-inbox"
+    assert missing[0].object_type == "message_queue"
+
+    external = dg.NodeGraphObjectRegistry(
+        [
+            {"object_id": "reviewer-inbox", "object_type": "message_queue", "status": "ready"},
+            terminal,
+        ]
+    )
+    assert graph.missing_runtime_object_refs(external) == ()
+    assert external.object_ref("reviewer-inbox").status == "ready"
+
+
+
+
+def test_node_graph_runtime_binding_maps_nodes_sections_and_validation() -> None:
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "terminal-owner",
+                "title": "Terminal",
+                "x": 20,
+                "y": 20,
+                "status": "running",
+                "data": {
+                    "node_type": "terminal",
+                    "runtime_object": "terminal_session",
+                    "config": {"session_id": "codex-impl", "command": "codex"},
+                },
+            },
+            {
+                "id": "terminal-ref",
+                "title": "Terminal Ref",
+                "x": 180,
+                "y": 40,
+                "data": {"node_type": "terminal_ref", "config": {"session_ref": "codex-impl"}},
+            },
+            {
+                "id": "queue-ref",
+                "title": "Queue Ref",
+                "x": 520,
+                "y": 40,
+                "data": {"node_type": "queue_ref", "config": {"queue_ref": "reviewer-inbox"}},
+            },
+        ],
+        sections=[
+            {
+                "id": "init",
+                "title": "Initialization",
+                "x": 0,
+                "y": 0,
+                "width": 360,
+                "height": 180,
+                "purpose": "start agents",
+                "trigger": "manual",
+                "data": {"config": {"button": "Initialize"}},
+            }
+        ],
+        parent=None,
+    )
+
+    binding = graph.runtime_binding()
+    assert isinstance(binding, dg.NodeGraphRuntimeBinding)
+    assert binding.valid is False
+    assert binding.validate() == {
+        "valid": False,
+        "missing_refs": [
+            {
+                "node_id": "queue-ref",
+                "object_id": "reviewer-inbox",
+                "object_type": "message_queue",
+                "key": "queue_ref",
+            }
+        ],
+    }
+
+    owner = binding.node_binding("terminal-owner")
+    assert isinstance(owner, dg.NodeGraphNodeBinding)
+    assert owner.node_type == "terminal"
+    assert owner.owned_object_id == "codex-impl"
+    assert owner.config == {"session_id": "codex-impl", "command": "codex"}
+    ref = binding.node_binding("terminal-ref")
+    assert ref.object_refs[0].object_id == "codex-impl"
+    assert ref.object_refs[0].object_type == "terminal_session"
+
+    section = binding.section_binding("init")
+    assert isinstance(section, dg.NodeGraphSectionBinding)
+    assert section.node_ids == ("terminal-owner", "terminal-ref")
+    assert section.trigger == "manual"
+    assert section.config == {"button": "Initialize"}
+
+    payload = binding.to_dict()
+    assert payload["registry"][0]["object_id"] == "codex-impl"
+    assert payload["sections"][0]["section_id"] == "init"
+
+    registry = dg.NodeGraphObjectRegistry(
+        [
+            {"object_id": "codex-impl", "object_type": "terminal_session"},
+            {"object_id": "reviewer-inbox", "object_type": "message_queue"},
+        ]
+    )
+    assert graph.runtime_binding(registry).valid is True
+
+def test_node_graph_runtime_object_registry_rejects_duplicate_ids() -> None:
+    registry = dg.NodeGraphObjectRegistry()
+    registry.register(object_id="shared", object_type="terminal_session")
+    with pytest.raises(ValueError, match="duplicate runtime object id"):
+        registry.register(object_id="shared", object_type="message_queue")
+
+    graph = dg.NodeGraph(
+        [
+            {"id": "a", "title": "A", "data": {"config": {"session_id": "shared"}}},
+            {"id": "b", "title": "B", "data": {"config": {"session_id": "shared"}}},
+        ],
+        parent=None,
+    )
+    with pytest.raises(ValueError, match="duplicate runtime object id"):
+        graph.runtime_object_registry()
 
 def test_node_graph_mapping_inputs_and_help_reference() -> None:
     graph = dg.NodeGraph(
@@ -9603,6 +9786,76 @@ def test_node_graph_canvas_events_sync_state_without_user_callbacks() -> None:
     emit(json.dumps({"schema_version": 1, "event": "edge_deleted", "edge": "edge-a-b"}))
     assert graph.to_graph_data()["edges"] == []
 
+
+
+def test_node_graph_section_metadata_and_group_move_sync() -> None:
+    events: list[dict[str, object]] = []
+    graph = dg.NodeGraph(
+        [
+            {"id": "inside", "title": "Inside", "x": 20, "y": 20},
+            {"id": "outside", "title": "Outside", "x": 420, "y": 20},
+        ],
+        sections=[dg.NodeGraphSection("group", "Group", 0, 0, 260, 150)],
+        parent=None,
+        on_graph_event=events.append,
+    )
+    _, change_cbs = _collect_runtime_callbacks(graph)
+    emit = change_cbs[graph.id]
+
+    assert graph.section_nodes("group") == ("inside",)
+    with pytest.raises(KeyError, match="missing"):
+        graph.section_nodes("missing")
+
+    emit(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "event": "section_updated",
+                "section": "group",
+                "updates": {
+                    "title": "Renamed Group",
+                    "purpose": "group startup work",
+                    "trigger": "manual",
+                    "color": "#bb9af7",
+                    "locked": True,
+                    "collapsed": True,
+                    "data": {"runtime_id": "startup-section"},
+                },
+            }
+        )
+    )
+    section = graph.to_graph_data()["sections"][0]
+    assert section["title"] == "Renamed Group"
+    assert section["purpose"] == "group startup work"
+    assert section["trigger"] == "manual"
+    assert section["color"] == "#bb9af7"
+    assert section["locked"] is True
+    assert section["collapsed"] is True
+    assert section["data"] == {"runtime_id": "startup-section"}
+
+    emit(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "event": "section_moved",
+                "section": {
+                    "id": "group",
+                    "title": "Renamed Group",
+                    "position": {"x": 50, "y": 25},
+                    "size": {"width": 260, "height": 150},
+                    "members": ["inside"],
+                },
+                "nodes": [{"id": "inside", "position": {"x": 70, "y": 45}}],
+            }
+        )
+    )
+
+    data = graph.to_graph_data()
+    assert data["sections"][0]["position"] == {"x": 50.0, "y": 25.0}
+    assert data["nodes"][0]["position"] == {"x": 70.0, "y": 45.0}
+    assert data["nodes"][1]["position"] == {"x": 420.0, "y": 20.0}
+    assert events[-1]["event"] == "section_moved"
+    assert events[-1]["nodes"] == [{"id": "inside", "position": {"x": 70, "y": 45}}]
 
 def test_node_graph_undo_redo_history_syncs_canvas_mutations() -> None:
     events: list[dict[str, object]] = []
@@ -9849,6 +10102,7 @@ def test_node_graph_property_updates_sync_history_and_undo_redo() -> None:
                     "subtitle": "new",
                     "status": "running",
                     "color": "#7aa2f7",
+                    "data": {"runtime_id": "node-a"},
                 },
             }
         )
@@ -9859,6 +10113,7 @@ def test_node_graph_property_updates_sync_history_and_undo_redo() -> None:
     assert node["subtitle"] == "new"
     assert node["status"] == "running"
     assert node["color"] == "#7aa2f7"
+    assert node["data"] == {"runtime_id": "node-a"}
     assert events[-1]["event"] == "node_updated"
     assert events[-1]["history"]["undo_depth"] == 1
 
@@ -10032,22 +10287,62 @@ def test_node_graph_multi_agent_templates_serialize_and_round_trip() -> None:
     templates = dg.multi_agent_node_templates()
     template_ids = {template.id for template in templates}
     assert {
-        "agent",
         "terminal",
-        "parser",
+        "text_input",
+        "append_text",
+        "extract_between_markers",
+        "envelope_parser",
+        "message_router",
         "approval_gate",
+        "log",
+        "probe",
+        "agent",
+        "parser",
         "tester",
         "artifact",
         "human_input",
         "rule",
     } <= template_ids
-
     terminal_template = next(template for template in templates if template.id == "terminal")
     assert terminal_template.inputs[0].port_type == "terminal_input"
     assert terminal_template.outputs[0].port_type == "terminal_output"
     assert terminal_template.data["node_type"] == "terminal"
     assert terminal_template.data["session"]["agent_type"] == "terminal"
+    terminal_fields = {field["key"]: field for field in terminal_template.data["property_fields"]}
+    assert terminal_fields["command"]["default"] == "codex"
+    assert terminal_fields["auto_start"]["type"] == "bool"
+    terminal_config_fields = {field["key"]: field for field in terminal_template.data["config_schema"]["fields"]}
+    assert terminal_config_fields["restart_policy"]["type"] == "select"
+    assert terminal_config_fields["restart_policy"]["options"] == ["never", "on_exit", "on_error"]
 
+    agent_template = next(template for template in templates if template.id == "agent")
+    agent_fields = {field["key"]: field for field in agent_template.data["property_fields"]}
+    assert agent_fields["requires_approval"]["type"] == "bool"
+
+    parser_template = next(template for template in templates if template.id == "parser")
+    parser_fields = {field["key"]: field for field in parser_template.data["property_fields"]}
+    assert parser_fields["end_marker"]["default"] == "@end"
+
+    text_template = next(template for template in templates if template.id == "text_input")
+    text_fields = {field["key"]: field for field in text_template.data["property_fields"]}
+    assert text_template.outputs[0].port_type == "text"
+    assert text_fields["emit_on_start"]["type"] == "bool"
+
+    extract_template = next(template for template in templates if template.id == "extract_between_markers")
+    extract_fields = {field["key"]: field for field in extract_template.data["property_fields"]}
+    assert extract_fields["start_marker"]["default"] == "@to"
+    assert any(port.id == "found" and port.port_type == "bool" for port in extract_template.outputs)
+
+    envelope_template = next(template for template in templates if template.id == "envelope_parser")
+    assert any(port.id == "message" and port.port_type == "message" for port in envelope_template.outputs)
+
+    router_template = next(template for template in templates if template.id == "message_router")
+    assert any(port.id == "default" and port.port_type == "message" for port in router_template.outputs)
+
+    log_template = next(template for template in templates if template.id == "log")
+    probe_template = next(template for template in templates if template.id == "probe")
+    assert log_template.inputs[0].port_type == "json"
+    assert probe_template.outputs[0].port_type == "json"
     graph = dg.NodeGraph([], templates=templates, parent=None)
     html = graph.to_dict()["props"]["html"]
     assert '"templates":' in html
@@ -10056,7 +10351,6 @@ def test_node_graph_multi_agent_templates_serialize_and_round_trip() -> None:
     assert '"node_type": "agent"' in html
     assert json.loads(json.dumps([template.data for template in templates]))
 
-    agent_template = next(template for template in templates if template.id == "agent")
     rule_template = next(template for template in templates if template.id == "rule")
     _, change_cbs = _collect_runtime_callbacks(graph)
     emit = change_cbs[graph.id]
@@ -10152,6 +10446,88 @@ def test_node_graph_multi_agent_templates_serialize_and_round_trip() -> None:
     assert restored.to_graph_data() == data
 
 
+
+def test_node_graph_run_text_flow_routes_parser_output_to_log() -> None:
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "input",
+                "title": "Demo Input",
+                "x": 0,
+                "y": 0,
+                "outputs": [dg.NodeGraphPort("text", "text", port_type="text")],
+                "data": {
+                    "node_type": "text_input",
+                    "config": {
+                        "text": (
+                            "@to reviewer\n"
+                            "@from implementer\n"
+                            "@type review_request\n"
+                            "@id demo-1\n"
+                            "Please review this harmless demo message.\n"
+                            "@end\n"
+                        )
+                    },
+                },
+            },
+            {
+                "id": "parser",
+                "title": "Envelope Parser",
+                "x": 240,
+                "y": 0,
+                "inputs": [dg.NodeGraphPort("text", "text", port_type="text")],
+                "outputs": [dg.NodeGraphPort("message", "message", port_type="message")],
+                "data": {"node_type": "envelope_parser"},
+            },
+            {
+                "id": "router",
+                "title": "Message Router",
+                "x": 480,
+                "y": 0,
+                "inputs": [dg.NodeGraphPort("message", "message", port_type="message")],
+                "outputs": [
+                    dg.NodeGraphPort("route_1", "reviewer", port_type="message"),
+                    dg.NodeGraphPort("default", "default", port_type="message"),
+                ],
+                "data": {
+                    "node_type": "message_router",
+                    "config": {
+                        "rules": [{"field": "to", "equals": "reviewer", "output": "route_1"}],
+                        "default_target": "default",
+                    },
+                },
+            },
+            {
+                "id": "log",
+                "title": "Log",
+                "x": 720,
+                "y": 0,
+                "inputs": [dg.NodeGraphPort("value", "value", port_type="json")],
+                "outputs": [dg.NodeGraphPort("value", "value", port_type="json")],
+                "data": {"node_type": "log"},
+            },
+        ],
+        [
+            dg.NodeGraphEdge("input", "text", "parser", "text"),
+            dg.NodeGraphEdge("parser", "message", "router", "message"),
+            dg.NodeGraphEdge("router", "route_1", "log", "value"),
+        ],
+        parent=None,
+    )
+
+    run = graph.run_text_flow()
+
+    assert isinstance(run, dg.NodeGraphFlowRun)
+    assert run.valid is True
+    routed = run.port_values("router", "route_1")
+    assert routed[0]["id"] == "demo-1"
+    assert routed[0]["to"] == "reviewer"
+    assert routed[0]["body"] == "Please review this harmless demo message."
+    assert run.port_values("log", "value") == routed
+    assert {entry["event"] for entry in run.log} >= {"parser", "route", "log"}
+    payload = run.to_dict()
+    assert payload["values"]["log.value"][0]["body"] == "Please review this harmless demo message."
+    assert payload["binding"]["valid"] is True
 def test_node_graph_navigation_events_do_not_mutate_graph_history() -> None:
     events: list[dict[str, object]] = []
     graph = dg.NodeGraph(
