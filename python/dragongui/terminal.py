@@ -266,6 +266,12 @@ class TerminalBridge:
             raise RuntimeError("TerminalBridge has not been started")
         return f"ws://127.0.0.1:{self._port}/terminal"
 
+    @property
+    def session_active(self) -> bool:
+        """Whether a terminal process/session is currently attached and alive."""
+        with self._session_lock:
+            return self._session is not None and self._session.is_alive()
+
     def start(self) -> "TerminalBridge":
         if self._thread is not None:
             return self
@@ -321,7 +327,8 @@ class TerminalBridge:
 
     def send_line(self, text: object = "") -> bool:
         """Write text followed by a newline to the active terminal session."""
-        return self.send_text(f"{text}\n")
+        newline = "\r\n" if os.name == "nt" else "\n"
+        return self.send_text(f"{text}{newline}")
 
     @property
     def transcript(self) -> list[dict[str, object]]:
@@ -375,7 +382,9 @@ class TerminalBridge:
         try:
             self._handshake(client)
             self._wait_for_initial_resize(client)
+            self._send_text(client, f"\x1b[2m[DragonGUI terminal bridge connected: {self.command.label}]\x1b[0m\r\n")
             session = self._spawn_session()
+            self._send_text(client, f"\x1b[2m[{self.status}]\x1b[0m\r\n")
             output_done = threading.Event()
             output_thread = threading.Thread(
                 target=self._pump_output,
@@ -584,6 +593,7 @@ class Terminal(HtmlReport):
         self,
         command: str | Sequence[object] = "powershell.exe",
         *,
+        bridge: TerminalBridge | None = None,
         args: Sequence[object] = (),
         cwd: str | Path | None = None,
         env: Mapping[str, str] | None = None,
@@ -605,27 +615,30 @@ class Terminal(HtmlReport):
         tooltip: str | None = None,
         parent: Container | None | object = _AUTO_PARENT,
     ) -> None:
-        self.bridge = TerminalBridge(
-            command,
-            args=args,
-            cwd=cwd,
-            env=env,
-            cols=cols,
-            rows=rows,
-            prefer_pty=prefer_pty,
-            on_output=on_output,
-            on_event=on_event,
-            capture_transcript=capture_transcript,
-            max_transcript_entries=max_transcript_entries,
-        ).start()
+        if bridge is None:
+            self.bridge = TerminalBridge(
+                command,
+                args=args,
+                cwd=cwd,
+                env=env,
+                cols=cols,
+                rows=rows,
+                prefer_pty=prefer_pty,
+                on_output=on_output,
+                on_event=on_event,
+                capture_transcript=capture_transcript,
+                max_transcript_entries=max_transcript_entries,
+            ).start()
+        else:
+            self.bridge = bridge.start()
         self.command = self.bridge.command
         self.title = title or self.command.label
         html = _terminal_html(
             title=self.title,
             ws_url=self.bridge.url,
             xterm_version=xterm_version,
-            cols=cols,
-            rows=rows,
+            cols=self.bridge.cols,
+            rows=self.bridge.rows,
         )
         super().__init__(
             html=html,
@@ -767,6 +780,7 @@ def _terminal_html(*, title: str, ws_url: str, xterm_version: str, cols: int, ro
       socket = new WebSocket(config.wsUrl);
       socket.addEventListener('open', () => {{
         fitAndNotify();
+        term.writeln('\x1b[2m[connected to DragonGUI terminal bridge]\x1b[0m');
       }});
       let sawFirstOutput = false;
       function refreshAfterStartupOutput() {{

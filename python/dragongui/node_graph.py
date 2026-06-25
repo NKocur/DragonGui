@@ -4,6 +4,8 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 import json
 import math
+import time
+from typing import Any
 
 from .agent_messages import AgentEnvelopeParser, AgentMessage
 from .widgets import Container, HtmlReport, _AUTO_PARENT
@@ -24,6 +26,108 @@ _GRAPH_MUTATION_EVENTS = {
     "section_resized",
     "section_deleted",
 }
+_NODE_GRAPH_RUNTIME_SCHEMA_VERSION = 1
+
+
+@dataclass(frozen=True, slots=True)
+class NodeGraphRuntimeEvent:
+    """Schema-versioned runtime event emitted by a live node graph session."""
+
+    event: str
+    node_id: str | None = None
+    port_id: str | None = None
+    section_id: str | None = None
+    object_id: str | None = None
+    value: object | None = None
+    data: dict[str, object] | None = None
+    sequence: int | None = None
+    timestamp: float | None = None
+    schema_version: int = _NODE_GRAPH_RUNTIME_SCHEMA_VERSION
+
+    def to_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "schema_version": self.schema_version,
+            "event": self.event,
+            "timestamp": time.time() if self.timestamp is None else self.timestamp,
+        }
+        if self.sequence is not None:
+            payload["sequence"] = self.sequence
+        if self.node_id is not None:
+            payload["node_id"] = self.node_id
+        if self.port_id is not None:
+            payload["port_id"] = self.port_id
+        if self.section_id is not None:
+            payload["section_id"] = self.section_id
+        if self.object_id is not None:
+            payload["object_id"] = self.object_id
+        if self.value is not None:
+            payload["value"] = _json_safe_value(self.value)
+        if self.data is not None:
+            payload["data"] = _json_copy(self.data, "runtime event data")
+        return payload
+
+
+@dataclass(slots=True)
+class NodeGraphRuntimeHandle:
+    """Live runtime object state owned by a node graph runtime session."""
+
+    object_id: str
+    object_type: str
+    owner_node_id: str | None = None
+    status: str = "created"
+    config: dict[str, object] | None = None
+    handle: Any | None = None
+    error: str | None = None
+    created_at: float | None = None
+    updated_at: float | None = None
+
+    def __post_init__(self) -> None:
+        now = time.time()
+        self.object_id = str(self.object_id)
+        self.object_type = str(self.object_type)
+        self.owner_node_id = None if self.owner_node_id is None else str(self.owner_node_id)
+        self.status = str(self.status)
+        self.config = _mapping_copy(self.config, "runtime handle config")
+        self.error = None if self.error is None else str(self.error)
+        if self.created_at is None:
+            self.created_at = now
+        if self.updated_at is None:
+            self.updated_at = self.created_at
+
+    def set_status(self, status: str, error: object | None = None) -> None:
+        self.status = str(status)
+        self.error = None if error is None else str(error)
+        self.updated_at = time.time()
+
+    def attach(self, handle: Any, *, status: str = "attached") -> None:
+        self.handle = handle
+        self.set_status(status)
+
+    def detach(self, *, status: str = "detached") -> Any | None:
+        handle = self.handle
+        self.handle = None
+        self.set_status(status)
+        return handle
+
+    @property
+    def handle_attached(self) -> bool:
+        return self.handle is not None
+
+    def to_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "object_id": self.object_id,
+            "object_type": self.object_type,
+            "owner_node_id": self.owner_node_id,
+            "status": self.status,
+            "handle_attached": self.handle_attached,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+        if self.config is not None:
+            payload["config"] = _json_copy(self.config, "runtime handle config")
+        if self.error is not None:
+            payload["error"] = self.error
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,11 +293,61 @@ class NodeGraphSectionBinding:
 
 
 @dataclass(frozen=True, slots=True)
+class NodeGraphRuntimeEdgeBinding:
+    """Runtime-facing directed connection between two graph ports."""
+
+    edge_id: str
+    source_node: str
+    source_port: str
+    target_node: str
+    target_port: str
+    label: str | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "edge_id": self.edge_id,
+            "source": {"node": self.source_node, "port": self.source_port},
+            "target": {"node": self.target_node, "port": self.target_port},
+            "label": self.label,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class NodeGraphRuntimeViewBinding:
+    """Runtime-facing view binding for an observable graph node."""
+
+    node_id: str
+    view_type: str
+    object_id: str | None = None
+    object_type: str | None = None
+    title: str | None = None
+    config: dict[str, object] | None = None
+    available: bool = False
+    reason: str | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "node_id": self.node_id,
+            "view_type": self.view_type,
+            "object_id": self.object_id,
+            "object_type": self.object_type,
+            "title": self.title,
+            "available": self.available,
+        }
+        if self.config is not None:
+            payload["config"] = _json_copy(self.config, "runtime view config")
+        if self.reason is not None:
+            payload["reason"] = self.reason
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
 class NodeGraphRuntimeBinding:
     """Static binding plan that maps graph structure to runtime objects."""
 
     nodes: tuple[NodeGraphNodeBinding, ...]
     sections: tuple[NodeGraphSectionBinding, ...]
+    edges: tuple[NodeGraphRuntimeEdgeBinding, ...]
     registry: NodeGraphObjectRegistry
     missing_refs: tuple[NodeGraphRuntimeObjectRef, ...] = ()
 
@@ -220,9 +374,567 @@ class NodeGraphRuntimeBinding:
             "valid": self.valid,
             "nodes": [binding.to_dict() for binding in self.nodes],
             "sections": [binding.to_dict() for binding in self.sections],
+            "edges": [binding.to_dict() for binding in self.edges],
             "registry": self.registry.to_list(),
             "missing_refs": [ref.to_dict() for ref in self.missing_refs],
         }
+
+
+class NodeGraphRuntimeSession:
+    """Live runtime session state for a graph binding.
+
+    A saved graph remains a template. This session owns the transient runtime
+    handles, statuses, and event log that should not be persisted into graph
+    layout data.
+    """
+
+    def __init__(
+        self,
+        binding: NodeGraphRuntimeBinding,
+        *,
+        session_id: str | None = None,
+        status: str = "created",
+    ) -> None:
+        self.binding = binding
+        self.session_id = str(session_id) if session_id is not None else f"graph-runtime-{int(time.time() * 1000)}"
+        self.status = str(status)
+        self._sequence = 0
+        self._events: list[NodeGraphRuntimeEvent] = []
+        self._handles: dict[str, NodeGraphRuntimeHandle] = {}
+        self._port_values: dict[tuple[str, str], list[object]] = {}
+        self._widgets: dict[str, Any] = {}
+        self._parser_state: dict[str, AgentEnvelopeParser] = {}
+        self._execution_depth = 0
+        for obj in binding.registry:
+            handle = NodeGraphRuntimeHandle(
+                object_id=obj.object_id,
+                object_type=obj.object_type,
+                owner_node_id=obj.owner_node_id,
+                status=obj.status or "declared",
+                config=obj.config,
+            )
+            self._handles[handle.object_id] = handle
+        self.emit_event("session_created", data={"valid": binding.valid})
+
+    @classmethod
+    def from_graph(
+        cls,
+        graph: "NodeGraph",
+        *,
+        registry: NodeGraphObjectRegistry | None = None,
+        session_id: str | None = None,
+    ) -> "NodeGraphRuntimeSession":
+        return cls(graph.runtime_binding(registry), session_id=session_id)
+
+    @property
+    def valid(self) -> bool:
+        return self.binding.valid
+
+    @property
+    def events(self) -> tuple[NodeGraphRuntimeEvent, ...]:
+        return tuple(self._events)
+
+    @property
+    def handles(self) -> tuple[NodeGraphRuntimeHandle, ...]:
+        return tuple(self._handles.values())
+
+    def port_values(self, node_id: str, port_id: str) -> list[object]:
+        """Return runtime values delivered to or emitted from a graph port."""
+
+        return list(self._port_values.get((str(node_id), str(port_id)), []))
+
+    def register_widget(self, widget_id: str | None, widget: Any | None = None) -> Any:
+        """Register a transient GUI widget handle for runtime widget sink nodes."""
+
+        if widget is None:
+            widget = widget_id
+            widget_id = getattr(widget, "id", None)
+        text = "" if widget_id is None else str(widget_id).strip()
+        if not text:
+            raise ValueError("widget_id is required")
+        if widget is None:
+            raise ValueError("widget is required")
+        self._widgets[text] = widget
+        self.emit_event("widget_registered", data={"widget_id": text, "widget_type": _widget_kind(widget)})
+        return widget
+
+    def unregister_widget(self, widget_id: str) -> Any | None:
+        """Remove and return a registered runtime widget handle, if present."""
+
+        text = str(widget_id).strip()
+        widget = self._widgets.pop(text, None)
+        if widget is not None:
+            self.emit_event("widget_unregistered", data={"widget_id": text, "widget_type": _widget_kind(widget)})
+        return widget
+
+    def widget_handle(self, widget_id: str) -> Any | None:
+        """Return a registered runtime widget handle by stable widget ID."""
+
+        return self._widgets.get(str(widget_id).strip())
+
+    def widget_ids(self) -> tuple[str, ...]:
+        """Return registered runtime widget IDs."""
+
+        return tuple(self._widgets)
+
+    def view_binding(self, node_id: str) -> NodeGraphRuntimeViewBinding | None:
+        """Return the runtime view binding for a graph node, when one is known."""
+
+        binding = self.binding.node_binding(node_id)
+        if binding is None:
+            return None
+        return self._view_binding_for_node(binding)
+
+    def view_bindings(self) -> tuple[NodeGraphRuntimeViewBinding, ...]:
+        """Return runtime view bindings for all nodes with observable views."""
+
+        bindings: list[NodeGraphRuntimeViewBinding] = []
+        for binding in self.binding.nodes:
+            view = self._view_binding_for_node(binding)
+            if view is not None:
+                bindings.append(view)
+        return tuple(bindings)
+
+    def _view_binding_for_node(self, binding: NodeGraphNodeBinding) -> NodeGraphRuntimeViewBinding | None:
+        config = dict(binding.config or {})
+        view_type = _runtime_view_type(binding, config)
+        if view_type is None:
+            return None
+        object_id = binding.owned_object_id
+        object_type: str | None = None
+        if object_id is not None:
+            handle = self.object_handle(object_id)
+            object_type = handle.object_type if handle is not None else None
+        elif binding.object_refs:
+            ref = binding.object_refs[0]
+            object_id = ref.object_id
+            object_type = ref.object_type
+        handle = self.object_handle(object_id) if object_id is not None else None
+        available = handle is not None and handle.handle_attached
+        reason = None if available else "runtime handle is not attached" if object_id else "node has no runtime object"
+        return NodeGraphRuntimeViewBinding(
+            node_id=binding.node_id,
+            view_type=view_type,
+            object_id=object_id,
+            object_type=object_type,
+            title=binding.title,
+            config=config,
+            available=available,
+            reason=reason,
+        )
+
+    def object_handle(self, object_id: str) -> NodeGraphRuntimeHandle | None:
+        return self._handles.get(str(object_id))
+
+    def require_object_handle(self, object_id: str) -> NodeGraphRuntimeHandle:
+        handle = self.object_handle(object_id)
+        if handle is None:
+            raise KeyError(f"runtime object {object_id!r} does not exist")
+        return handle
+
+    def attach_handle(self, object_id: str, handle: Any, *, status: str = "attached") -> NodeGraphRuntimeHandle:
+        runtime_handle = self.require_object_handle(object_id)
+        runtime_handle.attach(handle, status=status)
+        self.emit_event(
+            "object_handle_attached",
+            object_id=runtime_handle.object_id,
+            node_id=runtime_handle.owner_node_id,
+            data={"object_type": runtime_handle.object_type, "status": runtime_handle.status},
+        )
+        return runtime_handle
+
+    def detach_handle(self, object_id: str, *, status: str = "detached") -> Any | None:
+        runtime_handle = self.require_object_handle(object_id)
+        detached = runtime_handle.detach(status=status)
+        self.emit_event(
+            "object_handle_detached",
+            object_id=runtime_handle.object_id,
+            node_id=runtime_handle.owner_node_id,
+            data={"object_type": runtime_handle.object_type, "status": runtime_handle.status},
+        )
+        return detached
+
+    def set_object_status(self, object_id: str, status: str, *, error: object | None = None) -> NodeGraphRuntimeHandle:
+        runtime_handle = self.require_object_handle(object_id)
+        runtime_handle.set_status(status, error=error)
+        data: dict[str, object] = {"object_type": runtime_handle.object_type, "status": runtime_handle.status}
+        if runtime_handle.error is not None:
+            data["error"] = runtime_handle.error
+        self.emit_event(
+            "object_status_changed",
+            object_id=runtime_handle.object_id,
+            node_id=runtime_handle.owner_node_id,
+            data=data,
+        )
+        return runtime_handle
+
+    def create_terminal_bridge(
+        self,
+        object_id: str,
+        *,
+        start: bool = False,
+        on_event: Callable[[Any], object] | None = None,
+        on_output: Callable[[str], object] | None = None,
+        **overrides: object,
+    ) -> Any:
+        """Create and attach a TerminalBridge for a terminal_session object.
+
+        The bridge is not started unless ``start=True``. This keeps graph
+        runtime construction non-destructive while giving Terminal Session nodes
+        a concrete live handle path.
+        """
+
+        runtime_handle = self.require_object_handle(object_id)
+        if runtime_handle.object_type != "terminal_session":
+            raise ValueError(f"runtime object {object_id!r} is {runtime_handle.object_type!r}, not 'terminal_session'")
+        config = dict(runtime_handle.config or {})
+        config.update(overrides)
+        command = config.get("command") or config.get("cmd") or config.get("executable") or "powershell.exe"
+        args = _sequence_config(config.get("args"), "terminal args")
+        env_value = config.get("env")
+        if env_value is not None and not isinstance(env_value, Mapping):
+            raise TypeError("terminal env config must be a mapping")
+        cwd = config.get("cwd")
+
+        from .terminal import TerminalBridge
+
+        def handle_terminal_event(event: Any) -> None:
+            self.apply_terminal_event(runtime_handle.object_id, event)
+            if on_event is not None:
+                on_event(event)
+
+        bridge = TerminalBridge(
+            command,
+            args=args,
+            cwd=None if cwd is None else str(cwd),
+            env=None if env_value is None else {str(key): str(value) for key, value in env_value.items()},
+            cols=int(config.get("cols", 100)),
+            rows=int(config.get("rows", 30)),
+            prefer_pty=bool(config.get("prefer_pty", True)),
+            on_output=on_output,
+            on_event=handle_terminal_event,
+            capture_transcript=bool(config.get("capture_transcript", True)),
+            max_transcript_entries=int(config.get("max_transcript_entries", 10000)),
+        )
+        self.attach_handle(runtime_handle.object_id, bridge, status="ready")
+        self.emit_event(
+            "terminal_bridge_created",
+            node_id=runtime_handle.owner_node_id,
+            object_id=runtime_handle.object_id,
+            data={"command": bridge.command.label, "started": False},
+        )
+        if start:
+            self.start_terminal_session(runtime_handle.object_id)
+        return bridge
+
+    def start_terminal_session(self, object_id: str) -> Any:
+        """Start an attached terminal bridge, creating one from config when needed."""
+
+        runtime_handle = self.require_object_handle(object_id)
+        if runtime_handle.object_type != "terminal_session":
+            raise ValueError(f"runtime object {object_id!r} is {runtime_handle.object_type!r}, not 'terminal_session'")
+        bridge = runtime_handle.handle
+        if bridge is None:
+            bridge = self.create_terminal_bridge(runtime_handle.object_id, start=False)
+        already_running = bool(getattr(bridge, "session_active", False))
+        if already_running:
+            runtime_handle.set_status("running")
+            self.emit_event(
+                "terminal_start_requested",
+                node_id=runtime_handle.owner_node_id,
+                object_id=runtime_handle.object_id,
+                data={"object_type": runtime_handle.object_type, "already_running": True},
+            )
+            return bridge
+        self.set_object_status(runtime_handle.object_id, "starting")
+        if not hasattr(bridge, "start"):
+            raise TypeError(f"runtime object {object_id!r} handle does not support start()")
+        started = bridge.start()
+        if started is not None:
+            bridge = started
+            runtime_handle.handle = bridge
+        self.emit_event(
+            "terminal_start_requested",
+            node_id=runtime_handle.owner_node_id,
+            object_id=runtime_handle.object_id,
+            data={"object_type": runtime_handle.object_type},
+        )
+        return bridge
+
+    def send_terminal_input(self, object_id: str, text: object, *, newline: bool = False) -> bool:
+        """Send text to an attached terminal bridge and emit a stdin runtime event."""
+
+        runtime_handle = self.require_object_handle(object_id)
+        if runtime_handle.object_type != "terminal_session":
+            raise ValueError(f"runtime object {object_id!r} is {runtime_handle.object_type!r}, not 'terminal_session'")
+        bridge = runtime_handle.handle
+        if bridge is None:
+            raise RuntimeError(f"runtime object {object_id!r} has no attached terminal bridge")
+        method_name = "send_line" if newline else "send_text"
+        method = getattr(bridge, method_name, None)
+        if method is None:
+            raise TypeError(f"runtime object {object_id!r} handle does not support {method_name}()")
+        payload = str(text)
+        delivered = bool(method(payload))
+        self.emit_event(
+            "terminal_stdin",
+            node_id=runtime_handle.owner_node_id,
+            port_id="stdin",
+            object_id=runtime_handle.object_id,
+            value=payload + ("\n" if newline else ""),
+            data={"delivered": delivered, "newline": bool(newline), "object_type": runtime_handle.object_type},
+        )
+        return delivered
+
+    def stop_runtime_object(self, object_id: str, *, detach: bool = False) -> bool:
+        """Stop an attached runtime handle when it exposes stop/close/dispose."""
+
+        runtime_handle = self.require_object_handle(object_id)
+        handle = runtime_handle.handle
+        stopped = False
+        if handle is not None:
+            for method_name in ("stop", "close", "dispose"):
+                method = getattr(handle, method_name, None)
+                if method is None:
+                    continue
+                method()
+                stopped = True
+                break
+        runtime_handle.set_status("stopped")
+        self.emit_event(
+            "object_stop_requested",
+            node_id=runtime_handle.owner_node_id,
+            object_id=runtime_handle.object_id,
+            data={"object_type": runtime_handle.object_type, "stopped": stopped},
+        )
+        if detach:
+            self.detach_handle(runtime_handle.object_id, status="stopped")
+        return stopped
+
+    def cleanup(self) -> dict[str, object]:
+        """Stop all attached runtime handles and mark the runtime session stopped."""
+
+        stopped: list[str] = []
+        errors: dict[str, str] = {}
+        for runtime_handle in list(self._handles.values()):
+            if runtime_handle.handle is None:
+                continue
+            try:
+                if self.stop_runtime_object(runtime_handle.object_id):
+                    stopped.append(runtime_handle.object_id)
+            except Exception as exc:  # pragma: no cover - defensive cleanup path
+                runtime_handle.set_status("failed", error=exc)
+                errors[runtime_handle.object_id] = str(exc)
+        self.status = "stopped" if not errors else "failed"
+        self.emit_event("session_cleanup", data={"stopped": stopped, "errors": errors})
+        return {"stopped": stopped, "errors": errors}
+
+    def apply_terminal_event(self, object_id: str, event: Any) -> NodeGraphRuntimeEvent:
+        """Apply a TerminalEvent-like payload to an attached terminal object."""
+
+        runtime_handle = self.require_object_handle(object_id)
+        payload = event.to_dict() if hasattr(event, "to_dict") else dict(event)
+        name = str(payload.get("event", ""))
+        runtime_event = {
+            "bridge_started": "terminal_bridge_started",
+            "session_started": "terminal_started",
+            "session_ended": "terminal_stopped",
+            "bridge_stopped": "terminal_bridge_stopped",
+            "output": "terminal_stdout",
+            "input": "terminal_stdin",
+        }.get(name, f"terminal_{name}" if name else "terminal_event")
+        port_id = {"output": "stdout", "input": "stdin"}.get(name)
+        status = {
+            "bridge_started": "starting",
+            "session_started": "running",
+            "session_ended": "exited",
+            "bridge_stopped": "stopped",
+        }.get(name)
+        if status is not None:
+            runtime_handle.set_status(status)
+        data = {"terminal_event": _json_safe_value(payload), "object_type": runtime_handle.object_type}
+        value = payload.get("data") if name == "output" else None
+        return self.emit_event(
+            runtime_event,
+            node_id=runtime_handle.owner_node_id,
+            port_id=port_id,
+            object_id=runtime_handle.object_id,
+            value=value,
+            data=data,
+            timestamp=float(payload.get("timestamp", time.time())),
+        )
+
+    def emit_event(
+        self,
+        event: str,
+        *,
+        node_id: str | None = None,
+        port_id: str | None = None,
+        section_id: str | None = None,
+        object_id: str | None = None,
+        value: object | None = None,
+        data: Mapping[str, object] | None = None,
+        timestamp: float | None = None,
+    ) -> NodeGraphRuntimeEvent:
+        self._sequence += 1
+        item = NodeGraphRuntimeEvent(
+            event=str(event),
+            node_id=None if node_id is None else str(node_id),
+            port_id=None if port_id is None else str(port_id),
+            section_id=None if section_id is None else str(section_id),
+            object_id=None if object_id is None else str(object_id),
+            value=value,
+            data=None if data is None else _json_copy(data, "runtime event data"),
+            sequence=self._sequence,
+            timestamp=time.time() if timestamp is None else float(timestamp),
+        )
+        self._events.append(item)
+        self._record_and_propagate_port_event(item)
+        return item
+
+    def _record_and_propagate_port_event(self, item: NodeGraphRuntimeEvent) -> None:
+        if item.node_id is None or item.port_id is None or item.value is None:
+            return
+        key = (item.node_id, item.port_id)
+        self._port_values.setdefault(key, []).append(item.value)
+        if item.event == "edge_value":
+            self._execute_runtime_node(item.node_id, item.port_id, item.value, timestamp=item.timestamp)
+            return
+        for edge in self.binding.edges:
+            if edge.source_node != item.node_id or edge.source_port != item.port_id:
+                continue
+            self.emit_event(
+                "edge_value",
+                node_id=edge.target_node,
+                port_id=edge.target_port,
+                value=item.value,
+                data={
+                    "edge_id": edge.edge_id,
+                    "source_node": edge.source_node,
+                    "source_port": edge.source_port,
+                    "target_node": edge.target_node,
+                    "target_port": edge.target_port,
+                    "source_event": item.event,
+                },
+                timestamp=item.timestamp,
+            )
+
+    def _execute_runtime_node(self, node_id: str, port_id: str, value: object, *, timestamp: float | None = None) -> None:
+        binding = self.binding.node_binding(node_id)
+        if binding is None or binding.node_type not in _RUNTIME_EXECUTABLE_NODE_TYPES:
+            return
+        if self._execution_depth >= 32:
+            self.emit_event(
+                "node_execution_skipped",
+                node_id=node_id,
+                data={"reason": "max execution depth reached", "node_type": binding.node_type},
+                timestamp=timestamp,
+            )
+            return
+        node = _runtime_node_from_binding(binding)
+        log: list[dict[str, object]] = []
+        self._execution_depth += 1
+        try:
+            if binding.node_type == "widget_sink":
+                log.extend(self._apply_widget_sink(binding, value, timestamp=timestamp))
+                outputs = {"value": [value]}
+            else:
+                outputs = _execute_flow_node(node, {port_id: [value]}, self._parser_state, log)
+        finally:
+            self._execution_depth -= 1
+        self.emit_event(
+            "node_executed",
+            node_id=node_id,
+            data={
+                "node_type": binding.node_type,
+                "input_port": port_id,
+                "output_counts": {port: len(items) for port, items in outputs.items()},
+                "log": _json_safe_value(log),
+            },
+            timestamp=timestamp,
+        )
+        for output_port, values in outputs.items():
+            for output_value in values:
+                self.emit_event(
+                    "node_output",
+                    node_id=node_id,
+                    port_id=output_port,
+                    value=output_value,
+                    data={"node_type": binding.node_type},
+                    timestamp=timestamp,
+                )
+
+    def _apply_widget_sink(
+        self, binding: NodeGraphNodeBinding, value: object, *, timestamp: float | None = None
+    ) -> list[dict[str, object]]:
+        config = binding.config or {}
+        widget_id = str(config.get("widget_id", "")).strip()
+        widget_type = str(config.get("widget_type", "")).strip()
+        update_mode = str(config.get("update_mode", "") or "auto").strip()
+        value_format = str(config.get("format", "") or "text").strip()
+        if not widget_id:
+            result = {"ok": False, "reason": "widget_id is required"}
+            self.emit_event("widget_update_failed", node_id=binding.node_id, data=result, timestamp=timestamp)
+            return [result]
+        widget = self.widget_handle(widget_id)
+        if widget is None:
+            result = {"ok": False, "widget_id": widget_id, "reason": "widget is not registered"}
+            self.emit_event("widget_update_failed", node_id=binding.node_id, data=result, timestamp=timestamp)
+            return [result]
+        actual_type = _widget_kind(widget)
+        if widget_type and widget_type != actual_type:
+            result = {
+                "ok": False,
+                "widget_id": widget_id,
+                "widget_type": actual_type,
+                "expected_widget_type": widget_type,
+                "reason": "registered widget type does not match node config",
+            }
+            self.emit_event("widget_update_failed", node_id=binding.node_id, data=result, timestamp=timestamp)
+            return [result]
+        try:
+            applied_mode = _update_widget_sink(widget, value, update_mode=update_mode, value_format=value_format)
+        except Exception as exc:
+            result = {
+                "ok": False,
+                "widget_id": widget_id,
+                "widget_type": actual_type,
+                "update_mode": update_mode,
+                "reason": str(exc),
+            }
+            self.emit_event("widget_update_failed", node_id=binding.node_id, data=result, timestamp=timestamp)
+            return [result]
+        result = {
+            "ok": True,
+            "widget_id": widget_id,
+            "widget_type": actual_type,
+            "update_mode": applied_mode,
+            "format": value_format,
+        }
+        self.emit_event("widget_updated", node_id=binding.node_id, data=result, timestamp=timestamp)
+        return [result]
+
+    def validate(self) -> dict[str, object]:
+        return self.binding.validate()
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "schema_version": _NODE_GRAPH_RUNTIME_SCHEMA_VERSION,
+            "session_id": self.session_id,
+            "status": self.status,
+            "valid": self.valid,
+            "validation": self.validate(),
+            "objects": [handle.to_dict() for handle in self._handles.values()],
+            "widgets": [{"widget_id": widget_id, "widget_type": _widget_kind(widget)} for widget_id, widget in self._widgets.items()],
+            "views": [binding.to_dict() for binding in self.view_bindings()],
+            "port_values": {
+                f"{node}.{port}": [_json_safe_value(value) for value in values]
+                for (node, port), values in self._port_values.items()
+            },
+            "events": [event.to_dict() for event in self._events],
+        }
+
+    snapshot = to_dict
 
 
 @dataclass(frozen=True, slots=True)
@@ -466,9 +1178,21 @@ class NodeGraph(HtmlReport):
         return NodeGraphRuntimeBinding(
             nodes=tuple(_node_runtime_binding(node) for node in self.nodes),
             sections=tuple(_section_runtime_binding(section, self.section_nodes(section.id)) for section in self.sections),
+            edges=tuple(_edge_runtime_binding(edge, index) for index, edge in enumerate(self.edges)),
             registry=active_registry,
             missing_refs=active_registry.missing_object_refs(refs),
         )
+
+
+    def runtime_session(
+        self,
+        registry: NodeGraphObjectRegistry | None = None,
+        *,
+        session_id: str | None = None,
+    ) -> NodeGraphRuntimeSession:
+        """Create live runtime session state for this graph's current binding."""
+
+        return NodeGraphRuntimeSession(self.runtime_binding(registry), session_id=session_id)
 
 
     def runtime_object_refs(self) -> tuple[NodeGraphRuntimeObjectRef, ...]:
@@ -3879,6 +4603,44 @@ def multi_agent_node_templates() -> tuple[NodeGraphTemplate, ...]:
             ),
         ),
         NodeGraphTemplate(
+            "widget_sink",
+            "Widget Sink",
+            inputs=(NodeGraphPort("value", "value", port_type="json"),),
+            outputs=(NodeGraphPort("value", "value", port_type="json"),),
+            subtitle="update GUI widget",
+            status="watching",
+            color="#2ac3de",
+            width=220,
+            data=_template_data(
+                "widget_sink",
+                "watching",
+                [
+                    {"key": "widget_id", "label": "Widget ID"},
+                    {
+                        "key": "widget_type",
+                        "label": "Widget Type",
+                        "type": "select",
+                        "options": ["", "label", "badge", "log_view", "text_input", "text_area", "code_editor", "led"],
+                        "default": "",
+                    },
+                    {
+                        "key": "update_mode",
+                        "label": "Update",
+                        "type": "select",
+                        "options": ["auto", "set", "append", "state"],
+                        "default": "auto",
+                    },
+                    {
+                        "key": "format",
+                        "label": "Format",
+                        "type": "select",
+                        "options": ["text", "json", "repr", "message_body"],
+                        "default": "text",
+                    },
+                ],
+            ),
+        ),
+        NodeGraphTemplate(
             "agent",
             "Agent",
             inputs=(
@@ -4034,6 +4796,77 @@ _RUNTIME_OBJECT_REF_KEYS: tuple[tuple[str, str | None], ...] = (
     ("watcher_ref", "file_watcher"),
     ("recorder_ref", "transcript_recorder"),
 )
+_RUNTIME_EXECUTABLE_NODE_TYPES = {
+    "append_text",
+    "extract_between_markers",
+    "envelope_parser",
+    "parser",
+    "message_router",
+    "log",
+    "probe",
+    "widget_sink",
+}
+
+_WIDGET_SINK_SET_TYPES = {
+    "label",
+    "badge",
+    "text_input",
+    "text_area",
+    "code_editor",
+}
+
+_WIDGET_SINK_APPEND_TYPES = {"log_view"}
+
+
+def _widget_kind(widget: object) -> str:
+    kind = getattr(widget, "kind", None)
+    if kind is not None and str(kind).strip():
+        return str(kind).strip()
+    return type(widget).__name__
+
+
+def _widget_sink_text(value: object, value_format: str) -> str:
+    mode = str(value_format or "text").strip()
+    if mode == "json":
+        return json.dumps(_json_safe_value(value), sort_keys=True)
+    if mode == "repr":
+        return repr(value)
+    if mode == "message_body" and isinstance(value, Mapping):
+        body = value.get("body")
+        if body is not None:
+            return str(body)
+    return str(value)
+
+
+def _update_widget_sink(widget: object, value: object, *, update_mode: str, value_format: str) -> str:
+    kind = _widget_kind(widget)
+    mode = str(update_mode or "auto").strip()
+    if mode == "auto":
+        if kind in _WIDGET_SINK_APPEND_TYPES:
+            mode = "append"
+        elif kind == "led":
+            mode = "state"
+        else:
+            mode = "set"
+    if mode == "append":
+        append_line = getattr(widget, "append_line", None)
+        if not callable(append_line):
+            raise TypeError(f"widget type {kind!r} does not support append")
+        append_line(_widget_sink_text(value, value_format))
+        return mode
+    if mode == "set":
+        set_value = getattr(widget, "set_value", None)
+        if not callable(set_value):
+            raise TypeError(f"widget type {kind!r} does not support set")
+        set_value(_widget_sink_text(value, value_format))
+        return mode
+    if mode == "state":
+        set_state = getattr(widget, "set_state", None)
+        if not callable(set_state):
+            raise TypeError(f"widget type {kind!r} does not support state")
+        set_state(value)
+        return mode
+    raise ValueError(f"unsupported widget sink update mode {mode!r}")
 
 
 def _required_text(value: object, name: str) -> str:
@@ -4053,6 +4886,16 @@ def _mapping_copy(value: object, context: str) -> dict[str, object] | None:
     return _json_copy(dict(value), context)
 
 
+def _sequence_config(value: object, context: str) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return (value,)
+    if isinstance(value, (bytes, bytearray)) or not isinstance(value, Sequence):
+        raise TypeError(f"{context} must be a sequence")
+    return tuple(str(item) for item in value)
+
+
 def _node_config(node: NodeGraphNode) -> dict[str, object]:
     data = node.data or {}
     config = data.get("config") if isinstance(data, Mapping) else None
@@ -4069,6 +4912,38 @@ def _node_type(node: NodeGraphNode) -> str:
     return "node"
 
 
+def _runtime_view_type(binding: NodeGraphNodeBinding, config: Mapping[str, object]) -> str | None:
+    value = config.get("view_type")
+    if value is not None and str(value).strip():
+        return str(value).strip()
+    node_type_views = {
+        "terminal": "terminal",
+        "terminal_session": "terminal",
+        "envelope_parser": "parser_trace",
+        "parser": "parser_trace",
+        "message_router": "queue",
+        "router": "queue",
+        "approval_gate": "approval",
+        "log": "event_log",
+        "probe": "event_log",
+        "artifact": "artifact_list",
+        "recorder": "artifact_list",
+        "tester": "test_results",
+        "command_runner": "test_results",
+    }
+    if binding.node_type in node_type_views:
+        return node_type_views[binding.node_type]
+    object_type_views = {
+        "terminal_session": "terminal",
+        "message_queue": "queue",
+        "transcript_recorder": "artifact_list",
+    }
+    for ref in binding.object_refs:
+        if ref.object_type in object_type_views:
+            return object_type_views[ref.object_type]
+    return None
+
+
 def _section_config(section: NodeGraphSection) -> dict[str, object]:
     data = section.data or {}
     if not isinstance(data, Mapping):
@@ -4081,6 +4956,12 @@ def _section_config(section: NodeGraphSection) -> dict[str, object]:
 
 def _node_runtime_binding(node: NodeGraphNode) -> NodeGraphNodeBinding:
     config = _node_config(node)
+    data = node.data or {}
+    if isinstance(data, Mapping):
+        for key in ("view_type",):
+            value = data.get(key)
+            if value is not None and str(value).strip() and key not in config:
+                config[key] = str(value).strip()
     owned = _runtime_object_from_node(node)
     refs = _runtime_refs_from_node(node)
     return NodeGraphNodeBinding(
@@ -4094,6 +4975,20 @@ def _node_runtime_binding(node: NodeGraphNode) -> NodeGraphNodeBinding:
     )
 
 
+def _runtime_node_from_binding(binding: NodeGraphNodeBinding) -> NodeGraphNode:
+    data: dict[str, object] = {"node_type": binding.node_type}
+    if binding.config is not None:
+        data["config"] = _json_copy(binding.config, "runtime node config")
+    return NodeGraphNode(
+        binding.node_id,
+        binding.title,
+        0,
+        0,
+        status=binding.status,
+        data=data,
+    )
+
+
 def _section_runtime_binding(section: NodeGraphSection, node_ids: Sequence[str]) -> NodeGraphSectionBinding:
     config = _section_config(section)
     return NodeGraphSectionBinding(
@@ -4103,6 +4998,17 @@ def _section_runtime_binding(section: NodeGraphSection, node_ids: Sequence[str])
         purpose=section.purpose,
         trigger=section.trigger,
         config=config or None,
+    )
+
+
+def _edge_runtime_binding(edge: NodeGraphEdge, index: int) -> NodeGraphRuntimeEdgeBinding:
+    return NodeGraphRuntimeEdgeBinding(
+        edge_id=edge.id or f"edge-{index + 1}",
+        source_node=edge.source_node,
+        source_port=edge.source_port,
+        target_node=edge.target_node,
+        target_port=edge.target_port,
+        label=edge.label,
     )
 
 
@@ -4461,9 +5367,14 @@ def _json_copy(value: object, context: str) -> dict[str, object]:
 
 __all__ = [
     "NodeGraph",
+    "NodeGraphRuntimeEdgeBinding",
     "NodeGraphFlowRun",
     "NodeGraphNodeBinding",
     "NodeGraphRuntimeBinding",
+    "NodeGraphRuntimeEvent",
+    "NodeGraphRuntimeHandle",
+    "NodeGraphRuntimeSession",
+    "NodeGraphRuntimeViewBinding",
     "NodeGraphSectionBinding",
     "NodeGraphEdge",
     "NodeGraphNode",

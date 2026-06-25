@@ -9082,6 +9082,20 @@ def test_terminal_widget_serializes_as_html_report() -> None:
         terminal.stop()
 
 
+def test_terminal_widget_can_attach_existing_bridge_without_creating_another() -> None:
+    bridge = terminal_module.TerminalBridge("cmd.exe", prefer_pty=False)
+    terminal = dg.Terminal(bridge=bridge, parent=None, height=280)
+    try:
+        assert terminal.bridge is bridge
+        assert bridge.status.startswith("listening on 127.0.0.1:")
+        node = terminal.to_dict()
+        assert node["type"] == "html_report"
+        assert node["props"]["height"] == 280.0
+        assert bridge.url in node["props"]["html"]
+    finally:
+        terminal.stop()
+
+
 def test_terminal_bridge_control_surface_records_events_and_transcript() -> None:
     outputs: list[str] = []
     events: list[terminal_module.TerminalEvent] = []
@@ -9604,6 +9618,7 @@ def test_node_graph_runtime_binding_maps_nodes_sections_and_validation() -> None
     payload = binding.to_dict()
     assert payload["registry"][0]["object_id"] == "codex-impl"
     assert payload["sections"][0]["section_id"] == "init"
+    assert payload["edges"] == []
 
     registry = dg.NodeGraphObjectRegistry(
         [
@@ -9612,6 +9627,492 @@ def test_node_graph_runtime_binding_maps_nodes_sections_and_validation() -> None
         ]
     )
     assert graph.runtime_binding(registry).valid is True
+
+
+def test_node_graph_runtime_session_tracks_live_handles_and_events() -> None:
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "terminal-owner",
+                "title": "Terminal",
+                "status": "configured",
+                "data": {
+                    "node_type": "terminal",
+                    "runtime_object": "terminal_session",
+                    "config": {"session_id": "codex-impl", "command": "codex"},
+                },
+            },
+            {
+                "id": "terminal-ref",
+                "title": "Terminal Ref",
+                "data": {"node_type": "terminal_ref", "config": {"session_ref": "codex-impl"}},
+            },
+        ],
+        parent=None,
+    )
+
+    session = graph.runtime_session(session_id="runtime-1")
+
+    assert isinstance(session, dg.NodeGraphRuntimeSession)
+    assert session.session_id == "runtime-1"
+    assert session.valid is True
+    assert session.validate() == {"valid": True, "missing_refs": []}
+    assert isinstance(session.events[0], dg.NodeGraphRuntimeEvent)
+    assert session.events[0].event == "session_created"
+
+    runtime_handle = session.object_handle("codex-impl")
+    assert isinstance(runtime_handle, dg.NodeGraphRuntimeHandle)
+    assert runtime_handle.object_type == "terminal_session"
+    assert runtime_handle.owner_node_id == "terminal-owner"
+    assert runtime_handle.status == "configured"
+    assert runtime_handle.handle_attached is False
+
+    live_handle = object()
+    attached = session.attach_handle("codex-impl", live_handle, status="running")
+    assert attached.handle is live_handle
+    assert attached.handle_attached is True
+    assert attached.status == "running"
+    assert session.events[-1].event == "object_handle_attached"
+
+    session.emit_event(
+        "port_output",
+        node_id="terminal-owner",
+        port_id="stdout",
+        object_id="codex-impl",
+        value={"chunk": "ready"},
+    )
+    session.set_object_status("codex-impl", "failed", error="demo failure")
+    detached = session.detach_handle("codex-impl", status="stopped")
+    assert detached is live_handle
+    assert attached.handle_attached is False
+    assert attached.status == "stopped"
+
+    snapshot = session.snapshot()
+    assert snapshot["schema_version"] == 1
+    assert snapshot["session_id"] == "runtime-1"
+    assert snapshot["objects"][0]["handle_attached"] is False
+    assert snapshot["objects"][0]["status"] == "stopped"
+    assert snapshot["events"][0]["sequence"] == 1
+    assert [event["event"] for event in snapshot["events"]] == [
+        "session_created",
+        "object_handle_attached",
+        "port_output",
+        "object_status_changed",
+        "object_handle_detached",
+    ]
+    assert snapshot["events"][2]["value"] == {"chunk": "ready"}
+    assert json.loads(json.dumps(snapshot)) == snapshot
+
+
+def test_node_graph_runtime_view_bindings_resolve_view_types_and_handles() -> None:
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "terminal-owner",
+                "title": "Terminal",
+                "data": {
+                    "node_type": "terminal",
+                    "runtime_object": "terminal_session",
+                    "view_type": "terminal",
+                    "config": {"session_id": "shell-1", "command": "cmd.exe"},
+                },
+            },
+            {
+                "id": "parser",
+                "title": "Parser",
+                "data": {"node_type": "envelope_parser", "config": {"start_marker": "@to"}},
+            },
+        ],
+        parent=None,
+    )
+    session = graph.runtime_session(session_id="runtime-views")
+
+    terminal_view = session.view_binding("terminal-owner")
+    assert isinstance(terminal_view, dg.NodeGraphRuntimeViewBinding)
+    assert terminal_view.view_type == "terminal"
+    assert terminal_view.object_id == "shell-1"
+    assert terminal_view.object_type == "terminal_session"
+    assert terminal_view.available is False
+    assert terminal_view.reason == "runtime handle is not attached"
+
+    parser_view = session.view_binding("parser")
+    assert parser_view is not None
+    assert parser_view.view_type == "parser_trace"
+    assert parser_view.object_id is None
+    assert parser_view.available is False
+
+    bridge = session.create_terminal_bridge("shell-1", start=False)
+    try:
+        terminal_view = session.view_binding("terminal-owner")
+        assert terminal_view is not None
+        assert terminal_view.available is True
+        assert terminal_view.reason is None
+        payload = session.snapshot()
+        views = {view["node_id"]: view for view in payload["views"]}
+        assert views["terminal-owner"]["view_type"] == "terminal"
+        assert views["terminal-owner"]["available"] is True
+        assert views["parser"]["view_type"] == "parser_trace"
+    finally:
+        bridge.stop()
+
+
+def test_node_graph_runtime_session_creates_terminal_bridge_without_starting() -> None:
+    terminal_events: list[terminal_module.TerminalEvent] = []
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "terminal-owner",
+                "title": "Terminal",
+                "data": {
+                    "node_type": "terminal",
+                    "runtime_object": "terminal_session",
+                    "config": {
+                        "session_id": "shell-1",
+                        "command": "cmd.exe",
+                        "args": ["/Q"],
+                        "cwd": "J:\\Projects\\DragonFrame",
+                        "env": {"DRAGONGUI_TEST": "1"},
+                        "prefer_pty": False,
+                    },
+                },
+            },
+        ],
+        parent=None,
+    )
+
+    session = graph.runtime_session(session_id="runtime-terminal")
+    bridge = session.create_terminal_bridge("shell-1", start=False, on_event=terminal_events.append)
+
+    try:
+        assert isinstance(bridge, terminal_module.TerminalBridge)
+        assert bridge.command.argv == ["cmd.exe", "/Q"]
+        assert bridge.cwd == "J:\\Projects\\DragonFrame"
+        assert bridge.env == {"DRAGONGUI_TEST": "1"}
+        assert bridge.prefer_pty is False
+        assert bridge.status == "not started"
+
+        runtime_handle = session.require_object_handle("shell-1")
+        assert runtime_handle.handle is bridge
+        assert runtime_handle.status == "ready"
+        assert session.snapshot()["objects"][0]["handle_attached"] is True
+        assert session.events[-1].event == "terminal_bridge_created"
+
+        session.apply_terminal_event("shell-1", dg.TerminalEvent("session_started", session_id=3, timestamp=44.0))
+        assert runtime_handle.status == "running"
+        assert session.events[-1].event == "terminal_started"
+        assert session.events[-1].timestamp == 44.0
+
+        session.apply_terminal_event("shell-1", {"event": "output", "data": "ready", "timestamp": 45.0})
+        assert session.events[-1].event == "terminal_stdout"
+        assert session.events[-1].port_id == "stdout"
+        assert session.events[-1].value == "ready"
+        assert terminal_events == []
+    finally:
+        bridge.stop()
+
+
+def test_node_graph_runtime_session_routes_terminal_stdout_across_edges() -> None:
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "terminal-owner",
+                "title": "Terminal",
+                "outputs": [dg.NodeGraphPort("stdout", "stdout", port_type="terminal_output")],
+                "data": {
+                    "node_type": "terminal",
+                    "runtime_object": "terminal_session",
+                    "config": {"session_id": "shell-1", "command": "cmd.exe"},
+                },
+            },
+            {
+                "id": "parser",
+                "title": "Parser",
+                "inputs": [dg.NodeGraphPort("in", "in", port_type="terminal_output")],
+                "data": {"node_type": "envelope_parser"},
+            },
+        ],
+        [dg.NodeGraphEdge("terminal-owner", "stdout", "parser", "in", id="edge-terminal-parser")],
+        parent=None,
+    )
+    session = graph.runtime_session(session_id="runtime-edge-transport")
+
+    assert session.binding.edges[0].edge_id == "edge-terminal-parser"
+    assert isinstance(session.binding.edges[0], dg.NodeGraphRuntimeEdgeBinding)
+
+    session.apply_terminal_event("shell-1", {"event": "output", "data": "ready", "timestamp": 45.0})
+
+    assert session.port_values("terminal-owner", "stdout") == ["ready"]
+    assert session.port_values("parser", "in") == ["ready"]
+    terminal_event, edge_event, executed_event = session.events[-3:]
+    assert terminal_event.event == "terminal_stdout"
+    assert edge_event.event == "edge_value"
+    assert edge_event.node_id == "parser"
+    assert edge_event.port_id == "in"
+    assert edge_event.value == "ready"
+    assert edge_event.data["edge_id"] == "edge-terminal-parser"
+    assert executed_event.event == "node_executed"
+    assert executed_event.node_id == "parser"
+    assert executed_event.data["output_counts"]["message"] == 0
+    snapshot = session.snapshot()
+    assert snapshot["port_values"] == {
+        "terminal-owner.stdout": ["ready"],
+        "parser.in": ["ready"],
+    }
+
+
+def test_node_graph_runtime_session_executes_parser_and_log_from_edge_values() -> None:
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "terminal-owner",
+                "title": "Terminal",
+                "outputs": [dg.NodeGraphPort("stdout", "stdout", port_type="terminal_output")],
+                "data": {
+                    "node_type": "terminal",
+                    "runtime_object": "terminal_session",
+                    "config": {"session_id": "shell-1", "command": "cmd.exe"},
+                },
+            },
+            {
+                "id": "parser",
+                "title": "Parser",
+                "inputs": [dg.NodeGraphPort("in", "in", port_type="terminal_output")],
+                "outputs": [dg.NodeGraphPort("message", "message", port_type="message")],
+                "data": {"node_type": "envelope_parser"},
+            },
+            {
+                "id": "log",
+                "title": "Log",
+                "inputs": [dg.NodeGraphPort("value", "value", port_type="json")],
+                "outputs": [dg.NodeGraphPort("value", "value", port_type="json")],
+                "data": {"node_type": "log"},
+            },
+        ],
+        [
+            dg.NodeGraphEdge("terminal-owner", "stdout", "parser", "in", id="edge-terminal-parser"),
+            dg.NodeGraphEdge("parser", "message", "log", "value", id="edge-parser-log"),
+        ],
+        parent=None,
+    )
+    session = graph.runtime_session(session_id="runtime-node-exec")
+
+    session.apply_terminal_event(
+        "shell-1",
+        {
+            "event": "output",
+            "data": (
+                "@to reviewer\n"
+                "@from implementer\n"
+                "@type review_request\n"
+                "@id live-1\n"
+                "Please inspect the live runtime path.\n"
+                "@end\n"
+            ),
+            "timestamp": 45.0,
+        },
+    )
+
+    parser_messages = session.port_values("parser", "message")
+    assert len(parser_messages) == 1
+    assert parser_messages[0]["id"] == "live-1"
+    assert parser_messages[0]["to"] == "reviewer"
+    assert session.port_values("log", "value")[0] == parser_messages[0]
+    event_names = [event.event for event in session.events]
+    assert event_names.count("node_executed") >= 2
+    assert "node_output" in event_names
+    assert session.events[-1].event == "node_output"
+    snapshot = session.snapshot()
+    assert snapshot["port_values"]["parser.message"][0]["body"] == "Please inspect the live runtime path."
+    assert snapshot["port_values"]["log.value"][0]["id"] == "live-1"
+
+
+def test_node_graph_runtime_session_widget_sink_updates_registered_log_view() -> None:
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "terminal-owner",
+                "title": "Terminal",
+                "outputs": [dg.NodeGraphPort("stdout", "stdout", port_type="terminal_output")],
+                "data": {
+                    "node_type": "terminal",
+                    "runtime_object": "terminal_session",
+                    "config": {"session_id": "shell-1", "command": "cmd.exe"},
+                },
+            },
+            {
+                "id": "indicator",
+                "title": "Indicator",
+                "inputs": [dg.NodeGraphPort("value", "value", port_type="json")],
+                "outputs": [dg.NodeGraphPort("value", "value", port_type="json")],
+                "data": {
+                    "node_type": "widget_sink",
+                    "config": {
+                        "widget_id": "runtime-indicator",
+                        "widget_type": "log_view",
+                        "update_mode": "append",
+                        "format": "text",
+                    },
+                },
+            },
+        ],
+        [dg.NodeGraphEdge("terminal-owner", "stdout", "indicator", "value", id="edge-terminal-widget")],
+        parent=None,
+    )
+    session = graph.runtime_session(session_id="runtime-widget-sink")
+    log_view = dg.LogView([], id="runtime-indicator", parent=None)
+    session.register_widget(log_view)
+
+    session.apply_terminal_event("shell-1", {"event": "output", "data": "ready", "timestamp": 45.0})
+
+    assert log_view.lines == ["ready"]
+    assert session.port_values("indicator", "value") == ["ready", "ready"]
+    assert session.snapshot()["widgets"] == [{"widget_id": "runtime-indicator", "widget_type": "log_view"}]
+    event_names = [event.event for event in session.events]
+    assert "widget_registered" in event_names
+    assert "widget_updated" in event_names
+    assert session.events[-1].event == "node_output"
+
+
+def test_node_graph_runtime_session_widget_sink_sets_registered_label() -> None:
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "source",
+                "title": "Source",
+                "outputs": [dg.NodeGraphPort("out", "out", port_type="json")],
+                "data": {"node_type": "probe"},
+            },
+            {
+                "id": "indicator",
+                "title": "Indicator",
+                "inputs": [dg.NodeGraphPort("value", "value", port_type="json")],
+                "data": {
+                    "node_type": "widget_sink",
+                    "config": {
+                        "widget_id": "status-label",
+                        "widget_type": "label",
+                        "update_mode": "set",
+                        "format": "message_body",
+                    },
+                },
+            },
+        ],
+        [dg.NodeGraphEdge("source", "out", "indicator", "value", id="edge-source-widget")],
+        parent=None,
+    )
+    session = graph.runtime_session(session_id="runtime-widget-label")
+    label = dg.Label("Waiting", id="status-label", parent=None)
+    session.register_widget("status-label", label)
+
+    session.emit_event("node_output", node_id="source", port_id="out", value={"body": "Done", "id": "m1"})
+
+    assert label.text == "Done"
+    assert session.widget_handle("status-label") is label
+    assert session.widget_ids() == ("status-label",)
+
+
+def test_node_graph_runtime_session_widget_sink_reports_missing_widget() -> None:
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "source",
+                "title": "Source",
+                "outputs": [dg.NodeGraphPort("out", "out", port_type="json")],
+                "data": {"node_type": "probe"},
+            },
+            {
+                "id": "indicator",
+                "title": "Indicator",
+                "inputs": [dg.NodeGraphPort("value", "value", port_type="json")],
+                "data": {"node_type": "widget_sink", "config": {"widget_id": "missing-widget"}},
+            },
+        ],
+        [dg.NodeGraphEdge("source", "out", "indicator", "value", id="edge-source-widget")],
+        parent=None,
+    )
+    session = graph.runtime_session(session_id="runtime-widget-missing")
+
+    session.emit_event("node_output", node_id="source", port_id="out", value="ready")
+
+    failed = [event for event in session.events if event.event == "widget_update_failed"]
+    assert failed
+    assert failed[-1].data["widget_id"] == "missing-widget"
+    assert failed[-1].data["reason"] == "widget is not registered"
+
+
+def test_node_graph_runtime_session_terminal_commands_use_attached_handle() -> None:
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "terminal-owner",
+                "title": "Terminal",
+                "data": {
+                    "node_type": "terminal",
+                    "runtime_object": "terminal_session",
+                    "config": {"session_id": "shell-1", "command": "cmd.exe"},
+                },
+            },
+        ],
+        parent=None,
+    )
+    session = graph.runtime_session(session_id="runtime-terminal-commands")
+
+    class FakeBridge:
+        def __init__(self) -> None:
+            self.started = False
+            self.stopped = False
+            self.sent: list[str] = []
+            self.session_active = False
+
+        def start(self) -> "FakeBridge":
+            self.started = True
+            self.session_active = True
+            return self
+
+        def send_text(self, text: object) -> bool:
+            self.sent.append(str(text))
+            return self.started
+
+        def send_line(self, text: object = "") -> bool:
+            self.sent.append(f"{text}\r\n")
+            return self.started
+
+        def stop(self) -> None:
+            self.stopped = True
+
+    fake = FakeBridge()
+    session.attach_handle("shell-1", fake, status="ready")
+
+    assert session.start_terminal_session("shell-1") is fake
+    assert fake.started is True
+    assert session.require_object_handle("shell-1").status == "starting"
+    assert session.events[-1].event == "terminal_start_requested"
+
+    assert session.start_terminal_session("shell-1") is fake
+    assert session.require_object_handle("shell-1").status == "running"
+    assert session.events[-1].data["already_running"] is True
+
+    assert session.send_terminal_input("shell-1", "hello") is True
+    assert fake.sent[-1] == "hello"
+    assert session.events[-1].event == "terminal_stdin"
+    assert session.events[-1].port_id == "stdin"
+    assert session.events[-1].value == "hello"
+    assert session.events[-1].data["delivered"] is True
+
+    assert session.send_terminal_input("shell-1", "run", newline=True) is True
+    assert fake.sent[-1] == "run\r\n"
+    assert session.events[-1].value == "run\n"
+
+    assert session.stop_runtime_object("shell-1") is True
+    assert fake.stopped is True
+    assert session.require_object_handle("shell-1").status == "stopped"
+    assert session.events[-1].event == "object_stop_requested"
+
+    result = session.cleanup()
+    assert result == {"stopped": ["shell-1"], "errors": {}}
+    assert session.status == "stopped"
+    assert session.events[-1].event == "session_cleanup"
+
 
 def test_node_graph_runtime_object_registry_rejects_duplicate_ids() -> None:
     registry = dg.NodeGraphObjectRegistry()

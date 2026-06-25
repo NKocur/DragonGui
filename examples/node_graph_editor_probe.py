@@ -33,7 +33,18 @@ NODES = [
         status="running",
         color="#43c6ac",
         width=230,
-        data={"node_type": "terminal", "template_id": "terminal", "default_status": "running"},
+        data={
+            "node_type": "terminal",
+            "template_id": "terminal",
+            "default_status": "running",
+            "runtime_object": "terminal_session",
+            "config": {
+                "session_id": "implementer-session",
+                "command": "cmd.exe",
+                "args": [],
+                "prefer_pty": True,
+            },
+        },
     ),
     dg.NodeGraphNode(
         "parser",
@@ -52,102 +63,41 @@ NODES = [
         data={"node_type": "parser", "template_id": "parser", "default_status": "idle"},
     ),
     dg.NodeGraphNode(
-        "reviewer_agent",
-        "Reviewer Agent",
+        "message_indicator",
+        "Message Indicator",
         610,
-        40,
-        inputs=(
-            dg.NodeGraphPort("in", "message", port_type="message"),
-            dg.NodeGraphPort("approval", "approval_result", port_type="approval_result"),
-        ),
-        outputs=(
-            dg.NodeGraphPort("out", "message", port_type="message"),
-            dg.NodeGraphPort("approval_request", "approval_request", port_type="approval_request"),
-            dg.NodeGraphPort("test_request", "test_request", port_type="test_request"),
-            dg.NodeGraphPort("artifact", "artifact", port_type="artifact"),
-            dg.NodeGraphPort("error", "error", port_type="error"),
-        ),
-        subtitle="review and route",
-        status="idle",
-        color="#7aa2f7",
-        width=235,
+        90,
+        inputs=(dg.NodeGraphPort("value", "message", port_type="message"),),
+        outputs=(dg.NodeGraphPort("value", "message", port_type="message"),),
+        subtitle="widget sink",
+        status="watching",
+        color="#2ac3de",
+        width=230,
         data={
-            "node_type": "agent",
-            "template_id": "agent",
-            "default_status": "idle",
-            "session": {"agent_type": "codex", "capabilities": {"terminal": True}},
+            "node_type": "widget_sink",
+            "template_id": "widget_sink",
+            "default_status": "watching",
+            "config": {
+                "widget_id": "runtime-message-indicator",
+                "widget_type": "log_view",
+                "update_mode": "append",
+                "format": "json",
+            },
         },
-    ),
-    dg.NodeGraphNode(
-        "approval",
-        "Approval Gate",
-        910,
-        30,
-        inputs=(dg.NodeGraphPort("request", "approval_request", port_type="approval_request"),),
-        outputs=(
-            dg.NodeGraphPort("result", "approval_result", port_type="approval_result"),
-            dg.NodeGraphPort("error", "error", port_type="error"),
-        ),
-        subtitle="human checkpoint",
-        status="waiting",
-        color="#e0af68",
-        width=220,
-        data={"node_type": "approval_gate", "template_id": "approval_gate"},
-    ),
-    dg.NodeGraphNode(
-        "tester",
-        "Tester",
-        910,
-        245,
-        inputs=(dg.NodeGraphPort("request", "test_request", port_type="test_request"),),
-        outputs=(
-            dg.NodeGraphPort("report", "test_report", port_type="test_report"),
-            dg.NodeGraphPort("error", "error", port_type="error"),
-        ),
-        subtitle="focused checks",
-        status="ready",
-        color="#bb9af7",
-        width=210,
-        data={"node_type": "tester", "template_id": "tester"},
-    ),
-    dg.NodeGraphNode(
-        "artifacts",
-        "Artifacts",
-        610,
-        335,
-        inputs=(dg.NodeGraphPort("in", "artifact", port_type="artifact"),),
-        outputs=(dg.NodeGraphPort("out", "artifact", port_type="artifact"),),
-        subtitle="snapshots and reports",
-        status="recording",
-        color="#f7768e",
-        width=220,
-        data={"node_type": "artifact", "template_id": "artifact"},
     ),
 ]
 SECTIONS = [
     dg.NodeGraphSection(
-        "initialization",
-        "Initialization",
+        "runtime-smoke",
+        "Runtime Smoke Test",
         -18,
         48,
-        570,
+        890,
         230,
-        purpose="create terminal + parse startup output",
-        trigger="app_start",
+        purpose="terminal stdout -> parser -> widget sink",
+        trigger="manual_probe",
         color="#43c6ac",
-        data={"runtime_scope": "startup", "owns": ["implementer_terminal"]},
-    ),
-    dg.NodeGraphSection(
-        "review-loop",
-        "Review Loop",
-        570,
-        0,
-        640,
-        510,
-        purpose="route review, approval, tests, artifacts",
-        trigger="message_received",
-        color="#7aa2f7",
-        data={"runtime_scope": "work_loop", "refs": ["implementer_terminal"]},
+        data={"runtime_scope": "manual_probe", "owns": ["implementer_terminal"], "refs": ["runtime-message-indicator"]},
     ),
 ]
 EDGES = [
@@ -163,47 +113,11 @@ EDGES = [
     dg.NodeGraphEdge(
         "parser",
         "message",
-        "reviewer_agent",
-        "in",
-        label="message",
-        color="#7aa2f7",
-        id="edge-parser-reviewer",
-    ),
-    dg.NodeGraphEdge(
-        "reviewer_agent",
-        "approval_request",
-        "approval",
-        "request",
-        label="approval_request",
-        color="#e0af68",
-        id="edge-reviewer-approval",
-    ),
-    dg.NodeGraphEdge(
-        "approval",
-        "result",
-        "reviewer_agent",
-        "approval",
-        label="approval_result",
-        color="#e0af68",
-        id="edge-approval-reviewer",
-    ),
-    dg.NodeGraphEdge(
-        "reviewer_agent",
-        "test_request",
-        "tester",
-        "request",
-        label="test_request",
-        color="#bb9af7",
-        id="edge-reviewer-tester",
-    ),
-    dg.NodeGraphEdge(
-        "reviewer_agent",
-        "artifact",
-        "artifacts",
-        "in",
-        label="artifact",
-        color="#f7768e",
-        id="edge-reviewer-artifacts",
+        "message_indicator",
+        "value",
+        label="message indicator",
+        color="#2ac3de",
+        id="edge-parser-indicator",
     ),
 ]
 
@@ -309,7 +223,12 @@ history_label: dg.Label | None = None
 nav_label: dg.Label | None = None
 counts_label: dg.Label | None = None
 event_log: dg.LogView | None = None
+runtime_indicator: dg.LogView | None = None
+runtime_view_panel: dg.Panel | None = None
 selected_node_id: str | None = None
+runtime_session: dg.NodeGraphRuntimeSession | None = None
+runtime_terminal_id = "implementer-session"
+runtime_view_signature: tuple[object, ...] | None = None
 
 def log(line: object = "") -> None:
     if event_log is not None:
@@ -388,6 +307,11 @@ def on_graph_event(payload: dict[str, object]) -> None:
     }
     log(json.dumps(interesting, sort_keys=True))
     refresh_state()
+    if event == "node_deleted":
+        deleted_node = payload.get("node")
+        shown_node = runtime_view_signature[1] if runtime_view_signature is not None and len(runtime_view_signature) > 1 else None
+        if deleted_node is not None and str(deleted_node) == shown_node:
+            render_runtime_view(str(deleted_node))
 
 
 def on_select(node_id: str | None) -> None:
@@ -538,6 +462,225 @@ def run_text_flow_demo() -> None:
     trace = " -> ".join(event for event in events if event != "emit")
     log(f"text flow trace {trace}")
     log(f"text flow event counts {json.dumps(counts, sort_keys=True)}")
+
+
+def create_runtime_session() -> None:
+    global runtime_session
+    if graph is None:
+        return
+    runtime_session = graph.runtime_session(session_id="probe-runtime")
+    if runtime_indicator is not None:
+        runtime_session.register_widget(runtime_indicator)
+    snapshot = runtime_session.snapshot()
+    log(
+        "runtime session "
+        f"valid={snapshot['valid']} objects={len(snapshot['objects'])} events={len(snapshot['events'])}"
+    )
+    for obj in snapshot["objects"]:
+        if isinstance(obj, dict):
+            log(
+                "runtime object "
+                f"{obj.get('object_id')} type={obj.get('object_type')} status={obj.get('status')}"
+            )
+
+
+def attach_runtime_terminal() -> None:
+    global runtime_session
+    if graph is None:
+        return
+    if runtime_session is None:
+        runtime_session = graph.runtime_session(session_id="probe-runtime")
+        if runtime_indicator is not None:
+            runtime_session.register_widget(runtime_indicator)
+    bridge = runtime_session.create_terminal_bridge(runtime_terminal_id, start=False)
+    log(f"terminal bridge attached {bridge.command.label} status={bridge.status}")
+    render_runtime_view("implementer_terminal")
+    log_runtime_tail()
+
+
+def start_runtime_terminal() -> None:
+    if runtime_session is None:
+        log("runtime start skipped: create/attach runtime first")
+        return
+    before = runtime_session.object_handle(runtime_terminal_id)
+    had_view = before is not None and before.handle_attached
+    bridge = runtime_session.start_terminal_session(runtime_terminal_id)
+    log(f"terminal start requested status={bridge.status}")
+    if had_view:
+        log("terminal view already attached; keeping existing surface")
+    else:
+        render_runtime_view("implementer_terminal")
+    log_runtime_tail()
+
+
+def send_runtime_input() -> None:
+    if runtime_session is None:
+        log("runtime input skipped: create/attach runtime first")
+        return
+    try:
+        delivered = runtime_session.send_terminal_input(runtime_terminal_id, "echo DragonGUI runtime probe", newline=True)
+    except RuntimeError as exc:
+        log(f"runtime input blocked: {exc}")
+        return
+    log(f"terminal stdin delivered={delivered}")
+    log_runtime_tail()
+
+
+def inject_runtime_plain_output() -> None:
+    if runtime_session is None:
+        log("runtime plain output skipped: create/attach runtime first")
+        return
+    runtime_session.apply_terminal_event(
+        runtime_terminal_id,
+        {
+            "event": "output",
+            "data": "plain runtime output\n",
+        },
+    )
+    log("injected plain terminal stdout")
+    log_runtime_tail()
+
+
+def inject_runtime_envelope() -> None:
+    if runtime_session is None:
+        log("runtime envelope skipped: create/attach runtime first")
+        return
+    runtime_session.apply_terminal_event(
+        runtime_terminal_id,
+        {
+            "event": "output",
+            "data": (
+                "@to reviewer_agent\n"
+                "@from implementer_terminal\n"
+                "@type review_request\n"
+                "@id probe-live-1\n"
+                "Please inspect the live runtime path.\n"
+                "@end\n"
+            ),
+        },
+    )
+    log("injected terminal stdout envelope")
+    log_runtime_tail()
+
+
+def clear_runtime_indicator() -> None:
+    if runtime_indicator is not None:
+        runtime_indicator.clear()
+        runtime_indicator.append_line("Widget sink idle.")
+    log("runtime indicator cleared")
+
+
+def stop_runtime_terminal() -> None:
+    if runtime_session is None:
+        log("runtime stop skipped: create/attach runtime first")
+        return
+    stopped = runtime_session.stop_runtime_object(runtime_terminal_id)
+    log(f"terminal stop requested stopped={stopped}")
+    log_runtime_tail()
+
+
+def cleanup_runtime_session() -> None:
+    if runtime_session is None:
+        log("runtime cleanup skipped: create runtime first")
+        return
+    log(f"runtime cleanup {json.dumps(runtime_session.cleanup(), sort_keys=True)}")
+    log_runtime_tail()
+
+
+def log_runtime_tail() -> None:
+    if runtime_session is None:
+        return
+    snapshot = runtime_session.snapshot()
+    objects = snapshot.get("objects", [])
+    if objects:
+        log(f"runtime objects {json.dumps(objects, sort_keys=True)}")
+    port_values = snapshot.get("port_values", {})
+    if port_values:
+        counts = {
+            key: len(value)
+            for key, value in port_values.items()
+            if isinstance(value, list)
+        }
+        log(f"runtime port values {json.dumps(counts, sort_keys=True)}")
+    events = snapshot.get("events", [])
+    tail = events[-4:] if isinstance(events, list) else []
+    for event in tail:
+        log(f"runtime event {json.dumps(event, sort_keys=True)}")
+
+
+def render_runtime_view(node_id: str | None = None) -> None:
+    global runtime_view_signature
+    if runtime_view_panel is None:
+        return
+    target = node_id or selected_node_id or "implementer_terminal"
+    if runtime_session is None:
+        signature = ("empty",)
+        if runtime_view_signature == signature:
+            return
+        runtime_view_signature = signature
+        runtime_view_panel.replace_children(
+            [
+                dg.Label("No runtime session", class_="status", parent=None),
+                dg.Label("Click Runtime Session, then Attach Terminal.", class_="muted", parent=None),
+            ]
+        )
+        return
+    binding = runtime_session.view_binding(target)
+    if binding is None:
+        signature = ("missing", target)
+        if runtime_view_signature == signature:
+            return
+        runtime_view_signature = signature
+        runtime_view_panel.replace_children(
+            [
+                dg.Label(f"No runtime view for {target}", class_="status", parent=None),
+                dg.LogView([json.dumps(runtime_session.validate(), sort_keys=True)], rows=5, wrap=True, parent=None),
+            ]
+        )
+        return
+    handle = runtime_session.object_handle(binding.object_id) if binding.object_id is not None else None
+    if binding.view_type == "terminal" and handle is not None and handle.handle is not None:
+        signature = ("terminal", binding.node_id, binding.object_id, id(handle.handle))
+        if runtime_view_signature == signature:
+            return
+        runtime_view_signature = signature
+        runtime_view_panel.replace_children(
+            [
+                dg.Label(f"{binding.title or binding.node_id} -> {binding.object_id}", class_="status", parent=None),
+                dg.Terminal(
+                    bridge=handle.handle,
+                    title=str(binding.title or binding.object_id or "Terminal"),
+                    height=220,
+                    parent=None,
+                ),
+            ]
+        )
+        return
+    signature = ("detail", binding.node_id, binding.view_type, binding.object_id, binding.available, binding.reason)
+    if runtime_view_signature == signature:
+        return
+    runtime_view_signature = signature
+    runtime_view_panel.replace_children(
+        [
+            dg.Label(
+                f"{binding.title or binding.node_id}: {binding.view_type}",
+                class_="status",
+                parent=None,
+            ),
+            dg.LogView(
+                [
+                    json.dumps(binding.to_dict(), sort_keys=True),
+                    "Attach or start the runtime object to show its live view.",
+                ],
+                follow=True,
+                rows=6,
+                wrap=True,
+                parent=None,
+            ),
+        ]
+    )
+
+
 with dg.HLayout(class_="root"):
     with dg.Panel("Node Canvas", class_="canvas"):
         with dg.FlowLayout(gap=8, row_gap=6, style={"width": "100%", "height": "auto", "flex_shrink": 0}):
@@ -583,15 +726,38 @@ with dg.HLayout(class_="root"):
             dg.Button("Snapshot", on_click=log_snapshot)
             dg.Button("Model Smoke", on_click=run_model_smoke)
             dg.Button("Text Flow Demo", on_click=run_text_flow_demo)
-            dg.Button("Add Agent Node", on_click=add_toolbar_node)
+            dg.Button("Add Terminal Node", on_click=add_toolbar_node)
+        dg.Label("Runtime Checks", class_="section")
+        with dg.FlowLayout(gap=6, row_gap=6):
+            dg.Button("Runtime Session", on_click=create_runtime_session)
+            dg.Button("Attach Terminal", on_click=attach_runtime_terminal)
+            dg.Button("Start Terminal", on_click=start_runtime_terminal)
+            dg.Button("Send Input", on_click=send_runtime_input)
+            dg.Button("Inject Plain", on_click=inject_runtime_plain_output)
+            dg.Button("Inject Envelope", on_click=inject_runtime_envelope)
+            dg.Button("Clear Indicator", on_click=clear_runtime_indicator)
+            dg.Button("Stop Terminal", on_click=stop_runtime_terminal)
+            dg.Button("Cleanup Runtime", on_click=cleanup_runtime_session)
+        runtime_view_panel = dg.Panel("Runtime View", class_="runtime-view")
+        with runtime_view_panel:
+            dg.Label("No runtime session", class_="status")
+            dg.Label("Click Runtime Session, then Attach Terminal.", class_="muted")
+        dg.Label("Runtime Indicator", class_="section")
+        runtime_indicator = dg.LogView(
+            ["Widget sink idle."],
+            id="runtime-message-indicator",
+            follow=True,
+            rows=4,
+            wrap=True,
+        )
         dg.Label("Event Log", class_="section")
         event_log = dg.LogView(
             [
                 "NodeGraph probe ready.",
-                "Try dragging Agent.message -> Rule.message.",
-                "Try dragging Terminal.stdout -> Agent.message to see type rejection.",
+                "Default path: Terminal.stdout -> Parser.in -> Message Indicator.value.",
+                "Use Inject Plain for edge transport, Inject Envelope for parser + widget sink.",
             ],
-            follow=False,
+            follow=True,
             rows=6,
             wrap=True,
         )

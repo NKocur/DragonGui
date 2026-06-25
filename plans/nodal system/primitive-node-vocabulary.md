@@ -953,8 +953,8 @@ Implemented editor pieces:
 - Schema-driven custom property fields for primitive node templates.
 - Primitive palette templates for Terminal Session, Text Input, Append Text, Extract Between Markers, Envelope Parser, Message Router, Approval Gate, Log, and Probe.
 - Primitive templates now publish a `config_schema` with typed editable fields stored under node `data.config` when edited.
-- Python runtime object registry support can derive named objects from node config, list refs, and report missing refs.
-- Python runtime binding support maps graph nodes and sections into static runtime binding records with validation.
+- Python static runtime object registry support can derive named objects from node config, list refs, and report missing refs.
+- Python static runtime binding support maps graph nodes and sections into binding records with validation.
 
 ### Required Runtime Features
 
@@ -963,15 +963,114 @@ Implemented runtime pieces:
 - Non-destructive `NodeGraph.run_text_flow()` support for primitive text/message flows.
 - First-pass execution for Text Input, Append Text, Extract Between Markers, Envelope Parser, Message Router, Log, and Probe nodes.
 - A probe button that runs a parser -> router -> log demo without launching real terminals or agents.
+- `NodeGraphRuntimeEvent`, `NodeGraphRuntimeHandle`, and `NodeGraphRuntimeSession` provide the live runtime execution contract, transient handle registry, validation snapshot, and event log.
+- Runtime sessions can create and attach a `TerminalBridge` for a `terminal_session` object without starting it by default.
+- Runtime sessions can start/stop terminal handles, send stdin, normalize terminal lifecycle/stdout/stdin events, and clean up attached handles.
+- `node_graph_editor_probe.py` includes runtime controls for the Terminal Session path.
+- `NodeGraphRuntimeViewBinding` resolves graph nodes to observable runtime views.
+- `Terminal` can attach to an existing `TerminalBridge`, and the probe includes a Runtime View panel for the attached Terminal Session.
+- `NodeGraphRuntimeEdgeBinding` and runtime port-value storage propagate `terminal_stdout` values across connected graph edges.
+- Delivered runtime edge values can execute safe downstream primitive nodes (`parser`/`envelope_parser`, `message_router`, `log`, and `probe`) and emit their outputs back into the runtime event stream.
+- Widget Sink / UI Indicator nodes let graph values update registered DragonGUI widgets by stable widget ID without saving transient widget instances in graph data.
+
+The implemented runtime pieces are intentionally non-destructive. They validate
+graph metadata, own transient live handles, and run local text/message
+transforms from delivered runtime values, but they do not launch terminals
+automatically or execute sections.
 
 To make sections executable, the runtime will need:
 
-- Object registry keyed by stable IDs.
 - Object creator and reference node distinction.
-- Validation for missing object references.
+- Widget Sink / UI Indicator nodes backed by a transient runtime widget registry.
+- Additional runtime detail views from graph node -> runtime state -> observable widget or detail panel.
 - Lifecycle handling for startup and shutdown sections.
 - Section-level run, stop, reset, and replay commands.
 - GUI action binding to section commands.
+
+### Widget Sink / UI Indicator Binding
+
+Some graph nodes should drive ordinary DragonGUI widgets that already exist in
+the surrounding GUI. This is separate from runtime views: a runtime view is a
+detail surface for a selected node, while a widget sink is an output target that
+lets graph data update a stable widget ID anywhere in the app.
+
+Binding chain:
+
+```text
+NodeGraph output port
+  -> Widget Sink node input
+  -> NodeGraphRuntimeSession widget registry
+  -> existing DragonGUI widget instance
+```
+
+Required concepts:
+
+- Widget instances are transient runtime handles and must not be serialized into
+  graph data.
+- Graph data stores only a stable `widget_id`, an expected `widget_type`, an
+  `update_mode`, and formatting hints.
+- The runtime session owns a widget registry populated by the application or
+  probe before execution.
+- Safe first update modes should include `set`, `append`, and `state`.
+- Safe first widget targets should include `label`, `badge`, `log_view`,
+  `text_input`, `text_area`, `code_editor`, and `led`.
+- A later editor picker can list known runtime widget IDs and write the selected
+  ID into the Widget Sink node config.
+
+Example node config:
+
+```json
+{
+  "node_type": "widget_sink",
+  "config": {
+    "widget_id": "runtime-indicator",
+    "widget_type": "log_view",
+    "update_mode": "append",
+    "format": "json"
+  }
+}
+```
+
+### Runtime View Binding
+
+Applicable node types should be observable while they run. The graph should not
+special-case Terminal nodes forever; it needs a general pathway from graph node
+to runtime object to view.
+
+Binding chain:
+
+```text
+NodeGraphNode
+  -> NodeGraphNodeBinding
+  -> NodeGraphRuntimeObject / NodeGraphRuntimeHandle
+  -> NodeGraphRuntimeViewBinding
+  -> DragonGUI widget or detail panel
+```
+
+Required concepts:
+
+- Each runtime-capable node can declare `view_type`, such as `terminal`,
+  `event_log`, `queue`, `approval`, `parser_trace`, `artifact_list`,
+  `test_results`, or `metrics`.
+- A runtime view attaches to an existing runtime handle instead of creating a
+  second process/session.
+- View state is transient runtime UI state, not saved graph layout data.
+- The selected-node inspector or detail panel should resolve the selected node's
+  runtime object and show the matching live view when available.
+- Nodes without a dedicated view still expose a generic event/config/status
+  detail view.
+
+First useful view bindings:
+
+- Terminal Session -> `Terminal` widget attached to the existing
+  `TerminalBridge`.
+- Envelope Parser -> parser event trace and parsed message preview.
+- Message Router -> queue/routing table with delivered/held/failed states.
+- Approval Gate -> pending approval payload, approve/reject/edit controls, and
+  decision history.
+- Log / Probe -> latest values and event timeline.
+- Artifact / Recorder -> artifact manifest and transcript chunks.
+- Tester / Command Runner -> command status, stdout/stderr, and test report.
 
 ## First Useful Subgraph Templates
 
@@ -1069,11 +1168,24 @@ Strict typing should help prevent obvious mistakes, but the editor should allow 
 5. [x] Add schema-driven property fields for primitive templates.
 6. [x] Add primitive templates for Terminal, Text Input, Append Text, Extract Between Markers, Envelope Parser, Message Router, Approval Gate, Log, and Probe.
 7. [x] Add node configuration schema so each node template can define editable fields.
-8. [x] Add runtime object IDs and an object registry for terminals, queues, memory stores, file watchers, and recorders.
-9. [x] Add a runtime binding layer that maps graph nodes and sections to Python objects.
+8. [x] Add runtime object IDs and a static object registry that derives declared objects and missing references from graph config.
+9. [x] Add a static runtime binding layer that maps graph nodes and sections to Python binding records.
 10. [x] Build a small non-destructive demo where text flows through parser/router/log nodes without launching real agents.
-11. [ ] Add Terminal Session integration after the graph runtime can move typed events between nodes.
-12. [ ] Save common role setups as section or subgraph templates, not as hard-coded primitive nodes.
+11. [x] Define the live graph runtime execution contract: event payloads, validation snapshots, lifecycle status, and serializable event logs.
+12. [x] Promote static object metadata into a live runtime session registry with transient handles and status.
+13. [x] Add opt-in Terminal Session bridge creation without automatic process launch.
+14. [x] Add Terminal Session runtime commands for start, stop, stdin input, normalized stdout/stdin events, and cleanup.
+15. [x] Add probe controls for creating runtime sessions and exercising Terminal Session commands.
+16. [x] Add a general runtime-view binding contract for node types with useful live views.
+17. [x] Let `Terminal` attach to an existing `TerminalBridge` so Terminal Session nodes can be observed directly.
+18. [x] Add a probe detail panel that resolves the selected node's runtime view when available.
+19. [x] Route terminal stdout events across connected graph edges.
+20. [ ] Add stderr edge transport when `TerminalBridge` exposes stderr separately from combined PTY output.
+21. [x] Execute downstream parser/router/log/probe nodes from delivered runtime edge values.
+22. [x] Add Widget Sink / UI Indicator nodes that update registered DragonGUI widgets from graph values.
+23. [ ] Add widget-ID picker support for Widget Sink node config.
+24. [ ] Add section-level run, stop, reset, and replay commands.
+25. [ ] Save common role setups as section or subgraph templates, not as hard-coded primitive nodes.
 
 ## Open Questions
 
@@ -1085,5 +1197,6 @@ Strict typing should help prevent obvious mistakes, but the editor should allow 
 - Should subgraphs be editable inline, opened as tabs, or represented as collapsed macro nodes?
 - Should section membership be purely geometry-based, explicit in graph data, or both?
 - Should runtime object IDs be globally unique across the whole graph or scoped by section?
+- Should runtime views be registered by node type, runtime object type, or explicit node `view_type`?
 
 
