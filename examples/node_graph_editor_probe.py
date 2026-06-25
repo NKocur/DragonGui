@@ -1,4 +1,4 @@
-"""NodeGraph editor probe.
+﻿"""NodeGraph editor probe.
 
 Exercises the canvas-backed node editor: templates, typed ports, validation,
 events, history, navigation, persistence, and the Python-side agent models.
@@ -6,6 +6,7 @@ events, history, navigation, persistence, and the Python-side agent models.
 
 from __future__ import annotations
 
+import copy
 import json
 import sys
 from pathlib import Path
@@ -18,7 +19,34 @@ import dragongui as dg
 
 TEMPLATES = dg.multi_agent_node_templates()
 
+
+def template_data(template_id: str, **config: object) -> dict[str, object]:
+    """Copy template inspector metadata while allowing probe-specific defaults."""
+
+    template = next(template for template in TEMPLATES if template.id == template_id)
+    data = copy.deepcopy(template.data or {})
+    node_config = data.setdefault("config", {})
+    if isinstance(node_config, dict):
+        node_config.update(config)
+    return data
+
 NODES = [
+    dg.NodeGraphNode(
+        "terminal_command_text",
+        "Terminal Command Text",
+        -270,
+        95,
+        outputs=(dg.NodeGraphPort("text", "text", port_type="text"),),
+        subtitle="text -> terminal stdin",
+        status="ready",
+        color="#7aa2f7",
+        width=230,
+        data=template_data(
+            "text_input",
+            text="echo DragonGUI runtime probe",
+            output_mode="manual",
+        ),
+    ),
     dg.NodeGraphNode(
         "implementer_terminal",
         "Implementer Terminal",
@@ -63,16 +91,40 @@ NODES = [
         data={"node_type": "parser", "template_id": "parser", "default_status": "idle"},
     ),
     dg.NodeGraphNode(
+        "terminal_output_display",
+        "Terminal Output Display",
+        310,
+        260,
+        inputs=(dg.NodeGraphPort("value", "terminal_output", port_type="terminal_output"),),
+        outputs=(dg.NodeGraphPort("value", "terminal_output", port_type="terminal_output"),),
+        subtitle="stdout -> GUI log",
+        status="watching",
+        color="#2ac3de",
+        width=250,
+        data={
+            "node_type": "widget_sink",
+            "template_id": "widget_sink",
+            "default_status": "watching",
+            "config": {
+                "widget_id": "terminal-output-log",
+                "widget_type": "log_view",
+                "port_profile": "terminal_output",
+                "update_mode": "append",
+                "format": "text",
+            },
+        },
+    ),
+    dg.NodeGraphNode(
         "message_indicator",
-        "Message Indicator",
+        "Parsed Message Display",
         610,
         90,
         inputs=(dg.NodeGraphPort("value", "message", port_type="message"),),
         outputs=(dg.NodeGraphPort("value", "message", port_type="message"),),
-        subtitle="widget sink",
+        subtitle="message -> GUI log",
         status="watching",
         color="#2ac3de",
-        width=230,
+        width=250,
         data={
             "node_type": "widget_sink",
             "template_id": "widget_sink",
@@ -80,6 +132,7 @@ NODES = [
             "config": {
                 "widget_id": "runtime-message-indicator",
                 "widget_type": "log_view",
+                "port_profile": "message",
                 "update_mode": "append",
                 "format": "json",
             },
@@ -90,33 +143,51 @@ SECTIONS = [
     dg.NodeGraphSection(
         "runtime-smoke",
         "Runtime Smoke Test",
-        -18,
+        -300,
         48,
-        890,
-        230,
-        purpose="terminal stdout -> parser -> widget sink",
+        1220,
+        330,
+        purpose="terminal stdout -> GUI log and parser -> message log",
         trigger="manual_probe",
         color="#43c6ac",
-        data={"runtime_scope": "manual_probe", "owns": ["implementer_terminal"], "refs": ["runtime-message-indicator"]},
+        data={"runtime_scope": "manual_probe", "owns": ["implementer_terminal"], "refs": ["terminal-output-log", "runtime-message-indicator"]},
     ),
 ]
 EDGES = [
+    dg.NodeGraphEdge(
+        "terminal_command_text",
+        "text",
+        "implementer_terminal",
+        "stdin",
+        label="text -> terminal stdin",
+        color=dg.node_graph_port_type_color("text"),
+        id="edge-text-terminal-stdin",
+    ),
     dg.NodeGraphEdge(
         "implementer_terminal",
         "stdout",
         "parser",
         "in",
         label="terminal_output",
-        color="#9ece6a",
+        color=dg.node_graph_port_type_color("terminal_output"),
         id="edge-terminal-parser",
+    ),
+    dg.NodeGraphEdge(
+        "implementer_terminal",
+        "stdout",
+        "terminal_output_display",
+        "value",
+        label="stdout -> terminal output log",
+        color=dg.node_graph_port_type_color("terminal_output"),
+        id="edge-terminal-output-display",
     ),
     dg.NodeGraphEdge(
         "parser",
         "message",
         "message_indicator",
         "value",
-        label="message indicator",
-        color="#2ac3de",
+        label="message -> parsed message log",
+        color=dg.node_graph_port_type_color("message"),
         id="edge-parser-indicator",
     ),
 ]
@@ -141,15 +212,14 @@ app.stylesheet(
         height: 100%;
         min-width: 0;
         min-height: 0;
-        height: 230px;
         gap: 10px;
     }
 
     Panel.canvas {
-        flex-grow: 0;
+        flex-grow: 1;
         min-width: 0;
         min-height: 0;
-        height: 230px;
+        height: 100%;
         padding: 10px;
         gap: 8px;
     }
@@ -197,7 +267,8 @@ app.stylesheet(
     LogView {
         width: 100%;
         flex-grow: 0;
-        min-height: 0;`r`n        height: 230px;
+        min-height: 0;
+        height: 230px;
         background: #070a0f;
         border: 1px solid rgba(255, 255, 255, 0.11);
         border-radius: 6px;
@@ -223,6 +294,8 @@ history_label: dg.Label | None = None
 nav_label: dg.Label | None = None
 counts_label: dg.Label | None = None
 event_log: dg.LogView | None = None
+terminal_output_log: dg.LogView | None = None
+reviewer_terminal_output_log: dg.LogView | None = None
 runtime_indicator: dg.LogView | None = None
 runtime_view_panel: dg.Panel | None = None
 selected_node_id: str | None = None
@@ -233,6 +306,68 @@ runtime_view_signature: tuple[object, ...] | None = None
 def log(line: object = "") -> None:
     if event_log is not None:
         event_log.append_line(line)
+
+
+def register_graph_widget_targets() -> None:
+    if graph is None:
+        return
+    formats = ("text", "json", "repr", "message_body")
+    if terminal_output_log is not None:
+        graph.register_widget_target(
+            id="terminal-output-log",
+            label="Terminal Output",
+            widget_type="log_view",
+            widget=terminal_output_log,
+            supported_update_modes=("append", "set"),
+            default_update_mode="append",
+            supported_port_profiles=("terminal_output", "text"),
+            default_port_profile="terminal_output",
+            supported_formats=formats,
+        )
+    if reviewer_terminal_output_log is not None:
+        graph.register_widget_target(
+            id="reviewer-terminal-output-log",
+            label="Reviewer Terminal Output",
+            widget_type="log_view",
+            widget=reviewer_terminal_output_log,
+            supported_update_modes=("append", "set"),
+            default_update_mode="append",
+            supported_port_profiles=("terminal_output", "text"),
+            default_port_profile="terminal_output",
+            supported_formats=formats,
+        )
+    if runtime_indicator is not None:
+        graph.register_widget_target(
+            id="runtime-message-indicator",
+            label="Parsed Message Log",
+            widget_type="log_view",
+            widget=runtime_indicator,
+            supported_update_modes=("append", "set"),
+            default_update_mode="append",
+            supported_port_profiles=("message", "json", "text"),
+            default_port_profile="message",
+            supported_formats=formats,
+        )
+    if event_log is not None:
+        graph.register_widget_target(
+            id="node-probe-event-log",
+            label="Event Log",
+            widget_type="log_view",
+            widget=event_log,
+            supported_update_modes=("append", "set"),
+            default_update_mode="append",
+            supported_port_profiles=("event", "json", "text", "message", "terminal_output"),
+            default_port_profile="event",
+            supported_formats=formats,
+        )
+
+
+def register_runtime_widget_targets() -> None:
+    if graph is None or runtime_session is None:
+        return
+    for target in graph.widget_targets:
+        if target.widget is not None:
+            runtime_session.register_widget(target.id, target.widget)
 
 
 def add_toolbar_node() -> None:
@@ -469,8 +604,7 @@ def create_runtime_session() -> None:
     if graph is None:
         return
     runtime_session = graph.runtime_session(session_id="probe-runtime")
-    if runtime_indicator is not None:
-        runtime_session.register_widget(runtime_indicator)
+    register_runtime_widget_targets()
     snapshot = runtime_session.snapshot()
     log(
         "runtime session "
@@ -490,8 +624,7 @@ def attach_runtime_terminal() -> None:
         return
     if runtime_session is None:
         runtime_session = graph.runtime_session(session_id="probe-runtime")
-        if runtime_indicator is not None:
-            runtime_session.register_widget(runtime_indicator)
+        register_runtime_widget_targets()
     bridge = runtime_session.create_terminal_bridge(runtime_terminal_id, start=False)
     log(f"terminal bridge attached {bridge.command.label} status={bridge.status}")
     render_runtime_view("implementer_terminal")
@@ -517,15 +650,24 @@ def send_runtime_input() -> None:
     if runtime_session is None:
         log("runtime input skipped: create/attach runtime first")
         return
-    try:
-        delivered = runtime_session.send_terminal_input(runtime_terminal_id, "echo DragonGUI runtime probe", newline=True)
-    except RuntimeError as exc:
-        log(f"runtime input blocked: {exc}")
-        return
-    log(f"terminal stdin delivered={delivered}")
+    before_sequence = runtime_session.events[-1].sequence if runtime_session.events else 0
+    runtime_session.run_node("terminal_command_text")
+    new_events = [event for event in runtime_session.events if event.sequence > before_sequence]
+    outputs = runtime_session.port_values("terminal_command_text", "text")
+    skipped = [event for event in new_events if event.event == "node_run_skipped"]
+    failures = [event for event in new_events if event.event == "edge_conversion_failed"]
+    applied = [event for event in new_events if event.event == "edge_conversion_applied"]
+    if outputs:
+        log(f"terminal input source emitted: {outputs[-1]!r}")
+    if skipped:
+        log(f"terminal input source skipped: {skipped[-1].data.get('reason') if skipped[-1].data else 'unknown'}")
+    elif failures:
+        log(f"terminal stdin conversion blocked: {failures[-1].data.get('reason') if failures[-1].data else 'unknown'}")
+    elif applied:
+        log(f"terminal stdin delivered via graph edge={applied[-1].data.get('delivered') if applied[-1].data else None}")
+    else:
+        log("terminal input source ran; no terminal conversion result recorded")
     log_runtime_tail()
-
-
 def inject_runtime_plain_output() -> None:
     if runtime_session is None:
         log("runtime plain output skipped: create/attach runtime first")
@@ -564,9 +706,15 @@ def inject_runtime_envelope() -> None:
 
 
 def clear_runtime_indicator() -> None:
+    if terminal_output_log is not None:
+        terminal_output_log.clear()
+        terminal_output_log.append_line("Terminal output sink idle.")
+    if reviewer_terminal_output_log is not None:
+        reviewer_terminal_output_log.clear()
+        reviewer_terminal_output_log.append_line("Reviewer terminal output sink idle.")
     if runtime_indicator is not None:
         runtime_indicator.clear()
-        runtime_indicator.append_line("Widget sink idle.")
+        runtime_indicator.append_line("Parsed message sink idle.")
     log("runtime indicator cleared")
 
 
@@ -742,9 +890,25 @@ with dg.HLayout(class_="root"):
         with runtime_view_panel:
             dg.Label("No runtime session", class_="status")
             dg.Label("Click Runtime Session, then Attach Terminal.", class_="muted")
-        dg.Label("Runtime Indicator", class_="section")
+        dg.Label("Terminal Output", class_="section")
+        terminal_output_log = dg.LogView(
+            ["Terminal output sink idle."],
+            id="terminal-output-log",
+            follow=True,
+            rows=4,
+            wrap=True,
+        )
+        dg.Label("Reviewer Terminal Output", class_="section")
+        reviewer_terminal_output_log = dg.LogView(
+            ["Reviewer terminal output sink idle."],
+            id="reviewer-terminal-output-log",
+            follow=True,
+            rows=4,
+            wrap=True,
+        )
+        dg.Label("Parsed Message Log", class_="section")
         runtime_indicator = dg.LogView(
-            ["Widget sink idle."],
+            ["Parsed message sink idle."],
             id="runtime-message-indicator",
             follow=True,
             rows=4,
@@ -754,18 +918,23 @@ with dg.HLayout(class_="root"):
         event_log = dg.LogView(
             [
                 "NodeGraph probe ready.",
-                "Default path: Terminal.stdout -> Parser.in -> Message Indicator.value.",
-                "Use Inject Plain for edge transport, Inject Envelope for parser + widget sink.",
+                "Default path: Terminal Command Text.text -> Terminal.stdin, then Terminal.stdout -> display/parser.",
+                "Use Inject Plain for raw terminal output; Inject Envelope also feeds the parsed message log.",
             ],
+            id="node-probe-event-log",
             follow=True,
             rows=6,
             wrap=True,
         )
+        register_graph_widget_targets()
 
 refresh_state()
 
 if __name__ == "__main__":
     print(app.run(win))
+
+
+
 
 
 

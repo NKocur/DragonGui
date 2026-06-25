@@ -40,7 +40,9 @@ from .node_graph import (
     NodeGraphRuntimeObjectRef,
     NodeGraphSection,
     NodeGraphTemplate,
+    NodeGraphWidgetTarget,
     multi_agent_node_templates,
+    node_graph_port_type_color,
 )
 from .runtime import ToastHandle
 from .thread_monitor import ThreadMonitor

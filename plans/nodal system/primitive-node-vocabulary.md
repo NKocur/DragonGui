@@ -800,9 +800,21 @@ Suggested interactions:
 
 Membership can start as geometry-based: nodes whose center point is inside the rectangle belong to that section. Later, explicit membership can be stored in graph data for stability when nodes overlap section boundaries.
 
-### Section Triggers
+### Section Triggers And Action Targets
 
-A section can be connected to an action or control in the GUI.
+A section can be connected to an action or control in the surrounding GUI. This
+should use the same split as assignable widget targets: the graph stores stable
+IDs and command metadata, while the host app registers live buttons, menu items,
+or callbacks at runtime.
+
+Binding chain:
+
+```text
+DragonGUI button/menu/control
+  -> NodeGraph action target registry
+  -> section action binding
+  -> section runtime command
+```
 
 Common triggers:
 
@@ -816,6 +828,46 @@ Common triggers:
 - Approval accepted.
 - Shutdown.
 
+Target registration should be app-owned and transient:
+
+```python
+graph_editor.register_action_target(
+    id="initialize-agents",
+    label="Initialize Agents",
+    action_type="button",
+    callback=initialize_agents,
+    supported_commands=("run", "reset"),
+)
+```
+
+The registered target record should describe the live GUI action without making
+the graph depend on the button or callback instance:
+
+```json
+{
+  "action_id": "initialize-agents",
+  "label": "Initialize Agents",
+  "action_type": "button",
+  "supported_commands": ["run", "stop", "reset", "replay"],
+  "default_command": "run"
+}
+```
+
+Section inspector behavior:
+
+- Sections should show an `Action Target` dropdown in the section inspector / info
+  menu.
+- The dropdown should list registered action targets with friendly labels, while
+  saving only the stable `action_id`.
+- Choosing a target should fill `action_id` and any expected `action_type`
+  metadata together.
+- The section command dropdown should offer `run`, `stop`, `reset`, and `replay`,
+  filtered or ranked by the selected action target.
+- Missing or unregistered action targets should be shown as inspector warnings
+  and should also appear in validation/runtime events.
+- The editor should support freeform IDs for advanced/manual graph authoring,
+  but the normal path should be dropdown-first.
+
 Example GUI binding:
 
 ```text
@@ -824,7 +876,19 @@ Button("Run Review") -> Run Section("review-loop")
 Button("Stop All") -> Run Section("shutdown")
 ```
 
-This gives the visual graph a direct relationship to the app controls around it.
+Saved section data should remain portable:
+
+```json
+{
+  "runtime_scope": "initialization",
+  "trigger": "manual",
+  "action_id": "initialize-agents",
+  "section_command": "run"
+}
+```
+
+This gives the visual graph a direct relationship to the app controls around it
+without saving transient GUI objects or callbacks in graph data.
 
 ### Runtime Object IDs
 
@@ -930,6 +994,7 @@ The editor now has first-pass section support in the core `NodeGraph` widget:
 - `section_moved` events include moved node positions, and Python exposes `section_nodes(section_id)`.
 - The in-canvas property editor can edit node title/subtitle/status/color/runtime ID and section title/purpose/trigger/color/runtime ID/locked/collapsed fields.
 - Node templates can provide `property_fields` schemas that add custom inspector fields stored in node `data`.
+- Edge waypoints can be added by double-clicking a wire, dragged as routing dots, serialized in edge `data.waypoints`, and synced through undo/redo history.
 
 ### Required Editor Features
 
@@ -955,6 +1020,7 @@ Implemented editor pieces:
 - Primitive templates now publish a `config_schema` with typed editable fields stored under node `data.config` when edited.
 - Python static runtime object registry support can derive named objects from node config, list refs, and report missing refs.
 - Python static runtime binding support maps graph nodes and sections into binding records with validation.
+- Wire organization waypoints are persisted on edges and can be edited directly on the canvas.
 
 ### Required Runtime Features
 
@@ -972,6 +1038,11 @@ Implemented runtime pieces:
 - `NodeGraphRuntimeEdgeBinding` and runtime port-value storage propagate `terminal_stdout` values across connected graph edges.
 - Delivered runtime edge values can execute safe downstream primitive nodes (`parser`/`envelope_parser`, `message_router`, `log`, and `probe`) and emit their outputs back into the runtime event stream.
 - Widget Sink / UI Indicator nodes let graph values update registered DragonGUI widgets by stable widget ID without saving transient widget instances in graph data.
+- Assignable widget targets can be registered by host apps and selected from Widget Sink inspector dropdowns using friendly labels while saving portable widget IDs.
+- `node_graph_editor_probe.py` demonstrates terminal stdout assignment through a configured `Widget Sink` targeting the `Terminal Output` LogView, plus parsed message assignment through a second configured Widget Sink.
+- NodeGraph wire and socket colors are associated with port data types, so terminal output, messages, text, JSON, errors, artifacts, and control/status flows remain visually consistent across graphs.
+- Runtime sessions can run source nodes directly with `run_node()`, starting with `Text Input` emitting its configured text into the live graph.
+- Runtime sessions can run section-contained source nodes with `run_section()`, emitting a section summary event while keeping non-source nodes skipped rather than destructive.
 
 The implemented runtime pieces are intentionally non-destructive. They validate
 graph metadata, own transient live handles, and run local text/message
@@ -981,8 +1052,9 @@ automatically or execute sections.
 To make sections executable, the runtime will need:
 
 - Object creator and reference node distinction.
-- Widget Sink / UI Indicator nodes backed by a transient runtime widget registry.
 - Additional runtime detail views from graph node -> runtime state -> observable widget or detail panel.
+- Assignable action targets backed by a transient runtime action registry.
+- Section inspector dropdowns for action target and section command selection.
 - Lifecycle handling for startup and shutdown sections.
 - Section-level run, stop, reset, and replay commands.
 - GUI action binding to section commands.
@@ -1007,15 +1079,144 @@ Required concepts:
 
 - Widget instances are transient runtime handles and must not be serialized into
   graph data.
-- Graph data stores only a stable `widget_id`, an expected `widget_type`, an
-  `update_mode`, and formatting hints.
+- Graph data stores only a stable `widget_id`, an expected `widget_type`, a
+  `port_profile`, an `update_mode`, and formatting hints.
 - The runtime session owns a widget registry populated by the application or
   probe before execution.
 - Safe first update modes should include `set`, `append`, and `state`.
 - Safe first widget targets should include `label`, `badge`, `log_view`,
   `text_input`, `text_area`, `code_editor`, and `led`.
-- A later editor picker can list known runtime widget IDs and write the selected
-  ID into the Widget Sink node config.
+- The editor picker lists registered assignable widget targets and writes the
+  selected stable ID into the Widget Sink node config.
+
+### Assignable Widget Targets
+
+The editor should make widget binding feel like choosing a destination, not
+typing an implementation detail. A DragonGUI application can expose ordinary UI
+components as assignable graph targets, and Widget Sink / UI Indicator nodes can
+choose from those targets in the node inspector.
+
+Target registration should be app-owned and transient:
+
+```python
+graph_editor.register_widget_target(
+    id="event-log",
+    label="Event Log",
+    widget_type="log_view",
+    widget=event_log,
+    supported_update_modes=("append", "set"),
+    supported_port_profiles=("text", "terminal_output", "message", "json"),
+)
+```
+
+The registered target record should describe the live widget without making the
+graph depend on the widget instance:
+
+```json
+{
+  "widget_id": "event-log",
+  "label": "Event Log",
+  "widget_type": "log_view",
+  "supported_update_modes": ["append", "set"],
+  "default_update_mode": "append",
+  "supported_port_profiles": ["text", "terminal_output", "message", "json"],
+  "default_port_profile": "text",
+  "supported_formats": ["text", "json", "repr", "message_body"]
+}
+```
+
+Inspector behavior:
+
+- Widget Sink nodes should show a `Widget` dropdown in the node inspector / info
+  menu.
+- The dropdown should list registered targets with friendly labels, while still
+  saving only the stable `widget_id`.
+- Choosing a target should fill `widget_id` and `widget_type` together.
+- Update mode options should be filtered or ranked by the selected widget type.
+- Port profile options should describe the incoming graph value type and can be
+  suggested by the selected widget target.
+- Format options should remain explicit because they describe how the incoming
+  graph value should be rendered, not the target widget itself.
+- Missing, unregistered, or type-mismatched targets should be shown as warnings
+  in the inspector and should also emit runtime validation/update events.
+- The editor should support freeform IDs for advanced/manual graph authoring,
+  but the normal path should be dropdown-first.
+
+Compatibility examples:
+
+- `log_view`: `append`, `set`; good for terminal output, event streams, parsed
+  messages, and debug probes.
+- `label`, `badge`, `text_input`, `text_area`, `code_editor`: `set`; good for
+  latest status, selected message, prompt drafts, and generated artifacts.
+- `led`: `state`; good for boolean or enum-like runtime state.
+
+Saved graph data should continue to store only portable assignment metadata:
+
+```json
+{
+  "node_type": "widget_sink",
+  "config": {
+    "widget_id": "event-log",
+    "widget_type": "log_view",
+    "port_profile": "message",
+    "update_mode": "append",
+    "format": "message_body"
+  }
+}
+```
+
+This keeps the graph reusable across apps while allowing each host GUI to decide
+which live components are available as display targets.
+
+### Configurable Port Profiles
+
+Some primitive nodes should remain generic in behavior while letting the user pick
+which data type they accept or emit. This avoids creating special-purpose menu
+nodes such as `Terminal Output Display`, `Message Display`, or `JSON Display`
+when those are really configured versions of the same primitive.
+
+The first target is `Widget Sink`:
+
+- The add-node menu should expose one generic `Widget Sink` primitive.
+- The inspector should provide an `Accepted Value Type` or `Port Profile`
+  dropdown with options such as `text`, `terminal_output`, `message`, `json`,
+  `artifact`, `status`, and `error`.
+- Choosing a profile should update the visible input/output pin labels, port
+  types, socket colors, wire compatibility, and default formatting hints.
+- Choosing a registered widget target can suggest a profile, but the graph should
+  still save the explicit profile so it remains portable.
+- The node should remain `node_type="widget_sink"`; graph data should not grow
+  new hard-coded node types for every display target.
+
+Example saved config:
+
+```json
+{
+  "node_type": "widget_sink",
+  "config": {
+    "widget_id": "terminal-output-log",
+    "widget_type": "log_view",
+    "port_profile": "terminal_output",
+    "update_mode": "append",
+    "format": "text"
+  }
+}
+```
+
+This pattern should also apply to other generic primitives over time:
+
+- `Text Input` can emit plain `text`, terminal command text, or prompt text
+  without becoming separate node types.
+- `Formatter` can format `message`, `json`, `artifact`, or plain `text` into
+  `text`.
+- `Router` can route `message`, `event`, `status`, or generic `json` values
+  with the same core routing behavior.
+- `Log` and `Probe` can observe any value type while preserving the incoming
+  type on their output pin.
+
+Port profiles are different from adaptive conversion edges. A port profile says
+"this generic node is currently shaped for this data type." An adaptive edge says
+"these two different port types can connect through a saved conversion rule."
 
 Example node config:
 
@@ -1025,6 +1226,7 @@ Example node config:
   "config": {
     "widget_id": "runtime-indicator",
     "widget_type": "log_view",
+    "port_profile": "json",
     "update_mode": "append",
     "format": "json"
   }
@@ -1141,23 +1343,73 @@ This lets the graph editor become both a visual editor and a live workflow monit
 
 ## Port Typing Direction
 
-Suggested base port types:
+Suggested base port types should match the implementation names used by
+`NodeGraphPort.port_type` and the data-type color map:
 
 - `text`
 - `stream:text`
+- `text:list`
 - `message`
 - `message:list`
 - `json`
 - `file:path`
-- `terminal:stdin`
-- `terminal:stdout`
-- `terminal:stderr`
+- `terminal_input`
+- `terminal_output`
+- `terminal_error`
 - `event`
 - `control`
+- `status`
 - `bool`
 - `number`
+- `approval_request`
+- `approval_result`
+- `test_request`
+- `test_report`
+- `artifact`
+- `error`
 
-Strict typing should help prevent obvious mistakes, but the editor should allow explicit conversion nodes instead of blocking advanced workflows.
+Strict typing should help prevent obvious mistakes, but the editor should allow explicit conversion nodes instead of blocking advanced workflows. Wire and socket colors should continue to be derived from these port types.
+
+### Adaptive Conversion Edges
+
+Some common connections should be easy even when the source and target port types
+are not identical. The editor should allow a small, explicit set of safe
+conversions and store the conversion on the edge rather than mutating either
+node's port type.
+
+First supported conversion:
+
+```text
+Text Input(text) -> Terminal Session(stdin: terminal_input)
+```
+
+Saved edge data should describe the conversion:
+
+```json
+{
+  "conversion": "text_to_terminal_input",
+  "newline": true
+}
+```
+
+Runtime behavior:
+
+- When a `text` value reaches a `terminal_input` target through this conversion,
+  the runtime sends the converted text to the target terminal session's stdin.
+- The node remains a generic Text Input node, so the same text source can still
+  feed parsers, logs, prompt templates, or message builders.
+- The edge inspector can later expose conversion options such as newline, raw
+  text, trim whitespace, prefix, and suffix.
+- Advanced users can still use explicit converter nodes when they want conversion
+  steps to be visible in the graph.
+
+Future safe conversions may include:
+
+- `text -> message` through an envelope parser.
+- `message -> text` using body or template formatting.
+- `json -> text` using JSON serialization.
+- `terminal_output -> text` using transcript cleaning.
+
 
 ## Near-Term Implementation Order
 
@@ -1183,9 +1435,12 @@ Strict typing should help prevent obvious mistakes, but the editor should allow 
 20. [ ] Add stderr edge transport when `TerminalBridge` exposes stderr separately from combined PTY output.
 21. [x] Execute downstream parser/router/log/probe nodes from delivered runtime edge values.
 22. [x] Add Widget Sink / UI Indicator nodes that update registered DragonGUI widgets from graph values.
-23. [ ] Add widget-ID picker support for Widget Sink node config.
-24. [ ] Add section-level run, stop, reset, and replay commands.
-25. [ ] Save common role setups as section or subgraph templates, not as hard-coded primitive nodes.
+23. [x] Add assignable widget target registration and inspector dropdown support for Widget Sink node config.
+24. [x] Add adaptive conversion edges, starting with `text -> terminal_input`.
+25. [x] Add configurable port/type profiles for generic primitives, starting with Widget Sink accepted value type.
+26. [x] Add edge routing waypoints so complex graphs can organize traces without adding functional nodes.
+27. [ ] Add assignable action targets plus section-level run, stop, reset, and replay commands. `run_node()` and first-pass `run_section()` are now implemented; action target registration and stop/reset/replay commands remain.
+28. [ ] Save common role setups as section or subgraph templates, not as hard-coded primitive nodes.
 
 ## Open Questions
 
@@ -1198,5 +1453,7 @@ Strict typing should help prevent obvious mistakes, but the editor should allow 
 - Should section membership be purely geometry-based, explicit in graph data, or both?
 - Should runtime object IDs be globally unique across the whole graph or scoped by section?
 - Should runtime views be registered by node type, runtime object type, or explicit node `view_type`?
+- Should action targets bind directly to section commands, emit graph events, or both?
+
 
 

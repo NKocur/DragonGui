@@ -9069,6 +9069,10 @@ def test_terminal_widget_serializes_as_html_report() -> None:
         assert props["external_fallback"] is False
         assert props["height"] == 360.0
         assert "xterm" in props["html"]
+        assert "Cascadia Mono" in props["html"]
+        assert "Segoe UI Emoji" in props["html"]
+        assert "customGlyphs: true" in props["html"]
+        assert "rescaleOverlappingGlyphs: true" in props["html"]
         assert "cdn.jsdelivr" not in props["html"]
         assert "ws://127.0.0.1:" in props["html"]
         assert terminal.bridge.url.startswith("ws://127.0.0.1:")
@@ -9095,6 +9099,25 @@ def test_terminal_widget_can_attach_existing_bridge_without_creating_another() -
     finally:
         terminal.stop()
 
+
+
+def test_subprocess_terminal_session_preserves_split_utf8_characters() -> None:
+    class FakeStdout:
+        def __init__(self) -> None:
+            self.chunks = [b"\xe2\x82", b"\xac"]
+
+        def read(self, _size: int) -> bytes:
+            return self.chunks.pop(0) if self.chunks else b""
+
+    class FakeProcess:
+        stdout = FakeStdout()
+
+    session = terminal_module._SubprocessSession.__new__(terminal_module._SubprocessSession)
+    session.process = FakeProcess()
+    session._decoder = terminal_module.codecs.getincrementaldecoder("utf-8")(errors="replace")
+
+    assert session.read() == ""
+    assert session.read() == chr(0x20AC)
 
 def test_terminal_bridge_control_surface_records_events_and_transcript() -> None:
     outputs: list[str] = []
@@ -9433,7 +9456,7 @@ def test_node_graph_data_round_trips_versioned_schema() -> None:
                 label="records",
                 color="#9ece6a",
                 id="edge-records",
-                data={"required": True},
+                data={"required": True, "waypoints": [{"x": 180, "y": 90}]},
             )
         ],
         selected_node="source",
@@ -9453,7 +9476,7 @@ def test_node_graph_data_round_trips_versioned_schema() -> None:
     assert data["edges"][0]["id"] == "edge-records"
     assert data["edges"][0]["source"] == {"node": "source", "port": "out"}
     assert data["edges"][0]["target"] == {"node": "sink", "port": "in"}
-    assert data["edges"][0]["data"] == {"required": True}
+    assert data["edges"][0]["data"] == {"required": True, "waypoints": [{"x": 180, "y": 90}]}
 
     restored = dg.NodeGraph.from_graph_data(data, parent=None)
     assert restored.to_graph_data() == data
@@ -9926,6 +9949,162 @@ def test_node_graph_runtime_session_executes_parser_and_log_from_edge_values() -
     assert snapshot["port_values"]["log.value"][0]["id"] == "live-1"
 
 
+def test_node_graph_edges_use_source_port_type_colors() -> None:
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "terminal",
+                "title": "Terminal",
+                "outputs": [dg.NodeGraphPort("stdout", "stdout", port_type="terminal_output")],
+            },
+            {
+                "id": "parser",
+                "title": "Parser",
+                "inputs": [dg.NodeGraphPort("in", "in", port_type="terminal_output")],
+                "outputs": [dg.NodeGraphPort("message", "message", port_type="message")],
+            },
+            {
+                "id": "sink",
+                "title": "Sink",
+                "inputs": [dg.NodeGraphPort("value", "value", port_type="message")],
+            },
+        ],
+        [
+            dg.NodeGraphEdge("terminal", "stdout", "parser", "in", color="#ffffff"),
+            dg.NodeGraphEdge("parser", "message", "sink", "value", color="#ffffff"),
+        ],
+        parent=None,
+    )
+
+    data = graph.to_graph_data()
+
+    assert data["edges"][0]["color"] == dg.node_graph_port_type_color("terminal_output")
+    assert data["edges"][1]["color"] == dg.node_graph_port_type_color("message")
+    assert dg.node_graph_port_type_color("unknown", "#123456") == "#123456"
+    assert '"terminal_output": "#43c6ac"' in graph.html
+
+
+def test_node_graph_widget_targets_expose_inspector_metadata_without_serializing_widgets() -> None:
+    graph = dg.NodeGraph([], parent=None)
+    log_view = dg.LogView([], id="event-log", parent=None)
+
+    target = graph.register_widget_target(
+        widget=log_view,
+        label="Event Log",
+        supported_update_modes=("append", "set"),
+        default_update_mode="append",
+        supported_port_profiles=("text", "terminal_output"),
+        default_port_profile="text",
+        supported_formats=("text", "json"),
+    )
+
+    assert target.id == "event-log"
+    assert target.label == "Event Log"
+    assert target.widget_type == "log_view"
+    assert target.widget is log_view
+    assert target.supported_port_profiles == ("text", "terminal_output")
+    assert target.default_port_profile == "text"
+    assert graph.widget_target("event-log") is target
+    assert graph.widget_target_ids() == ("event-log",)
+    assert "Event Log" in graph.html
+    assert "event-log" in graph.html
+    assert "widgetTargets" in graph.html
+    assert "widget_targets" not in graph.to_graph_data()
+
+    removed = graph.unregister_widget_target("event-log")
+
+    assert removed is target
+    assert graph.widget_target_ids() == ()
+
+
+def test_node_graph_accepts_static_widget_target_metadata() -> None:
+    graph = dg.NodeGraph(
+        [],
+        widget_targets=[
+            {
+                "id": "status-label",
+                "label": "Status",
+                "widget_type": "label",
+                "supported_update_modes": ["set"],
+                "default_update_mode": "set",
+                "supported_port_profiles": ["status", "text"],
+                "default_port_profile": "status",
+            }
+        ],
+        parent=None,
+    )
+
+    target = graph.widget_target("status-label")
+
+    assert target is not None
+    assert target.widget is None
+    assert target.supported_update_modes == ("set",)
+    assert target.supported_port_profiles == ("status", "text")
+    assert target.default_port_profile == "status"
+    assert "Status" in graph.html
+    assert "status-label" in graph.html
+
+
+
+def test_node_graph_widget_sink_template_exposes_port_profile_schema() -> None:
+    graph = dg.NodeGraph([], templates=dg.multi_agent_node_templates(), parent=None)
+
+    template = next(template for template in graph.templates if template.id == "widget_sink")
+    field_keys = [field["key"] for field in template.data["config_schema"]["fields"]]
+
+    assert template.inputs[0].id == "value"
+    assert template.inputs[0].label == "text"
+    assert template.inputs[0].port_type == "text"
+    assert template.outputs[0].port_type == "text"
+    assert "port_profile" in field_keys
+    assert "terminal_output" in graph.html
+    assert "widgetSinkPortProfiles" in graph.html
+
+
+def test_node_graph_node_update_can_persist_profile_shaped_widget_sink_ports() -> None:
+    graph = dg.NodeGraph(
+        [
+            dg.NodeGraphNode(
+                "sink",
+                "Widget Sink",
+                0,
+                0,
+                inputs=(dg.NodeGraphPort("value", "text", port_type="text"),),
+                outputs=(dg.NodeGraphPort("value", "text", port_type="text"),),
+                data={"node_type": "widget_sink", "template_id": "widget_sink"},
+            )
+        ],
+        parent=None,
+    )
+    _, change_cbs = _collect_runtime_callbacks(graph)
+    emit = change_cbs[graph.id]
+
+    emit(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "event": "node_updated",
+                "node": "sink",
+                "updates": {
+                    "data": {
+                        "node_type": "widget_sink",
+                        "template_id": "widget_sink",
+                        "config": {"port_profile": "terminal_output"},
+                    },
+                    "inputs": [{"id": "value", "label": "terminal_output", "port_type": "terminal_output"}],
+                    "outputs": [{"id": "value", "label": "terminal_output", "port_type": "terminal_output"}],
+                },
+            }
+        )
+    )
+
+    node = graph.to_graph_data()["nodes"][0]
+    assert node["data"]["config"]["port_profile"] == "terminal_output"
+    assert node["inputs"][0]["id"] == "value"
+    assert node["inputs"][0]["label"] == "terminal_output"
+    assert node["inputs"][0]["port_type"] == "terminal_output"
+    assert node["outputs"][0]["port_type"] == "terminal_output"
+
 def test_node_graph_runtime_session_widget_sink_updates_registered_log_view() -> None:
     graph = dg.NodeGraph(
         [
@@ -9949,6 +10128,7 @@ def test_node_graph_runtime_session_widget_sink_updates_registered_log_view() ->
                     "config": {
                         "widget_id": "runtime-indicator",
                         "widget_type": "log_view",
+                        "port_profile": "terminal_output",
                         "update_mode": "append",
                         "format": "text",
                     },
@@ -9962,10 +10142,11 @@ def test_node_graph_runtime_session_widget_sink_updates_registered_log_view() ->
     log_view = dg.LogView([], id="runtime-indicator", parent=None)
     session.register_widget(log_view)
 
-    session.apply_terminal_event("shell-1", {"event": "output", "data": "ready", "timestamp": 45.0})
+    output = "\x1b[5;18H\x1b[0;13Hready\x1b[0m\r\n"
+    session.apply_terminal_event("shell-1", {"event": "output", "data": output, "timestamp": 45.0})
 
     assert log_view.lines == ["ready"]
-    assert session.port_values("indicator", "value") == ["ready", "ready"]
+    assert session.port_values("indicator", "value") == [output, output]
     assert session.snapshot()["widgets"] == [{"widget_id": "runtime-indicator", "widget_type": "log_view"}]
     event_names = [event.event for event in session.events]
     assert "widget_registered" in event_names
@@ -10114,6 +10295,177 @@ def test_node_graph_runtime_session_terminal_commands_use_attached_handle() -> N
     assert session.events[-1].event == "session_cleanup"
 
 
+def test_node_graph_runtime_converts_text_edge_to_terminal_stdin() -> None:
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "command",
+                "title": "Command",
+                "outputs": [dg.NodeGraphPort("text", "text", port_type="text")],
+                "data": {"node_type": "text_input"},
+            },
+            {
+                "id": "terminal",
+                "title": "Terminal",
+                "inputs": [dg.NodeGraphPort("stdin", "stdin", port_type="terminal_input")],
+                "outputs": [dg.NodeGraphPort("stdout", "stdout", port_type="terminal_output")],
+                "data": {
+                    "node_type": "terminal",
+                    "runtime_object": "terminal_session",
+                    "config": {"session_id": "shell-1", "command": "cmd.exe"},
+                },
+            },
+        ],
+        [dg.NodeGraphEdge("command", "text", "terminal", "stdin", id="edge-command-terminal")],
+        parent=None,
+    )
+
+    edge_data = graph.to_graph_data()["edges"][0]["data"]
+    assert edge_data["conversion"] == "text_to_terminal_input"
+    assert edge_data["newline"] is True
+    assert graph.runtime_binding().edges[0].conversion == "text_to_terminal_input"
+
+    class FakeBridge:
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+
+        def send_line(self, text: object = "") -> bool:
+            self.sent.append(f"{text}\r\n")
+            return True
+
+        def send_text(self, text: object) -> bool:
+            self.sent.append(str(text))
+            return True
+
+    session = graph.runtime_session(session_id="runtime-conversion")
+    bridge = FakeBridge()
+    session.attach_handle("shell-1", bridge, status="running")
+
+    session.emit_event("node_output", node_id="command", port_id="text", value="echo hello")
+
+    assert bridge.sent == ["echo hello\r\n"]
+    assert session.port_values("terminal", "stdin") == ["echo hello", "echo hello\n"]
+    event_names = [event.event for event in session.events]
+    assert "edge_value" in event_names
+    assert "terminal_stdin" in event_names
+    assert "edge_conversion_applied" in event_names
+    assert session.events[-1].event == "edge_conversion_applied"
+    assert session.events[-1].data["conversion"] == "text_to_terminal_input"
+
+
+
+def test_node_graph_runtime_run_node_emits_text_input_to_terminal_stdin() -> None:
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "command",
+                "title": "Command",
+                "outputs": [dg.NodeGraphPort("text", "text", port_type="text")],
+                "data": {"node_type": "text_input", "config": {"text": "echo hello"}},
+            },
+            {
+                "id": "terminal",
+                "title": "Terminal",
+                "inputs": [dg.NodeGraphPort("stdin", "stdin", port_type="terminal_input")],
+                "data": {
+                    "node_type": "terminal",
+                    "runtime_object": "terminal_session",
+                    "config": {"session_id": "shell-1", "command": "cmd.exe"},
+                },
+            },
+        ],
+        [dg.NodeGraphEdge("command", "text", "terminal", "stdin", id="edge-command-terminal")],
+        parent=None,
+    )
+
+    class FakeBridge:
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+
+        def send_line(self, text: object = "") -> bool:
+            self.sent.append(f"{text}\r\n")
+            return True
+
+        def send_text(self, text: object) -> bool:
+            self.sent.append(str(text))
+            return True
+
+    session = graph.runtime_session(session_id="runtime-run-node")
+    bridge = FakeBridge()
+    session.attach_handle("shell-1", bridge, status="running")
+
+    executed = session.run_node("command")
+
+    assert executed.event == "node_executed"
+    assert executed.node_id == "command"
+    assert executed.data["source"] == "run_node"
+    assert executed.data["output_counts"] == {"text": 1}
+    assert bridge.sent == ["echo hello\r\n"]
+    assert session.port_values("command", "text") == ["echo hello"]
+    assert session.port_values("terminal", "stdin") == ["echo hello", "echo hello\n"]
+    event_names = [event.event for event in session.events]
+    assert "node_output" in event_names
+    assert "edge_conversion_applied" in event_names
+
+
+def test_node_graph_runtime_run_section_runs_contained_source_nodes() -> None:
+    graph = dg.NodeGraph(
+        [
+            dg.NodeGraphNode(
+                "command",
+                "Command",
+                0,
+                0,
+                outputs=(dg.NodeGraphPort("text", "text", port_type="text"),),
+                data={"node_type": "text_input", "config": {"text": "echo from section"}},
+            ),
+            dg.NodeGraphNode(
+                "terminal",
+                "Terminal",
+                240,
+                0,
+                inputs=(dg.NodeGraphPort("stdin", "stdin", port_type="terminal_input"),),
+                data={
+                    "node_type": "terminal",
+                    "runtime_object": "terminal_session",
+                    "config": {"session_id": "shell-1", "command": "cmd.exe"},
+                },
+            ),
+        ],
+        [dg.NodeGraphEdge("command", "text", "terminal", "stdin", id="edge-command-terminal")],
+        sections=(dg.NodeGraphSection("init", "Initialization", -200, -160, 800, 420, trigger="manual"),),
+        parent=None,
+    )
+
+    class FakeBridge:
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+
+        def send_line(self, text: object = "") -> bool:
+            self.sent.append(f"{text}\r\n")
+            return True
+
+        def send_text(self, text: object) -> bool:
+            self.sent.append(str(text))
+            return True
+
+    binding = graph.runtime_binding()
+    assert binding.section_binding("init").node_ids == ("command", "terminal")
+
+    session = graph.runtime_session(session_id="runtime-run-section")
+    bridge = FakeBridge()
+    session.attach_handle("shell-1", bridge, status="running")
+
+    event = session.run_section("init")
+
+    assert event.event == "section_run"
+    assert event.section_id == "init"
+    assert event.data["executed_nodes"] == ["command"]
+    assert event.data["skipped_nodes"] == [
+        {"node_id": "terminal", "node_type": "terminal", "reason": "node is not a runnable source"}
+    ]
+    assert "node_output" in event.data["events"]
+    assert bridge.sent == ["echo from section\r\n"]
 def test_node_graph_runtime_object_registry_rejects_duplicate_ids() -> None:
     registry = dg.NodeGraphObjectRegistry()
     registry.register(object_id="shared", object_type="terminal_session")
@@ -10169,6 +10521,8 @@ def test_node_graph_event_bridge_dispatches_structured_payloads() -> None:
     assert "node_duplicated" in node["props"]["html"]
     assert "event.key === 'Escape'" in node["props"]["html"]
     assert "emitGraphEvent({ event: 'selection_cleared' });" in node["props"]["html"]
+    assert "edge_waypoints_changed" in node["props"]["html"]
+    assert "hitEdgeWaypoint" in node["props"]["html"]
 
     _, change_cbs = _collect_runtime_callbacks(graph)
     change_cbs[graph.id](
@@ -10283,6 +10637,23 @@ def test_node_graph_canvas_events_sync_state_without_user_callbacks() -> None:
         )
     )
     assert graph.to_graph_data()["edges"][0]["id"] == "edge-a-b"
+    emit(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "event": "edge_waypoints_changed",
+                "edge": {
+                    "id": "edge-a-b",
+                    "source_node": "a",
+                    "source_port": "out",
+                    "target_node": "b",
+                    "target_port": "in",
+                    "data": {"waypoints": [{"x": 120, "y": 80}]},
+                },
+            }
+        )
+    )
+    assert graph.to_graph_data()["edges"][0]["data"] == {"waypoints": [{"x": 120, "y": 80}]}
 
     emit(json.dumps({"schema_version": 1, "event": "edge_deleted", "edge": "edge-a-b"}))
     assert graph.to_graph_data()["edges"] == []
@@ -10434,6 +10805,29 @@ def test_node_graph_undo_redo_history_syncs_canvas_mutations() -> None:
         )
     )
     assert graph.to_graph_data()["edges"][0]["id"] == "edge-a-b"
+    emit(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "event": "edge_waypoints_changed",
+                "edge": {
+                    "id": "edge-a-b",
+                    "source_node": "a",
+                    "source_port": "out",
+                    "target_node": "b",
+                    "target_port": "in",
+                    "data": {"waypoints": [{"x": 160, "y": 70}]},
+                },
+            }
+        )
+    )
+    assert graph.to_graph_data()["edges"][0]["data"] == {"waypoints": [{"x": 160, "y": 70}]}
+    emit(json.dumps({"schema_version": 1, "event": "undo"}))
+    assert "data" not in graph.to_graph_data()["edges"][0]
+    emit(json.dumps({"schema_version": 1, "event": "redo"}))
+    assert graph.to_graph_data()["edges"][0]["data"] == {"waypoints": [{"x": 160, "y": 70}]}
+    emit(json.dumps({"schema_version": 1, "event": "undo"}))
+    assert "data" not in graph.to_graph_data()["edges"][0]
     emit(json.dumps({"schema_version": 1, "event": "undo"}))
     assert graph.to_graph_data()["edges"] == []
     emit(json.dumps({"schema_version": 1, "event": "redo"}))
@@ -11070,5 +11464,6 @@ def test_node_graph_navigation_events_do_not_mutate_graph_history() -> None:
     payload = graph.fit_to_view()
     assert payload == {"schema_version": 1, "event": "fit_to_view", "viewport": graph.navigation_state()}
     assert events[-1] == payload
+
 
 

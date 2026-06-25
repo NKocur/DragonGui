@@ -4,6 +4,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 import json
 import math
+import re
 import time
 from typing import Any
 
@@ -20,6 +21,7 @@ _GRAPH_MUTATION_EVENTS = {
     "node_updated",
     "edge_created",
     "edge_deleted",
+    "edge_waypoints_changed",
     "section_created",
     "section_updated",
     "section_moved",
@@ -27,6 +29,35 @@ _GRAPH_MUTATION_EVENTS = {
     "section_deleted",
 }
 _NODE_GRAPH_RUNTIME_SCHEMA_VERSION = 1
+
+_NODE_GRAPH_PORT_TYPE_CONVERSIONS: dict[tuple[str, str], str] = {
+    ("text", "terminal_input"): "text_to_terminal_input",
+}
+
+_NODE_GRAPH_WIDGET_SINK_PORT_PROFILES: tuple[str, ...] = ("text", "terminal_output", "message", "json", "artifact", "status", "error")
+
+_NODE_GRAPH_PORT_TYPE_COLORS: dict[str, str] = {
+    "terminal_input": "#4fd6be",
+    "terminal_output": "#43c6ac",
+    "terminal_error": "#f7768e",
+    "stream:text": "#73daca",
+    "text": "#7aa2f7",
+    "text:list": "#89b4fa",
+    "message": "#9ece6a",
+    "json": "#bb9af7",
+    "bool": "#e0af68",
+    "number": "#ff9e64",
+    "error": "#f7768e",
+    "event": "#e0af68",
+    "status": "#f8c14a",
+    "control": "#c0caf5",
+    "approval_request": "#e0af68",
+    "approval_result": "#e0af68",
+    "test_request": "#bb9af7",
+    "test_report": "#bb9af7",
+    "artifact": "#f7768e",
+    "file:path": "#ff9e64",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -302,14 +333,20 @@ class NodeGraphRuntimeEdgeBinding:
     target_node: str
     target_port: str
     label: str | None = None
+    conversion: str | None = None
+    config: dict[str, object] | None = None
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "edge_id": self.edge_id,
             "source": {"node": self.source_node, "port": self.source_port},
             "target": {"node": self.target_node, "port": self.target_port},
             "label": self.label,
+            "conversion": self.conversion,
         }
+        if self.config is not None:
+            payload["config"] = _json_copy(self.config, "runtime edge config")
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -764,6 +801,102 @@ class NodeGraphRuntimeSession:
             timestamp=float(payload.get("timestamp", time.time())),
         )
 
+    def run_node(self, node_id: str, *, timestamp: float | None = None) -> NodeGraphRuntimeEvent:
+        """Run a source node and emit its configured outputs into the live graph."""
+
+        binding = self.binding.node_binding(node_id)
+        if binding is None:
+            raise KeyError(f"runtime node {node_id!r} does not exist")
+        if binding.node_type not in _RUNTIME_SOURCE_NODE_TYPES:
+            return self.emit_event(
+                "node_run_skipped",
+                node_id=binding.node_id,
+                data={"reason": "node is not a runnable source", "node_type": binding.node_type},
+                timestamp=timestamp,
+            )
+        return self._run_runtime_source_node(binding, timestamp=timestamp)
+
+    def run_section(self, section_id: str, *, timestamp: float | None = None) -> NodeGraphRuntimeEvent:
+        """Run all source nodes currently bound to a graph section."""
+
+        section = self.binding.section_binding(section_id)
+        if section is None:
+            raise KeyError(f"runtime section {section_id!r} does not exist")
+        before_sequence = self._sequence
+        executed_nodes: list[str] = []
+        skipped_nodes: list[dict[str, object]] = []
+        for node_id in section.node_ids:
+            binding = self.binding.node_binding(node_id)
+            if binding is None:
+                skipped_nodes.append({"node_id": str(node_id), "reason": "node binding is missing"})
+                continue
+            if binding.node_type not in _RUNTIME_SOURCE_NODE_TYPES:
+                skipped_nodes.append(
+                    {
+                        "node_id": binding.node_id,
+                        "node_type": binding.node_type,
+                        "reason": "node is not a runnable source",
+                    }
+                )
+                continue
+            self._run_runtime_source_node(binding, timestamp=timestamp)
+            executed_nodes.append(binding.node_id)
+        generated = [event for event in self._events if event.sequence > before_sequence]
+        return self.emit_event(
+            "section_run",
+            section_id=section.section_id,
+            data={
+                "title": section.title,
+                "trigger": section.trigger,
+                "executed_nodes": executed_nodes,
+                "skipped_nodes": skipped_nodes,
+                "event_count": len(generated),
+                "events": [event.event for event in generated],
+            },
+            timestamp=timestamp,
+        )
+
+    def _run_runtime_source_node(
+        self, binding: NodeGraphNodeBinding, *, timestamp: float | None = None
+    ) -> NodeGraphRuntimeEvent:
+        if self._execution_depth >= 32:
+            return self.emit_event(
+                "node_execution_skipped",
+                node_id=binding.node_id,
+                data={"reason": "max execution depth reached", "node_type": binding.node_type},
+                timestamp=timestamp,
+            )
+        node = _runtime_node_from_binding(binding)
+        log: list[dict[str, object]] = []
+        self._execution_depth += 1
+        try:
+            outputs = _execute_flow_node(node, {}, self._parser_state, log)
+        finally:
+            self._execution_depth -= 1
+        executed = self.emit_event(
+            "node_executed",
+            node_id=binding.node_id,
+            data={
+                "node_type": binding.node_type,
+                "input_port": None,
+                "source": "run_node",
+                "output_counts": {port: len(items) for port, items in outputs.items()},
+                "log": _json_safe_value(log),
+            },
+            timestamp=timestamp,
+        )
+        for output_port, values in outputs.items():
+            for output_value in values:
+                self.emit_event(
+                    "node_output",
+                    node_id=binding.node_id,
+                    port_id=output_port,
+                    value=output_value,
+                    data={"node_type": binding.node_type, "source": "run_node"},
+                    timestamp=timestamp,
+                )
+        return executed
+
     def emit_event(
         self,
         event: str,
@@ -798,6 +931,7 @@ class NodeGraphRuntimeSession:
         key = (item.node_id, item.port_id)
         self._port_values.setdefault(key, []).append(item.value)
         if item.event == "edge_value":
+            self._apply_edge_value_to_runtime_target(item)
             self._execute_runtime_node(item.node_id, item.port_id, item.value, timestamp=item.timestamp)
             return
         for edge in self.binding.edges:
@@ -807,7 +941,7 @@ class NodeGraphRuntimeSession:
                 "edge_value",
                 node_id=edge.target_node,
                 port_id=edge.target_port,
-                value=item.value,
+                value=_convert_edge_value(edge, item.value),
                 data={
                     "edge_id": edge.edge_id,
                     "source_node": edge.source_node,
@@ -815,9 +949,52 @@ class NodeGraphRuntimeSession:
                     "target_node": edge.target_node,
                     "target_port": edge.target_port,
                     "source_event": item.event,
+                    "conversion": edge.conversion,
+                    "config": _json_copy(edge.config or {}, "runtime edge config"),
                 },
                 timestamp=item.timestamp,
             )
+
+    def _apply_edge_value_to_runtime_target(self, item: NodeGraphRuntimeEvent) -> None:
+        data = item.data or {}
+        if data.get("conversion") != "text_to_terminal_input":
+            return
+        if item.node_id is None:
+            return
+        binding = self.binding.node_binding(item.node_id)
+        if binding is None or binding.node_type != "terminal":
+            return
+        object_id = binding.owned_object_id
+        if not object_id:
+            self.emit_event(
+                "edge_conversion_failed",
+                node_id=item.node_id,
+                value=item.value,
+                data={"reason": "target terminal has no runtime object", "conversion": data.get("conversion"), "edge_id": data.get("edge_id")},
+                timestamp=item.timestamp,
+            )
+            return
+        config = data.get("config") if isinstance(data.get("config"), Mapping) else {}
+        newline = bool(config.get("newline", True)) if isinstance(config, Mapping) else True
+        try:
+            delivered = self.send_terminal_input(object_id, item.value, newline=newline)
+        except Exception as exc:
+            self.emit_event(
+                "edge_conversion_failed",
+                node_id=item.node_id,
+                value=item.value,
+                data={"reason": str(exc), "conversion": data.get("conversion"), "edge_id": data.get("edge_id"), "object_id": object_id},
+                timestamp=item.timestamp,
+            )
+            return
+        self.emit_event(
+            "edge_conversion_applied",
+            node_id=item.node_id,
+            object_id=object_id,
+            value=item.value,
+            data={"delivered": delivered, "conversion": data.get("conversion"), "edge_id": data.get("edge_id"), "newline": newline},
+            timestamp=item.timestamp,
+        )
 
     def _execute_runtime_node(self, node_id: str, port_id: str, value: object, *, timestamp: float | None = None) -> None:
         binding = self.binding.node_binding(node_id)
@@ -872,6 +1049,9 @@ class NodeGraphRuntimeSession:
         widget_type = str(config.get("widget_type", "")).strip()
         update_mode = str(config.get("update_mode", "") or "auto").strip()
         value_format = str(config.get("format", "") or "text").strip()
+        port_profile = str(config.get("port_profile", "") or "").strip()
+        if port_profile == "terminal_output" and value_format == "text":
+            value_format = "terminal_text"
         if not widget_id:
             result = {"ok": False, "reason": "widget_id is required"}
             self.emit_event("widget_update_failed", node_id=binding.node_id, data=result, timestamp=timestamp)
@@ -1019,6 +1199,22 @@ class NodeGraphTemplate:
 
 
 @dataclass(slots=True)
+class NodeGraphWidgetTarget:
+    """Transient GUI widget target exposed to Widget Sink node editors."""
+
+    id: str
+    label: str | None = None
+    widget_type: str | None = None
+    supported_update_modes: tuple[str, ...] = ()
+    default_update_mode: str | None = None
+    supported_port_profiles: tuple[str, ...] = ()
+    default_port_profile: str | None = None
+    supported_formats: tuple[str, ...] = ()
+    widget: Any | None = None
+    data: dict[str, object] | None = None
+
+
+@dataclass(slots=True)
 class NodeGraphSection:
     """Visual section region that groups nodes by purpose or runtime scope."""
 
@@ -1057,6 +1253,7 @@ class NodeGraph(HtmlReport):
         show_subtitles: bool = True,
         enable_zoom: bool = True,
         templates: Sequence[NodeGraphTemplate | Mapping[str, object]] | None = None,
+        widget_targets: Sequence[NodeGraphWidgetTarget | Mapping[str, object]] = (),
         width: int | float | None = 920,
         height: int | float | None = 560,
         id: str | None = None,
@@ -1079,6 +1276,7 @@ class NodeGraph(HtmlReport):
         self.enable_zoom = bool(enable_zoom)
         template_values = _default_templates() if templates is None else templates
         self.templates = tuple(self._template_from_value(template) for template in template_values)
+        self.widget_targets = tuple(self._widget_target_from_value(target) for target in widget_targets)
         self.on_graph_event = on_graph_event
         self._callback_compat = dict(callbacks)
         self._undo_stack: list[dict[str, object]] = []
@@ -1116,6 +1314,68 @@ class NodeGraph(HtmlReport):
         self.templates = tuple(self._template_from_value(template) for template in templates)
         self.set_html(self._html())
 
+    def set_widget_targets(self, targets: Sequence[NodeGraphWidgetTarget | Mapping[str, object]]) -> None:
+        """Replace assignable widget targets exposed to Widget Sink inspectors."""
+
+        self.widget_targets = tuple(self._widget_target_from_value(target) for target in targets)
+        self.set_html(self._html())
+
+    def register_widget_target(
+        self,
+        id: str | None = None,
+        *,
+        label: str | None = None,
+        widget_type: str | None = None,
+        widget: Any | None = None,
+        supported_update_modes: Sequence[str] = (),
+        default_update_mode: str | None = None,
+        supported_port_profiles: Sequence[str] = (),
+        default_port_profile: str | None = None,
+        supported_formats: Sequence[str] = (),
+        data: Mapping[str, object] | None = None,
+    ) -> NodeGraphWidgetTarget:
+        """Expose a live GUI widget as an assignable Widget Sink target."""
+
+        widget_id = id if id is not None else getattr(widget, "id", None)
+        target_id = self._text(widget_id, "widget target id")
+        actual_type = widget_type or (_widget_kind(widget) if widget is not None else None)
+        target = NodeGraphWidgetTarget(
+            id=target_id,
+            label=None if label is None else str(label),
+            widget_type=None if actual_type is None else str(actual_type),
+            supported_update_modes=tuple(str(mode) for mode in supported_update_modes),
+            default_update_mode=None if default_update_mode is None else str(default_update_mode),
+            supported_port_profiles=tuple(str(profile) for profile in supported_port_profiles),
+            default_port_profile=None if default_port_profile is None else str(default_port_profile),
+            supported_formats=tuple(str(fmt) for fmt in supported_formats),
+            widget=widget,
+            data=None if data is None else _json_copy(dict(data), "widget target data"),
+        )
+        self.widget_targets = tuple(existing for existing in self.widget_targets if existing.id != target.id) + (target,)
+        self.set_html(self._html())
+        return target
+
+    def unregister_widget_target(self, widget_id: str) -> NodeGraphWidgetTarget | None:
+        """Remove and return an assignable Widget Sink target by ID."""
+
+        target_id = self._text(widget_id, "widget target id")
+        removed = next((target for target in self.widget_targets if target.id == target_id), None)
+        if removed is not None:
+            self.widget_targets = tuple(target for target in self.widget_targets if target.id != target_id)
+            self.set_html(self._html())
+        return removed
+
+    def widget_target(self, widget_id: str) -> NodeGraphWidgetTarget | None:
+        """Return an assignable Widget Sink target by ID, if registered."""
+
+        target_id = self._text(widget_id, "widget target id")
+        return next((target for target in self.widget_targets if target.id == target_id), None)
+
+    def widget_target_ids(self) -> tuple[str, ...]:
+        """Return assignable Widget Sink target IDs."""
+
+        return tuple(target.id for target in self.widget_targets)
+
     def to_graph_data(self) -> dict[str, object]:
         """Return a JSON-serializable, versioned snapshot of the graph."""
 
@@ -1123,7 +1383,7 @@ class NodeGraph(HtmlReport):
             {
                 "schema_version": _GRAPH_SCHEMA_VERSION,
                 "nodes": [_node_graph_data(node) for node in self.nodes],
-                "edges": [_edge_graph_data(edge, index) for index, edge in enumerate(self.edges)],
+                "edges": [_edge_graph_data(edge, index, self.nodes) for index, edge in enumerate(self.edges)],
                 "sections": [_section_graph_data(section) for section in self.sections],
             },
             "NodeGraph graph data",
@@ -1178,7 +1438,7 @@ class NodeGraph(HtmlReport):
         return NodeGraphRuntimeBinding(
             nodes=tuple(_node_runtime_binding(node) for node in self.nodes),
             sections=tuple(_section_runtime_binding(section, self.section_nodes(section.id)) for section in self.sections),
-            edges=tuple(_edge_runtime_binding(edge, index) for index, edge in enumerate(self.edges)),
+            edges=tuple(_edge_runtime_binding(edge, index, self.nodes) for index, edge in enumerate(self.edges)),
             registry=active_registry,
             missing_refs=active_registry.missing_object_refs(refs),
         )
@@ -1413,6 +1673,7 @@ class NodeGraph(HtmlReport):
             enable_zoom=self.enable_zoom,
             templates=self.templates,
             sections=self.sections,
+            widget_targets=self.widget_targets,
             emit_events=True,
         )
 
@@ -1532,6 +1793,10 @@ class NodeGraph(HtmlReport):
                 node.status = None if value is None or str(value) == "" else str(value)
             if "color" in updates:
                 node.color = str(updates.get("color"))
+            if "inputs" in updates:
+                node.inputs = self._ports_from_value(updates.get("inputs") or ())
+            if "outputs" in updates:
+                node.outputs = self._ports_from_value(updates.get("outputs") or ())
             if "data" in updates:
                 value = updates.get("data")
                 if value is None:
@@ -1561,6 +1826,26 @@ class NodeGraph(HtmlReport):
                 for index, edge in enumerate(self.edges)
                 if (edge.id or f"edge-{index + 1}") != edge_id
             )
+        elif event == "edge_waypoints_changed":
+            edge_data = payload.get("edge")
+            if not isinstance(edge_data, Mapping):
+                raise TypeError("NodeGraph edge_waypoints_changed edge must be a mapping")
+            edge = self._edge_from_value(edge_data)
+            if edge.id is None:
+                raise ValueError("NodeGraph edge_waypoints_changed edge id is required")
+            updated: list[NodeGraphEdge] = []
+            found = False
+            for index, existing in enumerate(self.edges):
+                existing_id = existing.id or f"edge-{index + 1}"
+                if existing_id == edge.id:
+                    updated.append(edge)
+                    found = True
+                else:
+                    updated.append(existing)
+            if not found:
+                raise ValueError(f"NodeGraph edge {edge.id!r} does not exist")
+            self.edges = tuple(updated)
+            self.selected_node = None
         elif event == "section_created":
             section_data = payload.get("section")
             if not isinstance(section_data, Mapping):
@@ -1596,6 +1881,10 @@ class NodeGraph(HtmlReport):
                 section.collapsed = bool(updates.get("collapsed"))
             if "locked" in updates:
                 section.locked = bool(updates.get("locked"))
+            if "inputs" in updates:
+                node.inputs = self._ports_from_value(updates.get("inputs") or ())
+            if "outputs" in updates:
+                node.outputs = self._ports_from_value(updates.get("outputs") or ())
             if "data" in updates:
                 value = updates.get("data")
                 if value is None:
@@ -1697,7 +1986,7 @@ class NodeGraph(HtmlReport):
             return f"unknown target port {edge.target_port!r}"
         source_type = source_port.port_type
         target_type = target_port.port_type
-        if source_type and target_type and source_type != target_type:
+        if source_type and target_type and source_type != target_type and _port_type_conversion(source_type, target_type) is None:
             return f"incompatible port types: {source_type!r} -> {target_type!r}"
         for index, existing in enumerate(self.edges):
             existing_id = existing.id or f"edge-{index + 1}"
@@ -1862,6 +2151,26 @@ class NodeGraph(HtmlReport):
         )
 
     @classmethod
+    def _widget_target_from_value(cls, value: NodeGraphWidgetTarget | Mapping[str, object]) -> NodeGraphWidgetTarget:
+        if isinstance(value, NodeGraphWidgetTarget):
+            return value
+        if not isinstance(value, Mapping):
+            raise TypeError("NodeGraph widget targets must be NodeGraphWidgetTarget instances or mappings")
+        target_id = cls._text(value.get("id", value.get("widget_id")), "widget target id")
+        return NodeGraphWidgetTarget(
+            id=target_id,
+            label=None if value.get("label") is None else str(value.get("label")),
+            widget_type=None if value.get("widget_type", value.get("type")) is None else str(value.get("widget_type", value.get("type"))),
+            supported_update_modes=cls._string_tuple(value.get("supported_update_modes", value.get("update_modes", ())), "widget target update modes"),
+            default_update_mode=None if value.get("default_update_mode") is None else str(value.get("default_update_mode")),
+            supported_port_profiles=cls._string_tuple(value.get("supported_port_profiles", value.get("port_profiles", ())), "widget target port profiles"),
+            default_port_profile=None if value.get("default_port_profile") is None else str(value.get("default_port_profile")),
+            supported_formats=cls._string_tuple(value.get("supported_formats", value.get("formats", ())), "widget target formats"),
+            widget=value.get("widget"),
+            data=cls._data_from_value(value),
+        )
+
+    @classmethod
     def _edge_from_value(cls, value: NodeGraphEdge | Mapping[str, object]) -> NodeGraphEdge:
         if isinstance(value, NodeGraphEdge):
             return value
@@ -1922,6 +2231,16 @@ class NodeGraph(HtmlReport):
         return _json_copy(dict(custom_data), "NodeGraph custom data")
 
     @staticmethod
+    def _string_tuple(value: object, name: str) -> tuple[str, ...]:
+        if value is None:
+            return ()
+        if isinstance(value, str):
+            return (value,) if value else ()
+        if isinstance(value, (bytes, bytearray)) or not isinstance(value, Sequence):
+            raise TypeError(f"{name} must be a sequence of strings")
+        return tuple(str(item) for item in value)
+
+    @staticmethod
     def _text(value: object, name: str) -> str:
         text = "" if value is None else str(value).strip()
         if not text:
@@ -1949,6 +2268,7 @@ def _node_graph_html(
     edges: Sequence[NodeGraphEdge],
     templates: Sequence[NodeGraphTemplate],
     sections: Sequence[NodeGraphSection],
+    widget_targets: Sequence[NodeGraphWidgetTarget],
     selected_node: str | None,
     show_edge_labels: bool,
     show_port_labels: bool,
@@ -1959,9 +2279,13 @@ def _node_graph_html(
 ) -> str:
     config = {
         "nodes": [_node_payload(node) for node in nodes],
-        "edges": [_edge_payload(edge) for edge in edges],
+        "edges": [_edge_payload(edge, nodes) for edge in edges],
         "templates": [_template_payload(template) for template in templates],
         "sections": [_section_payload(section) for section in sections],
+        "widgetTargets": [_widget_target_payload(target) for target in widget_targets],
+        "portTypeColors": dict(_NODE_GRAPH_PORT_TYPE_COLORS),
+        "portTypeConversions": {f"{source}->{target}": conversion for (source, target), conversion in _NODE_GRAPH_PORT_TYPE_CONVERSIONS.items()},
+        "widgetSinkPortProfiles": list(_NODE_GRAPH_WIDGET_SINK_PORT_PROFILES),
         "selectedNode": selected_node,
         "showEdgeLabels": bool(show_edge_labels),
         "showPortLabels": bool(show_port_labels),
@@ -2005,7 +2329,7 @@ def _node_graph_html(
     const palette = {{ selected: config.templates[0] ? config.templates[0].id : null, items: [] }};
     const nodePicker = {{ open: false, x: 0, y: 0, graphX: 0, graphY: 0, query: '', selected: 0, scroll: 0, scrollDrag: null, rect: null, listRect: null, scrollBar: null, items: [] }};
     const renameEditor = {{ open: false, kind: null, id: null, value: '', original: '', selectAll: false, rect: null, buttons: [] }};
-    const propertyEditor = {{ open: false, kind: null, id: null, fields: [], active: 0, scroll: 0, scrollDrag: null, rect: null, listRect: null, scrollBar: null, buttons: [] }};
+    const propertyEditor = {{ open: false, kind: null, id: null, fields: [], active: 0, scroll: 0, scrollDrag: null, rect: null, listRect: null, scrollBar: null, buttons: [], selectPopup: null }};
     const TOOLBAR_Y = 10;
     const TOOLBAR_H = 28;
     const TOOLBAR_W = 34;
@@ -2171,6 +2495,13 @@ def _node_graph_html(
       for (const button of propertyEditor.buttons) {{
         if (sx >= button.x && sx <= button.x + button.w && sy >= button.y && sy <= button.y + button.h) return {{ kind: button.action }};
       }}
+      if (propertyEditor.selectPopup && Array.isArray(propertyEditor.selectPopup.items)) {{
+        for (const item of propertyEditor.selectPopup.items) {{
+          if (sx >= item.x && sx <= item.x + item.w && sy >= item.y && sy <= item.y + item.h) {{
+            return {{ kind: 'select_option', index: item.index, value: item.value }};
+          }}
+        }}
+      }}
       if (propertyEditor.scrollBar) {{
         const bar = propertyEditor.scrollBar;
         if (sx >= bar.x - 5 && sx <= bar.x + bar.w + 5 && sy >= bar.y && sy <= bar.y + bar.h) {{
@@ -2290,31 +2621,140 @@ def _node_graph_html(
       return Math.hypot(p.x - x, p.y - y);
     }}
 
+    function cleanWaypoints(value) {{
+      if (!Array.isArray(value)) return [];
+      return value
+        .map(point => ({{ x: Number(point && point.x), y: Number(point && point.y) }}))
+        .filter(point => Number.isFinite(point.x) && Number.isFinite(point.y));
+    }}
+
+    function edgeWaypoints(edge) {{
+      return cleanWaypoints(edge && edge.data ? edge.data.waypoints : null);
+    }}
+
+    function setEdgeWaypoints(edge, waypoints) {{
+      if (!edge) return [];
+      const cleaned = cleanWaypoints(waypoints);
+      const data = edge.data ? {{ ...edge.data }} : {{}};
+      if (cleaned.length) data.waypoints = cleaned;
+      else delete data.waypoints;
+      edge.data = Object.keys(data).length ? data : null;
+      return cleaned;
+    }}
+
+    function cloneEdgeData(data) {{
+      if (!data) return null;
+      const copy = {{ ...data }};
+      if (Array.isArray(data.waypoints)) copy.waypoints = cleanWaypoints(data.waypoints);
+      return Object.keys(copy).length ? copy : null;
+    }}
+
     function edgePoints(edge) {{
       const a = portPoint(edge.sourceNode, edge.sourcePort, 'output');
       const b = portPoint(edge.targetNode, edge.targetPort, 'input');
       if (!a || !b) return null;
-      return {{ a, b, dx: Math.max(48, Math.abs(b.x - a.x) * 0.45) }};
+      const waypoints = edgeWaypoints(edge);
+      const route = [a].concat(waypoints.map(point => screen(point.x, point.y))).concat([b]);
+      return {{ a, b, waypoints, route }};
     }}
 
-    function hitEdge(sx, sy) {{
+    function edgeSegmentDx(a, b) {{
+      return Math.max(24, Math.abs(b.x - a.x) * 0.45);
+    }}
+
+    function hitEdgeSegment(sx, sy) {{
       const p = {{ x: sx, y: sy }};
       for (let i = state.edges.length - 1; i >= 0; i--) {{
         const edge = state.edges[i];
         const points = edgePoints(edge);
         if (!points) continue;
-        let prev = points.a;
-        for (let step = 1; step <= 24; step++) {{
-          const next = bezierPoint(points.a, points.b, points.dx, step / 24);
-          if (distanceToSegment(p, prev, next) <= 7) return edge;
-          prev = next;
+        for (let segment = 0; segment < points.route.length - 1; segment++) {{
+          const a = points.route[segment];
+          const b = points.route[segment + 1];
+          const dx = edgeSegmentDx(a, b);
+          let prev = a;
+          for (let step = 1; step <= 18; step++) {{
+            const next = bezierPoint(a, b, dx, step / 18);
+            if (distanceToSegment(p, prev, next) <= 7) return {{ edge, segment }};
+            prev = next;
+          }}
         }}
       }}
       return null;
     }}
 
+    function hitEdge(sx, sy) {{
+      const hit = hitEdgeSegment(sx, sy);
+      return hit ? hit.edge : null;
+    }}
+
+    function hitEdgeWaypoint(sx, sy) {{
+      const radius = Math.max(8, 7 * state.zoom);
+      for (let edgeIndex = state.edges.length - 1; edgeIndex >= 0; edgeIndex--) {{
+        const edge = state.edges[edgeIndex];
+        const waypoints = edgeWaypoints(edge);
+        for (let index = waypoints.length - 1; index >= 0; index--) {{
+          const point = screen(waypoints[index].x, waypoints[index].y);
+          if (Math.hypot(sx - point.x, sy - point.y) <= radius) return {{ edge, index, point }};
+        }}
+      }}
+      return null;
+    }}
+
+    function addEdgeWaypoint(edge, segment, x, y) {{
+      if (!edge) return false;
+      const before = graphSnapshot();
+      const waypoints = edgeWaypoints(edge);
+      const insertAt = Math.max(0, Math.min(Number(segment) || 0, waypoints.length));
+      waypoints.splice(insertAt, 0, {{ x, y }});
+      setEdgeWaypoints(edge, waypoints);
+      state.selected = null;
+      state.selectedEdge = edge.id;
+      state.selectedSection = null;
+      emitGraphMutation({{ event: 'edge_waypoints_changed', edge: edgeEventPayload(edge) }}, before);
+      draw();
+      return true;
+    }}
+
     function portType(port) {{
       return port ? (port.port_type || port.type || null) : null;
+    }}
+
+    function portTypeColor(type, fallback = '#43c6ac') {{
+      if (!type) return fallback;
+      return (config.portTypeColors && config.portTypeColors[String(type)]) || fallback;
+    }}
+
+    function nodePort(nodeId, portId, side) {{
+      const node = state.nodes.find(candidate => candidate.id === nodeId);
+      if (!node) return null;
+      const ports = side === 'input' ? node.inputs : node.outputs;
+      return (ports || []).find(port => port.id === portId) || null;
+    }}
+
+    function edgeDataType(edge) {{
+      const source = nodePort(edge.sourceNode, edge.sourcePort, 'output');
+      const target = nodePort(edge.targetNode, edge.targetPort, 'input');
+      return portType(source) || portType(target) || null;
+    }}
+
+    function edgeColor(edge, fallback = '#43c6ac') {{
+      return portTypeColor(edgeDataType(edge), edge.color || fallback);
+    }}
+
+    function connectionColor(from, fallback = '#43c6ac') {{
+      return portTypeColor(from && from.port ? portType(from.port) : null, fallback);
+    }}
+
+    function portTypeConversion(sourceType, targetType) {{
+      if (!sourceType || !targetType || sourceType === targetType) return null;
+      const key = `${{sourceType}}->${{targetType}}`;
+      return (config.portTypeConversions && config.portTypeConversions[key]) || null;
+    }}
+
+    function edgeConversion(from, to) {{
+      if (!from || !to) return null;
+      return portTypeConversion(portType(from.port), portType(to.port));
     }}
 
     function connectionRejection(from, to) {{
@@ -2325,7 +2765,7 @@ def _node_graph_html(
       if (from.node.id === to.node.id) return 'self connection rejected';
       const sourceType = portType(from.port);
       const targetType = portType(to.port);
-      if (sourceType && targetType && sourceType !== targetType) return `incompatible port types: ${{sourceType}} -> ${{targetType}}`;
+      if (sourceType && targetType && sourceType !== targetType && !portTypeConversion(sourceType, targetType)) return `incompatible port types: ${{sourceType}} -> ${{targetType}}`;
       const duplicate = state.edges.some(edge => edge.sourceNode === from.node.id && edge.sourcePort === from.port.id && edge.targetNode === to.node.id && edge.targetPort === to.port.id);
       if (duplicate) return 'duplicate edge';
       return null;
@@ -2336,15 +2776,18 @@ def _node_graph_html(
     }}
 
     function edgeEventPayload(edge) {{
-      return {{
+      const payload = {{
         id: edge.id,
         source_node: edge.sourceNode,
         source_port: edge.sourcePort,
         target_node: edge.targetNode,
         target_port: edge.targetPort,
         label: edge.label || null,
-        color: edge.color || '#43c6ac'
+        color: edgeColor(edge)
       }};
+      const data = cloneEdgeData(edge.data);
+      if (data) payload.data = data;
+      return payload;
     }}
 
     function nodeEventPayload(node) {{
@@ -2484,7 +2927,7 @@ def _node_graph_html(
           inputs: node.inputs.map(port => ({{ ...port }})),
           outputs: node.outputs.map(port => ({{ ...port }}))
         }})),
-        edges: state.edges.map(edge => ({{ ...edge }})),
+        edges: state.edges.map(edge => ({{ ...edge, data: cloneEdgeData(edge.data) || undefined }})),
         sections: state.sections.map(section => ({{ ...section, data: section.data ? {{ ...section.data }} : undefined }})),
         selected: state.selected,
         selectedEdge: state.selectedEdge,
@@ -2498,7 +2941,7 @@ def _node_graph_html(
         inputs: node.inputs.map(port => ({{ ...port }})),
         outputs: node.outputs.map(port => ({{ ...port }}))
       }}));
-      state.edges = snapshot.edges.map(edge => ({{ ...edge }}));
+      state.edges = snapshot.edges.map(edge => ({{ ...edge, data: cloneEdgeData(edge.data) || undefined }}));
       state.sections = (snapshot.sections || []).map(section => ({{ ...section, data: section.data ? {{ ...section.data }} : undefined }}));
       state.selected = snapshot.selected || null;
       state.selectedEdge = snapshot.selectedEdge || null;
@@ -2650,14 +3093,16 @@ def _node_graph_html(
         return false;
       }}
       const before = graphSnapshot();
+      const conversion = edgeConversion(from, to);
       state.edges.push({{
         id: `edge-${{++edgeSerial}}`,
         sourceNode: from.node.id,
         sourcePort: from.port.id,
         targetNode: to.node.id,
         targetPort: to.port.id,
-        label: null,
-        color: from.node.color || '#43c6ac'
+        label: conversion ? conversion : null,
+        color: connectionColor(from, from.node.color || '#43c6ac'),
+        data: conversion ? {{ conversion, newline: true }} : null
       }});
       emitGraphMutation({{ event: 'edge_created', edge: edgeEventPayload(state.edges[state.edges.length - 1]) }}, before);
       return true;
@@ -2735,19 +3180,51 @@ def _node_graph_html(
       return target.data && target.data.runtime_id !== undefined && target.data.runtime_id !== null ? String(target.data.runtime_id) : '';
     }}
 
+    function normalizeFieldOption(option) {{
+      if (option && typeof option === 'object' && !Array.isArray(option)) {{
+        const value = String(option.value ?? option.id ?? option.widget_id ?? option.label ?? '');
+        return {{ value, label: String(option.label ?? value), meta: option }};
+      }}
+      const value = String(option ?? '');
+      return {{ value, label: value, meta: {{ value, label: value }} }};
+    }}
+
+    function optionLabel(field, value) {{
+      const key = String(value || '');
+      return field.optionLabels && Object.prototype.hasOwnProperty.call(field.optionLabels, key)
+        ? field.optionLabels[key]
+        : key;
+    }}
+
+    function optionMeta(field, value) {{
+      const key = String(value || '');
+      return field.optionMeta && Object.prototype.hasOwnProperty.call(field.optionMeta, key)
+        ? field.optionMeta[key]
+        : null;
+    }}
+
     function makePropertyField(key, label, value, type = 'text', options = {{}}) {{
       const normalizedType = ['bool', 'number', 'select', 'json', 'textarea'].includes(type) ? type : 'text';
+      const normalizedOptions = Array.isArray(options.options) ? options.options.map(normalizeFieldOption) : [];
       let normalizedValue = value;
       if (normalizedType === 'bool') normalizedValue = !!value;
       else if (normalizedType === 'number') normalizedValue = value === undefined || value === null || value === '' ? '' : String(value);
       else if (normalizedType === 'json' && value !== undefined && value !== null && typeof value !== 'string') normalizedValue = JSON.stringify(value);
       else normalizedValue = String(value || '');
+      const optionLabels = {{}};
+      const optionMeta = {{}};
+      for (const option of normalizedOptions) {{
+        optionLabels[option.value] = option.label;
+        optionMeta[option.value] = option.meta;
+      }}
       return {{
         key,
         label,
         value: normalizedValue,
         type: normalizedType,
-        options: Array.isArray(options.options) ? options.options.map(option => String(option)) : [],
+        options: normalizedOptions.map(option => option.value),
+        optionLabels,
+        optionMeta,
         placeholder: options.placeholder ? String(options.placeholder) : '',
         help: options.help || options.description ? String(options.help || options.description) : '',
         required: !!options.required,
@@ -2784,6 +3261,81 @@ def _node_graph_html(
       return '';
     }}
 
+    function isWidgetSinkTarget(target) {{
+      return !!(target && target.data && String(target.data.node_type || target.data.template_id || '') === 'widget_sink');
+    }}
+
+    function widgetSinkPortProfiles() {{
+      const profiles = Array.isArray(config.widgetSinkPortProfiles) ? config.widgetSinkPortProfiles.map(profile => String(profile)).filter(Boolean) : [];
+      return profiles.length ? profiles : ['text', 'terminal_output', 'message', 'json', 'artifact', 'status', 'error'];
+    }}
+
+    function widgetTargetById(id) {{
+      const targetId = String(id || '');
+      const targets = Array.isArray(config.widgetTargets) ? config.widgetTargets : [];
+      return targets.find(targetInfo => String(targetInfo.widget_id || targetInfo.id || '') === targetId) || null;
+    }}
+
+    function widgetSinkProfileOptions(target, value, spec) {{
+      const configData = nodeConfig(target);
+      const targetInfo = widgetTargetById(configData.widget_id);
+      let profiles = [];
+      if (targetInfo && Array.isArray(targetInfo.supported_port_profiles) && targetInfo.supported_port_profiles.length) {{
+        profiles = targetInfo.supported_port_profiles.map(profile => String(profile)).filter(Boolean);
+      }} else if (spec && Array.isArray(spec.options) && spec.options.length) {{
+        profiles = spec.options.map(option => normalizeFieldOption(option).value).filter(Boolean);
+      }} else {{
+        profiles = widgetSinkPortProfiles();
+      }}
+      const current = String(value || '');
+      if (current && !profiles.includes(current)) profiles.push(current);
+      return profiles.map(profile => {{ return {{ value: profile, label: profile }}; }});
+    }}
+
+    function widgetSinkPort(profile) {{
+      const value = String(profile || '').trim() || 'text';
+      return {{ id: 'value', label: value, port_type: value }};
+    }}
+
+    function applyWidgetSinkPortProfile(node, updates, data) {{
+      if (!isWidgetSinkTarget(node)) return;
+      const configData = data && data.config && typeof data.config === 'object' && !Array.isArray(data.config) ? data.config : {{}};
+      const port = widgetSinkPort(configData.port_profile || 'text');
+      updates.inputs = [{{ ...port }}];
+      updates.outputs = [{{ ...port }}];
+      node.inputs = updates.inputs.map(item => ({{ ...item }}));
+      node.outputs = updates.outputs.map(item => ({{ ...item }}));
+    }}
+
+    function widgetTargetFieldSpec(target, spec, value) {{
+      if (!isWidgetSinkTarget(target)) return null;
+      const key = String(spec.key || '');
+      if (key === 'port_profile') {{
+        return {{ ...spec, type: 'select', options: widgetSinkProfileOptions(target, value, spec), help: spec.help || spec.description || 'Incoming graph value type' }};
+      }}
+      if (key !== 'widget_id') return null;
+      const targets = Array.isArray(config.widgetTargets) ? config.widgetTargets : [];
+      const options = [{{ value: '', label: 'Choose widget...', widget_type: '', supported_update_modes: [], supported_port_profiles: [] }}];
+      for (const targetInfo of targets) {{
+        const value = String(targetInfo.widget_id || targetInfo.id || '');
+        if (!value) continue;
+        options.push({{
+          value,
+          label: String(targetInfo.label || value),
+          widget_type: String(targetInfo.widget_type || ''),
+          supported_update_modes: Array.isArray(targetInfo.supported_update_modes) ? targetInfo.supported_update_modes : [],
+          default_update_mode: String(targetInfo.default_update_mode || ''),
+          supported_port_profiles: Array.isArray(targetInfo.supported_port_profiles) ? targetInfo.supported_port_profiles : [],
+          default_port_profile: String(targetInfo.default_port_profile || ''),
+          supported_formats: Array.isArray(targetInfo.supported_formats) ? targetInfo.supported_formats : []
+        }});
+      }}
+      const current = String(value || '');
+      if (current && !options.some(option => option.value === current)) {{
+        options.push({{ value: current, label: `${{current}} (unregistered)`, missing: true }});
+      }}
+      return {{ ...spec, type: 'select', options, placeholder: 'Choose widget...', help: spec.help || spec.description || 'Registered GUI target' }};
+    }}
     function schemaPropertyFields(target) {{
       const schemaFields = configSchemaFields(target);
       const storage = schemaFields ? 'config' : 'data';
@@ -2792,10 +3344,11 @@ def _node_graph_html(
         .filter(spec => spec && spec.key)
         .map(spec => {{
           const key = String(spec.key);
-          const type = schemaFieldType(spec);
           const value = schemaFieldValue(target, spec, storage);
+          const effectiveSpec = widgetTargetFieldSpec(target, spec, value) || spec;
+          const type = schemaFieldType(effectiveSpec);
           const fieldKey = storage === 'config' ? `config:${{key}}` : `data:${{key}}`;
-          const field = makePropertyField(fieldKey, String(spec.label || key), value, type, spec);
+          const field = makePropertyField(fieldKey, String(effectiveSpec.label || key), value, type, effectiveSpec);
           field.dataKey = key;
           field.storage = storage;
           return field;
@@ -2873,6 +3426,7 @@ def _node_graph_html(
       propertyEditor.listRect = null;
       propertyEditor.scrollBar = null;
       propertyEditor.buttons = [];
+      propertyEditor.selectPopup = null;
       emitGraphEvent({{ event: 'property_editor_opened', target_type: propertyEditor.kind, target: propertyEditor.id }});
       draw();
       return true;
@@ -2893,6 +3447,7 @@ def _node_graph_html(
       propertyEditor.listRect = null;
       propertyEditor.scrollBar = null;
       propertyEditor.buttons = [];
+      propertyEditor.selectPopup = null;
       if (notify) emitGraphEvent({{ event: 'property_editor_closed', target_type: kind, target: id }});
       draw();
       return true;
@@ -2907,8 +3462,71 @@ def _node_graph_html(
       return field ? String(field.value || '').trim() : fallback;
     }}
 
+    function applyWidgetTargetSelection(field) {{
+      if (!field || field.key !== 'config:widget_id') return;
+      const target = selectedPropertyTarget();
+      if (!target || target.kind !== 'node' || !isWidgetSinkTarget(target.target)) return;
+      const meta = optionMeta(field, field.value);
+      if (!meta || meta.missing) return;
+      const typeField = propertyField('config:widget_type');
+      if (typeField && meta.widget_type) typeField.value = String(meta.widget_type);
+      const profileField = propertyField('config:port_profile');
+      const profiles = Array.isArray(meta.supported_port_profiles) ? meta.supported_port_profiles.map(profile => String(profile)).filter(Boolean) : [];
+      if (profileField && profiles.length) {{
+        profileField.options = profiles.slice();
+        profileField.optionLabels = {{}};
+        profileField.optionMeta = {{}};
+        for (const profile of profiles) {{
+          profileField.optionLabels[profile] = profile;
+          profileField.optionMeta[profile] = {{ value: profile, label: profile }};
+        }}
+        const preferred = String(meta.default_port_profile || profiles[0] || 'text');
+        if (!profileField.value || !profileField.options.includes(profileField.value)) profileField.value = preferred;
+      }}
+      const updateField = propertyField('config:update_mode');
+      const modes = Array.isArray(meta.supported_update_modes) ? meta.supported_update_modes.map(mode => String(mode)) : [];
+      if (updateField && modes.length) {{
+        updateField.options = ['auto'].concat(modes.filter(mode => mode && mode !== 'auto'));
+        updateField.optionLabels = {{ auto: 'auto' }};
+        updateField.optionMeta = {{ auto: {{ value: 'auto', label: 'auto' }} }};
+        for (const mode of modes) {{
+          if (!mode) continue;
+          updateField.optionLabels[mode] = mode;
+          updateField.optionMeta[mode] = {{ value: mode, label: mode }};
+        }}
+        const preferred = String(meta.default_update_mode || modes[0] || 'auto');
+        if (!updateField.value || updateField.value === 'auto' || !updateField.options.includes(updateField.value)) updateField.value = preferred;
+      }}
+    }}
+    function setSelectFieldValue(field, value) {{
+      if (!field || field.type !== 'select') return false;
+      field.value = String(value || '');
+      applyWidgetTargetSelection(field);
+      return true;
+    }}
+
+    function cycleSelectField(field, direction) {{
+      if (!field || field.type !== 'select' || !field.options.length) return false;
+      const current = field.options.indexOf(String(field.value || ''));
+      const next = (current + direction + field.options.length) % field.options.length;
+      return setSelectFieldValue(field, field.options[next]);
+    }}
+
+    function closeSelectPopup() {{
+      propertyEditor.selectPopup = null;
+    }}
+
+    function openSelectPopup(index) {{
+      const field = propertyEditor.fields[index];
+      if (!field || field.type !== 'select' || !field.options.length) return false;
+      propertyEditor.active = index;
+      propertyEditor.selectPopup = {{ fieldIndex: index, items: [] }};
+      return true;
+    }}
+
     function commitPropertyEditor() {{
       if (!propertyEditor.open) return false;
+      closeSelectPopup();
       const before = graphSnapshot();
       if (propertyEditor.kind === 'node') {{
         const node = state.nodes.find(n => n.id === propertyEditor.id);
@@ -2924,6 +3542,7 @@ def _node_graph_html(
           color: textProperty('color', node.color || '#43c6ac') || '#43c6ac',
           data: Object.keys(data).length ? data : null
         }};
+        applyWidgetSinkPortProfile(node, updates, data);
         node.title = updates.title;
         node.subtitle = updates.subtitle;
         node.status = updates.status;
@@ -2970,6 +3589,7 @@ def _node_graph_html(
       propertyEditor.listRect = null;
       propertyEditor.scrollBar = null;
       propertyEditor.buttons = [];
+      propertyEditor.selectPopup = null;
       draw();
       return true;
     }}
@@ -2978,7 +3598,15 @@ def _node_graph_html(
       if (!propertyEditor.open || index < 0 || index >= propertyEditor.fields.length) return false;
       propertyEditor.active = index;
       const field = propertyEditor.fields[index];
-      if (field.type === 'bool') field.value = !field.value;
+      if (field.type === 'bool') {{
+        closeSelectPopup();
+        field.value = !field.value;
+      }} else if (field.type === 'select') {{
+        if (propertyEditor.selectPopup && propertyEditor.selectPopup.fieldIndex === index) closeSelectPopup();
+        else openSelectPopup(index);
+      }} else {{
+        closeSelectPopup();
+      }}
       draw();
       return true;
     }}
@@ -3207,18 +3835,37 @@ def _node_graph_html(
       const points = edgePoints(edge);
       if (!points) return;
       const selected = state.selectedEdge === edge.id;
-      ctx.strokeStyle = selected ? '#eef4ff' : (edge.color || '#43c6ac');
+      const color = edgeColor(edge);
+      ctx.strokeStyle = selected ? '#eef4ff' : color;
       ctx.lineWidth = selected ? 4 : 2.4;
       ctx.beginPath();
-      ctx.moveTo(points.a.x, points.a.y);
-      ctx.bezierCurveTo(points.a.x + points.dx, points.a.y, points.b.x - points.dx, points.b.y, points.b.x, points.b.y);
+      ctx.moveTo(points.route[0].x, points.route[0].y);
+      for (let segment = 0; segment < points.route.length - 1; segment++) {{
+        const a = points.route[segment];
+        const b = points.route[segment + 1];
+        const dx = edgeSegmentDx(a, b);
+        ctx.bezierCurveTo(a.x + dx, a.y, b.x - dx, b.y, b.x, b.y);
+      }}
       ctx.stroke();
-      ctx.fillStyle = selected ? '#eef4ff' : (edge.color || '#43c6ac');
+      ctx.fillStyle = selected ? '#eef4ff' : color;
       ctx.beginPath(); ctx.arc(points.a.x, points.a.y, 3.5, 0, Math.PI * 2); ctx.fill();
       ctx.beginPath(); ctx.arc(points.b.x, points.b.y, 3.5, 0, Math.PI * 2); ctx.fill();
+      if (selected && points.waypoints.length) {{
+        for (const waypoint of points.waypoints) {{
+          const point = screen(waypoint.x, waypoint.y);
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, Math.max(4.5, 4.2 * state.zoom), 0, Math.PI * 2);
+          ctx.fillStyle = '#101721';
+          ctx.fill();
+          ctx.lineWidth = Math.max(1.4, 1.2 * state.zoom);
+          ctx.strokeStyle = color;
+          ctx.stroke();
+        }}
+      }}
       if (config.showEdgeLabels && edge.label) {{
+        const mid = points.route[Math.floor(points.route.length / 2)];
         ctx.fillStyle = '#9fb0c3'; ctx.font = '11px Segoe UI'; ctx.textAlign = 'center';
-        ctx.fillText(edge.label, (points.a.x + points.b.x) / 2, Math.min(points.a.y, points.b.y) - 12);
+        ctx.fillText(edge.label, mid.x, mid.y - 12);
       }}
     }}
 
@@ -3228,7 +3875,8 @@ def _node_graph_html(
       const dx = Math.max(48, Math.abs(b.x - a.x) * 0.45);
       const target = hitPort(to.x, to.y, 'input');
       const valid = canConnect(from, target);
-      ctx.strokeStyle = valid ? '#eef4ff' : 'rgba(159, 176, 195, 0.68)';
+      const color = connectionColor(from, '#43c6ac');
+      ctx.strokeStyle = valid ? color : 'rgba(159, 176, 195, 0.68)';
       ctx.lineWidth = valid ? 3 : 2;
       ctx.setLineDash(valid ? [] : [7, 6]);
       ctx.beginPath();
@@ -3468,7 +4116,8 @@ def _node_graph_html(
         if (!point) continue;
         const hovered = state.hoverPort && state.hoverPort.node.id === node.id && state.hoverPort.port.id === port.id && state.hoverPort.side === side;
         const connectTarget = state.drag && state.drag.kind === 'edge' && side === 'input' && canConnect(state.drag.from, {{ node, port, side, point }});
-        ctx.fillStyle = '#0d1117'; ctx.strokeStyle = hovered || connectTarget ? '#eef4ff' : node.color; ctx.lineWidth = hovered || connectTarget ? 3 : 2;
+        const color = portTypeColor(portType(port), node.color || '#43c6ac');
+        ctx.fillStyle = '#0d1117'; ctx.strokeStyle = hovered || connectTarget ? '#eef4ff' : color; ctx.lineWidth = hovered || connectTarget ? 3 : 2;
         ctx.beginPath(); ctx.arc(point.x, point.y, 5 * state.zoom, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
         if (!config.showPortLabels) continue;
         ctx.fillStyle = '#cbd6e2'; ctx.font = `${{Math.max(9, 10.5 * state.zoom)}}px Segoe UI`;
@@ -3634,7 +4283,7 @@ def _node_graph_html(
           ctx.lineWidth = index === propertyEditor.active ? 1.4 : 1;
           ctx.stroke();
           const text = String(field.value || '');
-          const visible = text || field.placeholder || (field.type === 'select' && field.options.length ? field.options[0] : '');
+          const visible = field.type === 'select' ? (optionLabel(field, field.value) || field.placeholder || (field.options.length ? optionLabel(field, field.options[0]) : '')) : (text || field.placeholder || '');
           ctx.fillStyle = text ? '#eef4ff' : '#738296';
           ctx.font = '12px Segoe UI';
           const cursor = index === propertyEditor.active && Math.floor(Date.now() / 530) % 2 === 0 && field.type !== 'select' ? '|' : '';
@@ -3647,7 +4296,8 @@ def _node_graph_html(
             ctx.fillStyle = '#607086';
             ctx.font = '10px Segoe UI';
             ctx.textAlign = 'right';
-            ctx.fillText(field.options.join(' / '), inputX + inputW - 10, rowY + 19);
+            const labels = field.options.slice(0, 3).map(value => optionLabel(field, value)).filter(Boolean);
+            ctx.fillText(labels.length > 1 ? labels.join(' / ') : 'select', inputX + inputW - 10, rowY + 19);
             ctx.textAlign = 'left';
           }}
           ctx.restore();
@@ -3669,6 +4319,38 @@ def _node_graph_html(
         ctx.fillStyle = '#6f849d';
         ctx.fill();
         propertyEditor.scrollBar = {{ x: trackX, y: trackY, w: 6, h: trackH, thumbY, thumbH }};
+      }}
+
+      if (propertyEditor.selectPopup) {{
+        propertyEditor.selectPopup.items = [];
+        const field = propertyEditor.fields[propertyEditor.selectPopup.fieldIndex];
+        if (field && field.rect && field.options.length) {{
+          const optionH = 28;
+          const maxVisible = Math.min(6, field.options.length);
+          const popupW = field.rect.w;
+          const popupH = maxVisible * optionH + 8;
+          const popupX = field.rect.x;
+          const popupY = Math.min(y + panelH - 52 - popupH, field.rect.y + field.rect.h + 4);
+          roundedRect(popupX, popupY, popupW, popupH, 7);
+          ctx.fillStyle = '#0b1017';
+          ctx.fill();
+          ctx.strokeStyle = '#43c6ac';
+          ctx.lineWidth = 1.1;
+          ctx.stroke();
+          for (let optionIndex = 0; optionIndex < maxVisible; optionIndex++) {{
+            const value = field.options[optionIndex];
+            const itemY = popupY + 4 + optionIndex * optionH;
+            const selected = String(field.value || '') === String(value || '');
+            roundedRect(popupX + 4, itemY + 2, popupW - 8, optionH - 4, 5);
+            ctx.fillStyle = selected ? '#26384a' : '#111821';
+            ctx.fill();
+            ctx.fillStyle = selected ? '#eef4ff' : '#9aa8b8';
+            ctx.textAlign = 'left';
+            ctx.font = '12px Segoe UI';
+            ctx.fillText(optionLabel(field, value) || '(empty)', popupX + 12, itemY + optionH / 2);
+            propertyEditor.selectPopup.items.push({{ index: optionIndex, value, x: popupX + 4, y: itemY + 2, w: popupW - 8, h: optionH - 4 }});
+          }}
+        }}
       }}
 
       for (const button of propertyEditor.buttons) {{
@@ -3711,6 +4393,12 @@ def _node_graph_html(
       if (propertyEditor.open) {{
         const propertyHit = hitPropertyEditor(p.sx, p.sy);
         if (propertyHit && propertyHit.kind === 'commit') commitPropertyEditor();
+        else if (propertyHit && propertyHit.kind === 'select_option') {{
+          const popup = propertyEditor.selectPopup;
+          const field = popup ? propertyEditor.fields[popup.fieldIndex] : null;
+          if (field) setSelectFieldValue(field, propertyHit.value);
+          closeSelectPopup();
+        }}
         else if (propertyHit && propertyHit.kind === 'scrollbar' && propertyEditor.scrollBar) {{
           const bar = propertyEditor.scrollBar;
           const maxScroll = clampPropertyEditorScroll();
@@ -3771,6 +4459,17 @@ def _node_graph_html(
         draw();
         return;
       }}
+      const waypoint = hitEdgeWaypoint(p.sx, p.sy);
+      if (waypoint) {{
+        state.selected = null;
+        state.selectedEdge = waypoint.edge.id;
+        state.selectedSection = null;
+        state.drag = {{ kind: 'edge-waypoint', edge: waypoint.edge.id, index: waypoint.index, before: graphSnapshot() }};
+        canvas.style.cursor = 'grabbing';
+        emitGraphEvent({{ event: 'edge_selected', edge: waypoint.edge.id }});
+        draw();
+        return;
+      }}
       const output = hitPort(p.sx, p.sy, 'output');
       if (output) {{
         state.selected = null;
@@ -3794,7 +4493,7 @@ def _node_graph_html(
         if (body) {{
           state.selected = body.id;
           state.selectedEdge = null;
-        state.selectedSection = null;
+          state.selectedSection = null;
           state.drag = null;
           emitGraphEvent({{ event: 'node_selected', node: body.id }});
           draw();
@@ -3897,11 +4596,28 @@ def _node_graph_html(
       }}
       state.hoverPort = hitPort(p.sx, p.sy);
       if (!state.drag) {{
-
         const resizeSection = hitSectionResize(p.x, p.y);
         const movableSection = hitSectionMove(p.x, p.y);
         const section = movableSection || hitSection(p.x, p.y);
-        canvas.style.cursor = state.hoverPort && state.hoverPort.side === 'output' ? 'crosshair' : (hitHeader(p.x, p.y) ? 'grab' : (hitEdge(p.sx, p.sy) ? 'pointer' : (hitNode(p.x, p.y) ? 'default' : (resizeSection && !resizeSection.locked ? 'nwse-resize' : (movableSection && !movableSection.locked ? 'grab' : (section ? 'pointer' : 'move'))))));
+        const waypointHit = hitEdgeWaypoint(p.sx, p.sy);
+        const edgeHit = hitEdge(p.sx, p.sy);
+        canvas.style.cursor = state.hoverPort && state.hoverPort.side === 'output'
+          ? 'crosshair'
+          : waypointHit
+            ? 'grab'
+            : hitHeader(p.x, p.y)
+              ? 'grab'
+              : edgeHit
+                ? 'pointer'
+                : hitNode(p.x, p.y)
+                  ? 'default'
+                  : resizeSection && !resizeSection.locked
+                    ? 'nwse-resize'
+                    : movableSection && !movableSection.locked
+                      ? 'grab'
+                      : section
+                        ? 'pointer'
+                        : 'move';
         draw();
         return;
       }}
@@ -3928,6 +4644,15 @@ def _node_graph_html(
       }} else if (state.drag.kind === 'section-resize') {{
         const section = state.sections.find(s => s.id === state.drag.id);
         if (section) {{ section.width = Math.max(140, state.drag.startW + p.x - state.drag.startX); section.height = Math.max(90, state.drag.startH + p.y - state.drag.startY); }}
+      }} else if (state.drag.kind === 'edge-waypoint') {{
+        const edge = state.edges.find(candidate => candidate.id === state.drag.edge);
+        if (edge) {{
+          const waypoints = edgeWaypoints(edge);
+          if (state.drag.index >= 0 && state.drag.index < waypoints.length) {{
+            waypoints[state.drag.index] = {{ x: p.x, y: p.y }};
+            setEdgeWaypoints(edge, waypoints);
+          }}
+        }}
       }} else if (state.drag.kind === 'edge') {{
         state.drag.to = {{ x: p.sx, y: p.sy }};
       }} else {{
@@ -3971,6 +4696,9 @@ def _node_graph_html(
       }} else if (state.drag && state.drag.kind === 'section-resize') {{
         const section = state.sections.find(s => s.id === state.drag.id);
         if (section && snapshotCore(state.drag.before) !== snapshotCore(graphSnapshot())) emitGraphMutation({{ event: 'section_resized', section: sectionEventPayload(section) }}, state.drag.before);
+      }} else if (state.drag && state.drag.kind === 'edge-waypoint') {{
+        const edge = state.edges.find(candidate => candidate.id === state.drag.edge);
+        if (edge && snapshotCore(state.drag.before) !== snapshotCore(graphSnapshot())) emitGraphMutation({{ event: 'edge_waypoints_changed', edge: edgeEventPayload(edge) }}, state.drag.before);
       }} else if (state.drag && state.drag.kind === 'pan') {{
         emitViewportChanged('pan');
       }}
@@ -3981,7 +4709,13 @@ def _node_graph_html(
 
     canvas.addEventListener('dblclick', event => {{
       const p = graphPoint(event);
-      if (hitPort(p.sx, p.sy) || hitEdge(p.sx, p.sy) || hitNode(p.x, p.y)) return;
+      if (hitPort(p.sx, p.sy) || hitNode(p.x, p.y)) return;
+      const edgeHit = hitEdgeSegment(p.sx, p.sy);
+      if (edgeHit) {{
+        addEdgeWaypoint(edgeHit.edge, edgeHit.segment, p.x, p.y);
+        event.preventDefault();
+        return;
+      }}
       const section = hitSection(p.x, p.y);
       if (section) {{
         state.selected = null;
@@ -4000,14 +4734,6 @@ def _node_graph_html(
     canvas.addEventListener('keydown', event => {{
       if (propertyEditor.open) {{
         const field = activePropertyField();
-        const cycleSelectField = direction => {{
-          if (!field || field.type !== 'select' || !field.options.length) return false;
-          const current = field.options.indexOf(String(field.value || ''));
-          const next = (current + direction + field.options.length) % field.options.length;
-          field.value = field.options[next];
-          draw();
-          return true;
-        }};
         if (event.key === 'Escape') {{
           event.preventDefault();
           closePropertyEditor();
@@ -4022,10 +4748,12 @@ def _node_graph_html(
           draw();
         }} else if ((event.key === ' ' || event.key === 'ArrowDown' || event.key === 'ArrowRight') && field && field.type === 'select') {{
           event.preventDefault();
-          cycleSelectField(1);
+          closeSelectPopup();
+          cycleSelectField(field, 1);
         }} else if ((event.key === 'ArrowUp' || event.key === 'ArrowLeft') && field && field.type === 'select') {{
           event.preventDefault();
-          cycleSelectField(-1);
+          closeSelectPopup();
+          cycleSelectField(field, -1);
         }} else if (event.key === ' ' && field && field.type === 'bool') {{
           event.preventDefault();
           field.value = !field.value;
@@ -4232,20 +4960,92 @@ def _template_payload(template: NodeGraphTemplate) -> dict[str, object]:
     return payload
 
 
-def _edge_payload(edge: NodeGraphEdge) -> dict[str, object]:
+def _widget_target_payload(target: NodeGraphWidgetTarget) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "widget_id": target.id,
+        "id": target.id,
+        "label": target.label or target.id,
+        "widget_type": target.widget_type,
+        "supported_update_modes": list(target.supported_update_modes),
+        "default_update_mode": target.default_update_mode,
+        "supported_port_profiles": list(target.supported_port_profiles),
+        "default_port_profile": target.default_port_profile,
+        "supported_formats": list(target.supported_formats),
+    }
+    if target.data is not None:
+        payload["data"] = _json_copy(target.data, "widget target data")
+    return payload
+
+
+def _edge_payload(edge: NodeGraphEdge, nodes: Sequence[NodeGraphNode] = ()) -> dict[str, object]:
+    conversion = _edge_conversion(edge, nodes)
+    data = _edge_data(edge)
+    if conversion and "conversion" not in data:
+        data["conversion"] = conversion
+        data.setdefault("newline", True)
     payload = {
         "sourceNode": edge.source_node,
         "sourcePort": edge.source_port,
         "targetNode": edge.target_node,
         "targetPort": edge.target_port,
         "label": edge.label,
-        "color": edge.color,
+        "color": _edge_type_color(edge, nodes, edge.color),
     }
     if edge.id is not None:
         payload["id"] = edge.id
-    if edge.data is not None:
-        payload["data"] = _json_copy(edge.data, "edge custom data")
+    if data:
+        payload["data"] = data
     return payload
+
+
+def node_graph_port_type_color(port_type: object | None, fallback: str = "#43c6ac") -> str:
+    """Return the standard NodeGraph wire/socket color for a port data type."""
+
+    return _port_type_color(port_type, fallback)
+
+
+def _port_type_conversion(source_type: object | None, target_type: object | None) -> str | None:
+    if source_type is None or target_type is None:
+        return None
+    return _NODE_GRAPH_PORT_TYPE_CONVERSIONS.get((str(source_type), str(target_type)))
+
+
+def _edge_data(edge: NodeGraphEdge) -> dict[str, object]:
+    if edge.data is not None:
+        return _json_copy(edge.data, "edge data")
+    return {}
+
+
+def _edge_conversion(edge: NodeGraphEdge, nodes: Sequence[NodeGraphNode]) -> str | None:
+    data = _edge_data(edge)
+    configured = data.get("conversion")
+    if configured is not None and str(configured).strip():
+        return str(configured).strip()
+    source_node = next((candidate for candidate in nodes if candidate.id == edge.source_node), None)
+    target_node = next((candidate for candidate in nodes if candidate.id == edge.target_node), None)
+    if source_node is None or target_node is None:
+        return None
+    source_port = _port_by_id(source_node.outputs, edge.source_port)
+    target_port = _port_by_id(target_node.inputs, edge.target_port)
+    if source_port is None or target_port is None:
+        return None
+    return _port_type_conversion(source_port.port_type, target_port.port_type)
+
+
+def _port_type_color(port_type: object | None, fallback: str = "#43c6ac") -> str:
+    if port_type is None:
+        return fallback
+    return _NODE_GRAPH_PORT_TYPE_COLORS.get(str(port_type), fallback)
+
+
+def _edge_type_color(edge: NodeGraphEdge, nodes: Sequence[NodeGraphNode], fallback: str = "#43c6ac") -> str:
+    node = next((candidate for candidate in nodes if candidate.id == edge.source_node), None)
+    if node is None:
+        return fallback
+    port = _port_by_id(node.outputs, edge.source_port)
+    if port is None:
+        return fallback
+    return _port_type_color(port.port_type, fallback)
 
 
 def _port_payload(port: NodeGraphPort) -> dict[str, object]:
@@ -4304,16 +5104,21 @@ def _node_graph_data(node: NodeGraphNode) -> dict[str, object]:
     return payload
 
 
-def _edge_graph_data(edge: NodeGraphEdge, index: int) -> dict[str, object]:
+def _edge_graph_data(edge: NodeGraphEdge, index: int, nodes: Sequence[NodeGraphNode] = ()) -> dict[str, object]:
+    conversion = _edge_conversion(edge, nodes)
+    data = _edge_data(edge)
+    if conversion and "conversion" not in data:
+        data["conversion"] = conversion
+        data.setdefault("newline", True)
     payload: dict[str, object] = {
         "id": edge.id or f"edge-{index + 1}",
         "source": {"node": edge.source_node, "port": edge.source_port},
         "target": {"node": edge.target_node, "port": edge.target_port},
         "label": edge.label,
-        "color": edge.color,
+        "color": _edge_type_color(edge, nodes, edge.color),
     }
-    if edge.data is not None:
-        payload["data"] = edge.data
+    if data:
+        payload["data"] = data
     return payload
 
 
@@ -4605,8 +5410,8 @@ def multi_agent_node_templates() -> tuple[NodeGraphTemplate, ...]:
         NodeGraphTemplate(
             "widget_sink",
             "Widget Sink",
-            inputs=(NodeGraphPort("value", "value", port_type="json"),),
-            outputs=(NodeGraphPort("value", "value", port_type="json"),),
+            inputs=(NodeGraphPort("value", "text", port_type="text"),),
+            outputs=(NodeGraphPort("value", "text", port_type="text"),),
             subtitle="update GUI widget",
             status="watching",
             color="#2ac3de",
@@ -4624,6 +5429,13 @@ def multi_agent_node_templates() -> tuple[NodeGraphTemplate, ...]:
                         "default": "",
                     },
                     {
+                        "key": "port_profile",
+                        "label": "Port Profile",
+                        "type": "select",
+                        "options": list(_NODE_GRAPH_WIDGET_SINK_PORT_PROFILES),
+                        "default": "text",
+                    },
+                    {
                         "key": "update_mode",
                         "label": "Update",
                         "type": "select",
@@ -4634,7 +5446,7 @@ def multi_agent_node_templates() -> tuple[NodeGraphTemplate, ...]:
                         "key": "format",
                         "label": "Format",
                         "type": "select",
-                        "options": ["text", "json", "repr", "message_body"],
+                        "options": ["text", "terminal_text", "json", "repr", "message_body"],
                         "default": "text",
                     },
                 ],
@@ -4796,6 +5608,10 @@ _RUNTIME_OBJECT_REF_KEYS: tuple[tuple[str, str | None], ...] = (
     ("watcher_ref", "file_watcher"),
     ("recorder_ref", "transcript_recorder"),
 )
+_RUNTIME_SOURCE_NODE_TYPES = {
+    "text_input",
+}
+
 _RUNTIME_EXECUTABLE_NODE_TYPES = {
     "append_text",
     "extract_between_markers",
@@ -4817,6 +5633,19 @@ _WIDGET_SINK_SET_TYPES = {
 
 _WIDGET_SINK_APPEND_TYPES = {"log_view"}
 
+_ANSI_CONTROL_SEQUENCE_RE = re.compile(
+    r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[PX^_].*?\x1b\\|[@-Z\\-_])",
+    re.DOTALL,
+)
+_TERMINAL_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _terminal_display_text(value: object) -> str:
+    text = str(value)
+    text = _ANSI_CONTROL_SEQUENCE_RE.sub("", text)
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return _TERMINAL_CONTROL_CHAR_RE.sub("", text)
+
 
 def _widget_kind(widget: object) -> str:
     kind = getattr(widget, "kind", None)
@@ -4831,6 +5660,8 @@ def _widget_sink_text(value: object, value_format: str) -> str:
         return json.dumps(_json_safe_value(value), sort_keys=True)
     if mode == "repr":
         return repr(value)
+    if mode == "terminal_text":
+        return _terminal_display_text(value)
     if mode == "message_body" and isinstance(value, Mapping):
         body = value.get("body")
         if body is not None:
@@ -5001,7 +5832,15 @@ def _section_runtime_binding(section: NodeGraphSection, node_ids: Sequence[str])
     )
 
 
-def _edge_runtime_binding(edge: NodeGraphEdge, index: int) -> NodeGraphRuntimeEdgeBinding:
+def _convert_edge_value(edge: NodeGraphRuntimeEdgeBinding, value: object) -> object:
+    if edge.conversion == "text_to_terminal_input":
+        return "" if value is None else str(value)
+    return value
+
+
+def _edge_runtime_binding(edge: NodeGraphEdge, index: int, nodes: Sequence[NodeGraphNode] = ()) -> NodeGraphRuntimeEdgeBinding:
+    data = _edge_data(edge)
+    conversion = _edge_conversion(edge, nodes)
     return NodeGraphRuntimeEdgeBinding(
         edge_id=edge.id or f"edge-{index + 1}",
         source_node=edge.source_node,
@@ -5009,6 +5848,8 @@ def _edge_runtime_binding(edge: NodeGraphEdge, index: int) -> NodeGraphRuntimeEd
         target_node=edge.target_node,
         target_port=edge.target_port,
         label=edge.label,
+        conversion=conversion,
+        config=data or None,
     )
 
 
@@ -5384,8 +6225,14 @@ __all__ = [
     "NodeGraphRuntimeObjectRef",
     "NodeGraphSection",
     "NodeGraphTemplate",
+    "NodeGraphWidgetTarget",
     "multi_agent_node_templates",
+    "node_graph_port_type_color",
 ]
+
+
+
+
 
 
 

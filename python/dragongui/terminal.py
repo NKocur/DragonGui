@@ -1,7 +1,8 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import atexit
 import base64
+import codecs
 import hashlib
 from importlib import resources
 import json
@@ -116,6 +117,7 @@ class _SubprocessSession:
         merged_env = os.environ.copy()
         if env:
             merged_env.update({str(key): str(value) for key, value in env.items()})
+        self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         self.process = subprocess.Popen(
             command.argv,
             cwd=cwd,
@@ -130,7 +132,7 @@ class _SubprocessSession:
         if self.process.stdout is None:
             return ""
         data = self.process.stdout.read(4096)
-        return data.decode(errors="replace") if data else ""
+        return self._decoder.decode(data) if data else ""
 
     def write(self, data: str) -> None:
         if self.process.stdin is None:
@@ -554,7 +556,7 @@ class TerminalBridge:
         if opcode == 9:
             self._send_frame(client, data, opcode=10)
             return "{}"
-        return data.decode(errors="replace")
+        return data.decode("utf-8", errors="replace")
 
     def _recv_exact(self, client: socket.socket, size: int) -> bytes:
         data = b""
@@ -566,7 +568,7 @@ class TerminalBridge:
         return data
 
     def _send_text(self, client: socket.socket, text: str) -> None:
-        self._send_frame(client, text.encode(errors="replace"), opcode=1)
+        self._send_frame(client, text.encode("utf-8", errors="replace"), opcode=1)
 
     def _send_frame(self, client: socket.socket, payload: bytes, *, opcode: int = 1) -> None:
         header = bytearray([0x80 | opcode])
@@ -738,7 +740,9 @@ def _terminal_html(*, title: str, ws_url: str, xterm_version: str, cols: int, ro
         rows: config.rows,
         cursorBlink: true,
         convertEol: true,
-        fontFamily: 'Consolas, Courier New, monospace',
+        customGlyphs: true,
+        rescaleOverlappingGlyphs: true,
+        fontFamily: 'Cascadia Mono, Cascadia Code, Consolas, DejaVu Sans Mono, Noto Sans Mono, Segoe UI Symbol, Segoe UI Emoji, Apple Color Emoji, Noto Color Emoji, Courier New, monospace',
         fontSize: 15,
         letterSpacing: 0,
         scrollback: 5000,
