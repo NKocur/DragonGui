@@ -1,4 +1,4 @@
-"""NodeGraph editor probe.
+﻿"""NodeGraph editor probe.
 
 Exercises the canvas-backed node editor: templates, typed ports, validation,
 events, history, navigation, persistence, and the Python-side agent models.
@@ -333,6 +333,7 @@ reviewer_terminal_output_log: dg.LogView | None = None
 runtime_indicator: dg.LogView | None = None
 runtime_view_panel: dg.Panel | None = None
 runtime_prompt_input: dg.TextInput | None = None
+runtime_status_label: dg.Label | None = None
 selected_node_id: str | None = None
 runtime_session: dg.NodeGraphRuntimeSession | None = None
 runtime_terminal_id = "implementer-session"
@@ -422,6 +423,28 @@ def register_runtime_widget_targets() -> None:
         if target.widget is not None:
             runtime_session.register_widget(target.id, target.widget)
 
+
+
+def refresh_runtime_status() -> None:
+    if runtime_status_label is None:
+        return
+    if runtime_session is None:
+        if graph is not None:
+            runtime_status_label.text = graph.managed_runtime_status_text()
+        else:
+            runtime_status_label.text = "Runtime: idle"
+        return
+    last_event = runtime_session.events[-1].event if runtime_session.events else None
+    parts = [
+        "Runtime: active",
+        f"status {runtime_session.status}",
+        f"widgets {len(runtime_session.widget_ids())}",
+        f"handles {len(runtime_session.handles)}",
+        f"events {len(runtime_session.events)}",
+    ]
+    if last_event:
+        parts.append(f"last {last_event}")
+    runtime_status_label.text = " | ".join(parts)
 
 
 def run_runtime_smoke_action(action_id: str, command: str) -> object | None:
@@ -703,6 +726,7 @@ def create_runtime_session() -> None:
         "runtime session "
         f"valid={snapshot['valid']} objects={len(snapshot['objects'])} events={len(snapshot['events'])}"
     )
+    refresh_runtime_status()
     for obj in snapshot["objects"]:
         if isinstance(obj, dict):
             log(
@@ -871,6 +895,7 @@ def log_runtime_tail() -> None:
     tail = events[-4:] if isinstance(events, list) else []
     for event in tail:
         log(f"runtime event {json.dumps(event, sort_keys=True)}")
+    refresh_runtime_status()
 
 
 def render_runtime_view(node_id: str | None = None) -> None:
@@ -993,6 +1018,7 @@ with dg.HLayout(class_="root"):
             dg.Button("Text Flow Demo", on_click=run_text_flow_demo)
             dg.Button("Add Terminal Node", on_click=add_toolbar_node)
         dg.Label("Runtime Checks", class_="section")
+        runtime_status_label = dg.Label("Runtime: idle", class_="status")
         runtime_prompt_input = dg.TextInput(
             "echo DragonGUI prompt source",
             id="runtime-prompt-input",
@@ -1055,6 +1081,7 @@ with dg.HLayout(class_="root"):
         register_graph_widget_targets()
         register_graph_action_targets()
 
+refresh_runtime_status()
 refresh_state()
 
 if __name__ == "__main__":

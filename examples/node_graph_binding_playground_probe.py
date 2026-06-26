@@ -1,4 +1,4 @@
-"""Blank NodeGraph binding playground probe.
+﻿"""Blank NodeGraph binding playground probe.
 
 A small sandbox for testing the shared GUI binding registry without the larger
 runtime demo graph. Start with an empty node editor, add generic nodes from the
@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
 if __name__ == "__main__" and __package__ is None:
@@ -18,6 +19,13 @@ import dragongui as dg
 
 
 TEMPLATES = dg.multi_agent_node_templates()
+ACTION_SLOT_TARGETS = (
+    ("action-slot-a", "Action Slot A"),
+    ("action-slot-b", "Action Slot B"),
+    ("action-slot-c", "Action Slot C"),
+    ("action-slot-d", "Action Slot D"),
+)
+
 
 app = dg.App(theme=dg.Theme.dark(accent="#43c6ac", focus="#f8c14a", radius=7))
 app.stylesheet(
@@ -221,6 +229,55 @@ def run_selected_section_runtime() -> None:
     set_status(f"section {selected_section_id} ran with managed runtime")
 
 
+def section_action_config(section: dg.NodeGraphSection) -> tuple[str, str]:
+    data = section.data or {}
+    if not isinstance(data, Mapping):
+        return "", "run"
+    config = data.get("config")
+    source = config if isinstance(config, Mapping) else data
+    action_id = str(source.get("action_id", "") or "").strip()
+    command = str(source.get("section_command", "") or "run").strip() or "run"
+    return action_id, command
+
+
+def sections_for_action_target(action_id: str) -> tuple[dg.NodeGraphSection, ...]:
+    if graph is None:
+        return ()
+    target_id = str(action_id or "").strip()
+    return tuple(
+        section
+        for section in graph.sections
+        if section_action_config(section)[0] == target_id
+    )
+
+
+def run_action_slot(action_id: str, command: str | None = None) -> object:
+    if graph is None:
+        return {"action_id": action_id, "ran": 0}
+    sections = sections_for_action_target(action_id)
+    if not sections:
+        set_status(f"no sections assigned to {action_id}")
+        return {"action_id": action_id, "ran": 0}
+    events: list[str] = []
+    for section in sections:
+        _, section_command = section_action_config(section)
+        command_s = str(command or section_command or "run").strip() or "run"
+        try:
+            event = graph.run_section_runtime(section.id, command_s)
+        except Exception as exc:
+            log(f"action slot {action_id} section {section.id} failed: {exc}")
+            continue
+        events.append(event.event)
+        log(f"action slot {action_id} ran section {section.id} command={command_s} event={event.event}")
+    refresh_runtime_status()
+    set_status(f"{action_id} ran {len(events)} assigned section(s)")
+    return {"action_id": action_id, "ran": len(events), "events": events}
+
+
+def action_slot_callback(action_id: str, command: str) -> object:
+    return run_action_slot(action_id, command)
+
+
 def cleanup_runtime() -> None:
     if graph is None:
         return
@@ -402,6 +459,16 @@ def register_binding_targets() -> None:
             supported_commands=("run", "stop", "reset", "replay"),
             default_command="run",
         )
+    for action_id, label in ACTION_SLOT_TARGETS:
+        graph.register_binding_target(
+            action_id,
+            label=label,
+            target_type="button",
+            action_type="button",
+            callback=action_slot_callback,
+            supported_commands=("run", "stop", "reset", "replay"),
+            default_command="run",
+        )
     dump_bindings()
     refresh_runtime_status()
 
@@ -413,7 +480,6 @@ with dg.HLayout(class_="root"):
             selection_label = dg.Label("Selected: none", class_="status", style={"width": 180})
             counts_label = dg.Label("Graph: loading", class_="status", style={"width": 230})
             status_label = dg.Label("Ready", class_="status", style={"width": 330})
-            runtime_status_label = dg.Label("Runtime: idle", class_="status", style={"width": 440})
             dg.Tag("blank graph", level="neutral")
             dg.Tag("real GUI targets", level="success")
             dg.Tag("double-click to add", level="warning")
@@ -440,6 +506,8 @@ with dg.HLayout(class_="root"):
             "Terminal, or Section nodes. The Run buttons create/clean up runtime automatically.",
             class_="muted",
         )
+        dg.Label("Runtime Status", class_="section")
+        runtime_status_label = dg.Label("Runtime: idle", class_="status")
         dg.Label("Text Sources", class_="section")
         prompt_input = dg.TextInput(
             "echo hello from prompt input",
@@ -467,6 +535,10 @@ with dg.HLayout(class_="root"):
             dg.Button("Run Section", on_click=run_selected_section_runtime)
             dg.Button("Run Node", on_click=run_selected_node_runtime)
             dg.Button("Cleanup Runtime", on_click=cleanup_runtime)
+            dg.Button("Action Slot A", on_click=lambda: run_action_slot("action-slot-a"))
+            dg.Button("Action Slot B", on_click=lambda: run_action_slot("action-slot-b"))
+            dg.Button("Action Slot C", on_click=lambda: run_action_slot("action-slot-c"))
+            dg.Button("Action Slot D", on_click=lambda: run_action_slot("action-slot-d"))
             dg.Button("Run Selection", on_click=lambda: binding_action("run-selection-button", "run"))
             dg.Button("Send Prompt", on_click=lambda: binding_action("send-prompt-button", "run"))
             dg.Button("Append Samples", on_click=append_sample_outputs)

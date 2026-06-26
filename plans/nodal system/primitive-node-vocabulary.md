@@ -1,4 +1,4 @@
-# Primitive Node Vocabulary
+﻿# Primitive Node Vocabulary
 
 ## Purpose
 
@@ -1053,11 +1053,11 @@ Implemented runtime pieces:
 - Section action target and command dropdowns now use normalized select option labels, fixing object-backed options rendering as `[object Object]` in the inspector.
 - The probe now registers its prompt input, terminal output logs, parsed message log, event log, and section run button through the shared binding target API, so inspector dropdowns show real GUI components instead of separate hardcoded target systems.
 - First-pass shared GUI binding registry is implemented through `NodeGraphBindingTarget` and `register_binding_target(...)`; one target can expose widget metadata, action metadata, or both while keeping live widget handles/callbacks transient.
-- `node_graph_binding_playground_probe.py` adds a blank-editor binding playground with multiple text inputs, logs, and action buttons registered through the shared binding target API for manual wiring tests.
-- The binding playground probe now uses managed runtime run buttons, so manual testing no longer needs separate Create Runtime/Register Widgets controls.
+- `node_graph_binding_playground_probe.py` adds a blank-editor binding playground with multiple text inputs, logs, prewired demo buttons, and unassigned Action Slot buttons registered through the shared binding target API for manual wiring tests.
+- The binding playground probe now uses managed runtime run buttons, so manual testing no longer needs separate Create Runtime/Register Widgets controls. Its unassigned Action Slot buttons look up sections that selected the matching action target and run those section commands without requiring the section to be selected.
 - Runtime policy defaults to `auto`: stateless graphs use ephemeral sessions, while graphs declaring persistent runtime objects such as `terminal_session` keep the managed runtime alive until `cleanup_managed_runtime()` is called.
 - `NodeGraph` now has first-pass widget-managed runtime lifecycle helpers. `run_node_runtime(...)` and `run_section_runtime(...)` create a runtime session on demand, register live widget targets automatically, and clean up after stateless flows.
-- Managed runtime status is now surfaced through `managed_runtime_status()` / `managed_runtime_status_text()`, and the binding playground shows a live runtime status label plus cleanup control.
+- Managed runtime status is now surfaced through `managed_runtime_status()` / `managed_runtime_status_text()`, and both the binding playground and main editor probe show a live runtime status label plus cleanup controls where applicable.
 
 The implemented runtime pieces are intentionally non-destructive. They validate
 graph metadata, own transient live handles, and run local text/message
@@ -1489,7 +1489,7 @@ Future safe conversions may include:
 29. [x] Add assignable action targets plus section-level run, stop, reset, and replay commands. First-pass action target registration, section inspector dropdowns, `run_section_action()`, and runtime `run_section_command()` are implemented.
 30. [x] Add first-pass shared GUI binding target registration for widgets/actions. `NodeGraphBindingTarget` now fans out to widget/action inspector metadata, and the probe registers real GUI controls through it.
 31. [x] Add first-pass widget-managed runtime lifecycle. Managed node/section run helpers create runtime sessions on demand, auto-register GUI widgets, close stateless runs, and keep persistent terminal/session graphs alive.
-32. [x] Add first-pass managed runtime status indicator. `NodeGraph` exposes compact runtime status helpers, and the binding playground displays active/idle policy, widget, handle, and last-event state.
+32. [x] Add first-pass managed runtime status indicator. `NodeGraph` exposes compact runtime status helpers, and the binding playground plus main editor probe display active/idle policy, widget, handle, and last-event state.
 33. [ ] Save common role setups as section or subgraph templates, not as hard-coded primitive nodes.
 
 ## Open Questions
@@ -1504,5 +1504,7 @@ Future safe conversions may include:
 - Should runtime object IDs be globally unique across the whole graph or scoped by section?
 - Should runtime views be registered by node type, runtime object type, or explicit node `view_type`?
 - Should action targets bind directly to section commands, emit graph events, or both?
+
+
 
 
