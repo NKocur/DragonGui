@@ -19,12 +19,33 @@ import dragongui as dg
 
 
 TEMPLATES = dg.multi_agent_node_templates()
+ACTION_BUTTON_TARGETS = (
+    ("run-section-action-button", "Run Section Action Button"),
+    ("run-selection-button", "Run Selection Button"),
+    ("send-prompt-button", "Send Prompt Button"),
+    ("clear-logs-button", "Clear Logs Button"),
+    ("snapshot-button", "Snapshot Button"),
+)
+
 ACTION_SLOT_TARGETS = (
     ("action-slot-a", "Action Slot A"),
     ("action-slot-b", "Action Slot B"),
     ("action-slot-c", "Action Slot C"),
     ("action-slot-d", "Action Slot D"),
 )
+
+
+def initial_action_targets() -> tuple[dict[str, object], ...]:
+    return tuple(
+        {
+            "id": action_id,
+            "label": label,
+            "action_type": "button",
+            "supported_commands": ("run", "stop", "reset", "replay"),
+            "default_command": "run",
+        }
+        for action_id, label in (*ACTION_BUTTON_TARGETS, *ACTION_SLOT_TARGETS)
+    )
 
 
 app = dg.App(theme=dg.Theme.dark(accent="#43c6ac", focus="#f8c14a", radius=7))
@@ -114,6 +135,7 @@ main_output_log: dg.LogView | None = None
 review_output_log: dg.LogView | None = None
 message_log: dg.LogView | None = None
 event_log: dg.LogView | None = None
+action_slot_buttons: dict[str, dg.Button] = {}
 
 
 def log(line: object = "") -> None:
@@ -443,13 +465,7 @@ def register_binding_targets() -> None:
             default_port_profile="event",
             supported_formats=formats,
         )
-    for action_id, label in (
-        ("run-section-action-button", "Run Section Action Button"),
-        ("run-selection-button", "Run Selection Button"),
-        ("send-prompt-button", "Send Prompt Button"),
-        ("clear-logs-button", "Clear Logs Button"),
-        ("snapshot-button", "Snapshot Button"),
-    ):
+    for action_id, label in ACTION_BUTTON_TARGETS:
         graph.register_binding_target(
             action_id,
             label=label,
@@ -459,10 +475,11 @@ def register_binding_targets() -> None:
             supported_commands=("run", "stop", "reset", "replay"),
             default_command="run",
         )
-    for action_id, label in ACTION_SLOT_TARGETS:
+    for action_id, fallback_label in ACTION_SLOT_TARGETS:
+        button = action_slot_buttons.get(action_id)
         graph.register_binding_target(
             action_id,
-            label=label,
+            label=button.text if button is not None else fallback_label,
             target_type="button",
             action_type="button",
             callback=action_slot_callback,
@@ -488,6 +505,7 @@ with dg.HLayout(class_="root"):
             [],
             sections=[],
             templates=TEMPLATES,
+            action_targets=initial_action_targets(),
             on_graph_event=on_graph_event,
             on_node_select=on_select,
             on_node_move=on_move,
@@ -535,10 +553,10 @@ with dg.HLayout(class_="root"):
             dg.Button("Run Section", on_click=run_selected_section_runtime)
             dg.Button("Run Node", on_click=run_selected_node_runtime)
             dg.Button("Cleanup Runtime", on_click=cleanup_runtime)
-            dg.Button("Action Slot A", on_click=lambda: run_action_slot("action-slot-a"))
-            dg.Button("Action Slot B", on_click=lambda: run_action_slot("action-slot-b"))
-            dg.Button("Action Slot C", on_click=lambda: run_action_slot("action-slot-c"))
-            dg.Button("Action Slot D", on_click=lambda: run_action_slot("action-slot-d"))
+            action_slot_buttons["action-slot-a"] = dg.Button("Action Slot A", id="action-slot-a", on_click=lambda: run_action_slot("action-slot-a"))
+            action_slot_buttons["action-slot-b"] = dg.Button("Action Slot B", id="action-slot-b", on_click=lambda: run_action_slot("action-slot-b"))
+            action_slot_buttons["action-slot-c"] = dg.Button("Action Slot C", id="action-slot-c", on_click=lambda: run_action_slot("action-slot-c"))
+            action_slot_buttons["action-slot-d"] = dg.Button("Action Slot D", id="action-slot-d", on_click=lambda: run_action_slot("action-slot-d"))
             dg.Button("Run Selection", on_click=lambda: binding_action("run-selection-button", "run"))
             dg.Button("Send Prompt", on_click=lambda: binding_action("send-prompt-button", "run"))
             dg.Button("Append Samples", on_click=append_sample_outputs)

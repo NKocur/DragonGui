@@ -868,6 +868,36 @@ Section inspector behavior:
 - The editor should support freeform IDs for advanced/manual graph authoring,
   but the normal path should be dropdown-first.
 
+### Bindable Host Target Discovery
+
+The editor should eventually feel like it can discover compatible host GUI controls automatically, but the discovery boundary should be explicit rather than magical. It should not expose every button, text field, or log in the application by default. Instead, host widgets/actions should become visible to the node editor when they have a stable ID and are explicitly marked or registered as bindable.
+
+Desired model:
+
+```text
+real DragonGUI widget/action with stable id
+  -> bindable target metadata inferred or registered
+  -> NodeGraph inspector dropdowns update automatically
+  -> graph stores stable widget_id/action_id only
+  -> runtime receives transient live widget/callback handles from the host app
+```
+
+Future API direction:
+
+- Add an app/container-level bindable target collector that can scan marked DragonGUI widgets and actions near a `NodeGraph`.
+- Support an explicit opt-in flag or helper, such as `bindable=True`, `graph.bind_button(button)`, or `graph.bind_targets_from(container)`, instead of requiring users to duplicate metadata manually.
+- Keep graph documents portable by saving only IDs and config, never live widget objects, callbacks, terminal handles, or secrets.
+- Update inspector dropdown metadata after targets are registered, without requiring action/widget targets to be seeded into the `NodeGraph(...)` constructor.
+- Warn clearly when a saved graph references a target ID that the current host GUI did not provide.
+- Preserve advanced/manual freeform IDs for generated graphs and non-visual host integrations.
+
+Current probe status:
+
+- `node_graph_binding_playground_probe.py` uses real ID-backed Action Slot buttons and registers them as bindable action targets.
+- The probe still seeds action target metadata into `NodeGraph(...)` so the section inspector dropdown has choices immediately; this should become unnecessary once live target metadata refresh is implemented.
+- After the side panel exists, the probe registers callbacks from the actual button objects and clicking an Action Slot runs sections that selected that action target.
+
+
 Example GUI binding:
 
 ```text
@@ -1053,8 +1083,9 @@ Implemented runtime pieces:
 - Section action target and command dropdowns now use normalized select option labels, fixing object-backed options rendering as `[object Object]` in the inspector.
 - The probe now registers its prompt input, terminal output logs, parsed message log, event log, and section run button through the shared binding target API, so inspector dropdowns show real GUI components instead of separate hardcoded target systems.
 - First-pass shared GUI binding registry is implemented through `NodeGraphBindingTarget` and `register_binding_target(...)`; one target can expose widget metadata, action metadata, or both while keeping live widget handles/callbacks transient.
+- Binding target auto-discovery is documented as the desired next architecture: host controls should opt into being bindable, then the editor should refresh inspector dropdown metadata automatically instead of requiring duplicate constructor metadata.
 - `node_graph_binding_playground_probe.py` adds a blank-editor binding playground with multiple text inputs, logs, prewired demo buttons, and unassigned Action Slot buttons registered through the shared binding target API for manual wiring tests.
-- The binding playground probe now uses managed runtime run buttons, so manual testing no longer needs separate Create Runtime/Register Widgets controls. Its unassigned Action Slot buttons look up sections that selected the matching action target and run those section commands without requiring the section to be selected.
+- The binding playground probe now uses managed runtime run buttons, so manual testing no longer needs separate Create Runtime/Register Widgets controls. Its unassigned Action Slot buttons are real ID-backed DragonGUI buttons and are seeded into the NodeGraph constructor metadata so section inspector dropdowns show them immediately; after the side panel exists, live callbacks are registered from the actual button objects and look up sections that selected the matching action target without requiring the section to be selected.
 - Runtime policy defaults to `auto`: stateless graphs use ephemeral sessions, while graphs declaring persistent runtime objects such as `terminal_session` keep the managed runtime alive until `cleanup_managed_runtime()` is called.
 - `NodeGraph` now has first-pass widget-managed runtime lifecycle helpers. `run_node_runtime(...)` and `run_section_runtime(...)` create a runtime session on demand, register live widget targets automatically, and clean up after stateless flows.
 - Managed runtime status is now surfaced through `managed_runtime_status()` / `managed_runtime_status_text()`, and both the binding playground and main editor probe show a live runtime status label plus cleanup controls where applicable.
@@ -1490,7 +1521,8 @@ Future safe conversions may include:
 30. [x] Add first-pass shared GUI binding target registration for widgets/actions. `NodeGraphBindingTarget` now fans out to widget/action inspector metadata, and the probe registers real GUI controls through it.
 31. [x] Add first-pass widget-managed runtime lifecycle. Managed node/section run helpers create runtime sessions on demand, auto-register GUI widgets, close stateless runs, and keep persistent terminal/session graphs alive.
 32. [x] Add first-pass managed runtime status indicator. `NodeGraph` exposes compact runtime status helpers, and the binding playground plus main editor probe display active/idle policy, widget, handle, and last-event state.
-33. [ ] Save common role setups as section or subgraph templates, not as hard-coded primitive nodes.
+33. [ ] Add bindable host target discovery/refresh API so marked DragonGUI buttons, inputs, logs, and actions appear in NodeGraph inspector dropdowns without constructor metadata seeding.
+34. [ ] Save common role setups as section or subgraph templates, not as hard-coded primitive nodes.
 
 ## Open Questions
 
@@ -1504,6 +1536,9 @@ Future safe conversions may include:
 - Should runtime object IDs be globally unique across the whole graph or scoped by section?
 - Should runtime views be registered by node type, runtime object type, or explicit node `view_type`?
 - Should action targets bind directly to section commands, emit graph events, or both?
+- Should bindable target discovery be driven by explicit widget flags, container scanning, graph-local registration helpers, or a combination?
+
+
 
 
 
