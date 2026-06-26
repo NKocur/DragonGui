@@ -4164,6 +4164,7 @@ class LogView(Widget):
         self.wrap = bool(wrap)
         self.disabled = bool(disabled)
         self.lines = self._normalize_lines(lines)
+        self._stream_carriage_return = False
         self._trim()
         self.value = self._joined()
         super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
@@ -4198,14 +4199,44 @@ class LogView(Widget):
 
     def append_line(self, line: object = "") -> None:
         self.lines.extend(self._normalize_lines([line]))
+        self._stream_carriage_return = False
         self._sync_value()
 
     def append_lines(self, lines: Iterable[object]) -> None:
         self.lines.extend(self._normalize_lines(lines))
+        self._stream_carriage_return = False
         self._sync_value()
+
+    def append_text(self, text: object = "") -> None:
+        """Append stream text without forcing each chunk onto a new line."""
+
+        data = str(text)
+        if not data:
+            return
+        if not self.lines:
+            self.lines = [""]
+        for char in data:
+            if char == "\r":
+                self._stream_carriage_return = True
+                continue
+            if char == "\n":
+                self.lines.append("")
+                self._stream_carriage_return = False
+                continue
+            if self._stream_carriage_return:
+                self.lines[-1] = ""
+                self._stream_carriage_return = False
+            if char == "\b":
+                self.lines[-1] = self.lines[-1][:-1]
+            else:
+                self.lines[-1] += char
+        self._sync_value()
+
+    append_stream = append_text
 
     def clear(self) -> None:
         self.lines = []
+        self._stream_carriage_return = False
         self._sync_value()
 
     def props(self) -> dict[str, Any]:

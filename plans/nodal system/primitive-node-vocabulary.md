@@ -1015,6 +1015,7 @@ Implemented editor pieces:
 - Group movement for contained nodes.
 - Section movement events that include moved node positions.
 - Node and section metadata editing through the in-canvas property editor.
+- The in-canvas property editor and I-menu fields are canvas-drawn editors, not native DragonGUI `TextInput` widgets. They keep their own keyboard handling and explicitly refocus the graph canvas when a field or select popup is clicked.
 - Schema-driven custom property fields for primitive node templates.
 - Primitive palette templates for Terminal Session, Text Input, Append Text, Extract Between Markers, Envelope Parser, Message Router, Approval Gate, Log, and Probe.
 - Primitive templates now publish a `config_schema` with typed editable fields stored under node `data.config` when edited.
@@ -1038,8 +1039,10 @@ Implemented runtime pieces:
 - `NodeGraphRuntimeEdgeBinding` and runtime port-value storage propagate `terminal_stdout` values across connected graph edges.
 - Delivered runtime edge values can execute safe downstream primitive nodes (`parser`/`envelope_parser`, `message_router`, `log`, and `probe`) and emit their outputs back into the runtime event stream.
 - Widget Sink / UI Indicator nodes let graph values update registered DragonGUI widgets by stable widget ID without saving transient widget instances in graph data.
-- Assignable widget targets can be registered by host apps and selected from Widget Sink inspector dropdowns using friendly labels while saving portable widget IDs.
-- `node_graph_editor_probe.py` demonstrates terminal stdout assignment through a configured `Widget Sink` targeting the `Terminal Output` LogView, plus parsed message assignment through a second configured Widget Sink.
+- Widget Source nodes let graph values originate from registered DragonGUI widgets such as `TextInput`, `TextArea`, or `CodeEditor` by stable widget ID.
+- Assignable widget targets can be registered by host apps and selected from Widget Sink and Widget Source inspector dropdowns using friendly labels while saving portable widget IDs.
+- `node_graph_editor_probe.py` demonstrates terminal stdout assignment through configured `Widget Sink` nodes and GUI prompt input through a configured `Widget Source` targeting the `Runtime Prompt Input` TextInput.
+- The probe treats `Runtime Prompt Input` as an ordinary host GUI edit field registered by stable widget ID. The graph can read it through `Widget Source`, and the `Send GUI Prompt` control runs that source node to deliver the current GUI text to the Terminal Session path.
 - NodeGraph wire and socket colors are associated with port data types, so terminal output, messages, text, JSON, errors, artifacts, and control/status flows remain visually consistent across graphs.
 - Runtime sessions can run source nodes directly with `run_node()`, starting with `Text Input` emitting its configured text into the live graph.
 - Runtime sessions can run section-contained source nodes with `run_section()`, emitting a section summary event while keeping non-source nodes skipped rather than destructive.
@@ -1059,14 +1062,20 @@ To make sections executable, the runtime will need:
 - Section-level run, stop, reset, and replay commands.
 - GUI action binding to section commands.
 
-### Widget Sink / UI Indicator Binding
+### Widget Sink / Widget Source Binding
 
-Some graph nodes should drive ordinary DragonGUI widgets that already exist in
-the surrounding GUI. This is separate from runtime views: a runtime view is a
-detail surface for a selected node, while a widget sink is an output target that
-lets graph data update a stable widget ID anywhere in the app.
+Some graph nodes should connect ordinary DragonGUI widgets that already exist in
+the surrounding GUI to the graph runtime. This is separate from runtime views: a
+runtime view is a detail surface for a selected node, while widget binding is a
+portable connection between graph data and stable GUI widget IDs anywhere in the
+app.
 
-Binding chain:
+There are two directions:
+
+- `Widget Sink`: graph value -> existing GUI widget.
+- `Widget Source`: existing GUI widget value -> graph value.
+
+Widget Sink binding chain:
 
 ```text
 NodeGraph output port
@@ -1075,25 +1084,51 @@ NodeGraph output port
   -> existing DragonGUI widget instance
 ```
 
+Widget Source binding chain:
+
+```text
+Existing DragonGUI widget instance
+  -> NodeGraphRuntimeSession widget registry
+  -> Widget Source node output
+  -> connected graph input ports
+```
+
+### GUI Edit Fields And In-Canvas Edit Fields
+
+There are two different kinds of editable text involved:
+
+- Host GUI edit fields are real DragonGUI widgets such as `TextInput`, `TextArea`, and `CodeEditor`. These can be registered as assignable widget targets and selected by a `Widget Source` node. The graph stores the stable `widget_id`; the live app supplies the actual widget instance at runtime.
+- Node editor inspector fields, command-palette search text, and rename fields are drawn inside the `NodeGraph` canvas. They are not registered widget sources and do not become graph values directly. They exist to edit graph metadata, so they use the canvas keyboard/focus path and save changes back into graph data.
+
+Example host GUI field binding:
+
+```text
+TextInput(id="runtime-prompt-input")
+  -> Widget Source(widget_id="runtime-prompt-input", port_profile="text")
+  -> Terminal Session.stdin through text -> terminal_input conversion
+```
+
+This distinction matters for user expectations: typing in a normal GUI field should feel like a normal DragonGUI input and can feed the graph; typing in the I-menu/property editor changes node configuration.
+
 Required concepts:
 
 - Widget instances are transient runtime handles and must not be serialized into
   graph data.
 - Graph data stores only a stable `widget_id`, an expected `widget_type`, a
-  `port_profile`, an `update_mode`, and formatting hints.
+  `port_profile`, direction-specific options such as `update_mode`, and formatting hints.
 - The runtime session owns a widget registry populated by the application or
   probe before execution.
 - Safe first update modes should include `set`, `append`, and `state`.
 - Safe first widget targets should include `label`, `badge`, `log_view`,
   `text_input`, `text_area`, `code_editor`, and `led`.
 - The editor picker lists registered assignable widget targets and writes the
-  selected stable ID into the Widget Sink node config.
+  selected stable ID into Widget Sink or Widget Source node config.
 
 ### Assignable Widget Targets
 
 The editor should make widget binding feel like choosing a destination, not
 typing an implementation detail. A DragonGUI application can expose ordinary UI
-components as assignable graph targets, and Widget Sink / UI Indicator nodes can
+components as assignable graph targets, and Widget Sink / UI Indicator or Widget Source nodes can
 choose from those targets in the node inspector.
 
 Target registration should be app-owned and transient:
@@ -1127,16 +1162,16 @@ graph depend on the widget instance:
 
 Inspector behavior:
 
-- Widget Sink nodes should show a `Widget` dropdown in the node inspector / info
+- Widget Sink and Widget Source nodes should show a `Widget` dropdown in the node inspector / info
   menu.
 - The dropdown should list registered targets with friendly labels, while still
   saving only the stable `widget_id`.
 - Choosing a target should fill `widget_id` and `widget_type` together.
 - Update mode options should be filtered or ranked by the selected widget type.
-- Port profile options should describe the incoming graph value type and can be
-  suggested by the selected widget target.
-- Format options should remain explicit because they describe how the incoming
-  graph value should be rendered, not the target widget itself.
+- Port profile options should describe the incoming graph value type for sinks
+  and the outgoing graph value type for sources, and can be suggested by the selected widget target.
+- Format options should remain explicit because they describe how graph values
+  are rendered into widgets or how widget values are read into graph values.
 - Missing, unregistered, or type-mismatched targets should be shown as warnings
   in the inspector and should also emit runtime validation/update events.
 - The editor should support freeform IDs for advanced/manual graph authoring,
@@ -1166,7 +1201,7 @@ Saved graph data should continue to store only portable assignment metadata:
 ```
 
 This keeps the graph reusable across apps while allowing each host GUI to decide
-which live components are available as display targets.
+which live components are available as display targets or input sources.
 
 ### Configurable Port Profiles
 
@@ -1175,18 +1210,18 @@ which data type they accept or emit. This avoids creating special-purpose menu
 nodes such as `Terminal Output Display`, `Message Display`, or `JSON Display`
 when those are really configured versions of the same primitive.
 
-The first target is `Widget Sink`:
+The first targets are `Widget Sink` and `Widget Source`:
 
-- The add-node menu should expose one generic `Widget Sink` primitive.
-- The inspector should provide an `Accepted Value Type` or `Port Profile`
+- The add-node menu should expose one generic `Widget Sink` primitive and one generic `Widget Source` primitive.
+- The inspector should provide an `Accepted Value Type`, `Emitted Value Type`, or `Port Profile`
   dropdown with options such as `text`, `terminal_output`, `message`, `json`,
-  `artifact`, `status`, and `error`.
+  `artifact`, `status`, and `error` where compatible.
 - Choosing a profile should update the visible input/output pin labels, port
   types, socket colors, wire compatibility, and default formatting hints.
 - Choosing a registered widget target can suggest a profile, but the graph should
   still save the explicit profile so it remains portable.
-- The node should remain `node_type="widget_sink"`; graph data should not grow
-  new hard-coded node types for every display target.
+- The nodes should remain `node_type="widget_sink"` or `node_type="widget_source"`; graph data should not grow
+  new hard-coded node types for every display target or input source.
 
 Example saved config:
 
@@ -1438,9 +1473,11 @@ Future safe conversions may include:
 23. [x] Add assignable widget target registration and inspector dropdown support for Widget Sink node config.
 24. [x] Add adaptive conversion edges, starting with `text -> terminal_input`.
 25. [x] Add configurable port/type profiles for generic primitives, starting with Widget Sink accepted value type.
-26. [x] Add edge routing waypoints so complex graphs can organize traces without adding functional nodes.
-27. [ ] Add assignable action targets plus section-level run, stop, reset, and replay commands. `run_node()` and first-pass `run_section()` are now implemented; action target registration and stop/reset/replay commands remain.
-28. [ ] Save common role setups as section or subgraph templates, not as hard-coded primitive nodes.
+26. [x] Add Widget Source nodes so registered GUI edit fields can emit graph values without Python code changes. The probe demonstrates a real `TextInput` host widget feeding a Terminal Session path by stable widget ID.
+27. [x] Keep canvas-drawn node editor fields documented separately from real GUI edit fields; property/I-menu fields edit graph metadata and maintain their own canvas focus handling.
+28. [x] Add edge routing waypoints so complex graphs can organize traces without adding functional nodes.
+29. [ ] Add assignable action targets plus section-level run, stop, reset, and replay commands. `run_node()` and first-pass `run_section()` are now implemented; action target registration and stop/reset/replay commands remain.
+30. [ ] Save common role setups as section or subgraph templates, not as hard-coded primitive nodes.
 
 ## Open Questions
 
@@ -1454,6 +1491,5 @@ Future safe conversions may include:
 - Should runtime object IDs be globally unique across the whole graph or scoped by section?
 - Should runtime views be registered by node type, runtime object type, or explicit node `view_type`?
 - Should action targets bind directly to section commands, emit graph events, or both?
-
 
 

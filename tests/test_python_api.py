@@ -2313,6 +2313,23 @@ def test_log_view_append_trim_clear_and_live_updates() -> None:
     ]
 
 
+def test_log_view_append_text_handles_terminal_stream_chunks() -> None:
+    log = dg.LogView([], parent=None)
+
+    for char in "codex":
+        log.append_text(char)
+    assert log.lines == ["codex"]
+
+    log.append_text("\r\nready")
+    assert log.lines == ["codex", "ready"]
+
+    log.append_text("\rbusy")
+    assert log.lines == ["codex", "busy"]
+
+    log.append_text("!\b.")
+    assert log.lines == ["codex", "busy."]
+
+
 def test_scatter_colormap_serializes_and_live_update_reuploads_points(monkeypatch) -> None:
     class Sender:
         def __init__(self) -> None:
@@ -4427,6 +4444,7 @@ def test_change_callback_wrappers_update_python_handles() -> None:
     )
 
     _, change_cbs = _collect_runtime_callbacks(win)
+
 
     change_cbs[checkbox.id](True)
     change_cbs[toggle.id](True)
@@ -9071,8 +9089,8 @@ def test_terminal_widget_serializes_as_html_report() -> None:
         assert "xterm" in props["html"]
         assert "Cascadia Mono" in props["html"]
         assert "Segoe UI Emoji" in props["html"]
-        assert "customGlyphs: true" in props["html"]
-        assert "rescaleOverlappingGlyphs: true" in props["html"]
+        assert "customGlyphs: false" in props["html"]
+        assert "rescaleOverlappingGlyphs: false" in props["html"]
         assert "cdn.jsdelivr" not in props["html"]
         assert "ws://127.0.0.1:" in props["html"]
         assert terminal.bridge.url.startswith("ws://127.0.0.1:")
@@ -9949,6 +9967,49 @@ def test_node_graph_runtime_session_executes_parser_and_log_from_edge_values() -
     assert snapshot["port_values"]["log.value"][0]["id"] == "live-1"
 
 
+def test_node_graph_runtime_session_widget_sink_streams_terminal_chunks_to_log_view() -> None:
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "terminal-owner",
+                "title": "Terminal",
+                "outputs": [dg.NodeGraphPort("stdout", "stdout", port_type="terminal_output")],
+                "data": {
+                    "node_type": "terminal",
+                    "runtime_object": "terminal_session",
+                    "config": {"session_id": "shell-1", "command": "cmd.exe"},
+                },
+            },
+            {
+                "id": "indicator",
+                "title": "Indicator",
+                "inputs": [dg.NodeGraphPort("value", "value", port_type="terminal_output")],
+                "data": {
+                    "node_type": "widget_sink",
+                    "config": {
+                        "widget_id": "runtime-indicator",
+                        "widget_type": "log_view",
+                        "port_profile": "terminal_output",
+                        "update_mode": "append",
+                        "format": "text",
+                    },
+                },
+            },
+        ],
+        [dg.NodeGraphEdge("terminal-owner", "stdout", "indicator", "value", id="edge-terminal-widget")],
+        parent=None,
+    )
+    session = graph.runtime_session(session_id="runtime-widget-sink-stream")
+    log_view = dg.LogView([], id="runtime-indicator", parent=None)
+    session.register_widget(log_view)
+
+    for char in "abc":
+        session.apply_terminal_event("shell-1", {"event": "output", "data": char})
+    session.apply_terminal_event("shell-1", {"event": "output", "data": "\r\nnext"})
+
+    assert log_view.lines == ["abc", "next"]
+
+
 def test_node_graph_edges_use_source_port_type_colors() -> None:
     graph = dg.NodeGraph(
         [
@@ -10060,7 +10121,19 @@ def test_node_graph_widget_sink_template_exposes_port_profile_schema() -> None:
     assert "terminal_output" in graph.html
     assert "widgetSinkPortProfiles" in graph.html
 
+def test_node_graph_widget_source_template_exposes_port_profile_schema() -> None:
+    graph = dg.NodeGraph([], templates=dg.multi_agent_node_templates(), parent=None)
 
+    template = next(template for template in graph.templates if template.id == "widget_source")
+    field_keys = [field["key"] for field in template.data["config_schema"]["fields"]]
+
+    assert template.inputs == ()
+    assert template.outputs[0].id == "value"
+    assert template.outputs[0].label == "text"
+    assert template.outputs[0].port_type == "text"
+    assert "widget_id" in field_keys
+    assert "port_profile" in field_keys
+    assert "widgetSourcePortProfiles" in graph.html
 def test_node_graph_node_update_can_persist_profile_shaped_widget_sink_ports() -> None:
     graph = dg.NodeGraph(
         [
@@ -10105,6 +10178,48 @@ def test_node_graph_node_update_can_persist_profile_shaped_widget_sink_ports() -
     assert node["inputs"][0]["port_type"] == "terminal_output"
     assert node["outputs"][0]["port_type"] == "terminal_output"
 
+def test_node_graph_node_update_can_persist_profile_shaped_widget_source_ports() -> None:
+    graph = dg.NodeGraph(
+        [
+            dg.NodeGraphNode(
+                "source",
+                "Widget Source",
+                0,
+                0,
+                outputs=(dg.NodeGraphPort("value", "text", port_type="text"),),
+                data={"node_type": "widget_source", "template_id": "widget_source"},
+            )
+        ],
+        parent=None,
+    )
+    _, change_cbs = _collect_runtime_callbacks(graph)
+    emit = change_cbs[graph.id]
+
+    emit(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "event": "node_updated",
+                "node": "source",
+                "updates": {
+                    "data": {
+                        "node_type": "widget_source",
+                        "template_id": "widget_source",
+                        "config": {"port_profile": "json"},
+                    },
+                    "inputs": [],
+                    "outputs": [{"id": "value", "label": "json", "port_type": "json"}],
+                },
+            }
+        )
+    )
+
+    node = graph.to_graph_data()["nodes"][0]
+    assert node["data"]["config"]["port_profile"] == "json"
+    assert node["inputs"] == []
+    assert node["outputs"][0]["id"] == "value"
+    assert node["outputs"][0]["label"] == "json"
+    assert node["outputs"][0]["port_type"] == "json"
 def test_node_graph_runtime_session_widget_sink_updates_registered_log_view() -> None:
     graph = dg.NodeGraph(
         [
@@ -10145,7 +10260,7 @@ def test_node_graph_runtime_session_widget_sink_updates_registered_log_view() ->
     output = "\x1b[5;18H\x1b[0;13Hready\x1b[0m\r\n"
     session.apply_terminal_event("shell-1", {"event": "output", "data": output, "timestamp": 45.0})
 
-    assert log_view.lines == ["ready"]
+    assert log_view.lines == ["ready", ""]
     assert session.port_values("indicator", "value") == [output, output]
     assert session.snapshot()["widgets"] == [{"widget_id": "runtime-indicator", "widget_type": "log_view"}]
     event_names = [event.event for event in session.events]
@@ -10220,7 +10335,46 @@ def test_node_graph_runtime_session_widget_sink_reports_missing_widget() -> None
     assert failed[-1].data["widget_id"] == "missing-widget"
     assert failed[-1].data["reason"] == "widget is not registered"
 
+def test_node_graph_runtime_session_widget_source_reads_registered_text_input() -> None:
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "prompt",
+                "title": "Prompt Source",
+                "outputs": [dg.NodeGraphPort("value", "text", port_type="text")],
+                "data": {
+                    "node_type": "widget_source",
+                    "config": {
+                        "widget_id": "prompt-field",
+                        "widget_type": "text_input",
+                        "port_profile": "text",
+                        "format": "text",
+                    },
+                },
+            },
+            {
+                "id": "log",
+                "title": "Log",
+                "inputs": [dg.NodeGraphPort("value", "value", port_type="json")],
+                "outputs": [dg.NodeGraphPort("value", "value", port_type="json")],
+                "data": {"node_type": "log"},
+            },
+        ],
+        [dg.NodeGraphEdge("prompt", "value", "log", "value", id="edge-prompt-log")],
+        parent=None,
+    )
+    session = graph.runtime_session(session_id="runtime-widget-source")
+    prompt = dg.TextInput("echo from GUI field", id="prompt-field", parent=None)
+    session.register_widget(prompt)
 
+    session.run_node("prompt")
+
+    assert session.port_values("prompt", "value") == ["echo from GUI field"]
+    assert session.port_values("log", "value") == ["echo from GUI field", "echo from GUI field"]
+    event_names = [event.event for event in session.events]
+    assert "widget_read" in event_names
+    assert "node_output" in event_names
+    assert session.snapshot()["widgets"] == [{"widget_id": "prompt-field", "widget_type": "text_input"}]
 def test_node_graph_runtime_session_terminal_commands_use_attached_handle() -> None:
     graph = dg.NodeGraph(
         [
@@ -11191,6 +11345,8 @@ def test_node_graph_multi_agent_templates_serialize_and_round_trip() -> None:
         "approval_gate",
         "log",
         "probe",
+        "widget_sink",
+        "widget_source",
         "agent",
         "parser",
         "tester",

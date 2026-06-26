@@ -1,4 +1,4 @@
-﻿"""NodeGraph editor probe.
+"""NodeGraph editor probe.
 
 Exercises the canvas-backed node editor: templates, typed ports, validation,
 events, history, navigation, persistence, and the Python-side agent models.
@@ -45,6 +45,24 @@ NODES = [
             "text_input",
             text="echo DragonGUI runtime probe",
             output_mode="manual",
+        ),
+    ),
+    dg.NodeGraphNode(
+        "gui_prompt_source",
+        "GUI Prompt Source",
+        -270,
+        205,
+        outputs=(dg.NodeGraphPort("value", "text", port_type="text"),),
+        subtitle="GUI field -> terminal stdin",
+        status="ready",
+        color="#7aa2f7",
+        width=230,
+        data=template_data(
+            "widget_source",
+            widget_id="runtime-prompt-input",
+            widget_type="text_input",
+            port_profile="text",
+            format="text",
         ),
     ),
     dg.NodeGraphNode(
@@ -164,6 +182,15 @@ EDGES = [
         id="edge-text-terminal-stdin",
     ),
     dg.NodeGraphEdge(
+        "gui_prompt_source",
+        "value",
+        "implementer_terminal",
+        "stdin",
+        label="GUI prompt -> terminal stdin",
+        color=dg.node_graph_port_type_color("text"),
+        id="edge-gui-prompt-terminal-stdin",
+    ),
+    dg.NodeGraphEdge(
         "implementer_terminal",
         "stdout",
         "parser",
@@ -172,6 +199,7 @@ EDGES = [
         color=dg.node_graph_port_type_color("terminal_output"),
         id="edge-terminal-parser",
     ),
+
     dg.NodeGraphEdge(
         "implementer_terminal",
         "stdout",
@@ -298,6 +326,7 @@ terminal_output_log: dg.LogView | None = None
 reviewer_terminal_output_log: dg.LogView | None = None
 runtime_indicator: dg.LogView | None = None
 runtime_view_panel: dg.Panel | None = None
+runtime_prompt_input: dg.TextInput | None = None
 selected_node_id: str | None = None
 runtime_session: dg.NodeGraphRuntimeSession | None = None
 runtime_terminal_id = "implementer-session"
@@ -306,6 +335,12 @@ runtime_view_signature: tuple[object, ...] | None = None
 def log(line: object = "") -> None:
     if event_log is not None:
         event_log.append_line(line)
+
+
+
+def sync_runtime_prompt_input(value: str) -> None:
+    # The runtime callback wrapper has already mirrored the native value onto the widget.
+    _ = value
 
 
 def register_graph_widget_targets() -> None:
@@ -347,6 +382,18 @@ def register_graph_widget_targets() -> None:
             supported_port_profiles=("message", "json", "text"),
             default_port_profile="message",
             supported_formats=formats,
+        )
+    if runtime_prompt_input is not None:
+        graph.register_widget_target(
+            id="runtime-prompt-input",
+            label="Runtime Prompt Input",
+            widget_type="text_input",
+            widget=runtime_prompt_input,
+            supported_update_modes=("set",),
+            default_update_mode="set",
+            supported_port_profiles=("text",),
+            default_port_profile="text",
+            supported_formats=("text", "json", "repr", "raw"),
         )
     if event_log is not None:
         graph.register_widget_target(
@@ -668,6 +715,30 @@ def send_runtime_input() -> None:
     else:
         log("terminal input source ran; no terminal conversion result recorded")
     log_runtime_tail()
+
+def send_runtime_prompt_input() -> None:
+    if runtime_session is None:
+        log("runtime GUI prompt skipped: create/attach runtime first")
+        return
+    before_sequence = runtime_session.events[-1].sequence if runtime_session.events else 0
+    runtime_session.run_node("gui_prompt_source")
+    new_events = [event for event in runtime_session.events if event.sequence > before_sequence]
+    outputs = runtime_session.port_values("gui_prompt_source", "value")
+    reads = [event for event in new_events if event.event == "widget_read"]
+    skipped = [event for event in new_events if event.event == "node_run_skipped"]
+    failures = [event for event in new_events if event.event in {"widget_read_failed", "edge_conversion_failed"}]
+    applied = [event for event in new_events if event.event == "edge_conversion_applied"]
+    if reads and outputs:
+        log(f"GUI prompt source read: {outputs[-1]!r}")
+    if skipped:
+        log(f"GUI prompt source skipped: {skipped[-1].data.get('reason') if skipped[-1].data else 'unknown'}")
+    elif failures:
+        log(f"GUI prompt delivery blocked: {failures[-1].data.get('reason') if failures[-1].data else 'unknown'}")
+    elif applied:
+        log(f"GUI prompt delivered via graph edge={applied[-1].data.get('delivered') if applied[-1].data else None}")
+    else:
+        log("GUI prompt source ran; no terminal conversion result recorded")
+    log_runtime_tail()
 def inject_runtime_plain_output() -> None:
     if runtime_session is None:
         log("runtime plain output skipped: create/attach runtime first")
@@ -708,10 +779,10 @@ def inject_runtime_envelope() -> None:
 def clear_runtime_indicator() -> None:
     if terminal_output_log is not None:
         terminal_output_log.clear()
-        terminal_output_log.append_line("Terminal output sink idle.")
+        terminal_output_log.append_line("")
     if reviewer_terminal_output_log is not None:
         reviewer_terminal_output_log.clear()
-        reviewer_terminal_output_log.append_line("Reviewer terminal output sink idle.")
+        reviewer_terminal_output_log.append_line("")
     if runtime_indicator is not None:
         runtime_indicator.clear()
         runtime_indicator.append_line("Parsed message sink idle.")
@@ -876,11 +947,19 @@ with dg.HLayout(class_="root"):
             dg.Button("Text Flow Demo", on_click=run_text_flow_demo)
             dg.Button("Add Terminal Node", on_click=add_toolbar_node)
         dg.Label("Runtime Checks", class_="section")
+        runtime_prompt_input = dg.TextInput(
+            "echo DragonGUI prompt source",
+            id="runtime-prompt-input",
+            placeholder="Command text from GUI field...",
+            on_change=sync_runtime_prompt_input,
+            style={"width": "100%", "height": 34, "flex_shrink": 0},
+        )
         with dg.FlowLayout(gap=6, row_gap=6):
             dg.Button("Runtime Session", on_click=create_runtime_session)
             dg.Button("Attach Terminal", on_click=attach_runtime_terminal)
             dg.Button("Start Terminal", on_click=start_runtime_terminal)
             dg.Button("Send Input", on_click=send_runtime_input)
+            dg.Button("Send GUI Prompt", on_click=send_runtime_prompt_input)
             dg.Button("Inject Plain", on_click=inject_runtime_plain_output)
             dg.Button("Inject Envelope", on_click=inject_runtime_envelope)
             dg.Button("Clear Indicator", on_click=clear_runtime_indicator)
@@ -892,19 +971,19 @@ with dg.HLayout(class_="root"):
             dg.Label("Click Runtime Session, then Attach Terminal.", class_="muted")
         dg.Label("Terminal Output", class_="section")
         terminal_output_log = dg.LogView(
-            ["Terminal output sink idle."],
+            [],
             id="terminal-output-log",
             follow=True,
             rows=4,
-            wrap=True,
+            wrap=False,
         )
         dg.Label("Reviewer Terminal Output", class_="section")
         reviewer_terminal_output_log = dg.LogView(
-            ["Reviewer terminal output sink idle."],
+            [],
             id="reviewer-terminal-output-log",
             follow=True,
             rows=4,
-            wrap=True,
+            wrap=False,
         )
         dg.Label("Parsed Message Log", class_="section")
         runtime_indicator = dg.LogView(

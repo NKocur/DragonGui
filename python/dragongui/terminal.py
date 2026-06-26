@@ -384,9 +384,7 @@ class TerminalBridge:
         try:
             self._handshake(client)
             self._wait_for_initial_resize(client)
-            self._send_text(client, f"\x1b[2m[DragonGUI terminal bridge connected: {self.command.label}]\x1b[0m\r\n")
             session = self._spawn_session()
-            self._send_text(client, f"\x1b[2m[{self.status}]\x1b[0m\r\n")
             output_done = threading.Event()
             output_thread = threading.Thread(
                 target=self._pump_output,
@@ -739,9 +737,9 @@ def _terminal_html(*, title: str, ws_url: str, xterm_version: str, cols: int, ro
         cols: config.cols,
         rows: config.rows,
         cursorBlink: true,
-        convertEol: true,
-        customGlyphs: true,
-        rescaleOverlappingGlyphs: true,
+        convertEol: false,
+        customGlyphs: false,
+        rescaleOverlappingGlyphs: false,
         fontFamily: 'Cascadia Mono, Cascadia Code, Consolas, DejaVu Sans Mono, Noto Sans Mono, Segoe UI Symbol, Segoe UI Emoji, Apple Color Emoji, Noto Color Emoji, Courier New, monospace',
         fontSize: 15,
         letterSpacing: 0,
@@ -752,59 +750,54 @@ def _terminal_html(*, title: str, ws_url: str, xterm_version: str, cols: int, ro
       term.loadAddon(fit);
       term.open(host);
       let socket = null;
-      function syncRenderSurface() {{
-        const dimensions = term._core && term._core._renderService && term._core._renderService.dimensions;
-        if (!dimensions || !dimensions.css || !dimensions.css.canvas) {{
-          return;
-        }}
-        const width = dimensions.css.canvas.width + 'px';
-        const height = dimensions.css.canvas.height + 'px';
-        const screen = host.querySelector('.xterm-screen');
-        if (screen) {{
-          screen.style.width = width;
-          screen.style.height = height;
-        }}
-        for (const canvas of host.querySelectorAll('.xterm-screen canvas')) {{
-          canvas.style.width = width;
-          canvas.style.height = height;
-        }}
-      }}
       function fitAndNotify() {{
         fit.fit();
-        syncRenderSurface();
         if (socket && socket.readyState === WebSocket.OPEN) {{
           socket.send(JSON.stringify({{ type: 'resize', cols: term.cols, rows: term.rows }}));
         }}
       }}
-      requestAnimationFrame(() => requestAnimationFrame(() => {{
+      function refreshRenderSurface() {{
         fitAndNotify();
+        if (typeof term.clearTextureAtlas === 'function') {{
+          term.clearTextureAtlas();
+        }}
+        term.refresh(0, Math.max(term.rows - 1, 0));
+      }}
+      function scheduleRenderRefresh(delay = 0) {{
+        setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(() => {{
+          refreshRenderSurface();
+          term.focus();
+        }})), delay);
+      }}
+      requestAnimationFrame(() => requestAnimationFrame(() => {{
+        refreshRenderSurface();
         term.focus();
       }}));
 
       socket = new WebSocket(config.wsUrl);
       socket.addEventListener('open', () => {{
-        fitAndNotify();
-        term.writeln('\x1b[2m[connected to DragonGUI terminal bridge]\x1b[0m');
+        refreshRenderSurface();
+        scheduleRenderRefresh(0);
       }});
-      let sawFirstOutput = false;
-      function refreshAfterStartupOutput() {{
-        requestAnimationFrame(() => requestAnimationFrame(() => {{
-          fitAndNotify();
-          term.refresh(0, Math.max(term.rows - 1, 0));
-          term.focus();
-        }}));
-      }}
+      let startupRefreshes = 0;
+      let inputSurfacePrimed = false;
       socket.addEventListener('message', (event) => {{
         term.write(event.data, () => {{
-          if (!sawFirstOutput) {{
-            sawFirstOutput = true;
-            setTimeout(refreshAfterStartupOutput, 100);
+          if (startupRefreshes < 10) {{
+            startupRefreshes += 1;
+            scheduleRenderRefresh(25);
+            scheduleRenderRefresh(125);
           }}
         }});
       }});
-      socket.addEventListener('close', () => term.writeln('\\r\\n[terminal bridge closed]'));
-      socket.addEventListener('error', () => term.writeln('\\r\\n[terminal bridge connection failed]'));
+      socket.addEventListener('close', () => term.write('\\r\\n[terminal bridge closed]\\r\\n'));
+      socket.addEventListener('error', () => term.write('\\r\\n[terminal bridge connection failed]\\r\\n'));
       term.onData((data) => {{
+        if (!inputSurfacePrimed) {{
+          inputSurfacePrimed = true;
+          refreshRenderSurface();
+          scheduleRenderRefresh(50);
+        }}
         if (socket.readyState === WebSocket.OPEN) {{
           socket.send(JSON.stringify({{ type: 'input', data }}));
         }}

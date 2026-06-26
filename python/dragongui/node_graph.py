@@ -35,6 +35,7 @@ _NODE_GRAPH_PORT_TYPE_CONVERSIONS: dict[tuple[str, str], str] = {
 }
 
 _NODE_GRAPH_WIDGET_SINK_PORT_PROFILES: tuple[str, ...] = ("text", "terminal_output", "message", "json", "artifact", "status", "error")
+_NODE_GRAPH_WIDGET_SOURCE_PORT_PROFILES: tuple[str, ...] = ("text", "json", "status", "message", "artifact")
 
 _NODE_GRAPH_PORT_TYPE_COLORS: dict[str, str] = {
     "terminal_input": "#4fd6be",
@@ -870,7 +871,11 @@ class NodeGraphRuntimeSession:
         log: list[dict[str, object]] = []
         self._execution_depth += 1
         try:
-            outputs = _execute_flow_node(node, {}, self._parser_state, log)
+            if binding.node_type == "widget_source":
+                outputs, source_log = self._read_widget_source(binding, timestamp=timestamp)
+                log.extend(source_log)
+            else:
+                outputs = _execute_flow_node(node, {}, self._parser_state, log)
         finally:
             self._execution_depth -= 1
         executed = self.emit_event(
@@ -1094,6 +1099,61 @@ class NodeGraphRuntimeSession:
         self.emit_event("widget_updated", node_id=binding.node_id, data=result, timestamp=timestamp)
         return [result]
 
+    def _read_widget_source(
+        self, binding: NodeGraphNodeBinding, *, timestamp: float | None = None
+    ) -> tuple[dict[str, list[object]], list[dict[str, object]]]:
+        config = binding.config or {}
+        widget_id = str(config.get("widget_id", "")).strip()
+        widget_type = str(config.get("widget_type", "")).strip()
+        value_format = str(config.get("format", "") or "text").strip()
+        port_profile = str(config.get("port_profile", "") or "text").strip()
+        if not widget_id:
+            result = {"ok": False, "reason": "widget_id is required"}
+            self.emit_event("widget_read_failed", node_id=binding.node_id, data=result, timestamp=timestamp)
+            return {}, [result]
+        widget = self.widget_handle(widget_id)
+        if widget is None:
+            result = {"ok": False, "widget_id": widget_id, "reason": "widget is not registered"}
+            self.emit_event("widget_read_failed", node_id=binding.node_id, data=result, timestamp=timestamp)
+            return {}, [result]
+        actual_type = _widget_kind(widget)
+        if widget_type and widget_type != actual_type:
+            result = {
+                "ok": False,
+                "widget_id": widget_id,
+                "widget_type": actual_type,
+                "expected_widget_type": widget_type,
+                "reason": "registered widget type does not match node config",
+            }
+            self.emit_event("widget_read_failed", node_id=binding.node_id, data=result, timestamp=timestamp)
+            return {}, [result]
+        try:
+            value = _widget_source_value(widget, value_format)
+        except Exception as exc:
+            result = {
+                "ok": False,
+                "widget_id": widget_id,
+                "widget_type": actual_type,
+                "format": value_format,
+                "reason": str(exc),
+            }
+            self.emit_event("widget_read_failed", node_id=binding.node_id, data=result, timestamp=timestamp)
+            return {}, [result]
+        result = {
+            "ok": True,
+            "widget_id": widget_id,
+            "widget_type": actual_type,
+            "format": value_format,
+            "port_profile": port_profile,
+        }
+        self.emit_event(
+            "widget_read",
+            node_id=binding.node_id,
+            value=value,
+            data=result,
+            timestamp=timestamp,
+        )
+        return {"value": [value]}, [result]
     def validate(self) -> dict[str, object]:
         return self.binding.validate()
 
@@ -2286,6 +2346,7 @@ def _node_graph_html(
         "portTypeColors": dict(_NODE_GRAPH_PORT_TYPE_COLORS),
         "portTypeConversions": {f"{source}->{target}": conversion for (source, target), conversion in _NODE_GRAPH_PORT_TYPE_CONVERSIONS.items()},
         "widgetSinkPortProfiles": list(_NODE_GRAPH_WIDGET_SINK_PORT_PROFILES),
+        "widgetSourcePortProfiles": list(_NODE_GRAPH_WIDGET_SOURCE_PORT_PROFILES),
         "selectedNode": selected_node,
         "showEdgeLabels": bool(show_edge_labels),
         "showPortLabels": bool(show_port_labels),
@@ -2311,6 +2372,11 @@ def _node_graph_html(
     const config = {payload};
     const canvas = document.getElementById('graph');
     const ctx = canvas.getContext('2d');
+
+    function focusCanvas() {{
+      try {{ canvas.focus({{ preventScroll: true }}); }}
+      catch (error) {{ canvas.focus(); }}
+    }}
     const state = {{ nodes: config.nodes, edges: config.edges, sections: config.sections || [], selected: config.selectedNode, selectedEdge: null, selectedSection: null, viewX: 34, viewY: 32, zoom: 1, drag: null, hoverPort: null, showGrid: true }};
     let nodeSerial = state.nodes.length;
     let edgeSerial = state.edges.length;
@@ -3261,13 +3327,30 @@ def _node_graph_html(
       return '';
     }}
 
+    function widgetBindingKind(target) {{
+      return target && target.data ? String(target.data.node_type || target.data.template_id || '') : '';
+    }}
+
     function isWidgetSinkTarget(target) {{
-      return !!(target && target.data && String(target.data.node_type || target.data.template_id || '') === 'widget_sink');
+      return widgetBindingKind(target) === 'widget_sink';
+    }}
+
+    function isWidgetSourceTarget(target) {{
+      return widgetBindingKind(target) === 'widget_source';
+    }}
+
+    function isWidgetBindingTarget(target) {{
+      return isWidgetSinkTarget(target) || isWidgetSourceTarget(target);
     }}
 
     function widgetSinkPortProfiles() {{
       const profiles = Array.isArray(config.widgetSinkPortProfiles) ? config.widgetSinkPortProfiles.map(profile => String(profile)).filter(Boolean) : [];
       return profiles.length ? profiles : ['text', 'terminal_output', 'message', 'json', 'artifact', 'status', 'error'];
+    }}
+
+    function widgetSourcePortProfiles() {{
+      const profiles = Array.isArray(config.widgetSourcePortProfiles) ? config.widgetSourcePortProfiles.map(profile => String(profile)).filter(Boolean) : [];
+      return profiles.length ? profiles : ['text', 'json', 'status', 'message', 'artifact'];
     }}
 
     function widgetTargetById(id) {{
@@ -3276,7 +3359,7 @@ def _node_graph_html(
       return targets.find(targetInfo => String(targetInfo.widget_id || targetInfo.id || '') === targetId) || null;
     }}
 
-    function widgetSinkProfileOptions(target, value, spec) {{
+    function widgetProfileOptions(target, value, spec) {{
       const configData = nodeConfig(target);
       const targetInfo = widgetTargetById(configData.widget_id);
       let profiles = [];
@@ -3284,6 +3367,8 @@ def _node_graph_html(
         profiles = targetInfo.supported_port_profiles.map(profile => String(profile)).filter(Boolean);
       }} else if (spec && Array.isArray(spec.options) && spec.options.length) {{
         profiles = spec.options.map(option => normalizeFieldOption(option).value).filter(Boolean);
+      }} else if (isWidgetSourceTarget(target)) {{
+        profiles = widgetSourcePortProfiles();
       }} else {{
         profiles = widgetSinkPortProfiles();
       }}
@@ -3292,26 +3377,32 @@ def _node_graph_html(
       return profiles.map(profile => {{ return {{ value: profile, label: profile }}; }});
     }}
 
-    function widgetSinkPort(profile) {{
+    function widgetProfilePort(profile) {{
       const value = String(profile || '').trim() || 'text';
       return {{ id: 'value', label: value, port_type: value }};
     }}
 
-    function applyWidgetSinkPortProfile(node, updates, data) {{
-      if (!isWidgetSinkTarget(node)) return;
+    function applyWidgetBindingPortProfile(node, updates, data) {{
+      if (!isWidgetBindingTarget(node)) return;
       const configData = data && data.config && typeof data.config === 'object' && !Array.isArray(data.config) ? data.config : {{}};
-      const port = widgetSinkPort(configData.port_profile || 'text');
-      updates.inputs = [{{ ...port }}];
-      updates.outputs = [{{ ...port }}];
+      const port = widgetProfilePort(configData.port_profile || 'text');
+      if (isWidgetSourceTarget(node)) {{
+        updates.inputs = [];
+        updates.outputs = [{{ ...port }}];
+      }} else {{
+        updates.inputs = [{{ ...port }}];
+        updates.outputs = [{{ ...port }}];
+      }}
       node.inputs = updates.inputs.map(item => ({{ ...item }}));
       node.outputs = updates.outputs.map(item => ({{ ...item }}));
     }}
 
     function widgetTargetFieldSpec(target, spec, value) {{
-      if (!isWidgetSinkTarget(target)) return null;
+      if (!isWidgetBindingTarget(target)) return null;
       const key = String(spec.key || '');
       if (key === 'port_profile') {{
-        return {{ ...spec, type: 'select', options: widgetSinkProfileOptions(target, value, spec), help: spec.help || spec.description || 'Incoming graph value type' }};
+        const help = isWidgetSourceTarget(target) ? 'Outgoing graph value type' : 'Incoming graph value type';
+        return {{ ...spec, type: 'select', options: widgetProfileOptions(target, value, spec), help: spec.help || spec.description || help }};
       }}
       if (key !== 'widget_id') return null;
       const targets = Array.isArray(config.widgetTargets) ? config.widgetTargets : [];
@@ -3334,9 +3425,8 @@ def _node_graph_html(
       if (current && !options.some(option => option.value === current)) {{
         options.push({{ value: current, label: `${{current}} (unregistered)`, missing: true }});
       }}
-      return {{ ...spec, type: 'select', options, placeholder: 'Choose widget...', help: spec.help || spec.description || 'Registered GUI target' }};
-    }}
-    function schemaPropertyFields(target) {{
+      return {{ ...spec, type: 'select', options, placeholder: 'Choose widget...', help: spec.help || spec.description || 'Registered GUI widget' }};
+    }}    function schemaPropertyFields(target) {{
       const schemaFields = configSchemaFields(target);
       const storage = schemaFields ? 'config' : 'data';
       const schema = schemaFields || (target.data && Array.isArray(target.data.property_fields) ? target.data.property_fields : []);
@@ -3465,7 +3555,7 @@ def _node_graph_html(
     function applyWidgetTargetSelection(field) {{
       if (!field || field.key !== 'config:widget_id') return;
       const target = selectedPropertyTarget();
-      if (!target || target.kind !== 'node' || !isWidgetSinkTarget(target.target)) return;
+      if (!target || target.kind !== 'node' || !isWidgetBindingTarget(target.target)) return;
       const meta = optionMeta(field, field.value);
       if (!meta || meta.missing) return;
       const typeField = propertyField('config:widget_type');
@@ -3521,6 +3611,7 @@ def _node_graph_html(
       if (!field || field.type !== 'select' || !field.options.length) return false;
       propertyEditor.active = index;
       propertyEditor.selectPopup = {{ fieldIndex: index, items: [] }};
+      focusCanvas();
       return true;
     }}
 
@@ -3542,7 +3633,7 @@ def _node_graph_html(
           color: textProperty('color', node.color || '#43c6ac') || '#43c6ac',
           data: Object.keys(data).length ? data : null
         }};
-        applyWidgetSinkPortProfile(node, updates, data);
+        applyWidgetBindingPortProfile(node, updates, data);
         node.title = updates.title;
         node.subtitle = updates.subtitle;
         node.status = updates.status;
@@ -3597,6 +3688,7 @@ def _node_graph_html(
     function editPropertyField(index) {{
       if (!propertyEditor.open || index < 0 || index >= propertyEditor.fields.length) return false;
       propertyEditor.active = index;
+      focusCanvas();
       const field = propertyEditor.fields[index];
       if (field.type === 'bool') {{
         closeSelectPopup();
@@ -4388,7 +4480,7 @@ def _node_graph_html(
     }}
 
     canvas.addEventListener('mousedown', event => {{
-      canvas.focus();
+      focusCanvas();
       const p = graphPoint(event);
       if (propertyEditor.open) {{
         const propertyHit = hitPropertyEditor(p.sx, p.sy);
@@ -5453,6 +5545,43 @@ def multi_agent_node_templates() -> tuple[NodeGraphTemplate, ...]:
             ),
         ),
         NodeGraphTemplate(
+            "widget_source",
+            "Widget Source",
+            outputs=(NodeGraphPort("value", "text", port_type="text"),),
+            subtitle="read GUI widget",
+            status="ready",
+            color="#7aa2f7",
+            width=220,
+            data=_template_data(
+                "widget_source",
+                "ready",
+                [
+                    {"key": "widget_id", "label": "Widget ID"},
+                    {
+                        "key": "widget_type",
+                        "label": "Widget Type",
+                        "type": "select",
+                        "options": ["", "label", "badge", "log_view", "text_input", "text_area", "code_editor", "led"],
+                        "default": "",
+                    },
+                    {
+                        "key": "port_profile",
+                        "label": "Port Profile",
+                        "type": "select",
+                        "options": list(_NODE_GRAPH_WIDGET_SOURCE_PORT_PROFILES),
+                        "default": "text",
+                    },
+                    {
+                        "key": "format",
+                        "label": "Format",
+                        "type": "select",
+                        "options": ["text", "json", "repr", "raw"],
+                        "default": "text",
+                    },
+                ],
+            ),
+        ),
+        NodeGraphTemplate(
             "agent",
             "Agent",
             inputs=(
@@ -5610,8 +5739,8 @@ _RUNTIME_OBJECT_REF_KEYS: tuple[tuple[str, str | None], ...] = (
 )
 _RUNTIME_SOURCE_NODE_TYPES = {
     "text_input",
+    "widget_source",
 }
-
 _RUNTIME_EXECUTABLE_NODE_TYPES = {
     "append_text",
     "extract_between_markers",
@@ -5643,7 +5772,6 @@ _TERMINAL_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 def _terminal_display_text(value: object) -> str:
     text = str(value)
     text = _ANSI_CONTROL_SEQUENCE_RE.sub("", text)
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
     return _TERMINAL_CONTROL_CHAR_RE.sub("", text)
 
 
@@ -5680,10 +5808,20 @@ def _update_widget_sink(widget: object, value: object, *, update_mode: str, valu
         else:
             mode = "set"
     if mode == "append":
+        text = _widget_sink_text(value, value_format)
+        if value_format == "terminal_text":
+            append_stream = getattr(widget, "append_stream", None)
+            if not callable(append_stream):
+                append_stream = getattr(widget, "append_text", None)
+            if not callable(append_stream):
+                append_stream = getattr(widget, "write", None)
+            if callable(append_stream):
+                append_stream(text)
+                return mode
         append_line = getattr(widget, "append_line", None)
         if not callable(append_line):
             raise TypeError(f"widget type {kind!r} does not support append")
-        append_line(_widget_sink_text(value, value_format))
+        append_line(text)
         return mode
     if mode == "set":
         set_value = getattr(widget, "set_value", None)
@@ -5699,7 +5837,35 @@ def _update_widget_sink(widget: object, value: object, *, update_mode: str, valu
         return mode
     raise ValueError(f"unsupported widget sink update mode {mode!r}")
 
+def _read_widget_raw_value(widget: object) -> object:
+    for attr in ("value", "text", "checked", "state"):
+        if hasattr(widget, attr):
+            return getattr(widget, attr)
+    lines = getattr(widget, "lines", None)
+    if isinstance(lines, Sequence) and not isinstance(lines, (str, bytes, bytearray)):
+        return "\n".join(str(line) for line in lines)
+    raise TypeError(f"widget type {_widget_kind(widget)!r} does not expose a readable value")
 
+
+def _widget_source_value(widget: object, value_format: str) -> object:
+    raw = _read_widget_raw_value(widget)
+    mode = str(value_format or "text").strip()
+    if mode == "raw":
+        return _json_safe_value(raw)
+    if mode == "json":
+        if isinstance(raw, str):
+            text = raw.strip()
+            if text:
+                try:
+                    return _json_safe_value(json.loads(text))
+                except json.JSONDecodeError:
+                    return raw
+        return _json_safe_value(raw)
+    if mode == "repr":
+        return repr(raw)
+    if raw is None:
+        return ""
+    return str(raw)
 def _required_text(value: object, name: str) -> str:
     if value is None:
         raise ValueError(f"{name} is required")
