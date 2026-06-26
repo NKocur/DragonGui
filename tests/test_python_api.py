@@ -10107,6 +10107,148 @@ def test_node_graph_accepts_static_widget_target_metadata() -> None:
 
 
 
+
+def test_node_graph_action_targets_expose_section_inspector_metadata_without_serializing_callbacks() -> None:
+    calls: list[tuple[str, str]] = []
+    graph = dg.NodeGraph(
+        [],
+        sections=[dg.NodeGraphSection("init", "Initialization", 0, 0, 320, 180)],
+        parent=None,
+    )
+
+    target = graph.register_action_target(
+        "initialize-agents",
+        label="Initialize Agents",
+        action_type="button",
+        callback=lambda action_id, command: calls.append((action_id, command)),
+        supported_commands=("run", "reset"),
+        default_command="run",
+    )
+
+    assert isinstance(target, dg.NodeGraphActionTarget)
+    assert target.id == "initialize-agents"
+    assert target.label == "Initialize Agents"
+    assert target.action_type == "button"
+    assert target.supported_commands == ("run", "reset")
+    assert target.default_command == "run"
+    assert graph.action_target("initialize-agents") is target
+    assert graph.action_target_ids() == ("initialize-agents",)
+    assert "Initialize Agents" in graph.html
+    assert "actionTargets" in graph.html
+    assert "Action Target" in graph.html
+    assert "action_targets" not in graph.to_graph_data()
+
+    graph.run_action_target("initialize-agents", "reset")
+    assert calls == [("initialize-agents", "reset")]
+
+    removed = graph.unregister_action_target("initialize-agents")
+
+    assert removed is target
+    assert graph.action_target_ids() == ()
+
+
+
+
+def test_node_graph_binding_targets_fan_out_to_widget_and_action_registries() -> None:
+    calls: list[tuple[str, str]] = []
+    graph = dg.NodeGraph([], parent=None)
+    log_view = dg.LogView([], id="event-log", parent=None)
+
+    target = graph.register_binding_target(
+        "event-log",
+        label="Event Log",
+        target_type="button",
+        widget_type="log_view",
+        widget=log_view,
+        callback=lambda action_id, command: calls.append((action_id, command)),
+        supported_update_modes=("append", "set"),
+        default_update_mode="append",
+        supported_port_profiles=("event", "text"),
+        default_port_profile="event",
+        supported_formats=("text", "json"),
+        supported_commands=("run", "reset"),
+        default_command="run",
+    )
+
+    assert isinstance(target, dg.NodeGraphBindingTarget)
+    assert graph.binding_target("event-log") is target
+    assert graph.binding_target_ids() == ("event-log",)
+    assert graph.widget_target("event-log") is not None
+    assert graph.widget_target("event-log").widget is log_view
+    assert graph.action_target("event-log") is not None
+    assert graph.action_target("event-log").supported_commands == ("run", "reset")
+    assert graph.widget_target("event-log").data["binding_target_id"] == "event-log"
+    assert graph.action_target("event-log").data["binding_target_id"] == "event-log"
+    assert "Event Log" in graph.html
+    assert "widgetTargets" in graph.html
+    assert "actionTargets" in graph.html
+    assert "binding_targets" not in graph.to_graph_data()
+
+    graph.run_action_target("event-log", "reset")
+    assert calls == [("event-log", "reset")]
+
+    removed = graph.unregister_binding_target("event-log")
+
+    assert removed is target
+    assert graph.binding_target_ids() == ()
+    assert graph.widget_target_ids() == ()
+    assert graph.action_target_ids() == ()
+
+
+def test_node_graph_accepts_static_binding_target_metadata() -> None:
+    graph = dg.NodeGraph(
+        [],
+        binding_targets=[
+            {
+                "id": "prompt-input",
+                "label": "Prompt Input",
+                "target_type": "text_input",
+                "widget_type": "text_input",
+                "supported_update_modes": ["set"],
+                "supported_port_profiles": ["text"],
+                "default_port_profile": "text",
+            }
+        ],
+        parent=None,
+    )
+
+    target = graph.binding_target("prompt-input")
+
+    assert target is not None
+    assert target.widget is None
+    assert graph.widget_target("prompt-input") is not None
+    assert graph.action_target("prompt-input") is None
+    assert graph.widget_target("prompt-input").supported_port_profiles == ("text",)
+    assert "Prompt Input" in graph.html
+
+def test_node_graph_section_action_config_runs_registered_target() -> None:
+    calls: list[tuple[str, str]] = []
+    graph = dg.NodeGraph(
+        [],
+        sections=[
+            dg.NodeGraphSection(
+                "init",
+                "Initialization",
+                0,
+                0,
+                320,
+                180,
+                data={"action_id": "initialize-agents", "section_command": "run"},
+            )
+        ],
+        parent=None,
+    )
+    graph.register_action_target(
+        "initialize-agents",
+        label="Initialize Agents",
+        callback=lambda action_id, command: calls.append((action_id, command)),
+        supported_commands=("run", "reset"),
+    )
+
+    graph.run_section_action("init")
+
+    assert calls == [("initialize-agents", "run")]
+
 def test_node_graph_widget_sink_template_exposes_port_profile_schema() -> None:
     graph = dg.NodeGraph([], templates=dg.multi_agent_node_templates(), parent=None)
 
@@ -10375,6 +10517,107 @@ def test_node_graph_runtime_session_widget_source_reads_registered_text_input() 
     assert "widget_read" in event_names
     assert "node_output" in event_names
     assert session.snapshot()["widgets"] == [{"widget_id": "prompt-field", "widget_type": "text_input"}]
+
+
+def test_node_graph_managed_runtime_auto_cleans_up_stateless_widget_flow() -> None:
+    prompt = dg.TextInput("hello from managed runtime", id="prompt-field", parent=None)
+    output = dg.LogView([], id="output-log", parent=None)
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "prompt",
+                "title": "Prompt Source",
+                "outputs": [dg.NodeGraphPort("value", "text", port_type="text")],
+                "data": {
+                    "node_type": "widget_source",
+                    "config": {
+                        "widget_id": "prompt-field",
+                        "widget_type": "text_input",
+                        "port_profile": "text",
+                        "format": "text",
+                    },
+                },
+            },
+            {
+                "id": "output",
+                "title": "Output",
+                "inputs": [dg.NodeGraphPort("value", "text", port_type="text")],
+                "outputs": [dg.NodeGraphPort("value", "text", port_type="text")],
+                "data": {
+                    "node_type": "widget_sink",
+                    "config": {
+                        "widget_id": "output-log",
+                        "widget_type": "log_view",
+                        "update_mode": "append",
+                        "port_profile": "text",
+                        "format": "text",
+                    },
+                },
+            },
+        ],
+        [dg.NodeGraphEdge("prompt", "value", "output", "value", id="edge-prompt-output")],
+        binding_targets=[
+            {"id": "prompt-field", "label": "Prompt", "widget": prompt, "widget_type": "text_input"},
+            {"id": "output-log", "label": "Output", "widget": output, "widget_type": "log_view"},
+        ],
+        parent=None,
+    )
+
+    assert graph.resolved_runtime_policy() == "ephemeral"
+    assert graph.managed_runtime_status()["status"] == "idle"
+    assert graph.managed_runtime_status_text().startswith("Runtime: idle")
+    event = graph.run_node_runtime("prompt")
+
+    assert event.event == "node_executed"
+    assert output.lines == ["hello from managed runtime"]
+    assert graph.managed_runtime is None
+    assert graph.managed_runtime_status()["active"] is False
+
+
+def test_node_graph_managed_runtime_auto_keeps_persistent_terminal_session() -> None:
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "command",
+                "title": "Command",
+                "outputs": [dg.NodeGraphPort("text", "text", port_type="text")],
+                "data": {"node_type": "text_input", "config": {"text": "echo hello"}},
+            },
+            {
+                "id": "terminal",
+                "title": "Terminal",
+                "inputs": [dg.NodeGraphPort("stdin", "stdin", port_type="terminal_input")],
+                "data": {
+                    "node_type": "terminal",
+                    "runtime_object": "terminal_session",
+                    "config": {"session_id": "shell-1", "command": "cmd.exe"},
+                },
+            },
+        ],
+        [dg.NodeGraphEdge("command", "text", "terminal", "stdin", id="edge-command-terminal")],
+        parent=None,
+    )
+
+    assert graph.runtime_has_persistent_objects() is True
+    assert graph.resolved_runtime_policy() == "persistent"
+    event = graph.run_node_runtime("command")
+
+    assert event.event == "node_executed"
+    assert graph.managed_runtime is not None
+    assert graph.managed_runtime.object_handle("shell-1") is not None
+    assert any(event.event == "edge_conversion_failed" for event in graph.managed_runtime.events)
+    status = graph.managed_runtime_status()
+    assert status["active"] is True
+    assert status["resolved_policy"] == "persistent"
+    assert status["handles"] == 1
+    assert status["events"] >= 1
+    assert "Runtime: active" in graph.managed_runtime_status_text()
+
+    cleanup = graph.cleanup_managed_runtime()
+
+    assert cleanup == {"stopped": [], "errors": {}}
+    assert graph.managed_runtime is None
+
 def test_node_graph_runtime_session_terminal_commands_use_attached_handle() -> None:
     graph = dg.NodeGraph(
         [
@@ -10620,6 +10863,59 @@ def test_node_graph_runtime_run_section_runs_contained_source_nodes() -> None:
     ]
     assert "node_output" in event.data["events"]
     assert bridge.sent == ["echo from section\r\n"]
+
+
+def test_node_graph_runtime_run_section_command_dispatches_lifecycle_commands() -> None:
+    graph = dg.NodeGraph(
+        [
+            dg.NodeGraphNode(
+                "command",
+                "Command",
+                0,
+                0,
+                outputs=(dg.NodeGraphPort("text", "text", port_type="text"),),
+                data={"node_type": "text_input", "config": {"text": "echo from command"}},
+            ),
+            dg.NodeGraphNode(
+                "terminal",
+                "Terminal",
+                240,
+                0,
+                data={
+                    "node_type": "terminal",
+                    "runtime_object": "terminal_session",
+                    "config": {"session_id": "shell-1", "command": "cmd.exe"},
+                },
+            ),
+        ],
+        sections=(dg.NodeGraphSection("init", "Initialization", -200, -160, 800, 420),),
+        parent=None,
+    )
+
+    class FakeBridge:
+        def __init__(self) -> None:
+            self.stopped = False
+
+        def stop(self) -> None:
+            self.stopped = True
+
+    session = graph.runtime_session(session_id="runtime-section-commands")
+    bridge = FakeBridge()
+    session.attach_handle("shell-1", bridge, status="running")
+
+    run_event = session.run_section_command("init", "run")
+    stop_event = session.run_section_command("init", "stop")
+    reset_event = session.run_section_command("init", "reset")
+    unsupported_event = session.run_section_command("init", "dance")
+
+    assert run_event.event == "section_run"
+    assert stop_event.event == "section_stop"
+    assert stop_event.data["stopped"] == ["shell-1"]
+    assert bridge.stopped is True
+    assert reset_event.event == "section_reset"
+    assert reset_event.data["object_ids"] == ["shell-1"]
+    assert unsupported_event.event == "section_command_unsupported"
+
 def test_node_graph_runtime_object_registry_rejects_duplicate_ids() -> None:
     registry = dg.NodeGraphObjectRegistry()
     registry.register(object_id="shared", object_type="terminal_session")

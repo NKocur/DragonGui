@@ -859,10 +859,10 @@ Section inspector behavior:
   menu.
 - The dropdown should list registered action targets with friendly labels, while
   saving only the stable `action_id`.
-- Choosing a target should fill `action_id` and any expected `action_type`
-  metadata together.
+- Choosing a target should fill `action_id` and suggest compatible section commands from the registered target metadata.
 - The section command dropdown should offer `run`, `stop`, `reset`, and `replay`,
   filtered or ranked by the selected action target.
+- First-pass implementation stores `action_id` and `section_command` in section data, lists registered action targets in the section inspector, and invokes transient callbacks through `NodeGraph.run_section_action()`.
 - Missing or unregistered action targets should be shown as inspector warnings
   and should also appear in validation/runtime events.
 - The editor should support freeform IDs for advanced/manual graph authoring,
@@ -1046,21 +1046,31 @@ Implemented runtime pieces:
 - NodeGraph wire and socket colors are associated with port data types, so terminal output, messages, text, JSON, errors, artifacts, and control/status flows remain visually consistent across graphs.
 - Runtime sessions can run source nodes directly with `run_node()`, starting with `Text Input` emitting its configured text into the live graph.
 - Runtime sessions can run section-contained source nodes with `run_section()`, emitting a section summary event while keeping non-source nodes skipped rather than destructive.
+- Assignable action targets can be registered by host apps and selected from section inspector dropdowns using friendly labels while saving portable action IDs.
+- Sections can save `action_id` and `section_command` metadata, and `NodeGraph.run_section_action()` invokes the registered transient callback.
+- Runtime sessions provide first-pass section lifecycle commands through `run_section_command()`: `run`, `stop`, `reset`, and `replay`.
+- `node_graph_editor_probe.py` demonstrates a `Run Section Action Button` action target bound to the default section and a button that executes the section command saved in the graph.
+- Section action target and command dropdowns now use normalized select option labels, fixing object-backed options rendering as `[object Object]` in the inspector.
+- The probe now registers its prompt input, terminal output logs, parsed message log, event log, and section run button through the shared binding target API, so inspector dropdowns show real GUI components instead of separate hardcoded target systems.
+- First-pass shared GUI binding registry is implemented through `NodeGraphBindingTarget` and `register_binding_target(...)`; one target can expose widget metadata, action metadata, or both while keeping live widget handles/callbacks transient.
+- `node_graph_binding_playground_probe.py` adds a blank-editor binding playground with multiple text inputs, logs, and action buttons registered through the shared binding target API for manual wiring tests.
+- The binding playground probe now uses managed runtime run buttons, so manual testing no longer needs separate Create Runtime/Register Widgets controls.
+- Runtime policy defaults to `auto`: stateless graphs use ephemeral sessions, while graphs declaring persistent runtime objects such as `terminal_session` keep the managed runtime alive until `cleanup_managed_runtime()` is called.
+- `NodeGraph` now has first-pass widget-managed runtime lifecycle helpers. `run_node_runtime(...)` and `run_section_runtime(...)` create a runtime session on demand, register live widget targets automatically, and clean up after stateless flows.
+- Managed runtime status is now surfaced through `managed_runtime_status()` / `managed_runtime_status_text()`, and the binding playground shows a live runtime status label plus cleanup control.
 
 The implemented runtime pieces are intentionally non-destructive. They validate
 graph metadata, own transient live handles, and run local text/message
 transforms from delivered runtime values, but they do not launch terminals
-automatically or execute sections.
+automatically; section execution remains explicit through `run_section()`, `run_section_command()`, or a registered action target.
 
 To make sections executable, the runtime will need:
 
 - Object creator and reference node distinction.
 - Additional runtime detail views from graph node -> runtime state -> observable widget or detail panel.
-- Assignable action targets backed by a transient runtime action registry.
-- Section inspector dropdowns for action target and section command selection.
-- Lifecycle handling for startup and shutdown sections.
-- Section-level run, stop, reset, and replay commands.
-- GUI action binding to section commands.
+- Richer lifecycle handling for startup and shutdown sections beyond first-pass section commands.
+- Section-level command UX for confirming destructive reset/stop behavior.
+- GUI action presets for common startup/review/test/shutdown sections.
 
 ### Widget Sink / Widget Source Binding
 
@@ -1476,8 +1486,11 @@ Future safe conversions may include:
 26. [x] Add Widget Source nodes so registered GUI edit fields can emit graph values without Python code changes. The probe demonstrates a real `TextInput` host widget feeding a Terminal Session path by stable widget ID.
 27. [x] Keep canvas-drawn node editor fields documented separately from real GUI edit fields; property/I-menu fields edit graph metadata and maintain their own canvas focus handling.
 28. [x] Add edge routing waypoints so complex graphs can organize traces without adding functional nodes.
-29. [ ] Add assignable action targets plus section-level run, stop, reset, and replay commands. `run_node()` and first-pass `run_section()` are now implemented; action target registration and stop/reset/replay commands remain.
-30. [ ] Save common role setups as section or subgraph templates, not as hard-coded primitive nodes.
+29. [x] Add assignable action targets plus section-level run, stop, reset, and replay commands. First-pass action target registration, section inspector dropdowns, `run_section_action()`, and runtime `run_section_command()` are implemented.
+30. [x] Add first-pass shared GUI binding target registration for widgets/actions. `NodeGraphBindingTarget` now fans out to widget/action inspector metadata, and the probe registers real GUI controls through it.
+31. [x] Add first-pass widget-managed runtime lifecycle. Managed node/section run helpers create runtime sessions on demand, auto-register GUI widgets, close stateless runs, and keep persistent terminal/session graphs alive.
+32. [x] Add first-pass managed runtime status indicator. `NodeGraph` exposes compact runtime status helpers, and the binding playground displays active/idle policy, widget, handle, and last-event state.
+33. [ ] Save common role setups as section or subgraph templates, not as hard-coded primitive nodes.
 
 ## Open Questions
 

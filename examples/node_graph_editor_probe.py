@@ -168,7 +168,13 @@ SECTIONS = [
         purpose="terminal stdout -> GUI log and parser -> message log",
         trigger="manual_probe",
         color="#43c6ac",
-        data={"runtime_scope": "manual_probe", "owns": ["implementer_terminal"], "refs": ["terminal-output-log", "runtime-message-indicator"]},
+        data={
+            "runtime_scope": "manual_probe",
+            "owns": ["implementer_terminal"],
+            "refs": ["terminal-output-log", "runtime-message-indicator"],
+            "action_id": "run-section-action-button",
+            "section_command": "run",
+        },
     ),
 ]
 EDGES = [
@@ -348,7 +354,7 @@ def register_graph_widget_targets() -> None:
         return
     formats = ("text", "json", "repr", "message_body")
     if terminal_output_log is not None:
-        graph.register_widget_target(
+        graph.register_binding_target(
             id="terminal-output-log",
             label="Terminal Output",
             widget_type="log_view",
@@ -360,7 +366,7 @@ def register_graph_widget_targets() -> None:
             supported_formats=formats,
         )
     if reviewer_terminal_output_log is not None:
-        graph.register_widget_target(
+        graph.register_binding_target(
             id="reviewer-terminal-output-log",
             label="Reviewer Terminal Output",
             widget_type="log_view",
@@ -372,7 +378,7 @@ def register_graph_widget_targets() -> None:
             supported_formats=formats,
         )
     if runtime_indicator is not None:
-        graph.register_widget_target(
+        graph.register_binding_target(
             id="runtime-message-indicator",
             label="Parsed Message Log",
             widget_type="log_view",
@@ -384,7 +390,7 @@ def register_graph_widget_targets() -> None:
             supported_formats=formats,
         )
     if runtime_prompt_input is not None:
-        graph.register_widget_target(
+        graph.register_binding_target(
             id="runtime-prompt-input",
             label="Runtime Prompt Input",
             widget_type="text_input",
@@ -396,7 +402,7 @@ def register_graph_widget_targets() -> None:
             supported_formats=("text", "json", "repr", "raw"),
         )
     if event_log is not None:
-        graph.register_widget_target(
+        graph.register_binding_target(
             id="node-probe-event-log",
             label="Event Log",
             widget_type="log_view",
@@ -416,6 +422,46 @@ def register_runtime_widget_targets() -> None:
         if target.widget is not None:
             runtime_session.register_widget(target.id, target.widget)
 
+
+
+def run_runtime_smoke_action(action_id: str, command: str) -> object | None:
+    global runtime_session
+    if graph is None:
+        return None
+    if runtime_session is None:
+        runtime_session = graph.runtime_session(session_id="probe-runtime")
+        register_runtime_widget_targets()
+        log("runtime session created for section action")
+    register_runtime_widget_targets()
+    event = runtime_session.run_section_command("runtime-smoke", command)
+    log(f"section action {action_id} command={command} event={event.event}")
+    if event.data:
+        log(f"section action data {json.dumps(event.data, sort_keys=True)}")
+    log_runtime_tail()
+    render_runtime_view(selected_node_id or "implementer_terminal")
+    return event
+
+
+def register_graph_action_targets() -> None:
+    if graph is None:
+        return
+    graph.register_binding_target(
+        "run-section-action-button",
+        label="Run Section Action Button",
+        action_type="button",
+        callback=run_runtime_smoke_action,
+        supported_commands=("run", "stop", "reset", "replay"),
+        default_command="run",
+    )
+
+
+def run_runtime_smoke_section_action() -> None:
+    if graph is None:
+        return
+    try:
+        graph.run_section_action("runtime-smoke")
+    except Exception as exc:
+        log(f"section action failed: {exc}")
 
 def add_toolbar_node() -> None:
     global selected_node_id
@@ -960,6 +1006,7 @@ with dg.HLayout(class_="root"):
             dg.Button("Start Terminal", on_click=start_runtime_terminal)
             dg.Button("Send Input", on_click=send_runtime_input)
             dg.Button("Send GUI Prompt", on_click=send_runtime_prompt_input)
+            dg.Button("Run Section Action", on_click=run_runtime_smoke_section_action)
             dg.Button("Inject Plain", on_click=inject_runtime_plain_output)
             dg.Button("Inject Envelope", on_click=inject_runtime_envelope)
             dg.Button("Clear Indicator", on_click=clear_runtime_indicator)
@@ -1006,6 +1053,7 @@ with dg.HLayout(class_="root"):
             wrap=True,
         )
         register_graph_widget_targets()
+        register_graph_action_targets()
 
 refresh_state()
 

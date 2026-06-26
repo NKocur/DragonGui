@@ -23,6 +23,8 @@ from .manual import HelpSection, help
 from .notifications import toast
 from .node_graph import (
     NodeGraph,
+    NodeGraphActionTarget,
+    NodeGraphBindingTarget,
     NodeGraphRuntimeEdgeBinding,
     NodeGraphFlowRun,
     NodeGraphNodeBinding,
@@ -247,6 +249,8 @@ __all__ = [
     "NodeGraphRuntimeBinding",
     "NodeGraphRuntimeEvent",
     "NodeGraphRuntimeHandle",
+    "NodeGraphActionTarget",
+    "NodeGraphBindingTarget",
     "NodeGraphRuntimeSession",
     "NodeGraphRuntimeViewBinding",
     "NodeGraphSectionBinding",

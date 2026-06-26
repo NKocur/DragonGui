@@ -29,6 +29,8 @@ _GRAPH_MUTATION_EVENTS = {
     "section_deleted",
 }
 _NODE_GRAPH_RUNTIME_SCHEMA_VERSION = 1
+_NODE_GRAPH_RUNTIME_POLICIES = {"auto", "ephemeral", "persistent", "manual"}
+_PERSISTENT_RUNTIME_OBJECT_TYPES = {"terminal_session", "agent_session", "subprocess", "watcher", "file_watcher"}
 
 _NODE_GRAPH_PORT_TYPE_CONVERSIONS: dict[tuple[str, str], str] = {
     ("text", "terminal_input"): "text_to_terminal_input",
@@ -857,6 +859,75 @@ class NodeGraphRuntimeSession:
             timestamp=timestamp,
         )
 
+    def run_section_command(
+        self, section_id: str, command: str = "run", *, timestamp: float | None = None
+    ) -> NodeGraphRuntimeEvent:
+        """Run a first-pass lifecycle command for a section."""
+
+        command_s = str(command or "run").strip() or "run"
+        if command_s in {"run", "replay"}:
+            event = self.run_section(section_id, timestamp=timestamp)
+            if command_s == "replay" and event.data is not None:
+                event.data["command"] = "replay"
+            return event
+        section = self.binding.section_binding(section_id)
+        if section is None:
+            raise KeyError(f"runtime section {section_id!r} does not exist")
+        object_ids = self._section_object_ids(section)
+        stopped: list[str] = []
+        detached: list[str] = []
+        errors: dict[str, str] = {}
+        for object_id in object_ids:
+            handle = self.object_handle(object_id)
+            if handle is None:
+                continue
+            try:
+                if handle.handle is not None and self.stop_runtime_object(object_id):
+                    stopped.append(object_id)
+                elif command_s == "stop":
+                    handle.set_status("stopped")
+            except Exception as exc:  # pragma: no cover - defensive runtime command path
+                handle.set_status("failed", error=exc)
+                errors[object_id] = str(exc)
+            if command_s == "reset" and handle.handle is not None:
+                self.detach_handle(object_id, status="declared")
+                detached.append(object_id)
+        if command_s == "reset":
+            self._clear_section_port_values(section)
+            return self.emit_event(
+                "section_reset",
+                section_id=section.section_id,
+                data={"title": section.title, "object_ids": object_ids, "stopped": stopped, "detached": detached, "errors": errors},
+                timestamp=timestamp,
+            )
+        if command_s == "stop":
+            return self.emit_event(
+                "section_stop",
+                section_id=section.section_id,
+                data={"title": section.title, "object_ids": object_ids, "stopped": stopped, "errors": errors},
+                timestamp=timestamp,
+            )
+        return self.emit_event(
+            "section_command_unsupported",
+            section_id=section.section_id,
+            data={"title": section.title, "command": command_s, "supported_commands": ["run", "stop", "reset", "replay"]},
+            timestamp=timestamp,
+        )
+
+    def _section_object_ids(self, section: NodeGraphSectionBinding) -> list[str]:
+        ids: list[str] = []
+        for node_id in section.node_ids:
+            binding = self.binding.node_binding(node_id)
+            if binding is not None and binding.owned_object_id is not None and binding.owned_object_id not in ids:
+                ids.append(binding.owned_object_id)
+        return ids
+
+    def _clear_section_port_values(self, section: NodeGraphSectionBinding) -> None:
+        node_ids = set(section.node_ids)
+        for key in list(self._port_values):
+            if key[0] in node_ids:
+                self._port_values.pop(key, None)
+
     def _run_runtime_source_node(
         self, binding: NodeGraphNodeBinding, *, timestamp: float | None = None
     ) -> NodeGraphRuntimeEvent:
@@ -1259,6 +1330,27 @@ class NodeGraphTemplate:
 
 
 @dataclass(slots=True)
+class NodeGraphBindingTarget:
+    """Unified transient GUI binding target exposed to node graph inspectors."""
+
+    id: str
+    label: str | None = None
+    target_type: str | None = None
+    widget_type: str | None = None
+    widget: Any | None = None
+    action_type: str | None = None
+    callback: Callable[[str, str], object] | None = None
+    supported_update_modes: tuple[str, ...] = ()
+    default_update_mode: str | None = None
+    supported_port_profiles: tuple[str, ...] = ()
+    default_port_profile: str | None = None
+    supported_formats: tuple[str, ...] = ()
+    supported_commands: tuple[str, ...] = ()
+    default_command: str | None = None
+    data: dict[str, object] | None = None
+
+
+@dataclass(slots=True)
 class NodeGraphWidgetTarget:
     """Transient GUI widget target exposed to Widget Sink node editors."""
 
@@ -1273,6 +1365,17 @@ class NodeGraphWidgetTarget:
     widget: Any | None = None
     data: dict[str, object] | None = None
 
+@dataclass(slots=True)
+class NodeGraphActionTarget:
+    """Transient GUI action target exposed to section inspectors."""
+
+    id: str
+    label: str | None = None
+    action_type: str | None = None
+    supported_commands: tuple[str, ...] = ()
+    default_command: str | None = None
+    callback: Callable[[str, str], object] | None = None
+    data: dict[str, object] | None = None
 
 @dataclass(slots=True)
 class NodeGraphSection:
@@ -1314,6 +1417,9 @@ class NodeGraph(HtmlReport):
         enable_zoom: bool = True,
         templates: Sequence[NodeGraphTemplate | Mapping[str, object]] | None = None,
         widget_targets: Sequence[NodeGraphWidgetTarget | Mapping[str, object]] = (),
+        action_targets: Sequence[NodeGraphActionTarget | Mapping[str, object]] = (),
+        binding_targets: Sequence[NodeGraphBindingTarget | Mapping[str, object]] = (),
+        runtime_policy: str = "auto",
         width: int | float | None = 920,
         height: int | float | None = 560,
         id: str | None = None,
@@ -1337,6 +1443,13 @@ class NodeGraph(HtmlReport):
         template_values = _default_templates() if templates is None else templates
         self.templates = tuple(self._template_from_value(template) for template in template_values)
         self.widget_targets = tuple(self._widget_target_from_value(target) for target in widget_targets)
+        self.action_targets = tuple(self._action_target_from_value(target) for target in action_targets)
+        self.binding_targets = tuple(self._binding_target_from_value(target) for target in binding_targets)
+        for target in self.binding_targets:
+            self._apply_binding_target(target)
+        self.runtime_policy = self._runtime_policy_from_value(runtime_policy)
+        self._managed_runtime_session: NodeGraphRuntimeSession | None = None
+        self._managed_runtime_policy: str | None = None
         self.on_graph_event = on_graph_event
         self._callback_compat = dict(callbacks)
         self._undo_stack: list[dict[str, object]] = []
@@ -1379,6 +1492,180 @@ class NodeGraph(HtmlReport):
 
         self.widget_targets = tuple(self._widget_target_from_value(target) for target in targets)
         self.set_html(self._html())
+
+    def set_action_targets(self, targets: Sequence[NodeGraphActionTarget | Mapping[str, object]]) -> None:
+        """Replace assignable action targets exposed to section inspectors."""
+
+        self.action_targets = tuple(self._action_target_from_value(target) for target in targets)
+        self.set_html(self._html())
+
+    def set_binding_targets(self, targets: Sequence[NodeGraphBindingTarget | Mapping[str, object]]) -> None:
+        """Replace unified GUI binding targets and refresh derived widget/action targets."""
+
+        old_ids = {target.id for target in self.binding_targets}
+        self.binding_targets = tuple(self._binding_target_from_value(target) for target in targets)
+        new_ids = {target.id for target in self.binding_targets}
+        remove_ids = old_ids | new_ids
+        self.widget_targets = tuple(
+            target for target in self.widget_targets if (target.data or {}).get("binding_target_id") not in remove_ids
+        )
+        self.action_targets = tuple(
+            target for target in self.action_targets if (target.data or {}).get("binding_target_id") not in remove_ids
+        )
+        for target in self.binding_targets:
+            self._apply_binding_target(target)
+        self.set_html(self._html())
+
+    def register_binding_target(
+        self,
+        id: str,
+        *,
+        label: str | None = None,
+        target_type: str | None = None,
+        widget_type: str | None = None,
+        widget: Any | None = None,
+        action_type: str | None = None,
+        callback: Callable[[str, str], object] | None = None,
+        supported_update_modes: Sequence[str] = (),
+        default_update_mode: str | None = None,
+        supported_port_profiles: Sequence[str] = (),
+        default_port_profile: str | None = None,
+        supported_formats: Sequence[str] = (),
+        supported_commands: Sequence[str] = (),
+        default_command: str | None = None,
+        data: Mapping[str, object] | None = None,
+    ) -> NodeGraphBindingTarget:
+        """Expose a GUI component/action through the unified binding registry."""
+
+        target_id = self._text(id, "binding target id")
+        target = NodeGraphBindingTarget(
+            id=target_id,
+            label=None if label is None else str(label),
+            target_type=None if target_type is None else str(target_type),
+            widget_type=None if widget_type is None else str(widget_type),
+            widget=widget,
+            action_type=None if action_type is None else str(action_type),
+            callback=callback,
+            supported_update_modes=tuple(str(mode) for mode in supported_update_modes),
+            default_update_mode=None if default_update_mode is None else str(default_update_mode),
+            supported_port_profiles=tuple(str(profile) for profile in supported_port_profiles),
+            default_port_profile=None if default_port_profile is None else str(default_port_profile),
+            supported_formats=tuple(str(fmt) for fmt in supported_formats),
+            supported_commands=tuple(str(command) for command in supported_commands),
+            default_command=None if default_command is None else str(default_command),
+            data=None if data is None else _json_copy(dict(data), "binding target data"),
+        )
+        self.binding_targets = tuple(existing for existing in self.binding_targets if existing.id != target.id) + (target,)
+        self.widget_targets = tuple(
+            existing for existing in self.widget_targets if (existing.data or {}).get("binding_target_id") != target.id
+        )
+        self.action_targets = tuple(
+            existing for existing in self.action_targets if (existing.data or {}).get("binding_target_id") != target.id
+        )
+        self._apply_binding_target(target)
+        self.set_html(self._html())
+        return target
+
+    def unregister_binding_target(self, target_id: str) -> NodeGraphBindingTarget | None:
+        """Remove a unified binding target and its derived widget/action targets."""
+
+        text = self._text(target_id, "binding target id")
+        removed = next((target for target in self.binding_targets if target.id == text), None)
+        if removed is not None:
+            self.binding_targets = tuple(target for target in self.binding_targets if target.id != text)
+            self.widget_targets = tuple(
+                target for target in self.widget_targets if (target.data or {}).get("binding_target_id") != text
+            )
+            self.action_targets = tuple(
+                target for target in self.action_targets if (target.data or {}).get("binding_target_id") != text
+            )
+            self.set_html(self._html())
+        return removed
+
+    def binding_target(self, target_id: str) -> NodeGraphBindingTarget | None:
+        """Return a unified GUI binding target by ID, if registered."""
+
+        text = self._text(target_id, "binding target id")
+        return next((target for target in self.binding_targets if target.id == text), None)
+
+    def binding_target_ids(self) -> tuple[str, ...]:
+        """Return unified GUI binding target IDs."""
+
+        return tuple(target.id for target in self.binding_targets)
+
+    def register_action_target(
+        self,
+        id: str,
+        *,
+        label: str | None = None,
+        action_type: str | None = None,
+        callback: Callable[[str, str], object] | None = None,
+        supported_commands: Sequence[str] = (),
+        default_command: str | None = None,
+        data: Mapping[str, object] | None = None,
+    ) -> NodeGraphActionTarget:
+        """Expose a live GUI action as an assignable section target."""
+
+        target_id = self._text(id, "action target id")
+        target = NodeGraphActionTarget(
+            id=target_id,
+            label=None if label is None else str(label),
+            action_type=None if action_type is None else str(action_type),
+            supported_commands=tuple(str(command) for command in supported_commands),
+            default_command=None if default_command is None else str(default_command),
+            callback=callback,
+            data=None if data is None else _json_copy(dict(data), "action target data"),
+        )
+        self.action_targets = tuple(existing for existing in self.action_targets if existing.id != target.id) + (target,)
+        self.set_html(self._html())
+        return target
+
+    def unregister_action_target(self, action_id: str) -> NodeGraphActionTarget | None:
+        """Remove and return an assignable section action target by ID."""
+
+        target_id = self._text(action_id, "action target id")
+        removed = next((target for target in self.action_targets if target.id == target_id), None)
+        if removed is not None:
+            self.action_targets = tuple(target for target in self.action_targets if target.id != target_id)
+            self.set_html(self._html())
+        return removed
+
+    def action_target(self, action_id: str) -> NodeGraphActionTarget | None:
+        """Return an assignable section action target by ID, if registered."""
+
+        target_id = self._text(action_id, "action target id")
+        return next((target for target in self.action_targets if target.id == target_id), None)
+
+    def action_target_ids(self) -> tuple[str, ...]:
+        """Return assignable section action target IDs."""
+
+        return tuple(target.id for target in self.action_targets)
+
+    def run_action_target(self, action_id: str, command: str = "run") -> object:
+        """Invoke a registered action target callback."""
+
+        target = self.action_target(action_id)
+        if target is None:
+            raise KeyError(f"NodeGraph action target {action_id!r} is not registered")
+        command_s = str(command or target.default_command or "run")
+        if target.supported_commands and command_s not in target.supported_commands:
+            raise ValueError(f"action target {target.id!r} does not support command {command_s!r}")
+        if target.callback is None:
+            raise RuntimeError(f"action target {target.id!r} has no callback")
+        return target.callback(target.id, command_s)
+
+    def run_section_action(self, section_id: str) -> object:
+        """Invoke the action target configured on a section."""
+
+        section = next((existing for existing in self.sections if existing.id == str(section_id)), None)
+        if section is None:
+            raise KeyError(f"NodeGraph section {section_id!r} does not exist")
+        config = _section_config(section)
+        action_id = str(config.get("action_id", "") or "").strip()
+        command = str(config.get("section_command", "") or "run").strip() or "run"
+        if not action_id:
+            raise RuntimeError(f"section {section.id!r} has no action_id configured")
+        return self.run_action_target(action_id, command)
 
     def register_widget_target(
         self,
@@ -1435,6 +1722,76 @@ class NodeGraph(HtmlReport):
         """Return assignable Widget Sink target IDs."""
 
         return tuple(target.id for target in self.widget_targets)
+
+    def _binding_target_data(self, target: NodeGraphBindingTarget) -> dict[str, object]:
+        data = dict(target.data or {})
+        data["binding_target_id"] = target.id
+        if target.target_type is not None:
+            data["binding_target_type"] = target.target_type
+        return _json_copy(data, "binding target data")
+
+    def _binding_target_exposes_widget(self, target: NodeGraphBindingTarget) -> bool:
+        target_type = str(target.target_type or "").lower()
+        widget_types = {
+            "widget",
+            "source",
+            "sink",
+            "display",
+            "log",
+            "terminal",
+            "terminal_output",
+            "text_input",
+            "text_source",
+            "event_log",
+        }
+        return (
+            target.widget is not None
+            or target.widget_type is not None
+            or bool(target.supported_update_modes)
+            or bool(target.supported_port_profiles)
+            or bool(target.supported_formats)
+            or target_type in widget_types
+        )
+
+    def _binding_target_exposes_action(self, target: NodeGraphBindingTarget) -> bool:
+        target_type = str(target.target_type or "").lower()
+        action_types = {"action", "button", "command", "section_action", "trigger"}
+        return (
+            target.callback is not None
+            or target.action_type is not None
+            or bool(target.supported_commands)
+            or target_type in action_types
+        )
+
+    def _apply_binding_target(self, target: NodeGraphBindingTarget) -> None:
+        data = self._binding_target_data(target)
+        if self._binding_target_exposes_widget(target):
+            actual_type = target.widget_type or (_widget_kind(target.widget) if target.widget is not None else target.target_type)
+            widget_target = NodeGraphWidgetTarget(
+                id=target.id,
+                label=target.label,
+                widget_type=None if actual_type is None else str(actual_type),
+                supported_update_modes=target.supported_update_modes,
+                default_update_mode=target.default_update_mode,
+                supported_port_profiles=target.supported_port_profiles,
+                default_port_profile=target.default_port_profile,
+                supported_formats=target.supported_formats,
+                widget=target.widget,
+                data=data,
+            )
+            self.widget_targets = tuple(existing for existing in self.widget_targets if existing.id != target.id) + (widget_target,)
+        if self._binding_target_exposes_action(target):
+            actual_type = target.action_type or target.target_type
+            action_target = NodeGraphActionTarget(
+                id=target.id,
+                label=target.label,
+                action_type=None if actual_type is None else str(actual_type),
+                supported_commands=target.supported_commands,
+                default_command=target.default_command,
+                callback=target.callback,
+                data=data,
+            )
+            self.action_targets = tuple(existing for existing in self.action_targets if existing.id != target.id) + (action_target,)
 
     def to_graph_data(self) -> dict[str, object]:
         """Return a JSON-serializable, versioned snapshot of the graph."""
@@ -1514,6 +1871,147 @@ class NodeGraph(HtmlReport):
 
         return NodeGraphRuntimeSession(self.runtime_binding(registry), session_id=session_id)
 
+
+    def managed_runtime_session(
+        self,
+        registry: NodeGraphObjectRegistry | None = None,
+        *,
+        session_id: str | None = None,
+        policy: str | None = None,
+    ) -> NodeGraphRuntimeSession:
+        """Return a widget-managed runtime session, creating one on demand."""
+
+        resolved = self._runtime_policy_from_value(self.runtime_policy if policy is None else policy)
+        session = self._managed_runtime_session
+        if session is None or session.status in {"stopped", "failed"}:
+            session = self.runtime_session(registry, session_id=session_id)
+            self._managed_runtime_session = session
+        self._managed_runtime_policy = resolved
+        self._register_managed_runtime_widgets(session)
+        return session
+
+    @property
+    def managed_runtime(self) -> NodeGraphRuntimeSession | None:
+        """Return the current widget-managed runtime session, if one is alive."""
+
+        return self._managed_runtime_session
+
+    def managed_runtime_status(self) -> dict[str, object]:
+        """Return a compact status summary for the widget-managed runtime."""
+
+        session = self._managed_runtime_session
+        resolved_policy = self.resolved_runtime_policy()
+        persistent = self.runtime_has_persistent_objects()
+        if session is None:
+            return {
+                "active": False,
+                "status": "idle",
+                "runtime_policy": self.runtime_policy,
+                "resolved_policy": resolved_policy,
+                "persistent_objects": persistent,
+                "session_id": None,
+                "widgets": 0,
+                "handles": 0,
+                "events": 0,
+                "last_event": None,
+            }
+        last_event = session.events[-1].event if session.events else None
+        return {
+            "active": session.status not in {"stopped", "failed"},
+            "status": session.status,
+            "runtime_policy": self.runtime_policy,
+            "resolved_policy": resolved_policy,
+            "persistent_objects": persistent,
+            "session_id": session.session_id,
+            "widgets": len(session.widget_ids()),
+            "handles": len(session.handles),
+            "events": len(session.events),
+            "last_event": last_event,
+        }
+
+    def managed_runtime_status_text(self) -> str:
+        """Return a short human-readable managed runtime status line."""
+
+        status = self.managed_runtime_status()
+        state = "active" if status["active"] else "idle"
+        details = [
+            f"Runtime: {state}",
+            f"policy {status['resolved_policy']}",
+            f"status {status['status']}",
+            f"widgets {status['widgets']}",
+            f"handles {status['handles']}",
+        ]
+        if status["last_event"]:
+            details.append(f"last {status['last_event']}")
+        return " | ".join(details)
+
+    def runtime_has_persistent_objects(self) -> bool:
+        """Return True when the graph declares live runtime objects such as terminals."""
+
+        return any(_runtime_object_is_persistent(obj) for obj in self.runtime_object_registry())
+
+    def resolved_runtime_policy(self, policy: str | None = None) -> str:
+        """Resolve auto runtime lifetime into ephemeral or persistent for the current graph."""
+
+        requested = self._runtime_policy_from_value(self.runtime_policy if policy is None else policy)
+        if requested == "auto":
+            return "persistent" if self.runtime_has_persistent_objects() else "ephemeral"
+        return requested
+
+    def cleanup_managed_runtime(self) -> dict[str, object]:
+        """Stop and detach the widget-managed runtime session, if present."""
+
+        session = self._managed_runtime_session
+        self._managed_runtime_session = None
+        self._managed_runtime_policy = None
+        if session is None:
+            return {"stopped": [], "errors": {}}
+        return session.cleanup()
+
+    def run_node_runtime(
+        self,
+        node_id: str,
+        *,
+        policy: str | None = None,
+        session_id: str | None = None,
+    ) -> NodeGraphRuntimeEvent:
+        """Run a node using a runtime session managed by this NodeGraph widget."""
+
+        session = self.managed_runtime_session(session_id=session_id, policy=policy)
+        try:
+            return session.run_node(node_id)
+        finally:
+            self._finish_managed_runtime(policy)
+
+    def run_section_runtime(
+        self,
+        section_id: str,
+        command: str | None = None,
+        *,
+        policy: str | None = None,
+        session_id: str | None = None,
+    ) -> NodeGraphRuntimeEvent:
+        """Run a section command using a runtime session managed by this NodeGraph widget."""
+
+        command_s = command
+        if command_s is None:
+            section = next((existing for existing in self.sections if existing.id == str(section_id)), None)
+            config = _section_config(section) if section is not None else {}
+            command_s = str(config.get("section_command", "") or "run")
+        session = self.managed_runtime_session(session_id=session_id, policy=policy)
+        try:
+            return session.run_section_command(section_id, command_s)
+        finally:
+            self._finish_managed_runtime(policy)
+
+    def _register_managed_runtime_widgets(self, session: NodeGraphRuntimeSession) -> None:
+        for target in self.widget_targets:
+            if target.widget is not None:
+                session.register_widget(target.id, target.widget)
+
+    def _finish_managed_runtime(self, policy: str | None = None) -> None:
+        if self.resolved_runtime_policy(policy) == "ephemeral":
+            self.cleanup_managed_runtime()
 
     def runtime_object_refs(self) -> tuple[NodeGraphRuntimeObjectRef, ...]:
         """Return runtime object references declared by graph nodes."""
@@ -1734,6 +2232,7 @@ class NodeGraph(HtmlReport):
             templates=self.templates,
             sections=self.sections,
             widget_targets=self.widget_targets,
+            action_targets=self.action_targets,
             emit_events=True,
         )
 
@@ -2211,6 +2710,34 @@ class NodeGraph(HtmlReport):
         )
 
     @classmethod
+    def _binding_target_from_value(cls, value: NodeGraphBindingTarget | Mapping[str, object]) -> NodeGraphBindingTarget:
+        if isinstance(value, NodeGraphBindingTarget):
+            return value
+        if not isinstance(value, Mapping):
+            raise TypeError("NodeGraph binding targets must be NodeGraphBindingTarget instances or mappings")
+        target_id = cls._text(value.get("id", value.get("target_id", value.get("widget_id", value.get("action_id")))), "binding target id")
+        callback = value.get("callback")
+        if callback is not None and not callable(callback):
+            raise TypeError("binding target callback must be callable")
+        return NodeGraphBindingTarget(
+            id=target_id,
+            label=None if value.get("label") is None else str(value.get("label")),
+            target_type=None if value.get("target_type", value.get("type")) is None else str(value.get("target_type", value.get("type"))),
+            widget_type=None if value.get("widget_type") is None else str(value.get("widget_type")),
+            widget=value.get("widget"),
+            action_type=None if value.get("action_type") is None else str(value.get("action_type")),
+            callback=callback,
+            supported_update_modes=cls._string_tuple(value.get("supported_update_modes", value.get("update_modes", ())), "binding target update modes"),
+            default_update_mode=None if value.get("default_update_mode") is None else str(value.get("default_update_mode")),
+            supported_port_profiles=cls._string_tuple(value.get("supported_port_profiles", value.get("port_profiles", ())), "binding target port profiles"),
+            default_port_profile=None if value.get("default_port_profile") is None else str(value.get("default_port_profile")),
+            supported_formats=cls._string_tuple(value.get("supported_formats", value.get("formats", ())), "binding target formats"),
+            supported_commands=cls._string_tuple(value.get("supported_commands", value.get("commands", ())), "binding target commands"),
+            default_command=None if value.get("default_command") is None else str(value.get("default_command")),
+            data=cls._data_from_value(value),
+        )
+
+    @classmethod
     def _widget_target_from_value(cls, value: NodeGraphWidgetTarget | Mapping[str, object]) -> NodeGraphWidgetTarget:
         if isinstance(value, NodeGraphWidgetTarget):
             return value
@@ -2227,6 +2754,23 @@ class NodeGraph(HtmlReport):
             default_port_profile=None if value.get("default_port_profile") is None else str(value.get("default_port_profile")),
             supported_formats=cls._string_tuple(value.get("supported_formats", value.get("formats", ())), "widget target formats"),
             widget=value.get("widget"),
+            data=cls._data_from_value(value),
+        )
+
+    @classmethod
+    def _action_target_from_value(cls, value: NodeGraphActionTarget | Mapping[str, object]) -> NodeGraphActionTarget:
+        if isinstance(value, NodeGraphActionTarget):
+            return value
+        if not isinstance(value, Mapping):
+            raise TypeError("NodeGraph action targets must be NodeGraphActionTarget instances or mappings")
+        target_id = cls._text(value.get("id", value.get("action_id")), "action target id")
+        return NodeGraphActionTarget(
+            id=target_id,
+            label=None if value.get("label") is None else str(value.get("label")),
+            action_type=None if value.get("action_type", value.get("type")) is None else str(value.get("action_type", value.get("type"))),
+            supported_commands=cls._string_tuple(value.get("supported_commands", value.get("commands", ())), "action target commands"),
+            default_command=None if value.get("default_command") is None else str(value.get("default_command")),
+            callback=value.get("callback"),
             data=cls._data_from_value(value),
         )
 
@@ -2290,6 +2834,14 @@ class NodeGraph(HtmlReport):
             raise TypeError("custom data must be a mapping")
         return _json_copy(dict(custom_data), "NodeGraph custom data")
 
+    @classmethod
+    def _runtime_policy_from_value(cls, value: object) -> str:
+        policy = str(value or "auto").strip().lower()
+        if policy not in _NODE_GRAPH_RUNTIME_POLICIES:
+            allowed = ", ".join(sorted(_NODE_GRAPH_RUNTIME_POLICIES))
+            raise ValueError(f"runtime_policy must be one of {allowed}")
+        return policy
+
     @staticmethod
     def _string_tuple(value: object, name: str) -> tuple[str, ...]:
         if value is None:
@@ -2329,6 +2881,7 @@ def _node_graph_html(
     templates: Sequence[NodeGraphTemplate],
     sections: Sequence[NodeGraphSection],
     widget_targets: Sequence[NodeGraphWidgetTarget],
+    action_targets: Sequence[NodeGraphActionTarget],
     selected_node: str | None,
     show_edge_labels: bool,
     show_port_labels: bool,
@@ -2343,6 +2896,7 @@ def _node_graph_html(
         "templates": [_template_payload(template) for template in templates],
         "sections": [_section_payload(section) for section in sections],
         "widgetTargets": [_widget_target_payload(target) for target in widget_targets],
+        "actionTargets": [_action_target_payload(target) for target in action_targets],
         "portTypeColors": dict(_NODE_GRAPH_PORT_TYPE_COLORS),
         "portTypeConversions": {f"{source}->{target}": conversion for (source, target), conversion in _NODE_GRAPH_PORT_TYPE_CONVERSIONS.items()},
         "widgetSinkPortProfiles": list(_NODE_GRAPH_WIDGET_SINK_PORT_PROFILES),
@@ -3327,6 +3881,72 @@ def _node_graph_html(
       return '';
     }}
 
+    function actionTargetById(id) {{
+      const targetId = String(id || '');
+      const targets = Array.isArray(config.actionTargets) ? config.actionTargets : [];
+      return targets.find(targetInfo => String(targetInfo.action_id || targetInfo.id || '') === targetId) || null;
+    }}
+
+    function actionCommandOptions(targetInfo, fallback = 'run') {{
+      let commands = [];
+      if (targetInfo && Array.isArray(targetInfo.supported_commands) && targetInfo.supported_commands.length) {{
+        commands = targetInfo.supported_commands.map(command => String(command)).filter(Boolean);
+      }} else {{
+        commands = ['run', 'stop', 'reset', 'replay'];
+      }}
+      const preferred = targetInfo && targetInfo.default_command ? String(targetInfo.default_command) : fallback;
+      if (preferred && !commands.includes(preferred)) commands.unshift(preferred);
+      return commands.map(command => {{ return {{ value: command, label: command }}; }});
+    }}
+
+    function sectionActionTargetFieldSpec(section, value) {{
+      const targets = Array.isArray(config.actionTargets) ? config.actionTargets : [];
+      const options = [{{ value: '', label: 'Choose action...', action_type: '', supported_commands: [] }}];
+      for (const targetInfo of targets) {{
+        const value = String(targetInfo.action_id || targetInfo.id || '');
+        if (!value) continue;
+        options.push({{
+          value,
+          label: String(targetInfo.label || value),
+          action_type: String(targetInfo.action_type || ''),
+          supported_commands: Array.isArray(targetInfo.supported_commands) ? targetInfo.supported_commands : [],
+          default_command: String(targetInfo.default_command || '')
+        }});
+      }}
+      const current = String(value || '');
+      if (current && !options.some(option => option.value === current)) {{
+        options.push({{ value: current, label: `${{current}} (unregistered)`, missing: true }});
+      }}
+      return makePropertyField('data:action_id', 'Action Target', current, 'select', {{ options, help: 'Registered GUI action' }});
+    }}
+
+    function sectionCommandFieldSpec(section, value) {{
+      const data = section && section.data && typeof section.data === 'object' && !Array.isArray(section.data) ? section.data : {{}};
+      const targetInfo = actionTargetById(data.action_id);
+      const options = actionCommandOptions(targetInfo, 'run');
+      return makePropertyField('data:section_command', 'Command', String(value || (targetInfo && targetInfo.default_command) || 'run'), 'select', {{ options, help: 'Section action command' }});
+    }}
+
+    function applyActionTargetSelection(field) {{
+      if (!field || field.key !== 'data:action_id') return;
+      const selected = selectedPropertyTarget();
+      if (!selected || selected.kind !== 'section') return;
+      const meta = optionMeta(field, field.value);
+      if (!meta || meta.missing) return;
+      const commandField = propertyField('data:section_command');
+      if (commandField) {{
+        const options = actionCommandOptions(meta, commandField.value || 'run');
+        commandField.options = options.map(option => option.value);
+        commandField.optionLabels = {{}};
+        commandField.optionMeta = {{}};
+        for (const option of options) {{
+          commandField.optionLabels[option.value] = option.label;
+          commandField.optionMeta[option.value] = option;
+        }}
+        const preferred = String(meta.default_command || options[0]?.value || 'run');
+        if (!commandField.value || !commandField.options.includes(commandField.value)) commandField.value = preferred;
+      }}
+    }}
     function widgetBindingKind(target) {{
       return target && target.data ? String(target.data.node_type || target.data.template_id || '') : '';
     }}
@@ -3426,7 +4046,9 @@ def _node_graph_html(
         options.push({{ value: current, label: `${{current}} (unregistered)`, missing: true }});
       }}
       return {{ ...spec, type: 'select', options, placeholder: 'Choose widget...', help: spec.help || spec.description || 'Registered GUI widget' }};
-    }}    function schemaPropertyFields(target) {{
+    }}
+
+    function schemaPropertyFields(target) {{
       const schemaFields = configSchemaFields(target);
       const storage = schemaFields ? 'config' : 'data';
       const schema = schemaFields || (target.data && Array.isArray(target.data.property_fields) ? target.data.property_fields : []);
@@ -3507,6 +4129,8 @@ def _node_graph_html(
             makePropertyField('trigger', 'Trigger', target.trigger || ''),
             makePropertyField('color', 'Color', target.color || '#43c6ac'),
             makePropertyField('runtime_id', 'Runtime ID', runtimeId(target)),
+            sectionActionTargetFieldSpec(target, target.data && target.data.action_id),
+            sectionCommandFieldSpec(target, target.data && target.data.section_command),
             makePropertyField('locked', 'Locked', !!target.locked, 'bool'),
             makePropertyField('collapsed', 'Collapsed', !!target.collapsed, 'bool')
           ];
@@ -3592,6 +4216,7 @@ def _node_graph_html(
       if (!field || field.type !== 'select') return false;
       field.value = String(value || '');
       applyWidgetTargetSelection(field);
+      applyActionTargetSelection(field);
       return true;
     }}
 
@@ -3647,6 +4272,10 @@ def _node_graph_html(
         const data = section.data ? {{ ...section.data }} : {{}};
         const runtime = textProperty('runtime_id');
         if (runtime) data.runtime_id = runtime; else delete data.runtime_id;
+        const action = textProperty('data:action_id');
+        const command = textProperty('data:section_command', 'run') || 'run';
+        if (action) data.action_id = action; else delete data.action_id;
+        if (action || command !== 'run') data.section_command = command; else delete data.section_command;
         const lockedField = propertyField('locked');
         const collapsedField = propertyField('collapsed');
         const updates = {{
@@ -5052,6 +5681,20 @@ def _template_payload(template: NodeGraphTemplate) -> dict[str, object]:
     return payload
 
 
+def _action_target_payload(target: NodeGraphActionTarget) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "action_id": target.id,
+        "id": target.id,
+        "label": target.label or target.id,
+        "action_type": target.action_type,
+        "supported_commands": list(target.supported_commands),
+        "default_command": target.default_command,
+    }
+    if target.data is not None:
+        payload["data"] = _json_copy(target.data, "action target data")
+    return payload
+
+
 def _widget_target_payload(target: NodeGraphWidgetTarget) -> dict[str, object]:
     payload: dict[str, object] = {
         "widget_id": target.id,
@@ -6040,6 +6683,18 @@ def _runtime_object_id_from_sources(
     return None, None, None
 
 
+def _runtime_object_is_persistent(obj: NodeGraphRuntimeObject) -> bool:
+    object_type = str(obj.object_type or "").strip().lower()
+    if object_type in _PERSISTENT_RUNTIME_OBJECT_TYPES:
+        return True
+    config = obj.config or {}
+    if isinstance(config, Mapping):
+        value = config.get("persistent", config.get("keep_alive"))
+        if value is not None:
+            return bool(value)
+    return False
+
+
 def _runtime_object_from_node(node: NodeGraphNode) -> NodeGraphRuntimeObject | None:
     data = node.data or {}
     if not isinstance(data, Mapping):
@@ -6390,6 +7045,8 @@ __all__ = [
     "NodeGraphRuntimeObject",
     "NodeGraphRuntimeObjectRef",
     "NodeGraphSection",
+    "NodeGraphActionTarget",
+    "NodeGraphBindingTarget",
     "NodeGraphTemplate",
     "NodeGraphWidgetTarget",
     "multi_agent_node_templates",

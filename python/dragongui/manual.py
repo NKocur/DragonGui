@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import inspect
 from importlib import metadata as importlib_metadata
@@ -304,6 +304,8 @@ _DATACLASS_SYMBOLS = (
     "HistogramBins",
     "LinePlotPayload",
     "MeasureConstraints",
+    "NodeGraphActionTarget",
+    "NodeGraphBindingTarget",
     "NodeGraphEdge",
     "NodeGraphFlowRun",
     "NodeGraphNode",
@@ -486,6 +488,8 @@ _SYMBOL_NOTES = {
     "PaintContext": "Records display-list commands such as rects, lines, polylines, circles, text, and images for a `PaintWidget`.",
     "MeasureConstraints": "Constraint object passed to `PaintWidget.measure(...)`.",
     "NodeGraph": "Canvas-backed node editor for routing graphs, agent workflows, and visual pipelines.",
+    "NodeGraphActionTarget": "Transient UI action target that lets node graph sections invoke registered application callbacks.",
+    "NodeGraphBindingTarget": "Unified transient GUI binding target that can expose widgets, actions, or both to node graph inspectors.",
     "NodeGraphNode": "Node model for `NodeGraph`, including position, ports, status, and color.",
     "NodeGraphPort": "Input or output socket model used by `NodeGraphNode`.",
     "NodeGraphEdge": "Directed connection between `NodeGraph` ports.",
