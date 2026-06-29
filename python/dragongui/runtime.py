@@ -215,6 +215,27 @@ class LiveWidgetHandle:
         self.ensure_open()
         self.app.enqueue_clear_line_plot_series(self.id, series)
 
+    def enqueue_set_histogram_data(
+        self,
+        edges: Sequence[object],
+        counts: Sequence[object],
+        *,
+        input_count: int,
+        finite_count: int,
+        auto_fit: bool = True,
+        coalesce: bool = True,
+    ) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_histogram_data(
+            self.id,
+            edges,
+            counts,
+            input_count=input_count,
+            finite_count=finite_count,
+            auto_fit=auto_fit,
+            coalesce=coalesce,
+        )
+
     def enqueue_reset_scatter_camera(self) -> None:
         self.ensure_open()
         self.app.enqueue_reset_scatter_camera(self.id)
@@ -756,6 +777,28 @@ class AppHandle:
 
     def enqueue_clear_line_plot_series(self, widget_id: str, series: str | None = None) -> None:
         self._send_or_queue_native("enqueue_clear_line_plot_series", widget_id, series)
+
+    def enqueue_set_histogram_data(
+        self,
+        widget_id: str,
+        edges: Sequence[object],
+        counts: Sequence[object],
+        *,
+        input_count: int,
+        finite_count: int,
+        auto_fit: bool = True,
+        coalesce: bool = True,
+    ) -> None:
+        self._send_or_queue_native(
+            "enqueue_set_histogram_data",
+            widget_id,
+            [float(value) for value in edges],
+            [float(value) for value in counts],
+            int(input_count),
+            int(finite_count),
+            bool(auto_fit),
+            bool(coalesce),
+        )
 
     def enqueue_reset_scatter_camera(self, widget_id: str) -> None:
         self._send_or_queue_native("enqueue_reset_scatter_camera", widget_id)

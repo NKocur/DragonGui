@@ -807,6 +807,11 @@ Options and callbacks:
 Children:
 
 - Only `Tab` children are accepted.
+- By default `Tabs` paints only the individual tab buttons. The full-width
+  `Tabs::header` surface is not drawn unless that part is explicitly styled.
+- When the first visible body child of the active tab is a `Panel`, the panel's
+  top corners are squared so the selected tab and panel outline connect
+  cleanly.
 
 Live methods:
 
@@ -815,7 +820,8 @@ Live methods:
 CSS:
 
 - Type selector: `Tabs`.
-- Parts: `header`.
+- Parts: `header`. Style this part when you intentionally want a tab strip
+  background, divider, or custom header band.
 
 ### `Tab`
 
@@ -1669,7 +1675,7 @@ Notable non-selectors:
 | `Checkbox` | `row`, `box`, `indicator`, `label` |
 | `Slider` | `track`, `fill`, `thumb` |
 | `ProgressBar` | `track`, `fill`, `label` |
-| `Tabs` | `header` |
+| `Tabs` | `header` (opt-in strip/divider; unstyled tabs do not paint a header box) |
 | `Tab` | `tab`, `accent`, `badge` |
 | `NavItem` | `item`, `accent`, `badge` |
 | `PieChart` | `label` |

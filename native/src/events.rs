@@ -122,6 +122,8 @@ pub struct WidgetState {
     pub text_placeholder: HashMap<String, String>,
     /// TextInput cursor byte offset keyed by widget id.
     pub text_cursor: HashMap<String, usize>,
+    /// Active text selection byte range keyed by widget id.
+    pub text_selection: HashMap<String, (usize, usize)>,
     /// TextArea vertical scroll offset in physical pixels keyed by widget id.
     pub text_scroll_y: HashMap<String, f32>,
     /// TextArea horizontal scroll offset in physical pixels keyed by widget id.
@@ -536,6 +538,7 @@ impl WidgetState {
             return None;
         }
         self.text_cursor.insert(id.to_string(), value.len());
+        self.text_selection.remove(id);
         self.text_val.insert(id.to_string(), value.clone());
         self.text_scroll_y.insert(id.to_string(), 0.0);
         self.text_scroll_x.insert(id.to_string(), 0.0);
@@ -565,6 +568,7 @@ impl WidgetState {
         if text.is_empty() {
             return self.text_val.get(id).cloned();
         }
+        self.delete_text_selection(id);
         let value = self.text_val.get_mut(id)?;
         let cursor = self
             .text_cursor
@@ -577,6 +581,9 @@ impl WidgetState {
     }
 
     pub fn backspace_text(&mut self, id: &str) -> Option<String> {
+        if let Some(value) = self.delete_text_selection(id) {
+            return Some(value);
+        }
         let value = self.text_val.get_mut(id)?;
         let cursor = self
             .text_cursor
@@ -592,6 +599,9 @@ impl WidgetState {
     }
 
     pub fn delete_text(&mut self, id: &str) -> Option<String> {
+        if let Some(value) = self.delete_text_selection(id) {
+            return Some(value);
+        }
         let value = self.text_val.get_mut(id)?;
         let cursor = self
             .text_cursor
@@ -617,6 +627,7 @@ impl WidgetState {
                 std::cmp::Ordering::Greater => next_boundary(value, *cursor),
                 std::cmp::Ordering::Equal => *cursor,
             };
+            self.text_selection.remove(id);
         }
     }
 
@@ -637,13 +648,86 @@ impl WidgetState {
         };
         let target = cursor_for_line_column(value, target_line, column);
         self.text_cursor.insert(id.to_string(), target);
+        self.text_selection.remove(id);
     }
 
     pub fn move_text_cursor_home_end(&mut self, id: &str, end: bool) {
         if let Some(value) = self.text_val.get(id) {
             self.text_cursor
                 .insert(id.to_string(), if end { value.len() } else { 0 });
+            self.text_selection.remove(id);
         }
+    }
+
+    pub fn set_text_cursor(&mut self, id: &str, cursor: usize) -> bool {
+        let Some(value) = self.text_val.get(id) else {
+            return false;
+        };
+        let cursor = clamp_boundary(value, cursor);
+        self.text_cursor.insert(id.to_string(), cursor);
+        self.text_selection.remove(id);
+        true
+    }
+
+    pub fn set_text_selection(&mut self, id: &str, anchor: usize, cursor: usize) -> bool {
+        let Some(value) = self.text_val.get(id) else {
+            return false;
+        };
+        let anchor = clamp_boundary(value, anchor);
+        let cursor = clamp_boundary(value, cursor);
+        self.text_cursor.insert(id.to_string(), cursor);
+        if anchor == cursor {
+            self.text_selection.remove(id);
+        } else {
+            let start = anchor.min(cursor);
+            let end = anchor.max(cursor);
+            self.text_selection.insert(id.to_string(), (start, end));
+        }
+        true
+    }
+
+    pub fn select_all_text(&mut self, id: &str) -> bool {
+        let Some(value) = self.text_val.get(id) else {
+            return false;
+        };
+        self.text_cursor.insert(id.to_string(), value.len());
+        if value.is_empty() {
+            self.text_selection.remove(id);
+        } else {
+            self.text_selection.insert(id.to_string(), (0, value.len()));
+        }
+        true
+    }
+
+    pub fn selected_text(&self, id: &str) -> Option<String> {
+        let value = self.text_val.get(id)?;
+        let (start, end) = self.normalized_text_selection(id)?;
+        Some(value[start..end].to_string())
+    }
+
+    pub fn normalized_text_selection(&self, id: &str) -> Option<(usize, usize)> {
+        let value = self.text_val.get(id)?;
+        let (a, b) = self.text_selection.get(id).copied()?;
+        let start = clamp_boundary(value, a.min(b));
+        let end = clamp_boundary(value, a.max(b));
+        (start < end).then_some((start, end))
+    }
+
+    pub fn delete_text_selection(&mut self, id: &str) -> Option<String> {
+        let value = self.text_val.get_mut(id)?;
+        let (a, b) = self.text_selection.remove(id)?;
+        let start = clamp_boundary(value, a.min(b));
+        let end = clamp_boundary(value, a.max(b));
+        if start < end {
+            value.drain(start..end);
+            self.text_cursor.insert(id.to_string(), start);
+        }
+        Some(value.clone())
+    }
+
+    pub fn cursor_for_text_position(&self, id: &str, line: usize, column: usize) -> Option<usize> {
+        let value = self.text_val.get(id)?;
+        Some(cursor_for_line_column(value, line, column))
     }
 
     pub fn caret_t(&self, id: &str) -> f32 {
@@ -672,6 +756,10 @@ impl WidgetState {
 
     pub fn text_area_scroll_x(&self, id: &str) -> f32 {
         self.text_scroll_x.get(id).copied().unwrap_or(0.0).max(0.0)
+    }
+
+    pub fn text_area_scroll_y_raw(&self, id: &str) -> f32 {
+        self.text_scroll_y.get(id).copied().unwrap_or(0.0).max(0.0)
     }
 
     pub fn scroll_text_area(
@@ -1036,6 +1124,9 @@ impl WidgetState {
                 let cursor = previous.text_cursor.get(id).copied().unwrap_or(value.len());
                 self.text_cursor
                     .insert(id.clone(), clamp_boundary(value, cursor));
+                if let Some((start, end)) = previous.normalized_text_selection(id) {
+                    self.text_selection.insert(id.clone(), (start, end));
+                }
             }
         }
         self.invalid_numbers = previous
@@ -2444,6 +2535,46 @@ mod tests {
 
         let cursor = state.text_cursor["notes"];
         assert_eq!(line_column_for_cursor(text, cursor), (2, 2));
+    }
+
+    #[test]
+    fn text_selection_replaces_range_on_insert() {
+        let mut state = WidgetState::default();
+        state
+            .text_val
+            .insert("field".to_string(), "hello world".to_string());
+        assert!(state.set_text_selection("field", 6, 11));
+
+        let value = state.insert_text("field", "DragonGUI").unwrap();
+
+        assert_eq!(value, "hello DragonGUI");
+        assert_eq!(state.text_cursor.get("field").copied(), Some(15));
+        assert!(state.normalized_text_selection("field").is_none());
+    }
+
+    #[test]
+    fn text_selection_select_all_and_selected_text() {
+        let mut state = WidgetState::default();
+        state
+            .text_val
+            .insert("log".to_string(), "first\nsecond".to_string());
+
+        assert!(state.select_all_text("log"));
+
+        assert_eq!(state.selected_text("log").as_deref(), Some("first\nsecond"));
+        assert_eq!(state.normalized_text_selection("log"), Some((0, 12)));
+    }
+
+    #[test]
+    fn text_cursor_for_text_position_maps_lines_and_columns() {
+        let mut state = WidgetState::default();
+        state
+            .text_val
+            .insert("notes".to_string(), "aa\nbbbb\ncc".to_string());
+
+        let cursor = state.cursor_for_text_position("notes", 1, 3).unwrap();
+
+        assert_eq!(&state.text_val["notes"][cursor..], "b\ncc");
     }
 
     #[test]

@@ -1,7 +1,9 @@
 use serde_json::Value;
 use winit::{event_loop::EventLoopProxy, window::Window};
 
-use crate::{commands::RuntimeEvent, document::WidgetNode, layout::LayoutResult};
+use crate::{
+    commands::RuntimeEvent, document::WidgetNode, events::WidgetState, layout::LayoutResult,
+};
 
 pub(crate) struct HtmlReportWebViewManager {
     inner: platform::PlatformHtmlReportWebViewManager,
@@ -14,8 +16,13 @@ impl HtmlReportWebViewManager {
         }
     }
 
-    pub(crate) fn sync(&mut self, tree: Option<&WidgetNode>, layout: Option<&LayoutResult>) {
-        self.inner.sync(tree, layout);
+    pub(crate) fn sync(
+        &mut self,
+        tree: Option<&WidgetNode>,
+        layout: Option<&LayoutResult>,
+        state: Option<&WidgetState>,
+    ) {
+        self.inner.sync(tree, layout, state);
     }
 
     pub(crate) fn drain_messages(&mut self) -> Vec<(String, String)> {
@@ -69,6 +76,7 @@ mod platform {
     use crate::{
         commands::RuntimeEvent,
         document::{WidgetKind, WidgetNode},
+        events::WidgetState,
         layout::{LayoutResult, Rect},
     };
 
@@ -152,7 +160,12 @@ mod platform {
             }
         }
 
-        pub(crate) fn sync(&mut self, tree: Option<&WidgetNode>, layout: Option<&LayoutResult>) {
+        pub(crate) fn sync(
+            &mut self,
+            tree: Option<&WidgetNode>,
+            layout: Option<&LayoutResult>,
+            state: Option<&WidgetState>,
+        ) {
             if !self.enabled {
                 return;
             }
@@ -165,12 +178,10 @@ mod platform {
                 return;
             };
 
+            let mut mounted = HashSet::new();
+            collect_mounted_report_ids(tree, &mut mounted);
             let mut reports = Vec::new();
-            collect_visible_reports(tree, layout, &mut reports);
-            if reports.is_empty() {
-                self.hide_all();
-                return;
-            }
+            collect_visible_reports(tree, layout, state, &mut reports);
 
             let mut active = HashSet::new();
             for (id, source, rect, allow_scripts) in reports {
@@ -187,14 +198,24 @@ mod platform {
                 }
             }
 
-            let stale = self
+            let inactive = self
                 .views
                 .keys()
-                .filter(|id| !active.contains(*id))
+                .filter(|id| mounted.contains(*id) && !active.contains(*id))
                 .cloned()
                 .collect::<Vec<_>>();
-            for id in stale {
+            for id in inactive {
                 self.hide_view(&id);
+            }
+
+            let removed = self
+                .views
+                .keys()
+                .filter(|id| !mounted.contains(*id))
+                .cloned()
+                .collect::<Vec<_>>();
+            for id in removed {
+                self.remove_view(&id);
             }
         }
 
@@ -209,7 +230,7 @@ mod platform {
         pub(crate) fn hide_all(&mut self) {
             let ids = self.views.keys().cloned().collect::<Vec<_>>();
             for id in ids {
-                self.hide_view(&id);
+                self.remove_view(&id);
             }
         }
 
@@ -438,6 +459,12 @@ mod platform {
                 let _ = view.show(false);
             }
         }
+
+        fn remove_view(&mut self, id: &str) {
+            if let Some(mut view) = self.views.remove(id) {
+                let _ = view.hide_for_removal();
+            }
+        }
     }
 
     impl HtmlReportView {
@@ -470,6 +497,24 @@ mod platform {
                     .map_err(|error| format!("WebView2 visibility failed: {error}"))?;
             }
             self.visible = visible;
+            Ok(())
+        }
+
+        fn hide_for_removal(&mut self) -> Result<(), String> {
+            let offscreen = RECT {
+                left: -32000,
+                top: -32000,
+                right: -31999,
+                bottom: -31999,
+            };
+            unsafe {
+                let _ = self.controller.SetBounds(offscreen);
+                self.controller
+                    .SetIsVisible(false)
+                    .map_err(|error| format!("WebView2 visibility failed: {error}"))?;
+            }
+            self.visible = false;
+            self.rect = None;
             Ok(())
         }
 
@@ -587,13 +632,17 @@ mod platform {
     fn collect_visible_reports(
         node: &WidgetNode,
         layout: &LayoutResult,
+        state: Option<&WidgetState>,
         out: &mut Vec<(String, ReportSource, [i32; 4], bool)>,
     ) {
+        if matches!(node.kind, WidgetKind::Tabs | WidgetKind::Pages) {
+            for child in active_navigation_children(node, state) {
+                collect_visible_reports(child, layout, state, out);
+            }
+            return;
+        }
         if node.kind == WidgetKind::HtmlReport {
-            if let Some(rect) = layout
-                .visible_rect(&node.id)
-                .or_else(|| layout.rects.get(&node.id).copied())
-            {
+            if let Some(rect) = fully_visible_webview_rect(layout, &node.id) {
                 if let Some(bounds) = webview_bounds(rect) {
                     out.push((
                         node.id.clone(),
@@ -605,8 +654,72 @@ mod platform {
             }
         }
         for child in &node.children {
-            collect_visible_reports(child, layout, out);
+            collect_visible_reports(child, layout, state, out);
         }
+    }
+
+    fn fully_visible_webview_rect(layout: &LayoutResult, id: &str) -> Option<Rect> {
+        let rect = layout.rects.get(id).copied()?;
+        let visible = layout.visible_rect(id)?;
+        rect_fully_contains(visible, rect).then_some(rect)
+    }
+
+    fn rect_fully_contains(outer: Rect, inner: Rect) -> bool {
+        const EPSILON: f32 = 0.5;
+        outer.x <= inner.x + EPSILON
+            && outer.y <= inner.y + EPSILON
+            && outer.x + outer.w + EPSILON >= inner.x + inner.w
+            && outer.y + outer.h + EPSILON >= inner.y + inner.h
+            && inner.w > 0.0
+            && inner.h > 0.0
+    }
+
+    fn collect_mounted_report_ids(node: &WidgetNode, out: &mut HashSet<String>) {
+        if node.kind == WidgetKind::HtmlReport {
+            out.insert(node.id.clone());
+        }
+        for child in &node.children {
+            collect_mounted_report_ids(child, out);
+        }
+    }
+
+    fn active_navigation_children<'a>(
+        node: &'a WidgetNode,
+        state: Option<&WidgetState>,
+    ) -> Vec<&'a WidgetNode> {
+        let child_kind = match node.kind {
+            WidgetKind::Tabs => WidgetKind::Tab,
+            WidgetKind::Pages => WidgetKind::Page,
+            _ => return node.children.iter().collect(),
+        };
+        let items = node
+            .children
+            .iter()
+            .filter(|child| child.kind == child_kind)
+            .collect::<Vec<_>>();
+        let active = match node.kind {
+            WidgetKind::Tabs => state
+                .and_then(|state| state.active_tab(&node.id))
+                .or(node.props.route_value.as_deref()),
+            WidgetKind::Pages => state
+                .and_then(|state| state.active_page(&node.id))
+                .or(node.props.route_value.as_deref()),
+            _ => None,
+        }
+        .or_else(|| {
+            items
+                .first()
+                .and_then(|child| child.props.route_value.as_deref())
+        });
+        let active_child = active
+            .and_then(|value| {
+                items
+                    .iter()
+                    .find(|child| child.props.route_value.as_deref() == Some(value))
+                    .copied()
+            })
+            .or_else(|| items.first().copied());
+        active_child.into_iter().collect()
     }
 
     fn webview_bounds(rect: Rect) -> Option<[i32; 4]> {
@@ -616,6 +729,41 @@ mod platform {
             return None;
         }
         Some([rect.x.round() as i32, rect.y.round() as i32, w, h])
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn webview_rect_requires_full_visibility() {
+            let full = Rect {
+                x: 20.0,
+                y: 80.0,
+                w: 300.0,
+                h: 180.0,
+            };
+            let mut layout = LayoutResult::default();
+            layout.rects.insert("terminal".to_string(), full);
+            layout.clips.insert("terminal".to_string(), full);
+
+            assert_eq!(
+                fully_visible_webview_rect(&layout, "terminal").map(|rect| rect.h),
+                Some(180.0)
+            );
+
+            layout.clips.insert(
+                "terminal".to_string(),
+                Rect {
+                    x: 20.0,
+                    y: 120.0,
+                    w: 300.0,
+                    h: 140.0,
+                },
+            );
+
+            assert!(fully_visible_webview_rect(&layout, "terminal").is_none());
+        }
     }
 
     fn source_for_node(node: &WidgetNode) -> ReportSource {
@@ -700,7 +848,9 @@ mod platform {
     use serde_json::{json, Value};
     use winit::{event_loop::EventLoopProxy, window::Window};
 
-    use crate::{commands::RuntimeEvent, document::WidgetNode, layout::LayoutResult};
+    use crate::{
+        commands::RuntimeEvent, document::WidgetNode, events::WidgetState, layout::LayoutResult,
+    };
 
     pub(crate) struct PlatformHtmlReportWebViewManager;
 
@@ -709,7 +859,13 @@ mod platform {
             Self
         }
 
-        pub(crate) fn sync(&mut self, _tree: Option<&WidgetNode>, _layout: Option<&LayoutResult>) {}
+        pub(crate) fn sync(
+            &mut self,
+            _tree: Option<&WidgetNode>,
+            _layout: Option<&LayoutResult>,
+            _state: Option<&WidgetState>,
+        ) {
+        }
 
         pub(crate) fn drain_messages(&mut self) -> Vec<(String, String)> {
             Vec::new()

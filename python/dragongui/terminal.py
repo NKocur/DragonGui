@@ -254,6 +254,7 @@ class TerminalBridge:
         self._session: Any | None = None
         self._session_id: int | None = None
         self._session_seq = 0
+        self._pending_input: deque[str] = deque()
         self._event_lock = threading.Lock()
         self._events: deque[TerminalEvent] = deque()
         self._transcript: deque[TerminalTranscriptEntry] = deque(maxlen=max(1, int(max_transcript_entries)))
@@ -315,13 +316,22 @@ class TerminalBridge:
     dispose = stop
 
     def send_text(self, text: object) -> bool:
-        """Write text to the active terminal session, returning False if none is attached."""
+        """Write text to the active terminal session.
+
+        If the WebView has not connected and no process session exists yet,
+        input is queued and flushed when the session is spawned. The method
+        still returns False in that case because the write was not delivered
+        synchronously.
+        """
         data = str(text)
         with self._session_lock:
             session = self._session
             session_id = self._session_id
             alive = session is not None and session.is_alive()
         if not alive:
+            with self._session_lock:
+                if not self._closed and self._thread is not None:
+                    self._pending_input.append(data)
             return False
         session.write(data)
         self._record_transcript("input", data, session_id)
@@ -456,7 +466,12 @@ class TerminalBridge:
                     self.status = f"subprocess session started: {self.command.label}"
             self._session = session
             self._session_id = session_id
+            pending_input = tuple(self._pending_input)
+            self._pending_input.clear()
             self._record_event("session_started", session_id=session_id)
+            for data in pending_input:
+                session.write(data)
+                self._record_transcript("input", data, session_id)
             return session
 
     def _pump_output(self, client: socket.socket, session: Any, done: threading.Event) -> None:

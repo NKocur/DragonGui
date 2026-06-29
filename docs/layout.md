@@ -5,11 +5,36 @@ highest-level primitive that matches the composition:
 
 | Primitive | Use For |
 | --- | --- |
+| `AppShell` | Bounded top-level app layouts with sidebars and a main body. |
+| `Body` | Flexible scroll-owning main content inside an app shell. |
 | `VLayout` | Vertical application roots, forms, and stacked panel content. |
 | `HLayout` | Non-wrapping rows where every child is expected to fit. |
 | `ScrollArea` | Explicit bounded viewport for overflowing content. |
 | `GridLayout` | Responsive card/dashboard layouts that should collapse at narrow widths. |
 | `FlowLayout` | Buttons, tags, badges, and chips that should wrap by intrinsic width. |
+
+## App Shells
+
+For most tools and dashboards, start with `AppShell` and put the flexible main
+region in `Body`. This establishes a bounded window-sized layout, makes the
+main region shrink correctly next to fixed sidebars, and gives scrolling to one
+clear owner:
+
+```python
+win = dg.Window("Tool", width=1200, height=800)
+
+with dg.AppShell():
+    with dg.Sidebar(title="Controls", width=320):
+        ...
+
+    with dg.Body(scroll="y", gap=12):
+        with dg.GridLayout(columns=2, min_column_width=360, gap=12):
+            ...
+```
+
+Use this pattern instead of a raw top-level `HLayout` plus fixed-width panels
+when the content may grow. `Body` applies the usual safe defaults:
+`min_width: 0`, `min_height: 0`, flexible fill, and explicit overflow.
 
 ## Responsive Card Grids
 

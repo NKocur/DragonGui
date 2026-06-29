@@ -40,6 +40,8 @@ Common live methods:
 | Widget | Features |
 | --- | --- |
 | `Window(title, width=1024, height=768)` | Root container and native window metadata. Must be created outside any active layout context. |
+| `AppShell(gap=0)` | Bounded full-window app root for sidebar plus main-body layouts. Defaults to hidden outer overflow and safe min sizes. |
+| `Body(scroll="y", gap=None)` | Flexible scroll-owning main content pane for `AppShell`. Defaults to `min_width=0`, `min_height=0`, and fill behavior. |
 | `HLayout` | Horizontal flex container. Useful for rows, split panes, and button groups. |
 | `VLayout` | Vertical flex container. Useful for forms, panels, and stacked sections. |
 | `ScrollArea(axis="y", gap=None, width=None, height=None)` | Bounded scroll viewport for content that may exceed its parent. Defaults to vertical scrolling and uses a vertical layout for children. |
@@ -87,7 +89,7 @@ Helper builders:
 
 | Widget | Features |
 | --- | --- |
-| `Tabs(value=None, on_change=None, disabled=False)` | Container for `Tab` children. If `value` is omitted, the first tab becomes active. `set_value(value, notify=False)` switches tabs programmatically; pass `notify=True` to invoke `on_change`. Emits `change` for native interaction when `on_change` is supplied and not disabled. Supports `Tabs::header`. |
+| `Tabs(value=None, on_change=None, disabled=False)` | Container for `Tab` children. If `value` is omitted, the first tab becomes active. `set_value(value, notify=False)` switches tabs programmatically; pass `notify=True` to invoke `on_change`. Emits `change` for native interaction when `on_change` is supplied and not disabled. Default tabs paint only the tab buttons; `Tabs::header` is opt-in for a strip/divider/background. |
 | `Tab(label, value=None, badge=None, disabled=False)` | Tab page container. `value` defaults to a route-safe version of `label`. Must be created directly inside `Tabs`. Optional badge supports `set_badge(value)`. Supports `Tab::tab`, `accent`, and `badge`. |
 | `Pages(value=None, on_change=None)` | Container for route-based `Page` children. If `value` is omitted, the first page becomes active. `set_value(value, notify=False)` switches pages programmatically; pass `notify=True` to invoke `on_change`. Native page-route changes emit `change` when `on_change` is supplied; programmatic construction does not call it. |
 | `Page(value, title=None)` | Page container. Must be created directly inside `Pages`. |
@@ -173,7 +175,7 @@ These widgets expose named renderer parts for CSS selectors and inline
 | `Checkbox` | `row`, `box`, `indicator`, `label` |
 | `Slider` | `track`, `fill`, `thumb` |
 | `ProgressBar` | `track`, `fill`, `label` |
-| `Tabs` | `header` |
+| `Tabs` | `header` (opt-in strip/divider; unstyled tabs do not paint a header box) |
 | `Tab` | `tab`, `accent`, `badge` |
 | `NavItem` | `item`, `accent`, `badge` |
 | `DataFrameTable` | `header`, `row`, `row-selected`, `grid-line` |

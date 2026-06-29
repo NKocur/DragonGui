@@ -18,6 +18,17 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop, EventLoopProxy}
 use winit::keyboard::{Key, KeyCode, ModifiersState, NamedKey, PhysicalKey};
 use winit::window::{Theme as WinitTheme, Window, WindowId};
 
+#[cfg(windows)]
+use windows::Win32::Foundation::{HANDLE, HGLOBAL};
+#[cfg(windows)]
+use windows::Win32::System::DataExchange::{
+    CloseClipboard, EmptyClipboard, GetClipboardData, OpenClipboard, SetClipboardData,
+};
+#[cfg(windows)]
+use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+#[cfg(windows)]
+use windows::Win32::System::Ole::CF_UNICODETEXT;
+
 use crate::commands::{
     Command, CommandBridge, CommandValue, Dirty, RuntimeEvent, ScatterHoverColumnPacket,
     ScatterTelemetry, TableColumnPacket,
@@ -71,6 +82,85 @@ use crate::table::{self, TableHit};
 use crate::text::TextRendererDg;
 use crate::theme::{parse_web_color, Theme};
 use crate::toast::{ToastLevel, ToastOverlay, ToastPosition};
+
+#[cfg(windows)]
+fn set_system_clipboard_text(text: &str) -> bool {
+    let mut wide: Vec<u16> = text.encode_utf16().collect();
+    wide.push(0);
+    let byte_len = wide.len().saturating_mul(std::mem::size_of::<u16>());
+    if byte_len == 0 {
+        return false;
+    }
+    unsafe {
+        let Ok(()) = OpenClipboard(None) else {
+            return false;
+        };
+        let Ok(handle) = GlobalAlloc(GMEM_MOVEABLE, byte_len) else {
+            let _ = CloseClipboard();
+            return false;
+        };
+        if handle.is_invalid() {
+            let _ = CloseClipboard();
+            return false;
+        }
+        let ptr = GlobalLock(handle) as *mut u16;
+        if ptr.is_null() {
+            let _ = GlobalUnlock(handle);
+            let _ = CloseClipboard();
+            return false;
+        }
+        std::ptr::copy_nonoverlapping(wide.as_ptr(), ptr, wide.len());
+        let _ = GlobalUnlock(handle);
+        let _ = EmptyClipboard();
+        let copied = SetClipboardData(CF_UNICODETEXT.0 as u32, Some(HANDLE(handle.0))).is_ok();
+        let _ = CloseClipboard();
+        copied
+    }
+}
+
+#[cfg(windows)]
+fn get_system_clipboard_text() -> Option<String> {
+    unsafe {
+        let Ok(()) = OpenClipboard(None) else {
+            return None;
+        };
+        let handle = match GetClipboardData(CF_UNICODETEXT.0 as u32) {
+            Ok(handle) => handle,
+            Err(_) => {
+                let _ = CloseClipboard();
+                return None;
+            }
+        };
+        if handle.is_invalid() {
+            let _ = CloseClipboard();
+            return None;
+        }
+        let hglobal = HGLOBAL(handle.0);
+        let ptr = GlobalLock(hglobal) as *const u16;
+        if ptr.is_null() {
+            let _ = CloseClipboard();
+            return None;
+        }
+        let mut len = 0usize;
+        while *ptr.add(len) != 0 {
+            len += 1;
+        }
+        let text = String::from_utf16_lossy(std::slice::from_raw_parts(ptr, len));
+        let _ = GlobalUnlock(hglobal);
+        let _ = CloseClipboard();
+        Some(text)
+    }
+}
+
+#[cfg(not(windows))]
+fn set_system_clipboard_text(_text: &str) -> bool {
+    false
+}
+
+#[cfg(not(windows))]
+fn get_system_clipboard_text() -> Option<String> {
+    None
+}
 
 // ---------------------------------------------------------------------------
 // AppSpec — bundles everything parsed from the Python document
@@ -7688,6 +7778,11 @@ impl WgpuState {
         let line_plot_rebuild_ms = line_plot_t0.elapsed().as_secs_f64() * 1000.0;
 
         *current_layout = Some(layout);
+        html_reports.sync(
+            widget_tree.as_ref(),
+            current_layout.as_ref(),
+            widget_state.as_ref(),
+        );
         style_reapply_timing.record(style_ms);
         transition_sync_timing.record(transition_ms);
         layout_compute_timing.record(layout_compute_ms);
@@ -7701,8 +7796,11 @@ impl WgpuState {
     }
 
     fn sync_html_reports(&mut self) {
-        self.html_reports
-            .sync(self.widget_tree.as_ref(), self.current_layout.as_ref());
+        self.html_reports.sync(
+            self.widget_tree.as_ref(),
+            self.current_layout.as_ref(),
+            self.widget_state.as_ref(),
+        );
     }
 
     fn drain_html_report_messages(&mut self) -> Vec<(String, String)> {
@@ -10880,6 +10978,63 @@ impl WgpuState {
         (node.kind == WidgetKind::Histogram).then_some(node.props.histogram.interaction.as_str())
     }
 
+    fn set_histogram_data(
+        &mut self,
+        id: &str,
+        edges: Vec<f32>,
+        counts: Vec<f32>,
+        input_count: usize,
+        finite_count: usize,
+        auto_fit: bool,
+    ) -> Result<bool, String> {
+        if edges.len() != counts.len().saturating_add(1) {
+            return Err("histogram edges length must equal counts length + 1".to_string());
+        }
+        if edges.len() < 2 {
+            return Err("histogram edges must contain at least two values".to_string());
+        }
+        if edges.iter().any(|value| !value.is_finite()) {
+            return Err("histogram edges must be finite".to_string());
+        }
+        if counts
+            .iter()
+            .any(|value| !value.is_finite() || *value < 0.0)
+        {
+            return Err("histogram counts must be finite and non-negative".to_string());
+        }
+        if !edges.windows(2).all(|pair| pair[0] < pair[1]) {
+            return Err("histogram edges must be strictly increasing".to_string());
+        }
+        let Some(tree) = self.widget_tree.as_mut() else {
+            return Ok(false);
+        };
+        let Some(node) = find_widget_mut(tree, id) else {
+            return Ok(false);
+        };
+        if node.kind != WidgetKind::Histogram {
+            return Err(format!("widget {id:?} is not a Histogram"));
+        }
+        node.props.histogram.edges = edges;
+        node.props.histogram.counts = counts;
+        node.props.histogram.selection_rect = None;
+        if auto_fit {
+            node.props.histogram.auto_fit = true;
+            node.props.histogram.x_min = None;
+            node.props.histogram.x_max = None;
+            node.props.histogram.y_min = None;
+            node.props.histogram.y_max = None;
+        }
+        node.props.raw_props.insert(
+            "input_count".to_string(),
+            serde_json::Value::from(input_count as u64),
+        );
+        node.props.raw_props.insert(
+            "finite_count".to_string(),
+            serde_json::Value::from(finite_count as u64),
+        );
+        Ok(true)
+    }
+
     fn line_plot_toolbar_hit_at(&self, id: &str, pos: [f32; 2]) -> Option<&'static str> {
         if self.widget_kind(id) != Some(WidgetKind::LinePlot) {
             return None;
@@ -12982,6 +13137,76 @@ impl WgpuState {
         Some((visible_w, visible_h, line_h))
     }
 
+    fn text_cursor_at_point(&self, id: &str, pos: [f32; 2]) -> Option<usize> {
+        let tree = self.widget_tree.as_ref()?;
+        let layout = self.current_layout.as_ref()?;
+        let state = self.widget_state.as_ref()?;
+        let node = crate::overlays::find_node(tree, id)?;
+        let rect = layout.rects.get(id).copied()?;
+        let visible = layout.visible_rect(id).unwrap_or(rect);
+        if pos[0] < visible.x
+            || pos[0] > visible.x + visible.w
+            || pos[1] < visible.y
+            || pos[1] > visible.y + visible.h
+        {
+            return None;
+        }
+        let pad = self.theme.spacing * self.scale_factor;
+        let font_size = crate::text::text_font_size(node, &self.theme, self.scale_factor);
+        let line_h = crate::text::text_line_height(font_size, &self.theme, self.scale_factor);
+        let char_w = (font_size * 0.62).max(1.0);
+        let (left, top, scroll_x, scroll_y, multiline) = match node.kind {
+            WidgetKind::TextInput => (rect.x + pad, rect.y, 0.0, 0.0, false),
+            WidgetKind::NumberInput => {
+                let step_w = number_stepper_width_for_style(&node.style, rect.w, self.scale_factor);
+                (rect.x + step_w + pad, rect.y, 0.0, 0.0, false)
+            }
+            WidgetKind::TextArea | WidgetKind::CodeEditor | WidgetKind::LogView => {
+                let gutter_w = if node.kind == WidgetKind::CodeEditor {
+                    code_editor_gutter_width_for_style(&node.style, self.scale_factor)
+                        .min((rect.w - pad * 2.0).max(1.0) * 0.5)
+                } else {
+                    0.0
+                };
+                (
+                    rect.x + pad + gutter_w,
+                    rect.y + pad,
+                    state.text_area_scroll_x(id),
+                    state.text_area_scroll_y_raw(id),
+                    true,
+                )
+            }
+            _ => return None,
+        };
+        let column = (((pos[0] - left + scroll_x) / char_w).round().max(0.0)) as usize;
+        let line = if multiline {
+            (((pos[1] - top + scroll_y) / line_h).floor().max(0.0)) as usize
+        } else {
+            0
+        };
+        state.cursor_for_text_position(id, line, column)
+    }
+
+    fn begin_text_selection(&mut self, id: &str, pos: [f32; 2]) -> Option<TextSelectionDrag> {
+        let cursor = self.text_cursor_at_point(id, pos)?;
+        let state = self.widget_state.as_mut()?;
+        state.set_text_cursor(id, cursor);
+        Some(TextSelectionDrag {
+            widget_id: id.to_string(),
+            anchor: cursor,
+        })
+    }
+
+    fn update_text_selection(&mut self, drag: &TextSelectionDrag, pos: [f32; 2]) -> bool {
+        let Some(cursor) = self.text_cursor_at_point(&drag.widget_id, pos) else {
+            return false;
+        };
+        let Some(state) = self.widget_state.as_mut() else {
+            return false;
+        };
+        state.set_text_selection(&drag.widget_id, drag.anchor, cursor)
+    }
+
     fn scroll_text_area(&mut self, id: &str, wheel_x: f32, wheel_y: f32) -> bool {
         let Some((visible_w, visible_h, line_h)) = self.text_area_scroll_geometry(id) else {
             return false;
@@ -14179,6 +14404,12 @@ impl DragDropSession {
     }
 }
 
+#[derive(Debug, Clone)]
+struct TextSelectionDrag {
+    widget_id: String,
+    anchor: usize,
+}
+
 struct DragonApp {
     spec: Option<AppSpec>,
     command_bridge: Option<Arc<CommandBridge>>,
@@ -14239,6 +14470,8 @@ struct DragonApp {
     table_column_resize_drag: Option<TableColumnResizeDrag>,
     /// Pending or active app-local drag/drop session.
     drag_drop_session: Option<DragDropSession>,
+    /// Active mouse-drag text selection session.
+    text_selection_drag: Option<TextSelectionDrag>,
     scatter_press_pos: Option<[f32; 2]>,
     /// Scatter id that received the current pointer-down (for orbit/pan/pick).
     active_scatter_id: Option<String>,
@@ -14326,6 +14559,7 @@ impl DragonApp {
             splitter_drag: None,
             table_column_resize_drag: None,
             drag_drop_session: None,
+            text_selection_drag: None,
             scatter_press_pos: None,
             active_scatter_id: None,
             last_slider_emit: None,
@@ -15254,6 +15488,63 @@ impl DragonApp {
                 };
                 self.record_runtime_command(
                     "SetLinePlotDataPacked",
+                    Some(id),
+                    detail,
+                    dirty,
+                    &outcome,
+                    redraw,
+                )
+            }
+            Command::SetHistogramData {
+                id,
+                edges,
+                counts,
+                input_count,
+                finite_count,
+                auto_fit,
+                coalesce: _,
+            } => {
+                let detail = Some(format!(
+                    "bins={}, input_count={input_count}, finite_count={finite_count}, auto_fit={auto_fit}",
+                    counts.len()
+                ));
+                let (dirty, outcome, redraw) = {
+                    let Some(gpu) = &mut self.gpu else {
+                        return self.record_runtime_command(
+                            "SetHistogramData",
+                            Some(id),
+                            detail,
+                            None,
+                            "gpu_not_ready",
+                            false,
+                        );
+                    };
+                    match gpu.set_histogram_data(
+                        &id,
+                        edges,
+                        counts,
+                        input_count,
+                        finite_count,
+                        auto_fit,
+                    ) {
+                        Ok(true) => {
+                            gpu.rebuild_visuals();
+                            (Some(Dirty::Text), "applied".to_string(), true)
+                        }
+                        Ok(false) => {
+                            eprintln!(
+                                "DragonGUI: dropping stale histogram update for widget {id:?}"
+                            );
+                            (None, "stale_widget".to_string(), false)
+                        }
+                        Err(err) => {
+                            eprintln!("DragonGUI: failed to apply histogram update: {err}");
+                            (None, format!("error: {err}"), false)
+                        }
+                    }
+                };
+                self.record_runtime_command(
+                    "SetHistogramData",
                     Some(id),
                     detail,
                     dirty,
@@ -18412,7 +18703,190 @@ impl DragonApp {
         true
     }
 
+    fn copy_focused_text_widget(&mut self) -> bool {
+        let focused = self.gpu.as_ref().and_then(|g| g.focused_kind());
+        let Some((id, kind)) = focused else {
+            return false;
+        };
+        if !matches!(
+            kind,
+            WidgetKind::TextInput
+                | WidgetKind::TextArea
+                | WidgetKind::CodeEditor
+                | WidgetKind::LogView
+                | WidgetKind::NumberInput
+        ) {
+            return false;
+        }
+        let Some(text) = self
+            .gpu
+            .as_ref()
+            .and_then(|gpu| gpu.widget_state.as_ref())
+            .and_then(|state| {
+                state
+                    .selected_text(&id)
+                    .or_else(|| state.text_val.get(&id).cloned())
+            })
+        else {
+            return false;
+        };
+        set_system_clipboard_text(&text)
+    }
+
+    fn cut_focused_text_widget(&mut self) -> bool {
+        let focused = self.gpu.as_ref().and_then(|g| g.focused_kind());
+        let Some((id, kind)) = focused else {
+            return false;
+        };
+        if !matches!(
+            kind,
+            WidgetKind::TextInput
+                | WidgetKind::TextArea
+                | WidgetKind::CodeEditor
+                | WidgetKind::NumberInput
+        ) {
+            return false;
+        }
+        let Some(selected) = self
+            .gpu
+            .as_ref()
+            .and_then(|gpu| gpu.widget_state.as_ref())
+            .and_then(|state| state.selected_text(&id))
+            .filter(|text| !text.is_empty())
+        else {
+            return false;
+        };
+        if !set_system_clipboard_text(&selected) {
+            return false;
+        }
+        let changed = self
+            .gpu
+            .as_mut()
+            .and_then(|gpu| gpu.widget_state.as_mut())
+            .and_then(|state| state.delete_text_selection(&id));
+        if let Some(value) = changed {
+            if kind == WidgetKind::NumberInput {
+                self.process_number_text_change(&id);
+            } else {
+                self.emit_change(&id, ChangeValue::Text(value));
+                if let Some(gpu) = &mut self.gpu {
+                    if matches!(kind, WidgetKind::TextArea | WidgetKind::CodeEditor) {
+                        gpu.rebuild_text();
+                        gpu.ensure_text_area_cursor_visible(&id);
+                    }
+                    gpu.rebuild_visuals();
+                }
+                self.request_redraw();
+            }
+            return true;
+        }
+        false
+    }
+
+    fn paste_focused_text_widget(&mut self) -> bool {
+        let focused = self.gpu.as_ref().and_then(|g| g.focused_kind());
+        let Some((id, kind)) = focused else {
+            return false;
+        };
+        if !matches!(
+            kind,
+            WidgetKind::TextInput
+                | WidgetKind::TextArea
+                | WidgetKind::CodeEditor
+                | WidgetKind::NumberInput
+        ) {
+            return false;
+        }
+        let Some(mut text) = get_system_clipboard_text().filter(|text| !text.is_empty()) else {
+            return false;
+        };
+        let multiline = matches!(kind, WidgetKind::TextArea | WidgetKind::CodeEditor);
+        text = text.replace("\r\n", "\n").replace('\r', "\n");
+        if !multiline {
+            text = text.replace('\n', " ");
+        }
+        let changed = self
+            .gpu
+            .as_mut()
+            .and_then(|gpu| gpu.widget_state.as_mut())
+            .and_then(|state| state.insert_text(&id, &text));
+        if let Some(value) = changed {
+            if kind == WidgetKind::NumberInput {
+                self.process_number_text_change(&id);
+            } else {
+                self.emit_change(&id, ChangeValue::Text(value));
+                if let Some(gpu) = &mut self.gpu {
+                    if multiline {
+                        gpu.rebuild_text();
+                        gpu.ensure_text_area_cursor_visible(&id);
+                    }
+                    gpu.rebuild_visuals();
+                }
+                self.request_redraw();
+            }
+            return true;
+        }
+        false
+    }
+
+    fn select_all_focused_text_widget(&mut self) -> bool {
+        let focused = self.gpu.as_ref().and_then(|g| g.focused_kind());
+        let Some((id, kind)) = focused else {
+            return false;
+        };
+        if !matches!(
+            kind,
+            WidgetKind::TextInput
+                | WidgetKind::TextArea
+                | WidgetKind::CodeEditor
+                | WidgetKind::LogView
+                | WidgetKind::NumberInput
+        ) {
+            return false;
+        }
+        let changed = self
+            .gpu
+            .as_mut()
+            .and_then(|gpu| gpu.widget_state.as_mut())
+            .is_some_and(|state| state.select_all_text(&id));
+        if changed {
+            if let Some(gpu) = &mut self.gpu {
+                gpu.rebuild_visuals();
+            }
+            self.request_redraw();
+        }
+        changed
+    }
+
     fn handle_keyboard_input(&mut self, event: winit::event::KeyEvent) {
+        if self.modifiers.control_key() && !self.modifiers.alt_key() && !self.modifiers.super_key()
+        {
+            match event.physical_key {
+                PhysicalKey::Code(KeyCode::KeyA) if self.select_all_focused_text_widget() => {
+                    return;
+                }
+                PhysicalKey::Code(KeyCode::KeyC) if self.copy_focused_text_widget() => {
+                    return;
+                }
+                PhysicalKey::Code(KeyCode::KeyX) if self.cut_focused_text_widget() => {
+                    return;
+                }
+                PhysicalKey::Code(KeyCode::KeyV) if self.paste_focused_text_widget() => {
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        if self.modifiers.control_key()
+            && !self.modifiers.alt_key()
+            && !self.modifiers.super_key()
+            && matches!(event.physical_key, PhysicalKey::Code(KeyCode::KeyC))
+            && self.copy_focused_text_widget()
+        {
+            return;
+        }
+
         if matches!(&event.logical_key, Key::Named(NamedKey::Escape)) {
             if self.gpu.as_mut().is_some_and(WgpuState::close_popups) {
                 self.request_redraw();
@@ -19503,6 +19977,10 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                 self.request_redraw();
                                 return;
                             }
+                            if self.text_selection_drag.take().is_some() {
+                                self.request_redraw();
+                                return;
+                            }
 
                             if was_rect_select {
                                 if let Some(scatter_id) = self.active_scatter_id.clone() {
@@ -19905,6 +20383,30 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                                 self.gpu.as_ref().and_then(|g| g.hit_test_ui(pos))
                             {
                                 self.set_focus(Some(id.clone()));
+                                if matches!(
+                                    kind,
+                                    WidgetKind::TextInput
+                                        | WidgetKind::TextArea
+                                        | WidgetKind::CodeEditor
+                                        | WidgetKind::LogView
+                                        | WidgetKind::NumberInput
+                                ) {
+                                    self.text_selection_drag = self
+                                        .gpu
+                                        .as_mut()
+                                        .and_then(|gpu| gpu.begin_text_selection(&id, pos));
+                                    if let Some(gpu) = &mut self.gpu {
+                                        if matches!(
+                                            kind,
+                                            WidgetKind::TextArea | WidgetKind::CodeEditor
+                                        ) {
+                                            gpu.ensure_text_area_cursor_visible(&id);
+                                        }
+                                        gpu.rebuild_visuals();
+                                    }
+                                    self.request_redraw();
+                                    return;
+                                }
                                 if kind == WidgetKind::Extension {
                                     let payload = self.gpu.as_ref().and_then(|gpu| {
                                         gpu.extension_event_payload(
@@ -20148,6 +20650,23 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                     self.update_drag_number_drag(new_pos[0], false);
                 } else if self.drag_drop_session.is_some() {
                     self.update_drag_drop(new_pos);
+                } else if let Some(drag) = self.text_selection_drag.clone() {
+                    if self
+                        .gpu
+                        .as_mut()
+                        .is_some_and(|gpu| gpu.update_text_selection(&drag, new_pos))
+                    {
+                        if let Some(gpu) = &mut self.gpu {
+                            if matches!(
+                                gpu.widget_kind(&drag.widget_id),
+                                Some(WidgetKind::TextArea | WidgetKind::CodeEditor)
+                            ) {
+                                gpu.ensure_text_area_cursor_visible(&drag.widget_id);
+                            }
+                            gpu.rebuild_visuals();
+                        }
+                        self.request_redraw();
+                    }
                 } else if let Some(id) = self.line_plot_pan_drag.clone() {
                     if let Some(old) = self.last_mouse_pos {
                         let delta = [new_pos[0] - old[0], new_pos[1] - old[1]];
@@ -20263,6 +20782,7 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                     && self.range_slider_drag.is_none()
                     && self.drag_number_drag.is_none()
                     && self.drag_drop_session.is_none()
+                    && self.text_selection_drag.is_none()
                     && self.line_plot_pan_drag.is_none()
                     && self.line_plot_box_zoom_drag.is_none()
                     && self.histogram_pan_drag.is_none()

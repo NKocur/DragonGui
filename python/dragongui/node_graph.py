@@ -9,7 +9,7 @@ import time
 from typing import Any
 
 from .agent_messages import AgentEnvelopeParser, AgentMessage
-from .widgets import Container, HtmlReport, _AUTO_PARENT
+from .widgets import Container, HtmlReport, Widget, _AUTO_PARENT, _walk_widget_tree
 
 
 _GRAPH_SCHEMA_VERSION = 1
@@ -38,6 +38,17 @@ _NODE_GRAPH_PORT_TYPE_CONVERSIONS: dict[tuple[str, str], str] = {
 
 _NODE_GRAPH_WIDGET_SINK_PORT_PROFILES: tuple[str, ...] = ("text", "terminal_output", "message", "json", "artifact", "status", "error")
 _NODE_GRAPH_WIDGET_SOURCE_PORT_PROFILES: tuple[str, ...] = ("text", "json", "status", "message", "artifact")
+_NODE_GRAPH_AUTO_BINDING_DATA_KEY = "auto_discovered_binding_target"
+_NODE_GRAPH_AUTO_BINDING_WIDGET_KINDS = {
+    "log_view",
+    "text_input",
+    "text_area",
+    "code_editor",
+    "label",
+    "badge",
+    "tag",
+    "led",
+}
 
 _NODE_GRAPH_PORT_TYPE_COLORS: dict[str, str] = {
     "terminal_input": "#4fd6be",
@@ -667,6 +678,46 @@ class NodeGraphRuntimeSession:
             self.start_terminal_session(runtime_handle.object_id)
         return bridge
 
+    def ensure_runtime_dependencies(self) -> dict[str, object]:
+        """Create non-destructive live handles required by declared runtime objects."""
+
+        created: list[str] = []
+        started: list[str] = []
+        attached: list[str] = []
+        errors: dict[str, str] = {}
+        for runtime_handle in list(self._handles.values()):
+            if runtime_handle.object_type != "terminal_session":
+                continue
+            try:
+                if runtime_handle.handle is None:
+                    if self._terminal_has_dynamic_config_inputs(runtime_handle):
+                        runtime_handle.set_status("pending_config")
+                    else:
+                        self.create_terminal_bridge(runtime_handle.object_id, start=False)
+                        created.append(runtime_handle.object_id)
+                else:
+                    attached.append(runtime_handle.object_id)
+                config = runtime_handle.config or {}
+                if bool(config.get("auto_start", False)):
+                    bridge = self.start_terminal_session(runtime_handle.object_id)
+                    if bool(getattr(bridge, "session_active", False)):
+                        started.append(runtime_handle.object_id)
+            except Exception as exc:
+                runtime_handle.set_status("failed", error=exc)
+                errors[runtime_handle.object_id] = str(exc)
+        result = {"created": created, "started": started, "attached": attached, "errors": errors}
+        self.emit_event("runtime_dependencies_ensured", data=result)
+        return result
+
+    def _terminal_has_dynamic_config_inputs(self, runtime_handle: NodeGraphRuntimeHandle) -> bool:
+        owner_node_id = runtime_handle.owner_node_id
+        if not owner_node_id:
+            return False
+        return any(
+            edge.target_node == owner_node_id and edge.target_port in _TERMINAL_CONFIG_INPUT_PORTS
+            for edge in self.binding.edges
+        )
+
     def start_terminal_session(self, object_id: str) -> Any:
         """Start an attached terminal bridge, creating one from config when needed."""
 
@@ -709,7 +760,9 @@ class NodeGraphRuntimeSession:
             raise ValueError(f"runtime object {object_id!r} is {runtime_handle.object_type!r}, not 'terminal_session'")
         bridge = runtime_handle.handle
         if bridge is None:
-            raise RuntimeError(f"runtime object {object_id!r} has no attached terminal bridge")
+            bridge = self.start_terminal_session(runtime_handle.object_id)
+        if hasattr(bridge, "session_active") and not bool(getattr(bridge, "session_active", False)):
+            bridge = self.start_terminal_session(runtime_handle.object_id)
         method_name = "send_line" if newline else "send_text"
         method = getattr(bridge, method_name, None)
         if method is None:
@@ -732,7 +785,8 @@ class NodeGraphRuntimeSession:
         runtime_handle = self.require_object_handle(object_id)
         handle = runtime_handle.handle
         stopped = False
-        if handle is not None:
+        external_handle = bool((runtime_handle.config or {}).get("_external_terminal_widget_bridge"))
+        if handle is not None and not external_handle:
             for method_name in ("stop", "close", "dispose"):
                 method = getattr(handle, method_name, None)
                 if method is None:
@@ -740,15 +794,15 @@ class NodeGraphRuntimeSession:
                 method()
                 stopped = True
                 break
-        runtime_handle.set_status("stopped")
+        runtime_handle.set_status("detached" if external_handle else "stopped")
         self.emit_event(
             "object_stop_requested",
             node_id=runtime_handle.owner_node_id,
             object_id=runtime_handle.object_id,
-            data={"object_type": runtime_handle.object_type, "stopped": stopped},
+            data={"object_type": runtime_handle.object_type, "stopped": stopped, "external_handle": external_handle},
         )
-        if detach:
-            self.detach_handle(runtime_handle.object_id, status="stopped")
+        if detach or external_handle:
+            self.detach_handle(runtime_handle.object_id, status="detached" if external_handle else "stopped")
         return stopped
 
     def cleanup(self) -> dict[str, object]:
@@ -820,7 +874,7 @@ class NodeGraphRuntimeSession:
         return self._run_runtime_source_node(binding, timestamp=timestamp)
 
     def run_section(self, section_id: str, *, timestamp: float | None = None) -> NodeGraphRuntimeEvent:
-        """Run all source nodes currently bound to a graph section."""
+        """Run source nodes bound to a section, including upstream dependencies."""
 
         section = self.binding.section_binding(section_id)
         if section is None:
@@ -828,6 +882,7 @@ class NodeGraphRuntimeSession:
         before_sequence = self._sequence
         executed_nodes: list[str] = []
         skipped_nodes: list[dict[str, object]] = []
+        runnable_node_ids = self._section_runnable_source_node_ids(section)
         for node_id in section.node_ids:
             binding = self.binding.node_binding(node_id)
             if binding is None:
@@ -841,6 +896,9 @@ class NodeGraphRuntimeSession:
                         "reason": "node is not a runnable source",
                     }
                 )
+        for node_id in runnable_node_ids:
+            binding = self.binding.node_binding(node_id)
+            if binding is None:
                 continue
             self._run_runtime_source_node(binding, timestamp=timestamp)
             executed_nodes.append(binding.node_id)
@@ -852,12 +910,33 @@ class NodeGraphRuntimeSession:
                 "title": section.title,
                 "trigger": section.trigger,
                 "executed_nodes": executed_nodes,
+                "runnable_source_nodes": runnable_node_ids,
                 "skipped_nodes": skipped_nodes,
                 "event_count": len(generated),
                 "events": [event.event for event in generated],
             },
             timestamp=timestamp,
         )
+
+    def _section_runnable_source_node_ids(self, section: NodeGraphSectionBinding) -> list[str]:
+        section_node_ids = set(section.node_ids)
+        upstream: set[str] = set(section_node_ids)
+        stack = list(section_node_ids)
+        while stack:
+            target_id = stack.pop()
+            for edge in self.binding.edges:
+                if edge.target_node != target_id:
+                    continue
+                source_id = edge.source_node
+                if source_id in upstream:
+                    continue
+                upstream.add(source_id)
+                stack.append(source_id)
+        ordered: list[str] = []
+        for binding in self.binding.nodes:
+            if binding.node_id in upstream and binding.node_type in _RUNTIME_SOURCE_NODE_TYPES:
+                ordered.append(binding.node_id)
+        return ordered
 
     def run_section_command(
         self, section_id: str, command: str = "run", *, timestamp: float | None = None
@@ -1033,6 +1112,8 @@ class NodeGraphRuntimeSession:
 
     def _apply_edge_value_to_runtime_target(self, item: NodeGraphRuntimeEvent) -> None:
         data = item.data or {}
+        if self._apply_terminal_config_input(item):
+            return
         if data.get("conversion") != "text_to_terminal_input":
             return
         if item.node_id is None:
@@ -1072,6 +1153,70 @@ class NodeGraphRuntimeSession:
             timestamp=item.timestamp,
         )
 
+    def _apply_terminal_config_input(self, item: NodeGraphRuntimeEvent) -> bool:
+        if item.node_id is None or item.port_id not in _TERMINAL_CONFIG_INPUT_PORTS:
+            return False
+        binding = self.binding.node_binding(item.node_id)
+        if binding is None or binding.node_type != "terminal":
+            return False
+        object_id = binding.owned_object_id
+        if not object_id:
+            self.emit_event(
+                "terminal_config_rejected",
+                node_id=item.node_id,
+                port_id=item.port_id,
+                value=item.value,
+                data={"reason": "target terminal has no runtime object"},
+                timestamp=item.timestamp,
+            )
+            return True
+        runtime_handle = self.require_object_handle(object_id)
+        bridge = runtime_handle.handle
+        if bridge is not None and bool(getattr(bridge, "session_active", False)):
+            self.emit_event(
+                "terminal_config_rejected",
+                node_id=item.node_id,
+                port_id=item.port_id,
+                object_id=object_id,
+                value=item.value,
+                data={"reason": "terminal is already running", "config_key": item.port_id},
+                timestamp=item.timestamp,
+            )
+            return True
+        config = dict(runtime_handle.config or {})
+        try:
+            config[item.port_id] = _terminal_config_input_value(item.port_id, item.value)
+        except Exception as exc:
+            self.emit_event(
+                "terminal_config_rejected",
+                node_id=item.node_id,
+                port_id=item.port_id,
+                object_id=object_id,
+                value=item.value,
+                data={"reason": str(exc), "config_key": item.port_id},
+                timestamp=item.timestamp,
+            )
+            return True
+        runtime_handle.config = config
+        runtime_handle.updated_at = time.time()
+        if bridge is not None:
+            stop = getattr(bridge, "stop", None)
+            if callable(stop):
+                stop()
+            runtime_handle.detach(status="pending_config")
+        else:
+            runtime_handle.set_status("pending_config")
+        self.emit_event(
+            "terminal_config_applied",
+            node_id=item.node_id,
+            port_id=item.port_id,
+            object_id=object_id,
+            value=item.value,
+            data={"config_key": item.port_id, "config": _json_safe_value(config)},
+            timestamp=item.timestamp,
+        )
+        return True
+
     def _execute_runtime_node(self, node_id: str, port_id: str, value: object, *, timestamp: float | None = None) -> None:
         binding = self.binding.node_binding(node_id)
         if binding is None or binding.node_type not in _RUNTIME_EXECUTABLE_NODE_TYPES:
@@ -1092,7 +1237,21 @@ class NodeGraphRuntimeSession:
                 log.extend(self._apply_widget_sink(binding, value, timestamp=timestamp))
                 outputs = {"value": [value]}
             else:
-                outputs = _execute_flow_node(node, {port_id: [value]}, self._parser_state, log)
+                inputs = self._runtime_node_inputs(binding, port_id, value)
+                missing_inputs = self._runtime_missing_connected_inputs(binding, inputs)
+                if missing_inputs:
+                    self.emit_event(
+                        "node_execution_waiting",
+                        node_id=node_id,
+                        data={
+                            "node_type": binding.node_type,
+                            "input_port": port_id,
+                            "missing_inputs": missing_inputs,
+                        },
+                        timestamp=timestamp,
+                    )
+                    return
+                outputs = _execute_flow_node(node, inputs, self._parser_state, log)
         finally:
             self._execution_depth -= 1
         self.emit_event(
@@ -1116,6 +1275,29 @@ class NodeGraphRuntimeSession:
                     data={"node_type": binding.node_type},
                     timestamp=timestamp,
                 )
+
+    def _runtime_node_inputs(
+        self, binding: NodeGraphNodeBinding, port_id: str, value: object
+    ) -> dict[str, list[object]]:
+        inputs: dict[str, list[object]] = {}
+        connected_ports = {
+            edge.target_port for edge in self.binding.edges if edge.target_node == binding.node_id
+        }
+        connected_ports.add(str(port_id))
+        for input_port in connected_ports:
+            values = self._port_values.get((binding.node_id, input_port), [])
+            if values:
+                inputs[input_port] = list(values)
+        inputs.setdefault(str(port_id), [value])
+        return inputs
+
+    def _runtime_missing_connected_inputs(
+        self, binding: NodeGraphNodeBinding, inputs: Mapping[str, list[object]]
+    ) -> list[str]:
+        connected_ports = {
+            edge.target_port for edge in self.binding.edges if edge.target_node == binding.node_id
+        }
+        return sorted(port for port in connected_ports if not inputs.get(port))
 
     def _apply_widget_sink(
         self, binding: NodeGraphNodeBinding, value: object, *, timestamp: float | None = None
@@ -1420,6 +1602,9 @@ class NodeGraph(HtmlReport):
         action_targets: Sequence[NodeGraphActionTarget | Mapping[str, object]] = (),
         binding_targets: Sequence[NodeGraphBindingTarget | Mapping[str, object]] = (),
         runtime_policy: str = "auto",
+        show_editor_chrome: bool = False,
+        editor_title: str = "NodeGraph",
+        editor_actions: Sequence[Mapping[str, object]] = (),
         width: int | float | None = 920,
         height: int | float | None = 560,
         id: str | None = None,
@@ -1448,8 +1633,12 @@ class NodeGraph(HtmlReport):
         for target in self.binding_targets:
             self._apply_binding_target(target)
         self.runtime_policy = self._runtime_policy_from_value(runtime_policy)
+        self.show_editor_chrome = bool(show_editor_chrome)
+        self.editor_title = self._text(editor_title, "NodeGraph editor title")
+        self.editor_actions = tuple(_editor_action_payload(action) for action in editor_actions)
         self._managed_runtime_session: NodeGraphRuntimeSession | None = None
         self._managed_runtime_policy: str | None = None
+        self._refreshing_auto_binding_targets = False
         self.on_graph_event = on_graph_event
         self._callback_compat = dict(callbacks)
         self._undo_stack: list[dict[str, object]] = []
@@ -1585,12 +1774,14 @@ class NodeGraph(HtmlReport):
     def binding_target(self, target_id: str) -> NodeGraphBindingTarget | None:
         """Return a unified GUI binding target by ID, if registered."""
 
+        self._ensure_auto_binding_targets()
         text = self._text(target_id, "binding target id")
         return next((target for target in self.binding_targets if target.id == text), None)
 
     def binding_target_ids(self) -> tuple[str, ...]:
         """Return unified GUI binding target IDs."""
 
+        self._ensure_auto_binding_targets()
         return tuple(target.id for target in self.binding_targets)
 
     def register_action_target(
@@ -1633,12 +1824,14 @@ class NodeGraph(HtmlReport):
     def action_target(self, action_id: str) -> NodeGraphActionTarget | None:
         """Return an assignable section action target by ID, if registered."""
 
+        self._ensure_auto_binding_targets()
         target_id = self._text(action_id, "action target id")
         return next((target for target in self.action_targets if target.id == target_id), None)
 
     def action_target_ids(self) -> tuple[str, ...]:
         """Return assignable section action target IDs."""
 
+        self._ensure_auto_binding_targets()
         return tuple(target.id for target in self.action_targets)
 
     def run_action_target(self, action_id: str, command: str = "run") -> object:
@@ -1715,13 +1908,156 @@ class NodeGraph(HtmlReport):
     def widget_target(self, widget_id: str) -> NodeGraphWidgetTarget | None:
         """Return an assignable Widget Sink target by ID, if registered."""
 
+        self._ensure_auto_binding_targets()
         target_id = self._text(widget_id, "widget target id")
         return next((target for target in self.widget_targets if target.id == target_id), None)
 
     def widget_target_ids(self) -> tuple[str, ...]:
         """Return assignable Widget Sink target IDs."""
 
+        self._ensure_auto_binding_targets()
         return tuple(target.id for target in self.widget_targets)
+
+    def refresh_binding_targets_from_host(self, root: Container | None = None) -> tuple[NodeGraphBindingTarget, ...]:
+        """Refresh bindable targets discovered from the surrounding DragonGUI tree.
+
+        Host widgets with explicit stable IDs are treated as intentional public
+        targets. Generated ``dg-*`` IDs are ignored so anonymous layout controls
+        do not clutter graph inspector dropdowns.
+        """
+
+        targets = self._sync_auto_binding_targets(root=root)
+        self.set_html(self._render_html())
+        return targets
+
+    def _ensure_auto_binding_targets(self) -> None:
+        if not getattr(self, "_refreshing_auto_binding_targets", False):
+            self._sync_auto_binding_targets()
+
+    def _sync_auto_binding_targets(self, root: Container | None = None) -> tuple[NodeGraphBindingTarget, ...]:
+        if getattr(self, "_refreshing_auto_binding_targets", False):
+            return tuple(
+                target for target in self.binding_targets if _target_data_is_auto_binding(target.data)
+            )
+        self._refreshing_auto_binding_targets = True
+        try:
+            self._clear_auto_binding_targets()
+            reserved_binding_ids = {target.id for target in self.binding_targets}
+            reserved_widget_ids = {target.id for target in self.widget_targets}
+            reserved_action_ids = {target.id for target in self.action_targets}
+            applied: list[NodeGraphBindingTarget] = []
+            for target in self._discover_host_binding_targets(root=root):
+                exposes_widget = self._binding_target_exposes_widget(target)
+                exposes_action = self._binding_target_exposes_action(target)
+                if target.id in reserved_binding_ids:
+                    continue
+                if exposes_widget and target.id in reserved_widget_ids:
+                    continue
+                if exposes_action and target.id in reserved_action_ids:
+                    continue
+                self.binding_targets = (*self.binding_targets, target)
+                self._apply_binding_target(target)
+                reserved_binding_ids.add(target.id)
+                if exposes_widget:
+                    reserved_widget_ids.add(target.id)
+                if exposes_action:
+                    reserved_action_ids.add(target.id)
+                applied.append(target)
+            return tuple(applied)
+        finally:
+            self._refreshing_auto_binding_targets = False
+
+    def _clear_auto_binding_targets(self) -> None:
+        self.binding_targets = tuple(
+            target for target in self.binding_targets if not _target_data_is_auto_binding(target.data)
+        )
+        self.widget_targets = tuple(
+            target for target in self.widget_targets if not _target_data_is_auto_binding(target.data)
+        )
+        self.action_targets = tuple(
+            target for target in self.action_targets if not _target_data_is_auto_binding(target.data)
+        )
+
+    def _discover_host_binding_targets(self, root: Container | None = None) -> tuple[NodeGraphBindingTarget, ...]:
+        host_root = self._host_binding_root(root)
+        if host_root is None:
+            return ()
+        targets: list[NodeGraphBindingTarget] = []
+        seen: set[str] = set()
+        for widget in _walk_widget_tree(host_root):
+            if widget is self or not isinstance(widget, Widget):
+                continue
+            target = self._binding_target_from_widget(widget)
+            if target is None or target.id in seen:
+                continue
+            seen.add(target.id)
+            targets.append(target)
+        return tuple(targets)
+
+    def _host_binding_root(self, root: Container | None = None) -> Container | None:
+        if root is not None:
+            return root
+        parent = getattr(self, "parent", None)
+        if parent is None:
+            return None
+        current: Container = parent
+        while isinstance(current.parent, Container):
+            current = current.parent
+        return current
+
+    def _binding_target_from_widget(self, widget: Widget) -> NodeGraphBindingTarget | None:
+        widget_id = str(getattr(widget, "id", "") or "").strip()
+        if not widget_id or not bool(getattr(widget, "_explicit_id", False)):
+            return None
+        kind = _widget_kind(widget)
+        label = _binding_target_label(widget)
+        data = {
+            _NODE_GRAPH_AUTO_BINDING_DATA_KEY: True,
+            "binding_target_source": "host_widget_tree",
+            "widget_kind": kind,
+        }
+        if hasattr(widget, "bridge"):
+            data["runtime_object_id"] = widget_id
+            return NodeGraphBindingTarget(
+                id=widget_id,
+                label=label,
+                target_type="terminal",
+                widget_type="terminal",
+                widget=widget,
+                supported_update_modes=("append", "set"),
+                default_update_mode="append",
+                supported_port_profiles=("terminal_output", "text"),
+                default_port_profile="terminal_output",
+                supported_formats=("terminal_text", "text", "repr"),
+                data=data,
+            )
+        if kind in _NODE_GRAPH_AUTO_BINDING_WIDGET_KINDS:
+            modes, default_mode, profiles, default_profile, formats = _auto_widget_target_capabilities(kind)
+            return NodeGraphBindingTarget(
+                id=widget_id,
+                label=label,
+                target_type=kind,
+                widget_type=kind,
+                widget=widget,
+                supported_update_modes=modes,
+                default_update_mode=default_mode,
+                supported_port_profiles=profiles,
+                default_port_profile=default_profile,
+                supported_formats=formats,
+                data=data,
+            )
+        if _widget_is_action_target(widget):
+            return NodeGraphBindingTarget(
+                id=widget_id,
+                label=label,
+                target_type="action",
+                action_type=kind,
+                callback=_widget_action_callback(widget),
+                supported_commands=("run",),
+                default_command="run",
+                data=data,
+            )
+        return None
 
     def _binding_target_data(self, target: NodeGraphBindingTarget) -> dict[str, object]:
         data = dict(target.data or {})
@@ -1888,6 +2224,7 @@ class NodeGraph(HtmlReport):
             self._managed_runtime_session = session
         self._managed_runtime_policy = resolved
         self._register_managed_runtime_widgets(session)
+        session.ensure_runtime_dependencies()
         return session
 
     @property
@@ -2005,9 +2342,71 @@ class NodeGraph(HtmlReport):
             self._finish_managed_runtime(policy)
 
     def _register_managed_runtime_widgets(self, session: NodeGraphRuntimeSession) -> None:
+        self._ensure_auto_binding_targets()
         for target in self.widget_targets:
             if target.widget is not None:
                 session.register_widget(target.id, target.widget)
+                self._attach_terminal_widget_target(session, target)
+
+    def _attach_terminal_widget_target(
+        self, session: NodeGraphRuntimeSession, target: NodeGraphWidgetTarget
+    ) -> None:
+        widget = target.widget
+        bridge = getattr(widget, "bridge", None)
+        if bridge is None:
+            return
+        selected_object_ids = self._runtime_object_ids_for_terminal_widget_target(target.id)
+        if selected_object_ids:
+            candidates = selected_object_ids
+        else:
+            candidates = []
+            data = target.data or {}
+            for key in ("runtime_object_id", "object_id", "session_id", "terminal_session_id"):
+                value = data.get(key)
+                if value is not None and str(value).strip():
+                    candidates.append(str(value).strip())
+            candidates.append(target.id)
+        for object_id in candidates:
+            handle = session.object_handle(object_id)
+            if handle is None or handle.object_type != "terminal_session":
+                continue
+            if handle.handle is bridge:
+                return
+            if selected_object_ids:
+                if handle.handle is not None:
+                    stop = getattr(handle.handle, "stop", None)
+                    external = bool((handle.config or {}).get("_external_terminal_widget_bridge"))
+                    if callable(stop) and not external:
+                        stop()
+                    session.detach_handle(object_id, status="detached")
+                config = dict(handle.config or {})
+                config["_external_terminal_widget_bridge"] = True
+                config["terminal_widget_id"] = target.id
+                handle.config = config
+                session.attach_handle(object_id, bridge, status="running" if bool(getattr(bridge, "session_active", False)) else "ready")
+            elif handle.handle is None:
+                config = dict(handle.config or {})
+                config["_external_terminal_widget_bridge"] = True
+                config["terminal_widget_id"] = target.id
+                handle.config = config
+                session.attach_handle(object_id, bridge, status="running" if bool(getattr(bridge, "session_active", False)) else "ready")
+            return
+
+    def _runtime_object_ids_for_terminal_widget_target(self, widget_id: str) -> list[str]:
+        selected_widget_id = str(widget_id).strip()
+        if not selected_widget_id:
+            return []
+        object_ids: list[str] = []
+        for node in self.nodes:
+            if _node_type(node) != "terminal":
+                continue
+            config = _node_config(node)
+            if str(config.get("terminal_widget_id", "")).strip() != selected_widget_id:
+                continue
+            runtime_object = _runtime_object_from_node(node)
+            if runtime_object is not None and runtime_object.object_id not in object_ids:
+                object_ids.append(runtime_object.object_id)
+        return object_ids
 
     def _finish_managed_runtime(self, policy: str | None = None) -> None:
         if self.resolved_runtime_policy(policy) == "ephemeral":
@@ -2220,6 +2619,10 @@ class NodeGraph(HtmlReport):
         return True
 
     def _html(self) -> str:
+        self._ensure_auto_binding_targets()
+        return self._render_html()
+
+    def _render_html(self) -> str:
         return _node_graph_html(
             nodes=self.nodes,
             edges=self.edges,
@@ -2233,10 +2636,14 @@ class NodeGraph(HtmlReport):
             sections=self.sections,
             widget_targets=self.widget_targets,
             action_targets=self.action_targets,
+            show_editor_chrome=self.show_editor_chrome,
+            editor_title=self.editor_title,
+            editor_actions=self.editor_actions,
             emit_events=True,
         )
 
     def props(self) -> dict[str, object]:
+        self.html = self._html()
         props = super().props()
         props["events"] = ["change"]
         return props
@@ -2888,6 +3295,9 @@ def _node_graph_html(
     show_status_labels: bool,
     show_subtitles: bool,
     enable_zoom: bool,
+    show_editor_chrome: bool,
+    editor_title: str,
+    editor_actions: Sequence[Mapping[str, object]],
     emit_events: bool,
 ) -> str:
     config = {
@@ -2907,24 +3317,60 @@ def _node_graph_html(
         "showStatusLabels": bool(show_status_labels),
         "showSubtitles": bool(show_subtitles),
         "enableZoom": bool(enable_zoom),
+        "showEditorChrome": bool(show_editor_chrome),
+        "editorTitle": str(editor_title),
+        "editorActions": [_editor_action_payload(action) for action in editor_actions],
         "emitEvents": bool(emit_events),
     }
     payload = json.dumps(config)
+    chrome_html = """
+  <div id=\"editorChrome\" class=\"editor-shell\">
+    <div class=\"editor-topbar\">
+      <div class=\"editor-title\" id=\"editorTitle\"></div>
+      <div class=\"editor-state\" id=\"editorState\">Ready</div>
+      <div class=\"editor-tools\" id=\"editorTools\"></div>
+    </div>
+    <canvas id=\"graph\" tabindex=\"0\"></canvas>
+    <div class=\"editor-statusbar\">
+      <div class=\"status-item\" id=\"selectedStatus\">Selected: none</div>
+      <div class=\"status-item\" id=\"viewportStatus\">Viewport: loading</div>
+      <div class=\"status-item\" id=\"graphStatus\">Graph: loading</div>
+    </div>
+  </div>
+""" if show_editor_chrome else "  <canvas id=\"graph\" tabindex=\"0\"></canvas>"
     return f"""<!doctype html>
 <html>
 <head>
   <meta charset=\"utf-8\" />
   <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
   <style>
-    html, body {{ width: 100%; height: 100%; margin: 0; overflow: hidden; background: #0d1117; }}
-    canvas {{ width: 100%; height: 100%; display: block; background: #0d1117; cursor: default; }}
+    html, body {{ width: 100%; height: 100%; margin: 0; overflow: hidden; background: #0d1117; color: rgba(245, 248, 252, 0.94); font-family: Segoe UI, Arial, sans-serif; }}
+    canvas {{ width: 100%; height: 100%; min-height: 0; display: block; background: #0d1117; cursor: default; flex: 1 1 auto; }}
+    .editor-shell {{ width: 100%; height: 100%; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: #0d1117; }}
+    .editor-topbar {{ height: 42px; flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 5px 7px; background: #111821; border-bottom: 1px solid rgba(255, 255, 255, 0.09); box-sizing: border-box; }}
+    .editor-title {{ flex: 0 0 auto; color: #ffffff; font-size: 15px; font-weight: 850; padding: 0 4px; }}
+    .editor-state {{ flex: 1 1 auto; min-width: 0; color: rgba(226, 255, 248, 0.88); font-size: 12px; font-weight: 750; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }}
+    .editor-tools {{ flex: 0 0 auto; display: flex; align-items: center; gap: 5px; }}
+    .tool-button {{ width: 31px; height: 31px; border-radius: 7px; border: 1px solid rgba(255, 255, 255, 0.13); background: rgba(255, 255, 255, 0.055); color: rgba(247, 250, 255, 0.94); font-size: 14px; font-weight: 850; line-height: 1; padding: 0; cursor: default; }}
+    .tool-button:hover {{ background: rgba(255, 255, 255, 0.095); border-color: rgba(255, 255, 255, 0.22); }}
+    .tool-button.wide {{ width: auto; min-width: 58px; padding: 0 10px; font-size: 12px; }}
+    .tool-button.primary {{ width: auto; min-width: 74px; padding: 0 10px; background: rgba(67, 198, 172, 0.18); border-color: rgba(67, 198, 172, 0.44); font-size: 12px; }}
+    .tool-separator {{ width: 1px; height: 22px; background: rgba(255, 255, 255, 0.16); margin: 0 2px; }}
+    .editor-statusbar {{ height: 29px; flex: 0 0 auto; display: flex; align-items: center; gap: 2px; padding: 2px 6px; box-sizing: border-box; background: #101721; border-top: 1px solid rgba(255, 255, 255, 0.08); }}
+    .status-item {{ flex: 1 1 0; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: rgba(226, 235, 246, 0.74); font-size: 12px; font-weight: 650; padding: 3px 6px; }}
   </style>
 </head>
 <body>
-  <canvas id=\"graph\" tabindex=\"0\"></canvas>
+{chrome_html}
   <script>
     const config = {payload};
     const canvas = document.getElementById('graph');
+    const editorTitleEl = document.getElementById('editorTitle');
+    const editorStateEl = document.getElementById('editorState');
+    const editorToolsEl = document.getElementById('editorTools');
+    const selectedStatusEl = document.getElementById('selectedStatus');
+    const viewportStatusEl = document.getElementById('viewportStatus');
+    const graphStatusEl = document.getElementById('graphStatus');
     const ctx = canvas.getContext('2d');
 
     function focusCanvas() {{
@@ -2950,10 +3396,117 @@ def _node_graph_html(
     const nodePicker = {{ open: false, x: 0, y: 0, graphX: 0, graphY: 0, query: '', selected: 0, scroll: 0, scrollDrag: null, rect: null, listRect: null, scrollBar: null, items: [] }};
     const renameEditor = {{ open: false, kind: null, id: null, value: '', original: '', selectAll: false, rect: null, buttons: [] }};
     const propertyEditor = {{ open: false, kind: null, id: null, fields: [], active: 0, scroll: 0, scrollDrag: null, rect: null, listRect: null, scrollBar: null, buttons: [], selectPopup: null }};
+    const textEdit = {{ key: null, owner: null, prop: null, caret: 0, anchor: 0, dragging: false, font: '12px Segoe UI' }};
     const TOOLBAR_Y = 10;
     const TOOLBAR_H = 28;
     const TOOLBAR_W = 34;
     const toolbar = {{ items: [] }};
+
+    function selectedStatusText() {{
+      if (state.selected) return `Selected: ${{state.selected}}`;
+      if (state.selectedEdge) return `Selected: edge ${{state.selectedEdge}}`;
+      if (state.selectedSection) return `Selected: section ${{state.selectedSection}}`;
+      return 'Selected: none';
+    }}
+
+    function updateEditorChromeStatus(message = null) {{
+      if (!config.showEditorChrome) return;
+      if (editorTitleEl) editorTitleEl.textContent = config.editorTitle || 'NodeGraph';
+      if (editorStateEl && message) editorStateEl.textContent = message;
+      if (selectedStatusEl) selectedStatusEl.textContent = selectedStatusText();
+      if (viewportStatusEl) viewportStatusEl.textContent = `Viewport: x=${{state.viewX.toFixed(1)}} y=${{state.viewY.toFixed(1)}} zoom=${{state.zoom.toFixed(2)}}`;
+      if (graphStatusEl) graphStatusEl.textContent = `Graph: ${{state.nodes.length}} nodes / ${{state.edges.length}} edges`;
+    }}
+
+    function editorToolLabel(action) {{
+      const icon = String(action.icon || '').trim();
+      if (icon) return icon;
+      const id = String(action.id || action.action || '');
+      if (id === 'add') return '+';
+      if (id === 'rename') return 'E';
+      if (id === 'undo') return 'U';
+      if (id === 'redo') return 'R';
+      if (id === 'fit') return 'Fit';
+      if (id === 'snapshot') return 'S';
+      if (id === 'run_section') return 'Run';
+      if (id === 'stop_terminal') return 'Stop';
+      if (id === 'cleanup_runtime') return 'X';
+      return String(action.label || id || '?').slice(0, 4);
+    }}
+
+    function runEditorAction(id) {{
+      if (id === 'add') {{
+        const rect = canvas.getBoundingClientRect();
+        const sx = rect.width * 0.5;
+        const sy = rect.height * 0.5;
+        openNodePicker({{ sx, sy, x: (sx - state.viewX) / state.zoom, y: (sy - state.viewY) / state.zoom }});
+        updateEditorChromeStatus('Choose node');
+        return;
+      }}
+      if (id === 'rename') {{
+        if (!editSelectedNodeTitle()) editSelectedSectionTitle();
+        updateEditorChromeStatus('Rename');
+        return;
+      }}
+      if (id === 'undo') {{
+        undoGraph();
+        updateEditorChromeStatus('Undo');
+        return;
+      }}
+      if (id === 'redo') {{
+        redoGraph();
+        updateEditorChromeStatus('Redo');
+        return;
+      }}
+      if (id === 'fit') {{
+        fitToView();
+        updateEditorChromeStatus('Fit graph');
+        return;
+      }}
+      emitGraphEvent({{ event: 'editor_action', action: id }});
+      updateEditorChromeStatus(String(id).replace(/_/g, ' '));
+    }}
+
+    function setupEditorChrome() {{
+      if (!config.showEditorChrome || !editorToolsEl) return;
+      const defaults = [
+        {{ id: 'add', label: 'Add node', icon: '+' }},
+        {{ id: 'rename', label: 'Rename selected', icon: 'E' }},
+        {{ separator: true }},
+        {{ id: 'undo', label: 'Undo', icon: 'U' }},
+        {{ id: 'redo', label: 'Redo', icon: 'R' }},
+        {{ id: 'fit', label: 'Fit graph', icon: 'Fit' }},
+      ];
+      const actions = [...defaults, ...(config.editorActions || [])];
+      editorToolsEl.replaceChildren();
+      for (const action of actions) {{
+        if (action.separator) {{
+          const sep = document.createElement('div');
+          sep.className = 'tool-separator';
+          editorToolsEl.appendChild(sep);
+          continue;
+        }}
+        const id = String(action.id || action.action || '').trim();
+        if (!id) continue;
+        if (action.separator_before) {{
+          const sep = document.createElement('div');
+          sep.className = 'tool-separator';
+          editorToolsEl.appendChild(sep);
+        }}
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = action.primary ? 'tool-button primary' : (action.wide ? 'tool-button wide' : 'tool-button');
+        button.textContent = editorToolLabel(action);
+        button.title = String(action.tooltip || action.label || id);
+        button.addEventListener('click', event => {{
+          event.preventDefault();
+          runEditorAction(id);
+          focusCanvas();
+        }});
+        editorToolsEl.appendChild(button);
+      }}
+      updateEditorChromeStatus('Ready');
+    }}
 
     function resize() {{
       const dpr = window.devicePixelRatio || 1;
@@ -3055,6 +3608,7 @@ def _node_graph_html(
       nodePicker.query = '';
       nodePicker.scroll = 0;
       nodePicker.selected = Math.max(0, config.templates.findIndex(template => template.id === palette.selected));
+      setTextEditTarget('nodePicker.query', nodePicker, 'query', false, '13px Segoe UI');
       clampNodePicker();
       emitGraphEvent({{ event: 'node_picker_opened', position: {{ x: point.x, y: point.y }}, template: palette.selected || null }});
       draw();
@@ -3065,8 +3619,226 @@ def _node_graph_html(
       nodePicker.open = false;
       nodePicker.scrollDrag = null;
       nodePicker.items = [];
+      if (textEdit.key === 'nodePicker.query') clearTextEditTarget();
       if (notify) emitGraphEvent({{ event: 'node_picker_closed' }});
       draw();
+    }}
+
+    function clearTextEditTarget() {{
+      textEdit.key = null;
+      textEdit.owner = null;
+      textEdit.prop = null;
+      textEdit.caret = 0;
+      textEdit.anchor = 0;
+      textEdit.dragging = false;
+    }}
+
+    function textEditValue() {{
+      return textEdit.owner && textEdit.prop ? String(textEdit.owner[textEdit.prop] || '') : '';
+    }}
+
+    function setTextEditValue(value) {{
+      if (!textEdit.owner || !textEdit.prop) return;
+      textEdit.owner[textEdit.prop] = String(value || '');
+      if (textEdit.key === 'nodePicker.query') {{
+        nodePicker.selected = 0;
+        nodePicker.scroll = 0;
+      }}
+    }}
+
+    function setTextEditTarget(key, owner, prop, selectAll = false, font = '12px Segoe UI') {{
+      const value = String(owner && prop ? owner[prop] || '' : '');
+      if (textEdit.key !== key || textEdit.owner !== owner || textEdit.prop !== prop) {{
+        textEdit.key = key;
+        textEdit.owner = owner;
+        textEdit.prop = prop;
+        textEdit.font = font;
+        textEdit.caret = value.length;
+        textEdit.anchor = selectAll ? 0 : value.length;
+      }} else if (selectAll) {{
+        textEdit.caret = value.length;
+        textEdit.anchor = 0;
+      }}
+      textEdit.dragging = false;
+    }}
+
+    function textSelectionRange() {{
+      const a = Math.max(0, Math.min(textEdit.anchor, textEditValue().length));
+      const b = Math.max(0, Math.min(textEdit.caret, textEditValue().length));
+      return {{ start: Math.min(a, b), end: Math.max(a, b) }};
+    }}
+
+    function hasTextSelection() {{
+      const range = textSelectionRange();
+      return range.end > range.start;
+    }}
+
+    function setTextCaret(index, extend = false) {{
+      const value = textEditValue();
+      const next = Math.max(0, Math.min(Number(index) || 0, value.length));
+      textEdit.caret = next;
+      if (!extend) textEdit.anchor = next;
+    }}
+
+    function deleteTextSelection() {{
+      if (!hasTextSelection()) return false;
+      const value = textEditValue();
+      const range = textSelectionRange();
+      setTextEditValue(value.slice(0, range.start) + value.slice(range.end));
+      setTextCaret(range.start);
+      return true;
+    }}
+
+    function insertTextAtCaret(text) {{
+      if (!textEdit.owner || !textEdit.prop) return false;
+      const clean = String(text || '').replace(/\\r\\n?/g, '\\n').replace(/\\n/g, ' ');
+      deleteTextSelection();
+      const value = textEditValue();
+      const before = value.slice(0, textEdit.caret);
+      const after = value.slice(textEdit.caret);
+      setTextEditValue(before + clean + after);
+      setTextCaret(before.length + clean.length);
+      return true;
+    }}
+
+    function deleteTextBackward() {{
+      if (!textEdit.owner || !textEdit.prop) return false;
+      if (deleteTextSelection()) return true;
+      if (textEdit.caret <= 0) return false;
+      const value = textEditValue();
+      setTextEditValue(value.slice(0, textEdit.caret - 1) + value.slice(textEdit.caret));
+      setTextCaret(textEdit.caret - 1);
+      return true;
+    }}
+
+    function deleteTextForward() {{
+      if (!textEdit.owner || !textEdit.prop) return false;
+      if (deleteTextSelection()) return true;
+      const value = textEditValue();
+      if (textEdit.caret >= value.length) return false;
+      setTextEditValue(value.slice(0, textEdit.caret) + value.slice(textEdit.caret + 1));
+      setTextCaret(textEdit.caret);
+      return true;
+    }}
+
+    function moveTextCaret(delta, extend = false) {{
+      setTextCaret(textEdit.caret + delta, extend);
+    }}
+
+    function selectedTextValue() {{
+      if (!hasTextSelection()) return '';
+      const value = textEditValue();
+      const range = textSelectionRange();
+      return value.slice(range.start, range.end);
+    }}
+
+    function writeClipboardText(text) {{
+      if (!text) return;
+      if (navigator.clipboard && navigator.clipboard.writeText) {{
+        navigator.clipboard.writeText(text).catch(() => {{}});
+      }}
+    }}
+
+    function pasteClipboardText() {{
+      if (navigator.clipboard && navigator.clipboard.readText) {{
+        navigator.clipboard.readText().then(text => {{
+          if (textEdit.owner && text) {{
+            insertTextAtCaret(text);
+            draw();
+          }}
+        }}).catch(() => {{}});
+      }}
+    }}
+
+    function textIndexFromX(text, localX, font) {{
+      const value = String(text || '');
+      ctx.save();
+      ctx.font = font || textEdit.font || '12px Segoe UI';
+      let best = value.length;
+      for (let index = 0; index <= value.length; index++) {{
+        const left = ctx.measureText(value.slice(0, index)).width;
+        const right = index < value.length ? ctx.measureText(value.slice(0, index + 1)).width : left;
+        const midpoint = (left + right) / 2;
+        if (localX <= midpoint) {{
+          best = index;
+          break;
+        }}
+      }}
+      ctx.restore();
+      return best;
+    }}
+
+    function caretXForText(text, index, font) {{
+      ctx.save();
+      ctx.font = font || textEdit.font || '12px Segoe UI';
+      const width = ctx.measureText(String(text || '').slice(0, Math.max(0, index))).width;
+      ctx.restore();
+      return width;
+    }}
+
+    function drawEditableText(text, placeholder, rect, key, font = '12px Segoe UI') {{
+      const value = String(text || '');
+      const active = textEdit.key === key;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(rect.x, rect.y, rect.w, rect.h);
+      ctx.clip();
+      ctx.font = font;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      const textX = rect.x + 2;
+      const textY = rect.y + rect.h / 2;
+      if (active && hasTextSelection()) {{
+        const range = textSelectionRange();
+        const startX = textX + caretXForText(value, range.start, font);
+        const endX = textX + caretXForText(value, range.end, font);
+        ctx.fillStyle = 'rgba(67, 198, 172, 0.32)';
+        roundedRect(startX - 1, rect.y + 4, Math.max(2, endX - startX + 2), rect.h - 8, 4);
+        ctx.fill();
+      }}
+      ctx.fillStyle = value ? '#eef4ff' : '#738296';
+      ctx.fillText(value || placeholder || '', textX, textY);
+      if (active && Math.floor(Date.now() / 530) % 2 === 0) {{
+        const caretX = textX + caretXForText(value, textEdit.caret, font);
+        ctx.strokeStyle = '#eef4ff';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(caretX, rect.y + 7);
+        ctx.lineTo(caretX, rect.y + rect.h - 7);
+        ctx.stroke();
+      }}
+      ctx.restore();
+    }}
+
+    function pointInRect(sx, sy, rect) {{
+      return !!rect && sx >= rect.x && sx <= rect.x + rect.w && sy >= rect.y && sy <= rect.y + rect.h;
+    }}
+
+    function beginTextDrag(key, owner, prop, rect, sx, sy, font = '12px Segoe UI', selectAll = false) {{
+      if (!pointInRect(sx, sy, rect)) return false;
+      setTextEditTarget(key, owner, prop, selectAll, font);
+      const index = textIndexFromX(textEditValue(), sx - rect.x - 2, font);
+      setTextCaret(index, false);
+      textEdit.dragging = true;
+      draw();
+      return true;
+    }}
+
+    function updateTextDrag(sx, sy) {{
+      if (!textEdit.dragging || !textEdit.owner || !textEdit.prop) return false;
+      let rect = null;
+      let font = textEdit.font || '12px Segoe UI';
+      if (textEdit.key === 'nodePicker.query') rect = nodePicker.inputRect;
+      else if (textEdit.key === 'renameEditor.value') rect = renameEditor.inputRect;
+      else if (textEdit.key && textEdit.key.startsWith('propertyEditor.')) {{
+        const field = activePropertyField();
+        rect = field ? field.rect : null;
+      }}
+      if (!rect) return false;
+      const index = textIndexFromX(textEditValue(), sx - rect.x - 2, font);
+      setTextCaret(index, true);
+      draw();
+      return true;
     }}
 
     function chooseNodePickerSelection(index = nodePicker.selected) {{
@@ -3116,10 +3888,20 @@ def _node_graph_html(
         if (sx >= button.x && sx <= button.x + button.w && sy >= button.y && sy <= button.y + button.h) return {{ kind: button.action }};
       }}
       if (propertyEditor.selectPopup && Array.isArray(propertyEditor.selectPopup.items)) {{
+        const popup = propertyEditor.selectPopup;
+        if (popup.scrollBar) {{
+          const bar = popup.scrollBar;
+          if (sx >= bar.x - 5 && sx <= bar.x + bar.w + 5 && sy >= bar.y && sy <= bar.y + bar.h) {{
+            return {{ kind: 'select_scrollbar', onThumb: sy >= bar.thumbY && sy <= bar.thumbY + bar.thumbH }};
+          }}
+        }}
         for (const item of propertyEditor.selectPopup.items) {{
           if (sx >= item.x && sx <= item.x + item.w && sy >= item.y && sy <= item.y + item.h) {{
             return {{ kind: 'select_option', index: item.index, value: item.value }};
           }}
+        }}
+        if (popup.rect && sx >= popup.rect.x && sx <= popup.rect.x + popup.rect.w && sy >= popup.rect.y && sy <= popup.rect.y + popup.rect.h) {{
+          return {{ kind: 'select_popup' }};
         }}
       }}
       if (propertyEditor.scrollBar) {{
@@ -3130,6 +3912,13 @@ def _node_graph_html(
       }}
       for (let index = 0; index < propertyEditor.fields.length; index++) {{
         const field = propertyEditor.fields[index];
+        if (Array.isArray(field.stepperButtons)) {{
+          for (const button of field.stepperButtons) {{
+            if (sx >= button.x && sx <= button.x + button.w && sy >= button.y && sy <= button.y + button.h) {{
+              return {{ kind: 'field_stepper', index, delta: button.delta }};
+            }}
+          }}
+        }}
         if (field.rect && sx >= field.rect.x && sx <= field.rect.x + field.rect.w && sy >= field.rect.y && sy <= field.rect.y + field.rect.h) return {{ kind: 'field', index }};
       }}
       if (sx >= rect.x && sx <= rect.x + rect.w && sy >= rect.y && sy <= rect.y + rect.h) return {{ kind: 'inside' }};
@@ -3527,6 +4316,12 @@ def _node_graph_html(
     function emitGraphEvent(payload) {{
       if (!config.emitEvents) return;
       const eventPayload = {{ schema_version: 1, ...payload }};
+      if (eventPayload.event === 'node_selected') updateEditorChromeStatus(`Selected: ${{eventPayload.node || 'none'}}`);
+      else if (eventPayload.event === 'edge_selected') updateEditorChromeStatus(`Selected: edge ${{eventPayload.edge || ''}}`);
+      else if (eventPayload.event === 'selection_cleared') updateEditorChromeStatus('Selection cleared');
+      else if (eventPayload.event === 'viewport_changed') updateEditorChromeStatus(`Navigation: ${{eventPayload.action || 'viewport'}}`);
+      else if (eventPayload.event === 'graph_changed') updateEditorChromeStatus('Graph changed');
+      else if (eventPayload.event === 'connection_rejected') updateEditorChromeStatus(`Rejected: ${{eventPayload.reason || 'connection'}}`);
       if (window.chrome && window.chrome.webview && window.chrome.webview.postMessage) {{
         window.chrome.webview.postMessage(eventPayload);
       }}
@@ -3761,6 +4556,7 @@ def _node_graph_html(
       renameEditor.selectAll = true;
       renameEditor.rect = null;
       renameEditor.buttons = [];
+      setTextEditTarget('renameEditor.value', renameEditor, 'value', true, '13px Segoe UI');
       emitGraphEvent({{ event: 'rename_editor_opened', target_type: kind, target: id }});
       draw();
       return true;
@@ -3778,6 +4574,7 @@ def _node_graph_html(
       renameEditor.selectAll = false;
       renameEditor.rect = null;
       renameEditor.buttons = [];
+      if (textEdit.key === 'renameEditor.value') clearTextEditTarget();
       if (notify) emitGraphEvent({{ event: 'rename_editor_closed', target_type: kind, target: id }});
       draw();
       return true;
@@ -3979,6 +4776,26 @@ def _node_graph_html(
       return targets.find(targetInfo => String(targetInfo.widget_id || targetInfo.id || '') === targetId) || null;
     }}
 
+    function terminalWidgetOptions(value) {{
+      const targets = Array.isArray(config.widgetTargets) ? config.widgetTargets : [];
+      const options = [{{ value: '', label: 'Choose terminal widget...', widget_type: 'terminal' }}];
+      for (const targetInfo of targets) {{
+        const targetId = String(targetInfo.widget_id || targetInfo.id || '');
+        const widgetType = String(targetInfo.widget_type || targetInfo.target_type || '').toLowerCase();
+        if (!targetId || widgetType !== 'terminal') continue;
+        options.push({{
+          value: targetId,
+          label: String(targetInfo.label || targetId),
+          widget_type: 'terminal'
+        }});
+      }}
+      const current = String(value || '');
+      if (current && !options.some(option => option.value === current)) {{
+        options.push({{ value: current, label: `${{current}} (unregistered)`, widget_type: 'terminal', missing: true }});
+      }}
+      return options;
+    }}
+
     function widgetProfileOptions(target, value, spec) {{
       const configData = nodeConfig(target);
       const targetInfo = widgetTargetById(configData.widget_id);
@@ -4017,6 +4834,24 @@ def _node_graph_html(
       node.outputs = updates.outputs.map(item => ({{ ...item }}));
     }}
 
+    function buildTextInputCount(data) {{
+      const configData = data && data.config && typeof data.config === 'object' && !Array.isArray(data.config) ? data.config : {{}};
+      const raw = Number(configData.input_count || {_BUILD_TEXT_DEFAULT_INPUTS});
+      return Math.max({_BUILD_TEXT_MIN_INPUTS}, Math.min({_BUILD_TEXT_MAX_INPUTS}, Number.isFinite(raw) ? Math.round(raw) : {_BUILD_TEXT_DEFAULT_INPUTS}));
+    }}
+
+    function applyBuildTextPorts(node, updates, data) {{
+      if (!node || !node.data || String(node.data.node_type || node.data.template_id || '') !== 'build_text') return;
+      const count = buildTextInputCount(data);
+      updates.inputs = [];
+      for (let index = 1; index <= count; index++) {{
+        updates.inputs.push({{ id: `part_${{index}}`, label: `part ${{index}}`, port_type: 'text' }});
+      }}
+      updates.outputs = [{{ id: 'text', label: 'text', port_type: 'text' }}];
+      node.inputs = updates.inputs.map(item => ({{ ...item }}));
+      node.outputs = updates.outputs.map(item => ({{ ...item }}));
+    }}
+
     function widgetTargetFieldSpec(target, spec, value) {{
       if (!isWidgetBindingTarget(target)) return null;
       const key = String(spec.key || '');
@@ -4048,6 +4883,20 @@ def _node_graph_html(
       return {{ ...spec, type: 'select', options, placeholder: 'Choose widget...', help: spec.help || spec.description || 'Registered GUI widget' }};
     }}
 
+    function terminalTargetFieldSpec(target, spec, value) {{
+      const kind = widgetBindingKind(target);
+      if (kind !== 'terminal') return null;
+      const key = String(spec.key || '');
+      if (key !== 'terminal_widget_id' && String(spec.target_type || '') !== 'terminal_widget') return null;
+      return {{
+        ...spec,
+        type: 'select',
+        options: terminalWidgetOptions(value),
+        placeholder: 'Choose terminal widget...',
+        help: spec.help || spec.description || 'Attach this Terminal Session to a DragonGUI Terminal widget'
+      }};
+    }}
+
     function schemaPropertyFields(target) {{
       const schemaFields = configSchemaFields(target);
       const storage = schemaFields ? 'config' : 'data';
@@ -4057,7 +4906,7 @@ def _node_graph_html(
         .map(spec => {{
           const key = String(spec.key);
           const value = schemaFieldValue(target, spec, storage);
-          const effectiveSpec = widgetTargetFieldSpec(target, spec, value) || spec;
+          const effectiveSpec = widgetTargetFieldSpec(target, spec, value) || terminalTargetFieldSpec(target, spec, value) || spec;
           const type = schemaFieldType(effectiveSpec);
           const fieldKey = storage === 'config' ? `config:${{key}}` : `data:${{key}}`;
           const field = makePropertyField(fieldKey, String(effectiveSpec.label || key), value, type, effectiveSpec);
@@ -4141,6 +4990,7 @@ def _node_graph_html(
       propertyEditor.scrollBar = null;
       propertyEditor.buttons = [];
       propertyEditor.selectPopup = null;
+      setActivePropertyTextTarget(true);
       emitGraphEvent({{ event: 'property_editor_opened', target_type: propertyEditor.kind, target: propertyEditor.id }});
       draw();
       return true;
@@ -4162,6 +5012,7 @@ def _node_graph_html(
       propertyEditor.scrollBar = null;
       propertyEditor.buttons = [];
       propertyEditor.selectPopup = null;
+      if (textEdit.key && textEdit.key.startsWith('propertyEditor.')) clearTextEditTarget();
       if (notify) emitGraphEvent({{ event: 'property_editor_closed', target_type: kind, target: id }});
       draw();
       return true;
@@ -4169,6 +5020,35 @@ def _node_graph_html(
 
     function propertyField(key) {{
       return propertyEditor.fields.find(field => field.key === key);
+    }}
+
+    function isBuildTextPropertyTarget() {{
+      if (!propertyEditor.open || propertyEditor.kind !== 'node' || !propertyEditor.id) return false;
+      const node = state.nodes.find(n => n.id === propertyEditor.id);
+      return !!node && !!node.data && String(node.data.node_type || node.data.template_id || '') === 'build_text';
+    }}
+
+    function isBuildTextInputCountField(field) {{
+      return isBuildTextPropertyTarget() && !!field && field.key === 'config:input_count';
+    }}
+
+    function clampBuildTextInputCount(value) {{
+      const parsed = Number(value);
+      const fallback = {_BUILD_TEXT_DEFAULT_INPUTS};
+      const count = Number.isFinite(parsed) ? Math.round(parsed) : fallback;
+      return Math.max({_BUILD_TEXT_MIN_INPUTS}, Math.min({_BUILD_TEXT_MAX_INPUTS}, count));
+    }}
+
+    function adjustBuildTextInputCount(index, delta) {{
+      const field = propertyEditor.fields[index];
+      if (!isBuildTextInputCountField(field)) return false;
+      field.value = String(clampBuildTextInputCount(field.value) + delta);
+      field.value = String(clampBuildTextInputCount(field.value));
+      propertyEditor.active = index;
+      closeSelectPopup();
+      setActivePropertyTextTarget(true);
+      draw();
+      return true;
     }}
 
     function textProperty(key, fallback = '') {{
@@ -4235,7 +5115,8 @@ def _node_graph_html(
       const field = propertyEditor.fields[index];
       if (!field || field.type !== 'select' || !field.options.length) return false;
       propertyEditor.active = index;
-      propertyEditor.selectPopup = {{ fieldIndex: index, items: [] }};
+      const selectedIndex = Math.max(0, field.options.findIndex(value => String(value || '') === String(field.value || '')));
+      propertyEditor.selectPopup = {{ fieldIndex: index, items: [], scroll: Math.max(0, selectedIndex - 2) * 28, rect: null, scrollBar: null }};
       focusCanvas();
       return true;
     }}
@@ -4259,6 +5140,7 @@ def _node_graph_html(
           data: Object.keys(data).length ? data : null
         }};
         applyWidgetBindingPortProfile(node, updates, data);
+        applyBuildTextPorts(node, updates, data);
         node.title = updates.title;
         node.subtitle = updates.subtitle;
         node.status = updates.status;
@@ -4310,6 +5192,7 @@ def _node_graph_html(
       propertyEditor.scrollBar = null;
       propertyEditor.buttons = [];
       propertyEditor.selectPopup = null;
+      if (textEdit.key && textEdit.key.startsWith('propertyEditor.')) clearTextEditTarget();
       draw();
       return true;
     }}
@@ -4327,6 +5210,7 @@ def _node_graph_html(
         else openSelectPopup(index);
       }} else {{
         closeSelectPopup();
+        setActivePropertyTextTarget(false);
       }}
       draw();
       return true;
@@ -4334,6 +5218,16 @@ def _node_graph_html(
 
     function activePropertyField() {{
       return propertyEditor.fields[propertyEditor.active] || null;
+    }}
+
+    function setActivePropertyTextTarget(selectAll = false) {{
+      const field = activePropertyField();
+      if (!field || field.type === 'bool' || field.type === 'select') {{
+        if (textEdit.key && textEdit.key.startsWith('propertyEditor.')) clearTextEditTarget();
+        return false;
+      }}
+      setTextEditTarget(`propertyEditor.${{propertyEditor.active}}`, field, 'value', selectAll, '12px Segoe UI');
+      return true;
     }}
 
     function propertyEditorRowHeight() {{
@@ -4644,16 +5538,20 @@ def _node_graph_html(
       const inputX = rect.x + 14;
       const inputY = rect.y + 44;
       const inputW = rect.w - 28;
+      nodePicker.inputRect = {{ x: inputX + 8, y: inputY + 2, w: inputW - 16, h: 24 }};
       roundedRect(inputX, inputY, inputW, 28, 6);
       ctx.fillStyle = '#0b1017';
       ctx.fill();
       ctx.strokeStyle = '#26384a';
       ctx.lineWidth = 1;
       ctx.stroke();
-      ctx.textAlign = 'left';
-      ctx.font = '12px Segoe UI';
-      ctx.fillStyle = nodePicker.query ? '#eef4ff' : '#738296';
-      ctx.fillText(nodePicker.query || 'Type to filter templates...', inputX + 10, inputY + 14);
+      drawEditableText(
+        nodePicker.query,
+        'Type to filter templates...',
+        nodePicker.inputRect,
+        'nodePicker.query',
+        '12px Segoe UI'
+      );
 
       const listX = rect.x + 10;
       const listY = rect.y + 82;
@@ -4723,16 +5621,15 @@ def _node_graph_html(
     function drawToolbar(width) {{
       toolbar.items = [];
       const actions = [
-        {{ action: 'fit', label: '[]' }},
-        {{ action: 'zoom_in', label: '+' }},
-        {{ action: 'zoom_out', label: '-' }},
-        {{ action: 'grid', label: '#' }},
-        {{ action: 'inspect', label: 'i' }}
+        {{ action: 'fit', icon: 'fit' }},
+        {{ action: 'zoom_in', icon: 'zoom_in' }},
+        {{ action: 'zoom_out', icon: 'zoom_out' }},
+        {{ action: 'grid', icon: 'grid' }},
+        {{ action: 'inspect', icon: 'inspect' }}
       ];
       let x = width - actions.length * (TOOLBAR_W + 6) - 6;
       ctx.save();
       ctx.textBaseline = 'middle';
-      ctx.font = '13px Segoe UI';
       for (const item of actions) {{
         const active = item.action === 'grid' ? state.showGrid : false;
         ctx.fillStyle = active ? '#26384a' : '#171d27';
@@ -4741,13 +5638,97 @@ def _node_graph_html(
         roundedRect(x, TOOLBAR_Y, TOOLBAR_W, TOOLBAR_H, 6);
         ctx.fill();
         ctx.stroke();
-        ctx.fillStyle = '#cbd6e2';
-        ctx.textAlign = 'center';
-        ctx.fillText(item.label, x + TOOLBAR_W / 2, TOOLBAR_Y + TOOLBAR_H / 2);
+        drawToolbarIcon(item.icon, x, TOOLBAR_Y, TOOLBAR_W, TOOLBAR_H, active ? '#eef4ff' : '#cbd6e2');
         toolbar.items.push({{ action: item.action, x, y: TOOLBAR_Y, w: TOOLBAR_W, h: TOOLBAR_H }});
         x += TOOLBAR_W + 6;
       }}
       ctx.restore();
+    }}
+
+    function drawToolbarIcon(icon, x, y, w, h, color) {{
+      ctx.save();
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color;
+      ctx.lineWidth = 1.6;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      if (icon === 'fit') drawFitToolbarIcon(x, y, w, h);
+      else if (icon === 'zoom_in' || icon === 'zoom_out') drawZoomToolbarIcon(x, y, w, h, icon === 'zoom_in' ? 1 : -1);
+      else if (icon === 'grid') drawGridToolbarIcon(x, y, w, h);
+      else if (icon === 'inspect') drawInspectToolbarIcon(x, y, w, h);
+      ctx.restore();
+    }}
+
+    function drawFitToolbarIcon(x, y, w, h) {{
+      const inset = 9;
+      const len = 6;
+      const left = x + inset;
+      const right = x + w - inset;
+      const top = y + inset;
+      const bottom = y + h - inset;
+      for (const corner of [
+        [left, top, 1, 1],
+        [right, top, -1, 1],
+        [right, bottom, -1, -1],
+        [left, bottom, 1, -1],
+      ]) {{
+        const [cx, cy, sx, sy] = corner;
+        ctx.beginPath();
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx + len * sx, cy);
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(cx, cy + len * sy);
+        ctx.stroke();
+      }}
+    }}
+
+    function drawZoomToolbarIcon(x, y, w, h, sign) {{
+      const cx = x + w * 0.47;
+      const cy = y + h * 0.46;
+      const r = 5.7;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(cx - 3.2, cy);
+      ctx.lineTo(cx + 3.2, cy);
+      if (sign > 0) {{
+        ctx.moveTo(cx, cy - 3.2);
+        ctx.lineTo(cx, cy + 3.2);
+      }}
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(cx + r * 0.72, cy + r * 0.72);
+      ctx.lineTo(cx + r * 0.72 + 6.2, cy + r * 0.72 + 6.2);
+      ctx.stroke();
+    }}
+
+    function drawGridToolbarIcon(x, y, w, h) {{
+      const size = 14;
+      const left = x + (w - size) * 0.5;
+      const top = y + (h - size) * 0.5;
+      ctx.beginPath();
+      for (let i = 0; i <= 2; i++) {{
+        const t = i / 2;
+        const gx = left + size * t;
+        const gy = top + size * t;
+        ctx.moveTo(gx, top);
+        ctx.lineTo(gx, top + size);
+        ctx.moveTo(left, gy);
+        ctx.lineTo(left + size, gy);
+      }}
+      ctx.stroke();
+    }}
+
+    function drawInspectToolbarIcon(x, y, w, h) {{
+      const cx = x + w * 0.5;
+      ctx.beginPath();
+      ctx.arc(cx, y + 8.2, 1.4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(cx, y + 13);
+      ctx.lineTo(cx, y + h - 8);
+      ctx.stroke();
     }}
 
     function runToolbarAction(action) {{
@@ -4880,23 +5861,20 @@ def _node_graph_html(
       const inputX = x + 16;
       const inputY = y + 64;
       const inputW = panelW - 32;
+      renameEditor.inputRect = {{ x: inputX + 8, y: inputY + 4, w: inputW - 16, h: 26 }};
       roundedRect(inputX, inputY, inputW, 34, 6);
       ctx.fillStyle = '#0b1017';
       ctx.fill();
       ctx.strokeStyle = '#354255';
       ctx.lineWidth = 1;
       ctx.stroke();
-      ctx.fillStyle = renameEditor.value ? '#eef4ff' : '#738296';
-      ctx.font = '13px Segoe UI';
-      const visible = renameEditor.value || 'Title';
-      const cursor = Math.floor(Date.now() / 530) % 2 === 0 ? '|' : '';
-      if (renameEditor.selectAll && renameEditor.value) {{
-        ctx.fillStyle = 'rgba(67, 198, 172, 0.28)';
-        roundedRect(inputX + 7, inputY + 7, Math.min(inputW - 14, ctx.measureText(renameEditor.value).width + 8), 20, 4);
-        ctx.fill();
-        ctx.fillStyle = '#eef4ff';
-      }}
-      ctx.fillText(visible + (renameEditor.selectAll ? '' : cursor), inputX + 10, inputY + 17);
+      drawEditableText(
+        renameEditor.value,
+        'Title',
+        renameEditor.inputRect,
+        'renameEditor.value',
+        '13px Segoe UI'
+      );
       for (const button of renameEditor.buttons) {{
         const primary = button.action === 'commit';
         roundedRect(button.x, button.y, button.w, button.h, 6);
@@ -4933,7 +5911,10 @@ def _node_graph_html(
       propertyEditor.listRect = {{ x: listX, y: listY, w: listW, h: listH }};
       const maxScroll = clampPropertyEditorScroll();
       propertyEditor.scrollBar = null;
-      for (const field of propertyEditor.fields) field.rect = null;
+      for (const field of propertyEditor.fields) {{
+        field.rect = null;
+        field.stepperButtons = null;
+      }}
 
       ctx.save();
       ctx.fillStyle = 'rgba(7, 11, 17, 0.58)';
@@ -4968,6 +5949,8 @@ def _node_graph_html(
       for (let index = startIndex; index < endIndex; index++) {{
         const field = propertyEditor.fields[index];
         const rowY = listY + index * rowH - propertyEditor.scroll;
+        const hasStepper = isBuildTextInputCountField(field);
+        field.stepperButtons = null;
         field.rect = {{ x: inputX, y: rowY + 4, w: inputW, h: 30 }};
         ctx.fillStyle = '#9aa8b8';
         ctx.font = '11px Segoe UI';
@@ -5005,14 +5988,24 @@ def _node_graph_html(
           ctx.stroke();
           const text = String(field.value || '');
           const visible = field.type === 'select' ? (optionLabel(field, field.value) || field.placeholder || (field.options.length ? optionLabel(field, field.options[0]) : '')) : (text || field.placeholder || '');
-          ctx.fillStyle = text ? '#eef4ff' : '#738296';
-          ctx.font = '12px Segoe UI';
-          const cursor = index === propertyEditor.active && Math.floor(Date.now() / 530) % 2 === 0 && field.type !== 'select' ? '|' : '';
           ctx.save();
           ctx.beginPath();
-          ctx.rect(inputX + 8, rowY + 5, inputW - 16, 28);
+          const textClipW = inputW - (hasStepper ? 82 : 16);
+          ctx.rect(inputX + 8, rowY + 5, Math.max(20, textClipW), 28);
           ctx.clip();
-          ctx.fillText(visible + cursor, inputX + 10, rowY + 19);
+          if (field.type === 'select') {{
+            ctx.fillStyle = text ? '#eef4ff' : '#738296';
+            ctx.font = '12px Segoe UI';
+            ctx.fillText(visible, inputX + 10, rowY + 19);
+          }} else {{
+            drawEditableText(
+              text,
+              field.placeholder || '',
+              {{ x: inputX + 8, y: rowY + 5, w: Math.max(20, textClipW), h: 28 }},
+              `propertyEditor.${{index}}`,
+              '12px Segoe UI'
+            );
+          }}
           if (field.type === 'select' && field.options.length) {{
             ctx.fillStyle = '#607086';
             ctx.font = '10px Segoe UI';
@@ -5022,6 +6015,27 @@ def _node_graph_html(
             ctx.textAlign = 'left';
           }}
           ctx.restore();
+          if (hasStepper) {{
+            const buttonY = rowY + 7;
+            const minus = {{ x: inputX + inputW - 66, y: buttonY, w: 27, h: 24, delta: -1 }};
+            const plus = {{ x: inputX + inputW - 34, y: buttonY, w: 27, h: 24, delta: 1 }};
+            field.stepperButtons = [minus, plus];
+            for (const button of field.stepperButtons) {{
+              const nextValue = clampBuildTextInputCount(field.value) + button.delta;
+              const disabled = nextValue < {_BUILD_TEXT_MIN_INPUTS} || nextValue > {_BUILD_TEXT_MAX_INPUTS};
+              roundedRect(button.x, button.y, button.w, button.h, 5);
+              ctx.fillStyle = disabled ? '#10151d' : '#171d27';
+              ctx.fill();
+              ctx.strokeStyle = disabled ? '#253043' : '#354255';
+              ctx.lineWidth = 1;
+              ctx.stroke();
+              ctx.fillStyle = disabled ? '#4f5f73' : '#eef4ff';
+              ctx.textAlign = 'center';
+              ctx.font = '700 14px Segoe UI';
+              ctx.fillText(button.delta > 0 ? '+' : '-', button.x + button.w / 2, button.y + button.h / 2);
+            }}
+            ctx.textAlign = 'left';
+          }}
         }}
       }}
       ctx.restore();
@@ -5043,8 +6057,11 @@ def _node_graph_html(
       }}
 
       if (propertyEditor.selectPopup) {{
-        propertyEditor.selectPopup.items = [];
-        const field = propertyEditor.fields[propertyEditor.selectPopup.fieldIndex];
+        const popup = propertyEditor.selectPopup;
+        popup.items = [];
+        popup.rect = null;
+        popup.scrollBar = null;
+        const field = propertyEditor.fields[popup.fieldIndex];
         if (field && field.rect && field.options.length) {{
           const optionH = 28;
           const maxVisible = Math.min(6, field.options.length);
@@ -5052,24 +6069,51 @@ def _node_graph_html(
           const popupH = maxVisible * optionH + 8;
           const popupX = field.rect.x;
           const popupY = Math.min(y + panelH - 52 - popupH, field.rect.y + field.rect.h + 4);
+          const contentH = field.options.length * optionH;
+          const viewportH = maxVisible * optionH;
+          const maxScroll = Math.max(0, contentH - viewportH);
+          popup.scroll = Math.max(0, Math.min(popup.scroll || 0, maxScroll));
+          popup.rect = {{ x: popupX, y: popupY, w: popupW, h: popupH }};
           roundedRect(popupX, popupY, popupW, popupH, 7);
           ctx.fillStyle = '#0b1017';
           ctx.fill();
           ctx.strokeStyle = '#43c6ac';
           ctx.lineWidth = 1.1;
           ctx.stroke();
-          for (let optionIndex = 0; optionIndex < maxVisible; optionIndex++) {{
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(popupX + 4, popupY + 4, popupW - 8, viewportH);
+          ctx.clip();
+          const startIndex = Math.max(0, Math.floor(popup.scroll / optionH));
+          const endIndex = Math.min(field.options.length, Math.ceil((popup.scroll + viewportH) / optionH) + 1);
+          const itemW = popupW - (maxScroll > 0 ? 18 : 8);
+          for (let optionIndex = startIndex; optionIndex < endIndex; optionIndex++) {{
             const value = field.options[optionIndex];
-            const itemY = popupY + 4 + optionIndex * optionH;
+            const itemY = popupY + 4 + optionIndex * optionH - popup.scroll;
             const selected = String(field.value || '') === String(value || '');
-            roundedRect(popupX + 4, itemY + 2, popupW - 8, optionH - 4, 5);
+            roundedRect(popupX + 4, itemY + 2, itemW, optionH - 4, 5);
             ctx.fillStyle = selected ? '#26384a' : '#111821';
             ctx.fill();
             ctx.fillStyle = selected ? '#eef4ff' : '#9aa8b8';
             ctx.textAlign = 'left';
             ctx.font = '12px Segoe UI';
             ctx.fillText(optionLabel(field, value) || '(empty)', popupX + 12, itemY + optionH / 2);
-            propertyEditor.selectPopup.items.push({{ index: optionIndex, value, x: popupX + 4, y: itemY + 2, w: popupW - 8, h: optionH - 4 }});
+            popup.items.push({{ index: optionIndex, value, x: popupX + 4, y: itemY + 2, w: itemW, h: optionH - 4 }});
+          }}
+          ctx.restore();
+          if (maxScroll > 0) {{
+            const trackX = popupX + popupW - 12;
+            const trackY = popupY + 5;
+            const trackH = viewportH - 2;
+            const thumbH = Math.max(22, viewportH * viewportH / Math.max(viewportH, contentH));
+            const thumbY = trackY + (popup.scroll / maxScroll) * (trackH - thumbH);
+            roundedRect(trackX, trackY, 6, trackH, 3);
+            ctx.fillStyle = '#111821';
+            ctx.fill();
+            roundedRect(trackX, thumbY, 6, thumbH, 3);
+            ctx.fillStyle = '#6f849d';
+            ctx.fill();
+            popup.scrollBar = {{ x: trackX, y: trackY, w: 6, h: trackH, thumbY, thumbH, maxScroll }};
           }}
         }}
       }}
@@ -5106,7 +6150,10 @@ def _node_graph_html(
       ctx.fillText(`${{state.nodes.length}} nodes / ${{state.edges.length}} edges`, 12, rect.height - 16);
       drawRenameEditor(rect.width, rect.height);
       drawPropertyEditor(rect.width, rect.height);
+      updateEditorChromeStatus();
     }}
+
+    setupEditorChrome();
 
     canvas.addEventListener('mousedown', event => {{
       focusCanvas();
@@ -5120,6 +6167,18 @@ def _node_graph_html(
           if (field) setSelectFieldValue(field, propertyHit.value);
           closeSelectPopup();
         }}
+        else if (propertyHit && propertyHit.kind === 'select_scrollbar') {{
+          const popup = propertyEditor.selectPopup;
+          const bar = popup && popup.scrollBar;
+          if (popup && bar) {{
+            const trackTravel = Math.max(1, bar.h - bar.thumbH);
+            if (!propertyHit.onThumb && bar.maxScroll > 0) {{
+              popup.scroll = ((p.sy - bar.y - bar.thumbH / 2) / trackTravel) * bar.maxScroll;
+            }}
+            popup.scrollDrag = {{ startY: p.sy, startScroll: popup.scroll || 0, maxScroll: bar.maxScroll, trackH: bar.h, thumbH: bar.thumbH }};
+            canvas.style.cursor = 'grabbing';
+          }}
+        }}
         else if (propertyHit && propertyHit.kind === 'scrollbar' && propertyEditor.scrollBar) {{
           const bar = propertyEditor.scrollBar;
           const maxScroll = clampPropertyEditorScroll();
@@ -5131,8 +6190,20 @@ def _node_graph_html(
           propertyEditor.scrollDrag = {{ startY: p.sy, startScroll: propertyEditor.scroll, maxScroll, trackH: bar.h, thumbH: bar.thumbH }};
           canvas.style.cursor = 'grabbing';
         }}
+        else if (propertyHit && propertyHit.kind === 'field_stepper') {{
+          adjustBuildTextInputCount(propertyHit.index, propertyHit.delta);
+        }}
         else if (propertyHit && (propertyHit.kind === 'cancel' || propertyHit.kind === 'outside')) closePropertyEditor();
-        else if (propertyHit && propertyHit.kind === 'field') editPropertyField(propertyHit.index);
+        else if (propertyHit && propertyHit.kind === 'field') {{
+          propertyEditor.active = propertyHit.index;
+          const field = activePropertyField();
+          if (field && field.type !== 'bool' && field.type !== 'select') {{
+            closeSelectPopup();
+            beginTextDrag(`propertyEditor.${{propertyHit.index}}`, field, 'value', field.rect, p.sx, p.sy, '12px Segoe UI');
+          }} else {{
+            editPropertyField(propertyHit.index);
+          }}
+        }}
         event.preventDefault();
         draw();
         return;
@@ -5141,13 +6212,20 @@ def _node_graph_html(
         const renameHit = hitRenameEditor(p.sx, p.sy);
         if (renameHit && renameHit.kind === 'commit') commitRenameEditor();
         else if (renameHit && (renameHit.kind === 'cancel' || renameHit.kind === 'outside')) closeRenameEditor();
-        else if (renameHit && renameHit.kind === 'inside') renameEditor.selectAll = false;
+        else if (renameHit && renameHit.kind === 'inside') {{
+          renameEditor.selectAll = false;
+          beginTextDrag('renameEditor.value', renameEditor, 'value', renameEditor.inputRect, p.sx, p.sy, '13px Segoe UI');
+        }}
         event.preventDefault();
         draw();
         return;
       }}
       if (nodePicker.open) {{
         const pickerHit = hitNodePicker(p.sx, p.sy);
+        if (beginTextDrag('nodePicker.query', nodePicker, 'query', nodePicker.inputRect, p.sx, p.sy, '12px Segoe UI')) {{
+          event.preventDefault();
+          return;
+        }}
         if (pickerHit && pickerHit.kind === 'item') chooseNodePickerSelection(pickerHit.index);
         else if (pickerHit && pickerHit.kind === 'scrollbar' && nodePicker.scrollBar) {{
           const bar = nodePicker.scrollBar;
@@ -5297,6 +6375,19 @@ def _node_graph_html(
 
     window.addEventListener('mousemove', event => {{
       const p = graphPoint(event);
+      if (textEdit.dragging) {{
+        updateTextDrag(p.sx, p.sy);
+        event.preventDefault();
+        return;
+      }}
+      if (propertyEditor.selectPopup && propertyEditor.selectPopup.scrollDrag) {{
+        const drag = propertyEditor.selectPopup.scrollDrag;
+        const trackTravel = Math.max(1, drag.trackH - drag.thumbH);
+        propertyEditor.selectPopup.scroll = drag.startScroll + (p.sy - drag.startY) * (drag.maxScroll / trackTravel);
+        draw();
+        event.preventDefault();
+        return;
+      }}
       if (propertyEditor.scrollDrag) {{
         const drag = propertyEditor.scrollDrag;
         const trackTravel = Math.max(1, drag.trackH - drag.thumbH);
@@ -5384,6 +6475,15 @@ def _node_graph_html(
     }});
 
     window.addEventListener('mouseup', event => {{
+      if (textEdit.dragging) {{
+        textEdit.dragging = false;
+        event.preventDefault();
+      }}
+      if (propertyEditor.selectPopup && propertyEditor.selectPopup.scrollDrag) {{
+        propertyEditor.selectPopup.scrollDrag = null;
+        canvas.style.cursor = 'default';
+        event.preventDefault();
+      }}
       if (propertyEditor.scrollDrag) {{
         propertyEditor.scrollDrag = null;
         canvas.style.cursor = 'default';
@@ -5453,6 +6553,78 @@ def _node_graph_html(
       openNodePicker(p);
     }});
     canvas.addEventListener('keydown', event => {{
+      function handleTextEditKey() {{
+        if (!textEdit.owner || !textEdit.prop) return false;
+        const key = event.key;
+        const ctrl = event.ctrlKey || event.metaKey;
+        if (ctrl && key.toLowerCase() === 'a') {{
+          event.preventDefault();
+          textEdit.anchor = 0;
+          textEdit.caret = textEditValue().length;
+          draw();
+          return true;
+        }}
+        if (ctrl && key.toLowerCase() === 'c') {{
+          event.preventDefault();
+          writeClipboardText(selectedTextValue());
+          return true;
+        }}
+        if (ctrl && key.toLowerCase() === 'x') {{
+          event.preventDefault();
+          writeClipboardText(selectedTextValue());
+          deleteTextSelection();
+          draw();
+          return true;
+        }}
+        if (ctrl && key.toLowerCase() === 'v') {{
+          event.preventDefault();
+          pasteClipboardText();
+          return true;
+        }}
+        if (key === 'ArrowLeft') {{
+          event.preventDefault();
+          moveTextCaret(-1, event.shiftKey);
+          draw();
+          return true;
+        }}
+        if (key === 'ArrowRight') {{
+          event.preventDefault();
+          moveTextCaret(1, event.shiftKey);
+          draw();
+          return true;
+        }}
+        if (key === 'Home') {{
+          event.preventDefault();
+          setTextCaret(0, event.shiftKey);
+          draw();
+          return true;
+        }}
+        if (key === 'End') {{
+          event.preventDefault();
+          setTextCaret(textEditValue().length, event.shiftKey);
+          draw();
+          return true;
+        }}
+        if (key === 'Backspace') {{
+          event.preventDefault();
+          deleteTextBackward();
+          draw();
+          return true;
+        }}
+        if (key === 'Delete') {{
+          event.preventDefault();
+          deleteTextForward();
+          draw();
+          return true;
+        }}
+        if (key.length === 1 && !ctrl && !event.altKey) {{
+          event.preventDefault();
+          insertTextAtCaret(key);
+          draw();
+          return true;
+        }}
+        return false;
+      }}
       if (propertyEditor.open) {{
         const field = activePropertyField();
         if (event.key === 'Escape') {{
@@ -5465,6 +6637,7 @@ def _node_graph_html(
           event.preventDefault();
           const direction = event.shiftKey ? -1 : 1;
           propertyEditor.active = (propertyEditor.active + direction + propertyEditor.fields.length) % propertyEditor.fields.length;
+          setActivePropertyTextTarget(true);
           ensurePropertyFieldVisible();
           draw();
         }} else if ((event.key === ' ' || event.key === 'ArrowDown' || event.key === 'ArrowRight') && field && field.type === 'select') {{
@@ -5479,18 +6652,15 @@ def _node_graph_html(
           event.preventDefault();
           field.value = !field.value;
           draw();
-        }} else if (event.key === 'Backspace' && field && field.type !== 'bool' && field.type !== 'select') {{
+        }} else if ((event.key === 'ArrowUp' || event.key === 'ArrowRight') && isBuildTextInputCountField(field)) {{
           event.preventDefault();
-          field.value = String(field.value || '').slice(0, -1);
-          draw();
-        }} else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a' && field && field.type !== 'bool' && field.type !== 'select') {{
+          adjustBuildTextInputCount(propertyEditor.active, 1);
+        }} else if ((event.key === 'ArrowDown' || event.key === 'ArrowLeft') && isBuildTextInputCountField(field)) {{
           event.preventDefault();
-          field.value = '';
-          draw();
-        }} else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey && field && field.type !== 'bool' && field.type !== 'select') {{
-          event.preventDefault();
-          field.value = String(field.value || '') + event.key;
-          draw();
+          adjustBuildTextInputCount(propertyEditor.active, -1);
+        }} else if (field && field.type !== 'bool' && field.type !== 'select') {{
+          setActivePropertyTextTarget(false);
+          handleTextEditKey();
         }}
         return;
       }}
@@ -5501,21 +6671,9 @@ def _node_graph_html(
         }} else if (event.key === 'Enter') {{
           event.preventDefault();
           commitRenameEditor();
-        }} else if (event.key === 'Backspace') {{
-          event.preventDefault();
-          renameEditor.value = renameEditor.selectAll ? '' : renameEditor.value.slice(0, -1);
+        }} else {{
           renameEditor.selectAll = false;
-          draw();
-        }} else if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {{
-          event.preventDefault();
-          renameEditor.value = '';
-          renameEditor.selectAll = false;
-          draw();
-        }} else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {{
-          event.preventDefault();
-          renameEditor.value = renameEditor.selectAll ? event.key : renameEditor.value + event.key;
-          renameEditor.selectAll = false;
-          draw();
+          handleTextEditKey();
         }}
         return;
       }}
@@ -5536,18 +6694,8 @@ def _node_graph_html(
           nodePicker.selected = Math.max(0, nodePicker.selected - 1);
           ensureNodePickerSelectionVisible();
           draw();
-        }} else if (event.key === 'Backspace') {{
-          event.preventDefault();
-          nodePicker.query = nodePicker.query.slice(0, -1);
-          nodePicker.selected = 0;
-          nodePicker.scroll = 0;
-          draw();
-        }} else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {{
-          event.preventDefault();
-          nodePicker.query += event.key;
-          nodePicker.selected = 0;
-          nodePicker.scroll = 0;
-          draw();
+        }} else {{
+          handleTextEditKey();
         }}
         return;
       }}
@@ -5594,12 +6742,44 @@ def _node_graph_html(
       }}
     }});
 
+    canvas.addEventListener('copy', event => {{
+      if (!textEdit.owner || !textEdit.prop || !hasTextSelection()) return;
+      event.preventDefault();
+      if (event.clipboardData) event.clipboardData.setData('text/plain', selectedTextValue());
+    }});
+
+    canvas.addEventListener('cut', event => {{
+      if (!textEdit.owner || !textEdit.prop || !hasTextSelection()) return;
+      event.preventDefault();
+      if (event.clipboardData) event.clipboardData.setData('text/plain', selectedTextValue());
+      deleteTextSelection();
+      draw();
+    }});
+
+    canvas.addEventListener('paste', event => {{
+      if (!textEdit.owner || !textEdit.prop) return;
+      const text = event.clipboardData ? event.clipboardData.getData('text/plain') : '';
+      if (!text) return;
+      event.preventDefault();
+      insertTextAtCaret(text);
+      draw();
+    }});
+
     canvas.addEventListener('wheel', event => {{
       const p = graphPoint(event);
       if (propertyEditor.open && propertyEditor.rect) {{
         const hit = hitPropertyEditor(p.sx, p.sy);
         if (hit && hit.kind !== 'outside') {{
           event.preventDefault();
+          if (propertyEditor.selectPopup && (hit.kind === 'select_popup' || hit.kind === 'select_option' || hit.kind === 'select_scrollbar')) {{
+            const popup = propertyEditor.selectPopup;
+            const bar = popup.scrollBar;
+            if (bar) {{
+              popup.scroll = Math.max(0, Math.min((popup.scroll || 0) + event.deltaY, bar.maxScroll));
+            }}
+            draw();
+            return;
+          }}
           propertyEditor.scroll += event.deltaY;
           clampPropertyEditorScroll();
           draw();
@@ -5626,6 +6806,29 @@ def _node_graph_html(
   </script>
 </body>
 </html>"""
+
+
+def _editor_action_payload(value: Mapping[str, object]) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise TypeError("NodeGraph editor action must be a mapping")
+    raw_id = value.get("id", value.get("action"))
+    action_id = str(raw_id or "").strip()
+    if not action_id:
+        raise ValueError("NodeGraph editor action id cannot be empty")
+    payload: dict[str, object] = {"id": action_id}
+    for key in ("label", "tooltip", "icon"):
+        raw = value.get(key)
+        if raw is not None:
+            text = str(raw).strip()
+            if text:
+                payload[key] = text
+    if bool(value.get("primary", False)):
+        payload["primary"] = True
+    if bool(value.get("wide", False)):
+        payload["wide"] = True
+    if bool(value.get("separator_before", False)):
+        payload["separator_before"] = True
+    return payload
 
 
 def _section_payload(section: NodeGraphSection) -> dict[str, object]:
@@ -5923,9 +7126,11 @@ def multi_agent_node_templates() -> tuple[NodeGraphTemplate, ...]:
             "Terminal Session",
             inputs=(
                 NodeGraphPort("stdin", "stdin", port_type="terminal_input"),
+                NodeGraphPort("command", "command", port_type="text"),
+                NodeGraphPort("args", "args", port_type="text"),
                 NodeGraphPort("control", "control", port_type="control"),
-                NodeGraphPort("cwd", "cwd", port_type="file:path"),
-                NodeGraphPort("env", "env", port_type="json"),
+                NodeGraphPort("cwd", "cwd", port_type="text"),
+                NodeGraphPort("env", "env", port_type="text"),
             ),
             outputs=(
                 NodeGraphPort("stdout", "stdout", port_type="terminal_output"),
@@ -5943,9 +7148,7 @@ def multi_agent_node_templates() -> tuple[NodeGraphTemplate, ...]:
                 "stopped",
                 [
                     {"key": "session_id", "label": "Session ID"},
-                    {"key": "command", "label": "Command", "default": "codex"},
-                    {"key": "args", "label": "Args", "placeholder": "--model gpt-5"},
-                    {"key": "cwd", "label": "Working Dir"},
+                    {"key": "terminal_widget_id", "label": "Terminal View", "type": "select", "target_type": "terminal_widget", "placeholder": "Choose terminal widget..."},
                     {"key": "auto_start", "label": "Auto Start", "type": "bool", "default": False},
                     {"key": "restart_policy", "label": "Restart", "type": "select", "options": ["never", "on_exit", "on_error"], "default": "never"},
                 ],
@@ -5989,6 +7192,37 @@ def multi_agent_node_templates() -> tuple[NodeGraphTemplate, ...]:
                 [
                     {"key": "appendix", "label": "Appendix"},
                     {"key": "separator", "label": "Separator", "default": "\n"},
+                ],
+            ),
+        ),
+        NodeGraphTemplate(
+            "build_text",
+            "Build Text",
+            inputs=tuple(
+                NodeGraphPort(f"part_{index}", f"part {index}", port_type="text")
+                for index in range(1, _BUILD_TEXT_DEFAULT_INPUTS + 1)
+            ),
+            outputs=(NodeGraphPort("text", "text", port_type="text"),),
+            subtitle="join text parts",
+            status="idle",
+            color="#9ece6a",
+            width=230,
+            data=_template_data(
+                "build_text",
+                "idle",
+                [
+                    {"key": "input_count", "label": "Inputs", "type": "number", "default": _BUILD_TEXT_DEFAULT_INPUTS},
+                    {
+                        "key": "separator",
+                        "label": "Separator",
+                        "type": "select",
+                        "options": ["none", "space", "newline", "blank_line", "custom"],
+                        "default": "blank_line",
+                    },
+                    {"key": "custom_separator", "label": "Custom Separator"},
+                    {"key": "skip_empty", "label": "Skip Empty", "type": "bool", "default": True},
+                    {"key": "trim_parts", "label": "Trim Parts", "type": "bool", "default": False},
+                    {"key": "final_newline", "label": "Final Newline", "type": "bool", "default": False},
                 ],
             ),
         ),
@@ -6386,6 +7620,7 @@ _RUNTIME_SOURCE_NODE_TYPES = {
 }
 _RUNTIME_EXECUTABLE_NODE_TYPES = {
     "append_text",
+    "build_text",
     "extract_between_markers",
     "envelope_parser",
     "parser",
@@ -6394,6 +7629,7 @@ _RUNTIME_EXECUTABLE_NODE_TYPES = {
     "probe",
     "widget_sink",
 }
+_TERMINAL_CONFIG_INPUT_PORTS = {"command", "args", "cwd", "env"}
 
 _WIDGET_SINK_SET_TYPES = {
     "label",
@@ -6410,6 +7646,9 @@ _ANSI_CONTROL_SEQUENCE_RE = re.compile(
     re.DOTALL,
 )
 _TERMINAL_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_BUILD_TEXT_MIN_INPUTS = 1
+_BUILD_TEXT_DEFAULT_INPUTS = 3
+_BUILD_TEXT_MAX_INPUTS = 12
 
 
 def _terminal_display_text(value: object) -> str:
@@ -6423,6 +7662,80 @@ def _widget_kind(widget: object) -> str:
     if kind is not None and str(kind).strip():
         return str(kind).strip()
     return type(widget).__name__
+
+
+def _target_data_is_auto_binding(data: Mapping[str, object] | None) -> bool:
+    return bool(isinstance(data, Mapping) and data.get(_NODE_GRAPH_AUTO_BINDING_DATA_KEY))
+
+
+def _binding_target_label(widget: object) -> str:
+    for attr in ("text", "label", "title", "tooltip", "placeholder"):
+        value = getattr(widget, attr, None)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return _humanize_identifier(str(getattr(widget, "id", "") or _widget_kind(widget)))
+
+
+def _humanize_identifier(value: str) -> str:
+    text = re.sub(r"[_\-]+", " ", value).strip()
+    if not text:
+        return "Target"
+    return " ".join(part[:1].upper() + part[1:] for part in text.split())
+
+
+def _widget_is_action_target(widget: object) -> bool:
+    return callable(getattr(widget, "on_click", None)) and not bool(getattr(widget, "disabled", False))
+
+
+def _widget_action_callback(widget: object) -> Callable[[str, str], object]:
+    click = getattr(widget, "click", None)
+    on_click = getattr(widget, "on_click", None)
+
+    def callback(_action_id: str, _command: str) -> object:
+        if callable(click):
+            return click()
+        if callable(on_click):
+            return on_click()
+        return None
+
+    return callback
+
+
+def _auto_widget_target_capabilities(
+    widget_kind: str,
+) -> tuple[tuple[str, ...], str, tuple[str, ...], str, tuple[str, ...]]:
+    kind = str(widget_kind).strip()
+    if kind == "log_view":
+        return (
+            ("append", "set"),
+            "append",
+            _NODE_GRAPH_WIDGET_SINK_PORT_PROFILES,
+            "text",
+            ("text", "terminal_text", "message_body", "json", "repr"),
+        )
+    if kind in {"text_input", "text_area", "code_editor"}:
+        return (
+            ("set",),
+            "set",
+            _NODE_GRAPH_WIDGET_SOURCE_PORT_PROFILES,
+            "text",
+            ("text", "message_body", "json", "repr"),
+        )
+    if kind == "led":
+        return (
+            ("set",),
+            "set",
+            ("status", "bool", "text", "json"),
+            "status",
+            ("text", "json", "repr"),
+        )
+    return (
+        ("set",),
+        "set",
+        ("text", "status", "message", "json", "artifact", "error"),
+        "text",
+        ("text", "message_body", "json", "repr"),
+    )
 
 
 def _widget_sink_text(value: object, value_format: str) -> str:
@@ -6647,6 +7960,42 @@ def _convert_edge_value(edge: NodeGraphRuntimeEdgeBinding, value: object) -> obj
     return value
 
 
+def _terminal_config_input_value(port_id: str, value: object) -> object:
+    key = str(port_id)
+    if key == "command":
+        text = "" if value is None else str(value).strip()
+        if not text:
+            raise ValueError("terminal command input cannot be empty")
+        return text
+    if key == "args":
+        if value is None:
+            return []
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return []
+            if text.startswith("["):
+                parsed = json.loads(text)
+                if not isinstance(parsed, Sequence) or isinstance(parsed, (str, bytes, bytearray)):
+                    raise ValueError("terminal args JSON input must be a list")
+                return [str(item) for item in parsed]
+            return text.split()
+        if isinstance(value, (bytes, bytearray)) or not isinstance(value, Sequence):
+            raise ValueError("terminal args input must be text or a sequence")
+        return [str(item) for item in value]
+    if key == "cwd":
+        text = "" if value is None else str(value).strip()
+        return None if not text else text
+    if key == "env":
+        if value is None or value == "":
+            return {}
+        parsed = json.loads(value) if isinstance(value, str) else value
+        if not isinstance(parsed, Mapping):
+            raise ValueError("terminal env input must be a mapping or JSON object")
+        return {str(env_key): str(env_value) for env_key, env_value in parsed.items()}
+    return value
+
+
 def _edge_runtime_binding(edge: NodeGraphEdge, index: int, nodes: Sequence[NodeGraphNode] = ()) -> NodeGraphRuntimeEdgeBinding:
     data = _edge_data(edge)
     conversion = _edge_conversion(edge, nodes)
@@ -6701,6 +8050,11 @@ def _runtime_object_from_node(node: NodeGraphNode) -> NodeGraphRuntimeObject | N
         return None
     config = _node_config(node)
     object_id, _, key_type = _runtime_object_id_from_sources(config, data)
+    if object_id is None and _node_type(node) == "terminal":
+        terminal_widget_id = str(config.get("terminal_widget_id", "") or "").strip()
+        if terminal_widget_id:
+            object_id = node.id
+            key_type = "terminal_session"
     if object_id is None:
         return None
     object_type = _runtime_object_type_from_key(key_type, data.get("runtime_object", data.get("object_type")))
@@ -6885,9 +8239,19 @@ def _execute_flow_node(
         text = str(config.get("text", ""))
         return {"text": [text]} if text else {}
     if node_type == "append_text":
-        appendix = str(config.get("appendix", ""))
         separator = str(config.get("separator", ""))
-        return {"text": [str(value) + (separator if appendix else "") + appendix for value in _flow_input_values(inputs, "text", "in")]}
+        text_values = _flow_input_values(inputs, "text", "in")
+        appendix_values = _flow_input_values(inputs, "appendix")
+        if not appendix_values:
+            appendix_values = [config.get("appendix", "")]
+        output: list[object] = []
+        for value in text_values:
+            for appendix_value in appendix_values:
+                appendix = str(appendix_value)
+                output.append(str(value) + (separator if appendix else "") + appendix)
+        return {"text": output}
+    if node_type == "build_text":
+        return _execute_build_text(inputs, config)
     if node_type == "extract_between_markers":
         return _execute_extract_between_markers(inputs, config)
     if node_type in {"envelope_parser", "parser"}:
@@ -6914,6 +8278,52 @@ def _flow_input_values(inputs: Mapping[str, list[object]], *ports: str) -> list[
     for port in ports:
         result.extend(inputs.get(port, []))
     return result
+
+
+def _build_text_input_count(config: Mapping[str, object]) -> int:
+    try:
+        count = int(float(config.get("input_count", _BUILD_TEXT_DEFAULT_INPUTS)))
+    except (TypeError, ValueError):
+        count = _BUILD_TEXT_DEFAULT_INPUTS
+    return max(_BUILD_TEXT_MIN_INPUTS, min(_BUILD_TEXT_MAX_INPUTS, count))
+
+
+def _build_text_separator(config: Mapping[str, object]) -> str:
+    mode = str(config.get("separator", "blank_line")).strip()
+    if mode == "none":
+        return ""
+    if mode == "space":
+        return " "
+    if mode == "newline":
+        return "\n"
+    if mode == "custom":
+        return str(config.get("custom_separator", ""))
+    return "\n\n"
+
+
+def _execute_build_text(
+    inputs: Mapping[str, list[object]], config: Mapping[str, object]
+) -> dict[str, list[object]]:
+    parts: list[str] = []
+    trim_parts = bool(config.get("trim_parts", False))
+    skip_empty = bool(config.get("skip_empty", True))
+    for index in range(1, _build_text_input_count(config) + 1):
+        values = _flow_input_values(inputs, f"part_{index}")
+        if not values and f"part_{index}" in config:
+            values = [config.get(f"part_{index}", "")]
+        for value in values:
+            text = str(value)
+            if trim_parts:
+                text = text.strip()
+            if skip_empty and not text:
+                continue
+            parts.append(text)
+    if not parts:
+        return {}
+    output = _build_text_separator(config).join(parts)
+    if bool(config.get("final_newline", False)) and not output.endswith("\n"):
+        output += "\n"
+    return {"text": [output]}
 
 
 def _execute_extract_between_markers(inputs: Mapping[str, list[object]], config: Mapping[str, object]) -> dict[str, list[object]]:

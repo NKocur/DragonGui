@@ -32,10 +32,42 @@ def template_data(template_id: str, **config: object) -> dict[str, object]:
 
 NODES = [
     dg.NodeGraphNode(
-        "terminal_command_text",
-        "Terminal Command Text",
+        "terminal_executable_text",
+        "Terminal Executable",
         -270,
-        95,
+        55,
+        outputs=(dg.NodeGraphPort("text", "text", port_type="text"),),
+        subtitle="text -> terminal command",
+        status="ready",
+        color="#7aa2f7",
+        width=230,
+        data=template_data(
+            "text_input",
+            text="cmd.exe",
+            output_mode="manual",
+        ),
+    ),
+    dg.NodeGraphNode(
+        "terminal_args_text",
+        "Terminal Args",
+        -270,
+        145,
+        outputs=(dg.NodeGraphPort("text", "text", port_type="text"),),
+        subtitle="JSON list -> terminal args",
+        status="ready",
+        color="#7aa2f7",
+        width=230,
+        data=template_data(
+            "text_input",
+            text="[]",
+            output_mode="manual",
+        ),
+    ),
+    dg.NodeGraphNode(
+        "terminal_command_text",
+        "Terminal Stdin Text",
+        -270,
+        235,
         outputs=(dg.NodeGraphPort("text", "text", port_type="text"),),
         subtitle="text -> terminal stdin",
         status="ready",
@@ -51,7 +83,7 @@ NODES = [
         "gui_prompt_source",
         "GUI Prompt Source",
         -270,
-        205,
+        345,
         outputs=(dg.NodeGraphPort("value", "text", port_type="text"),),
         subtitle="GUI field -> terminal stdin",
         status="ready",
@@ -69,8 +101,12 @@ NODES = [
         "implementer_terminal",
         "Implementer Terminal",
         20,
-        90,
-        inputs=(dg.NodeGraphPort("stdin", "terminal_input", port_type="terminal_input"),),
+        130,
+        inputs=(
+            dg.NodeGraphPort("command", "command", port_type="text"),
+            dg.NodeGraphPort("args", "args", port_type="text"),
+            dg.NodeGraphPort("stdin", "terminal_input", port_type="terminal_input"),
+        ),
         outputs=(
             dg.NodeGraphPort("stdout", "terminal_output", port_type="terminal_output"),
             dg.NodeGraphPort("error", "error", port_type="error"),
@@ -86,8 +122,6 @@ NODES = [
             "runtime_object": "terminal_session",
             "config": {
                 "session_id": "implementer-session",
-                "command": "cmd.exe",
-                "args": [],
                 "prefer_pty": True,
             },
         },
@@ -164,7 +198,7 @@ SECTIONS = [
         -300,
         48,
         1220,
-        330,
+        430,
         purpose="terminal stdout -> GUI log and parser -> message log",
         trigger="manual_probe",
         color="#43c6ac",
@@ -178,6 +212,24 @@ SECTIONS = [
     ),
 ]
 EDGES = [
+    dg.NodeGraphEdge(
+        "terminal_executable_text",
+        "text",
+        "implementer_terminal",
+        "command",
+        label="text -> terminal command",
+        color=dg.node_graph_port_type_color("text"),
+        id="edge-text-terminal-command",
+    ),
+    dg.NodeGraphEdge(
+        "terminal_args_text",
+        "text",
+        "implementer_terminal",
+        "args",
+        label="text -> terminal args",
+        color=dg.node_graph_port_type_color("text"),
+        id="edge-text-terminal-args",
+    ),
     dg.NodeGraphEdge(
         "terminal_command_text",
         "text",
@@ -298,6 +350,11 @@ app.stylesheet(
         padding: 7px 9px;
     }
 
+    Collapsible.diagnostics {
+        width: 100%;
+        flex-grow: 0;
+    }
+
     LogView {
         width: 100%;
         flex-grow: 0;
@@ -322,11 +379,7 @@ app.stylesheet(
 win = dg.Window("NodeGraph Editor Probe", width=1480, height=820)
 
 graph: dg.NodeGraph | None = None
-status_label: dg.Label | None = None
-selection_label: dg.Label | None = None
 history_label: dg.Label | None = None
-nav_label: dg.Label | None = None
-counts_label: dg.Label | None = None
 event_log: dg.LogView | None = None
 terminal_output_log: dg.LogView | None = None
 reviewer_terminal_output_log: dg.LogView | None = None
@@ -499,19 +552,11 @@ def add_toolbar_node() -> None:
 def refresh_state() -> None:
     if graph is None:
         return
-    data = graph.to_graph_data()
     history = graph.history_state()
-    nav = graph.navigation_state()
-    if counts_label is not None:
-        counts_label.set_value(f"Graph: {len(data['nodes'])} nodes / {len(data['edges'])} edges")
     if history_label is not None:
         history_label.set_value(
             "History: "
             f"undo={history['undo_depth']} redo={history['redo_depth']} dirty={history['dirty']}"
-        )
-    if nav_label is not None:
-        nav_label.set_value(
-            f"Viewport: x={nav['x']:.1f} y={nav['y']:.1f} zoom={nav['zoom']:.2f}"
         )
 
 
@@ -521,35 +566,28 @@ def on_graph_event(payload: dict[str, object]) -> None:
     if event == "node_selected":
         node = payload.get("node")
         selected_node_id = None if node is None else str(node)
-        if selection_label is not None:
-            selection_label.set_value(f"Selected: {selected_node_id or 'none'}")
     elif event == "node_created":
         node = payload.get("node")
         if isinstance(node, dict):
             selected_node_id = None if node.get("id") is None else str(node.get("id"))
-            if selection_label is not None:
-                selection_label.set_value(f"Selected: {selected_node_id or 'none'}")
-    elif event == "node_picker_opened":
-        position = payload.get("position")
-        if isinstance(position, dict) and status_label is not None:
-            status_label.set_value(f"Choose node for {float(position.get('x', 0.0)):.0f},{float(position.get('y', 0.0)):.0f}")
-    elif event == "node_picker_selected":
-        if status_label is not None:
-            status_label.set_value(f"Added template: {payload.get('template')}")
     elif event in {"selection_cleared", "edge_selected"}:
         selected_node_id = None
-        if selection_label is not None:
-            selection_label.set_value(
-                f"Selected: edge {payload.get('edge')}" if event == "edge_selected" else "Selected: none"
-            )
-
-    if status_label is not None:
-        if event == "connection_rejected":
-            status_label.set_value(f"Rejected: {payload.get('reason')}")
-        elif event == "viewport_changed":
-            status_label.set_value(f"Navigation: {payload.get('action', 'viewport')}")
+    elif event == "editor_action":
+        action = str(payload.get("action", ""))
+        if action == "snapshot":
+            log_snapshot()
+        elif action == "run_section":
+            run_runtime_smoke_section_action()
+        elif action == "send_input":
+            send_runtime_input()
+        elif action == "send_prompt":
+            send_runtime_prompt_input()
+        elif action == "stop_terminal":
+            stop_runtime_terminal()
+        elif action == "cleanup_runtime":
+            cleanup_runtime_session()
         else:
-            status_label.set_value(f"Event: {event}")
+            log(f"editor action ignored: {action}")
 
     interesting = {
         key: payload[key]
@@ -973,16 +1011,6 @@ def render_runtime_view(node_id: str | None = None) -> None:
 
 with dg.HLayout(class_="root"):
     with dg.Panel("Node Canvas", class_="canvas"):
-        with dg.FlowLayout(gap=8, row_gap=6, style={"width": "100%", "height": "auto", "flex_shrink": 0}):
-            dg.Label("NodeGraph", class_="title")
-            selection_label = dg.Label("Selected: none", class_="status", style={"width": 190})
-            status_label = dg.Label("Ready", class_="status", style={"width": 280})
-            counts_label = dg.Label("Graph: loading", class_="status", style={"width": 210})
-            dg.Tag("typed ports", level="success")
-            dg.Tag("palette templates", level="success")
-            dg.Tag("undo/redo", level="neutral")
-            dg.Tag("fit/zoom/grid/minimap", level="neutral")
-            dg.Tag("invalid links reject", level="warning")
         graph = dg.NodeGraph(
             LOADED_GRAPH.nodes,
             LOADED_GRAPH.edges,
@@ -994,6 +1022,16 @@ with dg.HLayout(class_="root"):
             enable_zoom=True,
             show_port_labels=True,
             show_subtitles=True,
+            show_editor_chrome=True,
+            editor_title="NodeGraph",
+            editor_actions=(
+                {"id": "snapshot", "label": "Snapshot", "icon": "S", "separator_before": True},
+                {"id": "run_section", "label": "Run section", "icon": "Run", "wide": True, "separator_before": True},
+                {"id": "send_input", "label": "Send input", "icon": "Input", "primary": True},
+                {"id": "send_prompt", "label": "Send prompt", "icon": "Prompt", "wide": True},
+                {"id": "stop_terminal", "label": "Stop terminal", "icon": "Stop", "wide": True},
+                {"id": "cleanup_runtime", "label": "Cleanup runtime", "icon": "X", "separator_before": True},
+            ),
             width=1080,
             height=660,
             class_="node-graph",
@@ -1006,17 +1044,13 @@ with dg.HLayout(class_="root"):
             "press Enter/F2 to rename, Ctrl+Z/Ctrl+Y for history, F to fit, +/- to zoom, G for grid.",
             class_="muted",
         )
-        history_label = dg.Label("History: loading", class_="status")
-        nav_label = dg.Label("Viewport: loading", class_="status")
         with dg.FlowLayout(gap=6, row_gap=6):
-            dg.Button("Rename Selected", on_click=rename_selected)
-            dg.Button("Undo", on_click=undo_graph)
-            dg.Button("Redo", on_click=redo_graph)
-            dg.Button("Fit Request", on_click=request_fit)
-            dg.Button("Snapshot", on_click=log_snapshot)
-            dg.Button("Model Smoke", on_click=run_model_smoke)
-            dg.Button("Text Flow Demo", on_click=run_text_flow_demo)
-            dg.Button("Add Terminal Node", on_click=add_toolbar_node)
+            dg.Tag("typed ports", level="success")
+            dg.Tag("palette templates", level="success")
+            dg.Tag("undo/redo", level="neutral")
+            dg.Tag("fit/zoom/grid/minimap", level="neutral")
+            dg.Tag("invalid links reject", level="warning")
+        history_label = dg.Label("History: loading", class_="status")
         dg.Label("Runtime Checks", class_="section")
         runtime_status_label = dg.Label("Runtime: idle", class_="status")
         runtime_prompt_input = dg.TextInput(
@@ -1026,18 +1060,16 @@ with dg.HLayout(class_="root"):
             on_change=sync_runtime_prompt_input,
             style={"width": "100%", "height": 34, "flex_shrink": 0},
         )
-        with dg.FlowLayout(gap=6, row_gap=6):
-            dg.Button("Runtime Session", on_click=create_runtime_session)
-            dg.Button("Attach Terminal", on_click=attach_runtime_terminal)
-            dg.Button("Start Terminal", on_click=start_runtime_terminal)
-            dg.Button("Send Input", on_click=send_runtime_input)
-            dg.Button("Send GUI Prompt", on_click=send_runtime_prompt_input)
-            dg.Button("Run Section Action", on_click=run_runtime_smoke_section_action)
-            dg.Button("Inject Plain", on_click=inject_runtime_plain_output)
-            dg.Button("Inject Envelope", on_click=inject_runtime_envelope)
-            dg.Button("Clear Indicator", on_click=clear_runtime_indicator)
-            dg.Button("Stop Terminal", on_click=stop_runtime_terminal)
-            dg.Button("Cleanup Runtime", on_click=cleanup_runtime_session)
+        with dg.Collapsible("Manual Runtime Diagnostics", expanded=False, class_="diagnostics"):
+            with dg.FlowLayout(gap=6, row_gap=6):
+                dg.Button("Runtime Session", on_click=create_runtime_session)
+                dg.Button("Attach Terminal", on_click=attach_runtime_terminal)
+                dg.Button("Start Terminal", on_click=start_runtime_terminal)
+                dg.Button("Model Smoke", on_click=run_model_smoke)
+                dg.Button("Text Flow Demo", on_click=run_text_flow_demo)
+                dg.Button("Inject Plain", on_click=inject_runtime_plain_output)
+                dg.Button("Inject Envelope", on_click=inject_runtime_envelope)
+                dg.Button("Clear Indicator", on_click=clear_runtime_indicator)
         runtime_view_panel = dg.Panel("Runtime View", class_="runtime-view")
         with runtime_view_panel:
             dg.Label("No runtime session", class_="status")

@@ -191,6 +191,8 @@ def _section(
 
 _LAYOUT_WIDGETS = (
     "Window",
+    "AppShell",
+    "Body",
     "HLayout",
     "VLayout",
     "ScrollArea",
@@ -457,6 +459,8 @@ _SIGNATURE_OVERRIDES = {
 _SYMBOL_NOTES = {
     "App": "Owns the native runtime bridge, stylesheets, loading screen, toasts, and thread-safe scheduling.",
     "Window": "Top-level application shell passed to `app.run(window)`.",
+    "AppShell": "Bounded top-level layout for sidebar plus flexible body apps.",
+    "Body": "Flexible main app region that owns scrolling and avoids accidental horizontal overflow.",
     "Panel": "Framed container for related controls or content; use it as a major dashboard building block.",
     "HLayout": "Horizontal flex container for rows, split regions, toolbars, and compact control groups.",
     "VLayout": "Vertical flex container for stacked forms, panels, and page content.",
@@ -669,10 +673,31 @@ _PARAMETER_NOTES = {
         "`title` is required.",
         "`width` and `height` are startup size hints; layout should still be responsive.",
     ),
+    "AppShell": (
+        "Use directly inside `Window` for app-style layouts.",
+        "It defaults to a bounded full-window horizontal layout with hidden outer overflow.",
+        "Pair it with `Body` for the flexible scroll-owning main pane.",
+    ),
+    "Body": (
+        "`scroll` accepts the same axis values as `ScrollArea`: `y`, `x`, `both`, or `none`.",
+        "It defaults to `min_width=0`, `min_height=0`, and flexible fill behavior.",
+        "Use it as the main content pane inside `AppShell` instead of a raw `HLayout` or `Panel`.",
+    ),
     "Panel": (
         "`title` creates the panel header.",
         "`width`/`height` constrain the panel; prefer `flex_grow` for responsive fill.",
         "Use `scroll=True` or a nested `ScrollArea` when content can overflow.",
+        "When a `Panel` is the first visible body inside an active `Tab`, its top corners are squared so the tab and panel connect cleanly.",
+    ),
+    "Tabs": (
+        "`value` selects the active child tab; omit it to select the first tab.",
+        "`Tabs::header` is opt-in chrome: unstyled tabs render without a full-width colored header band.",
+        "Style `Tabs::header` only when you want a strip, divider, or custom background behind the tab buttons.",
+    ),
+    "Tab": (
+        "`label` is the visible tab text.",
+        "`value` is the route value used by the parent `Tabs`.",
+        "Use `Tab::tab`, `accent`, and `badge` for per-tab chrome; `:selected` targets the active tab.",
     ),
     "HLayout": (
         "Use for rows and horizontal control groups.",
@@ -839,6 +864,8 @@ _EXAMPLE_METADATA: dict[str, dict[str, tuple[str, ...]]] = {
             "examples/css_feature_probes/layout_overlay_collision_probe.py",
         )
     },
+    "Tabs": {"probes": ("examples/css_feature_probes/navigation_widgets_probe.py",)},
+    "Tab": {"probes": ("examples/css_feature_probes/navigation_widgets_probe.py",)},
     "Modal": {
         "probes": (
             "examples/css_feature_probes/overlay_stack_probe.py",
@@ -1248,6 +1275,7 @@ def _css_parts_reference() -> HelpSection:
         "Generated from `dragongui.widgets._SUPPORTED_PARTS_BY_KIND`.",
         "",
         "Use CSS parts with `Widget::part { ... }` or `.class::part { ... }`.",
+        "`Tabs::header` is opt-in: unstyled `Tabs` do not paint a header box.",
         "",
     ]
     for kind in sorted(_SUPPORTED_PARTS_BY_KIND):
@@ -2012,6 +2040,12 @@ with dg.Tabs(value="metrics"):
         dg.LinePlot(frame, y="loss")
 ```
 
+Default `Tabs` render only the individual tab buttons. The `Tabs::header` part
+is available when an app intentionally wants a full-width strip, divider, or
+background behind the buttons. If the first visible tab body child is a `Panel`,
+DragonGUI squares that panel's top corners so its outline connects cleanly with
+the selected tab.
+
 Use `Pages`/`Page` with `NavItem` or custom navigation when the navigation and
 content should be separate:
 ```python
@@ -2297,6 +2331,8 @@ Common parts:
 - `Heatmap::cell`, `grid`, `hover`, `scalar-bar`, `label`
 - `BarChart::label`, `value-label`
 - `PieChart::label`
+- `Tabs::header` when you explicitly want a full-width tab strip background or
+  divider; unstyled `Tabs` do not paint a header box.
 - `Tab::tab`, `accent`, `badge`
 - `NavItem::item`, `accent`, `badge`
 - `DataFrameTable::header`, `row`, `row-selected`, `grid-line`,

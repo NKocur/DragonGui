@@ -39,6 +39,8 @@ Runs or attaches to a command-line process.
 
 Inputs:
 
+- `command`: executable or shell command text used when the session is created.
+- `args`: optional argument list, supplied as a JSON list or simple text.
 - `stdin`: text to send to the process.
 - `control`: start, stop, restart, interrupt, clear, focus.
 - `cwd`: optional working directory update.
@@ -56,6 +58,7 @@ Notes:
 
 - This is the basic wrapper for Codex CLI, Claude CLI, PowerShell, Python scripts, test runners, and helper tools.
 - It should expose both raw stream output and normalized transcript events.
+- `command`, `args`, `cwd`, and `env` are data inputs rather than required node property fields. Saved node config may still provide fallback defaults for older graphs, but new graphs should compose these values from Text Input, Build Text, Widget Source, or preset/source nodes.
 
 #### Command Runner
 
@@ -146,6 +149,51 @@ Example use:
 
 ```text
 agent message -> Append Text(review rubric) -> terminal stdin
+```
+
+Near-term expansion:
+
+- Keep simple `Append Text` for the common suffix case, but make it configurable
+  enough for prompt construction.
+- Add separator formatting with presets:
+  - none
+  - space
+  - newline
+  - blank line
+  - custom text
+- Add placement behavior:
+  - append after incoming text
+  - append before incoming text
+  - append only when appendix is non-empty
+  - trim leading/trailing whitespace before joining
+- Add an optional `ensure_trailing_newline` setting for terminal input paths.
+
+Variadic text-builder direction:
+
+- Add or evolve into a `Build Text` / `Join Text` node for combining many text
+  parts.
+- It should support a variable number of input ports, similar in spirit to
+  LabVIEW-style expandable function nodes where users can add more input
+  terminals as needed.
+- The editor should let users drag the bottom edge or use `+ input` / `- input`
+  controls to change the number of inputs.
+- Each input row should have an optional label and an enable/disable checkbox,
+  so prompt pieces can be turned on without rewiring.
+- Formatting should be explicit and visible:
+  - global separator preset
+  - per-input prefix/suffix
+  - skip empty inputs
+  - trim inputs
+  - output final newline
+
+Example:
+
+```text
+Text Input(task)
+Text Input(context)
+Text Input(instructions)
+  -> Build Text(separator=blank_line, final_newline=true)
+  -> Terminal Session(stdin)
 ```
 
 ### Prepend Text
@@ -884,8 +932,8 @@ real DragonGUI widget/action with stable id
 
 Future API direction:
 
-- Add an app/container-level bindable target collector that can scan marked DragonGUI widgets and actions near a `NodeGraph`.
-- Support an explicit opt-in flag or helper, such as `bindable=True`, `graph.bind_button(button)`, or `graph.bind_targets_from(container)`, instead of requiring users to duplicate metadata manually.
+- Add an app/container-level bindable target collector that can scan stable-ID DragonGUI widgets and actions near a `NodeGraph`.
+- Support an explicit opt-out or advanced opt-in helper, such as `bindable=False`, `bindable=True`, `graph.bind_button(button)`, or `graph.bind_targets_from(container)`, for apps that need tighter control than the stable-ID default.
 - Keep graph documents portable by saving only IDs and config, never live widget objects, callbacks, terminal handles, or secrets.
 - Update inspector dropdown metadata after targets are registered, without requiring action/widget targets to be seeded into the `NodeGraph(...)` constructor.
 - Warn clearly when a saved graph references a target ID that the current host GUI did not provide.
@@ -894,7 +942,7 @@ Future API direction:
 Current probe status:
 
 - `node_graph_binding_playground_probe.py` uses real ID-backed Action Slot buttons and registers them as bindable action targets.
-- The probe still seeds action target metadata into `NodeGraph(...)` so the section inspector dropdown has choices immediately; this should become unnecessary once live target metadata refresh is implemented.
+- The graph can now discover stable-ID nearby buttons, inputs, logs, and indicators automatically, so probes no longer need to seed duplicate constructor metadata for those host controls.
 - After the side panel exists, the probe registers callbacks from the actual button objects and clicking an Action Slot runs sections that selected that action target.
 
 
@@ -1075,6 +1123,7 @@ Implemented runtime pieces:
 - The probe treats `Runtime Prompt Input` as an ordinary host GUI edit field registered by stable widget ID. The graph can read it through `Widget Source`, and the `Send GUI Prompt` control runs that source node to deliver the current GUI text to the Terminal Session path.
 - NodeGraph wire and socket colors are associated with port data types, so terminal output, messages, text, JSON, errors, artifacts, and control/status flows remain visually consistent across graphs.
 - Runtime sessions can run source nodes directly with `run_node()`, starting with `Text Input` emitting its configured text into the live graph.
+- `Build Text` is implemented as a first-pass variadic text composition node. It starts with three text inputs, supports inspector-controlled input count, separator presets, custom separator, skip-empty, trim-parts, and final-newline behavior, and runtime joins active parts in port order.
 - Runtime sessions can run section-contained source nodes with `run_section()`, emitting a section summary event while keeping non-source nodes skipped rather than destructive.
 - Assignable action targets can be registered by host apps and selected from section inspector dropdowns using friendly labels while saving portable action IDs.
 - Sections can save `action_id` and `section_command` metadata, and `NodeGraph.run_section_action()` invokes the registered transient callback.
@@ -1083,17 +1132,33 @@ Implemented runtime pieces:
 - Section action target and command dropdowns now use normalized select option labels, fixing object-backed options rendering as `[object Object]` in the inspector.
 - The probe now registers its prompt input, terminal output logs, parsed message log, event log, and section run button through the shared binding target API, so inspector dropdowns show real GUI components instead of separate hardcoded target systems.
 - First-pass shared GUI binding registry is implemented through `NodeGraphBindingTarget` and `register_binding_target(...)`; one target can expose widget metadata, action metadata, or both while keeping live widget handles/callbacks transient.
-- Binding target auto-discovery is documented as the desired next architecture: host controls should opt into being bindable, then the editor should refresh inspector dropdown metadata automatically instead of requiring duplicate constructor metadata.
+- Binding target auto-discovery now refreshes from stable-ID host controls near a `NodeGraph`, so inspector dropdowns can pick up surrounding buttons, inputs, logs, and indicators without constructor metadata seeding. Manual registrations still override discovered metadata.
 - `node_graph_binding_playground_probe.py` adds a blank-editor binding playground with multiple text inputs, logs, prewired demo buttons, and unassigned Action Slot buttons registered through the shared binding target API for manual wiring tests.
-- The binding playground probe now uses managed runtime run buttons, so manual testing no longer needs separate Create Runtime/Register Widgets controls. Its unassigned Action Slot buttons are real ID-backed DragonGUI buttons and are seeded into the NodeGraph constructor metadata so section inspector dropdowns show them immediately; after the side panel exists, live callbacks are registered from the actual button objects and look up sections that selected the matching action target without requiring the section to be selected.
+- The binding playground probe now uses managed runtime run actions, so manual testing no longer needs separate Create Runtime/Register Widgets controls. Its unassigned Action Slot buttons are real ID-backed DragonGUI buttons discovered from the host UI after the side panel exists; live callbacks are registered from the actual button objects and look up sections that selected the matching action target without requiring the section to be selected.
 - Runtime policy defaults to `auto`: stateless graphs use ephemeral sessions, while graphs declaring persistent runtime objects such as `terminal_session` keep the managed runtime alive until `cleanup_managed_runtime()` is called.
 - `NodeGraph` now has first-pass widget-managed runtime lifecycle helpers. `run_node_runtime(...)` and `run_section_runtime(...)` create a runtime session on demand, register live widget targets automatically, and clean up after stateless flows.
 - Managed runtime status is now surfaced through `managed_runtime_status()` / `managed_runtime_status_text()`, and both the binding playground and main editor probe show a live runtime status label plus cleanup controls where applicable.
+- Managed runtime run buttons now ensure required runtime dependencies before executing. For terminal graphs, this means creating `TerminalBridge` handles for declared `terminal_session` objects, attaching available Terminal views automatically when their target maps to the runtime object, respecting Terminal Session `auto_start`, and auto-starting a terminal when input is delivered to an unstarted terminal so users do not need separate terminal initialization buttons.
+- Terminal Session nodes now expose `command`, `args`, `cwd`, and `env` as input ports. Connected config inputs update the terminal runtime object before bridge creation, and terminal bridges with dynamic config inputs stay pending until stdin/auto-start needs the process. Legacy `config.command` / `config.args` values still work as fallback defaults for saved graphs. The main editor probe now seeds separate Terminal Executable, Terminal Args, and Terminal Stdin Text nodes to demonstrate this path.
+- Terminal Session keeps `stdin` as the first/top input port so the common Text Input -> terminal path sends text to the process by default; `command` and `args` remain explicit secondary config inputs.
+- Terminal Session inspector now includes a `Terminal View` dropdown sourced from registered/autodiscovered DragonGUI `Terminal` widget targets. The graph saves the selected terminal widget ID, and managed runtime attaches that widget's live bridge to the selected terminal session object so users can observe the node's process in the native terminal view.
+- `NodeGraph` now has opt-in built-in editor chrome (`show_editor_chrome=True`) with title, top command bar, host-provided editor actions, and bottom status rail for selection, viewport, and graph counts. The main editor probe and binding playground probe now let the widget own that chrome instead of assembling separate top/bottom bars around it.
+- The binding playground now uses DragonGUI `Tabs`: a `Node Editor` tab for the `NodeGraph` widget and a `GUI Objects` tab for bindable text inputs, action buttons, logs, and target diagnostics. This keeps the editor surface focused while preserving host-target discovery across the full window tree.
+- Embedded `HtmlReport`/WebView widgets now filter collection through active `Tabs` and `Pages`, native layout prunes inactive tab/page descendants from layout maps, and WebView sync runs immediately after layout recompute. Inactive WebViews are removed and their WebView2 controllers are closed, rather than merely hidden, so a `NodeGraph` or terminal hosted in an inactive tab/page should no longer draw, hit-test, scroll, or keep an OS-level child window visible over the active GUI tab.
+- Native `Tabs` clipping now treats active tab children as body content below the tab header. This fixes active tab controls/logs receiving valid layout rectangles but being clipped away by the tab header rectangle.
 
-The implemented runtime pieces are intentionally non-destructive. They validate
-graph metadata, own transient live handles, and run local text/message
-transforms from delivered runtime values, but they do not launch terminals
-automatically; section execution remains explicit through `run_section()`, `run_section_command()`, or a registered action target.
+Resolved issue note:
+
+- Symptom: the binding playground `GUI Objects` tab showed scrollbars but no controls, and the scrollbar could not be clicked. Removing the `NodeGraph` did not fix it.
+- Root cause: active tab body widgets had layout rectangles, but `compute_clips(...)` inherited the active `Tab` header rect as the child clip, so body controls were clipped to the header area.
+- Fix: active `Tab` children now receive a body-area clip below the tab header, inactive tab/page descendants are pruned from layout maps, and a regression test asserts active tab body controls keep nonzero visible clips.
+
+The implemented runtime pieces validate graph metadata, own transient live
+handles, and run local text/message transforms from delivered runtime values.
+Terminal sessions are prepared by managed Run paths and start only when
+`auto_start` is set or when stdin is delivered to the terminal. Section
+execution remains explicit through `run_section()`, `run_section_command()`, or
+a registered action target.
 
 To make sections executable, the runtime will need:
 
@@ -1521,7 +1586,7 @@ Future safe conversions may include:
 30. [x] Add first-pass shared GUI binding target registration for widgets/actions. `NodeGraphBindingTarget` now fans out to widget/action inspector metadata, and the probe registers real GUI controls through it.
 31. [x] Add first-pass widget-managed runtime lifecycle. Managed node/section run helpers create runtime sessions on demand, auto-register GUI widgets, close stateless runs, and keep persistent terminal/session graphs alive.
 32. [x] Add first-pass managed runtime status indicator. `NodeGraph` exposes compact runtime status helpers, and the binding playground plus main editor probe display active/idle policy, widget, handle, and last-event state.
-33. [ ] Add bindable host target discovery/refresh API so marked DragonGUI buttons, inputs, logs, and actions appear in NodeGraph inspector dropdowns without constructor metadata seeding.
+33. [x] Add bindable host target discovery/refresh API so stable-ID DragonGUI buttons, inputs, logs, and indicators appear in NodeGraph inspector dropdowns without constructor metadata seeding.
 34. [ ] Save common role setups as section or subgraph templates, not as hard-coded primitive nodes.
 
 ## Open Questions

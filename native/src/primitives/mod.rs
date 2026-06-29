@@ -1010,6 +1010,7 @@ impl PrimitivesRenderer {
             state,
             caret_positions,
             true,
+            RenderContext::default(),
             &mut self.instances,
         );
         self.overlay_start = self.instances.len() as u32;
@@ -9501,7 +9502,35 @@ fn emit_rects(
     caret_positions: &HashMap<String, [f32; 2]>,
     out: &mut Vec<RectInstance>,
 ) {
-    emit_rects_inner(node, layout, theme, sf, state, caret_positions, false, out);
+    emit_rects_inner(
+        node,
+        layout,
+        theme,
+        sf,
+        state,
+        caret_positions,
+        false,
+        RenderContext::default(),
+        out,
+    );
+}
+
+#[derive(Clone, Copy, Default)]
+struct RenderContext {
+    tab_body_start: bool,
+}
+
+fn transparent_tab_body_container(kind: WidgetKind) -> bool {
+    matches!(
+        kind,
+        WidgetKind::VLayout
+            | WidgetKind::HLayout
+            | WidgetKind::GridLayout
+            | WidgetKind::FlowLayout
+            | WidgetKind::ScrollArea
+            | WidgetKind::Pane
+            | WidgetKind::Spacer
+    )
 }
 
 fn emit_rects_inner(
@@ -9512,6 +9541,7 @@ fn emit_rects_inner(
     state: &WidgetState,
     caret_positions: &HashMap<String, [f32; 2]>,
     skip_open_modals: bool,
+    context: RenderContext,
     out: &mut Vec<RectInstance>,
 ) {
     if node.kind == WidgetKind::Tooltip {
@@ -9539,6 +9569,7 @@ fn emit_rects_inner(
         let radius_lp = visual.border_radius.unwrap_or(theme.radius).max(0.0);
         let radius = radius_lp * sf;
         let radii = visual_radii(&visual, radius_lp, sf);
+        let tab_attached_panel = context.tab_body_start && node.kind == WidgetKind::Panel;
         let styled_bg =
             resolve_color(&visual.background, theme).map(|c| apply_opacity(c, visual.opacity));
         let styled_border =
@@ -9555,10 +9586,19 @@ fn emit_rects_inner(
             )
         });
         if widget_supports_box_shadow(node.kind) {
+            let shadow_radii = if tab_attached_panel {
+                let panel_radius_lp = visual.border_radius.unwrap_or(theme.radius * 0.5).max(0.0);
+                let mut panel_radii = visual_radii(&visual, panel_radius_lp, sf);
+                panel_radii[0] = 0.0;
+                panel_radii[1] = 0.0;
+                panel_radii
+            } else {
+                radii
+            };
             emit_box_shadows(
                 out,
                 [full_rect.x, full_rect.y, full_rect.w, full_rect.h],
-                radii,
+                shadow_radii,
                 &visual,
                 theme,
                 sf,
@@ -9568,7 +9608,11 @@ fn emit_rects_inner(
         match node.kind {
             WidgetKind::Panel => {
                 let panel_radius_lp = visual.border_radius.unwrap_or(theme.radius * 0.5).max(0.0);
-                let panel_radii = visual_radii(&visual, panel_radius_lp, sf);
+                let mut panel_radii = visual_radii(&visual, panel_radius_lp, sf);
+                if tab_attached_panel {
+                    panel_radii[0] = 0.0;
+                    panel_radii[1] = 0.0;
+                }
                 let panel_fill = resolve_background_paint(&visual, theme, theme.surface);
                 emit_bordered_paint_rect_radii(
                     out,
@@ -10003,36 +10047,43 @@ fn emit_rects_inner(
             WidgetKind::Tabs => {
                 let header_visual = part_visual_for(node, state, "header");
                 let header_h = tabs_header_height_for_style(&node.style, theme, sf);
-                let header_border_w = header_visual
-                    .border_width
-                    .map(|width| (width.max(0.0) * sf).max(0.0))
-                    .unwrap_or(border_w);
-                let header_radii = visual_radii_with_fallback(&header_visual, [0.0; 4], sf);
-                let header_fallback = apply_opacity(
-                    resolve_color(&header_visual.background, theme)
-                        .or(styled_bg)
-                        .unwrap_or(theme.surface),
-                    header_visual.opacity,
-                );
-                let header_fill = if header_visual.background_paint.is_some() {
-                    resolve_background_paint(&header_visual, theme, header_fallback)
-                } else {
-                    FillPaint::Solid(header_fallback)
-                };
-                emit_paint_rect_radii(out, [x, y, w, header_h], header_fill, header_radii);
-                if header_border_w > 0.0 {
-                    out.push(inst(
-                        [
-                            x,
-                            y + header_h - header_border_w,
-                            w,
-                            header_border_w.max(1.0),
-                        ],
-                        resolve_color(&header_visual.border_color, theme)
-                            .or(styled_border)
-                            .unwrap_or(theme.border),
-                        0.0,
-                    ));
+                if part_style_active_for_state(node, state, "header") {
+                    let header_border_w = header_visual
+                        .border_width
+                        .map(|width| (width.max(0.0) * sf).max(0.0))
+                        .unwrap_or(0.0);
+                    let header_radii = visual_radii_with_fallback(&header_visual, [0.0; 4], sf);
+                    let header_bg = resolve_color(&header_visual.background, theme)
+                        .map(|color| apply_opacity(color, header_visual.opacity))
+                        .or(styled_bg);
+                    let has_header_fill =
+                        header_bg.is_some() || header_visual.background_paint.is_some();
+                    if has_header_fill {
+                        let header_fill = if header_visual.background_paint.is_some() {
+                            resolve_background_paint(
+                                &header_visual,
+                                theme,
+                                header_bg.unwrap_or([0.0, 0.0, 0.0, 0.0]),
+                            )
+                        } else {
+                            FillPaint::Solid(header_bg.unwrap_or([0.0, 0.0, 0.0, 0.0]))
+                        };
+                        emit_paint_rect_radii(out, [x, y, w, header_h], header_fill, header_radii);
+                    }
+                    if header_border_w > 0.0 || header_visual.border_color.is_some() {
+                        out.push(inst(
+                            [
+                                x,
+                                y + header_h - header_border_w.max(1.0),
+                                w,
+                                header_border_w.max(1.0),
+                            ],
+                            resolve_color(&header_visual.border_color, theme)
+                                .or(styled_border)
+                                .unwrap_or(theme.border),
+                            0.0,
+                        ));
+                    }
                 }
             }
 
@@ -10944,6 +10995,16 @@ fn emit_rects_inner(
                 } else {
                     0.0
                 };
+                emit_text_selection_rects(
+                    out,
+                    node,
+                    state,
+                    theme,
+                    sf,
+                    [x, y, w, h],
+                    border_w,
+                    gutter_w,
+                );
                 if state.focused.as_deref() == Some(node.id.as_str())
                     && node.kind != WidgetKind::LogView
                     && !state.is_disabled(&node.id)
@@ -11188,6 +11249,16 @@ fn emit_rects_inner(
                 if state.focused.as_deref() == Some(node.id.as_str())
                     && !state.is_disabled(&node.id)
                 {
+                    emit_text_selection_rects(
+                        out,
+                        node,
+                        state,
+                        theme,
+                        sf,
+                        [x, y, w, h],
+                        border_w,
+                        0.0,
+                    );
                     let pad = theme.spacing * sf;
                     let text_left = x + step_w + pad;
                     let text_w = (w - step_w * 2.0 - pad * 2.0).max(1.0);
@@ -12378,7 +12449,17 @@ fn emit_rects_inner(
         );
     }
 
+    let node_is_active_tab = node.kind == WidgetKind::Tab && state.is_active_tab(&node.id);
+    let mut tab_body_context_available =
+        node_is_active_tab || (context.tab_body_start && transparent_tab_body_container(node.kind));
     visit_stacking_children(node, |child| {
+        let child_starts_tab_body =
+            if tab_body_context_available && layout.visible_rect(&child.id).is_some() {
+                tab_body_context_available = false;
+                true
+            } else {
+                false
+            };
         emit_rects_inner(
             child,
             layout,
@@ -12387,6 +12468,9 @@ fn emit_rects_inner(
             state,
             caret_positions,
             skip_open_modals,
+            RenderContext {
+                tab_body_start: child_starts_tab_body,
+            },
             out,
         );
     });
@@ -12597,6 +12681,135 @@ fn caret_xy_for_node(
     [left + xy[0].clamp(0.0, text_width), xy[1]]
 }
 
+fn emit_text_selection_rects(
+    out: &mut Vec<RectInstance>,
+    node: &WidgetNode,
+    state: &WidgetState,
+    theme: &Theme,
+    sf: f32,
+    rect: [f32; 4],
+    border_w: f32,
+    gutter_w: f32,
+) {
+    let Some((start, end)) = state.normalized_text_selection(&node.id) else {
+        return;
+    };
+    let Some(value) = state.text_val.get(&node.id) else {
+        return;
+    };
+    if start >= end || value.is_empty() {
+        return;
+    }
+    let pad = theme.spacing * sf;
+    let font_size = crate::text::text_font_size(node, theme, sf);
+    let line_h = crate::text::text_line_height(font_size, theme, sf).max(1.0);
+    let char_w = (font_size * 0.62).max(1.0);
+    let mut color = theme.focus;
+    color[3] = 0.34;
+    let [x, y, w, h] = rect;
+    let mut text_left = x + pad + gutter_w;
+    let mut text_top = y + pad;
+    let mut text_h = (h - pad * 2.0).max(1.0);
+    let mut scroll_x = 0.0;
+    let mut scroll_y = 0.0;
+    let multiline = matches!(
+        node.kind,
+        WidgetKind::TextArea | WidgetKind::CodeEditor | WidgetKind::LogView
+    );
+    if node.kind == WidgetKind::NumberInput {
+        let step_w = number_stepper_width_for_style(&node.style, w, sf);
+        text_left = x + step_w + pad;
+        text_top = y + (h - line_h) * 0.5;
+        text_h = line_h;
+    } else if !multiline {
+        text_top = y + (h - line_h) * 0.5;
+        text_h = line_h;
+    } else {
+        scroll_x = state.text_area_scroll_x(&node.id);
+        scroll_y = state.text_area_scroll_y_raw(&node.id);
+    }
+
+    let clip = [
+        x + border_w,
+        y + border_w,
+        (w - border_w * 2.0).max(0.0),
+        (h - border_w * 2.0).max(0.0),
+    ];
+    for (line, start_col, end_col) in selected_line_columns(value, start, end) {
+        if end_col <= start_col {
+            continue;
+        }
+        let row_y = if multiline {
+            text_top + line as f32 * line_h - scroll_y
+        } else {
+            text_top
+        };
+        let row_x = text_left + start_col as f32 * char_w - scroll_x;
+        let row_w = ((end_col - start_col) as f32 * char_w).max(1.0);
+        if let Some(r) = intersect_rect_arrays([row_x, row_y, row_w, text_h.min(line_h)], clip) {
+            out.push(inst(r, color, 2.0 * sf));
+        }
+        if !multiline {
+            break;
+        }
+    }
+}
+
+fn selected_line_columns(text: &str, start: usize, end: usize) -> Vec<(usize, usize, usize)> {
+    let start_lc = line_col_for_byte(text, start);
+    let end_lc = line_col_for_byte(text, end);
+    let mut out = Vec::new();
+    for line in start_lc.0..=end_lc.0 {
+        let line_len = line_char_len(text, line);
+        let start_col = if line == start_lc.0 { start_lc.1 } else { 0 };
+        let end_col = if line == end_lc.0 { end_lc.1 } else { line_len };
+        out.push((line, start_col.min(line_len), end_col.min(line_len)));
+    }
+    out
+}
+
+fn line_col_for_byte(text: &str, cursor: usize) -> (usize, usize) {
+    let cursor = cursor.min(text.len());
+    let cursor = if text.is_char_boundary(cursor) {
+        cursor
+    } else {
+        text.char_indices()
+            .map(|(idx, _)| idx)
+            .take_while(|idx| *idx < cursor)
+            .last()
+            .unwrap_or(0)
+    };
+    let mut line = 0usize;
+    let mut col = 0usize;
+    for (idx, ch) in text.char_indices() {
+        if idx >= cursor {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            col = 0;
+        } else {
+            col += 1;
+        }
+    }
+    (line, col)
+}
+
+fn line_char_len(text: &str, target_line: usize) -> usize {
+    text.split('\n')
+        .nth(target_line)
+        .map(|line| line.chars().count())
+        .unwrap_or(0)
+}
+
+fn intersect_rect_arrays(a: [f32; 4], b: [f32; 4]) -> Option<[f32; 4]> {
+    let x0 = a[0].max(b[0]);
+    let y0 = a[1].max(b[1]);
+    let x1 = (a[0] + a[2]).min(b[0] + b[2]);
+    let y1 = (a[1] + a[3]).min(b[1] + b[3]);
+    (x1 > x0 && y1 > y0).then_some([x0, y0, x1 - x0, y1 - y0])
+}
+
 fn badge_rect(
     node: &WidgetNode,
     rect: [f32; 4],
@@ -12687,7 +12900,17 @@ fn emit_modal_overlays(
     out: &mut Vec<RectInstance>,
 ) {
     if node.kind == WidgetKind::Modal && node.props.open.unwrap_or(false) {
-        emit_rects_inner(node, layout, theme, sf, state, caret_positions, false, out);
+        emit_rects_inner(
+            node,
+            layout,
+            theme,
+            sf,
+            state,
+            caret_positions,
+            false,
+            RenderContext::default(),
+            out,
+        );
         return;
     }
     for child in &node.children {
@@ -15963,7 +16186,17 @@ mod tests {
         let theme = Theme::dark();
         let state = WidgetState::default();
         let carets = HashMap::new();
-        emit_rects_inner(&root, &layout, &theme, 1.0, &state, &carets, true, &mut out);
+        emit_rects_inner(
+            &root,
+            &layout,
+            &theme,
+            1.0,
+            &state,
+            &carets,
+            true,
+            RenderContext::default(),
+            &mut out,
+        );
         emit_modal_overlays(&root, &layout, &theme, 1.0, &state, &carets, &mut out);
 
         let panel_index = out
@@ -17085,6 +17318,174 @@ mod tests {
         assert!(tab_surface.radii[1] > 0.0);
         assert_eq!(tab_surface.radii[2], 0.0);
         assert_eq!(tab_surface.radii[3], 0.0);
+    }
+
+    #[test]
+    fn tabs_header_surface_is_not_painted_by_default() {
+        let mut tabs = node("tabs", WidgetKind::Tabs);
+        let tab = node("tab-a", WidgetKind::Tab);
+        tabs.children = vec![tab];
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "tabs".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 220.0,
+                h: 180.0,
+            },
+        );
+        layout.rects.insert(
+            "tab-a".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 220.0,
+                h: 36.0,
+            },
+        );
+        let mut state = WidgetState::default();
+        state
+            .tab_parent
+            .insert("tab-a".to_string(), "tabs".to_string());
+        state
+            .tab_values
+            .insert("tab-a".to_string(), "a".to_string());
+        state
+            .active_tabs
+            .insert("tabs".to_string(), "a".to_string());
+        let mut out = Vec::new();
+
+        emit_rects(
+            &tabs,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &state,
+            &HashMap::new(),
+            &mut out,
+        );
+
+        assert!(
+            !out.iter().any(|inst| inst.rect == [0.0, 0.0, 220.0, 36.0]),
+            "unstyled Tabs should not paint a full header box behind tab buttons"
+        );
+        assert!(
+            !out.iter().any(|inst| inst.rect == [0.0, 35.0, 220.0, 1.0]),
+            "unstyled Tabs should not paint a header divider line"
+        );
+    }
+
+    #[test]
+    fn explicitly_styled_tabs_header_surface_still_paints() {
+        let mut tabs = node("tabs", WidgetKind::Tabs);
+        tabs.style.parts.parts.insert(
+            "header".to_string(),
+            PartStyle {
+                layout: PartLayoutStyle {
+                    height: Some(36.0),
+                    ..Default::default()
+                },
+                visual: VisualStyle {
+                    background: Some(rgba(0.12, 0.24, 0.36)),
+                    border_color: Some(rgba(0.45, 0.55, 0.65)),
+                    border_width: Some(2.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "tabs".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 220.0,
+                h: 180.0,
+            },
+        );
+        let mut out = Vec::new();
+
+        emit_rects(
+            &tabs,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        assert!(out
+            .iter()
+            .any(|inst| inst.rect == [0.0, 0.0, 220.0, 36.0]
+                && inst.color == [0.12, 0.24, 0.36, 1.0]));
+        assert!(out
+            .iter()
+            .any(|inst| inst.rect == [0.0, 34.0, 220.0, 2.0]
+                && inst.color == [0.45, 0.55, 0.65, 1.0]));
+    }
+
+    #[test]
+    fn panel_at_active_tab_body_start_connects_with_square_top_corners() {
+        let mut panel = node("panel", WidgetKind::Panel);
+        panel.style.visual.background = Some(rgba(0.18, 0.28, 0.38));
+        panel.style.visual.border_radius = Some(10.0);
+        let mut tab = node("tab-a", WidgetKind::Tab);
+        tab.children = vec![panel];
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "tab-a".to_string(),
+            Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 160.0,
+                h: 36.0,
+            },
+        );
+        layout.rects.insert(
+            "panel".to_string(),
+            Rect {
+                x: 0.0,
+                y: 36.0,
+                w: 160.0,
+                h: 120.0,
+            },
+        );
+        let mut state = WidgetState::default();
+        state
+            .tab_parent
+            .insert("tab-a".to_string(), "tabs".to_string());
+        state
+            .tab_values
+            .insert("tab-a".to_string(), "a".to_string());
+        state
+            .active_tabs
+            .insert("tabs".to_string(), "a".to_string());
+        let mut out = Vec::new();
+
+        emit_rects(
+            &tab,
+            &layout,
+            &Theme::dark(),
+            1.0,
+            &state,
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let panel_surface = out
+            .iter()
+            .find(|inst| inst.color == [0.18, 0.28, 0.38, 1.0])
+            .expect("active tab content panel surface should be emitted");
+        assert_eq!(panel_surface.radii[0], 0.0);
+        assert_eq!(panel_surface.radii[1], 0.0);
+        assert!(panel_surface.radii[2] > 0.0);
+        assert!(panel_surface.radii[3] > 0.0);
     }
 
     #[test]

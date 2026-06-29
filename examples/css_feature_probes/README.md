@@ -56,29 +56,30 @@ Suggested order:
 25. `form_controls_probe.py` - TextInput, TextArea, Checkbox, Dropdown, Button badges, Slider, NumberInput, ProgressBar, disabled states, and form-control parts.
 26. `overlay_stack_probe.py` - modal, toast, tooltip, dropdown, context menu, MenuBar, scrim styling, edge clamping, and overlay theme stress.
 27. `histogram_probe.py` - first-slice Histogram rendering, count/density/percent/cumulative modes, explicit bin edges, and native bar chrome.
-28. `startup_loading_probe.py` - native startup loading screen display, custom copy/colors, minimum duration, and delayed startup handoff.
-29. `pie_chart_probe.py` - dashboard-style PieChart donut cards with center metrics, toolbar chrome, legends, and themed slice colors.
-30. `scatter3d_css_chrome_probe.py` - Scatter3D CSS grid visibility, grid planes, legend position, orientation axes, point size, and point style.
-31. `container_queries_probe.py` - first-slice named `@container` width queries with `container-type: inline-size`.
-32. `primitive_benchmark_probe.py` - dense primitive rect rendering benchmark with split-path diagnostics.
-33. `line_plot_stream_benchmark_probe.py` - LinePlot append streaming benchmark with native, primitive, decimation, and dedicated line renderer diagnostics.
-34. `toggle_switch_probe.py` - ToggleSwitch state, callbacks, disabled state, label position, and track/thumb parts.
-35. `date_time_inputs_probe.py` - DateInput, TimeInput, and DateTimeInput validation, normalization, callbacks, and invalid styling.
-36. `code_editor_probe.py` - CodeEditor multiline editing, fixed-width text, line numbers, gutter styling, and disabled state.
-37. `log_view_probe.py` - LogView append streams, visible-line rendering, follow mode, scrolling, and severity row parts.
-38. `breadcrumbs_probe.py` - Breadcrumbs path navigation, collapsed middle segments, current styling, and selection callbacks.
-39. `toolbar_probe.py` - Toolbar and ToolbarSeparator grouped actions, embedded controls, vertical layout, and disabled states.
-40. `loading_spinner_probe.py` - LoadingSpinner animated, paused, disabled, labeled, and CSS part states.
-41. `scatter_plot_2d_probe.py` - ScatterPlot2D scalar and categorical packed point rendering with flat camera controls.
-42. `scatter3d_dense_probe.py` - Dense 3D scalar volume rendering, depth behavior, orbit controls, view snaps, and packed point rendering.
-43. `heatmap_probe.py` - Heatmap packed matrix rendering, labels, scalar bars, and hover readout.
-44. `bar_chart_probe.py` - BarChart categorical rendering, grouped series, horizontal orientation, native toolbar, and hover readout.
-45. `layout_flex_stress_probe.py` - long labels, mixed fixed/flexible controls, nested rows, wrapped chips, and constrained cards.
-46. `layout_panel_bounds_probe.py` - fixed and auto-height panels, scroll bodies, nested groups, logs, and constrained tables.
-47. `layout_grid_masonry_probe.py` - masonry packing, standard grid alignment, nested cards, split panes, and responsive fallback.
-48. `layout_overlay_collision_probe.py` - tooltips, menus, dropdowns, modal, command palette, toasts, and drag ghost overlay collision stress.
-49. `layout_scrollable_composites_probe.py` - tables, logs, code editor, tree/list widgets, property rows, command results, and nested scroll regions.
-50. `layout_plot_embedding_probe.py` - line, scatter, heatmap, histogram, bar, and table widgets embedded in constrained cards and split panes.
-51. `custom_composite_widget_probe.py` - V5 composite widget state/keys plus the native ExtensionWidget layout/CSS foundation.
-52. `paint_widget_sparkline_probe.py` - V5 PaintWidget display-list primitives, theme-token colors, scaling, and sparkline rendering.
-53. `paint_widget_events_probe.py` - V5 PaintWidget click hit-testing, callback routing, live repaint, and ordinary-widget updates.
+28. `histogram_live_update_probe.py` - live `Histogram.set_data()` updates through the native command queue without widget recreation.
+29. `startup_loading_probe.py` - native startup loading screen display, custom copy/colors, minimum duration, and delayed startup handoff.
+30. `pie_chart_probe.py` - dashboard-style PieChart donut cards with center metrics, toolbar chrome, legends, and themed slice colors.
+31. `scatter3d_css_chrome_probe.py` - Scatter3D CSS grid visibility, grid planes, legend position, orientation axes, point size, and point style.
+32. `container_queries_probe.py` - first-slice named `@container` width queries with `container-type: inline-size`.
+33. `primitive_benchmark_probe.py` - dense primitive rect rendering benchmark with split-path diagnostics.
+34. `line_plot_stream_benchmark_probe.py` - LinePlot append streaming benchmark with native, primitive, decimation, and dedicated line renderer diagnostics.
+35. `toggle_switch_probe.py` - ToggleSwitch state, callbacks, disabled state, label position, and track/thumb parts.
+36. `date_time_inputs_probe.py` - DateInput, TimeInput, and DateTimeInput validation, normalization, callbacks, and invalid styling.
+37. `code_editor_probe.py` - CodeEditor multiline editing, fixed-width text, line numbers, gutter styling, and disabled state.
+38. `log_view_probe.py` - LogView append streams, visible-line rendering, follow mode, scrolling, and severity row parts.
+39. `breadcrumbs_probe.py` - Breadcrumbs path navigation, collapsed middle segments, current styling, and selection callbacks.
+40. `toolbar_probe.py` - Toolbar and ToolbarSeparator grouped actions, embedded controls, vertical layout, and disabled states.
+41. `loading_spinner_probe.py` - LoadingSpinner animated, paused, disabled, labeled, and CSS part states.
+42. `scatter_plot_2d_probe.py` - ScatterPlot2D scalar and categorical packed point rendering with flat camera controls.
+43. `scatter3d_dense_probe.py` - Dense 3D scalar volume rendering, depth behavior, orbit controls, view snaps, and packed point rendering.
+44. `heatmap_probe.py` - Heatmap packed matrix rendering, labels, scalar bars, and hover readout.
+45. `bar_chart_probe.py` - BarChart categorical rendering, grouped series, horizontal orientation, native toolbar, and hover readout.
+46. `layout_flex_stress_probe.py` - long labels, mixed fixed/flexible controls, nested rows, wrapped chips, and constrained cards.
+47. `layout_panel_bounds_probe.py` - fixed and auto-height panels, scroll bodies, nested groups, logs, and constrained tables.
+48. `layout_grid_masonry_probe.py` - masonry packing, standard grid alignment, nested cards, split panes, and responsive fallback.
+49. `layout_overlay_collision_probe.py` - tooltips, menus, dropdowns, modal, command palette, toasts, and drag ghost overlay collision stress.
+50. `layout_scrollable_composites_probe.py` - tables, logs, code editor, tree/list widgets, property rows, command results, and nested scroll regions.
+51. `layout_plot_embedding_probe.py` - line, scatter, heatmap, histogram, bar, and table widgets embedded in constrained cards and split panes.
+52. `custom_composite_widget_probe.py` - V5 composite widget state/keys plus the native ExtensionWidget layout/CSS foundation.
+53. `paint_widget_sparkline_probe.py` - V5 PaintWidget display-list primitives, theme-token colors, scaling, and sparkline rendering.
+54. `paint_widget_events_probe.py` - V5 PaintWidget click hit-testing, callback routing, live repaint, and ordinary-widget updates.

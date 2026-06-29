@@ -3169,11 +3169,27 @@ fn compute_node_clips(
         h: 0.0,
     });
     result.clips.insert(node.id.clone(), clip);
-    let child_clip = scroll_container_child_clip(node, result, clip, sf, theme)
-        .unwrap_or_else(|| child_clip_for_overflow(node, parent_clip, clip));
+    let child_clip = active_tab_content_clip(node, parent_clip, clip).unwrap_or_else(|| {
+        scroll_container_child_clip(node, result, clip, sf, theme)
+            .unwrap_or_else(|| child_clip_for_overflow(node, parent_clip, clip))
+    });
     for child in &node.children {
         compute_node_clips(child, result, child_clip, root_clip, sf, theme);
     }
+}
+
+fn active_tab_content_clip(node: &WidgetNode, parent_clip: Rect, node_clip: Rect) -> Option<Rect> {
+    if node.kind != WidgetKind::Tab || node.children.is_empty() {
+        return None;
+    }
+    let top = node_clip.y + node_clip.h;
+    let bottom = parent_clip.y + parent_clip.h;
+    Some(Rect {
+        x: parent_clip.x,
+        y: top,
+        w: parent_clip.w,
+        h: (bottom - top).max(0.0),
+    })
 }
 
 pub(crate) fn is_scroll_container_kind(kind: &WidgetKind) -> bool {
@@ -3832,6 +3848,13 @@ fn layout_tabs(
         })
         .or_else(|| tabs.first().copied());
     if let Some(active_tab) = active_tab {
+        for tab in &tabs {
+            if tab.id != active_tab.id {
+                remove_children_layout(tab, result);
+            }
+        }
+    }
+    if let Some(active_tab) = active_tab {
         let content = Rect {
             x: r.x,
             y: r.y + header_h,
@@ -3878,6 +3901,13 @@ fn layout_pages(
         })
         .or_else(|| pages.first().copied());
     if let Some(active_page) = active_page {
+        for page in &pages {
+            if page.id != active_page.id {
+                remove_subtree_layout(page, result);
+            }
+        }
+    }
+    if let Some(active_page) = active_page {
         result.rects.insert(active_page.id.clone(), r);
         layout_page_region(active_page, r, result, sf, theme, state);
     }
@@ -3909,6 +3939,25 @@ fn layout_page_region(
                 h: child_rect.h,
             },
         );
+    }
+}
+
+fn remove_children_layout(node: &WidgetNode, result: &mut LayoutResult) {
+    for child in &node.children {
+        remove_subtree_layout(child, result);
+    }
+}
+
+fn remove_subtree_layout(node: &WidgetNode, result: &mut LayoutResult) {
+    result.rects.remove(&node.id);
+    result.clips.remove(&node.id);
+    result.paint_clips.remove(&node.id);
+    result.scroll_x.remove(&node.id);
+    result.scroll_y.remove(&node.id);
+    result.scroll_max_x.remove(&node.id);
+    result.scroll_max_y.remove(&node.id);
+    for child in &node.children {
+        remove_subtree_layout(child, result);
     }
 }
 
@@ -4017,6 +4066,138 @@ mod tests {
             .and_then(|value| value.parse::<usize>().ok())
             .filter(|value| *value > 0)
             .unwrap_or(default)
+    }
+
+    #[test]
+    fn inactive_tab_content_is_removed_from_layout() {
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "tabs",
+                WidgetKind::Tabs,
+                NodeProps {
+                    route_value: Some("objects".to_string()),
+                    ..NodeProps::default()
+                },
+                vec![
+                    node(
+                        "editor-tab",
+                        WidgetKind::Tab,
+                        NodeProps {
+                            text: Some("Editor".to_string()),
+                            route_value: Some("editor".to_string()),
+                            ..NodeProps::default()
+                        },
+                        vec![node(
+                            "editor-report",
+                            WidgetKind::HtmlReport,
+                            NodeProps::default(),
+                            vec![],
+                        )],
+                    ),
+                    node(
+                        "objects-tab",
+                        WidgetKind::Tab,
+                        NodeProps {
+                            text: Some("Objects".to_string()),
+                            route_value: Some("objects".to_string()),
+                            ..NodeProps::default()
+                        },
+                        vec![node(
+                            "objects-panel",
+                            WidgetKind::Panel,
+                            NodeProps::default(),
+                            vec![node(
+                                "objects-button",
+                                WidgetKind::Button,
+                                NodeProps::default(),
+                                vec![],
+                            )],
+                        )],
+                    ),
+                ],
+            )],
+        );
+
+        let layout = compute_layout(&root, 800.0, 480.0, 1.0, &Theme::dark(), None);
+
+        assert!(layout.rects.contains_key("editor-tab"));
+        assert!(layout.rects.contains_key("objects-tab"));
+        assert!(!layout.rects.contains_key("editor-report"));
+        assert!(layout.rects.contains_key("objects-panel"));
+        assert!(layout.rects.contains_key("objects-button"));
+        let panel_clip = layout.clips.get("objects-panel").copied().unwrap();
+        let button_clip = layout.clips.get("objects-button").copied().unwrap();
+        assert!(
+            panel_clip.h > 0.0,
+            "active tab body panel should not be clipped by the tab header"
+        );
+        assert!(
+            button_clip.h > 0.0,
+            "active tab body control should not be clipped by the tab header"
+        );
+    }
+
+    #[test]
+    fn inactive_page_content_is_removed_from_layout() {
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "pages",
+                WidgetKind::Pages,
+                NodeProps {
+                    route_value: Some("objects".to_string()),
+                    ..NodeProps::default()
+                },
+                vec![
+                    node(
+                        "editor-page",
+                        WidgetKind::Page,
+                        NodeProps {
+                            route_value: Some("editor".to_string()),
+                            ..NodeProps::default()
+                        },
+                        vec![node(
+                            "editor-report",
+                            WidgetKind::HtmlReport,
+                            NodeProps::default(),
+                            vec![],
+                        )],
+                    ),
+                    node(
+                        "objects-page",
+                        WidgetKind::Page,
+                        NodeProps {
+                            route_value: Some("objects".to_string()),
+                            ..NodeProps::default()
+                        },
+                        vec![node(
+                            "objects-panel",
+                            WidgetKind::Panel,
+                            NodeProps::default(),
+                            vec![node(
+                                "objects-button",
+                                WidgetKind::Button,
+                                NodeProps::default(),
+                                vec![],
+                            )],
+                        )],
+                    ),
+                ],
+            )],
+        );
+
+        let layout = compute_layout(&root, 800.0, 480.0, 1.0, &Theme::dark(), None);
+
+        assert!(!layout.rects.contains_key("editor-page"));
+        assert!(!layout.rects.contains_key("editor-report"));
+        assert!(layout.rects.contains_key("objects-page"));
+        assert!(layout.rects.contains_key("objects-panel"));
+        assert!(layout.rects.contains_key("objects-button"));
     }
 
     fn many_controls_layout_tree(count: usize) -> WidgetNode {

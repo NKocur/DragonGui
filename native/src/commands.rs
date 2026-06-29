@@ -104,6 +104,15 @@ pub enum Command {
         fit: bool,
         coalesce: bool,
     },
+    SetHistogramData {
+        id: String,
+        edges: Vec<f32>,
+        counts: Vec<f32>,
+        input_count: usize,
+        finite_count: usize,
+        auto_fit: bool,
+        coalesce: bool,
+    },
     AppendLinePlotPointsPacked {
         id: String,
         series: String,
@@ -618,6 +627,36 @@ impl CommandQueue {
                 }
             }
             *fit = fit_after_upload;
+        }
+        if let Command::SetHistogramData {
+            id,
+            auto_fit,
+            coalesce: true,
+            ..
+        } = &mut command
+        {
+            let target_id = id.clone();
+            let mut auto_fit_after_update = *auto_fit;
+            let mut index = inner.items.len();
+            while index > 0 {
+                index -= 1;
+                let remove = match &inner.items[index] {
+                    Command::SetHistogramData {
+                        id: queued_id,
+                        auto_fit: queued_auto_fit,
+                        coalesce: true,
+                        ..
+                    } if queued_id == &target_id => {
+                        auto_fit_after_update |= *queued_auto_fit;
+                        true
+                    }
+                    _ => false,
+                };
+                if remove {
+                    inner.items.remove(index);
+                }
+            }
+            *auto_fit = auto_fit_after_update;
         }
         if let Command::SetScatterScalarBar { id, .. } = &command {
             let target_id = id.clone();
@@ -1142,6 +1181,52 @@ impl NativeCommandSender {
     #[pyo3(signature = (id, series=None))]
     fn enqueue_clear_line_plot_series(&self, id: String, series: Option<String>) -> PyResult<()> {
         self.enqueue(Command::ClearLinePlotSeries { id, series })
+    }
+
+    #[pyo3(signature = (id, edges, counts, input_count, finite_count, auto_fit=true, coalesce=true))]
+    fn enqueue_set_histogram_data(
+        &self,
+        id: String,
+        edges: Vec<f32>,
+        counts: Vec<f32>,
+        input_count: usize,
+        finite_count: usize,
+        auto_fit: bool,
+        coalesce: bool,
+    ) -> PyResult<()> {
+        if edges.len() != counts.len().saturating_add(1) {
+            return Err(PyValueError::new_err(
+                "histogram edges length must equal counts length + 1",
+            ));
+        }
+        if edges.len() < 2 {
+            return Err(PyValueError::new_err(
+                "histogram edges must contain at least two values",
+            ));
+        }
+        if edges.iter().any(|value| !value.is_finite())
+            || counts
+                .iter()
+                .any(|value| !value.is_finite() || *value < 0.0)
+        {
+            return Err(PyValueError::new_err(
+                "histogram edges/counts must be finite and counts must be non-negative",
+            ));
+        }
+        if !edges.windows(2).all(|pair| pair[0] < pair[1]) {
+            return Err(PyValueError::new_err(
+                "histogram edges must be strictly increasing",
+            ));
+        }
+        self.enqueue(Command::SetHistogramData {
+            id,
+            edges,
+            counts,
+            input_count,
+            finite_count,
+            auto_fit,
+            coalesce,
+        })
     }
 
     fn enqueue_reset_scatter_camera(&self, id: String) -> PyResult<()> {

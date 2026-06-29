@@ -131,6 +131,9 @@ def test_builtin_help_manual_exposes_nested_sections() -> None:
         "symbol"
     ] == "NumberInput"
     assert "NumberInput" in dg.help.widgets.inputs.numeric()
+    assert "unstyled tabs render without a full-width colored header band" in dg.help.reference.widgets.tabs()
+    assert "squares that panel's top corners" in dg.help.widgets.navigation.tabs_pages()
+    assert "unstyled `Tabs` do not paint a header box" in dg.help.reference.css_parts()
     assert dg.help.reference.widgets.number_input().startswith("# NumberInput")
     assert dg.help.find_symbol("NumberInput")["path"] == "reference.widgets.number_input"
     assert dg.help.dialogs is dg.help.reference.dialogs
@@ -2553,6 +2556,53 @@ def test_histogram_serializes_binned_data() -> None:
     assert props["edges"] == [0.0, 1.0, 2.0, 3.0]
     assert props["counts"] == [1.0, 2.0, 2.0]
     assert props["color"] == "#42a5ff"
+
+
+def test_histogram_live_set_data_enqueues_binned_update() -> None:
+    np = pytest.importorskip("numpy")
+
+    class NumericFrame:
+        columns = ("latency",)
+        dtypes = ("float32",)
+
+        def __init__(self, values: object) -> None:
+            self.latency = np.asarray(values, dtype=np.float32)
+            self.shape = (len(self.latency), 1)
+
+        def __getitem__(self, column: str) -> object:
+            return getattr(self, column)
+
+    class FakeHandle:
+        closed = False
+
+        def __init__(self) -> None:
+            self.histogram_updates: list[tuple[object, object, dict[str, object]]] = []
+
+        def enqueue_set_histogram_data(
+            self,
+            edges: object,
+            counts: object,
+            **kwargs: object,
+        ) -> None:
+            self.histogram_updates.append((edges, counts, kwargs))
+
+    hist = dg.Histogram(
+        NumericFrame([0.0, 1.0, 1.5]),
+        value="latency",
+        bins=3,
+        range=(0.0, 3.0),
+        parent=None,
+    )
+    handle = FakeHandle()
+    hist._live_handle = handle  # type: ignore[attr-defined]
+
+    hist.set_data(NumericFrame([0.25, 0.75, 1.25, 2.75]))
+
+    assert len(handle.histogram_updates) == 1
+    edges, counts, kwargs = handle.histogram_updates[0]
+    assert list(edges) == [0.0, 1.0, 2.0, 3.0]
+    assert list(counts) == [2.0, 1.0, 1.0]
+    assert kwargs == {"input_count": 4, "finite_count": 4, "auto_fit": True}
 
 
 def test_bar_chart_serializes_direct_and_frame_data() -> None:
@@ -9077,6 +9127,36 @@ def test_scroll_area_axis_modes() -> None:
         dg.ScrollArea(axis="diagonal")
 
 
+def test_app_shell_and_body_provide_safe_app_layout_defaults() -> None:
+    win = dg.Window("Shell", width=900, height=640)
+    with dg.AppShell(id="shell"):
+        with dg.Sidebar(width=260):
+            dg.Button("Action")
+        with dg.Body(id="body", gap=8):
+            dg.Label("Content")
+
+    shell = win.to_dict()["children"][0]
+    body = shell["children"][1]
+
+    assert shell["type"] == "h_layout"
+    assert shell["class"] == "app-shell"
+    assert shell["style"]["width"] == "100%"
+    assert shell["style"]["height"] == "100%"
+    assert shell["style"]["min_width"] == 0
+    assert shell["style"]["min_height"] == 0
+    assert shell["style"]["overflow_x"] == "hidden"
+    assert shell["style"]["overflow_y"] == "hidden"
+    assert body["type"] == "scroll_area"
+    assert body["class"] == "body"
+    assert body["style"]["width"] == 0
+    assert body["style"]["flex"] == 1
+    assert body["style"]["min_width"] == 0
+    assert body["style"]["min_height"] == 0
+    assert body["style"]["overflow_y"] == "auto"
+    assert body["style"]["overflow_x"] == "hidden"
+    assert body["style"]["gap"] == 8
+
+
 def test_terminal_widget_serializes_as_html_report() -> None:
     terminal = dg.Terminal("cmd.exe", prefer_pty=False, height=360, parent=None)
     try:
@@ -9186,6 +9266,39 @@ def test_terminal_bridge_control_surface_records_events_and_transcript() -> None
     assert fake.alive is False
     assert events[-1].event == "bridge_stopped"
     assert bridge.send_text("after stop") is False
+
+
+def test_terminal_bridge_queues_input_until_session_spawns(monkeypatch: pytest.MonkeyPatch) -> None:
+    bridge = terminal_module.TerminalBridge("cmd.exe", prefer_pty=False)
+    bridge._thread = object()
+
+    class FakeSession:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self.writes: list[str] = []
+            self.alive = True
+
+        def write(self, data: str) -> None:
+            self.writes.append(data)
+
+        def is_alive(self) -> bool:
+            return self.alive
+
+        def terminate(self) -> None:
+            self.alive = False
+
+    monkeypatch.setattr(terminal_module, "_SubprocessSession", FakeSession)
+
+    assert bridge.send_line("echo queued") is False
+    assert list(bridge._pending_input) == ["echo queued\r\n"]
+
+    session = bridge._spawn_session()
+
+    assert session.writes == ["echo queued\r\n"]
+    assert bridge._pending_input == terminal_module.deque()
+    assert bridge.transcript[-1]["stream"] == "input"
+    assert bridge.transcript[-1]["data"] == "echo queued\r\n"
+
+    bridge.stop()
 
 
 def test_terminal_event_is_public_and_serializes_compact_shape() -> None:
@@ -9427,6 +9540,13 @@ def test_node_graph_serializes_canvas_editor() -> None:
     assert "function commitPropertyEditor" in html
     assert "function schemaPropertyFields" in html
     assert "function applySchemaPropertyFields" in html
+    assert "function setTextEditTarget" in html
+    assert "function drawEditableText" in html
+    assert "function beginTextDrag" in html
+    assert "clipboardData" in html
+    assert "pasteClipboardText" in html
+    assert "select_scrollbar" in html
+    assert "propertyEditor.selectPopup.scrollDrag" in html
     assert "function configSchemaFields" in html
     assert "config_schema" in html
     assert "config:" in html
@@ -9519,6 +9639,33 @@ def test_node_graph_data_round_trips_versioned_schema() -> None:
 
     with pytest.raises(ValueError, match="schema_version"):
         graph.set_graph_data({"schema_version": 999, "nodes": [], "edges": []})
+
+
+def test_node_graph_can_render_own_editor_chrome() -> None:
+    graph = dg.NodeGraph(
+        [dg.NodeGraphNode("source", "Source", 12, 34, outputs=(dg.NodeGraphPort("out", "text"),))],
+        templates=dg.multi_agent_node_templates(),
+        show_editor_chrome=True,
+        editor_title="Workflow Editor",
+        editor_actions=(
+            {"id": "snapshot", "label": "Snapshot", "icon": "S", "separator_before": True},
+            {"id": "send_prompt", "label": "Send Prompt", "icon": "Prompt", "wide": True},
+            {"id": "send_input", "label": "Send Input", "icon": "Input", "primary": True},
+        ),
+        parent=None,
+    )
+
+    html = graph.to_dict()["props"]["html"]
+
+    assert '"showEditorChrome": true' in html
+    assert '"editorTitle": "Workflow Editor"' in html
+    assert '"id": "send_prompt"' in html
+    assert '"wide": true' in html
+    assert '"primary": true' in html
+    assert 'class="editor-shell"' in html
+    assert 'id="editorTools"' in html
+    assert "function setupEditorChrome" in html
+    assert "event: 'editor_action'" in html
 
 
 
@@ -10221,6 +10368,75 @@ def test_node_graph_accepts_static_binding_target_metadata() -> None:
     assert graph.widget_target("prompt-input").supported_port_profiles == ("text",)
     assert "Prompt Input" in graph.html
 
+
+def test_node_graph_auto_discovers_stable_id_host_widget_targets() -> None:
+    root = dg.VLayout(parent=None)
+    graph = dg.NodeGraph([], parent=root)
+    prompt = dg.TextInput("hello", id="prompt-input", parent=root)
+    event_log = dg.LogView([], id="event-log", parent=root)
+    anonymous = dg.TextInput("hidden", parent=root)
+
+    root.to_dict()
+
+    assert graph.binding_target("prompt-input").widget is prompt
+    assert graph.binding_target("event-log").widget is event_log
+    assert anonymous.id not in graph.binding_target_ids()
+    assert graph.widget_target("prompt-input").widget_type == "text_input"
+    assert graph.widget_target("event-log").default_update_mode == "append"
+    assert "Prompt Input" in graph.html
+    assert "Event Log" in graph.html
+
+
+def test_node_graph_auto_discovers_stable_id_button_action_targets() -> None:
+    calls: list[str] = []
+    root = dg.VLayout(parent=None)
+    graph = dg.NodeGraph(
+        [],
+        sections=[
+            dg.NodeGraphSection(
+                "init",
+                "Initialization",
+                0,
+                0,
+                320,
+                180,
+                data={"action_id": "run-section", "section_command": "run"},
+            )
+        ],
+        parent=root,
+    )
+    dg.Button("Run Section", id="run-section", on_click=lambda: calls.append("clicked"), parent=root)
+    anonymous = dg.Button("Anonymous", on_click=lambda: calls.append("anonymous"), parent=root)
+
+    graph.run_section_action("init")
+
+    assert calls == ["clicked"]
+    assert graph.action_target("run-section").label == "Run Section"
+    assert anonymous.id not in graph.action_target_ids()
+    root.to_dict()
+    assert "Run Section" in graph.html
+
+
+def test_node_graph_auto_discovery_preserves_manual_targets() -> None:
+    root = dg.VLayout(parent=None)
+    prompt = dg.TextInput("hello", id="prompt-input", parent=root)
+    graph = dg.NodeGraph([], parent=root)
+
+    graph.register_widget_target(
+        "prompt-input",
+        widget=prompt,
+        label="Manual Prompt",
+        supported_update_modes=("set",),
+        default_update_mode="set",
+    )
+    root.to_dict()
+
+    target = graph.widget_target("prompt-input")
+
+    assert target.label == "Manual Prompt"
+    assert graph.binding_target("prompt-input") is None
+
+
 def test_node_graph_section_action_config_runs_registered_target() -> None:
     calls: list[tuple[str, str]] = []
     graph = dg.NodeGraph(
@@ -10574,7 +10790,7 @@ def test_node_graph_managed_runtime_auto_cleans_up_stateless_widget_flow() -> No
     assert graph.managed_runtime_status()["active"] is False
 
 
-def test_node_graph_managed_runtime_auto_keeps_persistent_terminal_session() -> None:
+def test_node_graph_managed_runtime_auto_keeps_persistent_terminal_session(monkeypatch: pytest.MonkeyPatch) -> None:
     graph = dg.NodeGraph(
         [
             {
@@ -10597,6 +10813,37 @@ def test_node_graph_managed_runtime_auto_keeps_persistent_terminal_session() -> 
         [dg.NodeGraphEdge("command", "text", "terminal", "stdin", id="edge-command-terminal")],
         parent=None,
     )
+    bridges: list[object] = []
+
+    class FakeCommand:
+        label = "cmd.exe"
+
+    class FakeBridge:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self.command = FakeCommand()
+            self.cols = int(kwargs.get("cols", 100))
+            self.rows = int(kwargs.get("rows", 30))
+            self.url = "ws://127.0.0.1:1"
+            self.session_active = False
+            self.sent: list[str] = []
+            bridges.append(self)
+
+        def start(self) -> "FakeBridge":
+            self.session_active = True
+            return self
+
+        def send_line(self, text: object = "") -> bool:
+            self.sent.append(f"{text}\r\n")
+            return self.session_active
+
+        def send_text(self, text: object) -> bool:
+            self.sent.append(str(text))
+            return self.session_active
+
+        def stop(self) -> None:
+            self.session_active = False
+
+    monkeypatch.setattr(terminal_module, "TerminalBridge", FakeBridge)
 
     assert graph.runtime_has_persistent_objects() is True
     assert graph.resolved_runtime_policy() == "persistent"
@@ -10605,7 +10852,11 @@ def test_node_graph_managed_runtime_auto_keeps_persistent_terminal_session() -> 
     assert event.event == "node_executed"
     assert graph.managed_runtime is not None
     assert graph.managed_runtime.object_handle("shell-1") is not None
-    assert any(event.event == "edge_conversion_failed" for event in graph.managed_runtime.events)
+    assert bridges
+    assert bridges[0].sent == ["echo hello\r\n"]
+    assert not any(event.event == "edge_conversion_failed" for event in graph.managed_runtime.events)
+    assert any(event.event == "runtime_dependencies_ensured" for event in graph.managed_runtime.events)
+    assert any(event.event == "edge_conversion_applied" for event in graph.managed_runtime.events)
     status = graph.managed_runtime_status()
     assert status["active"] is True
     assert status["resolved_policy"] == "persistent"
@@ -10615,8 +10866,260 @@ def test_node_graph_managed_runtime_auto_keeps_persistent_terminal_session() -> 
 
     cleanup = graph.cleanup_managed_runtime()
 
-    assert cleanup == {"stopped": [], "errors": {}}
+    assert cleanup == {"stopped": ["shell-1"], "errors": {}}
     assert graph.managed_runtime is None
+
+
+def test_node_graph_terminal_session_command_and_args_can_come_from_inputs(monkeypatch: pytest.MonkeyPatch) -> None:
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "command",
+                "title": "Command",
+                "outputs": [dg.NodeGraphPort("text", "text", port_type="text")],
+                "data": {"node_type": "text_input", "config": {"text": "cmd.exe"}},
+            },
+            {
+                "id": "args",
+                "title": "Args",
+                "outputs": [dg.NodeGraphPort("text", "text", port_type="text")],
+                "data": {"node_type": "text_input", "config": {"text": "[\"/Q\"]"}},
+            },
+            {
+                "id": "stdin",
+                "title": "Input",
+                "outputs": [dg.NodeGraphPort("text", "text", port_type="text")],
+                "data": {"node_type": "text_input", "config": {"text": "echo dynamic"}},
+            },
+            {
+                "id": "terminal",
+                "title": "Terminal",
+                "inputs": [
+                    dg.NodeGraphPort("command", "command", port_type="text"),
+                    dg.NodeGraphPort("args", "args", port_type="text"),
+                    dg.NodeGraphPort("stdin", "stdin", port_type="terminal_input"),
+                ],
+                "data": {
+                    "node_type": "terminal",
+                    "runtime_object": "terminal_session",
+                    "config": {"session_id": "shell-1"},
+                },
+            },
+        ],
+        [
+            dg.NodeGraphEdge("command", "text", "terminal", "command"),
+            dg.NodeGraphEdge("args", "text", "terminal", "args"),
+            dg.NodeGraphEdge("stdin", "text", "terminal", "stdin"),
+        ],
+        sections=[dg.NodeGraphSection("run", "Run", 0, 0, 320, 220)],
+        parent=None,
+    )
+    bridges: list[object] = []
+
+    class FakeCommand:
+        def __init__(self, argv: list[str]) -> None:
+            self.argv = argv
+            self.label = " ".join(argv)
+
+    class FakeBridge:
+        def __init__(self, command: object, *args: object, **kwargs: object) -> None:
+            argv = [str(command), *[str(item) for item in kwargs.get("args", ())]]
+            self.command = FakeCommand(argv)
+            self.session_active = False
+            self.sent: list[str] = []
+            bridges.append(self)
+
+        def start(self) -> "FakeBridge":
+            self.session_active = True
+            return self
+
+        def send_line(self, text: object = "") -> bool:
+            self.sent.append(f"{text}\r\n")
+            return self.session_active
+
+        def send_text(self, text: object) -> bool:
+            self.sent.append(str(text))
+            return self.session_active
+
+        def stop(self) -> None:
+            self.session_active = False
+
+    monkeypatch.setattr(terminal_module, "TerminalBridge", FakeBridge)
+
+    event = graph.run_section_runtime("run")
+
+    assert event.event == "section_run"
+    assert bridges
+    assert bridges[0].command.argv == ["cmd.exe", "/Q"]
+    assert bridges[0].sent == ["echo dynamic\r\n"]
+    assert graph.managed_runtime is not None
+    terminal_config_events = [
+        item for item in graph.managed_runtime.events if item.event == "terminal_config_applied"
+    ]
+    assert [item.port_id for item in terminal_config_events] == ["command", "args"]
+
+
+def test_node_graph_section_run_executes_upstream_sources_for_terminal_group() -> None:
+    class FakeBridge:
+        session_active = False
+
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+
+        def start(self) -> "FakeBridge":
+            self.session_active = True
+            return self
+
+        def send_line(self, text: object = "") -> bool:
+            self.sent.append(f"{text}\r\n")
+            return self.session_active
+
+        def send_text(self, text: object) -> bool:
+            self.sent.append(str(text))
+            return self.session_active
+
+        def stop(self) -> None:
+            self.session_active = False
+
+    class FakeTerminalWidget:
+        kind = "terminal"
+        id = "playground-terminal"
+
+        def __init__(self) -> None:
+            self.bridge = FakeBridge()
+
+    terminal_widget = FakeTerminalWidget()
+    graph = dg.NodeGraph(
+        [
+            dg.NodeGraphNode(
+                "text",
+                "Text",
+                -260,
+                40,
+                outputs=(dg.NodeGraphPort("text", "text", port_type="text"),),
+                data={"node_type": "text_input", "config": {"text": "echo upstream"}},
+            ),
+            dg.NodeGraphNode(
+                "terminal",
+                "Terminal",
+                40,
+                40,
+                inputs=(dg.NodeGraphPort("stdin", "stdin", port_type="terminal_input"),),
+                data={
+                    "node_type": "terminal",
+                    "runtime_object": "terminal_session",
+                    "config": {
+                        "session_id": "shell-1",
+                        "terminal_widget_id": "playground-terminal",
+                    },
+                },
+            ),
+        ],
+        [dg.NodeGraphEdge("text", "text", "terminal", "stdin")],
+        sections=[dg.NodeGraphSection("terminal-section", "Terminal Section", 0, 0, 260, 160)],
+        binding_targets=[
+            {
+                "id": "playground-terminal",
+                "label": "Playground Terminal",
+                "target_type": "terminal",
+                "widget_type": "terminal",
+                "widget": terminal_widget,
+            }
+        ],
+        parent=None,
+    )
+
+    assert graph.runtime_binding().section_binding("terminal-section").node_ids == ("terminal",)
+
+    event = graph.run_section_runtime("terminal-section")
+
+    assert event.event == "section_run"
+    assert event.data["executed_nodes"] == ["text"]
+    assert terminal_widget.bridge.sent == ["echo upstream\r\n"]
+
+
+def test_node_graph_terminal_widget_selection_without_session_id_receives_stdin() -> None:
+    class FakeBridge:
+        session_active = False
+
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+
+        def start(self) -> "FakeBridge":
+            self.session_active = True
+            return self
+
+        def send_line(self, text: object = "") -> bool:
+            self.sent.append(f"{text}\r\n")
+            return self.session_active
+
+        def send_text(self, text: object) -> bool:
+            self.sent.append(str(text))
+            return self.session_active
+
+        def stop(self) -> None:
+            self.session_active = False
+
+    class FakeTerminalWidget:
+        kind = "terminal"
+        id = "playground-terminal"
+
+        def __init__(self) -> None:
+            self.bridge = FakeBridge()
+
+    terminal_widget = FakeTerminalWidget()
+    graph = dg.NodeGraph(
+        [
+            dg.NodeGraphNode(
+                "text",
+                "Text",
+                10,
+                10,
+                outputs=(dg.NodeGraphPort("text", "text", port_type="text"),),
+                data={"node_type": "text_input", "config": {"text": "codex"}},
+            ),
+            dg.NodeGraphNode(
+                "terminal",
+                "Terminal",
+                260,
+                10,
+                inputs=(dg.NodeGraphPort("stdin", "stdin", port_type="terminal_input"),),
+                data={
+                    "node_type": "terminal",
+                    "runtime_object": "terminal_session",
+                    "config": {"terminal_widget_id": "playground-terminal"},
+                },
+            ),
+        ],
+        [dg.NodeGraphEdge("text", "text", "terminal", "stdin")],
+        sections=[dg.NodeGraphSection("run", "Run", 0, 0, 540, 180)],
+        binding_targets=[
+            {
+                "id": "playground-terminal",
+                "label": "Playground Terminal",
+                "target_type": "terminal",
+                "widget_type": "terminal",
+                "widget": terminal_widget,
+            }
+        ],
+        parent=None,
+    )
+
+    runtime_object = graph.runtime_object_registry().object_ref("terminal")
+
+    assert runtime_object is not None
+    assert runtime_object.object_type == "terminal_session"
+    assert graph.runtime_binding().node_binding("terminal").owned_object_id == "terminal"
+
+    event = graph.run_section_runtime("run")
+
+    assert event.event == "section_run"
+    assert terminal_widget.bridge.sent == ["codex\r\n"]
+    assert graph.managed_runtime is not None
+    event_names = [item.event for item in graph.managed_runtime.events]
+    assert "edge_conversion_applied" in event_names
+    assert "edge_conversion_failed" not in event_names
+
 
 def test_node_graph_runtime_session_terminal_commands_use_attached_handle() -> None:
     graph = dg.NodeGraph(
@@ -10690,6 +11193,172 @@ def test_node_graph_runtime_session_terminal_commands_use_attached_handle() -> N
     assert result == {"stopped": ["shell-1"], "errors": {}}
     assert session.status == "stopped"
     assert session.events[-1].event == "session_cleanup"
+
+
+def test_node_graph_managed_runtime_attaches_matching_terminal_widget_target() -> None:
+    class FakeBridge:
+        session_active = True
+
+        def start(self) -> "FakeBridge":
+            return self
+
+        def stop(self) -> None:
+            self.session_active = False
+
+    class FakeTerminalWidget:
+        kind = "terminal"
+        id = "shell-1"
+
+        def __init__(self) -> None:
+            self.bridge = FakeBridge()
+
+    terminal_widget = FakeTerminalWidget()
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "terminal-owner",
+                "title": "Terminal",
+                "data": {
+                    "node_type": "terminal",
+                    "runtime_object": "terminal_session",
+                    "config": {"session_id": "shell-1", "command": "cmd.exe"},
+                },
+            },
+        ],
+        binding_targets=[
+            {
+                "id": "shell-1",
+                "label": "Runtime Terminal",
+                "target_type": "terminal",
+                "widget_type": "terminal",
+                "widget": terminal_widget,
+                "data": {"runtime_object_id": "shell-1"},
+            }
+        ],
+        parent=None,
+    )
+
+    session = graph.managed_runtime_session()
+
+    assert session.object_handle("shell-1").handle is terminal_widget.bridge
+    assert any(event.event == "object_handle_attached" for event in session.events)
+
+
+def test_node_graph_managed_runtime_attaches_selected_terminal_widget_target() -> None:
+    class FakeBridge:
+        session_active = False
+
+        def start(self) -> "FakeBridge":
+            self.session_active = True
+            return self
+
+        def stop(self) -> None:
+            self.session_active = False
+
+    class FakeTerminalWidget:
+        kind = "terminal"
+        id = "terminal-view-a"
+
+        def __init__(self) -> None:
+            self.bridge = FakeBridge()
+
+    terminal_widget = FakeTerminalWidget()
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "terminal-owner",
+                "title": "Terminal",
+                "data": {
+                    "node_type": "terminal",
+                    "runtime_object": "terminal_session",
+                    "config": {
+                        "session_id": "shell-1",
+                        "terminal_widget_id": "terminal-view-a",
+                    },
+                },
+            },
+        ],
+        binding_targets=[
+            {
+                "id": "terminal-view-a",
+                "label": "Terminal View A",
+                "target_type": "terminal",
+                "widget_type": "terminal",
+                "widget": terminal_widget,
+            }
+        ],
+        parent=None,
+    )
+
+    session = graph.managed_runtime_session()
+
+    assert session.object_handle("shell-1").handle is terminal_widget.bridge
+    assert session.object_handle("shell-1").status == "ready"
+
+    cleanup = session.cleanup()
+
+    assert cleanup == {"stopped": [], "errors": {}}
+    assert terminal_widget.bridge.session_active is False
+
+
+def test_node_graph_selected_terminal_widget_replaces_stale_runtime_bridge() -> None:
+    class FakeBridge:
+        def __init__(self, active: bool = False) -> None:
+            self.session_active = active
+            self.stopped = False
+
+        def start(self) -> "FakeBridge":
+            self.session_active = True
+            return self
+
+        def stop(self) -> None:
+            self.stopped = True
+            self.session_active = False
+
+    class FakeTerminalWidget:
+        kind = "terminal"
+        id = "terminal-view-a"
+
+        def __init__(self) -> None:
+            self.bridge = FakeBridge()
+
+    terminal_widget = FakeTerminalWidget()
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "terminal-owner",
+                "title": "Terminal",
+                "data": {
+                    "node_type": "terminal",
+                    "runtime_object": "terminal_session",
+                    "config": {
+                        "session_id": "shell-1",
+                        "terminal_widget_id": "terminal-view-a",
+                    },
+                },
+            },
+        ],
+        binding_targets=[
+            {
+                "id": "terminal-view-a",
+                "label": "Terminal View A",
+                "target_type": "terminal",
+                "widget_type": "terminal",
+                "widget": terminal_widget,
+            }
+        ],
+        parent=None,
+    )
+    session = graph.runtime_session()
+    stale_bridge = FakeBridge(active=True)
+    session.attach_handle("shell-1", stale_bridge, status="running")
+    graph._managed_runtime_session = session
+
+    graph.managed_runtime_session()
+
+    assert stale_bridge.stopped is True
+    assert session.object_handle("shell-1").handle is terminal_widget.bridge
+    assert any(event.event == "object_handle_detached" for event in session.events)
 
 
 def test_node_graph_runtime_converts_text_edge_to_terminal_stdin() -> None:
@@ -11651,16 +12320,21 @@ def test_node_graph_multi_agent_templates_serialize_and_round_trip() -> None:
         "rule",
     } <= template_ids
     terminal_template = next(template for template in templates if template.id == "terminal")
+    assert [port.id for port in terminal_template.inputs[:3]] == ["stdin", "command", "args"]
     assert terminal_template.inputs[0].port_type == "terminal_input"
+    assert terminal_template.inputs[1].port_type == "text"
     assert terminal_template.outputs[0].port_type == "terminal_output"
     assert terminal_template.data["node_type"] == "terminal"
     assert terminal_template.data["session"]["agent_type"] == "terminal"
     terminal_fields = {field["key"]: field for field in terminal_template.data["property_fields"]}
-    assert terminal_fields["command"]["default"] == "codex"
+    assert "command" not in terminal_fields
+    assert "args" not in terminal_fields
+    assert terminal_fields["terminal_widget_id"]["target_type"] == "terminal_widget"
     assert terminal_fields["auto_start"]["type"] == "bool"
     terminal_config_fields = {field["key"]: field for field in terminal_template.data["config_schema"]["fields"]}
     assert terminal_config_fields["restart_policy"]["type"] == "select"
     assert terminal_config_fields["restart_policy"]["options"] == ["never", "on_exit", "on_error"]
+    assert "terminalWidgetOptions" in dg.NodeGraph([], templates=templates, parent=None).html
 
     agent_template = next(template for template in templates if template.id == "agent")
     agent_fields = {field["key"]: field for field in agent_template.data["property_fields"]}
@@ -11674,6 +12348,14 @@ def test_node_graph_multi_agent_templates_serialize_and_round_trip() -> None:
     text_fields = {field["key"]: field for field in text_template.data["property_fields"]}
     assert text_template.outputs[0].port_type == "text"
     assert text_fields["emit_on_start"]["type"] == "bool"
+
+    build_template = next(template for template in templates if template.id == "build_text")
+    build_fields = {field["key"]: field for field in build_template.data["config_schema"]["fields"]}
+    assert [port.id for port in build_template.inputs] == ["part_1", "part_2", "part_3"]
+    assert build_template.outputs[0].port_type == "text"
+    assert build_fields["input_count"]["type"] == "number"
+    assert build_fields["separator"]["options"] == ["none", "space", "newline", "blank_line", "custom"]
+    assert build_fields["final_newline"]["type"] == "bool"
 
     extract_template = next(template for template in templates if template.id == "extract_between_markers")
     extract_fields = {field["key"]: field for field in extract_template.data["property_fields"]}
@@ -11696,6 +12378,8 @@ def test_node_graph_multi_agent_templates_serialize_and_round_trip() -> None:
     assert '"id": "agent"' in html
     assert '"port_type": "approval_request"' in html
     assert '"node_type": "agent"' in html
+    assert "adjustBuildTextInputCount" in html
+    assert "field_stepper" in html
     assert json.loads(json.dumps([template.data for template in templates]))
 
     rule_template = next(template for template in templates if template.id == "rule")
@@ -11875,6 +12559,189 @@ def test_node_graph_run_text_flow_routes_parser_output_to_log() -> None:
     payload = run.to_dict()
     assert payload["values"]["log.value"][0]["body"] == "Please review this harmless demo message."
     assert payload["binding"]["valid"] is True
+
+
+def test_node_graph_append_text_uses_appendix_input_in_text_flow() -> None:
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "text",
+                "title": "Text",
+                "outputs": [dg.NodeGraphPort("text", "text", port_type="text")],
+                "data": {"node_type": "text_input", "config": {"text": "Hello"}},
+            },
+            {
+                "id": "suffix",
+                "title": "Suffix",
+                "outputs": [dg.NodeGraphPort("text", "text", port_type="text")],
+                "data": {"node_type": "text_input", "config": {"text": "World"}},
+            },
+            {
+                "id": "append",
+                "title": "Append",
+                "inputs": [
+                    dg.NodeGraphPort("text", "text", port_type="text"),
+                    dg.NodeGraphPort("appendix", "appendix", port_type="text"),
+                ],
+                "outputs": [dg.NodeGraphPort("text", "text", port_type="text")],
+                "data": {"node_type": "append_text", "config": {"separator": "\n"}},
+            },
+        ],
+        [
+            dg.NodeGraphEdge("text", "text", "append", "text"),
+            dg.NodeGraphEdge("suffix", "text", "append", "appendix"),
+        ],
+        parent=None,
+    )
+
+    run = graph.run_text_flow()
+
+    assert run.port_values("append", "text") == ["Hello\nWorld"]
+
+
+def test_node_graph_build_text_joins_configured_inputs_in_order() -> None:
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "task",
+                "title": "Task",
+                "outputs": [dg.NodeGraphPort("text", "text", port_type="text")],
+                "data": {"node_type": "text_input", "config": {"text": "  Implement feature  "}},
+            },
+            {
+                "id": "context",
+                "title": "Context",
+                "outputs": [dg.NodeGraphPort("text", "text", port_type="text")],
+                "data": {"node_type": "text_input", "config": {"text": "Use existing patterns."}},
+            },
+            {
+                "id": "instructions",
+                "title": "Instructions",
+                "outputs": [dg.NodeGraphPort("text", "text", port_type="text")],
+                "data": {"node_type": "text_input", "config": {"text": "Run focused tests."}},
+            },
+            {
+                "id": "builder",
+                "title": "Build Text",
+                "inputs": [
+                    dg.NodeGraphPort("part_1", "part 1", port_type="text"),
+                    dg.NodeGraphPort("part_2", "part 2", port_type="text"),
+                    dg.NodeGraphPort("part_3", "part 3", port_type="text"),
+                ],
+                "outputs": [dg.NodeGraphPort("text", "text", port_type="text")],
+                "data": {
+                    "node_type": "build_text",
+                    "config": {
+                        "input_count": 3,
+                        "separator": "blank_line",
+                        "trim_parts": True,
+                        "skip_empty": True,
+                        "final_newline": True,
+                    },
+                },
+            },
+        ],
+        [
+            dg.NodeGraphEdge("task", "text", "builder", "part_1"),
+            dg.NodeGraphEdge("context", "text", "builder", "part_2"),
+            dg.NodeGraphEdge("instructions", "text", "builder", "part_3"),
+        ],
+        parent=None,
+    )
+
+    run = graph.run_text_flow()
+
+    assert run.port_values("builder", "text") == [
+        "Implement feature\n\nUse existing patterns.\n\nRun focused tests.\n"
+    ]
+
+
+def test_node_graph_build_text_supports_custom_separator_and_literal_parts() -> None:
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "source",
+                "title": "Source",
+                "outputs": [dg.NodeGraphPort("text", "text", port_type="text")],
+                "data": {"node_type": "text_input", "config": {"text": "alpha"}},
+            },
+            {
+                "id": "builder",
+                "title": "Build Text",
+                "inputs": [
+                    dg.NodeGraphPort("part_1", "part 1", port_type="text"),
+                    dg.NodeGraphPort("part_2", "part 2", port_type="text"),
+                ],
+                "outputs": [dg.NodeGraphPort("text", "text", port_type="text")],
+                "data": {
+                    "node_type": "build_text",
+                    "config": {
+                        "input_count": 2,
+                        "separator": "custom",
+                        "custom_separator": " | ",
+                        "part_2": "omega",
+                    },
+                },
+            },
+        ],
+        [dg.NodeGraphEdge("source", "text", "builder", "part_1")],
+        parent=None,
+    )
+
+    run = graph.run_text_flow()
+
+    assert run.port_values("builder", "text") == ["alpha | omega"]
+
+
+def test_node_graph_runtime_append_text_waits_for_connected_appendix_input() -> None:
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "text",
+                "title": "Text",
+                "outputs": [dg.NodeGraphPort("text", "text", port_type="text")],
+                "data": {"node_type": "text_input", "config": {"text": "Hello"}},
+            },
+            {
+                "id": "suffix",
+                "title": "Suffix",
+                "outputs": [dg.NodeGraphPort("text", "text", port_type="text")],
+                "data": {"node_type": "text_input", "config": {"text": "World"}},
+            },
+            {
+                "id": "append",
+                "title": "Append",
+                "inputs": [
+                    dg.NodeGraphPort("text", "text", port_type="text"),
+                    dg.NodeGraphPort("appendix", "appendix", port_type="text"),
+                ],
+                "outputs": [dg.NodeGraphPort("text", "text", port_type="text")],
+                "data": {"node_type": "append_text", "config": {"separator": "\n"}},
+            },
+        ],
+        [
+            dg.NodeGraphEdge("text", "text", "append", "text"),
+            dg.NodeGraphEdge("suffix", "text", "append", "appendix"),
+        ],
+        parent=None,
+    )
+    session = graph.runtime_session()
+
+    session.run_node("text")
+
+    append_outputs = [
+        event.value for event in session.events if event.event == "node_output" and event.node_id == "append"
+    ]
+    assert append_outputs == []
+    assert session.events[-1].event == "node_execution_waiting"
+    assert session.events[-1].data["missing_inputs"] == ["appendix"]
+
+    session.run_node("suffix")
+
+    append_outputs = [
+        event.value for event in session.events if event.event == "node_output" and event.node_id == "append"
+    ]
+    assert append_outputs == ["Hello\nWorld"]
 def test_node_graph_navigation_events_do_not_mutate_graph_history() -> None:
     events: list[dict[str, object]] = []
     graph = dg.NodeGraph(
@@ -11889,6 +12756,8 @@ def test_node_graph_navigation_events_do_not_mutate_graph_history() -> None:
     html = graph.to_dict()["props"]["html"]
     assert "function fitToView" in html
     assert "function drawToolbar" in html
+    assert "function drawToolbarIcon" in html
+    assert "function drawZoomToolbarIcon" in html
     assert "function drawMinimap" in html
     assert "viewport_changed" in html
     assert "zoom_in" in html
