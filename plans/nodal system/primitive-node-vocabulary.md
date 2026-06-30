@@ -1602,6 +1602,8 @@ Future safe conversions may include:
 - Should runtime views be registered by node type, runtime object type, or explicit node `view_type`?
 - Should action targets bind directly to section commands, emit graph events, or both?
 - Should bindable target discovery be driven by explicit widget flags, container scanning, graph-local registration helpers, or a combination?
+- Should WebView-backed widgets inside `Tabs`/navigation containers be handled by a stronger native visibility/z-order contract before probes rely on top-level tabbed layouts?
+
 
 
 

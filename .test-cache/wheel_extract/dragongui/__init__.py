@@ -1,6 +1,14 @@
 """Python API for DragonGUI."""
 
 from ._backend import BackendUnavailableError, backend_info, native_backend_available
+from .agent_messages import (
+    AgentEnvelopeParseEvent,
+    AgentEnvelopeParser,
+    AgentMessage,
+    AgentRouterQueue,
+    AgentRouterQueueItem,
+)
+from .agent_session import AgentSession, AgentSessionLogEntry, AgentSessionRecord
 from .app import App, LoadingScreen, run_with_loading
 from .components import ComponentCtx, ComponentInstance, StateSlot, component
 from .dialogs import (
@@ -13,14 +21,40 @@ from .dialogs import (
 from .diagnostics import register_thread_role, thread_role
 from .manual import HelpSection, help
 from .notifications import toast
+from .node_graph import (
+    NodeGraph,
+    NodeGraphActionTarget,
+    NodeGraphBindingTarget,
+    NodeGraphRuntimeEdgeBinding,
+    NodeGraphFlowRun,
+    NodeGraphNodeBinding,
+    NodeGraphRuntimeBinding,
+    NodeGraphRuntimeEvent,
+    NodeGraphRuntimeHandle,
+    NodeGraphRuntimeSession,
+    NodeGraphRuntimeViewBinding,
+    NodeGraphSectionBinding,
+    NodeGraphEdge,
+    NodeGraphNode,
+    NodeGraphObjectRegistry,
+    NodeGraphPort,
+    NodeGraphRuntimeObject,
+    NodeGraphRuntimeObjectRef,
+    NodeGraphSection,
+    NodeGraphTemplate,
+    NodeGraphWidgetTarget,
+    multi_agent_node_templates,
+    node_graph_port_type_color,
+)
 from .runtime import ToastHandle
 from .thread_monitor import ThreadMonitor
 from .theme import Theme
-from .terminal import Terminal
+from .terminal import Terminal, TerminalEvent
 from .vdom import Patch, ResourceRef, VNode
 from .widgets import (
     Badge,
     ArrowButton,
+    AppShell,
     BarChart,
     BarChartBar,
     BarChartData,
@@ -28,6 +62,7 @@ from .widgets import (
     BreadcrumbSelection,
     Breadcrumbs,
     Button,
+    Body,
     Checkbox,
     Collapsible,
     CodeEditor,
@@ -141,6 +176,14 @@ def unlink_cameras(*scatters: "Scatter3D") -> None:
 
 __all__ = [
     "App",
+    "AgentEnvelopeParseEvent",
+    "AgentEnvelopeParser",
+    "AgentMessage",
+    "AgentRouterQueue",
+    "AgentRouterQueueItem",
+    "AgentSession",
+    "AgentSessionLogEntry",
+    "AgentSessionRecord",
     "BackendUnavailableError",
     "ComponentCtx",
     "ComponentInstance",
@@ -154,6 +197,7 @@ __all__ = [
     "VNode",
     "Badge",
     "ArrowButton",
+    "AppShell",
     "BarChart",
     "BarChartBar",
     "BarChartData",
@@ -161,6 +205,7 @@ __all__ = [
     "BreadcrumbSelection",
     "Breadcrumbs",
     "Button",
+    "Body",
     "Checkbox",
     "Collapsible",
     "CodeEditor",
@@ -201,6 +246,26 @@ __all__ = [
     "MenuItem",
     "Modal",
     "NavItem",
+    "NodeGraph",
+    "NodeGraphRuntimeEdgeBinding",
+    "NodeGraphFlowRun",
+    "NodeGraphNodeBinding",
+    "NodeGraphRuntimeBinding",
+    "NodeGraphRuntimeEvent",
+    "NodeGraphRuntimeHandle",
+    "NodeGraphActionTarget",
+    "NodeGraphBindingTarget",
+    "NodeGraphRuntimeSession",
+    "NodeGraphRuntimeViewBinding",
+    "NodeGraphSectionBinding",
+    "NodeGraphEdge",
+    "NodeGraphNode",
+    "NodeGraphObjectRegistry",
+    "NodeGraphPort",
+    "NodeGraphRuntimeObject",
+    "NodeGraphRuntimeObjectRef",
+    "NodeGraphSection",
+    "NodeGraphTemplate",
     "NumberInput",
     "Page",
     "Pages",
@@ -246,6 +311,7 @@ __all__ = [
     "TableSort",
     "Tag",
     "Terminal",
+    "TerminalEvent",
     "TextArea",
     "TextInput",
     "TimeInput",
@@ -268,6 +334,7 @@ __all__ = [
     "native_backend_available",
     "toast",
     "help",
+    "multi_agent_node_templates",
     "link_cameras",
     "unlink_cameras",
     "run_with_loading",
@@ -277,3 +344,5 @@ __all__ = [
 ]
 
 __version__ = "0.1.0"
+
+

@@ -215,6 +215,27 @@ class LiveWidgetHandle:
         self.ensure_open()
         self.app.enqueue_clear_line_plot_series(self.id, series)
 
+    def enqueue_set_histogram_data(
+        self,
+        edges: Sequence[object],
+        counts: Sequence[object],
+        *,
+        input_count: int,
+        finite_count: int,
+        auto_fit: bool = True,
+        coalesce: bool = True,
+    ) -> None:
+        self.ensure_open()
+        self.app.enqueue_set_histogram_data(
+            self.id,
+            edges,
+            counts,
+            input_count=input_count,
+            finite_count=finite_count,
+            auto_fit=auto_fit,
+            coalesce=coalesce,
+        )
+
     def enqueue_reset_scatter_camera(self) -> None:
         self.ensure_open()
         self.app.enqueue_reset_scatter_camera(self.id)
@@ -756,6 +777,28 @@ class AppHandle:
 
     def enqueue_clear_line_plot_series(self, widget_id: str, series: str | None = None) -> None:
         self._send_or_queue_native("enqueue_clear_line_plot_series", widget_id, series)
+
+    def enqueue_set_histogram_data(
+        self,
+        widget_id: str,
+        edges: Sequence[object],
+        counts: Sequence[object],
+        *,
+        input_count: int,
+        finite_count: int,
+        auto_fit: bool = True,
+        coalesce: bool = True,
+    ) -> None:
+        self._send_or_queue_native(
+            "enqueue_set_histogram_data",
+            widget_id,
+            [float(value) for value in edges],
+            [float(value) for value in counts],
+            int(input_count),
+            int(finite_count),
+            bool(auto_fit),
+            bool(coalesce),
+        )
 
     def enqueue_reset_scatter_camera(self, widget_id: str) -> None:
         self._send_or_queue_native("enqueue_reset_scatter_camera", widget_id)
@@ -1822,6 +1865,7 @@ def _table_column_payload(columns: object) -> tuple[list[dict[str, object]], lis
 def _collect_runtime_callbacks(
     widget: object,
 ) -> tuple[dict[str, Callable[[], None]], dict[str, Callable[[object], None]]]:
+    from .node_graph import NodeGraph
     from .widgets import BarChart, BarChartBar, Button, Checkbox, CodeEditor, Collapsible, Container, DataFrameTable, DateInput, DateTimeInput, DragDropPayload, DragNumber, DropTarget, Dropdown, ExtensionWidget, Heatmap, HeatmapCell, MenuItem, NumberInput, Pages, PaintKeyEvent, PaintPointerEvent, RadioButton, RangeSlider, Scatter3D, ScatterHit, ScatterPick, Selectable, Slider, TableSelection, TableSort, Tabs, TextArea, TextInput, TimeInput, ToggleSwitch, TreeNode, TreeView, Widget
 
     click_callbacks: dict[str, Callable[[], None]] = {}
@@ -2082,6 +2126,8 @@ def _collect_runtime_callbacks(
                     widget.on_select(selection)
 
             change_callbacks[node.id] = table_changed
+        if isinstance(node, NodeGraph):
+            change_callbacks[node.id] = node._handle_graph_event
         if isinstance(node, Heatmap) and node.on_hover is not None:
             def heatmap_hover_changed(value: object, widget: Heatmap = node) -> None:
                 payload = json.loads(value) if isinstance(value, str) else value

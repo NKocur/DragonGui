@@ -1,4 +1,4 @@
-[package]
+﻿[package]
 name = "dragongui-native"
 version = "0.1.0"
 edition = "2021"
@@ -18,7 +18,7 @@ name = "_dragongui"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.23", features = ["abi3-py311"] }
+pyo3 = { version = "0.23", features = ["abi3-py312"] }
 winit = "0.30"
 wgpu = "29"
 glam = "0.28"
@@ -50,3 +50,4 @@ windows = { version = "0.61", features = [
 [features]
 default = []
 gpu = []
+

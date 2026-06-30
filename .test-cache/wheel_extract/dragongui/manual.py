@@ -191,6 +191,8 @@ def _section(
 
 _LAYOUT_WIDGETS = (
     "Window",
+    "AppShell",
+    "Body",
     "HLayout",
     "VLayout",
     "ScrollArea",
@@ -268,6 +270,7 @@ _DATA_WIDGETS = (
     "Image",
     "HtmlReport",
     "Terminal",
+    "NodeGraph",
     "DataFrameTable",
     "Histogram",
     "BarChart",
@@ -289,6 +292,11 @@ _WIDGET_SYMBOLS = (
 )
 
 _DATACLASS_SYMBOLS = (
+    "AgentEnvelopeParseEvent",
+    "AgentMessage",
+    "AgentRouterQueueItem",
+    "AgentSessionLogEntry",
+    "AgentSessionRecord",
     "BarChartBar",
     "BarChartData",
     "BreadcrumbItem",
@@ -298,6 +306,23 @@ _DATACLASS_SYMBOLS = (
     "HistogramBins",
     "LinePlotPayload",
     "MeasureConstraints",
+    "NodeGraphActionTarget",
+    "NodeGraphBindingTarget",
+    "NodeGraphEdge",
+    "NodeGraphFlowRun",
+    "NodeGraphNode",
+    "NodeGraphNodeBinding",
+    "NodeGraphPort",
+    "NodeGraphRuntimeBinding",
+    "NodeGraphRuntimeEdgeBinding",
+    "NodeGraphRuntimeEvent",
+    "NodeGraphRuntimeHandle",
+    "NodeGraphRuntimeViewBinding",
+    "NodeGraphRuntimeObject",
+    "NodeGraphRuntimeObjectRef",
+    "NodeGraphSection",
+    "NodeGraphSectionBinding",
+    "NodeGraphTemplate",
     "PaintContext",
     "PaintKeyEvent",
     "PaintPointerEvent",
@@ -310,7 +335,16 @@ _DATACLASS_SYMBOLS = (
     "ScatterStreamMetrics",
     "TableSelection",
     "TableSort",
+    "TerminalEvent",
     "Size",
+)
+
+_MODEL_SYMBOLS = (
+    "AgentEnvelopeParser",
+    "AgentRouterQueue",
+    "AgentSession",
+    "NodeGraphObjectRegistry",
+    "NodeGraphRuntimeSession",
 )
 
 _DIALOG_SYMBOLS = (
@@ -348,12 +382,14 @@ _RUNTIME_SYMBOLS = (
     "thread_role",
     "link_cameras",
     "unlink_cameras",
+    "multi_agent_node_templates",
     "help",
     "HelpSection",
 )
 
 _PUBLIC_EXPORT_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("runtime", _RUNTIME_SYMBOLS),
+    ("models", _MODEL_SYMBOLS),
     ("components", _COMPONENT_SYMBOLS),
     ("dialogs", _DIALOG_SYMBOLS),
     ("widgets.layout", _LAYOUT_WIDGETS),
@@ -423,6 +459,8 @@ _SIGNATURE_OVERRIDES = {
 _SYMBOL_NOTES = {
     "App": "Owns the native runtime bridge, stylesheets, loading screen, toasts, and thread-safe scheduling.",
     "Window": "Top-level application shell passed to `app.run(window)`.",
+    "AppShell": "Bounded top-level layout for sidebar plus flexible body apps.",
+    "Body": "Flexible main app region that owns scrolling and avoids accidental horizontal overflow.",
     "Panel": "Framed container for related controls or content; use it as a major dashboard building block.",
     "HLayout": "Horizontal flex container for rows, split regions, toolbars, and compact control groups.",
     "VLayout": "Vertical flex container for stacked forms, panels, and page content.",
@@ -453,6 +491,36 @@ _SYMBOL_NOTES = {
     "PaintWidget": "Pure-Python custom widget base that records a native display list through `PaintContext`.",
     "PaintContext": "Records display-list commands such as rects, lines, polylines, circles, text, and images for a `PaintWidget`.",
     "MeasureConstraints": "Constraint object passed to `PaintWidget.measure(...)`.",
+    "NodeGraph": "Canvas-backed node editor for routing graphs, agent workflows, and visual pipelines.",
+    "NodeGraphActionTarget": "Transient UI action target that lets node graph sections invoke registered application callbacks.",
+    "NodeGraphBindingTarget": "Unified transient GUI binding target that can expose widgets, actions, or both to node graph inspectors.",
+    "NodeGraphNode": "Node model for `NodeGraph`, including position, ports, status, and color.",
+    "NodeGraphPort": "Input or output socket model used by `NodeGraphNode`.",
+    "NodeGraphEdge": "Directed connection between `NodeGraph` ports.",
+    "NodeGraphSection": "Region model for grouping nodes by geometry inside a `NodeGraph`.",
+    "NodeGraphTemplate": "Palette template model used by `NodeGraph` for canvas-created nodes.",
+    "NodeGraphFlowRun": "Serializable result from non-destructive primitive text/message graph execution.",
+    "NodeGraphNodeBinding": "Static runtime binding record for one graph node.",
+    "NodeGraphSectionBinding": "Static runtime binding record for one graph section and its member nodes.",
+    "NodeGraphRuntimeBinding": "Static graph-to-runtime binding plan with registry validation.",
+    "NodeGraphRuntimeEdgeBinding": "Static runtime binding record for one directed graph edge.",
+    "NodeGraphObjectRegistry": "Static registry of runtime objects declared or referenced by graph configuration.",
+    "NodeGraphRuntimeObject": "Serializable static runtime object declaration derived from graph config.",
+    "NodeGraphRuntimeObjectRef": "Serializable reference from a graph node to a declared runtime object.",
+    "NodeGraphRuntimeEvent": "Schema-versioned runtime event payload for live node graph sessions.",
+    "NodeGraphRuntimeHandle": "Transient live runtime object state with an attached non-serializable handle.",
+    "NodeGraphRuntimeSession": "Live graph runtime session that owns handles, statuses, validation, and runtime events separately from graph layout data.",
+    "NodeGraphRuntimeViewBinding": "Runtime view binding from graph node to runtime object and observable detail view.",
+    "multi_agent_node_templates": "Factory for typed runtime-oriented `NodeGraphTemplate` values for multi-agent workflows.",
+    "AgentMessage": "Parsed schema-versioned text envelope with routing fields, optional metadata, and body text.",
+    "AgentEnvelopeParser": "Incremental parser for terminal transcript message envelopes with partial buffering and deduplication.",
+    "AgentEnvelopeParseEvent": "Parser event payload for parsed, partial, malformed, and duplicate envelope outcomes.",
+    "AgentRouterQueue": "Model-level target queue for parsed agent messages with delivery status tracking.",
+    "AgentRouterQueueItem": "Queue record pairing one parsed agent message with queued, held, delivered, or failed state.",
+    "AgentSession": "Python-side model that binds a graph node to a terminal-backed agent session record and append-only logs.",
+    "AgentSessionRecord": "Serializable ownership, command metadata, status, capabilities, and safety policy for an agent session.",
+    "AgentSessionLogEntry": "Schema-versioned append-only event or transcript entry for an agent session.",
+    "TerminalEvent": "Schema-versioned terminal bridge lifecycle or output event payload.",
     "Size": "Logical width/height object returned from `PaintWidget.measure(...)`.",
     "PaintKeyEvent": "Event object delivered to focused extension widget key callbacks.",
     "PaintPointerEvent": "Event object delivered to extension widget pointer and wheel callbacks.",
@@ -605,10 +673,31 @@ _PARAMETER_NOTES = {
         "`title` is required.",
         "`width` and `height` are startup size hints; layout should still be responsive.",
     ),
+    "AppShell": (
+        "Use directly inside `Window` for app-style layouts.",
+        "It defaults to a bounded full-window horizontal layout with hidden outer overflow.",
+        "Pair it with `Body` for the flexible scroll-owning main pane.",
+    ),
+    "Body": (
+        "`scroll` accepts the same axis values as `ScrollArea`: `y`, `x`, `both`, or `none`.",
+        "It defaults to `min_width=0`, `min_height=0`, and flexible fill behavior.",
+        "Use it as the main content pane inside `AppShell` instead of a raw `HLayout` or `Panel`.",
+    ),
     "Panel": (
         "`title` creates the panel header.",
         "`width`/`height` constrain the panel; prefer `flex_grow` for responsive fill.",
         "Use `scroll=True` or a nested `ScrollArea` when content can overflow.",
+        "When a `Panel` is the first visible body inside an active `Tab`, its top corners are squared so the tab and panel connect cleanly.",
+    ),
+    "Tabs": (
+        "`value` selects the active child tab; omit it to select the first tab.",
+        "`Tabs::header` is opt-in chrome: unstyled tabs render without a full-width colored header band.",
+        "Style `Tabs::header` only when you want a strip, divider, or custom background behind the tab buttons.",
+    ),
+    "Tab": (
+        "`label` is the visible tab text.",
+        "`value` is the route value used by the parent `Tabs`.",
+        "Use `Tab::tab`, `accent`, and `badge` for per-tab chrome; `:selected` targets the active tab.",
     ),
     "HLayout": (
         "Use for rows and horizontal control groups.",
@@ -679,6 +768,11 @@ _PARAMETER_NOTES = {
         "`values` is the backing mapping.",
         "`schema` describes labels/editors/sections.",
         "`on_change(PropertyChange)` receives edited keys and values.",
+    ),
+    "NodeGraph": (
+        "`nodes` accepts `NodeGraphNode` instances or mappings. "
+        "Use `NodeGraphEdge` to connect output ports to input ports. "
+        "`on_node_select(node_id)` and `on_node_move(node_id, x, y)` receive canvas interactions."
     ),
     "DataFrameTable": (
         "`frame` can be a pandas/polars-like object or DragonGUI table payload.",
@@ -770,6 +864,8 @@ _EXAMPLE_METADATA: dict[str, dict[str, tuple[str, ...]]] = {
             "examples/css_feature_probes/layout_overlay_collision_probe.py",
         )
     },
+    "Tabs": {"probes": ("examples/css_feature_probes/navigation_widgets_probe.py",)},
+    "Tab": {"probes": ("examples/css_feature_probes/navigation_widgets_probe.py",)},
     "Modal": {
         "probes": (
             "examples/css_feature_probes/overlay_stack_probe.py",
@@ -874,11 +970,14 @@ def _object_for_symbol(name: str) -> Any | None:
         return None
 
     from . import _backend as backend_module
+    from . import agent_messages as agent_messages_module
+    from . import agent_session as agent_session_module
     from . import app as app_module
     from . import components as components_module
     from . import diagnostics as diagnostics_module
     from . import dialogs as dialogs_module
     from . import notifications as notifications_module
+    from . import node_graph as node_graph_module
     from . import runtime as runtime_module
     from . import theme as theme_module
     from . import terminal as terminal_module
@@ -888,11 +987,14 @@ def _object_for_symbol(name: str) -> Any | None:
 
     modules = (
         widgets_module,
+        agent_messages_module,
+        agent_session_module,
         app_module,
         components_module,
         dialogs_module,
         diagnostics_module,
         notifications_module,
+        node_graph_module,
         runtime_module,
         theme_module,
         terminal_module,
@@ -1173,6 +1275,7 @@ def _css_parts_reference() -> HelpSection:
         "Generated from `dragongui.widgets._SUPPORTED_PARTS_BY_KIND`.",
         "",
         "Use CSS parts with `Widget::part { ... }` or `.class::part { ... }`.",
+        "`Tabs::header` is opt-in: unstyled `Tabs` do not paint a header box.",
         "",
     ]
     for kind in sorted(_SUPPORTED_PARTS_BY_KIND):
@@ -1361,6 +1464,13 @@ def _build_reference_sections() -> HelpSection:
         _RUNTIME_SYMBOLS,
         "runtime",
     )
+    models = _group_section(
+        "models",
+        "Models Reference",
+        "Python-side agent session, message parser, and router queue models.",
+        _MODEL_SYMBOLS,
+        "runtime",
+    )
     components = _group_section(
         "components",
         "Components Reference",
@@ -1417,6 +1527,7 @@ you need a specific symbol.
         [
             exports,
             runtime,
+            models,
             components,
             dialogs,
             dataclasses,
@@ -1929,6 +2040,12 @@ with dg.Tabs(value="metrics"):
         dg.LinePlot(frame, y="loss")
 ```
 
+Default `Tabs` render only the individual tab buttons. The `Tabs::header` part
+is available when an app intentionally wants a full-width strip, divider, or
+background behind the buttons. If the first visible tab body child is a `Panel`,
+DragonGUI squares that panel's top corners so its outline connects cleanly with
+the selected tab.
+
 Use `Pages`/`Page` with `NavItem` or custom navigation when the navigation and
 content should be separate:
 ```python
@@ -2214,6 +2331,8 @@ Common parts:
 - `Heatmap::cell`, `grid`, `hover`, `scalar-bar`, `label`
 - `BarChart::label`, `value-label`
 - `PieChart::label`
+- `Tabs::header` when you explicitly want a full-width tab strip background or
+  divider; unstyled `Tabs` do not paint a header box.
 - `Tab::tab`, `accent`, `badge`
 - `NavItem::item`, `accent`, `badge`
 - `DataFrameTable::header`, `row`, `row-selected`, `grid-line`,
@@ -3506,3 +3625,4 @@ help = _build_manual()
 
 
 __all__ = ["HelpSection", "help"]
+

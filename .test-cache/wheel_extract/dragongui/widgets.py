@@ -1408,6 +1408,7 @@ class Widget:
             raise ValueError("widget key must be a non-empty string")
         if class_ is not None and (not isinstance(class_, str) or not class_):
             raise ValueError("widget class_ must be a non-empty string")
+        self._explicit_id = id is not None
         self.id = id or f"dg-{next(_ids)}"
         self.key = key
         self.class_ = class_
@@ -2079,6 +2080,49 @@ class VLayout(Container):
     kind = "v_layout"
 
 
+class AppShell(HLayout):
+    """Bounded application root for sidebar plus main-body layouts.
+
+    ``AppShell`` gives the top-level layout a definite window-sized region and
+    hides accidental outer overflow. Pair it with ``Body`` for the flexible
+    scroll-owning pane instead of hand-writing the same flex/min-size styles in
+    every app.
+    """
+
+    def __init__(
+        self,
+        *,
+        gap: int | None = 0,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: "Container | None | object" = _AUTO_PARENT,
+    ) -> None:
+        if gap is not None and int(gap) < 0:
+            raise ValueError("AppShell gap must be non-negative")
+        extra: dict[str, object] = {
+            "width": "100%",
+            "height": "100%",
+            "min_width": 0,
+            "min_height": 0,
+            "overflow_x": "hidden",
+            "overflow_y": "hidden",
+        }
+        if gap is not None:
+            extra["gap"] = int(gap)
+        merged: Mapping[str, object] = {**extra, **(style or {})}
+        super().__init__(
+            id=id,
+            key=key,
+            class_=_merge_widget_class("app-shell", class_),
+            style=merged,
+            tooltip=tooltip,
+            parent=parent,
+        )
+
+
 class ScrollArea(Container):
     """Bounded scroll viewport for content that may exceed available space.
 
@@ -2147,6 +2191,52 @@ class ScrollArea(Container):
             handle.enqueue_set_prop("scroll_x", float(x))
         if y is not None:
             handle.enqueue_set_prop("scroll_y", float(y))
+
+
+class Body(ScrollArea):
+    """Flexible main app region with explicit scroll ownership.
+
+    ``Body`` is the safe default for the main content area in an ``AppShell``:
+    it can shrink inside horizontal layouts, fills remaining space, and owns
+    overflow on the configured axis.
+    """
+
+    def __init__(
+        self,
+        *,
+        scroll: str = "y",
+        gap: int | None = None,
+        width: "int | float | None" = None,
+        height: "int | float | None" = None,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: "Container | None | object" = _AUTO_PARENT,
+    ) -> None:
+        extra: dict[str, object] = {
+            "flex": 1,
+            "flex_grow": 1,
+            "flex_shrink": 1,
+            "min_width": 0,
+            "min_height": 0,
+        }
+        if width is None:
+            extra["width"] = 0
+        merged: Mapping[str, object] = {**extra, **(style or {})}
+        super().__init__(
+            axis=scroll,
+            gap=gap,
+            width=width,
+            height=height,
+            id=id,
+            key=key,
+            class_=_merge_widget_class("body", class_),
+            style=merged,
+            tooltip=tooltip,
+            parent=parent,
+        )
 
 
 GridTrackValue = int | float | str | Mapping[str, object]
@@ -4164,6 +4254,7 @@ class LogView(Widget):
         self.wrap = bool(wrap)
         self.disabled = bool(disabled)
         self.lines = self._normalize_lines(lines)
+        self._stream_carriage_return = False
         self._trim()
         self.value = self._joined()
         super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
@@ -4198,14 +4289,44 @@ class LogView(Widget):
 
     def append_line(self, line: object = "") -> None:
         self.lines.extend(self._normalize_lines([line]))
+        self._stream_carriage_return = False
         self._sync_value()
 
     def append_lines(self, lines: Iterable[object]) -> None:
         self.lines.extend(self._normalize_lines(lines))
+        self._stream_carriage_return = False
         self._sync_value()
+
+    def append_text(self, text: object = "") -> None:
+        """Append stream text without forcing each chunk onto a new line."""
+
+        data = str(text)
+        if not data:
+            return
+        if not self.lines:
+            self.lines = [""]
+        for char in data:
+            if char == "\r":
+                self._stream_carriage_return = True
+                continue
+            if char == "\n":
+                self.lines.append("")
+                self._stream_carriage_return = False
+                continue
+            if self._stream_carriage_return:
+                self.lines[-1] = ""
+                self._stream_carriage_return = False
+            if char == "\b":
+                self.lines[-1] = self.lines[-1][:-1]
+            else:
+                self.lines[-1] += char
+        self._sync_value()
+
+    append_stream = append_text
 
     def clear(self) -> None:
         self.lines = []
+        self._stream_carriage_return = False
         self._sync_value()
 
     def props(self) -> dict[str, Any]:
@@ -7486,8 +7607,14 @@ class Histogram(Widget):
             mode=self.mode,
             cumulative=self.cumulative,
         )
-        if self.is_live:
-            raise RuntimeError("live Histogram.set_data is not implemented yet")
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_histogram_data(
+                self._bins.edges,
+                self._bins.counts,
+                input_count=self._bins.input_count,
+                finite_count=self._bins.finite_count,
+                auto_fit=self.auto_fit,
+            )
 
     def set_grid_visible(self, visible: bool) -> None:
         self.show_grid = bool(visible)

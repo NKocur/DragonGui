@@ -51,7 +51,20 @@ app.stylesheet(
         padding: 10px;
         gap: 10px;
     }
+    HLayout.root {
+        width: 100%;
+        height: 100%;
+        min-width: 0;
+        min-height: 0;
+        gap: 10px;
+    }
     Tabs.root {
+        width: 100%;
+        height: 100%;
+        min-width: 0;
+        min-height: 0;
+    }
+    Tab.editor-tab, Tab.objects-tab, Tab.terminal-tab {
         width: 100%;
         height: 100%;
         min-width: 0;
@@ -163,6 +176,11 @@ def log(line: object = "") -> None:
 
 def set_status(text: str) -> None:
     log(text)
+
+
+def on_playground_tab_change(value: str) -> None:
+    log(f"tab changed: {value}")
+    refresh_target_status()
 
 
 def refresh_counts() -> None:
@@ -618,7 +636,7 @@ def register_binding_targets() -> None:
     refresh_runtime_status()
 
 
-with dg.Tabs(value="editor", class_="root"):
+with dg.Tabs(value="objects", id="binding-playground-tabs", class_="root", on_change=on_playground_tab_change):
     with dg.Tab("Node Editor", value="editor", class_="editor-tab"):
         with dg.VLayout(class_="editor-page"):
             with dg.Panel("Blank Node Editor", class_="canvas"):
@@ -662,6 +680,7 @@ with dg.Tabs(value="editor", class_="root"):
                         height=680,
                         class_="node-graph",
                     )
+        
 
     with dg.Tab("GUI Objects", value="objects", class_="objects-tab"):
         with dg.Panel("Bindable GUI Controls", class_="side"):
@@ -695,15 +714,6 @@ with dg.Tabs(value="editor", class_="root"):
                 placeholder="Scratch JSON/text source...",
                 on_change=lambda value: set_status(f"Scratch changed: {value}"),
                 class_="mini-field",
-            )
-            dg.Label("Terminal Widget", class_="section")
-            playground_terminal = dg.Terminal(
-                "cmd.exe",
-                id="playground-terminal",
-                title="Playground Terminal",
-                prefer_pty=True,
-                height=280,
-                class_="play-terminal",
             )
             dg.Label("Action Buttons", class_="section")
             with dg.FlowLayout(gap=6, row_gap=6):
@@ -755,8 +765,25 @@ with dg.Tabs(value="editor", class_="root"):
                 wrap=True,
                 class_="play-log",
             )
-            register_binding_targets()
+    
 
+    with dg.Tab("Terminal", value="terminal", class_="terminal-tab"):
+        with dg.Panel("Terminal Target", class_="side"):
+            dg.Label("Terminal Widget", class_="section")
+            dg.Label(
+                "This WebView-backed terminal is isolated from the native GUI controls tab for local layering diagnostics.",
+                class_="muted",
+            )
+            playground_terminal = dg.Terminal(
+                "cmd.exe",
+                id="playground-terminal",
+                title="Playground Terminal",
+                prefer_pty=True,
+                height=420,
+                class_="play-terminal",
+            )
+
+register_binding_targets()
 refresh_counts()
 refresh_selection()
 refresh_runtime_status()
@@ -767,3 +794,4 @@ refresh_target_status()
 
 if __name__ == "__main__":
     print(app.run(win))
+

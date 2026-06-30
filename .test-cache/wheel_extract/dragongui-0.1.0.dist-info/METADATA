@@ -6,7 +6,6 @@ Classifier: Intended Audience :: Developers
 Classifier: Intended Audience :: Science/Research
 Classifier: License :: OSI Approved :: MIT License
 Classifier: Programming Language :: Python :: 3
-Classifier: Programming Language :: Python :: 3.11
 Classifier: Programming Language :: Python :: 3.12
 Classifier: Programming Language :: Python :: 3.13
 Classifier: Programming Language :: Rust
@@ -30,7 +29,7 @@ License-File: LICENSE
 Summary: A Python application toolkit for GPU-native data tools.
 Keywords: gui,gpu,dataframe,wgpu,visualization,rust
 Author: DragonFrame contributors
-Requires-Python: >=3.11
+Requires-Python: >=3.12
 Description-Content-Type: text/markdown; charset=UTF-8; variant=GFM
 Project-URL: Homepage, https://github.com/dragonframe/dragongui
 Project-URL: Issues, https://github.com/dragonframe/dragongui/issues

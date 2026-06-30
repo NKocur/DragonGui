@@ -1,3 +1,4 @@
 {
-    "contextEngine.databasePath": ".test-cache/test.db"
+    "contextEngine.databasePath": ".test-cache/test.db",
+    "python-envs.defaultEnvManager": "ms-python.python:system"
 }

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import math
@@ -11,6 +11,7 @@ import threading
 import tempfile
 import time
 import zlib
+from collections.abc import Mapping
 from html import escape
 
 if __name__ == "__main__" and __package__ is None:
@@ -40,6 +41,21 @@ REPORT_OVERVIEW = REPORT_DIR / "plotly_style_sensor_report.html"
 REPORT_DETAIL = REPORT_DIR / "plotly_style_failure_report.html"
 REPORT_INLINE = REPORT_DIR / "plotly_style_inline_report.html"
 REPORT_BACKEND_LABEL = "Real Plotly" if go is not None else "Self-contained fallback"
+NODE_BINDING_TEMPLATES = dg.multi_agent_node_templates()
+NODE_BINDING_NO_GRAPH = os.environ.get("DRAGONGUI_BINDING_PROBE_NO_GRAPH", "").strip().lower() in {"1", "true", "yes", "on"}
+NODE_BINDING_ACTION_BUTTON_TARGETS = (
+    ("v3-run-section-action-button", "Run Section Action Button"),
+    ("v3-run-selection-button", "Run Selection Button"),
+    ("v3-send-prompt-button", "Send Prompt Button"),
+    ("v3-clear-logs-button", "Clear Logs Button"),
+    ("v3-snapshot-button", "Snapshot Button"),
+)
+NODE_BINDING_ACTION_SLOT_TARGETS = (
+    ("v3-action-slot-a", "Action Slot A"),
+    ("v3-action-slot-b", "Action Slot B"),
+    ("v3-action-slot-c", "Action Slot C"),
+    ("v3-action-slot-d", "Action Slot D"),
+)
 GRID_STYLE = {"padding": 10, "align_items": "start", "flex_grow": 0, "flex_shrink": 1}
 CARD_STYLE = {
     "padding": 10,
@@ -2352,6 +2368,7 @@ line_width_label: dg.Label | None = None
 line_tick_label: dg.Label | None = None
 line_window_label: dg.Label | None = None
 histogram_tick_label: dg.Label | None = None
+binding_playground: NodeGraphBindingPlayground | None = None
 
 
 def set_status(message: str) -> None:
@@ -3283,6 +3300,567 @@ def cycle_style() -> None:
     set_status("Applied live style patch")
 
 
+
+class NodeGraphBindingPlayground:
+    def __init__(self, host_window: dg.Window) -> None:
+        self.host_window = host_window
+        self.graph: dg.NodeGraph | None = None
+        self.runtime_status_label: dg.Label | None = None
+        self.target_status_label: dg.Label | None = None
+        self.selected_section_id: str | None = None
+        self.prompt_input: dg.TextInput | None = None
+        self.review_input: dg.TextInput | None = None
+        self.scratch_input: dg.TextInput | None = None
+        self.main_output_log: dg.LogView | None = None
+        self.review_output_log: dg.LogView | None = None
+        self.message_log: dg.LogView | None = None
+        self.event_log: dg.LogView | None = None
+        self.playground_terminal: dg.Terminal | None = None
+        self.action_slot_buttons: dict[str, dg.Button] = {}
+
+    def log(self, line: object = "") -> None:
+        if self.event_log is not None:
+            self.event_log.append_line(str(line))
+
+    def mark(self, text: str) -> None:
+        self.log(text)
+        try:
+            set_status(f"Node binding: {text}")
+        except Exception:
+            pass
+
+    def on_tab_change(self, value: str) -> None:
+        self.log(f"tab changed: {value}")
+        self.refresh_target_status()
+
+    def refresh_counts(self) -> None:
+        return
+
+    def refresh_selection(self) -> None:
+        return
+
+    def refresh_runtime_status(self) -> None:
+        if self.graph is None or self.runtime_status_label is None:
+            return
+        self.runtime_status_label.set_value(self.graph.managed_runtime_status_text())
+
+    def refresh_target_status(self) -> None:
+        if self.graph is None or self.target_status_label is None:
+            return
+        self.target_status_label.set_value(
+            f"Discovered Actions: {len(self.graph.action_target_ids())} | "
+            f"Widgets: {len(self.graph.widget_target_ids())}"
+        )
+
+    def force_refresh_targets(self) -> None:
+        if self.graph is None:
+            return
+        self.graph.refresh_binding_targets_from_host(self.host_window)
+        self.refresh_target_status()
+        self.log(f"refreshed action targets: {', '.join(self.graph.action_target_ids())}")
+        self.mark("binding targets refreshed")
+
+    def on_select(self, node_id: str) -> None:
+        self.selected_section_id = None
+        self.refresh_selection()
+        self.mark(f"selected node {node_id}")
+
+    def on_move(self, node_id: str, x: float, y: float) -> None:
+        self.log(f"Moved {node_id}: {x:.0f}, {y:.0f}")
+
+    def on_graph_event(self, event: dict[str, object]) -> None:
+        event_name = str(event.get("event", "event"))
+        if event_name in {
+            "node_created",
+            "node_duplicated",
+            "node_deleted",
+            "edge_created",
+            "edge_deleted",
+            "section_created",
+            "section_deleted",
+            "property_editor_saved",
+            "graph_changed",
+        }:
+            self.refresh_counts()
+        if event_name == "section_selected":
+            self.selected_section_id = str(event.get("section") or "") or None
+        elif event_name in {"node_selected", "selection_cleared"}:
+            self.selected_section_id = None
+        if event_name in {"node_selected", "section_selected", "selection_cleared"}:
+            self.refresh_selection()
+        if event_name == "editor_action":
+            action = str(event.get("action", ""))
+            if action == "run_node":
+                self.run_selected_node_runtime()
+            elif action == "run_section":
+                self.run_selected_section_runtime()
+            elif action == "cleanup_runtime":
+                self.cleanup_runtime()
+            elif action == "refresh_targets":
+                self.force_refresh_targets()
+            elif action == "snapshot":
+                self.snapshot_graph()
+            elif action == "reset_graph":
+                self.reset_blank_graph()
+            else:
+                self.mark(f"editor action ignored: {action}")
+        if event_name not in {"viewport_changed", "node_moved"}:
+            self.log(json.dumps(event, sort_keys=True))
+
+    def binding_action(self, action_id: str, command: str) -> object:
+        message = f"action target fired: {action_id} command={command}"
+        self.mark(message)
+        if self.message_log is not None:
+            self.message_log.append_line(message)
+        return {"action_id": action_id, "command": command}
+
+    def run_selected_node_runtime(self) -> None:
+        if self.graph is None:
+            return
+        if not self.graph.selected_node:
+            self.mark("select a node before running it")
+            return
+        try:
+            event = self.graph.run_node_runtime(self.graph.selected_node)
+        except Exception as exc:
+            self.mark(f"node runtime failed: {exc}")
+            return
+        self.log(f"node {self.graph.selected_node} runtime event: {event.event}")
+        self.refresh_runtime_status()
+        self.mark(f"node {self.graph.selected_node} ran with managed runtime")
+
+    def run_selected_section_runtime(self) -> None:
+        if self.graph is None:
+            return
+        if not self.selected_section_id:
+            self.mark("select a section before running its action")
+            return
+        try:
+            result = self.graph.run_section_runtime(self.selected_section_id)
+        except Exception as exc:
+            self.mark(f"section action failed: {exc}")
+            return
+        self.log(f"section {self.selected_section_id} runtime event: {result.event}")
+        self.refresh_runtime_status()
+        self.mark(f"section {self.selected_section_id} ran with managed runtime")
+
+    def section_action_config(self, section: dg.NodeGraphSection) -> tuple[str, str]:
+        data = section.data or {}
+        if not isinstance(data, Mapping):
+            return "", "run"
+        config = data.get("config")
+        source = config if isinstance(config, Mapping) else data
+        action_id = str(source.get("action_id", "") or "").strip()
+        command = str(source.get("section_command", "") or "run").strip() or "run"
+        return action_id, command
+
+    def sections_for_action_target(self, action_id: str) -> tuple[dg.NodeGraphSection, ...]:
+        if self.graph is None:
+            return ()
+        target_id = str(action_id or "").strip()
+        return tuple(
+            section
+            for section in self.graph.sections
+            if self.section_action_config(section)[0] == target_id
+        )
+
+    def log_section_runtime_diagnostic(self, section: dg.NodeGraphSection) -> None:
+        if self.graph is None:
+            return
+        try:
+            node_ids = self.graph.section_nodes(section.id)
+        except Exception as exc:
+            node_ids = ()
+            self.log(f"section {section.id} node lookup failed: {exc}")
+        binding = self.graph.runtime_binding()
+        section_binding = binding.section_binding(section.id)
+        terminal_nodes: list[dict[str, object]] = []
+        for node in self.graph.nodes:
+            data = node.data or {}
+            if not isinstance(data, Mapping):
+                continue
+            if str(data.get("node_type", data.get("template_id", ""))) != "terminal":
+                continue
+            config = data.get("config") if isinstance(data.get("config"), Mapping) else {}
+            terminal_nodes.append(
+                {
+                    "id": node.id,
+                    "in_section": node.id in node_ids,
+                    "inputs": [port.id for port in node.inputs],
+                    "session_id": str(config.get("session_id", "")),
+                    "terminal_widget_id": str(config.get("terminal_widget_id", "")),
+                }
+            )
+        self.log(
+            "section diagnostic "
+            + json.dumps(
+                {
+                    "section": section.id,
+                    "section_nodes": list(node_ids),
+                    "binding_nodes": list(section_binding.node_ids) if section_binding else [],
+                    "terminal_nodes": terminal_nodes,
+                    "widget_targets": list(self.graph.widget_target_ids()),
+                },
+                sort_keys=True,
+            )
+        )
+
+    def run_action_slot(self, action_id: str, command: str | None = None) -> object:
+        if self.graph is None:
+            return {"action_id": action_id, "ran": 0}
+        sections = self.sections_for_action_target(action_id)
+        if not sections:
+            self.mark(f"no sections assigned to {action_id}")
+            return {"action_id": action_id, "ran": 0}
+        events: list[str] = []
+        for section in sections:
+            _, section_command = self.section_action_config(section)
+            command_s = str(command or section_command or "run").strip() or "run"
+            self.log_section_runtime_diagnostic(section)
+            try:
+                event = self.graph.run_section_runtime(section.id, command_s)
+            except Exception as exc:
+                self.log(f"action slot {action_id} section {section.id} failed: {exc}")
+                continue
+            events.append(event.event)
+            self.log(
+                "section result "
+                + json.dumps(
+                    {
+                        "action_id": action_id,
+                        "section": section.id,
+                        "command": command_s,
+                        "event": event.event,
+                        "data": event.data or {},
+                    },
+                    sort_keys=True,
+                )
+            )
+            self.log_runtime_tail()
+        self.refresh_runtime_status()
+        self.mark(f"{action_id} ran {len(events)} assigned section(s)")
+        return {"action_id": action_id, "ran": len(events), "events": events}
+
+    def action_slot_callback(self, action_id: str, command: str) -> object:
+        return self.run_action_slot(action_id, command)
+
+    def cleanup_runtime(self) -> None:
+        if self.graph is None:
+            return
+        result = self.graph.cleanup_managed_runtime()
+        self.log(f"managed runtime cleanup: {json.dumps(result, sort_keys=True)}")
+        self.refresh_runtime_status()
+        self.mark("managed runtime cleaned up")
+
+    def append_sample_outputs(self) -> None:
+        if self.main_output_log is not None:
+            self.main_output_log.append_line("Main output sample: hello from the playground.")
+        if self.review_output_log is not None:
+            self.review_output_log.append_line("Reviewer output sample: this would be agent/reviewer text.")
+        if self.message_log is not None:
+            self.message_log.append_line("Parsed message sample: @type report")
+        self.mark("sample output appended")
+
+    def send_direct_terminal_test(self) -> None:
+        if self.playground_terminal is None:
+            self.mark("direct terminal test skipped: no terminal widget")
+            return
+        delivered = self.playground_terminal.send_line("echo direct terminal widget test")
+        self.log(f"direct terminal widget send delivered={delivered}")
+        self.mark(f"direct terminal widget send delivered={delivered}")
+
+    def clear_logs(self) -> None:
+        for target in (self.main_output_log, self.review_output_log, self.message_log, self.event_log):
+            if target is not None:
+                target.clear()
+        self.mark("logs cleared")
+
+    def dump_bindings(self, *, announce: bool = True) -> None:
+        if self.graph is None:
+            return
+        self.graph.refresh_binding_targets_from_host(self.host_window)
+        payload = {
+            "binding_targets": self.graph.binding_target_ids(),
+            "widget_targets": self.graph.widget_target_ids(),
+            "action_targets": self.graph.action_target_ids(),
+        }
+        self.log(json.dumps(payload, sort_keys=True))
+        if announce:
+            self.mark("binding registry dumped to event log")
+
+    def log_runtime_tail(self) -> None:
+        if self.graph is None or self.graph.managed_runtime is None:
+            return
+        events = self.graph.managed_runtime.snapshot().get("events", [])
+        tail = events[-6:] if isinstance(events, list) else []
+        for event in tail:
+            self.log(f"runtime event {json.dumps(event, sort_keys=True)}")
+
+    def snapshot_graph(self) -> None:
+        if self.graph is None:
+            return
+        data = self.graph.to_graph_data()
+        self.log(
+            json.dumps(
+                {
+                    "nodes": len(data.get("nodes", [])),
+                    "edges": len(data.get("edges", [])),
+                    "sections": len(data.get("sections", [])),
+                    "viewport": data.get("viewport"),
+                },
+                sort_keys=True,
+            )
+        )
+        self.mark("graph snapshot written to event log")
+
+    def reset_blank_graph(self) -> None:
+        if self.graph is None:
+            return
+        self.graph.set_nodes([])
+        self.graph.set_edges([])
+        self.graph.set_sections([])
+        self.selected_section_id = None
+        self.refresh_counts()
+        self.refresh_selection()
+        self.refresh_runtime_status()
+        self.mark("graph cleared")
+
+    def register_binding_targets(self) -> None:
+        if self.graph is None:
+            return
+        formats = ("text", "json", "repr", "message_body", "raw")
+        if self.prompt_input is not None:
+            self.graph.register_binding_target(
+                "v3-prompt-input",
+                label="Prompt Input",
+                target_type="text_input",
+                widget_type="text_input",
+                widget=self.prompt_input,
+                supported_update_modes=("set",),
+                default_update_mode="set",
+                supported_port_profiles=("text", "terminal_input"),
+                default_port_profile="text",
+                supported_formats=formats,
+            )
+        if self.review_input is not None:
+            self.graph.register_binding_target(
+                "v3-review-input",
+                label="Reviewer Prompt Input",
+                target_type="text_input",
+                widget_type="text_input",
+                widget=self.review_input,
+                supported_update_modes=("set",),
+                default_update_mode="set",
+                supported_port_profiles=("text", "message"),
+                default_port_profile="text",
+                supported_formats=formats,
+            )
+        if self.scratch_input is not None:
+            self.graph.register_binding_target(
+                "v3-scratch-input",
+                label="Scratch Text Input",
+                target_type="text_input",
+                widget_type="text_input",
+                widget=self.scratch_input,
+                supported_update_modes=("set",),
+                default_update_mode="set",
+                supported_port_profiles=("text", "json"),
+                default_port_profile="text",
+                supported_formats=formats,
+            )
+        for target_id, label, widget, profiles in (
+            ("v3-main-output-log", "Main Output Log", self.main_output_log, ("terminal_output", "text", "json", "message")),
+            ("v3-review-output-log", "Reviewer Output Log", self.review_output_log, ("terminal_output", "text", "json", "message")),
+            ("v3-message-log", "Parsed Message Log", self.message_log, ("message", "json", "text", "event")),
+            ("v3-event-log", "Event Log", self.event_log, ("event", "json", "text", "message", "terminal_output")),
+        ):
+            if widget is not None:
+                self.graph.register_binding_target(
+                    target_id,
+                    label=label,
+                    target_type="log",
+                    widget_type="log_view",
+                    widget=widget,
+                    supported_update_modes=("append", "set"),
+                    default_update_mode="append",
+                    supported_port_profiles=profiles,
+                    default_port_profile=profiles[0],
+                    supported_formats=formats,
+                )
+        if self.playground_terminal is not None:
+            self.graph.register_binding_target(
+                "v3-playground-terminal",
+                label="Playground Terminal",
+                target_type="terminal",
+                widget_type="terminal",
+                widget=self.playground_terminal,
+                supported_update_modes=("append", "set"),
+                default_update_mode="append",
+                supported_port_profiles=("terminal_output", "text"),
+                default_port_profile="terminal_output",
+                supported_formats=("terminal_text", "text", "repr"),
+                data={"runtime_object_id": "v3-playground-terminal"},
+            )
+        for action_id, label in NODE_BINDING_ACTION_BUTTON_TARGETS:
+            self.graph.register_binding_target(
+                action_id,
+                label=label,
+                target_type="button",
+                action_type="button",
+                callback=self.binding_action,
+                supported_commands=("run", "stop", "reset", "replay"),
+                default_command="run",
+            )
+        for action_id, fallback_label in NODE_BINDING_ACTION_SLOT_TARGETS:
+            button = self.action_slot_buttons.get(action_id)
+            self.graph.register_binding_target(
+                action_id,
+                label=button.text if button is not None else fallback_label,
+                target_type="button",
+                action_type="button",
+                callback=self.action_slot_callback,
+                supported_commands=("run", "stop", "reset", "replay"),
+                default_command="run",
+            )
+        self.dump_bindings(announce=False)
+        self.refresh_runtime_status()
+
+    def build(self) -> None:
+        page_style = {"width": "100%", "height": "100%", "min_width": 0, "min_height": 0}
+        panel_style = {
+            **CARD_STYLE,
+            "width": "100%",
+            "height": "100%",
+            "min_width": 0,
+            "min_height": 0,
+            "align_self": "stretch",
+            "overflow_y": "auto",
+        }
+        log_style = {
+            "width": "100%",
+            "flex_shrink": 0,
+            "font_family": "Consolas",
+            "font_size": 12,
+            "background": "#070a0f",
+            "border_color": "#263347",
+            "border_radius": 6,
+        }
+        with dg.Tabs(
+            value="objects",
+            id="v3-binding-playground-tabs",
+            on_change=self.on_tab_change,
+            style=page_style,
+        ):
+            with dg.Tab("Node Editor", value="editor", style=page_style):
+                with dg.Panel("Blank Node Editor", style={**panel_style, "overflow_y": "hidden"}):
+                    if NODE_BINDING_NO_GRAPH:
+                        dg.Label("NodeGraph disabled for layout isolation", class_="subtle")
+                        dg.Button("Native placeholder button")
+                        dg.LogView(
+                            ["No HtmlReport/WebView was created in this run."],
+                            rows=6,
+                            follow=True,
+                            wrap=True,
+                            style=log_style,
+                        )
+                    else:
+                        self.graph = dg.NodeGraph(
+                            [],
+                            [],
+                            sections=[],
+                            templates=NODE_BINDING_TEMPLATES,
+                            on_graph_event=self.on_graph_event,
+                            on_node_select=self.on_select,
+                            on_node_move=self.on_move,
+                            enable_zoom=True,
+                            show_port_labels=True,
+                            show_subtitles=True,
+                            show_editor_chrome=True,
+                            editor_title="Binding Playground",
+                            editor_actions=(
+                                {"id": "run_node", "label": "Run node", "icon": "Node", "wide": True, "separator_before": True},
+                                {"id": "run_section", "label": "Run section", "icon": "Section", "wide": True},
+                                {"id": "cleanup_runtime", "label": "Cleanup runtime", "icon": "X", "separator_before": True},
+                                {"id": "refresh_targets", "label": "Refresh targets", "icon": "Refresh", "wide": True},
+                                {"id": "snapshot", "label": "Snapshot", "icon": "S", "separator_before": True},
+                                {"id": "reset_graph", "label": "Reset graph", "icon": "Reset", "wide": True},
+                            ),
+                            width=1020,
+                            height=680,
+                            style={"width": "100%", "flex_grow": 1, "min_height": 640, "border_color": "#263347", "border_radius": 8},
+                        )
+
+            with dg.Tab("GUI Objects", value="objects", style=page_style):
+                with dg.Panel("Bindable GUI Controls", style=panel_style):
+                    dg.Label("Add Widget Source, Widget Sink, Text Input, Parser, Terminal, or Section nodes in the editor tab, then assign them to these real GUI targets.", class_="subtle")
+                    self.runtime_status_label = dg.Label("Runtime: idle", class_="subtle")
+                    self.target_status_label = dg.Label("Discovered Actions: loading", class_="subtle")
+                    dg.Label("Text Sources", style={"font_weight": "bold"})
+                    self.prompt_input = dg.TextInput(
+                        "echo hello from prompt input",
+                        id="v3-prompt-input",
+                        placeholder="Prompt text source...",
+                        on_change=lambda value: self.mark(f"Prompt Input changed: {value}"),
+                        style={"width": "100%", "height": 34},
+                    )
+                    self.review_input = dg.TextInput(
+                        "Please review the implementation.",
+                        id="v3-review-input",
+                        placeholder="Reviewer prompt source...",
+                        on_change=lambda value: self.mark(f"Reviewer Prompt changed: {value}"),
+                        style={"width": "100%", "height": 34},
+                    )
+                    self.scratch_input = dg.TextInput(
+                        '{"kind": "scratch", "ok": true}',
+                        id="v3-scratch-input",
+                        placeholder="Scratch JSON/text source...",
+                        on_change=lambda value: self.mark(f"Scratch changed: {value}"),
+                        style={"width": "100%", "height": 34},
+                    )
+                    dg.Label("Action Buttons", style={"font_weight": "bold"})
+                    with dg.FlowLayout(gap=6, row_gap=6):
+                        dg.Button("Run Section Target", id="v3-run-section-action-button", on_click=lambda: self.binding_action("v3-run-section-action-button", "run"))
+                        self.action_slot_buttons["v3-action-slot-a"] = dg.Button("Action Slot A", id="v3-action-slot-a", on_click=lambda: self.run_action_slot("v3-action-slot-a"))
+                        self.action_slot_buttons["v3-action-slot-b"] = dg.Button("Action Slot B", id="v3-action-slot-b", on_click=lambda: self.run_action_slot("v3-action-slot-b"))
+                        self.action_slot_buttons["v3-action-slot-c"] = dg.Button("Action Slot C", id="v3-action-slot-c", on_click=lambda: self.run_action_slot("v3-action-slot-c"))
+                        self.action_slot_buttons["v3-action-slot-d"] = dg.Button("Action Slot D", id="v3-action-slot-d", on_click=lambda: self.run_action_slot("v3-action-slot-d"))
+                        dg.Button("Run Selection", id="v3-run-selection-button", on_click=lambda: self.binding_action("v3-run-selection-button", "run"))
+                        dg.Button("Send Prompt", id="v3-send-prompt-button", on_click=lambda: self.binding_action("v3-send-prompt-button", "run"))
+                        dg.Button("Direct Terminal Test", id="v3-direct-terminal-test-button", on_click=self.send_direct_terminal_test)
+                        dg.Button("Append Samples", id="v3-append-samples-button", on_click=self.append_sample_outputs)
+                        dg.Button("Snapshot Target", id="v3-snapshot-button", on_click=lambda: self.binding_action("v3-snapshot-button", "run"))
+                        dg.Button("Dump Bindings", id="v3-dump-bindings-button", on_click=self.dump_bindings)
+                        dg.Button("Clear Logs", id="v3-clear-logs-button", on_click=self.clear_logs)
+                    dg.Label("Main Output Log", style={"font_weight": "bold"})
+                    self.main_output_log = dg.LogView(["Main output log ready."], id="v3-main-output-log", rows=4, follow=True, wrap=True, style=log_style)
+                    dg.Label("Reviewer Output Log", style={"font_weight": "bold"})
+                    self.review_output_log = dg.LogView(["Reviewer output log ready."], id="v3-review-output-log", rows=4, follow=True, wrap=True, style=log_style)
+                    dg.Label("Parsed Message Log", style={"font_weight": "bold"})
+                    self.message_log = dg.LogView(["Parsed message log ready."], id="v3-message-log", rows=4, follow=True, wrap=True, style=log_style)
+                    dg.Label("Event Log", style={"font_weight": "bold"})
+                    self.event_log = dg.LogView(["Binding playground ready."], id="v3-event-log", rows=6, follow=True, wrap=True, style=log_style)
+
+            with dg.Tab("Terminal", value="terminal", style=page_style):
+                with dg.Panel("Terminal Target", style=panel_style):
+                    dg.Label("This WebView-backed terminal is a real bindable widget target for Terminal and Widget Sink nodes.", class_="subtle")
+                    self.playground_terminal = dg.Terminal(
+                        "cmd.exe",
+                        id="v3-playground-terminal",
+                        title="Playground Terminal",
+                        prefer_pty=True,
+                        height=420,
+                        style={"width": "100%", "height": 420, "min_height": 220, "border_color": "#263347", "border_radius": 6},
+                    )
+
+        self.register_binding_targets()
+        self.refresh_counts()
+        self.refresh_selection()
+        self.refresh_runtime_status()
+        if self.graph is not None:
+            self.graph.refresh_binding_targets_from_host(self.host_window)
+            self.log(f"startup action targets: {', '.join(self.graph.action_target_ids())}")
+        self.refresh_target_status()
+
 @dg.component
 def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
     global win, status, progress, scatter_stats_summary, scatter, table
@@ -3293,7 +3871,7 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
     global html_report_view, html_report_status
     global histogram_latency, histogram_score, histogram_revenue, histogram_residual
     global histogram_tick_label
-    global confirm_modal, about_modal
+    global confirm_modal, about_modal, binding_playground
 
     v4_log: dg.LogView | None = None
     v4_palette: dg.CommandPalette | None = None
@@ -3373,7 +3951,7 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
             dg.NavItem("Runtime", page="runtime")
             dg.NavItem("Debug", page="debug")
             dg.NavItem("Styling", page="styling")
-            dg.NavItem("Layout", page="layout")
+            dg.NavItem("Node Binding", page="layout")
             dg.Spacer()
             dg.Separator()
             dg.Label("Responsive grids, CSS, overlays, tables, and live native commands.", class_="subtle")
@@ -4289,23 +4867,9 @@ def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
                         dg.Image(demo_image_path, fit="cover", height=170, style={"border_color": "accent", "border_radius": 10})
                         dg.Label("CSS, inline style, pseudo states, and live style patches.", class_="subtle")
 
-            with dg.Page("layout", title="Layout"):
-                with dg.GridLayout(columns=3, min_column_width=300, gap=GRID_GAP, style=GRID_STYLE):
-                    with dg.Panel("Flow wrap", style=CARD_STYLE):
-                        with dg.FlowLayout(gap=8, row_gap=8):
-                            for label in ["Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta", "Eta"]:
-                                dg.Button(label)
-                        dg.Label("FlowLayout wraps intrinsic controls without clipping.", class_="subtle")
-                    with dg.Panel("Vertical scroll", class_="scroll-card", style=CARD_STYLE):
-                        for index in range(1, 18):
-                            dg.Label(f"Scrollable row {index:02d}")
-                        dg.Button("Last action")
-                    with dg.Panel("Composition", style=CARD_STYLE):
-                        dg.Label("GridLayout chooses columns from available width.", class_="subtle")
-                        dg.Label("Panels use bounded padding and overflow rules.", class_="subtle")
-                        dg.Label("Rounded controls get paint breathing room in titled panels.", class_="subtle")
-                        dg.ProgressBar(0.72, show_value=True)
-
+            with dg.Page("layout", title="Node Binding"):
+                binding_playground = NodeGraphBindingPlayground(win)
+                binding_playground.build()
 
     with dg.StatusBar(height=40):
         status = dg.TextInput("Ready", placeholder="status", style={"width": 360})
@@ -4454,3 +5018,5 @@ finally:
         stats_thread.join(timeout=0.25)
     if stream_controller is not None:
         stream_controller.stop(timeout=0.25)
+
+

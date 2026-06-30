@@ -7,7 +7,7 @@ rem Optional first argument: full path to the Python executable to build against
 cd /d "%~dp0"
 
 if "%~1"=="" (
-    set "PYTHON_EXE=C:\Users\nkocur\AppData\Local\Programs\Python\Python311\python.exe"
+    set "PYTHON_EXE=C:\Users\nkocur\AppData\Local\Microsoft\WindowsApps\python3.12.exe"
 ) else (
     set "PYTHON_EXE=%~1"
 )
@@ -84,3 +84,4 @@ exit /b 0
 echo.
 echo Rebuild/copy failed.
 exit /b 1
+

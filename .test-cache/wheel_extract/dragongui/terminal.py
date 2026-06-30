@@ -1,18 +1,20 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import atexit
 import base64
+import codecs
 import hashlib
 from importlib import resources
 import json
 import os
+from collections import deque
 import socket
 import struct
 import subprocess
 import threading
 import time
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from html import escape
 from pathlib import Path
 from typing import Any
@@ -21,6 +23,7 @@ from .widgets import HtmlReport, _AUTO_PARENT, Container
 
 _XTERM_VERSION = "5.5.0"
 _ASSET_PACKAGE = "dragongui.assets.terminal"
+_TERMINAL_EVENT_SCHEMA_VERSION = 1
 
 
 @dataclass(slots=True)
@@ -57,6 +60,49 @@ class TerminalCommand:
         return subprocess.list2cmdline(self.argv)
 
 
+@dataclass(frozen=True, slots=True)
+class TerminalEvent:
+    """Structured terminal bridge event for lifecycle and output consumers."""
+
+    event: str
+    session_id: int | None = None
+    data: str | None = None
+    schema_version: int = _TERMINAL_EVENT_SCHEMA_VERSION
+    timestamp: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "schema_version": self.schema_version,
+            "event": self.event,
+            "timestamp": self.timestamp,
+        }
+        if self.session_id is not None:
+            payload["session_id"] = self.session_id
+        if self.data is not None:
+            payload["data"] = self.data
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
+class TerminalTranscriptEntry:
+    """Append-only terminal transcript chunk independent of rendered xterm state."""
+
+    stream: str
+    data: str
+    session_id: int | None = None
+    timestamp: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict[str, object]:
+        payload: dict[str, object] = {
+            "timestamp": self.timestamp,
+            "stream": self.stream,
+            "data": self.data,
+        }
+        if self.session_id is not None:
+            payload["session_id"] = self.session_id
+        return payload
+
+
 class _SubprocessSession:
     def __init__(
         self,
@@ -71,6 +117,7 @@ class _SubprocessSession:
         merged_env = os.environ.copy()
         if env:
             merged_env.update({str(key): str(value) for key, value in env.items()})
+        self._decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
         self.process = subprocess.Popen(
             command.argv,
             cwd=cwd,
@@ -85,7 +132,7 @@ class _SubprocessSession:
         if self.process.stdout is None:
             return ""
         data = self.process.stdout.read(4096)
-        return data.decode(errors="replace") if data else ""
+        return self._decoder.decode(data) if data else ""
 
     def write(self, data: str) -> None:
         if self.process.stdin is None:
@@ -186,6 +233,10 @@ class TerminalBridge:
         cols: int = 100,
         rows: int = 30,
         prefer_pty: bool = True,
+        on_output: Callable[[str], object] | None = None,
+        on_event: Callable[[TerminalEvent], object] | None = None,
+        capture_transcript: bool = True,
+        max_transcript_entries: int = 10000,
     ) -> None:
         self.command = TerminalCommand.from_value(command, args)
         self.cwd = None if cwd is None else str(cwd)
@@ -193,11 +244,20 @@ class TerminalBridge:
         self.cols = max(int(cols), 2)
         self.rows = max(int(rows), 1)
         self.prefer_pty = bool(prefer_pty)
+        self.on_output = on_output
+        self.on_event = on_event
+        self.capture_transcript = bool(capture_transcript)
         self._server: socket.socket | None = None
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._session_lock = threading.Lock()
         self._session: Any | None = None
+        self._session_id: int | None = None
+        self._session_seq = 0
+        self._pending_input: deque[str] = deque()
+        self._event_lock = threading.Lock()
+        self._events: deque[TerminalEvent] = deque()
+        self._transcript: deque[TerminalTranscriptEntry] = deque(maxlen=max(1, int(max_transcript_entries)))
         self._port: int | None = None
         self._closed = False
         self.status = "not started"
@@ -208,6 +268,12 @@ class TerminalBridge:
         if self._port is None:
             raise RuntimeError("TerminalBridge has not been started")
         return f"ws://127.0.0.1:{self._port}/terminal"
+
+    @property
+    def session_active(self) -> bool:
+        """Whether a terminal process/session is currently attached and alive."""
+        with self._session_lock:
+            return self._session is not None and self._session.is_alive()
 
     def start(self) -> "TerminalBridge":
         if self._thread is not None:
@@ -222,6 +288,7 @@ class TerminalBridge:
         self.status = f"listening on 127.0.0.1:{self._port}"
         self._thread = threading.Thread(target=self._serve, name="DragonGuiTerminalBridge", daemon=True)
         self._thread.start()
+        self._record_event("bridge_started")
         return self
 
     def stop(self) -> None:
@@ -243,8 +310,72 @@ class TerminalBridge:
             except OSError:
                 pass
         self.status = "stopped"
+        self._record_event("bridge_stopped")
 
     close = stop
+    dispose = stop
+
+    def send_text(self, text: object) -> bool:
+        """Write text to the active terminal session.
+
+        If the WebView has not connected and no process session exists yet,
+        input is queued and flushed when the session is spawned. The method
+        still returns False in that case because the write was not delivered
+        synchronously.
+        """
+        data = str(text)
+        with self._session_lock:
+            session = self._session
+            session_id = self._session_id
+            alive = session is not None and session.is_alive()
+        if not alive:
+            with self._session_lock:
+                if not self._closed and self._thread is not None:
+                    self._pending_input.append(data)
+            return False
+        session.write(data)
+        self._record_transcript("input", data, session_id)
+        return True
+
+    def send_line(self, text: object = "") -> bool:
+        """Write text followed by a newline to the active terminal session."""
+        newline = "\r\n" if os.name == "nt" else "\n"
+        return self.send_text(f"{text}{newline}")
+
+    @property
+    def transcript(self) -> list[dict[str, object]]:
+        with self._event_lock:
+            return [entry.to_dict() for entry in self._transcript]
+
+    @property
+    def events(self) -> list[dict[str, object]]:
+        with self._event_lock:
+            return [event.to_dict() for event in self._events]
+
+    def drain_events(self) -> list[dict[str, object]]:
+        with self._event_lock:
+            events = [event.to_dict() for event in self._events]
+            self._events.clear()
+            return events
+
+    def _record_event(self, event: str, *, data: str | None = None, session_id: int | None = None) -> None:
+        item = TerminalEvent(event=event, session_id=session_id, data=data)
+        with self._event_lock:
+            self._events.append(item)
+        if self.on_event is not None:
+            self.on_event(item)
+
+    def _record_transcript(self, stream: str, data: str, session_id: int | None) -> None:
+        if not data:
+            return
+        if self.capture_transcript:
+            item = TerminalTranscriptEntry(stream=stream, data=data, session_id=session_id)
+            with self._event_lock:
+                self._transcript.append(item)
+        if stream == "output":
+            self._record_event("output", data=data, session_id=session_id)
+            if self.on_output is not None:
+                self.on_output(data)
 
     def _serve(self) -> None:
         assert self._server is not None
@@ -308,6 +439,8 @@ class TerminalBridge:
         with self._session_lock:
             if self._session is not None and self._session.is_alive():
                 return self._session
+            self._session_seq += 1
+            session_id = self._session_seq
             session: Any | None = None
             if self.prefer_pty and os.name == "nt":
                 try:
@@ -332,22 +465,35 @@ class TerminalBridge:
                 if "PTY unavailable" not in self.status:
                     self.status = f"subprocess session started: {self.command.label}"
             self._session = session
+            self._session_id = session_id
+            pending_input = tuple(self._pending_input)
+            self._pending_input.clear()
+            self._record_event("session_started", session_id=session_id)
+            for data in pending_input:
+                session.write(data)
+                self._record_transcript("input", data, session_id)
             return session
 
     def _pump_output(self, client: socket.socket, session: Any, done: threading.Event) -> None:
+        with self._session_lock:
+            session_id = self._session_id if session is self._session else None
         try:
             while not self._stop.is_set() and not done.is_set() and session.is_alive():
                 data = session.read()
                 if data:
+                    self._record_transcript("output", data, session_id)
                     self._send_text(client, data)
                 else:
                     time.sleep(0.01)
         except Exception:
             pass
         finally:
+            self._record_event("session_ended", session_id=session_id)
             done.set()
 
     def _pump_input(self, client: socket.socket, session: Any, done: threading.Event) -> None:
+        with self._session_lock:
+            session_id = self._session_id if session is self._session else None
         while not self._stop.is_set() and not done.is_set():
             try:
                 message = self._read_message(client)
@@ -361,7 +507,9 @@ class TerminalBridge:
                 continue
             kind = payload.get("type")
             if kind == "input":
-                session.write(str(payload.get("data", "")))
+                data = str(payload.get("data", ""))
+                session.write(data)
+                self._record_transcript("input", data, session_id)
             elif kind == "resize":
                 cols = int(payload.get("cols", self.cols))
                 rows = int(payload.get("rows", self.rows))
@@ -421,7 +569,7 @@ class TerminalBridge:
         if opcode == 9:
             self._send_frame(client, data, opcode=10)
             return "{}"
-        return data.decode(errors="replace")
+        return data.decode("utf-8", errors="replace")
 
     def _recv_exact(self, client: socket.socket, size: int) -> bytes:
         data = b""
@@ -433,7 +581,7 @@ class TerminalBridge:
         return data
 
     def _send_text(self, client: socket.socket, text: str) -> None:
-        self._send_frame(client, text.encode(errors="replace"), opcode=1)
+        self._send_frame(client, text.encode("utf-8", errors="replace"), opcode=1)
 
     def _send_frame(self, client: socket.socket, payload: bytes, *, opcode: int = 1) -> None:
         header = bytearray([0x80 | opcode])
@@ -460,6 +608,7 @@ class Terminal(HtmlReport):
         self,
         command: str | Sequence[object] = "powershell.exe",
         *,
+        bridge: TerminalBridge | None = None,
         args: Sequence[object] = (),
         cwd: str | Path | None = None,
         env: Mapping[str, str] | None = None,
@@ -467,6 +616,10 @@ class Terminal(HtmlReport):
         cols: int = 100,
         rows: int = 30,
         prefer_pty: bool = True,
+        on_output: Callable[[str], object] | None = None,
+        on_event: Callable[[TerminalEvent], object] | None = None,
+        capture_transcript: bool = True,
+        max_transcript_entries: int = 10000,
         xterm_version: str = _XTERM_VERSION,
         width: int | float | None = None,
         height: int | float | None = 520,
@@ -477,23 +630,30 @@ class Terminal(HtmlReport):
         tooltip: str | None = None,
         parent: Container | None | object = _AUTO_PARENT,
     ) -> None:
-        self.bridge = TerminalBridge(
-            command,
-            args=args,
-            cwd=cwd,
-            env=env,
-            cols=cols,
-            rows=rows,
-            prefer_pty=prefer_pty,
-        ).start()
+        if bridge is None:
+            self.bridge = TerminalBridge(
+                command,
+                args=args,
+                cwd=cwd,
+                env=env,
+                cols=cols,
+                rows=rows,
+                prefer_pty=prefer_pty,
+                on_output=on_output,
+                on_event=on_event,
+                capture_transcript=capture_transcript,
+                max_transcript_entries=max_transcript_entries,
+            ).start()
+        else:
+            self.bridge = bridge.start()
         self.command = self.bridge.command
         self.title = title or self.command.label
         html = _terminal_html(
             title=self.title,
             ws_url=self.bridge.url,
             xterm_version=xterm_version,
-            cols=cols,
-            rows=rows,
+            cols=self.bridge.cols,
+            rows=self.bridge.rows,
         )
         super().__init__(
             html=html,
@@ -513,7 +673,35 @@ class Terminal(HtmlReport):
         """Stop the terminal bridge and the wrapped process."""
         self.bridge.stop()
 
+    def start(self) -> "Terminal":
+        """Start the terminal bridge if it has not already been started."""
+        self.bridge.start()
+        return self
+
+    def send_text(self, text: object) -> bool:
+        """Write text to the active terminal session, returning False when no session is attached."""
+        return self.bridge.send_text(text)
+
+    def send_line(self, text: object = "") -> bool:
+        """Write text followed by a newline to the active terminal session."""
+        return self.bridge.send_line(text)
+
+    @property
+    def transcript(self) -> list[dict[str, object]]:
+        """Captured terminal input/output chunks independent of rendered xterm state."""
+        return self.bridge.transcript
+
+    @property
+    def events(self) -> list[dict[str, object]]:
+        """Structured lifecycle/output events captured by the terminal bridge."""
+        return self.bridge.events
+
+    def drain_events(self) -> list[dict[str, object]]:
+        """Return and clear queued terminal bridge events."""
+        return self.bridge.drain_events()
+
     close = stop
+    dispose = stop
 
 def _terminal_html(*, title: str, ws_url: str, xterm_version: str, cols: int, rows: int) -> str:
     del xterm_version
@@ -564,8 +752,10 @@ def _terminal_html(*, title: str, ws_url: str, xterm_version: str, cols: int, ro
         cols: config.cols,
         rows: config.rows,
         cursorBlink: true,
-        convertEol: true,
-        fontFamily: 'Consolas, Courier New, monospace',
+        convertEol: false,
+        customGlyphs: false,
+        rescaleOverlappingGlyphs: false,
+        fontFamily: 'Cascadia Mono, Cascadia Code, Consolas, DejaVu Sans Mono, Noto Sans Mono, Segoe UI Symbol, Segoe UI Emoji, Apple Color Emoji, Noto Color Emoji, Courier New, monospace',
         fontSize: 15,
         letterSpacing: 0,
         scrollback: 5000,
@@ -575,58 +765,54 @@ def _terminal_html(*, title: str, ws_url: str, xterm_version: str, cols: int, ro
       term.loadAddon(fit);
       term.open(host);
       let socket = null;
-      function syncRenderSurface() {{
-        const dimensions = term._core && term._core._renderService && term._core._renderService.dimensions;
-        if (!dimensions || !dimensions.css || !dimensions.css.canvas) {{
-          return;
-        }}
-        const width = dimensions.css.canvas.width + 'px';
-        const height = dimensions.css.canvas.height + 'px';
-        const screen = host.querySelector('.xterm-screen');
-        if (screen) {{
-          screen.style.width = width;
-          screen.style.height = height;
-        }}
-        for (const canvas of host.querySelectorAll('.xterm-screen canvas')) {{
-          canvas.style.width = width;
-          canvas.style.height = height;
-        }}
-      }}
       function fitAndNotify() {{
         fit.fit();
-        syncRenderSurface();
         if (socket && socket.readyState === WebSocket.OPEN) {{
           socket.send(JSON.stringify({{ type: 'resize', cols: term.cols, rows: term.rows }}));
         }}
       }}
-      requestAnimationFrame(() => requestAnimationFrame(() => {{
+      function refreshRenderSurface() {{
         fitAndNotify();
+        if (typeof term.clearTextureAtlas === 'function') {{
+          term.clearTextureAtlas();
+        }}
+        term.refresh(0, Math.max(term.rows - 1, 0));
+      }}
+      function scheduleRenderRefresh(delay = 0) {{
+        setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(() => {{
+          refreshRenderSurface();
+          term.focus();
+        }})), delay);
+      }}
+      requestAnimationFrame(() => requestAnimationFrame(() => {{
+        refreshRenderSurface();
         term.focus();
       }}));
 
       socket = new WebSocket(config.wsUrl);
       socket.addEventListener('open', () => {{
-        fitAndNotify();
+        refreshRenderSurface();
+        scheduleRenderRefresh(0);
       }});
-      let sawFirstOutput = false;
-      function refreshAfterStartupOutput() {{
-        requestAnimationFrame(() => requestAnimationFrame(() => {{
-          fitAndNotify();
-          term.refresh(0, Math.max(term.rows - 1, 0));
-          term.focus();
-        }}));
-      }}
+      let startupRefreshes = 0;
+      let inputSurfacePrimed = false;
       socket.addEventListener('message', (event) => {{
         term.write(event.data, () => {{
-          if (!sawFirstOutput) {{
-            sawFirstOutput = true;
-            setTimeout(refreshAfterStartupOutput, 100);
+          if (startupRefreshes < 10) {{
+            startupRefreshes += 1;
+            scheduleRenderRefresh(25);
+            scheduleRenderRefresh(125);
           }}
         }});
       }});
-      socket.addEventListener('close', () => term.writeln('\\r\\n[terminal bridge closed]'));
-      socket.addEventListener('error', () => term.writeln('\\r\\n[terminal bridge connection failed]'));
+      socket.addEventListener('close', () => term.write('\\r\\n[terminal bridge closed]\\r\\n'));
+      socket.addEventListener('error', () => term.write('\\r\\n[terminal bridge connection failed]\\r\\n'));
       term.onData((data) => {{
+        if (!inputSurfacePrimed) {{
+          inputSurfacePrimed = true;
+          refreshRenderSurface();
+          scheduleRenderRefresh(50);
+        }}
         if (socket.readyState === WebSocket.OPEN) {{
           socket.send(JSON.stringify({{ type: 'input', data }}));
         }}
