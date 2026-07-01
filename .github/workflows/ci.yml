@@ -89,10 +89,13 @@ jobs:
       - name: Install maturin
         run: pip install maturin
 
-      - name: maturin develop
-        run: python -m maturin develop --manifest-path native/Cargo.toml
+      - name: Build wheel
+        run: python -m maturin build --manifest-path native/Cargo.toml --out dist
         env:
           PYO3_PYTHON: ${{ steps.python.outputs.python-path }}
+
+      - name: Install built wheel
+        run: pip install --no-index --find-links dist dragongui
 
       - name: Import smoke test
         run: >
@@ -135,10 +138,13 @@ jobs:
       - name: Install maturin
         run: pip install maturin
 
-      - name: maturin develop
-        run: python -m maturin develop --manifest-path native/Cargo.toml
+      - name: Build wheel
+        run: python -m maturin build --manifest-path native/Cargo.toml --out dist
         env:
           PYO3_PYTHON: ${{ steps.python.outputs.python-path }}
+
+      - name: Install built wheel
+        run: pip install --no-index --find-links dist dragongui
 
       - name: Import smoke test
         run: >
