@@ -99,12 +99,10 @@ jobs:
 
       - name: Import smoke test
         run: >
-          python -c "
-          import dragongui as dg;
+          python -c "import dragongui as dg;
           info = dg.backend_info();
           print(info);
-          assert info['native'], f'Expected native=True: {info}'
-          "
+          assert info['native'], f'Expected native=True: {info}'"
 
   # -------------------------------------------------------------------------
   # macOS: build the native extension, import smoke, then window smoke.
@@ -148,23 +146,19 @@ jobs:
 
       - name: Import smoke test
         run: >
-          python -c "
-          import dragongui as dg;
+          python -c "import dragongui as dg;
           info = dg.backend_info();
           print(info);
-          assert info['native'], f'Expected native=True: {info}'
-          "
+          assert info['native'], f'Expected native=True: {info}'"
 
       - name: Window smoke test (macOS main-thread path)
         run: >
-          python -c "
-          import dragongui as dg;
+          python -c "import dragongui as dg;
           app = dg.App();
           win = dg.Window('CI Smoke', width=400, height=300);
           result = app.run(win);
           print(result);
           assert result['status'] == 'ok', f'Expected ok: {result}';
-          assert result['renderer'] == 'wgpu', f'Expected wgpu: {result}'
-          "
+          assert result['renderer'] == 'wgpu', f'Expected wgpu: {result}'"
         env:
           DRAGONGUI_SMOKE_FRAMES: "3"
