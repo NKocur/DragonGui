@@ -5335,7 +5335,7 @@ def test_scatter_example_runs_from_source_tree() -> None:
     env = os.environ.copy()
     env["DRAGONGUI_SMOKE_FRAMES"] = "3"
     result = subprocess.run(
-        [sys.executable, str(root / "examples" / "scatter_tool.py")],
+        [sys.executable, str(root / "examples" / "older" / "scatter_tool.py")],
         check=True,
         capture_output=True,
         text=True,
@@ -9345,15 +9345,18 @@ def test_terminal_bridge_queues_input_until_session_spawns(monkeypatch: pytest.M
 
     monkeypatch.setattr(terminal_module, "_SubprocessSession", FakeSession)
 
+    # send_line uses a platform-appropriate newline (\r\n on Windows, \n on POSIX).
+    queued = "echo queued" + ("\r\n" if os.name == "nt" else "\n")
+
     assert bridge.send_line("echo queued") is False
-    assert list(bridge._pending_input) == ["echo queued\r\n"]
+    assert list(bridge._pending_input) == [queued]
 
     session = bridge._spawn_session()
 
-    assert session.writes == ["echo queued\r\n"]
+    assert session.writes == [queued]
     assert bridge._pending_input == terminal_module.deque()
     assert bridge.transcript[-1]["stream"] == "input"
-    assert bridge.transcript[-1]["data"] == "echo queued\r\n"
+    assert bridge.transcript[-1]["data"] == queued
 
     bridge.stop()
 
