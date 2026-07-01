@@ -10891,7 +10891,27 @@ fn emit_rects_inner(
                             .unwrap_or_else(|| styled_accent.unwrap_or(theme.accent)),
                         accent_visual.opacity,
                     );
-                    let accent_x_inset = (2.0 * sf).min((w - bar_w).max(0.0));
+                    // Left inset of the bar is CSS-controllable via the accent
+                    // part's padding (cascaded through states), defaulting to
+                    // 2px. NavItem::accent { padding: 6px } floats the bar in a
+                    // wider gutter instead of hugging the left edge.
+                    let accent_inset_lp: f32 = {
+                        let base_inset = node
+                            .style
+                            .parts
+                            .parts
+                            .get("accent")
+                            .and_then(|p| p.layout.padding);
+                        let selected_inset =
+                            selected_part_style_for_state(&node.style, &node.id, state, "accent")
+                                .and_then(|p| p.layout.padding);
+                        let pseudo_inset =
+                            state_part_style_for_state(&node.style, &node.id, state, "accent")
+                                .and_then(|p| p.layout.padding);
+                        pseudo_inset.or(selected_inset).or(base_inset).unwrap_or(2.0)
+                    };
+                    let accent_x_inset =
+                        (accent_inset_lp.max(0.0) * sf).min((w - bar_w).max(0.0));
                     let accent_y_inset = (6.0 * sf).min(h * 0.25).max(0.0);
                     let accent_h = (h - accent_y_inset * 2.0).max(0.0);
                     let accent_rect = [x + accent_x_inset, y + accent_y_inset, bar_w, accent_h];
@@ -11679,6 +11699,7 @@ fn emit_rects_inner(
                     .border_width
                     .map(|width| width.max(0.0) * sf)
                     .unwrap_or(border_w);
+                let track_radii = visual_radii_with_fallback(&track_visual, radii, sf);
                 emit_bordered_rect_radii(
                     out,
                     [x, y, w, h],
@@ -11686,7 +11707,7 @@ fn emit_rects_inner(
                         .map(|color| apply_opacity(color, track_visual.opacity.or(visual.opacity)))
                         .unwrap_or_else(|| styled_border.unwrap_or(theme.border)),
                     track_fill,
-                    visual_radii_with_fallback(&track_visual, radii, sf),
+                    track_radii,
                     track_border_w,
                 );
                 let inset = (track_border_w + 2.0 * sf).max(track_border_w);
@@ -11711,10 +11732,22 @@ fn emit_rects_inner(
                         } else {
                             styled_accent.unwrap_or(theme.accent)
                         });
+                    // Default the fill's corners to be concentric with the
+                    // track (outer radius minus the inset) so the inner bar
+                    // follows the container's shape instead of always defaulting
+                    // to a pill. Clamp to a pill at most; an explicit ::fill
+                    // border-radius still wins via visual_radii_with_fallback.
+                    let fill_cap = fill_h * 0.5;
+                    let concentric_fill_radii = [
+                        (track_radii[0] - inset).clamp(0.0, fill_cap),
+                        (track_radii[1] - inset).clamp(0.0, fill_cap),
+                        (track_radii[2] - inset).clamp(0.0, fill_cap),
+                        (track_radii[3] - inset).clamp(0.0, fill_cap),
+                    ];
                     out.push(inst_progress_fill(
                         [inner[0], fill_y, inner[2], fill_h],
                         fill_color,
-                        visual_radii_with_fallback(&fill_visual, [fill_h * 0.5; 4], sf),
+                        visual_radii_with_fallback(&fill_visual, concentric_fill_radii, sf),
                         fill_w,
                     ));
                 }
@@ -13655,7 +13688,10 @@ mod tests {
 
         assert_eq!(fill.rect, [3.0, 3.0, 194.0, 14.0]);
         assert_eq!(fill.clip, default_local_clip(fill.rect));
-        assert_eq!(fill.radii, [7.0; 4]);
+        // Fill corners are concentric with the track: track radius 6 (dark
+        // theme) minus the 3px inset = 3, so the inner bar follows the
+        // container shape instead of bulging out as a pill.
+        assert_eq!(fill.radii, [3.0; 4]);
         assert!(
             (fill.paint[3] - 5.82).abs() < 0.01,
             "small progress should use a soft cutoff at the progress width, got paint={:?}",

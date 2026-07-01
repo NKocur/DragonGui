@@ -4255,6 +4255,10 @@ class LogView(Widget):
         self.disabled = bool(disabled)
         self.lines = self._normalize_lines(lines)
         self._stream_carriage_return = False
+        self._terminal_escape_buffer = ""
+        self._terminal_cursor_row: int | None = None
+        self._terminal_rewrite_rows = False
+        self._terminal_rewritten_rows: set[int] = set()
         self._trim()
         self.value = self._joined()
         super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
@@ -4290,11 +4294,17 @@ class LogView(Widget):
     def append_line(self, line: object = "") -> None:
         self.lines.extend(self._normalize_lines([line]))
         self._stream_carriage_return = False
+        self._terminal_cursor_row = None
+        self._terminal_rewrite_rows = False
+        self._terminal_rewritten_rows.clear()
         self._sync_value()
 
     def append_lines(self, lines: Iterable[object]) -> None:
         self.lines.extend(self._normalize_lines(lines))
         self._stream_carriage_return = False
+        self._terminal_cursor_row = None
+        self._terminal_rewrite_rows = False
+        self._terminal_rewritten_rows.clear()
         self._sync_value()
 
     def append_text(self, text: object = "") -> None:
@@ -4303,9 +4313,86 @@ class LogView(Widget):
         data = str(text)
         if not data:
             return
+        self._append_plain_stream_text(data)
+        self._sync_value()
+
+    def append_terminal_text(self, text: object = "") -> None:
+        """Append terminal output while honoring common screen redraw controls."""
+
+        data = str(text)
+        if not data:
+            return
+        index = 0
+        if self._terminal_escape_buffer:
+            data = self._terminal_escape_buffer + data
+            self._terminal_escape_buffer = ""
+        plain: list[str] = []
+        while index < len(data):
+            char = data[index]
+            if char != "\x1b":
+                plain.append(char)
+                index += 1
+                continue
+            if plain:
+                self._append_terminal_stream_text("".join(plain))
+                plain = []
+            consumed = self._consume_terminal_escape(data, index)
+            if consumed is None:
+                self._terminal_escape_buffer = data[index:]
+                break
+            index = consumed
+        if plain:
+            self._append_terminal_stream_text("".join(plain))
+        self._sync_value()
+
+    def _ensure_terminal_cursor_row(self) -> int:
+        if self._terminal_cursor_row is None:
+            self._terminal_cursor_row = max(len(self.lines) - 1, 0)
+        while len(self.lines) <= self._terminal_cursor_row:
+            self.lines.append("")
+        return self._terminal_cursor_row
+
+    def _append_terminal_stream_text(self, data: str) -> None:
+        row = self._ensure_terminal_cursor_row()
+        for char in data:
+            if char == "\f":
+                self.lines = [""]
+                row = 0
+                self._terminal_cursor_row = row
+                self._stream_carriage_return = False
+                self._terminal_rewrite_rows = False
+                continue
+            if char == "\r":
+                self._stream_carriage_return = True
+                continue
+            if char == "\n":
+                row += 1
+                self._terminal_cursor_row = row
+                while len(self.lines) <= row:
+                    self.lines.append("")
+                self._stream_carriage_return = False
+                continue
+            while len(self.lines) <= row:
+                self.lines.append("")
+            should_rewrite_row = self._terminal_rewrite_rows and row not in self._terminal_rewritten_rows
+            if self._stream_carriage_return or should_rewrite_row:
+                self.lines[row] = ""
+                self._terminal_rewritten_rows.add(row)
+                self._stream_carriage_return = False
+            if char == "\b":
+                self.lines[row] = self.lines[row][:-1]
+            else:
+                self.lines[row] += char
+        self._terminal_cursor_row = row
+
+    def _append_plain_stream_text(self, data: str) -> None:
         if not self.lines:
             self.lines = [""]
         for char in data:
+            if char == "\f":
+                self.lines = [""]
+                self._stream_carriage_return = False
+                continue
             if char == "\r":
                 self._stream_carriage_return = True
                 continue
@@ -4320,13 +4407,68 @@ class LogView(Widget):
                 self.lines[-1] = self.lines[-1][:-1]
             else:
                 self.lines[-1] += char
-        self._sync_value()
+
+    def _consume_terminal_escape(self, data: str, start: int) -> int | None:
+        if start + 1 >= len(data):
+            return None
+        kind = data[start + 1]
+        if kind == "]":
+            index = start + 2
+            while index < len(data):
+                if data[index] == "\x07":
+                    return index + 1
+                if data[index] == "\x1b":
+                    if index + 1 >= len(data):
+                        return None
+                    if data[index + 1] == "\\":
+                        return index + 2
+                index += 1
+            return None
+        if kind == "[":
+            index = start + 2
+            while index < len(data):
+                code = ord(data[index])
+                if 0x40 <= code <= 0x7E:
+                    self._apply_terminal_csi(data[start + 2 : index], data[index])
+                    return index + 1
+                index += 1
+            return None
+        return min(start + 2, len(data))
+
+    def _apply_terminal_csi(self, params: str, final: str) -> None:
+        normalized = params.replace("?", "")
+        if final in {"H", "f"} and normalized in {"", "1", "1;1"}:
+            self._terminal_cursor_row = 0
+            self._stream_carriage_return = False
+            self._terminal_rewrite_rows = True
+            self._terminal_rewritten_rows.clear()
+            return
+        if final == "J" and (normalized in {"", "0", "2", "3"} or normalized.endswith(";2")):
+            self.lines = [""]
+            self._terminal_cursor_row = 0
+            self._stream_carriage_return = False
+            self._terminal_rewrite_rows = False
+            self._terminal_rewritten_rows.clear()
+            return
+        if final == "K":
+            if not self.lines:
+                self.lines = [""]
+            row = self._ensure_terminal_cursor_row()
+            self.lines[row] = ""
+            self._stream_carriage_return = False
+            return
+        if final == "G":
+            self._stream_carriage_return = True
 
     append_stream = append_text
 
     def clear(self) -> None:
         self.lines = []
         self._stream_carriage_return = False
+        self._terminal_escape_buffer = ""
+        self._terminal_cursor_row = None
+        self._terminal_rewrite_rows = False
+        self._terminal_rewritten_rows.clear()
         self._sync_value()
 
     def props(self) -> dict[str, Any]:

@@ -454,6 +454,7 @@ class NodeGraphRuntimeSession:
         self._handles: dict[str, NodeGraphRuntimeHandle] = {}
         self._port_values: dict[tuple[str, str], list[object]] = {}
         self._widgets: dict[str, Any] = {}
+        self._terminal_event_listener_removers: dict[str, Callable[[], None]] = {}
         self._parser_state: dict[str, AgentEnvelopeParser] = {}
         self._execution_depth = 0
         for obj in binding.registry:
@@ -585,7 +586,9 @@ class NodeGraphRuntimeSession:
 
     def attach_handle(self, object_id: str, handle: Any, *, status: str = "attached") -> NodeGraphRuntimeHandle:
         runtime_handle = self.require_object_handle(object_id)
+        self._detach_terminal_event_listener(runtime_handle.object_id)
         runtime_handle.attach(handle, status=status)
+        self._attach_terminal_event_listener(runtime_handle)
         self.emit_event(
             "object_handle_attached",
             object_id=runtime_handle.object_id,
@@ -596,6 +599,7 @@ class NodeGraphRuntimeSession:
 
     def detach_handle(self, object_id: str, *, status: str = "detached") -> Any | None:
         runtime_handle = self.require_object_handle(object_id)
+        self._detach_terminal_event_listener(runtime_handle.object_id)
         detached = runtime_handle.detach(status=status)
         self.emit_event(
             "object_handle_detached",
@@ -604,6 +608,27 @@ class NodeGraphRuntimeSession:
             data={"object_type": runtime_handle.object_type, "status": runtime_handle.status},
         )
         return detached
+
+    def _attach_terminal_event_listener(self, runtime_handle: NodeGraphRuntimeHandle) -> None:
+        if runtime_handle.object_type != "terminal_session" or runtime_handle.handle is None:
+            return
+        add_listener = getattr(runtime_handle.handle, "add_event_listener", None)
+        if not callable(add_listener):
+            return
+
+        object_id = runtime_handle.object_id
+
+        def handle_terminal_event(event: Any) -> None:
+            self.apply_terminal_event(object_id, event)
+
+        remover = add_listener(handle_terminal_event)
+        if callable(remover):
+            self._terminal_event_listener_removers[object_id] = remover
+
+    def _detach_terminal_event_listener(self, object_id: str) -> None:
+        remover = self._terminal_event_listener_removers.pop(str(object_id), None)
+        if remover is not None:
+            remover()
 
     def set_object_status(self, object_id: str, status: str, *, error: object | None = None) -> NodeGraphRuntimeHandle:
         runtime_handle = self.require_object_handle(object_id)
@@ -649,11 +674,6 @@ class NodeGraphRuntimeSession:
 
         from .terminal import TerminalBridge
 
-        def handle_terminal_event(event: Any) -> None:
-            self.apply_terminal_event(runtime_handle.object_id, event)
-            if on_event is not None:
-                on_event(event)
-
         bridge = TerminalBridge(
             command,
             args=args,
@@ -663,7 +683,7 @@ class NodeGraphRuntimeSession:
             rows=int(config.get("rows", 30)),
             prefer_pty=bool(config.get("prefer_pty", True)),
             on_output=on_output,
-            on_event=handle_terminal_event,
+            on_event=on_event,
             capture_transcript=bool(config.get("capture_transcript", True)),
             max_transcript_entries=int(config.get("max_transcript_entries", 10000)),
         )
@@ -7645,6 +7665,7 @@ _ANSI_CONTROL_SEQUENCE_RE = re.compile(
     r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[PX^_].*?\x1b\\|[@-Z\\-_])",
     re.DOTALL,
 )
+_ANSI_TERMINAL_LINE_REWRITE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[GK]")
 _TERMINAL_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _BUILD_TEXT_MIN_INPUTS = 1
 _BUILD_TEXT_DEFAULT_INPUTS = 3
@@ -7653,6 +7674,7 @@ _BUILD_TEXT_MAX_INPUTS = 12
 
 def _terminal_display_text(value: object) -> str:
     text = str(value)
+    text = _ANSI_TERMINAL_LINE_REWRITE_RE.sub("\r", text)
     text = _ANSI_CONTROL_SEQUENCE_RE.sub("", text)
     return _TERMINAL_CONTROL_CHAR_RE.sub("", text)
 
@@ -7744,8 +7766,6 @@ def _widget_sink_text(value: object, value_format: str) -> str:
         return json.dumps(_json_safe_value(value), sort_keys=True)
     if mode == "repr":
         return repr(value)
-    if mode == "terminal_text":
-        return _terminal_display_text(value)
     if mode == "message_body" and isinstance(value, Mapping):
         body = value.get("body")
         if body is not None:
@@ -7766,7 +7786,10 @@ def _update_widget_sink(widget: object, value: object, *, update_mode: str, valu
     if mode == "append":
         text = _widget_sink_text(value, value_format)
         if value_format == "terminal_text":
-            append_stream = getattr(widget, "append_stream", None)
+            append_stream = getattr(widget, "append_terminal_text", None)
+            if not callable(append_stream):
+                text = _terminal_display_text(value)
+                append_stream = getattr(widget, "append_stream", None)
             if not callable(append_stream):
                 append_stream = getattr(widget, "append_text", None)
             if not callable(append_stream):

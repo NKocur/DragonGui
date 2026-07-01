@@ -2333,6 +2333,46 @@ def test_log_view_append_text_handles_terminal_stream_chunks() -> None:
     assert log.lines == ["codex", "busy."]
 
 
+def test_log_view_append_terminal_text_handles_tui_redraws_and_split_title() -> None:
+    log = dg.LogView(["Main output log ready."], parent=None)
+
+    log.append_terminal_text("\x1b]0; Dragon")
+    log.append_terminal_text("Frame\x07")
+    assert log.lines == ["Main output log ready."]
+
+    log.append_terminal_text(
+        "\x1b[?1049h\x1b[H\x1b[2J"
+        ">_ OpenAI Codex (v0.142.3)\r\n"
+        "model:     loading   /model to change\r\n"
+        "directory: J:\\Projects\\DragonFrame"
+    )
+    assert log.lines == [
+        ">_ OpenAI Codex (v0.142.3)",
+        "model:     loading   /model to change",
+        "directory: J:\\Projects\\DragonFrame",
+    ]
+
+    log.append_terminal_text(
+        "\x1b[H\x1b[2J"
+        ">_ OpenAI Codex (v0.142.3)\r\n"
+        "model:     gpt-5.5 medium   /model to change\r\n"
+        "directory: J:\\Projects\\DragonFrame\r\n"
+        "Working (2s  esc to interrupt)"
+    )
+    assert log.lines == [
+        ">_ OpenAI Codex (v0.142.3)",
+        "model:     gpt-5.5 medium   /model to change",
+        "directory: J:\\Projects\\DragonFrame",
+        "Working (2s  esc to interrupt)",
+    ]
+
+    log.append_terminal_text("\x1b[H>_ OpenAI Codex (v0.142.3)\r\nmodel:     ready")
+    assert log.lines[:2] == [
+        ">_ OpenAI Codex (v0.142.3)",
+        "model:     ready",
+    ]
+
+
 def test_scatter_colormap_serializes_and_live_update_reuploads_points(monkeypatch) -> None:
     class Sender:
         def __init__(self) -> None:
@@ -9268,6 +9308,23 @@ def test_terminal_bridge_control_surface_records_events_and_transcript() -> None
     assert bridge.send_text("after stop") is False
 
 
+def test_terminal_bridge_event_listeners_do_not_replace_on_event() -> None:
+    primary_events: list[terminal_module.TerminalEvent] = []
+    listener_events: list[terminal_module.TerminalEvent] = []
+    bridge = terminal_module.TerminalBridge("cmd.exe", prefer_pty=False, on_event=primary_events.append)
+
+    remove = bridge.add_event_listener(listener_events.append)
+
+    bridge._record_event("session_started", session_id=2)
+    remove()
+    bridge._record_event("session_ended", session_id=2)
+
+    assert [event.event for event in primary_events] == ["session_started", "session_ended"]
+    assert [event.event for event in listener_events] == ["session_started"]
+
+    bridge.stop()
+
+
 def test_terminal_bridge_queues_input_until_session_spawns(monkeypatch: pytest.MonkeyPatch) -> None:
     bridge = terminal_module.TerminalBridge("cmd.exe", prefer_pty=False)
     bridge._thread = object()
@@ -10155,6 +10212,51 @@ def test_node_graph_runtime_session_widget_sink_streams_terminal_chunks_to_log_v
     session.apply_terminal_event("shell-1", {"event": "output", "data": "\r\nnext"})
 
     assert log_view.lines == ["abc", "next"]
+
+
+def test_node_graph_runtime_session_widget_sink_rewrites_terminal_status_line() -> None:
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "terminal-owner",
+                "title": "Terminal",
+                "outputs": [dg.NodeGraphPort("stdout", "stdout", port_type="terminal_output")],
+                "data": {
+                    "node_type": "terminal",
+                    "runtime_object": "terminal_session",
+                    "config": {"session_id": "shell-1", "command": "cmd.exe"},
+                },
+            },
+            {
+                "id": "indicator",
+                "title": "Indicator",
+                "inputs": [dg.NodeGraphPort("value", "value", port_type="terminal_output")],
+                "data": {
+                    "node_type": "widget_sink",
+                    "config": {
+                        "widget_id": "runtime-indicator",
+                        "widget_type": "log_view",
+                        "port_profile": "terminal_output",
+                        "update_mode": "append",
+                        "format": "text",
+                    },
+                },
+            },
+        ],
+        [dg.NodeGraphEdge("terminal-owner", "stdout", "indicator", "value", id="edge-terminal-widget")],
+        parent=None,
+    )
+    session = graph.runtime_session(session_id="runtime-widget-sink-spinner")
+    log_view = dg.LogView([], id="runtime-indicator", parent=None)
+    session.register_widget(log_view)
+
+    session.apply_terminal_event("shell-1", {"event": "output", "data": "\x1b[1G\x1b[2KLoading |"})
+    session.apply_terminal_event("shell-1", {"event": "output", "data": "\x1b[1G\x1b[2KLoading /"})
+    session.apply_terminal_event("shell-1", {"event": "output", "data": "\x1b[1G\x1b[2KLoading -"})
+    session.apply_terminal_event("shell-1", {"event": "output", "data": "\x1b[1G\x1b[2KDone\r\nnext"})
+
+    assert log_view.lines == ["Done", "next"]
+    assert log_view.value == "Done\nnext"
 
 
 def test_node_graph_edges_use_source_port_type_colors() -> None:
@@ -11299,6 +11401,105 @@ def test_node_graph_managed_runtime_attaches_selected_terminal_widget_target() -
 
     assert cleanup == {"stopped": [], "errors": {}}
     assert terminal_widget.bridge.session_active is False
+
+
+def test_node_graph_external_terminal_widget_stdout_reaches_widget_sink() -> None:
+    class FakeBridge:
+        session_active = True
+
+        def __init__(self) -> None:
+            self._listeners: list[Callable[[dict[str, object]], object]] = []
+
+        def add_event_listener(self, callback: Callable[[dict[str, object]], object]) -> Callable[[], None]:
+            self._listeners.append(callback)
+
+            def remove() -> None:
+                self._listeners.remove(callback)
+
+            return remove
+
+        def emit_output(self, text: str) -> None:
+            for listener in tuple(self._listeners):
+                listener({"event": "output", "data": text, "timestamp": 45.0})
+
+        def stop(self) -> None:
+            self.session_active = False
+
+    class FakeTerminalWidget:
+        kind = "terminal"
+        id = "terminal-view-a"
+
+        def __init__(self) -> None:
+            self.bridge = FakeBridge()
+
+    terminal_widget = FakeTerminalWidget()
+    output_log = dg.LogView([], id="main-output-log", parent=None)
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "terminal-owner",
+                "title": "Terminal",
+                "outputs": [dg.NodeGraphPort("stdout", "stdout", port_type="terminal_output")],
+                "data": {
+                    "node_type": "terminal",
+                    "runtime_object": "terminal_session",
+                    "config": {
+                        "session_id": "shell-1",
+                        "terminal_widget_id": "terminal-view-a",
+                    },
+                },
+            },
+            {
+                "id": "indicator",
+                "title": "Indicator",
+                "inputs": [dg.NodeGraphPort("value", "terminal_output", port_type="terminal_output")],
+                "data": {
+                    "node_type": "widget_sink",
+                    "config": {
+                        "widget_id": "main-output-log",
+                        "widget_type": "log_view",
+                        "port_profile": "terminal_output",
+                        "update_mode": "append",
+                        "format": "text",
+                    },
+                },
+            },
+        ],
+        [dg.NodeGraphEdge("terminal-owner", "stdout", "indicator", "value", id="edge-terminal-log")],
+        binding_targets=[
+            {
+                "id": "terminal-view-a",
+                "label": "Terminal View A",
+                "target_type": "terminal",
+                "widget_type": "terminal",
+                "widget": terminal_widget,
+            },
+            {
+                "id": "main-output-log",
+                "label": "Main Output Log",
+                "target_type": "log_view",
+                "widget_type": "log_view",
+                "widget": output_log,
+                "supported_update_modes": ["append", "set"],
+                "default_update_mode": "append",
+                "supported_port_profiles": ["terminal_output", "text"],
+                "default_port_profile": "terminal_output",
+            },
+        ],
+        parent=None,
+    )
+
+    session = graph.managed_runtime_session()
+
+    terminal_widget.bridge.emit_output("hello")
+    terminal_widget.bridge.emit_output("\r\nworld")
+
+    assert output_log.lines == ["hello", "world"]
+    assert session.port_values("terminal-owner", "stdout") == ["hello", "\r\nworld"]
+    assert session.port_values("indicator", "value") == ["hello", "hello", "\r\nworld", "\r\nworld"]
+    event_names = [event.event for event in session.events]
+    assert "terminal_stdout" in event_names
+    assert "widget_updated" in event_names
 
 
 def test_node_graph_selected_terminal_widget_replaces_stale_runtime_bridge() -> None:

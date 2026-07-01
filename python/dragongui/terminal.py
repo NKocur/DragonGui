@@ -246,6 +246,7 @@ class TerminalBridge:
         self.prefer_pty = bool(prefer_pty)
         self.on_output = on_output
         self.on_event = on_event
+        self._event_listeners: list[Callable[[TerminalEvent], object]] = []
         self.capture_transcript = bool(capture_transcript)
         self._server: socket.socket | None = None
         self._thread: threading.Thread | None = None
@@ -358,12 +359,29 @@ class TerminalBridge:
             self._events.clear()
             return events
 
+    def add_event_listener(self, callback: Callable[[TerminalEvent], object]) -> Callable[[], None]:
+        """Subscribe to terminal bridge events without replacing ``on_event``."""
+
+        if not callable(callback):
+            raise TypeError("terminal event listener must be callable")
+        self._event_listeners.append(callback)
+
+        def remove() -> None:
+            try:
+                self._event_listeners.remove(callback)
+            except ValueError:
+                pass
+
+        return remove
+
     def _record_event(self, event: str, *, data: str | None = None, session_id: int | None = None) -> None:
         item = TerminalEvent(event=event, session_id=session_id, data=data)
         with self._event_lock:
             self._events.append(item)
         if self.on_event is not None:
             self.on_event(item)
+        for listener in tuple(self._event_listeners):
+            listener(item)
 
     def _record_transcript(self, stream: str, data: str, session_id: int | None) -> None:
         if not data:

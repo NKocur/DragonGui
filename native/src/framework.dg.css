@@ -283,6 +283,22 @@ Menu {
     accent: accent;
 }
 
+/* Sidebar nav buttons default to slightly less-round corners and an accent
+   bar that floats with an even gap on both sides: the 3px bar is inset 4px
+   (via the accent part's padding) and the label clears it by 4px (11px item
+   padding). Apps can override any of these per NavItem. */
+NavItem {
+    border-radius: 5px;
+}
+
+NavItem::accent {
+    padding: 4px;
+}
+
+NavItem::item {
+    padding: 11px;
+}
+
 Menu:hover,
 Menu:active,
 Menu:open {

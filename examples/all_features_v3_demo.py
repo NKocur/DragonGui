@@ -949,6 +949,21 @@ Menu {
     color: rgba(245, 248, 255, 0.94);
 }
 
+/* Refined sidebar nav buttons: slightly less-round corners, and an accent bar
+   that floats with an even gap on both sides (bar inset 4px + item padding
+   11px, so the 3px bar sits with ~4px of breathing room on each side). */
+NavItem {
+    border-radius: 5px;
+}
+
+NavItem::accent {
+    padding: 4px;
+}
+
+NavItem::item {
+    padding: 11px;
+}
+
 Checkbox {
     accent: #74ddb0;
     color: rgba(245, 248, 255, 0.92);
@@ -1056,6 +1071,7 @@ LED.css-demo::highlight {
 ProgressBar {
     background: rgba(255, 255, 255, 0.10);
     border-color: rgba(255, 255, 255, 0.14);
+    border-radius: 999px;
     accent: #74ddb0;
 }
 
