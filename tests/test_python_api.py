@@ -20,6 +20,7 @@ import dragongui.app as app_module
 import dragongui.dataframe as dataframe_module
 import dragongui.dialogs as dialogs_module
 import dragongui.terminal as terminal_module
+import dragongui.node_graph as node_graph_module
 import dragongui.widgets as widgets_module
 from dragongui.runtime import AppHandle, _collect_runtime_callbacks, _set_active_app_handle
 
@@ -10217,6 +10218,278 @@ def test_node_graph_runtime_session_widget_sink_streams_terminal_chunks_to_log_v
     assert log_view.lines == ["abc", "next"]
 
 
+
+def test_node_graph_runtime_session_widget_sink_clean_stream_text_strips_ansi_without_screen_rewrite() -> None:
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "terminal-owner",
+                "title": "Terminal",
+                "outputs": [dg.NodeGraphPort("stdout", "stdout", port_type="terminal_output")],
+                "data": {
+                    "node_type": "terminal",
+                    "runtime_object": "terminal_session",
+                    "config": {"session_id": "shell-1", "command": "cmd.exe"},
+                },
+            },
+            {
+                "id": "indicator",
+                "title": "Indicator",
+                "inputs": [dg.NodeGraphPort("value", "value", port_type="terminal_output")],
+                "data": {
+                    "node_type": "widget_sink",
+                    "config": {
+                        "widget_id": "runtime-indicator",
+                        "widget_type": "log_view",
+                        "port_profile": "terminal_output",
+                        "update_mode": "append",
+                        "format": "clean_stream_text",
+                    },
+                },
+            },
+        ],
+        [dg.NodeGraphEdge("terminal-owner", "stdout", "indicator", "value", id="edge-terminal-widget")],
+        parent=None,
+    )
+    session = graph.runtime_session(session_id="runtime-widget-sink-clean-stream-text")
+    log_view = dg.LogView([], id="runtime-indicator", parent=None)
+    session.register_widget(log_view)
+
+    session.apply_terminal_event("shell-1", {"event": "output", "data": "\x1b[2Jassistant line\r\n"})
+    session.apply_terminal_event("shell-1", {"event": "output", "data": "\x1b[17;1H › Use /skills"})
+    session.apply_terminal_event("shell-1", {"event": "output", "data": " footer"})
+
+    assert log_view.lines == ["assistant line", " › Use /skills footer"]
+    assert "\x1b" not in log_view.value
+
+
+
+def test_node_graph_runtime_session_codex_exec_runs_json_mode_and_updates_log(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    class FakePopen:
+        def __init__(self, command: list[str], **kwargs: object) -> None:
+            self.command = command
+            self.kwargs = kwargs
+            self.returncode = 0
+            calls.append({"command": command, "kwargs": kwargs})
+
+        def communicate(self, input: str | None = None, timeout: float | None = None) -> tuple[str, str]:
+            calls[-1]["input"] = input
+            calls[-1]["timeout"] = timeout
+            stdout = "\n".join(
+                [
+                    json.dumps({"type": "thread.started"}),
+                    json.dumps({"type": "turn.started"}),
+                    json.dumps(
+                        {
+                            "type": "item.completed",
+                            "item": {"type": "command_execution", "command": "rg node", "status": "completed"},
+                        }
+                    ),
+                    json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": "Summary line."}}),
+                    json.dumps({"type": "turn.completed"}),
+                ]
+            )
+            return stdout, ""
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+    monkeypatch.setattr(node_graph_module.subprocess, "Popen", FakePopen)
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "prompt",
+                "title": "Prompt",
+                "outputs": [dg.NodeGraphPort("text", "text", port_type="text")],
+                "data": {"node_type": "text_input", "config": {"text": "Explain this codebase"}},
+            },
+            {
+                "id": "codex",
+                "title": "Codex Exec",
+                "inputs": [
+                    dg.NodeGraphPort("prompt", "prompt", port_type="text"),
+                    dg.NodeGraphPort("cwd", "cwd", port_type="text"),
+                    dg.NodeGraphPort("model", "model", port_type="text"),
+                ],
+                "outputs": [
+                    dg.NodeGraphPort("final", "final", port_type="text"),
+                    dg.NodeGraphPort("activity", "activity", port_type="text"),
+                    dg.NodeGraphPort("raw_jsonl", "raw_jsonl", port_type="text"),
+                    dg.NodeGraphPort("events", "events", port_type="json"),
+                    dg.NodeGraphPort("stderr", "stderr", port_type="error"),
+                    dg.NodeGraphPort("exit_code", "exit_code", port_type="number"),
+                    dg.NodeGraphPort("ok", "ok", port_type="bool"),
+                ],
+                "data": {
+                    "node_type": "codex_exec",
+                    "config": {"cwd": "C:\\repo", "model": "gpt-5.5", "codex_cmd": "codex"},
+                },
+            },
+            {
+                "id": "indicator",
+                "title": "Indicator",
+                "inputs": [dg.NodeGraphPort("value", "value", port_type="text")],
+                "outputs": [dg.NodeGraphPort("value", "value", port_type="text")],
+                "data": {
+                    "node_type": "widget_sink",
+                    "config": {
+                        "widget_id": "runtime-indicator",
+                        "widget_type": "log_view",
+                        "port_profile": "text",
+                        "update_mode": "append",
+                        "format": "text",
+                    },
+                },
+            },
+        ],
+        [
+            dg.NodeGraphEdge("prompt", "text", "codex", "prompt", id="edge-prompt-codex"),
+            dg.NodeGraphEdge("codex", "final", "indicator", "value", id="edge-codex-log"),
+        ],
+        parent=None,
+    )
+    session = graph.runtime_session(session_id="runtime-codex-exec")
+    log_view = dg.LogView([], id="runtime-indicator", parent=None)
+    session.register_widget(log_view)
+
+    session.run_node("prompt")
+
+    assert len(calls) == 1
+    command = calls[0]["command"]
+    assert command[:5] == ["codex", "exec", "--json", "--color", "never"]
+    assert command[-1] == "-"
+    assert "--dangerously-bypass-approvals-and-sandbox" not in command
+    assert command[command.index("--sandbox") + 1] == "workspace-write"
+    assert command[command.index("--cd") + 1] == "C:\\repo"
+    assert command[command.index("--model") + 1] == "gpt-5.5"
+    assert "--skip-git-repo-check" in command
+    assert calls[0]["kwargs"]["cwd"] == "C:\\repo"
+    assert calls[0]["input"] == "Explain this codebase\n"
+    assert session.port_values("codex", "final") == ["Summary line."]
+    assert session.port_values("codex", "ok") == [True]
+    assert session.port_values("codex", "exit_code") == [0]
+    assert "command completed: rg node" in session.port_values("codex", "activity")[0]
+    assert log_view.lines == ["Summary line."]
+def test_node_graph_runtime_session_tui_screen_diff_filters_chrome_and_dedupes_snapshots() -> None:
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "terminal-owner",
+                "title": "Terminal",
+                "outputs": [dg.NodeGraphPort("screen", "screen", port_type="text")],
+                "data": {
+                    "node_type": "terminal",
+                    "runtime_object": "terminal_session",
+                    "config": {"session_id": "shell-1", "command": "cmd.exe"},
+                },
+            },
+            {
+                "id": "screen-diff",
+                "title": "TUI Screen Diff",
+                "inputs": [dg.NodeGraphPort("screen", "screen", port_type="text")],
+                "outputs": [dg.NodeGraphPort("text", "text", port_type="text")],
+                "data": {
+                    "node_type": "tui_screen_diff",
+                    "config": {"drop_chrome": True, "dedupe": True, "emit_trailing_newline": True},
+                },
+            },
+            {
+                "id": "indicator",
+                "title": "Indicator",
+                "inputs": [dg.NodeGraphPort("value", "value", port_type="text")],
+                "data": {
+                    "node_type": "widget_sink",
+                    "config": {
+                        "widget_id": "runtime-indicator",
+                        "widget_type": "log_view",
+                        "port_profile": "text",
+                        "update_mode": "append",
+                        "format": "text",
+                    },
+                },
+            },
+        ],
+        [
+            dg.NodeGraphEdge("terminal-owner", "screen", "screen-diff", "screen", id="edge-screen-diff"),
+            dg.NodeGraphEdge("screen-diff", "text", "indicator", "value", id="edge-diff-log"),
+        ],
+        parent=None,
+    )
+    session = graph.runtime_session(session_id="runtime-tui-screen-diff")
+    log_view = dg.LogView([], id="runtime-indicator", parent=None)
+    session.register_widget(log_view)
+
+    box_top = chr(0x256D) + (chr(0x2500) * 16) + chr(0x256E)
+    side = chr(0x2502)
+    bullet = chr(0x2022)
+    prompt = chr(0x203A)
+    middle_dot = chr(0x00B7)
+    first_screen = "\n".join(
+        [
+            box_top,
+            f"{side} >_ OpenAI Codex {side}",
+            f"{side} model: gpt-5.5 high /model to change {side}",
+            f"{bullet} Hello. What would you like to work on in DragonGui?",
+            f"{prompt} Use /skills to list available skills gpt-5.5 high {middle_dot} ~\\DragonGui",
+        ]
+    )
+    second_screen = "\n".join(
+        [
+            box_top,
+            f"{side} >_ OpenAI Codex {side}",
+            f"{bullet} Hello. What would you like to work on in DragonGui?",
+            "Here is the codebase summary.",
+            f"{bullet}Working(0s {bullet} esc to interrupt)",
+        ]
+    )
+
+    banner_screen = "\n".join(
+        [
+            "Microsoft Windows [Version 10.0.26100.8655]",
+            "(c) Microsoft Corporation. All rights reserved.",
+            f"{bullet} Hello. What would you like to work on in DragonGui?",
+        ]
+    )
+
+    typing_screen = "\n".join(
+        [
+            box_top,
+            f"{side} >_ OpenAI Codex {side}",
+            "Here is the codebase summary.",
+            f"{prompt} h",
+        ]
+    )
+    typing_screen_next = "\n".join(
+        [
+            box_top,
+            f"{side} >_ OpenAI Codex {side}",
+            "Here is the codebase summary.",
+            f"{prompt} he",
+        ]
+    )
+
+
+    session.apply_terminal_event("shell-1", {"event": "screen_snapshot", "data": first_screen})
+    session.apply_terminal_event("shell-1", {"event": "screen_snapshot", "data": second_screen})
+    session.apply_terminal_event("shell-1", {"event": "screen_snapshot", "data": banner_screen})
+    session.apply_terminal_event("shell-1", {"event": "screen_snapshot", "data": first_screen})
+    session.apply_terminal_event("shell-1", {"event": "screen_snapshot", "data": typing_screen})
+    session.apply_terminal_event("shell-1", {"event": "screen_snapshot", "data": typing_screen_next})
+
+    assert session.port_values("terminal-owner", "screen") == [first_screen, second_screen, banner_screen, first_screen, typing_screen, typing_screen_next]
+    assert "Hello. What would you like to work on in DragonGui?" in log_view.value
+    assert "Here is the codebase summary." in log_view.value
+    assert log_view.value.count("Hello. What would you like to work on in DragonGui?") == 1
+    assert "OpenAI Codex" not in log_view.value
+    assert "Microsoft Windows" not in log_view.value
+    assert "Microsoft Corporation" not in log_view.value
+    assert "Use /skills" not in log_view.value
+    assert f"{prompt} h" not in log_view.value
+    assert f"{prompt} he" not in log_view.value
+    assert "Working" not in log_view.value
+
 def test_node_graph_runtime_session_widget_sink_rewrites_terminal_status_line() -> None:
     graph = dg.NodeGraph(
         [
@@ -10583,6 +10856,43 @@ def test_node_graph_widget_sink_template_exposes_port_profile_schema() -> None:
     assert "port_profile" in field_keys
     assert "terminal_output" in graph.html
     assert "widgetSinkPortProfiles" in graph.html
+
+
+
+def test_node_graph_codex_exec_template_exposes_json_exec_outputs() -> None:
+    graph = dg.NodeGraph([], templates=dg.multi_agent_node_templates(), parent=None)
+
+    template = next(template for template in graph.templates if template.id == "codex_exec")
+    field_keys = [field["key"] for field in template.data["config_schema"]["fields"]]
+
+    assert template.inputs[0].id == "prompt"
+    assert template.outputs[0].id == "final"
+    assert template.outputs[3].port_type == "json"
+    assert template.data["node_type"] == "codex_exec"
+    assert "sandbox" in field_keys
+    assert "bypass_approvals_and_sandbox" in field_keys
+    assert template.data["config_schema"]["fields"][5]["default"] is False
+def test_node_graph_terminal_log_sink_template_is_preconfigured_for_terminal_output() -> None:
+    graph = dg.NodeGraph([], templates=dg.multi_agent_node_templates(), parent=None)
+
+    template = next(template for template in graph.templates if template.id == "terminal_log_sink")
+    config = template.data["config"]
+    fields = {field["key"]: field for field in template.data["config_schema"]["fields"]}
+
+    assert template.data["node_type"] == "widget_sink"
+    assert template.inputs[0].id == "value"
+    assert template.inputs[0].port_type == "terminal_output"
+    assert template.outputs[0].port_type == "terminal_output"
+    assert config == {
+        "widget_type": "log_view",
+        "port_profile": "terminal_output",
+        "update_mode": "append",
+        "format": "clean_stream_text",
+    }
+    assert fields["widget_type"]["default"] == "log_view"
+    assert fields["port_profile"]["default"] == "terminal_output"
+    assert fields["update_mode"]["default"] == "append"
+    assert fields["format"]["default"] == "clean_stream_text"
 
 def test_node_graph_widget_source_template_exposes_port_profile_schema() -> None:
     graph = dg.NodeGraph([], templates=dg.multi_agent_node_templates(), parent=None)
@@ -11503,6 +11813,117 @@ def test_node_graph_external_terminal_widget_stdout_reaches_widget_sink() -> Non
     event_names = [event.event for event in session.events]
     assert "terminal_stdout" in event_names
     assert "widget_updated" in event_names
+
+
+
+def test_node_graph_managed_runtime_rebuilds_when_widget_sink_binding_changes() -> None:
+    class FakeBridge:
+        session_active = True
+
+        def __init__(self) -> None:
+            self._listeners: list[Callable[[dict[str, object]], object]] = []
+
+        def add_event_listener(self, callback: Callable[[dict[str, object]], object]) -> Callable[[], None]:
+            self._listeners.append(callback)
+
+            def remove() -> None:
+                if callback in self._listeners:
+                    self._listeners.remove(callback)
+
+            return remove
+
+        def emit_output(self, text: str) -> None:
+            for listener in tuple(self._listeners):
+                listener({"event": "output", "data": text, "timestamp": 45.0})
+
+        def stop(self) -> None:
+            self.session_active = False
+
+    class FakeTerminalWidget:
+        kind = "terminal"
+        id = "terminal-view-a"
+
+        def __init__(self) -> None:
+            self.bridge = FakeBridge()
+
+    terminal_widget = FakeTerminalWidget()
+    output_log = dg.LogView([], id="main-output-log", parent=None)
+    graph = dg.NodeGraph(
+        [
+            {
+                "id": "terminal-owner",
+                "title": "Terminal",
+                "outputs": [dg.NodeGraphPort("stdout", "stdout", port_type="terminal_output")],
+                "data": {
+                    "node_type": "terminal",
+                    "runtime_object": "terminal_session",
+                    "config": {
+                        "session_id": "shell-1",
+                        "terminal_widget_id": "terminal-view-a",
+                    },
+                },
+            },
+            {
+                "id": "indicator",
+                "title": "Indicator",
+                "inputs": [dg.NodeGraphPort("value", "terminal_output", port_type="terminal_output")],
+                "data": {
+                    "node_type": "widget_sink",
+                    "config": {
+                        "widget_type": "log_view",
+                        "port_profile": "terminal_output",
+                        "update_mode": "append",
+                        "format": "terminal_text",
+                    },
+                },
+            },
+        ],
+        [dg.NodeGraphEdge("terminal-owner", "stdout", "indicator", "value", id="edge-terminal-log")],
+        binding_targets=[
+            {
+                "id": "terminal-view-a",
+                "label": "Terminal View A",
+                "target_type": "terminal",
+                "widget_type": "terminal",
+                "widget": terminal_widget,
+            },
+            {
+                "id": "main-output-log",
+                "label": "Main Output Log",
+                "target_type": "log_view",
+                "widget_type": "log_view",
+                "widget": output_log,
+                "supported_update_modes": ["append", "set"],
+                "default_update_mode": "append",
+                "supported_port_profiles": ["terminal_output", "text"],
+                "default_port_profile": "terminal_output",
+            },
+        ],
+        parent=None,
+    )
+
+    stale_session = graph.managed_runtime_session()
+    terminal_widget.bridge.emit_output("before")
+
+    assert output_log.lines == []
+
+    indicator = next(node for node in graph.nodes if node.id == "indicator")
+    indicator.data = {
+        "node_type": "widget_sink",
+        "config": {
+            "widget_id": "main-output-log",
+            "widget_type": "log_view",
+            "port_profile": "terminal_output",
+            "update_mode": "append",
+            "format": "terminal_text",
+        },
+    }
+    rebuilt_session = graph.managed_runtime_session()
+    terminal_widget.bridge.emit_output("after")
+
+    assert rebuilt_session is not stale_session
+    assert output_log.lines == ["after"]
+    assert rebuilt_session.port_values("indicator", "value") == ["after", "after"]
 
 
 def test_node_graph_selected_terminal_widget_replaces_stale_runtime_bridge() -> None:
@@ -12515,6 +12936,7 @@ def test_node_graph_multi_agent_templates_serialize_and_round_trip() -> None:
         "log",
         "probe",
         "widget_sink",
+        "terminal_log_sink",
         "widget_source",
         "agent",
         "parser",
@@ -12989,6 +13411,3 @@ def test_node_graph_navigation_events_do_not_mutate_graph_history() -> None:
     payload = graph.fit_to_view()
     assert payload == {"schema_version": 1, "event": "fit_to_view", "viewport": graph.navigation_state()}
     assert events[-1] == payload
-
-
-

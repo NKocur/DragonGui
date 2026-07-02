@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import math
@@ -3757,6 +3757,8 @@ class NodeGraphBindingPlayground:
             "flex_shrink": 0,
             "font_family": "Consolas",
             "font_size": 12,
+            "line_height": "17px",
+            "padding_bottom": 12,
             "background": "#070a0f",
             "border_color": "#263347",
             "border_radius": 6,
@@ -3848,11 +3850,11 @@ class NodeGraphBindingPlayground:
                         dg.Button("Dump Bindings", id="v3-dump-bindings-button", on_click=self.dump_bindings)
                         dg.Button("Clear Logs", id="v3-clear-logs-button", on_click=self.clear_logs)
                     dg.Label("Main Output Log", style={"font_weight": "bold"})
-                    self.main_output_log = dg.LogView(["Main output log ready."], id="v3-main-output-log", rows=4, follow=True, wrap=True, style=log_style)
+                    self.main_output_log = dg.LogView(["Main output log ready."], id="v3-main-output-log", rows=8, follow=True, wrap=True, style=log_style)
                     dg.Label("Reviewer Output Log", style={"font_weight": "bold"})
-                    self.review_output_log = dg.LogView(["Reviewer output log ready."], id="v3-review-output-log", rows=4, follow=True, wrap=True, style=log_style)
+                    self.review_output_log = dg.LogView(["Reviewer output log ready."], id="v3-review-output-log", rows=6, follow=True, wrap=True, style=log_style)
                     dg.Label("Parsed Message Log", style={"font_weight": "bold"})
-                    self.message_log = dg.LogView(["Parsed message log ready."], id="v3-message-log", rows=4, follow=True, wrap=True, style=log_style)
+                    self.message_log = dg.LogView(["Parsed message log ready."], id="v3-message-log", rows=6, follow=True, wrap=True, style=log_style)
                     dg.Label("Event Log", style={"font_weight": "bold"})
                     self.event_log = dg.LogView(["Binding playground ready."], id="v3-event-log", rows=6, follow=True, wrap=True, style=log_style)
 
