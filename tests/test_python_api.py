@@ -4963,7 +4963,7 @@ def test_navigation_validation() -> None:
 
     with dg.Tabs():
         dg.Tab("One", value="same")
-        with pytest.raises(ValueError, match="duplicate Tab"):
+        with pytest.raises(ValueError, match="duplicate Tab value 'same': 'One' and 'Two'"):
             dg.Tab("Two", value="same")
 
     with dg.Pages():
@@ -9198,6 +9198,68 @@ def test_app_shell_and_body_provide_safe_app_layout_defaults() -> None:
     assert body["style"]["gap"] == 8
 
 
+
+def test_workbench_layout_and_main_provide_prompt_first_defaults() -> None:
+    win = dg.Window("Workbench", width=900, height=640)
+    with dg.WorkbenchLayout(id="workbench", gap=8, padding=10):
+        with dg.Toolbar(id="controls"):
+            dg.Button("Run")
+            dg.Button("Stop")
+        with dg.WorkbenchMain(id="main", gap=6):
+            dg.LogView(["Ready"], variant="conversation", id="conversation")
+        with dg.StatusBar(height=28):
+            dg.Label("Idle")
+
+    root = win.to_dict()["children"][0]
+    toolbar = root["children"][0]
+    main = root["children"][1]
+    conversation = main["children"][0]
+
+    assert root["type"] == "v_layout"
+    assert root["class"] == "workbench-layout"
+    assert root["style"]["width"] == "100%"
+    assert root["style"]["height"] == "100%"
+    assert root["style"]["overflow_y"] == "hidden"
+    assert root["style"]["gap"] == 8.0
+    assert root["style"]["padding"] == 10.0
+    assert toolbar["class"] == "toolbar toolbar-horizontal"
+    assert main["type"] == "scroll_area"
+    assert main["class"] == "workbench-main"
+    assert main["style"]["height"] == 0
+    assert main["style"]["flex"] == 1
+    assert main["style"]["overflow_y"] == "auto"
+    assert main["style"]["gap"] == 6
+    assert conversation["class"] == "log-view-conversation"
+    assert conversation["props"]["rows"] == 18
+    assert conversation["props"]["wrap"] is True
+
+    with pytest.raises(ValueError, match="WorkbenchLayout gap"):
+        dg.WorkbenchLayout(gap=-1, parent=None)
+
+
+def test_log_view_variants_apply_opt_in_layout_presets() -> None:
+    conversation = dg.LogView(["hello"], variant="conversation", parent=None)
+    activity = dg.LogView([], variant="activity", rows=4, wrap=False, style={"font_size": 13}, class_="extra", parent=None)
+    debug = dg.LogView([], variant="debug", parent=None)
+
+    conversation_node = conversation.to_dict()
+    activity_node = activity.to_dict()
+    debug_node = debug.to_dict()
+
+    assert conversation_node["class"] == "log-view-conversation"
+    assert conversation_node["props"]["rows"] == 18
+    assert conversation_node["props"]["wrap"] is True
+    assert conversation_node["style"]["flex_grow"] == 1
+    assert conversation_node["style"]["padding_bottom"] == 12
+    assert activity_node["class"] == "log-view-activity extra"
+    assert activity_node["props"]["rows"] == 4
+    assert activity_node["props"]["wrap"] is False
+    assert activity_node["style"]["font_size"] == 13
+    assert debug_node["class"] == "log-view-debug"
+    assert debug_node["style"]["font_family"] == "Consolas"
+
+    with pytest.raises(ValueError, match="LogView variant"):
+        dg.LogView([], variant="timeline", parent=None)
 def test_terminal_widget_serializes_as_html_report() -> None:
     terminal = dg.Terminal("cmd.exe", prefer_pty=False, height=360, parent=None)
     try:

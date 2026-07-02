@@ -2080,6 +2080,55 @@ class VLayout(Container):
     kind = "v_layout"
 
 
+
+class WorkbenchLayout(VLayout):
+    """Full-height vertical shell for prompt-first workbench applications."""
+
+    def __init__(
+        self,
+        *,
+        gap: int | float | None = 10,
+        padding: int | float | None = 12,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: "Container | None | object" = _AUTO_PARENT,
+    ) -> None:
+        if gap is not None:
+            gap_f = float(gap)
+            if not math.isfinite(gap_f) or gap_f < 0:
+                raise ValueError("WorkbenchLayout gap must be a non-negative finite number")
+        else:
+            gap_f = None
+        if padding is not None:
+            padding_f = float(padding)
+            if not math.isfinite(padding_f) or padding_f < 0:
+                raise ValueError("WorkbenchLayout padding must be a non-negative finite number")
+        else:
+            padding_f = None
+        default_style: dict[str, object] = {
+            "width": "100%",
+            "height": "100%",
+            "min_width": 0,
+            "min_height": 0,
+            "overflow_x": "hidden",
+            "overflow_y": "hidden",
+        }
+        if gap_f is not None:
+            default_style["gap"] = gap_f
+        if padding_f is not None:
+            default_style["padding"] = padding_f
+        super().__init__(
+            id=id,
+            key=key,
+            class_=_merge_widget_class("workbench-layout", class_),
+            style={**default_style, **(style or {})},
+            tooltip=tooltip,
+            parent=parent,
+        )
+
 class AppShell(HLayout):
     """Bounded application root for sidebar plus main-body layouts.
 
@@ -2238,6 +2287,42 @@ class Body(ScrollArea):
             parent=parent,
         )
 
+
+
+class WorkbenchMain(ScrollArea):
+    """Flexible scroll-owning main region for conversation/detail workbench panes."""
+
+    def __init__(
+        self,
+        *,
+        scroll: str = "y",
+        gap: int | None = 10,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: "Container | None | object" = _AUTO_PARENT,
+    ) -> None:
+        default_style: dict[str, object] = {
+            "width": "100%",
+            "height": 0,
+            "flex": 1,
+            "flex_grow": 1,
+            "flex_shrink": 1,
+            "min_width": 0,
+            "min_height": 0,
+        }
+        super().__init__(
+            axis=scroll,
+            gap=gap,
+            id=id,
+            key=key,
+            class_=_merge_widget_class("workbench-main", class_),
+            style={**default_style, **(style or {})},
+            tooltip=tooltip,
+            parent=parent,
+        )
 
 GridTrackValue = int | float | str | Mapping[str, object]
 GridTrackTemplate = Sequence[GridTrackValue] | str
@@ -3130,8 +3215,14 @@ class Tabs(Container):
     def add(self, child: Widget) -> Widget:
         if not isinstance(child, Tab):
             raise TypeError("Tabs can only contain Tab children")
-        if any(isinstance(existing, Tab) and existing.value == child.value for existing in self.children):
-            raise ValueError(f"duplicate Tab value: {child.value!r}")
+        duplicate = next(
+            (existing for existing in self.children if isinstance(existing, Tab) and existing.value == child.value),
+            None,
+        )
+        if duplicate is not None:
+            raise ValueError(
+                f"duplicate Tab value {child.value!r}: {duplicate.label!r} and {child.label!r} use the same value"
+            )
         if self.value is None:
             self.value = child.value
         return super().add(child)
@@ -4223,6 +4314,31 @@ class CodeEditor(Widget):
         }
 
 
+
+_LOG_VIEW_UNSET = object()
+_LOG_VIEW_VARIANTS = {"default", "conversation", "activity", "debug"}
+_LOG_VIEW_VARIANT_DEFAULTS: dict[str, dict[str, object]] = {
+    "default": {"rows": 12, "wrap": False, "class": ""},
+    "conversation": {
+        "rows": 18,
+        "wrap": True,
+        "class": "log-view-conversation",
+        "style": {"width": "100%", "min_height": 0, "flex_grow": 1, "line_height": "1.45", "padding_bottom": 12},
+    },
+    "activity": {
+        "rows": 8,
+        "wrap": True,
+        "class": "log-view-activity",
+        "style": {"width": "100%", "font_size": 12, "line_height": "1.35", "padding_bottom": 8},
+    },
+    "debug": {
+        "rows": 8,
+        "wrap": False,
+        "class": "log-view-debug",
+        "style": {"width": "100%", "font_family": "Consolas", "font_size": 12, "padding_bottom": 8},
+    },
+}
+
 class LogView(Widget):
     kind = "log_view"
 
@@ -4232,8 +4348,9 @@ class LogView(Widget):
         *,
         follow: bool = True,
         max_lines: int = 10_000,
-        rows: int = 12,
-        wrap: bool = False,
+        rows: int | object = _LOG_VIEW_UNSET,
+        wrap: bool | object = _LOG_VIEW_UNSET,
+        variant: str = "default",
         disabled: bool = False,
         id: str | None = None,
         key: str | None = None,
@@ -4242,16 +4359,27 @@ class LogView(Widget):
         tooltip: str | None = None,
         parent: Container | None | object = _AUTO_PARENT,
     ) -> None:
-        rows_i = int(rows)
+        variant_value = str(variant).strip().lower()
+        if variant_value not in _LOG_VIEW_VARIANTS:
+            raise ValueError("LogView variant must be 'default', 'conversation', 'activity', or 'debug'")
+        defaults = _LOG_VIEW_VARIANT_DEFAULTS[variant_value]
+        resolved_rows = defaults["rows"] if rows is _LOG_VIEW_UNSET else rows
+        resolved_wrap = defaults["wrap"] if wrap is _LOG_VIEW_UNSET else wrap
+        rows_i = int(resolved_rows)
         if rows_i < 1:
             raise ValueError("LogView rows must be at least 1")
         max_lines_i = int(max_lines)
         if max_lines_i < 1:
             raise ValueError("LogView max_lines must be at least 1")
+        variant_style = defaults.get("style")
+        merged_style = {**variant_style, **(style or {})} if isinstance(variant_style, Mapping) else style
+        variant_class = str(defaults.get("class", "") or "")
+        merged_class = class_ if not variant_class else _merge_widget_class(variant_class, class_)
+        self.variant = variant_value
         self.follow = bool(follow)
         self.max_lines = max_lines_i
         self.rows = rows_i
-        self.wrap = bool(wrap)
+        self.wrap = bool(resolved_wrap)
         self.disabled = bool(disabled)
         self.lines = self._normalize_lines(lines)
         self._stream_carriage_return = False
@@ -4261,7 +4389,7 @@ class LogView(Widget):
         self._terminal_rewritten_rows: set[int] = set()
         self._trim()
         self.value = self._joined()
-        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+        super().__init__(id=id, key=key, class_=merged_class, style=merged_style, tooltip=tooltip, parent=parent)
 
     @staticmethod
     def _normalize_lines(lines: str | Iterable[object]) -> list[str]:
