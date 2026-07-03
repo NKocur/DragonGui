@@ -10908,10 +10908,12 @@ fn emit_rects_inner(
                         let pseudo_inset =
                             state_part_style_for_state(&node.style, &node.id, state, "accent")
                                 .and_then(|p| p.layout.padding);
-                        pseudo_inset.or(selected_inset).or(base_inset).unwrap_or(2.0)
+                        pseudo_inset
+                            .or(selected_inset)
+                            .or(base_inset)
+                            .unwrap_or(2.0)
                     };
-                    let accent_x_inset =
-                        (accent_inset_lp.max(0.0) * sf).min((w - bar_w).max(0.0));
+                    let accent_x_inset = (accent_inset_lp.max(0.0) * sf).min((w - bar_w).max(0.0));
                     let accent_y_inset = (6.0 * sf).min(h * 0.25).max(0.0);
                     let accent_h = (h - accent_y_inset * 2.0).max(0.0);
                     let accent_rect = [x + accent_x_inset, y + accent_y_inset, bar_w, accent_h];
@@ -12734,32 +12736,41 @@ fn emit_text_selection_rects(
         return;
     }
     let pad = theme.spacing * sf;
-    let font_size = crate::text::text_font_size(node, theme, sf);
-    let line_h = crate::text::text_line_height(font_size, theme, sf).max(1.0);
-    let char_w = (font_size * 0.62).max(1.0);
     let mut color = theme.focus;
     color[3] = 0.34;
     let [x, y, w, h] = rect;
     let mut text_left = x + pad + gutter_w;
     let mut text_top = y + pad;
-    let mut text_h = (h - pad * 2.0).max(1.0);
+    let mut text_w = (w - pad * 2.0 - gutter_w).max(1.0);
     let mut scroll_x = 0.0;
     let mut scroll_y = 0.0;
+    let mut wrap = false;
     let multiline = matches!(
         node.kind,
         WidgetKind::TextArea | WidgetKind::CodeEditor | WidgetKind::LogView
     );
     if node.kind == WidgetKind::NumberInput {
         let step_w = number_stepper_width_for_style(&node.style, w, sf);
+        let font_size = crate::text::text_font_size(node, theme, sf);
+        let line_h = crate::text::text_line_height(font_size, theme, sf).max(1.0);
         text_left = x + step_w + pad;
         text_top = y + (h - line_h) * 0.5;
-        text_h = line_h;
+        text_w = (w - step_w * 2.0 - pad * 2.0).max(1.0);
     } else if !multiline {
+        let font_size = crate::text::text_font_size(node, theme, sf);
+        let line_h = crate::text::text_line_height(font_size, theme, sf).max(1.0);
         text_top = y + (h - line_h) * 0.5;
-        text_h = line_h;
     } else {
-        scroll_x = state.text_area_scroll_x(&node.id);
-        scroll_y = state.text_area_scroll_y_raw(&node.id);
+        wrap = node.props.wrap.unwrap_or(true);
+        let font_size = crate::text::text_font_size(node, theme, sf);
+        let line_h = crate::text::text_line_height(font_size, theme, sf).max(1.0);
+        let visible_h = (h - pad * 2.0).max(1.0);
+        scroll_x = if wrap {
+            0.0
+        } else {
+            state.text_area_scroll_x(&node.id)
+        };
+        scroll_y = state.text_area_scroll_y(&node.id, visible_h, line_h);
     }
 
     let clip = [
@@ -12768,71 +12779,19 @@ fn emit_text_selection_rects(
         (w - border_w * 2.0).max(0.0),
         (h - border_w * 2.0).max(0.0),
     ];
-    for (line, start_col, end_col) in selected_line_columns(value, start, end) {
-        if end_col <= start_col {
-            continue;
-        }
-        let row_y = if multiline {
-            text_top + line as f32 * line_h - scroll_y
-        } else {
-            text_top
-        };
-        let row_x = text_left + start_col as f32 * char_w - scroll_x;
-        let row_w = ((end_col - start_col) as f32 * char_w).max(1.0);
-        if let Some(r) = intersect_rect_arrays([row_x, row_y, row_w, text_h.min(line_h)], clip) {
+    for [local_x, local_y, local_w, local_h] in
+        crate::text::shaped_text_selection_rects(node, theme, sf, value, text_w, wrap, (start, end))
+    {
+        let row = [
+            text_left + local_x - scroll_x,
+            text_top + local_y - scroll_y,
+            local_w,
+            local_h,
+        ];
+        if let Some(r) = intersect_rect_arrays(row, clip) {
             out.push(inst(r, color, 2.0 * sf));
         }
-        if !multiline {
-            break;
-        }
     }
-}
-
-fn selected_line_columns(text: &str, start: usize, end: usize) -> Vec<(usize, usize, usize)> {
-    let start_lc = line_col_for_byte(text, start);
-    let end_lc = line_col_for_byte(text, end);
-    let mut out = Vec::new();
-    for line in start_lc.0..=end_lc.0 {
-        let line_len = line_char_len(text, line);
-        let start_col = if line == start_lc.0 { start_lc.1 } else { 0 };
-        let end_col = if line == end_lc.0 { end_lc.1 } else { line_len };
-        out.push((line, start_col.min(line_len), end_col.min(line_len)));
-    }
-    out
-}
-
-fn line_col_for_byte(text: &str, cursor: usize) -> (usize, usize) {
-    let cursor = cursor.min(text.len());
-    let cursor = if text.is_char_boundary(cursor) {
-        cursor
-    } else {
-        text.char_indices()
-            .map(|(idx, _)| idx)
-            .take_while(|idx| *idx < cursor)
-            .last()
-            .unwrap_or(0)
-    };
-    let mut line = 0usize;
-    let mut col = 0usize;
-    for (idx, ch) in text.char_indices() {
-        if idx >= cursor {
-            break;
-        }
-        if ch == '\n' {
-            line += 1;
-            col = 0;
-        } else {
-            col += 1;
-        }
-    }
-    (line, col)
-}
-
-fn line_char_len(text: &str, target_line: usize) -> usize {
-    text.split('\n')
-        .nth(target_line)
-        .map(|line| line.chars().count())
-        .unwrap_or(0)
 }
 
 fn intersect_rect_arrays(a: [f32; 4], b: [f32; 4]) -> Option<[f32; 4]> {
@@ -13419,6 +13378,76 @@ mod tests {
         assert!(
             (phase1 - phase0).abs() > 0.01,
             "spinner phase should advance across one frame even with epoch-sized timestamps"
+        );
+    }
+
+    #[test]
+    fn text_area_selection_rect_honors_horizontal_scroll_when_unwrapped() {
+        let mut area = node("notes", WidgetKind::TextArea);
+        area.props.wrap = Some(false);
+        area.style.text.font_size = Some(16.0);
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "notes".to_string(),
+            Rect {
+                x: 10.0,
+                y: 20.0,
+                w: 240.0,
+                h: 80.0,
+            },
+        );
+        let theme = Theme::dark();
+        let text = "iiii WWWW longer text".to_string();
+        let start = text.find("WWWW").expect("selection start");
+        let end = start + "WWWW".len();
+        let carets = HashMap::new();
+
+        let mut unscrolled = WidgetState::default();
+        unscrolled
+            .text_val
+            .insert("notes".to_string(), text.clone());
+        assert!(unscrolled.set_text_selection("notes", start, end));
+        let mut unscrolled_out = Vec::new();
+        emit_rects(
+            &area,
+            &layout,
+            &theme,
+            1.0,
+            &unscrolled,
+            &carets,
+            &mut unscrolled_out,
+        );
+
+        let mut scrolled = WidgetState::default();
+        scrolled.text_val.insert("notes".to_string(), text);
+        assert!(scrolled.set_text_selection("notes", start, end));
+        assert!(scrolled.scroll_text_area_with_max_scroll("notes", 12.0, 0.0, 0.0));
+        let mut scrolled_out = Vec::new();
+        emit_rects(
+            &area,
+            &layout,
+            &theme,
+            1.0,
+            &scrolled,
+            &carets,
+            &mut scrolled_out,
+        );
+
+        let selection_color = |inst: &&RectInstance| (inst.color[3] - 0.34).abs() < 0.001;
+        let unscrolled_rect = unscrolled_out
+            .iter()
+            .find(selection_color)
+            .expect("unscrolled selection rect")
+            .rect;
+        let scrolled_rect = scrolled_out
+            .iter()
+            .find(selection_color)
+            .expect("scrolled selection rect")
+            .rect;
+
+        assert!(
+            (scrolled_rect[0] - (unscrolled_rect[0] - 12.0)).abs() < 0.5,
+            "selection x should shift by scroll amount: unscrolled={unscrolled_rect:?} scrolled={scrolled_rect:?}"
         );
     }
 

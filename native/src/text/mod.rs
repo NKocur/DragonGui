@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 use ab_glyph::{point, Font as AbFont, FontArc, ScaleFont};
 use base64::Engine;
 use flate2::read::ZlibDecoder;
-use glyphon::cosmic_text::{FeatureTag, FontFeatures};
+use glyphon::cosmic_text::{Affinity, Cursor, FeatureTag, FontFeatures};
 use glyphon::{
     Attrs, Buffer, Cache, Color, ContentType, CustomGlyph, CustomGlyphId, Family, FontSystem,
     Metrics, RasterizeCustomGlyphRequest, RasterizedCustomGlyph, Resolution, Shaping,
@@ -5226,6 +5226,169 @@ fn text_width_for_buffer(buffer: &Buffer) -> f32 {
         .unwrap_or(0.0)
 }
 
+pub(crate) fn shaped_text_selection_rects(
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    text: &str,
+    avail_w: f32,
+    wrap: bool,
+    selection: (usize, usize),
+) -> Vec<[f32; 4]> {
+    let (start, end) = selection;
+    let start = clamp_boundary(text, start.min(end));
+    let end = clamp_boundary(text, start.max(end));
+    if start >= end || text.is_empty() {
+        return Vec::new();
+    }
+    let font_size = text_font_size(node, theme, sf);
+    let line_height = text_line_height_for_style(&node.style.text, font_size, theme, sf);
+    let mut font_system = FontSystem::new();
+    let font_aliases = FontFamilyAliases::default();
+    let buffer = shaped_text_buffer(
+        &mut font_system,
+        text,
+        font_size,
+        line_height,
+        node.style.text.font_family.as_ref(),
+        &font_aliases,
+        node.style.text.font_weight.unwrap_or(Weight::NORMAL.0),
+        avail_w,
+        wrap,
+        text_options_from_style(&node.style.text),
+    );
+
+    let mut rects = Vec::new();
+    for run in buffer.layout_runs() {
+        let line_start = line_start_byte(text, run.line_i);
+        let line_end = line_end_byte(text, line_start);
+        let run_start = line_start
+            + run
+                .glyphs
+                .iter()
+                .map(|glyph| glyph.start)
+                .min()
+                .unwrap_or(0);
+        let run_end = line_start + run.glyphs.iter().map(|glyph| glyph.end).max().unwrap_or(0);
+        let span_start = start.max(run_start).min(line_end);
+        let span_end = end.min(run_end).min(line_end);
+        if span_start >= span_end {
+            continue;
+        }
+        let cursor_start = Cursor::new_with_affinity(
+            run.line_i,
+            span_start.saturating_sub(line_start),
+            Affinity::After,
+        );
+        let cursor_end = Cursor::new_with_affinity(
+            run.line_i,
+            span_end.saturating_sub(line_start),
+            Affinity::Before,
+        );
+        let span = run.highlight(cursor_start, cursor_end).or_else(|| {
+            let x0 = caret_x_for_run(text, &run, line_start, span_start);
+            let x1 = caret_x_for_run(text, &run, line_start, span_end);
+            (x1 > x0).then_some((x0, x1 - x0))
+        });
+        if let Some((x, w)) = span.filter(|(_, w)| *w > 0.0) {
+            rects.push([
+                x.max(0.0),
+                run.line_top.max(0.0),
+                w.max(1.0),
+                run.line_height,
+            ]);
+        }
+    }
+    rects
+}
+
+pub(crate) fn shaped_text_cursor_at_point(
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    text: &str,
+    avail_w: f32,
+    wrap: bool,
+    point: [f32; 2],
+) -> usize {
+    if text.is_empty() {
+        return 0;
+    }
+    let font_size = text_font_size(node, theme, sf);
+    let line_height = text_line_height_for_style(&node.style.text, font_size, theme, sf);
+    let mut font_system = FontSystem::new();
+    let font_aliases = FontFamilyAliases::default();
+    let buffer = shaped_text_buffer(
+        &mut font_system,
+        text,
+        font_size,
+        line_height,
+        node.style.text.font_family.as_ref(),
+        &font_aliases,
+        node.style.text.font_weight.unwrap_or(Weight::NORMAL.0),
+        avail_w,
+        wrap,
+        text_options_from_style(&node.style.text),
+    );
+
+    let mut last_cursor = text.len();
+    for run in buffer.layout_runs() {
+        let line_start = line_start_byte(text, run.line_i);
+        let line_end = line_end_byte(text, line_start);
+        last_cursor = line_end;
+        if point[1] < run.line_top {
+            return line_start;
+        }
+        if point[1] > run.line_top + run.line_height {
+            continue;
+        }
+        if run.glyphs.is_empty() {
+            return line_start;
+        }
+        let mut best = line_start;
+        let mut best_dist = f32::INFINITY;
+        for glyph in run.glyphs {
+            let left = glyph.x;
+            let right = glyph.x + glyph.w;
+            let boundaries = [
+                (left, line_start + glyph.start),
+                (right, line_start + glyph.end),
+            ];
+            for (x, cursor) in boundaries {
+                let dist = (point[0] - x).abs();
+                if dist < best_dist {
+                    best_dist = dist;
+                    best = cursor.min(line_end);
+                }
+            }
+        }
+        return clamp_boundary(text, best);
+    }
+    last_cursor
+}
+
+#[allow(clippy::too_many_arguments)]
+fn shaped_text_buffer(
+    font_system: &mut FontSystem,
+    text: &str,
+    font_size: f32,
+    line_height: f32,
+    font_family: Option<&FontFamily>,
+    font_aliases: &FontFamilyAliases,
+    font_weight: u16,
+    avail_w: f32,
+    wrap: bool,
+    options: TextRenderOptions,
+) -> Buffer {
+    let mut buf = Buffer::new(font_system, Metrics::new(font_size, line_height));
+    buf.set_size(font_system, Some(avail_w.max(1.0)), None);
+    buf.set_wrap(font_system, if wrap { Wrap::Word } else { Wrap::None });
+    let attrs = text_attrs(font_family, font_aliases, font_weight, options, font_size);
+    buf.set_text(font_system, text, &attrs, Shaping::Advanced, None);
+    buf.shape_until_scroll(font_system, false);
+    buf
+}
+
 fn caret_xy_for_buffer(buffer: &Buffer, text: &str, cursor: usize) -> [f32; 2] {
     let cursor = clamp_boundary(text, cursor);
     if cursor == 0 || text.is_empty() {
@@ -5237,6 +5400,15 @@ fn caret_xy_for_buffer(buffer: &Buffer, text: &str, cursor: usize) -> [f32; 2] {
         let line_start = line_start_byte(text, run.line_i);
         let line_end = line_end_byte(text, line_start);
         if cursor < line_start || cursor > line_end {
+            continue;
+        }
+        let Some((run_start, run_end)) = visual_run_byte_range(&run, line_start) else {
+            if cursor == line_start {
+                return [0.0, run.line_top.max(0.0)];
+            }
+            continue;
+        };
+        if cursor < run_start || cursor > run_end {
             continue;
         }
         if cursor == line_start {
@@ -5265,6 +5437,47 @@ fn caret_xy_for_buffer(buffer: &Buffer, text: &str, cursor: usize) -> [f32; 2] {
         return last;
     }
 
+    last
+}
+
+fn visual_run_byte_range(
+    run: &glyphon::cosmic_text::LayoutRun<'_>,
+    line_start: usize,
+) -> Option<(usize, usize)> {
+    let run_start = line_start + run.glyphs.iter().map(|glyph| glyph.start).min()?;
+    let run_end = line_start + run.glyphs.iter().map(|glyph| glyph.end).max()?;
+    Some((run_start, run_end))
+}
+
+fn caret_x_for_run(
+    text: &str,
+    run: &glyphon::cosmic_text::LayoutRun<'_>,
+    line_start: usize,
+    cursor: usize,
+) -> f32 {
+    if cursor <= line_start {
+        return 0.0;
+    }
+    let mut last = 0.0;
+    for glyph in run.glyphs {
+        let glyph_start = line_start + glyph.start;
+        let glyph_end = line_start + glyph.end;
+        let glyph_left = glyph.x;
+        let glyph_right = glyph.x + glyph.w;
+        last = glyph_right.max(last);
+        if cursor == glyph_start {
+            return glyph_left.max(0.0);
+        }
+        if cursor == glyph_end {
+            return glyph_right.max(0.0);
+        }
+        if cursor > glyph_start && cursor < glyph_end {
+            let before = text[glyph_start..cursor].chars().count() as f32;
+            let total = text[glyph_start..glyph_end].chars().count().max(1) as f32;
+            let t = (before / total).clamp(0.0, 1.0);
+            return (glyph_left + glyph.w * t).max(0.0);
+        }
+    }
     last
 }
 
@@ -5789,6 +6002,166 @@ mod tests {
             (entry.top - expected_top).abs() < 0.01,
             "button text should stay vertically centered on a physical pixel: top={} expected={expected_top}",
             entry.top
+        );
+    }
+
+    #[test]
+    fn shaped_selection_select_all_multiline_emits_per_line_rects() {
+        let theme = Theme::dark();
+        let mut area = node("area", WidgetKind::TextArea);
+        area.style.text.font_size = Some(14.0);
+        let text = "short\nsecond";
+
+        let rects =
+            shaped_text_selection_rects(&area, &theme, 1.0, text, 240.0, true, (0, text.len()));
+
+        assert!(
+            rects.len() >= 2,
+            "multiline selection should emit visible spans per shaped line: {rects:?}"
+        );
+        assert!(
+            rects.windows(2).any(|pair| pair[0][1] != pair[1][1]),
+            "selection spans should occupy more than one y position: {rects:?}"
+        );
+    }
+
+    #[test]
+    fn shaped_selection_short_full_line_does_not_fill_control_width() {
+        let theme = Theme::dark();
+        let mut input = node("input", WidgetKind::TextInput);
+        input.style.text.font_size = Some(16.0);
+        let text = "abc";
+
+        let rects =
+            shaped_text_selection_rects(&input, &theme, 1.0, text, 300.0, false, (0, text.len()));
+        let width: f32 = rects.iter().map(|rect| rect[2]).sum();
+
+        assert!(width > 1.0, "selection should produce a non-empty span");
+        assert!(
+            width < 100.0,
+            "short text selection should use glyph width, not the full field: {width}"
+        );
+    }
+
+    #[test]
+    fn shaped_selection_uses_proportional_glyph_widths() {
+        let theme = Theme::dark();
+        let mut input = node("input", WidgetKind::TextInput);
+        input.style.text.font_size = Some(20.0);
+        let narrow = "iiii";
+        let wide = "WWWW";
+
+        let narrow_w: f32 = shaped_text_selection_rects(
+            &input,
+            &theme,
+            1.0,
+            narrow,
+            300.0,
+            false,
+            (0, narrow.len()),
+        )
+        .iter()
+        .map(|rect| rect[2])
+        .sum();
+        let wide_w: f32 =
+            shaped_text_selection_rects(&input, &theme, 1.0, wide, 300.0, false, (0, wide.len()))
+                .iter()
+                .map(|rect| rect[2])
+                .sum();
+
+        assert!(
+            wide_w > narrow_w * 1.5,
+            "selection widths should follow shaped proportional glyphs: narrow={narrow_w} wide={wide_w}"
+        );
+    }
+
+    #[test]
+    fn shaped_selection_wraps_long_logical_line_into_visual_rects() {
+        let theme = Theme::dark();
+        let mut area = node("area", WidgetKind::TextArea);
+        area.style.text.font_size = Some(16.0);
+        let text = "alpha beta gamma delta epsilon zeta eta theta";
+
+        let rects =
+            shaped_text_selection_rects(&area, &theme, 1.0, text, 90.0, true, (0, text.len()));
+
+        assert!(
+            rects.len() > 1,
+            "wrapped logical line should emit multiple visual selection spans: {rects:?}"
+        );
+    }
+
+    #[test]
+    fn shaped_hit_testing_uses_glyph_positions() {
+        let theme = Theme::dark();
+        let mut input = node("input", WidgetKind::TextInput);
+        input.style.text.font_size = Some(20.0);
+        let text = "iiii WWWW";
+        let rects = shaped_text_selection_rects(&input, &theme, 1.0, text, 300.0, false, (0, 4));
+        let narrow_w: f32 = rects.iter().map(|rect| rect[2]).sum();
+
+        let cursor = shaped_text_cursor_at_point(
+            &input,
+            &theme,
+            1.0,
+            text,
+            300.0,
+            false,
+            [narrow_w + 1.0, 0.0],
+        );
+
+        assert!(
+            cursor <= 5,
+            "point just after narrow glyphs should map near the first word boundary, got {cursor}"
+        );
+    }
+
+    #[test]
+    fn shaped_caret_xy_uses_wrapped_visual_run() {
+        let theme = Theme::dark();
+        let mut area = node("area", WidgetKind::TextArea);
+        area.style.text.font_size = Some(16.0);
+        let text = "alpha beta gamma delta epsilon zeta eta theta";
+        let font_size = text_font_size(&area, &theme, 1.0);
+        let line_height = text_line_height_for_style(&area.style.text, font_size, &theme, 1.0);
+        let mut font_system = FontSystem::new();
+        let font_aliases = FontFamilyAliases::default();
+        let buffer = shaped_text_buffer(
+            &mut font_system,
+            text,
+            font_size,
+            line_height,
+            area.style.text.font_family.as_ref(),
+            &font_aliases,
+            area.style.text.font_weight.unwrap_or(Weight::NORMAL.0),
+            90.0,
+            true,
+            text_options_from_style(&area.style.text),
+        );
+        let runs: Vec<_> = buffer.layout_runs().collect();
+        let first_run_end = runs[0]
+            .glyphs
+            .iter()
+            .map(|glyph| glyph.end)
+            .max()
+            .unwrap_or(0);
+        let second_run = runs
+            .iter()
+            .find(|run| run.line_i == 0 && run.line_top > runs[0].line_top)
+            .expect("wrapped text should produce a second visual run");
+        let cursor = second_run
+            .glyphs
+            .iter()
+            .map(|glyph| glyph.end)
+            .find(|end| *end > first_run_end)
+            .expect("second visual run should contain later glyphs");
+
+        let xy = caret_xy_for_buffer(&buffer, text, cursor);
+
+        assert!(
+            xy[1] >= second_run.line_top,
+            "caret y should follow the wrapped visual run: cursor={cursor} xy={xy:?} second_run_top={}",
+            second_run.line_top
         );
     }
 

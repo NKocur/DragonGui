@@ -13154,12 +13154,26 @@ impl WgpuState {
         let pad = self.theme.spacing * self.scale_factor;
         let font_size = crate::text::text_font_size(node, &self.theme, self.scale_factor);
         let line_h = crate::text::text_line_height(font_size, &self.theme, self.scale_factor);
-        let char_w = (font_size * 0.62).max(1.0);
-        let (left, top, scroll_x, scroll_y, multiline) = match node.kind {
-            WidgetKind::TextInput => (rect.x + pad, rect.y, 0.0, 0.0, false),
+        let value = state.text_for(id).unwrap_or("");
+        let (left, top, avail_w, scroll_x, scroll_y, wrap) = match node.kind {
+            WidgetKind::TextInput => (
+                rect.x + pad,
+                rect.y + (rect.h - line_h) * 0.5,
+                (rect.w - pad * 2.0).max(1.0),
+                0.0,
+                0.0,
+                false,
+            ),
             WidgetKind::NumberInput => {
                 let step_w = number_stepper_width_for_style(&node.style, rect.w, self.scale_factor);
-                (rect.x + step_w + pad, rect.y, 0.0, 0.0, false)
+                (
+                    rect.x + step_w + pad,
+                    rect.y + (rect.h - line_h) * 0.5,
+                    (rect.w - step_w * 2.0 - pad * 2.0).max(1.0),
+                    0.0,
+                    0.0,
+                    false,
+                )
             }
             WidgetKind::TextArea | WidgetKind::CodeEditor | WidgetKind::LogView => {
                 let gutter_w = if node.kind == WidgetKind::CodeEditor {
@@ -13168,23 +13182,32 @@ impl WgpuState {
                 } else {
                     0.0
                 };
+                let wrap = node.props.wrap.unwrap_or(true);
+                let visible_h = (rect.h - pad * 2.0).max(1.0);
                 (
                     rect.x + pad + gutter_w,
                     rect.y + pad,
-                    state.text_area_scroll_x(id),
-                    state.text_area_scroll_y_raw(id),
-                    true,
+                    (rect.w - pad * 2.0 - gutter_w).max(1.0),
+                    if wrap {
+                        0.0
+                    } else {
+                        state.text_area_scroll_x(id)
+                    },
+                    state.text_area_scroll_y(id, visible_h, line_h),
+                    wrap,
                 )
             }
             _ => return None,
         };
-        let column = (((pos[0] - left + scroll_x) / char_w).round().max(0.0)) as usize;
-        let line = if multiline {
-            (((pos[1] - top + scroll_y) / line_h).floor().max(0.0)) as usize
-        } else {
-            0
-        };
-        state.cursor_for_text_position(id, line, column)
+        Some(crate::text::shaped_text_cursor_at_point(
+            node,
+            &self.theme,
+            self.scale_factor,
+            value,
+            avail_w,
+            wrap,
+            [pos[0] - left + scroll_x, pos[1] - top + scroll_y],
+        ))
     }
 
     fn begin_text_selection(&mut self, id: &str, pos: [f32; 2]) -> Option<TextSelectionDrag> {

@@ -725,6 +725,7 @@ impl WidgetState {
         Some(value.clone())
     }
 
+    #[allow(dead_code)]
     pub fn cursor_for_text_position(&self, id: &str, line: usize, column: usize) -> Option<usize> {
         let value = self.text_val.get(id)?;
         Some(cursor_for_line_column(value, line, column))
@@ -758,6 +759,7 @@ impl WidgetState {
         self.text_scroll_x.get(id).copied().unwrap_or(0.0).max(0.0)
     }
 
+    #[allow(dead_code)]
     pub fn text_area_scroll_y_raw(&self, id: &str) -> f32 {
         self.text_scroll_y.get(id).copied().unwrap_or(0.0).max(0.0)
     }
