@@ -1,0 +1,268 @@
+diff --git a/artifacts/IMPLEMENTATION_NOTES.md b/artifacts/IMPLEMENTATION_NOTES.md
+index ca57b19..f11600d 100644
+--- a/artifacts/IMPLEMENTATION_NOTES.md
++++ b/artifacts/IMPLEMENTATION_NOTES.md
+@@ -1,40 +1,71 @@
+-# Implementation Notes
++# Implementation Notes: Badge Layout Pass
+ 
+ ## Changed
+-- Fixed the wrapped caret regression in `native/src/text/mod.rs::caret_xy_for_buffer`.
+-  - The helper now filters candidate `layout_runs()` by the visual run's glyph byte range before resolving the caret x/y.
+-  - Wrapped visual runs that share the same logical line no longer let the first run claim cursors that belong to later wrapped runs.
+-  - Added `visual_run_byte_range` as a small local helper for the run byte-span calculation.
+-- Added shaped text geometry helpers in `native/src/text/mod.rs`:
+-  - `shaped_text_selection_rects` builds a COSMIC Text/glyphon buffer with the widget text font, line height, width, and wrap settings, then emits selection spans from `LayoutRun::highlight` with a caret-position fallback.
+-  - `shaped_text_cursor_at_point` uses the same shaped glyph positions for mouse hit-testing instead of line/column estimates.
+-- Replaced `native/src/primitives/mod.rs::emit_text_selection_rects` character-width math with shaped selection spans.
+-  - Multi-line and wrapped selections now emit per-visual-run rectangles.
+-  - Short full-line selections now stop at shaped text width instead of extending across the field.
+-  - Non-wrapping multiline selection still applies horizontal scroll; wrapping ignores horizontal scroll like rendering.
+-  - Code editor gutter offset is still handled by the caller before painting.
+-- Replaced `native/src/runtime.rs::text_cursor_at_point` column math with shaped hit-testing so drag endpoints match the painted selection geometry.
+-- Fixed the reviewed single-line hit-test regression by using the same vertically centered line-box origin for `TextInput` and `NumberInput` that painting uses.
+-- Tightened selection run clipping to use min/max glyph byte offsets within each shaped run instead of assuming first/last visual glyph order matches logical byte order.
+-- Left existing text state/copy/paste behavior intact. The old line/column state utilities are still present and marked as retained dead code.
+-- Added targeted unit tests in `native/src/text/mod.rs` for:
+-  - multi-line select-all producing multiple rects
+-  - short full-line selection not filling the field
+-  - proportional glyph width differences
+-  - wrapped logical lines producing multiple visual rects
+-  - hit-testing using shaped positions
+-  - caret y-position using the correct wrapped visual run
+-- Added a primitive-layer test for non-wrapping text area horizontal scroll shifting the selection rect by the scroll amount.
++
++- Added a dedicated badge visual-audit target:
++  - `examples/css_feature_probes/badge_layout_probe.py`
++  - manifest id: `badge-layout`
++  - sizes: `900x640`, `390x720`, `320x640`
++  - category: `widgets`
++  - covers standalone `Badge` / `Tag`, inline `Button` / `SmallButton` badges, `Tab` badges, `NavItem` badges, styled `::badge` parts, long badge values, constrained parents, disabled states, and narrow/mobile cases.
++- Updated inline badge geometry in `native/src/text/mod.rs` and `native/src/primitives/mod.rs`.
++  - The previous inline `badge_rect()` returned `None` when a badge's preferred x position was at or left of the parent x. In narrow controls this made non-empty badges disappear.
++  - Inline badge rects now cap badge width to the available right-side space inside the parent and allow the badge to sit flush against the parent left edge.
++  - Text and primitive badge rect behavior remains matched.
++- Updated label text bounds for `Button`, `SmallButton`, `Tab`, and `NavItem` in `native/src/text/mod.rs`.
++  - When reserved badge width consumes most of a parent, the main label clip right edge is clamped so text bounds do not invert.
++  - The label can now collapse/clamp before the badge disappears.
++- Added focused native regression tests:
++  - `text::tests::narrow_button_badge_text_rect_stays_inside_parent`
++  - `text::tests::narrow_tab_and_nav_badge_text_rects_stay_inside_parent`
++  - `text::tests::button_label_clip_is_not_inverted_when_badge_consumes_width`
++  - `primitives::tests::narrow_button_badge_pill_rect_stays_inside_parent`
++  - `primitives::tests::narrow_tab_and_nav_badge_pill_rects_stay_inside_parent`
++- Rebuilt and copied the native Python extension:
++  - `native/target/release/_dragongui.dll`
++  - `python/dragongui/_dragongui.pyd`
++- Updated visual-audit artifacts:
++  - `artifacts/visual_audit/report.json`
++  - `artifacts/visual_audit/REPORT.md`
++  - new badge screenshots and snapshots under `artifacts/visual_audit/screenshots/` and `artifacts/visual_audit/snapshots/`
++
++## Observed Issues
++
++- The new `badge-layout` probe reproduced the risky narrow cases from the spec: badge preferred width can exceed the available control width for buttons, tabs, and nav items.
++- Before the fix, the native code path would drop the inline badge entirely when the computed badge x was at or before the parent left edge.
++- After the fix, the `320x640` badge-layout capture shows narrow button, tab, and nav badges still visible and clipped inside their parents.
++- Existing mobile `navigation-widgets` remains generally cramped in the content pane, but the badge-specific failure is not present in the rerun: nav and tab badges remain visible within their controls.
+ 
+ ## Validation
++
++- `C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe -m py_compile examples/css_feature_probes/badge_layout_probe.py tools/visual_audit.py` passed.
+ - `cargo fmt --manifest-path native/Cargo.toml -- --check` passed.
+-- With `PYO3_PYTHON=C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe` and `LIB` prefixed with `C:\Users\nashk\AppData\Local\Programs\Python\Python313\libs`:
+-  - `cargo check --manifest-path native/Cargo.toml` passed.
+-  - `cargo test --manifest-path native/Cargo.toml shaped_caret_xy_uses_wrapped_visual_run -- --nocapture` passed.
+-  - `cargo test --manifest-path native/Cargo.toml shaped -- --nocapture` passed, 6 passed.
+-  - `cargo test --manifest-path native/Cargo.toml text_area_selection_rect_honors_horizontal_scroll_when_unwrapped -- --nocapture` passed, 1 passed.
++- `cargo check --manifest-path native/Cargo.toml` passed with the Python 3.13 PyO3/MSVC environment.
++- Focused native tests passed:
++  - `narrow_button_badge_text_rect_stays_inside_parent`
++  - `narrow_tab_and_nav_badge_text_rects_stay_inside_parent`
++  - `button_label_clip_is_not_inverted_when_badge_consumes_width`
++  - `narrow_button_badge_pill_rect_stays_inside_parent`
++  - `narrow_tab_and_nav_badge_pill_rects_stay_inside_parent`
++- Visual audit reruns passed:
++  - `badge-layout --sizes desktop,mobile,320x640`
++  - `core-widgets --sizes desktop,mobile`
++  - `navigation-widgets --sizes desktop,mobile`
++  - `typography --sizes desktop,mobile`
++- Current report summary:
++  - entries: 67
++  - `pass`: 46
++  - `needs_manual_interaction`: 21
++  - `fail`: 0
++  - `blocked`: 0
++- PNG header and dimensions checked for the new badge screenshots:
++  - `badge-layout-desktop-1.png`: `900x640`
++  - `badge-layout-390x720.png`: `390x720`
++  - `badge-layout-320x640.png`: `320x640`
+ 
+ ## Remaining
+-- Full `cargo test --manifest-path native/Cargo.toml` was not rerun in this implementer pass; prior artifacts show unrelated layout/chart failures.
+-- Manual visual smoke test is still needed for text input, number input, text area, log view, code editor gutter selection, wrapped text, horizontal scroll, and proportional strings.
+-- The transient geometry helpers still use default font aliases, so custom loaded font aliases may differ from the renderer until geometry can share the renderer's live font system/alias map. This remains explicitly limited to default/system-font parity for now.
++
++- Full `cargo test --manifest-path native/Cargo.toml` was not run.
++- The 21 `needs_manual_interaction` visual targets still require interaction-state coverage.
++- The `navigation-widgets` mobile probe is still visually dense/cramped outside the badge-specific behavior; that appears to be broader probe/layout pressure, not the disappearing inline badge bug.
++- The working tree still contains pre-existing dirty/generated files from earlier workflow passes; this pass did not revert unrelated changes.
+diff --git a/native/src/primitives/mod.rs b/native/src/primitives/mod.rs
+index 98821f3..681d6c6 100644
+--- a/native/src/primitives/mod.rs
++++ b/native/src/primitives/mod.rs
+@@ -20,9 +20,9 @@ use crate::layout::{
+ use crate::overlays::{find_node, menu_popup_rect, rich_tooltip_target, tooltip_target};
+ use crate::scatter::colormap;
+ use crate::style::{
+-    badge_height_for_style, badge_width_for_text, base_part_style, checked_part_style_for_state,
+-    code_editor_gutter_width_for_style, collapsed_part_style_for_state,
+-    collapsible_header_height_for_style, expanded_part_style_for_state,
++    base_part_style, checked_part_style_for_state, code_editor_gutter_width_for_style,
++    collapsed_part_style_for_state, collapsible_header_height_for_style,
++    expanded_part_style_for_state, inline_badge_layout_for_text,
+     merged_part_visual_for_state as style_merged_part_visual_for_state,
+     number_stepper_width_for_style, open_part_style_for_state,
+     part_style_active_for_state as style_part_style_active_for_state,
+@@ -12814,14 +12814,11 @@ fn badge_rect(
+         .badge
+         .as_deref()
+         .filter(|badge| !badge.is_empty())?;
+-    let badge_w = badge_width_for_text(&node.style, badge, theme, sf);
+-    let badge_h = badge_height_for_style(&node.style, theme, sf).min((rect[3] - 4.0 * sf).max(1.0));
+-    let x = rect[0] + rect[2] - right_inset - badge_w;
+-    let y = rect[1] + (rect[3] - badge_h) * 0.5;
+-    if x <= rect[0] || badge_w <= 0.0 || badge_h <= 0.0 {
+-        return None;
+-    }
+-    Some([x, y, badge_w, badge_h])
++    let layout =
++        inline_badge_layout_for_text(&node.style, badge, theme, sf, rect[2], rect[3], right_inset);
++    layout
++        .visible_rect
++        .map(|[x, y, w, h]| [rect[0] + x, rect[1] + y, w, h])
+ }
+ 
+ fn emit_badge_pill(
+@@ -14281,6 +14278,84 @@ mod tests {
+         assert_eq!(shadow.params, [6.0, 6.0, 1.0, 0.0]);
+     }
+ 
++    #[test]
++    fn narrow_button_badge_pill_rect_stays_inside_parent() {
++        let mut button = node("narrow", WidgetKind::Button);
++        button.props.badge = Some("owner: platform-design".to_string());
++
++        let parent = [10.0, 12.0, 42.0, 28.0];
++        let badge = badge_rect(&button, parent, &Theme::dark(), 1.0, 8.0)
++            .expect("narrow badge should still produce a clipped pill rect");
++
++        assert!(
++            badge[0] >= parent[0] && badge[0] + badge[2] <= parent[0] + parent[2],
++            "badge pill should stay inside parent: parent={parent:?} badge={badge:?}"
++        );
++        assert!(
++            badge[2] <= parent[2] - 8.0,
++            "badge pill width should be capped by available parent space: {badge:?}"
++        );
++    }
++
++    #[test]
++    fn narrow_tab_and_nav_badge_pill_rects_stay_inside_parent() {
++        let theme = Theme::dark();
++        for kind in [WidgetKind::Tab, WidgetKind::NavItem] {
++            let mut node = node("narrow", kind);
++            node.props.badge = Some("overflow-count".to_string());
++            let parent = [4.0, 6.0, 36.0, 26.0];
++            let badge = badge_rect(&node, parent, &theme, 1.0, 8.0)
++                .expect("narrow inline badge should still produce a clipped pill rect");
++
++            assert!(
++                badge[0] >= parent[0] && badge[0] + badge[2] <= parent[0] + parent[2],
++                "{kind:?} badge pill should stay inside parent: parent={parent:?} badge={badge:?}"
++            );
++        }
++    }
++
++    #[test]
++    fn disabled_button_still_emits_inline_badge_pill_inside_parent() {
++        let mut button = node("disabled", WidgetKind::Button);
++        button.props.badge = Some("1234567890".to_string());
++        button.props.disabled = true;
++
++        let parent = Rect {
++            x: 10.0,
++            y: 12.0,
++            w: 54.0,
++            h: 30.0,
++        };
++        let mut layout = LayoutResult::default();
++        layout.rects.insert("disabled".to_string(), parent);
++        let theme = Theme::dark();
++        let mut out = Vec::new();
++
++        emit_rects(
++            &button,
++            &layout,
++            &theme,
++            1.0,
++            &WidgetState::default(),
++            &HashMap::new(),
++            &mut out,
++        );
++
++        let expected = badge_rect(
++            &button,
++            [parent.x, parent.y, parent.w, parent.h],
++            &theme,
++            1.0,
++            theme.spacing,
++        )
++        .expect("disabled badge rect");
++        assert!(
++            out.iter().any(|inst| inst.rect == expected),
++            "disabled button should emit badge pill at {expected:?}; emitted rects: {:?}",
++            out.iter().map(|inst| inst.rect).collect::<Vec<_>>()
++        );
++    }
++
+     #[test]
+     fn backdrop_filter_brightness_and_saturation_affect_tint_instance() {
+         let mut out = Vec::new();
+diff --git a/native/src/style.rs b/native/src/style.rs
+index 909d71a..0de8ba6 100644
+--- a/native/src/style.rs
++++ b/native/src/style.rs
+@@ -67,27 +67,78 @@ pub(crate) fn badge_font_size_lp(style: &NodeStyle, theme: &Theme) -> f32 {
+ }
+ 
+ pub(crate) fn badge_height_for_style(style: &NodeStyle, theme: &Theme, sf: f32) -> f32 {
+-    let height_lp = style
+-        .parts
+-        .parts
+-        .get("badge")
++    let badge_part = style.parts.parts.get("badge");
++    let height_lp = badge_part
+         .and_then(|part| part.layout.height)
+-        .unwrap_or_else(|| (badge_font_size_lp(style, theme) + 6.0).max(BADGE_MIN_HEIGHT_LP));
++        .unwrap_or_else(|| {
++            let font_size = badge_font_size_lp(style, theme);
++            if let Some(part) = badge_part {
++                let padding = part.layout.padding.unwrap_or(3.0).max(0.0);
++                let border = part.visual.border_width.unwrap_or(0.0).max(0.0);
++                (font_size + padding * 2.0 + border * 2.0).max(BADGE_MIN_HEIGHT_LP)
++            } else {
++                (font_size + 6.0).max(BADGE_MIN_HEIGHT_LP)
++            }
++        });
+     (height_lp.max(1.0) * sf).max(1.0)
+ }
+ 
+warning: LF will be replaced by CRLF in artifacts/IMPLEMENTATION_NOTES.md.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in native/src/primitives/mod.rs.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in native/src/style.rs.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in native/src/text/mod.rs.
+The file will have its original line endings in your working directory

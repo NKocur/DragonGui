@@ -1,0 +1,4029 @@
+{
+  "gpu": {
+    "computed_styles": {
+      "dg-1": {
+        "matched_rules": [
+          "framework: Window",
+          "user: Window"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "gap": 12.0,
+            "padding": 18.0,
+            "padding_bottom": 18.0,
+            "padding_left": 18.0,
+            "padding_right": 18.0,
+            "padding_top": 18.0
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.9647058844566345,
+                0.9764705896377563,
+                1.0,
+                0.9411764740943909
+              ]
+            },
+            "font_size": 14.0
+          },
+          "visual": {
+            "background": {
+              "rgba": [
+                0.0470588244497776,
+                0.06666667014360428,
+                0.11372549086809158,
+                1.0
+              ]
+            },
+            "background_paint": {
+              "color": {
+                "rgba": [
+                  0.0470588244497776,
+                  0.06666667014360428,
+                  0.11372549086809158,
+                  1.0
+                ]
+              },
+              "type": "color"
+            }
+          },
+          "widget": {}
+        }
+      },
+      "dg-10": {
+        "matched_rules": [
+          "user: HLayout.grid"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "gap": 12.0,
+            "height": "auto"
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.9647058844566345,
+                0.9764705896377563,
+                1.0,
+                0.9411764740943909
+              ]
+            },
+            "font_size": 14.0
+          },
+          "visual": {},
+          "widget": {}
+        }
+      },
+      "dg-11": {
+        "matched_rules": [
+          "framework: Panel",
+          "user: Panel",
+          "user: Panel.scatter-case"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "gap": 8.0,
+            "height": 278.0,
+            "min_width": 360.0,
+            "overflow": "hidden",
+            "padding": 12.0,
+            "padding_bottom": 12.0,
+            "padding_left": 12.0,
+            "padding_right": 12.0,
+            "padding_top": 12.0,
+            "width": {
+              "calc": {
+                "percent": 50.0,
+                "px": -6.0
+              }
+            }
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.9647058844566345,
+                0.9764705896377563,
+                1.0,
+                0.9411764740943909
+              ]
+            },
+            "font_size": 14.0
+          },
+          "visual": {
+            "accent": {
+              "token": "accent"
+            },
+            "background_paint": {
+              "layers": [
+                {
+                  "center": [
+                    0.11999999731779099,
+                    0.18000000715255737
+                  ],
+                  "repeating": false,
+                  "stops": [
+                    {
+                      "color": {
+                        "rgba": [
+                          0.3529411852359772,
+                          0.6627451181411743,
+                          1.0,
+                          0.12156862765550613
+                        ]
+                      },
+                      "position": null
+                    },
+                    {
+                      "color": {
+                        "rgba": [
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0
+                        ]
+                      },
+                      "position": 0.5400000214576721
+                    }
+                  ],
+                  "type": "radial_gradient"
+                },
+                {
+                  "color": {
+                    "rgba": [
+                      0.07058823853731155,
+                      0.09803921729326248,
+                      0.1568627506494522,
+                      0.9607843160629272
+                    ]
+                  },
+                  "type": "color"
+                }
+              ],
+              "type": "layers"
+            },
+            "border_color": {
+              "rgba": [
+                1.0,
+                1.0,
+                1.0,
+                0.1411764770746231
+              ]
+            },
+            "border_radius": 14.0,
+            "border_width": 1.0,
+            "box_shadow": []
+          },
+          "widget": {}
+        }
+      },
+      "dg-12": {
+        "matched_rules": [
+          "user: Label.case-title"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {},
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                1.0,
+                1.0,
+                1.0,
+                1.0
+              ]
+            },
+            "font_size": 14.0,
+            "font_weight": 850
+          },
+          "visual": {},
+          "widget": {}
+        }
+      },
+      "dg-13": {
+        "matched_rules": [
+          "framework: Scatter3D",
+          "user: Scatter3D",
+          "user: Scatter3D.small-points"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "height": 188.0
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.9647058844566345,
+                0.9764705896377563,
+                1.0,
+                0.9411764740943909
+              ]
+            },
+            "font_size": 14.0
+          },
+          "visual": {
+            "background_paint": {
+              "layers": [
+                {
+                  "center": [
+                    0.18000000715255737,
+                    0.2199999988079071
+                  ],
+                  "repeating": false,
+                  "stops": [
+                    {
+                      "color": {
+                        "rgba": [
+                          0.45490196347236633,
+                          0.8666666746139526,
+                          0.6901960968971252,
+                          0.16078431904315948
+                        ]
+                      },
+                      "position": null
+                    },
+                    {
+                      "color": {
+                        "rgba": [
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0
+                        ]
+                      },
+                      "position": 0.5600000023841858
+                    }
+                  ],
+                  "type": "radial_gradient"
+                },
+                {
+                  "color": {
+                    "rgba": [
+                      0.0117647061124444,
+                      0.0313725508749485,
+                      0.07058823853731155,
+                      0.501960813999176
+                    ]
+                  },
+                  "type": "color"
+                }
+              ],
+              "type": "layers"
+            },
+            "border_color": {
+              "rgba": [
+                0.45490196347236633,
+                0.8666666746139526,
+                0.6901960968971252,
+                0.3019607961177826
+              ]
+            },
+            "border_radius": 14.0,
+            "border_width": 1.0
+          },
+          "widget": {
+            "scatter_point_size": 4.0
+          }
+        }
+      },
+      "dg-14": {
+        "matched_rules": [
+          "user: Label.pass"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {},
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.45490196347236633,
+                0.8666666746139526,
+                0.6901960968971252,
+                1.0
+              ]
+            },
+            "font_size": 14.0,
+            "font_weight": 800
+          },
+          "visual": {},
+          "widget": {}
+        }
+      },
+      "dg-15": {
+        "matched_rules": [
+          "framework: Panel",
+          "user: Panel",
+          "user: Panel.scatter-case"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "gap": 8.0,
+            "height": 278.0,
+            "min_width": 360.0,
+            "overflow": "hidden",
+            "padding": 12.0,
+            "padding_bottom": 12.0,
+            "padding_left": 12.0,
+            "padding_right": 12.0,
+            "padding_top": 12.0,
+            "width": {
+              "calc": {
+                "percent": 50.0,
+                "px": -6.0
+              }
+            }
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.9647058844566345,
+                0.9764705896377563,
+                1.0,
+                0.9411764740943909
+              ]
+            },
+            "font_size": 14.0
+          },
+          "visual": {
+            "accent": {
+              "token": "accent"
+            },
+            "background_paint": {
+              "layers": [
+                {
+                  "center": [
+                    0.11999999731779099,
+                    0.18000000715255737
+                  ],
+                  "repeating": false,
+                  "stops": [
+                    {
+                      "color": {
+                        "rgba": [
+                          0.3529411852359772,
+                          0.6627451181411743,
+                          1.0,
+                          0.12156862765550613
+                        ]
+                      },
+                      "position": null
+                    },
+                    {
+                      "color": {
+                        "rgba": [
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0
+                        ]
+                      },
+                      "position": 0.5400000214576721
+                    }
+                  ],
+                  "type": "radial_gradient"
+                },
+                {
+                  "color": {
+                    "rgba": [
+                      0.07058823853731155,
+                      0.09803921729326248,
+                      0.1568627506494522,
+                      0.9607843160629272
+                    ]
+                  },
+                  "type": "color"
+                }
+              ],
+              "type": "layers"
+            },
+            "border_color": {
+              "rgba": [
+                1.0,
+                1.0,
+                1.0,
+                0.1411764770746231
+              ]
+            },
+            "border_radius": 14.0,
+            "border_width": 1.0,
+            "box_shadow": []
+          },
+          "widget": {}
+        }
+      },
+      "dg-16": {
+        "matched_rules": [
+          "user: Label.case-title"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {},
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                1.0,
+                1.0,
+                1.0,
+                1.0
+              ]
+            },
+            "font_size": 14.0,
+            "font_weight": 850
+          },
+          "visual": {},
+          "widget": {}
+        }
+      },
+      "dg-17": {
+        "matched_rules": [
+          "framework: Scatter3D",
+          "user: Scatter3D",
+          "user: Scatter3D.large-points"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "height": 188.0
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.9647058844566345,
+                0.9764705896377563,
+                1.0,
+                0.9411764740943909
+              ]
+            },
+            "font_size": 14.0
+          },
+          "visual": {
+            "background_paint": {
+              "layers": [
+                {
+                  "center": [
+                    0.18000000715255737,
+                    0.2199999988079071
+                  ],
+                  "repeating": false,
+                  "stops": [
+                    {
+                      "color": {
+                        "rgba": [
+                          0.45490196347236633,
+                          0.8666666746139526,
+                          0.6901960968971252,
+                          0.16078431904315948
+                        ]
+                      },
+                      "position": null
+                    },
+                    {
+                      "color": {
+                        "rgba": [
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0
+                        ]
+                      },
+                      "position": 0.5600000023841858
+                    }
+                  ],
+                  "type": "radial_gradient"
+                },
+                {
+                  "color": {
+                    "rgba": [
+                      0.0117647061124444,
+                      0.0313725508749485,
+                      0.07058823853731155,
+                      0.501960813999176
+                    ]
+                  },
+                  "type": "color"
+                }
+              ],
+              "type": "layers"
+            },
+            "border_color": {
+              "rgba": [
+                0.45490196347236633,
+                0.8666666746139526,
+                0.6901960968971252,
+                0.3019607961177826
+              ]
+            },
+            "border_radius": 14.0,
+            "border_width": 1.0
+          },
+          "widget": {
+            "scatter_point_size": 8.0
+          }
+        }
+      },
+      "dg-18": {
+        "matched_rules": [
+          "user: Label.pass"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {},
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.45490196347236633,
+                0.8666666746139526,
+                0.6901960968971252,
+                1.0
+              ]
+            },
+            "font_size": 14.0,
+            "font_weight": 800
+          },
+          "visual": {},
+          "widget": {}
+        }
+      },
+      "dg-2": {
+        "matched_rules": [
+          "user: VLayout.root",
+          "user: VLayout.root::scrollbar-track",
+          "user: VLayout.root::scrollbar-thumb"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "gap": 12.0,
+            "height": {
+              "percent": 100.0
+            },
+            "overflow_y": "auto",
+            "padding_right": 24.0,
+            "width": {
+              "percent": 100.0
+            }
+          },
+          "open": {},
+          "parts": {
+            "scrollbar-thumb": {
+              "layout": {
+                "width": 6.0
+              },
+              "matched_rules": [
+                "user: VLayout.root::scrollbar-thumb"
+              ],
+              "visual": {
+                "background": {
+                  "rgba": [
+                    0.3529411852359772,
+                    0.6627451181411743,
+                    1.0,
+                    0.7215686440467834
+                  ]
+                },
+                "background_paint": {
+                  "color": {
+                    "rgba": [
+                      0.3529411852359772,
+                      0.6627451181411743,
+                      1.0,
+                      0.7215686440467834
+                    ]
+                  },
+                  "type": "color"
+                },
+                "border_radius": 999.0
+              }
+            },
+            "scrollbar-track": {
+              "layout": {
+                "padding": 1.0,
+                "width": 8.0
+              },
+              "matched_rules": [
+                "user: VLayout.root::scrollbar-track"
+              ],
+              "visual": {
+                "background": {
+                  "rgba": [
+                    1.0,
+                    1.0,
+                    1.0,
+                    0.0784313753247261
+                  ]
+                },
+                "background_paint": {
+                  "color": {
+                    "rgba": [
+                      1.0,
+                      1.0,
+                      1.0,
+                      0.0784313753247261
+                    ]
+                  },
+                  "type": "color"
+                },
+                "border_radius": 999.0
+              }
+            }
+          },
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.9647058844566345,
+                0.9764705896377563,
+                1.0,
+                0.9411764740943909
+              ]
+            },
+            "font_size": 14.0
+          },
+          "visual": {},
+          "widget": {}
+        }
+      },
+      "dg-3": {
+        "matched_rules": [
+          "user: Label.title"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {},
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                1.0,
+                1.0,
+                1.0,
+                1.0
+              ]
+            },
+            "font_size": 20.0,
+            "font_weight": 850
+          },
+          "visual": {},
+          "widget": {}
+        }
+      },
+      "dg-4": {
+        "matched_rules": [
+          "user: Label.caption"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {},
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.9647058844566345,
+                0.9764705896377563,
+                1.0,
+                0.7215686440467834
+              ]
+            },
+            "font_size": 14.0,
+            "line_height": {
+              "multiplier": 1.1200000047683716
+            }
+          },
+          "visual": {},
+          "widget": {}
+        }
+      },
+      "dg-5": {
+        "matched_rules": [
+          "user: Label.status"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "padding_bottom": 8.0,
+            "padding_left": 10.0,
+            "padding_right": 10.0,
+            "padding_top": 8.0,
+            "width": {
+              "percent": 100.0
+            }
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.8980392217636108,
+                1.0,
+                0.95686274766922,
+                0.9490196108818054
+              ]
+            },
+            "font_size": 14.0,
+            "font_weight": 750
+          },
+          "visual": {
+            "background": {
+              "rgba": [
+                0.45490196347236633,
+                0.8666666746139526,
+                0.6901960968971252,
+                0.12156862765550613
+              ]
+            },
+            "background_paint": {
+              "color": {
+                "rgba": [
+                  0.45490196347236633,
+                  0.8666666746139526,
+                  0.6901960968971252,
+                  0.12156862765550613
+                ]
+              },
+              "type": "color"
+            },
+            "border_color": {
+              "rgba": [
+                0.45490196347236633,
+                0.8666666746139526,
+                0.6901960968971252,
+                0.34117648005485535
+              ]
+            },
+            "border_radius": 10.0,
+            "border_width": 1.0
+          },
+          "widget": {}
+        }
+      },
+      "dg-6": {
+        "matched_rules": [
+          "framework: Panel",
+          "user: Panel"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "gap": 10.0,
+            "padding": 14.0,
+            "padding_bottom": 14.0,
+            "padding_left": 14.0,
+            "padding_right": 14.0,
+            "padding_top": 14.0
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.9647058844566345,
+                0.9764705896377563,
+                1.0,
+                0.9411764740943909
+              ]
+            },
+            "font_size": 14.0
+          },
+          "visual": {
+            "accent": {
+              "token": "accent"
+            },
+            "background_paint": {
+              "layers": [
+                {
+                  "center": [
+                    0.11999999731779099,
+                    0.18000000715255737
+                  ],
+                  "repeating": false,
+                  "stops": [
+                    {
+                      "color": {
+                        "rgba": [
+                          0.3529411852359772,
+                          0.6627451181411743,
+                          1.0,
+                          0.12156862765550613
+                        ]
+                      },
+                      "position": null
+                    },
+                    {
+                      "color": {
+                        "rgba": [
+                          0.0,
+                          0.0,
+                          0.0,
+                          0.0
+                        ]
+                      },
+                      "position": 0.5400000214576721
+                    }
+                  ],
+                  "type": "radial_gradient"
+                },
+                {
+                  "color": {
+                    "rgba": [
+                      0.07058823853731155,
+                      0.09803921729326248,
+                      0.1568627506494522,
+                      0.9607843160629272
+                    ]
+                  },
+                  "type": "color"
+                }
+              ],
+              "type": "layers"
+            },
+            "border_color": {
+              "rgba": [
+                1.0,
+                1.0,
+                1.0,
+                0.1411764770746231
+              ]
+            },
+            "border_radius": 14.0,
+            "border_width": 1.0,
+            "box_shadow": [
+              {
+                "blur": 30.0,
+                "color": {
+                  "rgba": [
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.239215686917305
+                  ]
+                },
+                "inset": false,
+                "offset_x": 0.0,
+                "offset_y": 12.0,
+                "spread": 0.0
+              }
+            ]
+          },
+          "widget": {}
+        }
+      },
+      "dg-7": {
+        "matched_rules": [
+          "user: Label.case-title"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {},
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                1.0,
+                1.0,
+                1.0,
+                1.0
+              ]
+            },
+            "font_size": 14.0,
+            "font_weight": 850
+          },
+          "visual": {},
+          "widget": {}
+        }
+      },
+      "dg-8": {
+        "matched_rules": [
+          "user: DataFrameTable.probe-table",
+          "user: DataFrameTable.probe-table::header",
+          "user: DataFrameTable.probe-table::row",
+          "user: DataFrameTable.probe-table::row-selected",
+          "user: DataFrameTable.probe-table::grid-line"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "height": 285.0
+          },
+          "open": {},
+          "parts": {
+            "grid-line": {
+              "matched_rules": [
+                "user: DataFrameTable.probe-table::grid-line"
+              ],
+              "visual": {
+                "background": {
+                  "rgba": [
+                    1.0,
+                    1.0,
+                    1.0,
+                    0.10980392247438431
+                  ]
+                },
+                "background_paint": {
+                  "color": {
+                    "rgba": [
+                      1.0,
+                      1.0,
+                      1.0,
+                      0.10980392247438431
+                    ]
+                  },
+                  "type": "color"
+                }
+              }
+            },
+            "header": {
+              "matched_rules": [
+                "user: DataFrameTable.probe-table::header"
+              ],
+              "text": {
+                "color": {
+                  "rgba": [
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0
+                  ]
+                },
+                "font_weight": 850,
+                "letter_spacing": {
+                  "em": 0.07000000029802322
+                },
+                "text_transform": "uppercase"
+              },
+              "visual": {
+                "background_paint": {
+                  "angle_deg": 180.0,
+                  "repeating": false,
+                  "stops": [
+                    {
+                      "color": {
+                        "rgba": [
+                          0.3529411852359772,
+                          0.6627451181411743,
+                          1.0,
+                          0.27843138575553894
+                        ]
+                      },
+                      "position": null
+                    },
+                    {
+                      "color": {
+                        "rgba": [
+                          0.3529411852359772,
+                          0.6627451181411743,
+                          1.0,
+                          0.12941177189350128
+                        ]
+                      },
+                      "position": null
+                    }
+                  ],
+                  "type": "linear_gradient"
+                }
+              }
+            },
+            "row": {
+              "matched_rules": [
+                "user: DataFrameTable.probe-table::row"
+              ],
+              "visual": {
+                "background": {
+                  "rgba": [
+                    1.0,
+                    1.0,
+                    1.0,
+                    0.0235294122248888
+                  ]
+                },
+                "background_paint": {
+                  "color": {
+                    "rgba": [
+                      1.0,
+                      1.0,
+                      1.0,
+                      0.0235294122248888
+                    ]
+                  },
+                  "type": "color"
+                }
+              }
+            },
+            "row-selected": {
+              "matched_rules": [
+                "user: DataFrameTable.probe-table::row-selected"
+              ],
+              "text": {
+                "color": {
+                  "rgba": [
+                    1.0,
+                    1.0,
+                    1.0,
+                    1.0
+                  ]
+                }
+              },
+              "visual": {
+                "background": {
+                  "rgba": [
+                    1.0,
+                    0.8274509906768799,
+                    0.4156862795352936,
+                    0.239215686917305
+                  ]
+                },
+                "background_paint": {
+                  "color": {
+                    "rgba": [
+                      1.0,
+                      0.8274509906768799,
+                      0.4156862795352936,
+                      0.239215686917305
+                    ]
+                  },
+                  "type": "color"
+                }
+              }
+            }
+          },
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.9098039269447327,
+                0.9411764740943909,
+                1.0,
+                0.8588235378265381
+              ]
+            },
+            "font_size": 12.0
+          },
+          "visual": {
+            "background": {
+              "rgba": [
+                0.0117647061124444,
+                0.0313725508749485,
+                0.07058823853731155,
+                0.43921568989753723
+              ]
+            },
+            "background_paint": {
+              "color": {
+                "rgba": [
+                  0.0117647061124444,
+                  0.0313725508749485,
+                  0.07058823853731155,
+                  0.43921568989753723
+                ]
+              },
+              "type": "color"
+            },
+            "border_color": {
+              "rgba": [
+                0.3529411852359772,
+                0.6627451181411743,
+                1.0,
+                0.32156863808631897
+              ]
+            },
+            "border_radius": 13.0,
+            "border_width": 1.0
+          },
+          "widget": {
+            "table_column_width": 124.0,
+            "table_header_height": 36.0,
+            "table_index_width": 62.0,
+            "table_row_height": 27.0
+          }
+        }
+      },
+      "dg-9": {
+        "matched_rules": [
+          "user: Label.pass"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {},
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.45490196347236633,
+                0.8666666746139526,
+                0.6901960968971252,
+                1.0
+              ]
+            },
+            "font_size": 14.0,
+            "font_weight": 800
+          },
+          "visual": {},
+          "widget": {}
+        }
+      }
+    },
+    "framework": {
+      "apply_layout": {
+        "avg_ms": 1.6558,
+        "count": 3,
+        "last_ms": 0.3126,
+        "total_ms": 4.9674
+      },
+      "container_style": {
+        "avg_ms": 0.0005333333333333334,
+        "count": 3,
+        "last_ms": 9.999999999999999e-05,
+        "total_ms": 0.0016
+      },
+      "image_rebuild": {
+        "avg_ms": 0.0114,
+        "count": 3,
+        "last_ms": 0.0111,
+        "total_ms": 0.0342
+      },
+      "layout_compute": {
+        "avg_ms": 0.10606666666666666,
+        "count": 3,
+        "last_ms": 0.0957,
+        "total_ms": 0.3182
+      },
+      "line_plot_rebuild": {
+        "avg_ms": 0.0166,
+        "count": 3,
+        "last_ms": 0.0159,
+        "total_ms": 0.0498
+      },
+      "prewarm_scatter_widgets": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "primitive_rebuild": {
+        "avg_ms": 0.043666666666666666,
+        "count": 3,
+        "last_ms": 0.0283,
+        "total_ms": 0.131
+      },
+      "rebuild_primitives": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "rebuild_text": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "rebuild_visuals": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "replace_children_maps": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "replace_children_parse": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "replace_children_swap": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "replace_node_maps": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "replace_node_parse": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "replace_node_swap": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_line_plot_sync": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_maps": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_resources": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_scatter_chrome": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_scatter_collect": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_scatter_decode": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_scatter_new_widget": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_scatter_retain": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_scatter_sync": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_scatter_upload": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_state_preserve": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_widget_kinds": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_widget_state": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "scatter_layout": {
+        "avg_ms": 0.04093333333333333,
+        "count": 3,
+        "last_ms": 0.0428,
+        "total_ms": 0.12279999999999999
+      },
+      "style_reapply": {
+        "avg_ms": 0.0335,
+        "count": 3,
+        "last_ms": 0.002,
+        "total_ms": 0.1005
+      },
+      "text_rebuild": {
+        "avg_ms": 1.3896333333333333,
+        "count": 3,
+        "last_ms": 0.1027,
+        "total_ms": 4.1689
+      },
+      "transition_sync": {
+        "avg_ms": 0.007566666666666666,
+        "count": 3,
+        "last_ms": 0.008,
+        "total_ms": 0.022699999999999998
+      }
+    },
+    "layout": {
+      "clips": {
+        "dg-1": {
+          "h": 760.0,
+          "w": 1000.0,
+          "x": 0.0,
+          "y": 0.0
+        },
+        "dg-10": {
+          "h": 137.0,
+          "w": 940.0,
+          "x": 18.0,
+          "y": 605.0
+        },
+        "dg-11": {
+          "h": 137.0,
+          "w": 464.0,
+          "x": 18.0,
+          "y": 605.0
+        },
+        "dg-12": {
+          "h": 34.0,
+          "w": 440.0,
+          "x": 30.0,
+          "y": 645.0
+        },
+        "dg-13": {
+          "h": 55.0,
+          "w": 440.0,
+          "x": 30.0,
+          "y": 687.0
+        },
+        "dg-14": {
+          "h": 0.0,
+          "w": 0.0,
+          "x": 30.0,
+          "y": 883.0
+        },
+        "dg-15": {
+          "h": 137.0,
+          "w": 464.0,
+          "x": 494.0,
+          "y": 605.0
+        },
+        "dg-16": {
+          "h": 34.0,
+          "w": 440.0,
+          "x": 506.0,
+          "y": 645.0
+        },
+        "dg-17": {
+          "h": 55.0,
+          "w": 440.0,
+          "x": 506.0,
+          "y": 687.0
+        },
+        "dg-18": {
+          "h": 0.0,
+          "w": 0.0,
+          "x": 506.0,
+          "y": 883.0
+        },
+        "dg-2": {
+          "h": 724.0,
+          "w": 964.0,
+          "x": 18.0,
+          "y": 18.0
+        },
+        "dg-3": {
+          "h": 40.0,
+          "w": 940.0,
+          "x": 18.0,
+          "y": 18.0
+        },
+        "dg-4": {
+          "h": 34.0,
+          "w": 940.0,
+          "x": 18.0,
+          "y": 70.0
+        },
+        "dg-5": {
+          "h": 34.0,
+          "w": 940.0,
+          "x": 18.0,
+          "y": 116.0
+        },
+        "dg-6": {
+          "h": 431.0,
+          "w": 940.0,
+          "x": 18.0,
+          "y": 162.0
+        },
+        "dg-7": {
+          "h": 34.0,
+          "w": 912.0,
+          "x": 32.0,
+          "y": 206.0
+        },
+        "dg-8": {
+          "h": 285.0,
+          "w": 912.0,
+          "x": 32.0,
+          "y": 250.0
+        },
+        "dg-9": {
+          "h": 34.0,
+          "w": 912.0,
+          "x": 32.0,
+          "y": 545.0
+        }
+      },
+      "diagnostics": {
+        "dg-1": {
+          "available": {
+            "height": 760.0,
+            "width": 1000.0,
+            "x": 0.0,
+            "y": 0.0
+          },
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 760.0,
+            "width": 1000.0,
+            "x": 0.0,
+            "y": 0.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-10": {
+          "available": {
+            "height": 137.0,
+            "width": 940.0,
+            "x": 18.0,
+            "y": 605.0
+          },
+          "overflow": {
+            "bottom": 141.0,
+            "height": 141.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 278.0,
+            "width": 940.0,
+            "x": 18.0,
+            "y": 605.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-11": {
+          "available": {
+            "height": 137.0,
+            "width": 464.0,
+            "x": 18.0,
+            "y": 605.0
+          },
+          "overflow": {
+            "bottom": 141.0,
+            "height": 141.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 278.0,
+            "width": 464.0,
+            "x": 18.0,
+            "y": 605.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-12": {
+          "available": {
+            "height": 34.0,
+            "width": 440.0,
+            "x": 30.0,
+            "y": 645.0
+          },
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 34.0,
+            "width": 440.0,
+            "x": 30.0,
+            "y": 645.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-13": {
+          "available": {
+            "height": 55.0,
+            "width": 440.0,
+            "x": 30.0,
+            "y": 687.0
+          },
+          "overflow": {
+            "bottom": 133.0,
+            "height": 133.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 188.0,
+            "width": 440.0,
+            "x": 30.0,
+            "y": 687.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-14": {
+          "available": {
+            "height": 0.0,
+            "width": 0.0,
+            "x": 30.0,
+            "y": 883.0
+          },
+          "overflow": {
+            "bottom": 34.0,
+            "height": 34.0,
+            "left": 0.0,
+            "right": 440.0,
+            "top": 0.0,
+            "width": 440.0
+          },
+          "resolved": {
+            "height": 34.0,
+            "width": 440.0,
+            "x": 30.0,
+            "y": 883.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-15": {
+          "available": {
+            "height": 137.0,
+            "width": 464.0,
+            "x": 494.0,
+            "y": 605.0
+          },
+          "overflow": {
+            "bottom": 141.0,
+            "height": 141.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 278.0,
+            "width": 464.0,
+            "x": 494.0,
+            "y": 605.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-16": {
+          "available": {
+            "height": 34.0,
+            "width": 440.0,
+            "x": 506.0,
+            "y": 645.0
+          },
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 34.0,
+            "width": 440.0,
+            "x": 506.0,
+            "y": 645.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-17": {
+          "available": {
+            "height": 55.0,
+            "width": 440.0,
+            "x": 506.0,
+            "y": 687.0
+          },
+          "overflow": {
+            "bottom": 133.0,
+            "height": 133.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 188.0,
+            "width": 440.0,
+            "x": 506.0,
+            "y": 687.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-18": {
+          "available": {
+            "height": 0.0,
+            "width": 0.0,
+            "x": 506.0,
+            "y": 883.0
+          },
+          "overflow": {
+            "bottom": 34.0,
+            "height": 34.0,
+            "left": 0.0,
+            "right": 440.0,
+            "top": 0.0,
+            "width": 440.0
+          },
+          "resolved": {
+            "height": 34.0,
+            "width": 440.0,
+            "x": 506.0,
+            "y": 883.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-2": {
+          "available": {
+            "height": 724.0,
+            "width": 964.0,
+            "x": 18.0,
+            "y": 18.0
+          },
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 724.0,
+            "width": 964.0,
+            "x": 18.0,
+            "y": 18.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 151.0
+          }
+        },
+        "dg-3": {
+          "available": {
+            "height": 40.0,
+            "width": 940.0,
+            "x": 18.0,
+            "y": 18.0
+          },
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 40.0,
+            "width": 940.0,
+            "x": 18.0,
+            "y": 18.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-4": {
+          "available": {
+            "height": 34.0,
+            "width": 940.0,
+            "x": 18.0,
+            "y": 70.0
+          },
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 34.0,
+            "width": 940.0,
+            "x": 18.0,
+            "y": 70.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-5": {
+          "available": {
+            "height": 34.0,
+            "width": 940.0,
+            "x": 18.0,
+            "y": 116.0
+          },
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 34.0,
+            "width": 940.0,
+            "x": 18.0,
+            "y": 116.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-6": {
+          "available": {
+            "height": 431.0,
+            "width": 940.0,
+            "x": 18.0,
+            "y": 162.0
+          },
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 431.0,
+            "width": 940.0,
+            "x": 18.0,
+            "y": 162.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-7": {
+          "available": {
+            "height": 34.0,
+            "width": 912.0,
+            "x": 32.0,
+            "y": 206.0
+          },
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 34.0,
+            "width": 912.0,
+            "x": 32.0,
+            "y": 206.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-8": {
+          "available": {
+            "height": 285.0,
+            "width": 912.0,
+            "x": 32.0,
+            "y": 250.0
+          },
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 285.0,
+            "width": 912.0,
+            "x": 32.0,
+            "y": 250.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-9": {
+          "available": {
+            "height": 34.0,
+            "width": 912.0,
+            "x": 32.0,
+            "y": 545.0
+          },
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 34.0,
+            "width": 912.0,
+            "x": 32.0,
+            "y": 545.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        }
+      },
+      "rects": {
+        "dg-1": {
+          "h": 760.0,
+          "w": 1000.0,
+          "x": 0.0,
+          "y": 0.0
+        },
+        "dg-10": {
+          "h": 278.0,
+          "w": 940.0,
+          "x": 18.0,
+          "y": 605.0
+        },
+        "dg-11": {
+          "h": 278.0,
+          "w": 464.0,
+          "x": 18.0,
+          "y": 605.0
+        },
+        "dg-12": {
+          "h": 34.0,
+          "w": 440.0,
+          "x": 30.0,
+          "y": 645.0
+        },
+        "dg-13": {
+          "h": 188.0,
+          "w": 440.0,
+          "x": 30.0,
+          "y": 687.0
+        },
+        "dg-14": {
+          "h": 34.0,
+          "w": 440.0,
+          "x": 30.0,
+          "y": 883.0
+        },
+        "dg-15": {
+          "h": 278.0,
+          "w": 464.0,
+          "x": 494.0,
+          "y": 605.0
+        },
+        "dg-16": {
+          "h": 34.0,
+          "w": 440.0,
+          "x": 506.0,
+          "y": 645.0
+        },
+        "dg-17": {
+          "h": 188.0,
+          "w": 440.0,
+          "x": 506.0,
+          "y": 687.0
+        },
+        "dg-18": {
+          "h": 34.0,
+          "w": 440.0,
+          "x": 506.0,
+          "y": 883.0
+        },
+        "dg-2": {
+          "h": 724.0,
+          "w": 964.0,
+          "x": 18.0,
+          "y": 18.0
+        },
+        "dg-3": {
+          "h": 40.0,
+          "w": 940.0,
+          "x": 18.0,
+          "y": 18.0
+        },
+        "dg-4": {
+          "h": 34.0,
+          "w": 940.0,
+          "x": 18.0,
+          "y": 70.0
+        },
+        "dg-5": {
+          "h": 34.0,
+          "w": 940.0,
+          "x": 18.0,
+          "y": 116.0
+        },
+        "dg-6": {
+          "h": 431.0,
+          "w": 940.0,
+          "x": 18.0,
+          "y": 162.0
+        },
+        "dg-7": {
+          "h": 34.0,
+          "w": 912.0,
+          "x": 32.0,
+          "y": 206.0
+        },
+        "dg-8": {
+          "h": 285.0,
+          "w": 912.0,
+          "x": 32.0,
+          "y": 250.0
+        },
+        "dg-9": {
+          "h": 34.0,
+          "w": 912.0,
+          "x": 32.0,
+          "y": 545.0
+        }
+      },
+      "scroll_max_x": {
+        "dg-2": 0.0,
+        "dg-6": 0.0
+      },
+      "scroll_max_y": {
+        "dg-2": 151.0,
+        "dg-6": 0.0
+      },
+      "scroll_x": {
+        "dg-2": 0.0,
+        "dg-6": 0.0
+      },
+      "scroll_y": {
+        "dg-2": 0.0,
+        "dg-6": 0.0
+      }
+    },
+    "renderer": {
+      "caret_positions": {},
+      "desired_maximum_frame_latency": 2,
+      "font_warnings": [],
+      "has_primitives": true,
+      "has_scatter": true,
+      "has_text": true,
+      "html_reports": {
+        "enabled": true,
+        "environment_ready": false,
+        "instances": {},
+        "last_error": null,
+        "platform": "windows",
+        "profile_generation": 0,
+        "profile_recovered": false,
+        "reason": null,
+        "user_data_dir": null
+      },
+      "line_plot_renderer": {
+        "aa_width": 1.0,
+        "buffer_bytes": 0,
+        "decimated_series_count": 0,
+        "decimation_mode": "auto",
+        "enabled": true,
+        "last_decimate_ms": 0.0,
+        "last_emit_ms": 0.0011,
+        "last_encode_ms": 9.999999999999999e-05,
+        "last_upload_ms": 0.0,
+        "max_segments_per_series": 8192,
+        "point_bytes": 0,
+        "point_count": 0,
+        "segment_count": 0,
+        "series_bytes": 0,
+        "series_count": 0,
+        "source_point_count": 0
+      },
+      "present_mode": "fifo",
+      "present_mode_env": null,
+      "primitives": {
+        "base_batches": 14,
+        "buffer_bytes": 4896,
+        "complex_batches": 7,
+        "complex_bytes": 2400,
+        "complex_count": 10,
+        "last_base_encode_ms": 0.0052,
+        "last_emit_ms": 0.0207,
+        "last_overlay_encode_ms": 9.999999999999999e-05,
+        "last_split_ms": 0.0009,
+        "last_upload_ms": 0.004,
+        "line_batches": 0,
+        "line_bytes": 0,
+        "line_count": 0,
+        "overlay_batches": 0,
+        "rect_count": 49,
+        "simple_batches": 7,
+        "simple_bytes": 2496,
+        "simple_count": 39,
+        "source_bytes": 11760,
+        "split_collapsed": false,
+        "split_enabled": true
+      },
+      "scatter_count": 2,
+      "scatter_widget_id": "dg-13",
+      "scatter_widget_pool": 0,
+      "supported_present_modes": [
+        "fifo",
+        "fifo-relaxed",
+        "mailbox",
+        "immediate"
+      ],
+      "surface_format": "Bgra8UnormSrgb",
+      "widget_count": 18
+    },
+    "resources": {
+      "buffers": {
+        "resources": 0
+      },
+      "line_plot": null,
+      "line_plots": {},
+      "registry": {
+        "buffers": {
+          "count": 0,
+          "items": {}
+        },
+        "tables": {
+          "count": 1,
+          "items": {
+            "dg-8:table": {
+              "buffer_bytes": 0,
+              "buffer_columns": 0,
+              "columns": 7,
+              "rows": 1200,
+              "sample_rows": 32,
+              "sampled_cells": 224,
+              "version": 1
+            }
+          }
+        }
+      },
+      "scatter": {
+        "active_render_scale": 1.0,
+        "auto_point_size": true,
+        "auto_quality": false,
+        "effective_draw_point_count": 0,
+        "id": "dg-13",
+        "interactive_render_scale": 1.0,
+        "last_bounds_ms": 0.0,
+        "last_decode_ms": 0.0,
+        "last_grid_ms": 0.0,
+        "last_lod_ms": 0.0007,
+        "last_overlay_ms": 0.0,
+        "last_pack_ms": 0.0,
+        "last_payload_bytes": 0,
+        "last_point_count": 0,
+        "last_primary_upload_ms": 0.0,
+        "last_queue_latency_ms": 0.0,
+        "last_render_cache_hit": false,
+        "last_render_composite_ms": 0.0,
+        "last_render_encode_ms": 1.3983,
+        "last_render_redraw_ms": 0.0022,
+        "last_total_native_ms": 0.0,
+        "last_upload_ms": 0.0,
+        "payload_status": "Empty",
+        "point_size_scale": 1.0,
+        "primary_compact_colormap": "viridis",
+        "quality_level": 0,
+        "quality_target_frame_ms": 100.0,
+        "render_cache_hit_rate": 0.0,
+        "render_cache_hits": 0,
+        "render_cache_revision": null,
+        "render_composite_avg_ms": 0.0,
+        "render_count": 1,
+        "render_encode_avg_ms": 1.3983,
+        "render_redraw_avg_ms": 0.0022,
+        "scalar_bar": {
+          "colormap": "viridis",
+          "log_scale": false,
+          "title": null,
+          "visible": false,
+          "vmax": 1.0,
+          "vmin": 0.0
+        },
+        "scene_revision": 22,
+        "updates": 0
+      },
+      "scatters": {
+        "dg-13": {
+          "active_render_scale": 1.0,
+          "auto_point_size": true,
+          "auto_quality": false,
+          "camera": {
+            "distance": 12.493555068969727,
+            "parallel": false,
+            "pitch": 0.4000000059604645,
+            "target": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "yaw": 0.4000000059604645
+          },
+          "effective_draw_point_count": 0,
+          "fitted_once": false,
+          "interactive_render_scale": 1.0,
+          "last_bounds_ms": 0.0,
+          "last_decode_ms": 0.0,
+          "last_grid_ms": 0.0,
+          "last_lod_ms": 0.0007,
+          "last_overlay_ms": 0.0,
+          "last_pack_ms": 0.0,
+          "last_payload_bytes": 0,
+          "last_point_count": 0,
+          "last_primary_upload_ms": 0.0,
+          "last_queue_latency_ms": 0.0,
+          "last_render_cache_hit": false,
+          "last_render_composite_ms": 0.0,
+          "last_render_encode_ms": 1.3983,
+          "last_render_redraw_ms": 0.0022,
+          "last_total_native_ms": 0.0,
+          "last_upload_ms": 0.0,
+          "lod": {
+            "active": false,
+            "enabled": false,
+            "factor": 8,
+            "threshold": 200000
+          },
+          "payload_format": "xyz_f32_v0",
+          "payload_status": "Empty",
+          "point_size_scale": 1.0,
+          "primary_compact_colormap": "viridis",
+          "quality_level": 0,
+          "quality_target_frame_ms": 100.0,
+          "render_cache_hit_rate": 0.0,
+          "render_cache_hits": 0,
+          "render_cache_revision": null,
+          "render_composite_avg_ms": 0.0,
+          "render_count": 1,
+          "render_encode_avg_ms": 1.3983,
+          "render_redraw_avg_ms": 0.0022,
+          "scalar_bar": {
+            "colormap": "viridis",
+            "log_scale": false,
+            "title": null,
+            "visible": false,
+            "vmax": 1.0,
+            "vmin": 0.0
+          },
+          "scene_revision": 22,
+          "updates": 0
+        },
+        "dg-17": {
+          "active_render_scale": 1.0,
+          "auto_point_size": true,
+          "auto_quality": false,
+          "camera": {
+            "distance": 12.493555068969727,
+            "parallel": false,
+            "pitch": 0.4000000059604645,
+            "target": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "yaw": 0.4000000059604645
+          },
+          "effective_draw_point_count": 0,
+          "fitted_once": false,
+          "interactive_render_scale": 1.0,
+          "last_bounds_ms": 0.0,
+          "last_decode_ms": 0.0,
+          "last_grid_ms": 0.0,
+          "last_lod_ms": 9.999999999999999e-05,
+          "last_overlay_ms": 0.0,
+          "last_pack_ms": 0.0,
+          "last_payload_bytes": 0,
+          "last_point_count": 0,
+          "last_primary_upload_ms": 0.0,
+          "last_queue_latency_ms": 0.0,
+          "last_render_cache_hit": false,
+          "last_render_composite_ms": 0.0,
+          "last_render_encode_ms": 0.7459,
+          "last_render_redraw_ms": 0.0011,
+          "last_total_native_ms": 0.0,
+          "last_upload_ms": 0.0,
+          "lod": {
+            "active": false,
+            "enabled": false,
+            "factor": 8,
+            "threshold": 200000
+          },
+          "payload_format": "xyz_f32_v0",
+          "payload_status": "Empty",
+          "point_size_scale": 1.0,
+          "primary_compact_colormap": "magma",
+          "quality_level": 0,
+          "quality_target_frame_ms": 100.0,
+          "render_cache_hit_rate": 0.0,
+          "render_cache_hits": 0,
+          "render_cache_revision": null,
+          "render_composite_avg_ms": 0.0,
+          "render_count": 1,
+          "render_encode_avg_ms": 0.7459,
+          "render_redraw_avg_ms": 0.0011,
+          "scalar_bar": {
+            "colormap": "viridis",
+            "log_scale": false,
+            "title": null,
+            "visible": false,
+            "vmax": 1.0,
+            "vmin": 0.0
+          },
+          "scene_revision": 22,
+          "updates": 0
+        }
+      },
+      "tables": {
+        "resources": 1,
+        "widgets": 1
+      }
+    },
+    "state": {
+      "active_pages": {},
+      "active_t": {},
+      "active_tabs": {},
+      "checked": {},
+      "checked_t": {},
+      "container_scroll_x": {
+        "dg-2": 0.0,
+        "dg-6": 0.0
+      },
+      "container_scroll_y": {
+        "dg-2": 0.0,
+        "dg-6": 0.0
+      },
+      "context_menu_pos": null,
+      "context_targets": {},
+      "disabled": [],
+      "drag_hover_target": null,
+      "drag_kind": null,
+      "drag_pos": null,
+      "drag_source": null,
+      "dropdown_hover": null,
+      "dropdown_index": {},
+      "dropdown_items_count": {},
+      "expanded": {},
+      "expanded_t": {},
+      "float_range": {},
+      "float_val": {},
+      "focus_order": [
+        "dg-8"
+      ],
+      "focus_t": {},
+      "focused": null,
+      "hover_t": {},
+      "hovered": null,
+      "menu_items_count": {},
+      "open_context_menu": null,
+      "open_dropdown": null,
+      "open_menu": null,
+      "open_t": {},
+      "pane_sizes": {},
+      "pressed": null,
+      "range_val": {},
+      "selectable_selected": {},
+      "selected_t": {},
+      "tables": {
+        "dg-8": {
+          "column_widths": [],
+          "columns": 7,
+          "page_size": 48,
+          "resource_id": "dg-8:table",
+          "rows": 1200,
+          "scroll_col": 0,
+          "scroll_row": 0,
+          "selected": null,
+          "selected_cell": null,
+          "sort": null
+        }
+      },
+      "text_cursor": {},
+      "text_scroll_x": {},
+      "text_scroll_y": {},
+      "text_val": {}
+    },
+    "stylesheets": {
+      "framework_rules": 123,
+      "last_error": null,
+      "theme_rules": 0,
+      "user_rules": 20,
+      "warning_count": 0
+    },
+    "theme": {
+      "accent": [
+        0.3529411852359772,
+        0.6627451181411743,
+        1.0,
+        1.0
+      ],
+      "background": [
+        0.07058823853731155,
+        0.07058823853731155,
+        0.10196078568696976,
+        1.0
+      ],
+      "border": [
+        0.21960784494876862,
+        0.21960784494876862,
+        0.3137255012989044,
+        1.0
+      ],
+      "danger": [
+        1.0,
+        0.3607843220233917,
+        0.47843137383461,
+        1.0
+      ],
+      "disabled": [
+        0.4000000059604645,
+        0.4000000059604645,
+        0.47843137383461,
+        1.0
+      ],
+      "focus": [
+        1.0,
+        0.8274509906768799,
+        0.4156862795352936,
+        1.0
+      ],
+      "font_size": 14.0,
+      "muted_text": [
+        0.658823549747467,
+        0.658823549747467,
+        0.729411780834198,
+        1.0
+      ],
+      "radius": 8.0,
+      "spacing": 8.0,
+      "success": [
+        0.26274511218070984,
+        0.8313725590705872,
+        0.5607843399047852,
+        1.0
+      ],
+      "surface": [
+        0.11764705926179886,
+        0.11764705926179886,
+        0.18039216101169586,
+        1.0
+      ],
+      "surface_alt": [
+        0.19607843458652496,
+        0.19607843458652496,
+        0.29019609093666077,
+        1.0
+      ],
+      "text": [
+        0.9411764740943909,
+        0.9411764740943909,
+        0.9686274528503418,
+        1.0
+      ],
+      "warning": [
+        1.0,
+        0.7490196228027344,
+        0.27843138575553894,
+        1.0
+      ]
+    },
+    "toasts": {
+      "count": 0,
+      "items": []
+    },
+    "tree": {
+      "children": [
+        {
+          "children": [
+            {
+              "children": [],
+              "class": "title",
+              "id": "dg-3",
+              "key": null,
+              "props": {
+                "badge": null,
+                "checked": null,
+                "disabled": false,
+                "expanded": null,
+                "extension_type": null,
+                "fixed_height": null,
+                "fixed_width": null,
+                "flow_align": null,
+                "flow_cross_align": null,
+                "grid_columns": null,
+                "grid_masonry": false,
+                "grid_min_column_width": null,
+                "grid_template_columns": null,
+                "grid_template_rows": null,
+                "gutter_size": null,
+                "image_fit": null,
+                "image_path": null,
+                "intrinsic_height": null,
+                "intrinsic_width": null,
+                "items_count": 0,
+                "led_size": null,
+                "led_state": null,
+                "level": null,
+                "max": null,
+                "min": null,
+                "open": null,
+                "orientation": null,
+                "page": null,
+                "pane_flex": null,
+                "pane_max_size": null,
+                "pane_min_size": null,
+                "pane_size": null,
+                "placeholder": null,
+                "route_value": null,
+                "rows": null,
+                "step": null,
+                "table": {
+                  "columns": 0,
+                  "page_size": null,
+                  "resizable_columns": true,
+                  "resource_id": null,
+                  "rows": null,
+                  "sample_rows": null,
+                  "sortable": true
+                },
+                "target": null,
+                "text": "Data widgets",
+                "toggle": null,
+                "tooltip": null,
+                "value": null,
+                "wrap": true
+              },
+              "style": {},
+              "type": "label"
+            },
+            {
+              "children": [],
+              "class": "caption",
+              "id": "dg-4",
+              "key": null,
+              "props": {
+                "badge": null,
+                "checked": null,
+                "disabled": false,
+                "expanded": null,
+                "extension_type": null,
+                "fixed_height": null,
+                "fixed_width": null,
+                "flow_align": null,
+                "flow_cross_align": null,
+                "grid_columns": null,
+                "grid_masonry": false,
+                "grid_min_column_width": null,
+                "grid_template_columns": null,
+                "grid_template_rows": null,
+                "gutter_size": null,
+                "image_fit": null,
+                "image_path": null,
+                "intrinsic_height": null,
+                "intrinsic_width": null,
+                "items_count": 0,
+                "led_size": null,
+                "led_state": null,
+                "level": null,
+                "max": null,
+                "min": null,
+                "open": null,
+                "orientation": null,
+                "page": null,
+                "pane_flex": null,
+                "pane_max_size": null,
+                "pane_min_size": null,
+                "pane_size": null,
+                "placeholder": null,
+                "route_value": null,
+                "rows": null,
+                "step": null,
+                "table": {
+                  "columns": 0,
+                  "page_size": null,
+                  "resizable_columns": true,
+                  "resource_id": null,
+                  "rows": null,
+                  "sample_rows": null,
+                  "sortable": true
+                },
+                "target": null,
+                "text": "This probe checks DataFrameTable parts and Scatter3D renderer metrics, including selection/pick callbacks, rounded clipping, and point-size styling.",
+                "toggle": null,
+                "tooltip": null,
+                "value": null,
+                "wrap": true
+              },
+              "style": {},
+              "type": "label"
+            },
+            {
+              "children": [],
+              "class": "status",
+              "id": "dg-5",
+              "key": null,
+              "props": {
+                "badge": null,
+                "checked": null,
+                "disabled": false,
+                "expanded": null,
+                "extension_type": null,
+                "fixed_height": null,
+                "fixed_width": null,
+                "flow_align": null,
+                "flow_cross_align": null,
+                "grid_columns": null,
+                "grid_masonry": false,
+                "grid_min_column_width": null,
+                "grid_template_columns": null,
+                "grid_template_rows": null,
+                "gutter_size": null,
+                "image_fit": null,
+                "image_path": null,
+                "intrinsic_height": null,
+                "intrinsic_width": null,
+                "items_count": 0,
+                "led_size": null,
+                "led_state": null,
+                "level": null,
+                "max": null,
+                "min": null,
+                "open": null,
+                "orientation": null,
+                "page": null,
+                "pane_flex": null,
+                "pane_max_size": null,
+                "pane_min_size": null,
+                "pane_size": null,
+                "placeholder": null,
+                "route_value": null,
+                "rows": null,
+                "step": null,
+                "table": {
+                  "columns": 0,
+                  "page_size": null,
+                  "resizable_columns": true,
+                  "resource_id": null,
+                  "rows": null,
+                  "sample_rows": null,
+                  "sortable": true
+                },
+                "target": null,
+                "text": "Click a table cell or pick a scatter point.",
+                "toggle": null,
+                "tooltip": null,
+                "value": null,
+                "wrap": true
+              },
+              "style": {},
+              "type": "label"
+            },
+            {
+              "children": [
+                {
+                  "children": [],
+                  "class": "case-title",
+                  "id": "dg-7",
+                  "key": null,
+                  "props": {
+                    "badge": null,
+                    "checked": null,
+                    "disabled": false,
+                    "expanded": null,
+                    "extension_type": null,
+                    "fixed_height": null,
+                    "fixed_width": null,
+                    "flow_align": null,
+                    "flow_cross_align": null,
+                    "grid_columns": null,
+                    "grid_masonry": false,
+                    "grid_min_column_width": null,
+                    "grid_template_columns": null,
+                    "grid_template_rows": null,
+                    "gutter_size": null,
+                    "image_fit": null,
+                    "image_path": null,
+                    "intrinsic_height": null,
+                    "intrinsic_width": null,
+                    "items_count": 0,
+                    "led_size": null,
+                    "led_state": null,
+                    "level": null,
+                    "max": null,
+                    "min": null,
+                    "open": null,
+                    "orientation": null,
+                    "page": null,
+                    "pane_flex": null,
+                    "pane_max_size": null,
+                    "pane_min_size": null,
+                    "pane_size": null,
+                    "placeholder": null,
+                    "route_value": null,
+                    "rows": null,
+                    "step": null,
+                    "table": {
+                      "columns": 0,
+                      "page_size": null,
+                      "resizable_columns": true,
+                      "resource_id": null,
+                      "rows": null,
+                      "sample_rows": null,
+                      "sortable": true
+                    },
+                    "target": null,
+                    "text": "Header, row, selected-row, and grid-line parts should all be visibly styled.",
+                    "toggle": null,
+                    "tooltip": null,
+                    "value": null,
+                    "wrap": true
+                  },
+                  "style": {},
+                  "type": "label"
+                },
+                {
+                  "children": [],
+                  "class": "probe-table",
+                  "id": "dg-8",
+                  "key": null,
+                  "props": {
+                    "badge": null,
+                    "checked": null,
+                    "disabled": false,
+                    "expanded": null,
+                    "extension_type": null,
+                    "fixed_height": null,
+                    "fixed_width": null,
+                    "flow_align": null,
+                    "flow_cross_align": null,
+                    "grid_columns": null,
+                    "grid_masonry": false,
+                    "grid_min_column_width": null,
+                    "grid_template_columns": null,
+                    "grid_template_rows": null,
+                    "gutter_size": null,
+                    "image_fit": null,
+                    "image_path": null,
+                    "intrinsic_height": null,
+                    "intrinsic_width": null,
+                    "items_count": 0,
+                    "led_size": null,
+                    "led_state": null,
+                    "level": null,
+                    "max": null,
+                    "min": null,
+                    "open": null,
+                    "orientation": null,
+                    "page": null,
+                    "pane_flex": null,
+                    "pane_max_size": null,
+                    "pane_min_size": null,
+                    "pane_size": null,
+                    "placeholder": null,
+                    "route_value": null,
+                    "rows": null,
+                    "step": null,
+                    "table": {
+                      "columns": 7,
+                      "page_size": 48,
+                      "resizable_columns": true,
+                      "resource_id": "dg-8:table",
+                      "rows": 1200,
+                      "sample_rows": 32,
+                      "sortable": true
+                    },
+                    "target": null,
+                    "text": null,
+                    "toggle": null,
+                    "tooltip": null,
+                    "value": null,
+                    "wrap": null
+                  },
+                  "style": {},
+                  "type": "dataframe_table"
+                },
+                {
+                  "children": [],
+                  "class": "pass",
+                  "id": "dg-9",
+                  "key": null,
+                  "props": {
+                    "badge": null,
+                    "checked": null,
+                    "disabled": false,
+                    "expanded": null,
+                    "extension_type": null,
+                    "fixed_height": null,
+                    "fixed_width": null,
+                    "flow_align": null,
+                    "flow_cross_align": null,
+                    "grid_columns": null,
+                    "grid_masonry": false,
+                    "grid_min_column_width": null,
+                    "grid_template_columns": null,
+                    "grid_template_rows": null,
+                    "gutter_size": null,
+                    "image_fit": null,
+                    "image_path": null,
+                    "intrinsic_height": null,
+                    "intrinsic_width": null,
+                    "items_count": 0,
+                    "led_size": null,
+                    "led_state": null,
+                    "level": null,
+                    "max": null,
+                    "min": null,
+                    "open": null,
+                    "orientation": null,
+                    "page": null,
+                    "pane_flex": null,
+                    "pane_max_size": null,
+                    "pane_min_size": null,
+                    "pane_size": null,
+                    "placeholder": null,
+                    "route_value": null,
+                    "rows": null,
+                    "step": null,
+                    "table": {
+                      "columns": 0,
+                      "page_size": null,
+                      "resizable_columns": true,
+                      "resource_id": null,
+                      "rows": null,
+                      "sample_rows": null,
+                      "sortable": true
+                    },
+                    "target": null,
+                    "text": "PASS: selected cells update the status label and use the selected-row style.",
+                    "toggle": null,
+                    "tooltip": null,
+                    "value": null,
+                    "wrap": true
+                  },
+                  "style": {},
+                  "type": "label"
+                }
+              ],
+              "class": null,
+              "id": "dg-6",
+              "key": null,
+              "props": {
+                "badge": null,
+                "checked": null,
+                "disabled": false,
+                "expanded": null,
+                "extension_type": null,
+                "fixed_height": null,
+                "fixed_width": null,
+                "flow_align": null,
+                "flow_cross_align": null,
+                "grid_columns": null,
+                "grid_masonry": false,
+                "grid_min_column_width": null,
+                "grid_template_columns": null,
+                "grid_template_rows": null,
+                "gutter_size": null,
+                "image_fit": null,
+                "image_path": null,
+                "intrinsic_height": null,
+                "intrinsic_width": null,
+                "items_count": 0,
+                "led_size": null,
+                "led_state": null,
+                "level": null,
+                "max": null,
+                "min": null,
+                "open": null,
+                "orientation": null,
+                "page": null,
+                "pane_flex": null,
+                "pane_max_size": null,
+                "pane_min_size": null,
+                "pane_size": null,
+                "placeholder": null,
+                "route_value": null,
+                "rows": null,
+                "step": null,
+                "table": {
+                  "columns": 0,
+                  "page_size": null,
+                  "resizable_columns": true,
+                  "resource_id": null,
+                  "rows": null,
+                  "sample_rows": null,
+                  "sortable": true
+                },
+                "target": null,
+                "text": "DataFrameTable styling and selection",
+                "toggle": null,
+                "tooltip": null,
+                "value": null,
+                "wrap": null
+              },
+              "style": {},
+              "type": "panel"
+            },
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "children": [],
+                      "class": "case-title",
+                      "id": "dg-12",
+                      "key": null,
+                      "props": {
+                        "badge": null,
+                        "checked": null,
+                        "disabled": false,
+                        "expanded": null,
+                        "extension_type": null,
+                        "fixed_height": null,
+                        "fixed_width": null,
+                        "flow_align": null,
+                        "flow_cross_align": null,
+                        "grid_columns": null,
+                        "grid_masonry": false,
+                        "grid_min_column_width": null,
+                        "grid_template_columns": null,
+                        "grid_template_rows": null,
+                        "gutter_size": null,
+                        "image_fit": null,
+                        "image_path": null,
+                        "intrinsic_height": null,
+                        "intrinsic_width": null,
+                        "items_count": 0,
+                        "led_size": null,
+                        "led_state": null,
+                        "level": null,
+                        "max": null,
+                        "min": null,
+                        "open": null,
+                        "orientation": null,
+                        "page": null,
+                        "pane_flex": null,
+                        "pane_max_size": null,
+                        "pane_min_size": null,
+                        "pane_size": null,
+                        "placeholder": null,
+                        "route_value": null,
+                        "rows": null,
+                        "step": null,
+                        "table": {
+                          "columns": 0,
+                          "page_size": null,
+                          "resizable_columns": true,
+                          "resource_id": null,
+                          "rows": null,
+                          "sample_rows": null,
+                          "sortable": true
+                        },
+                        "target": null,
+                        "text": "Small viridis points",
+                        "toggle": null,
+                        "tooltip": null,
+                        "value": null,
+                        "wrap": true
+                      },
+                      "style": {},
+                      "type": "label"
+                    },
+                    {
+                      "children": [],
+                      "class": "small-points",
+                      "id": "dg-13",
+                      "key": null,
+                      "props": {
+                        "badge": null,
+                        "checked": null,
+                        "disabled": false,
+                        "expanded": null,
+                        "extension_type": null,
+                        "fixed_height": null,
+                        "fixed_width": null,
+                        "flow_align": null,
+                        "flow_cross_align": null,
+                        "grid_columns": null,
+                        "grid_masonry": false,
+                        "grid_min_column_width": null,
+                        "grid_template_columns": null,
+                        "grid_template_rows": null,
+                        "gutter_size": null,
+                        "image_fit": null,
+                        "image_path": null,
+                        "intrinsic_height": null,
+                        "intrinsic_width": null,
+                        "items_count": 0,
+                        "led_size": null,
+                        "led_state": null,
+                        "level": null,
+                        "max": null,
+                        "min": null,
+                        "open": null,
+                        "orientation": null,
+                        "page": null,
+                        "pane_flex": null,
+                        "pane_max_size": null,
+                        "pane_min_size": null,
+                        "pane_size": null,
+                        "placeholder": null,
+                        "route_value": null,
+                        "rows": null,
+                        "step": null,
+                        "table": {
+                          "columns": 7,
+                          "page_size": null,
+                          "resizable_columns": true,
+                          "resource_id": null,
+                          "rows": 1200,
+                          "sample_rows": null,
+                          "sortable": true
+                        },
+                        "target": null,
+                        "text": null,
+                        "toggle": null,
+                        "tooltip": null,
+                        "value": null,
+                        "wrap": null
+                      },
+                      "style": {},
+                      "type": "scatter_3d"
+                    },
+                    {
+                      "children": [],
+                      "class": "pass",
+                      "id": "dg-14",
+                      "key": null,
+                      "props": {
+                        "badge": null,
+                        "checked": null,
+                        "disabled": false,
+                        "expanded": null,
+                        "extension_type": null,
+                        "fixed_height": null,
+                        "fixed_width": null,
+                        "flow_align": null,
+                        "flow_cross_align": null,
+                        "grid_columns": null,
+                        "grid_masonry": false,
+                        "grid_min_column_width": null,
+                        "grid_template_columns": null,
+                        "grid_template_rows": null,
+                        "gutter_size": null,
+                        "image_fit": null,
+                        "image_path": null,
+                        "intrinsic_height": null,
+                        "intrinsic_width": null,
+                        "items_count": 0,
+                        "led_size": null,
+                        "led_state": null,
+                        "level": null,
+                        "max": null,
+                        "min": null,
+                        "open": null,
+                        "orientation": null,
+                        "page": null,
+                        "pane_flex": null,
+                        "pane_max_size": null,
+                        "pane_min_size": null,
+                        "pane_size": null,
+                        "placeholder": null,
+                        "route_value": null,
+                        "rows": null,
+                        "step": null,
+                        "table": {
+                          "columns": 0,
+                          "page_size": null,
+                          "resizable_columns": true,
+                          "resource_id": null,
+                          "rows": null,
+                          "sample_rows": null,
+                          "sortable": true
+                        },
+                        "target": null,
+                        "text": "PASS: plot clips cleanly to the rounded panel.",
+                        "toggle": null,
+                        "tooltip": null,
+                        "value": null,
+                        "wrap": true
+                      },
+                      "style": {},
+                      "type": "label"
+                    }
+                  ],
+                  "class": "scatter-case",
+                  "id": "dg-11",
+                  "key": null,
+                  "props": {
+                    "badge": null,
+                    "checked": null,
+                    "disabled": false,
+                    "expanded": null,
+                    "extension_type": null,
+                    "fixed_height": null,
+                    "fixed_width": null,
+                    "flow_align": null,
+                    "flow_cross_align": null,
+                    "grid_columns": null,
+                    "grid_masonry": false,
+                    "grid_min_column_width": null,
+                    "grid_template_columns": null,
+                    "grid_template_rows": null,
+                    "gutter_size": null,
+                    "image_fit": null,
+                    "image_path": null,
+                    "intrinsic_height": null,
+                    "intrinsic_width": null,
+                    "items_count": 0,
+                    "led_size": null,
+                    "led_state": null,
+                    "level": null,
+                    "max": null,
+                    "min": null,
+                    "open": null,
+                    "orientation": null,
+                    "page": null,
+                    "pane_flex": null,
+                    "pane_max_size": null,
+                    "pane_min_size": null,
+                    "pane_size": null,
+                    "placeholder": null,
+                    "route_value": null,
+                    "rows": null,
+                    "step": null,
+                    "table": {
+                      "columns": 0,
+                      "page_size": null,
+                      "resizable_columns": true,
+                      "resource_id": null,
+                      "rows": null,
+                      "sample_rows": null,
+                      "sortable": true
+                    },
+                    "target": null,
+                    "text": "Scatter3D compact points",
+                    "toggle": null,
+                    "tooltip": null,
+                    "value": null,
+                    "wrap": null
+                  },
+                  "style": {},
+                  "type": "panel"
+                },
+                {
+                  "children": [
+                    {
+                      "children": [],
+                      "class": "case-title",
+                      "id": "dg-16",
+                      "key": null,
+                      "props": {
+                        "badge": null,
+                        "checked": null,
+                        "disabled": false,
+                        "expanded": null,
+                        "extension_type": null,
+                        "fixed_height": null,
+                        "fixed_width": null,
+                        "flow_align": null,
+                        "flow_cross_align": null,
+                        "grid_columns": null,
+                        "grid_masonry": false,
+                        "grid_min_column_width": null,
+                        "grid_template_columns": null,
+                        "grid_template_rows": null,
+                        "gutter_size": null,
+                        "image_fit": null,
+                        "image_path": null,
+                        "intrinsic_height": null,
+                        "intrinsic_width": null,
+                        "items_count": 0,
+                        "led_size": null,
+                        "led_state": null,
+                        "level": null,
+                        "max": null,
+                        "min": null,
+                        "open": null,
+                        "orientation": null,
+                        "page": null,
+                        "pane_flex": null,
+                        "pane_max_size": null,
+                        "pane_min_size": null,
+                        "pane_size": null,
+                        "placeholder": null,
+                        "route_value": null,
+                        "rows": null,
+                        "step": null,
+                        "table": {
+                          "columns": 0,
+                          "page_size": null,
+                          "resizable_columns": true,
+                          "resource_id": null,
+                          "rows": null,
+                          "sample_rows": null,
+                          "sortable": true
+                        },
+                        "target": null,
+                        "text": "Large magma points",
+                        "toggle": null,
+                        "tooltip": null,
+                        "value": null,
+                        "wrap": true
+                      },
+                      "style": {},
+                      "type": "label"
+                    },
+                    {
+                      "children": [],
+                      "class": "large-points",
+                      "id": "dg-17",
+                      "key": null,
+                      "props": {
+                        "badge": null,
+                        "checked": null,
+                        "disabled": false,
+                        "expanded": null,
+                        "extension_type": null,
+                        "fixed_height": null,
+                        "fixed_width": null,
+                        "flow_align": null,
+                        "flow_cross_align": null,
+                        "grid_columns": null,
+                        "grid_masonry": false,
+                        "grid_min_column_width": null,
+                        "grid_template_columns": null,
+                        "grid_template_rows": null,
+                        "gutter_size": null,
+                        "image_fit": null,
+                        "image_path": null,
+                        "intrinsic_height": null,
+                        "intrinsic_width": null,
+                        "items_count": 0,
+                        "led_size": null,
+                        "led_state": null,
+                        "level": null,
+                        "max": null,
+                        "min": null,
+                        "open": null,
+                        "orientation": null,
+                        "page": null,
+                        "pane_flex": null,
+                        "pane_max_size": null,
+                        "pane_min_size": null,
+                        "pane_size": null,
+                        "placeholder": null,
+                        "route_value": null,
+                        "rows": null,
+                        "step": null,
+                        "table": {
+                          "columns": 7,
+                          "page_size": null,
+                          "resizable_columns": true,
+                          "resource_id": null,
+                          "rows": 1200,
+                          "sample_rows": null,
+                          "sortable": true
+                        },
+                        "target": null,
+                        "text": null,
+                        "toggle": null,
+                        "tooltip": null,
+                        "value": null,
+                        "wrap": null
+                      },
+                      "style": {},
+                      "type": "scatter_3d"
+                    },
+                    {
+                      "children": [],
+                      "class": "pass",
+                      "id": "dg-18",
+                      "key": null,
+                      "props": {
+                        "badge": null,
+                        "checked": null,
+                        "disabled": false,
+                        "expanded": null,
+                        "extension_type": null,
+                        "fixed_height": null,
+                        "fixed_width": null,
+                        "flow_align": null,
+                        "flow_cross_align": null,
+                        "grid_columns": null,
+                        "grid_masonry": false,
+                        "grid_min_column_width": null,
+                        "grid_template_columns": null,
+                        "grid_template_rows": null,
+                        "gutter_size": null,
+                        "image_fit": null,
+                        "image_path": null,
+                        "intrinsic_height": null,
+                        "intrinsic_width": null,
+                        "items_count": 0,
+                        "led_size": null,
+                        "led_state": null,
+                        "level": null,
+                        "max": null,
+                        "min": null,
+                        "open": null,
+                        "orientation": null,
+                        "page": null,
+                        "pane_flex": null,
+                        "pane_max_size": null,
+                        "pane_min_size": null,
+                        "pane_size": null,
+                        "placeholder": null,
+                        "route_value": null,
+                        "rows": null,
+                        "step": null,
+                        "table": {
+                          "columns": 0,
+                          "page_size": null,
+                          "resizable_columns": true,
+                          "resource_id": null,
+                          "rows": null,
+                          "sample_rows": null,
+                          "sortable": true
+                        },
+                        "target": null,
+                        "text": "PASS: point size and colormap differ from the left plot.",
+                        "toggle": null,
+                        "tooltip": null,
+                        "value": null,
+                        "wrap": true
+                      },
+                      "style": {},
+                      "type": "label"
+                    }
+                  ],
+                  "class": "scatter-case",
+                  "id": "dg-15",
+                  "key": null,
+                  "props": {
+                    "badge": null,
+                    "checked": null,
+                    "disabled": false,
+                    "expanded": null,
+                    "extension_type": null,
+                    "fixed_height": null,
+                    "fixed_width": null,
+                    "flow_align": null,
+                    "flow_cross_align": null,
+                    "grid_columns": null,
+                    "grid_masonry": false,
+                    "grid_min_column_width": null,
+                    "grid_template_columns": null,
+                    "grid_template_rows": null,
+                    "gutter_size": null,
+                    "image_fit": null,
+                    "image_path": null,
+                    "intrinsic_height": null,
+                    "intrinsic_width": null,
+                    "items_count": 0,
+                    "led_size": null,
+                    "led_state": null,
+                    "level": null,
+                    "max": null,
+                    "min": null,
+                    "open": null,
+                    "orientation": null,
+                    "page": null,
+                    "pane_flex": null,
+                    "pane_max_size": null,
+                    "pane_min_size": null,
+                    "pane_size": null,
+                    "placeholder": null,
+                    "route_value": null,
+                    "rows": null,
+                    "step": null,
+                    "table": {
+                      "columns": 0,
+                      "page_size": null,
+                      "resizable_columns": true,
+                      "resource_id": null,
+                      "rows": null,
+                      "sample_rows": null,
+                      "sortable": true
+                    },
+                    "target": null,
+                    "text": "Scatter3D large points",
+                    "toggle": null,
+                    "tooltip": null,
+                    "value": null,
+                    "wrap": null
+                  },
+                  "style": {},
+                  "type": "panel"
+                }
+              ],
+              "class": "grid",
+              "id": "dg-10",
+              "key": null,
+              "props": {
+                "badge": null,
+                "checked": null,
+                "disabled": false,
+                "expanded": null,
+                "extension_type": null,
+                "fixed_height": null,
+                "fixed_width": null,
+                "flow_align": null,
+                "flow_cross_align": null,
+                "grid_columns": null,
+                "grid_masonry": false,
+                "grid_min_column_width": null,
+                "grid_template_columns": null,
+                "grid_template_rows": null,
+                "gutter_size": null,
+                "image_fit": null,
+                "image_path": null,
+                "intrinsic_height": null,
+                "intrinsic_width": null,
+                "items_count": 0,
+                "led_size": null,
+                "led_state": null,
+                "level": null,
+                "max": null,
+                "min": null,
+                "open": null,
+                "orientation": null,
+                "page": null,
+                "pane_flex": null,
+                "pane_max_size": null,
+                "pane_min_size": null,
+                "pane_size": null,
+                "placeholder": null,
+                "route_value": null,
+                "rows": null,
+                "step": null,
+                "table": {
+                  "columns": 0,
+                  "page_size": null,
+                  "resizable_columns": true,
+                  "resource_id": null,
+                  "rows": null,
+                  "sample_rows": null,
+                  "sortable": true
+                },
+                "target": null,
+                "text": null,
+                "toggle": null,
+                "tooltip": null,
+                "value": null,
+                "wrap": null
+              },
+              "style": {},
+              "type": "h_layout"
+            }
+          ],
+          "class": "root",
+          "id": "dg-2",
+          "key": null,
+          "props": {
+            "badge": null,
+            "checked": null,
+            "disabled": false,
+            "expanded": null,
+            "extension_type": null,
+            "fixed_height": null,
+            "fixed_width": null,
+            "flow_align": null,
+            "flow_cross_align": null,
+            "grid_columns": null,
+            "grid_masonry": false,
+            "grid_min_column_width": null,
+            "grid_template_columns": null,
+            "grid_template_rows": null,
+            "gutter_size": null,
+            "image_fit": null,
+            "image_path": null,
+            "intrinsic_height": null,
+            "intrinsic_width": null,
+            "items_count": 0,
+            "led_size": null,
+            "led_state": null,
+            "level": null,
+            "max": null,
+            "min": null,
+            "open": null,
+            "orientation": null,
+            "page": null,
+            "pane_flex": null,
+            "pane_max_size": null,
+            "pane_min_size": null,
+            "pane_size": null,
+            "placeholder": null,
+            "route_value": null,
+            "rows": null,
+            "step": null,
+            "table": {
+              "columns": 0,
+              "page_size": null,
+              "resizable_columns": true,
+              "resource_id": null,
+              "rows": null,
+              "sample_rows": null,
+              "sortable": true
+            },
+            "target": null,
+            "text": null,
+            "toggle": null,
+            "tooltip": null,
+            "value": null,
+            "wrap": null
+          },
+          "style": {},
+          "type": "v_layout"
+        }
+      ],
+      "class": null,
+      "id": "dg-1",
+      "key": null,
+      "props": {
+        "badge": null,
+        "checked": null,
+        "disabled": false,
+        "expanded": null,
+        "extension_type": null,
+        "fixed_height": 760.0,
+        "fixed_width": 1000.0,
+        "flow_align": null,
+        "flow_cross_align": null,
+        "grid_columns": null,
+        "grid_masonry": false,
+        "grid_min_column_width": null,
+        "grid_template_columns": null,
+        "grid_template_rows": null,
+        "gutter_size": null,
+        "image_fit": null,
+        "image_path": null,
+        "intrinsic_height": null,
+        "intrinsic_width": null,
+        "items_count": 0,
+        "led_size": null,
+        "led_state": null,
+        "level": null,
+        "max": null,
+        "min": null,
+        "open": null,
+        "orientation": null,
+        "page": null,
+        "pane_flex": null,
+        "pane_max_size": null,
+        "pane_min_size": null,
+        "pane_size": null,
+        "placeholder": null,
+        "route_value": null,
+        "rows": null,
+        "step": null,
+        "table": {
+          "columns": 0,
+          "page_size": null,
+          "resizable_columns": true,
+          "resource_id": null,
+          "rows": null,
+          "sample_rows": null,
+          "sortable": true
+        },
+        "target": null,
+        "text": null,
+        "toggle": null,
+        "tooltip": null,
+        "value": null,
+        "wrap": null
+      },
+      "style": {},
+      "type": "window"
+    },
+    "window": {
+      "height": 760,
+      "scale_factor": 1.0,
+      "width": 1000
+    }
+  },
+  "runtime": {
+    "command_drain": {
+      "apply": {
+        "avg_ms": 0.0103,
+        "count": 3,
+        "last_ms": 0.0,
+        "total_ms": 0.0309
+      },
+      "coalesce": {
+        "avg_ms": 0.0011333333333333332,
+        "count": 3,
+        "last_ms": 0.0,
+        "total_ms": 0.0034
+      },
+      "fetch": {
+        "avg_ms": 0.0009999999999999998,
+        "count": 3,
+        "last_ms": 9.999999999999999e-05,
+        "total_ms": 0.0029999999999999996
+      },
+      "flush_rebuilds": {
+        "avg_ms": 0.0,
+        "count": 3,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "last_batches": 0,
+      "last_commands": 0,
+      "last_pending": 0,
+      "timing": {
+        "avg_ms": 0.0126,
+        "count": 3,
+        "last_ms": 0.00019999999999999998,
+        "total_ms": 0.0378
+      }
+    },
+    "command_queue_depth": 0,
+    "command_timings": {
+      "DebugSnapshot": {
+        "avg_ms": 0.0029000000000000002,
+        "count": 1,
+        "last_ms": 0.0029000000000000002,
+        "total_ms": 0.0029000000000000002
+      },
+      "SetScatterAutoPointSize": {
+        "avg_ms": 0.0007999999999999999,
+        "count": 2,
+        "last_ms": 0.00019999999999999998,
+        "total_ms": 0.0015999999999999999
+      },
+      "SetScatterAutoQuality": {
+        "avg_ms": 0.0015500000000000002,
+        "count": 2,
+        "last_ms": 0.00039999999999999996,
+        "total_ms": 0.0031000000000000003
+      },
+      "SetScatterHoverTooltip": {
+        "avg_ms": 0.0025499999999999997,
+        "count": 2,
+        "last_ms": 0.00019999999999999998,
+        "total_ms": 0.0050999999999999995
+      },
+      "SetScatterInteractiveRenderScale": {
+        "avg_ms": 0.0017,
+        "count": 2,
+        "last_ms": 0.0003,
+        "total_ms": 0.0034
+      },
+      "SetScatterLod": {
+        "avg_ms": 0.003,
+        "count": 2,
+        "last_ms": 0.00039999999999999996,
+        "total_ms": 0.006
+      },
+      "SetScatterPickingMode": {
+        "avg_ms": 0.0006,
+        "count": 2,
+        "last_ms": 0.0,
+        "total_ms": 0.0012
+      },
+      "SetScatterTooltipAxisLabels": {
+        "avg_ms": 0.0015999999999999999,
+        "count": 2,
+        "last_ms": 0.00039999999999999996,
+        "total_ms": 0.0031999999999999997
+      }
+    },
+    "commands": {
+      "count": 15,
+      "limit": 64,
+      "recent": [
+        {
+          "command": "SetScatterHoverTooltip",
+          "detail": "true",
+          "dirty": null,
+          "elapsed_ms": 0.0049,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": false,
+          "seq": 1,
+          "target": "dg-13"
+        },
+        {
+          "command": "SetScatterTooltipAxisLabels",
+          "detail": null,
+          "dirty": null,
+          "elapsed_ms": 0.0028,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": false,
+          "seq": 2,
+          "target": "dg-13"
+        },
+        {
+          "command": "SetScatterLod",
+          "detail": null,
+          "dirty": null,
+          "elapsed_ms": 0.0056,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 3,
+          "target": "dg-13"
+        },
+        {
+          "command": "SetScatterAutoPointSize",
+          "detail": null,
+          "dirty": null,
+          "elapsed_ms": 0.0014,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 4,
+          "target": "dg-13"
+        },
+        {
+          "command": "SetScatterInteractiveRenderScale",
+          "detail": "1.000",
+          "dirty": null,
+          "elapsed_ms": 0.0031,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 5,
+          "target": "dg-13"
+        },
+        {
+          "command": "SetScatterAutoQuality",
+          "detail": "enabled=false, target_fps=10.00",
+          "dirty": null,
+          "elapsed_ms": 0.0027,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 6,
+          "target": "dg-13"
+        },
+        {
+          "command": "SetScatterPickingMode",
+          "detail": null,
+          "dirty": null,
+          "elapsed_ms": 0.0012,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 7,
+          "target": "dg-13"
+        },
+        {
+          "command": "SetScatterHoverTooltip",
+          "detail": "true",
+          "dirty": null,
+          "elapsed_ms": 0.00019999999999999998,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": false,
+          "seq": 8,
+          "target": "dg-17"
+        },
+        {
+          "command": "SetScatterTooltipAxisLabels",
+          "detail": null,
+          "dirty": null,
+          "elapsed_ms": 0.00039999999999999996,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": false,
+          "seq": 9,
+          "target": "dg-17"
+        },
+        {
+          "command": "SetScatterLod",
+          "detail": null,
+          "dirty": null,
+          "elapsed_ms": 0.00039999999999999996,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 10,
+          "target": "dg-17"
+        },
+        {
+          "command": "SetScatterAutoPointSize",
+          "detail": null,
+          "dirty": null,
+          "elapsed_ms": 0.00019999999999999998,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 11,
+          "target": "dg-17"
+        },
+        {
+          "command": "SetScatterInteractiveRenderScale",
+          "detail": "1.000",
+          "dirty": null,
+          "elapsed_ms": 0.0003,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 12,
+          "target": "dg-17"
+        },
+        {
+          "command": "SetScatterAutoQuality",
+          "detail": "enabled=false, target_fps=10.00",
+          "dirty": null,
+          "elapsed_ms": 0.00039999999999999996,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 13,
+          "target": "dg-17"
+        },
+        {
+          "command": "SetScatterPickingMode",
+          "detail": null,
+          "dirty": null,
+          "elapsed_ms": 0.0,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 14,
+          "target": "dg-17"
+        },
+        {
+          "command": "DebugSnapshot",
+          "detail": "request_id=0",
+          "dirty": null,
+          "elapsed_ms": 0.0029000000000000002,
+          "frame": 1,
+          "outcome": "completed",
+          "requested_redraw": false,
+          "seq": 15,
+          "target": null
+        }
+      ]
+    },
+    "cpu_frame_ms": 6.066,
+    "dirty": {
+      "current": null,
+      "note": "DragonGUI applies coarse dirty flags immediately; this history records the recent command reasons that triggered them.",
+      "recent": []
+    },
+    "drag_drop_session": null,
+    "drag_number_drag": null,
+    "frame_acquire_ms": 0.0336,
+    "frame_acquire_ms_avg": 0.0336,
+    "frame_encode_ms": 2.1656,
+    "frame_encode_ms_avg": 2.1656,
+    "frame_ms": 6.066,
+    "frame_ms_avg": 6.066,
+    "frame_prepare_ms": 3.4358,
+    "frame_prepare_ms_avg": 3.4358,
+    "frame_present_ms": 0.07490000000000001,
+    "frame_present_ms_avg": 0.07490000000000001,
+    "frame_submit_ms": 0.3554,
+    "frame_submit_ms_avg": 0.3554,
+    "frame_window_count": 1,
+    "frame_work_ms": 5.9568,
+    "frame_work_ms_avg": 5.9568,
+    "frames_rendered": 1,
+    "gpu_ready": true,
+    "last_frame_ms": 6.066,
+    "last_mouse_pos": null,
+    "loading_screen": {
+      "enabled": true,
+      "frames": 1,
+      "min_duration_ms": 120,
+      "present_ms": 115.2295,
+      "shown": true,
+      "startup_resource_ms": 0.18000000000000002
+    },
+    "orbit_active": false,
+    "pan_active": false,
+    "pan_button": null,
+    "pending_slider_emit": null,
+    "pressed_id": null,
+    "python": {
+      "drain_requested": false,
+      "last_task": null,
+      "last_task_drain": null,
+      "pending_native_commands": 0,
+      "queued_tasks": 0,
+      "startup": {},
+      "task_drain_timing": {},
+      "task_timings": {}
+    },
+    "scrollbar_drag": null,
+    "smoke_frames": null,
+    "splitter_drag": null,
+    "table_column_resize_drag": null,
+    "table_scrollbar_drag": null,
+    "upload_ms": 0.18000000000000002,
+    "wall_fps": 0.0,
+    "window_open": true
+  },
+  "schema": 1
+}

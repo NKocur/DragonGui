@@ -1,0 +1,220 @@
+# Spec: Fix Visual Audit Layout Failures And Retest
+
+## Goal
+
+Review the failures reported in `artifacts/visual_audit`, fix the product/layout bugs that caused them, then rerun the visual audit targets to confirm the failures are resolved.
+
+This is not another harness-building pass. The visual audit harness already exists and produced a report. The concrete scope is the four `fail` entries in `artifacts/visual_audit/REPORT.md` / `report.json`.
+
+## Source Of Truth
+
+Current report status:
+
+- `artifacts/visual_audit/report.json`: 66 entries, 41 `pass`, 21 `needs_manual_interaction`, 4 `fail`, 0 `blocked`.
+- Failed targets:
+  - `form-controls`
+  - `app-shell-workbench`
+  - `layout-flex-stress`
+  - `responsive-layout`
+
+Relevant screenshots:
+
+- `artifacts/visual_audit/screenshots/form-controls-390x720.png`
+- `artifacts/visual_audit/screenshots/app-shell-workbench-desktop-1.png`
+- `artifacts/visual_audit/screenshots/app-shell-workbench-390x720.png`
+- `artifacts/visual_audit/screenshots/layout-flex-stress-390x720.png`
+- `artifacts/visual_audit/screenshots/responsive-layout-390x720.png`
+
+Relevant snapshots:
+
+- `artifacts/visual_audit/snapshots/form-controls-390x720.json`
+- `artifacts/visual_audit/snapshots/app-shell-workbench-desktop-1.json`
+- `artifacts/visual_audit/snapshots/app-shell-workbench-390x720.json`
+- `artifacts/visual_audit/snapshots/layout-flex-stress-390x720.json`
+- `artifacts/visual_audit/snapshots/responsive-layout-390x720.json`
+
+## Failure Inventory
+
+### 1. `app-shell-workbench`
+
+Symptoms:
+
+- Desktop and `390x720` screenshots show the sidebar, but the `WorkbenchLayout` / `Body` / `WorkbenchMain` content area is blank except for a scrollbar.
+- `StatusBar` is not visible in the viewport.
+- Snapshot shows right-side body content laid out thousands of pixels below the viewport.
+- Many body descendants have `w: 0.0`; examples from desktop snapshot:
+  - first body label `dg-12`: `x: 190`, `y: 0`, `w: 0`, `h: 725`
+  - second body label `dg-13`: `x: 190`, `y: 739`, `w: 0`, `h: 1756`
+  - `WorkbenchMain` scroll area `dg-24`: `x: 190`, `y: 3581`, `w: 20`, `h: 0`
+  - `StatusBar` `dg-43`: `x: 190`, `y: 3581`, `w: 850`, `h: 34`
+
+Likely area:
+
+- `native/src/layout.rs`
+- Python layout defaults in `python/dragongui/widgets.py` for `AppShell`, `WorkbenchLayout`, `Body`, and `WorkbenchMain` only if the native behavior is correct but defaults are wrong.
+
+The bug class appears to be row/flex child sizing and scroll-owner height resolution for an `AppShell` horizontal root containing a fixed `Sidebar` and a vertical `WorkbenchLayout` with `Body` plus `StatusBar`. `Body` currently supplies `width: 0` when no explicit width is passed; verify whether that is intended as flex-basis behavior or is collapsing descendants in the native/Taffy lowering.
+
+Expected behavior:
+
+- `Sidebar` keeps its fixed width.
+- `WorkbenchLayout` fills the remaining width and visible height.
+- `Body` is visible above `StatusBar`, owns vertical scrolling, and its children have nonzero content width.
+- `WorkbenchMain` appears inside the body at its fixed height.
+- `StatusBar` is pinned below the body inside the workbench area and remains visible at desktop and `390x720`.
+
+### 2. `form-controls` at `390x720`
+
+Symptoms:
+
+- Mobile screenshot shows the Theme stress test button row clipped/overlapped by the following Text entry panel.
+- Desktop capture is acceptable.
+- Snapshot shows the `Theme stress test` panel at `h: 118` while its button row appears too low for the panel body (`dg-8` y-position extends below panel bottom).
+- Later `GridLayout` children also show widths wider than their containing grid at `390x720`:
+  - `grid_layout` `dg-33`: `w: 330`
+  - child panels `dg-34` / `dg-43`: `w: 390`
+
+Likely area:
+
+- `native/src/layout.rs`
+- Possibly probe CSS only if the probe has impossible desktop-only min constraints, but prefer fixing native layout if the same bug class appears in other targets.
+
+Expected behavior:
+
+- Titled panels reserve enough title/body height for their children at narrow widths.
+- Responsive `GridLayout` children should not exceed the grid content width at `390x720`.
+- The theme button row should be fully visible, and the following text-entry panel should start after the theme panel.
+
+### 3. `layout-flex-stress` at `390x720`
+
+Symptoms:
+
+- Dense rows are squeezed/truncated and lose usable width.
+- Several flexible controls are laid out with `w: 0.0`, including:
+  - text input in the first stress row
+  - range slider in nested row
+  - buttons in action row
+  - small buttons in constrained card row
+- Fixed labels of `172px` plus gaps and fixed action buttons can exceed available row width; the current engine allocates zero width to flexible children instead of wrapping/reflowing or preserving a minimum usable width.
+
+Likely area:
+
+- `native/src/layout.rs`
+- Potentially `examples/css_feature_probes/layout_flex_stress_probe.py` only to express intended wrapping with `FlowLayout` where an `HLayout` cannot reasonably fit. Do not hide a real native flex-shrink bug by only loosening the probe.
+
+Expected behavior:
+
+- Flexible controls with `flex: 1`, `flex-shrink: 1`, `min-width: 0` should stay within row bounds without becoming unusably zero-width when there is available remaining width.
+- Where a row cannot physically fit all fixed elements, the target/probe should use `FlowLayout` or native layout should preserve a usable control width and avoid text/control overlap.
+- No child should paint outside its panel's right edge in the `390x720` capture.
+
+### 4. `responsive-layout` at `390x720`
+
+Symptoms:
+
+- Content clips off the left edge and overlaps vertically.
+- `Auto sizing` panel has `x: -37`, `w: 440` inside a narrow viewport because CSS has `min-width: 440` plus auto side margins.
+- `Auto-fit and dense placement` and `fit-content and minmax tracks` overlap vertically:
+  - auto-fit grid starts at `y: 801`, `h: 220`
+  - following fit-row panel starts at `y: 1033`, but descendants from auto-fit extend below this region.
+- Existing full native test artifacts already reported layout failures involving percent/calc sizing and flow auto-width behavior; those are relevant here.
+
+Likely area:
+
+- `native/src/layout.rs`, especially:
+  - percent/calc lowering and parent-size resolution
+  - auto margins with min/max widths
+  - CSS grid auto-fit/auto-fill/dense placement height reconciliation
+  - post-layout reflow of column siblings after grid packing
+- `examples/css_feature_probes/responsive_layout_probe.py` only if a probe rule intentionally sets a minimum width larger than mobile and should instead demonstrate responsive collapse.
+
+Expected behavior:
+
+- Narrow viewport content should stay within the visible horizontal bounds or intentionally scroll horizontally if configured. This probe is not a horizontal-overflow stress case.
+- Auto-width/min-width panels should not be centered to negative x in a scroll-root that is intended to fit the viewport.
+- Grid auto-placement height must include all packed children before following siblings are positioned.
+
+## Affected Files And Modules
+
+Primary implementation target:
+
+- `native/src/layout.rs`
+
+Potential supporting edits:
+
+- `python/dragongui/widgets.py` for safer `Body` / `WorkbenchMain` / shell defaults if native lowering depends on Python-provided flex styles.
+- `examples/css_feature_probes/app_shell_workbench_probe.py` if the probe accidentally applies contradictory styles such as `height: 100%` plus scroll ownership in a way the documented API does not support.
+- `examples/css_feature_probes/form_controls_probe.py`, `layout_flex_stress_probe.py`, or `responsive_layout_probe.py` only for clearly impossible demo constraints. Keep these changes minimal and documented in implementation notes.
+
+Reference files:
+
+- `docs/layout.md`
+- `docs/widgets-reference.md`
+- `artifacts/visual_audit/REPORT.md`
+- `artifacts/visual_audit/report.json`
+- Relevant snapshot JSON files listed above.
+
+## Implementation Guidance
+
+Start by reproducing and measuring with existing tests and snapshots before editing:
+
+1. Read existing `native/src/layout.rs` tests around percent/calc, flow layout, grid auto rows, shell/status-bar, and scroll areas.
+2. Run the currently failing/relevant layout tests individually if they still fail:
+   - `percent_style_width_uses_parent_space`
+   - `calc_style_width_lowers_when_expression_is_single_unit`
+   - `flow_layout_auto_width_controls_do_not_reserve_wrapped_height`
+   - any `status_bar`, `scroll_area`, grid auto-row, and shell-related tests nearby.
+3. Add focused regression tests in `native/src/layout.rs` for:
+   - AppShell-like horizontal root with fixed sidebar and flexible workbench/body/status-bar producing visible nonzero body width and status-bar y within viewport.
+   - Titled panel auto-height following a wrapped/positioned child row at narrow width.
+   - GridLayout responsive children not exceeding grid content width at `390px`.
+   - Grid auto-fit/dense container height including all placed children before following sibling layout.
+   - Flexible row children not collapsing to zero width when `min-width: 0` and remaining width exists.
+
+Prefer fixing shared layout behavior over adding probe-specific hacks. If a probe genuinely encodes an impossible layout, adjust the probe after documenting why it is a demo correction rather than a product fix.
+
+## Validation Required
+
+Use the Python 3.13 environment already documented in prior artifacts:
+
+```powershell
+$py = 'C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe'
+$env:LIB='C:\Users\nashk\AppData\Local\Programs\Python\Python313\libs;' + $env:LIB
+$env:PYO3_PYTHON=$py
+```
+
+Minimum code validation:
+
+```powershell
+cargo fmt --manifest-path native/Cargo.toml -- --check
+cargo check --manifest-path native/Cargo.toml
+```
+
+Run focused native layout tests added/changed by the fix. Also rerun the historical relevant tests above.
+
+If native code is edited and the Python extension must be used by the visual harness, rebuild/copy the native extension into `python/dragongui/_dragongui.pyd` using the existing repo workflow. Prior artifacts used `native/target/release/_dragongui.dll` copied to `python/dragongui/_dragongui.pyd`.
+
+Rerun the failed audit targets:
+
+```powershell
+& $py tools/visual_audit.py --target app-shell-workbench --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
+& $py tools/visual_audit.py --target form-controls --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
+& $py tools/visual_audit.py --target layout-flex-stress --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
+& $py tools/visual_audit.py --target responsive-layout --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
+```
+
+Then inspect the regenerated screenshots and update `artifacts/visual_audit/REPORT.md` / `report.json` so the four entries reflect the new reviewed outcome. If a target is still not perfect but materially improved, record the remaining defect precisely instead of marking it pass.
+
+Recommended final report status target:
+
+- `app-shell-workbench`: `pass`
+- `form-controls`: `pass`
+- `layout-flex-stress`: `pass` or `needs_manual_interaction` only if static layout is fixed but interactive resizing still needs coverage
+- `responsive-layout`: `pass`
+
+## Edge Cases
+
+- `390x720` viewport with fixed sidebars and narrow content.
+- Fixed-width labels combined with flexible controls.
+- Rows where fixed children consume more width than the parent can provide.
+- `width: 100%`, `width: 0` used as flex basis, `width: auto`, percent, and `calc()` under flex parents.

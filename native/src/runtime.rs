@@ -5876,6 +5876,14 @@ struct WgpuState {
     loading_screen: LoadingScreenRuntime,
 }
 
+struct WindowScreenshotReadback {
+    buffer: wgpu::Buffer,
+    padded_row: u32,
+    width: u32,
+    height: u32,
+    format: wgpu::TextureFormat,
+}
+
 #[derive(Debug, Clone)]
 struct LoadingScreenRuntime {
     spec: LoadingScreenSpec,
@@ -7171,6 +7179,7 @@ impl WgpuState {
             config.present_mode,
             &surface_capabilities.present_modes,
         );
+        config.usage |= wgpu::TextureUsages::COPY_SRC;
         if let Ok(value) = std::env::var("DRAGONGUI_SURFACE_FRAME_LATENCY") {
             if let Ok(latency) = value.trim().parse::<u32>() {
                 if latency > 0 {
@@ -13491,7 +13500,10 @@ impl WgpuState {
         self.current_layout.as_ref()?.rects.get(&id).copied()
     }
 
-    fn render(&mut self) -> Result<FrameRenderTimings, DragonError> {
+    fn render(
+        &mut self,
+        screenshot_requests: &mut Vec<u64>,
+    ) -> Result<(FrameRenderTimings, Vec<(u64, String)>), DragonError> {
         let frame_t0 = Instant::now();
         let mut timings = FrameRenderTimings::default();
         let prepare_t0 = Instant::now();
@@ -13559,14 +13571,14 @@ impl WgpuState {
                 self.surface.configure(&self.device, &self.config);
                 timings.acquire_ms = acquire_t0.elapsed().as_secs_f64() * 1000.0;
                 timings.total_ms = frame_t0.elapsed().as_secs_f64() * 1000.0;
-                return Ok(timings);
+                return Ok((timings, Vec::new()));
             }
             wgpu::CurrentSurfaceTexture::Timeout
             | wgpu::CurrentSurfaceTexture::Occluded
             | wgpu::CurrentSurfaceTexture::Validation => {
                 timings.acquire_ms = acquire_t0.elapsed().as_secs_f64() * 1000.0;
                 timings.total_ms = frame_t0.elapsed().as_secs_f64() * 1000.0;
-                return Ok(timings);
+                return Ok((timings, Vec::new()));
             }
         };
         timings.acquire_ms = acquire_t0.elapsed().as_secs_f64() * 1000.0;
@@ -13870,18 +13882,156 @@ impl WgpuState {
         self.last_primitive_base_encode_ms = primitive_base_encode_ms;
         self.last_primitive_overlay_encode_ms = primitive_overlay_encode_ms;
         self.last_line_plot_encode_ms = line_plot_encode_ms;
+
+        let request_ids = if screenshot_requests.is_empty() {
+            Vec::new()
+        } else {
+            std::mem::take(screenshot_requests)
+        };
+        let screenshot_readback = if request_ids.is_empty() {
+            None
+        } else {
+            Some(copy_window_screenshot_to_buffer(
+                &self.device,
+                &mut encoder,
+                &texture.texture,
+                self.config.width,
+                self.config.height,
+                self.config.format,
+            ))
+        };
         timings.encode_ms = encode_t0.elapsed().as_secs_f64() * 1000.0;
 
         let submit_t0 = Instant::now();
         self.queue.submit(std::iter::once(encoder.finish()));
         timings.submit_ms = submit_t0.elapsed().as_secs_f64() * 1000.0;
+        let screenshots = if let Some(readback) = screenshot_readback {
+            match finish_window_screenshot_readback(&self.device, readback) {
+                Ok(json) => request_ids
+                    .into_iter()
+                    .map(|request_id| (request_id, json.clone()))
+                    .collect(),
+                Err(error) => {
+                    eprintln!("DragonGUI: window screenshot error: {error}");
+                    request_ids
+                        .into_iter()
+                        .map(|request_id| {
+                            (
+                                request_id,
+                                r#"{"w":0,"h":0,"rgba_b64":"","error":"readback failed"}"#
+                                    .to_string(),
+                            )
+                        })
+                        .collect()
+                }
+            }
+        } else {
+            Vec::new()
+        };
         let present_t0 = Instant::now();
         texture.present();
         timings.present_ms = present_t0.elapsed().as_secs_f64() * 1000.0;
         timings.total_ms = frame_t0.elapsed().as_secs_f64() * 1000.0;
 
-        Ok(timings)
+        Ok((timings, screenshots))
     }
+}
+
+fn copy_window_screenshot_to_buffer(
+    device: &wgpu::Device,
+    encoder: &mut wgpu::CommandEncoder,
+    texture: &wgpu::Texture,
+    width: u32,
+    height: u32,
+    format: wgpu::TextureFormat,
+) -> WindowScreenshotReadback {
+    let bytes_per_px = 4u32;
+    let unpadded_row = width * bytes_per_px;
+    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let padded_row = (unpadded_row + align - 1) & !(align - 1);
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("dragongui-window-screenshot-readback"),
+        size: (padded_row * height) as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(padded_row),
+                rows_per_image: Some(height),
+            },
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+    WindowScreenshotReadback {
+        buffer,
+        padded_row,
+        width,
+        height,
+        format,
+    }
+}
+
+fn finish_window_screenshot_readback(
+    device: &wgpu::Device,
+    readback: WindowScreenshotReadback,
+) -> Result<String, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    readback
+        .buffer
+        .slice(..)
+        .map_async(wgpu::MapMode::Read, move |result| {
+            tx.send(result).ok();
+        });
+    let _ = device.poll(wgpu::PollType::wait_indefinitely());
+    rx.recv()
+        .map_err(|e| format!("window screenshot map callback: {e}"))?
+        .map_err(|e| format!("window screenshot map_async: {e:?}"))?;
+
+    let raw = readback.buffer.slice(..).get_mapped_range();
+    let is_bgra = matches!(
+        readback.format,
+        wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+    );
+    let bytes_per_px = 4u32;
+    let unpadded_row = readback.width * bytes_per_px;
+    let pixels = if !is_bgra && readback.padded_row == unpadded_row {
+        raw.to_vec()
+    } else {
+        let mut out = Vec::with_capacity(readback.width as usize * readback.height as usize * 4);
+        for row in 0..readback.height as usize {
+            let start = row * readback.padded_row as usize;
+            let row_bytes = &raw[start..start + readback.width as usize * 4];
+            if is_bgra {
+                for px in row_bytes.chunks_exact(4) {
+                    out.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
+                }
+            } else {
+                out.extend_from_slice(row_bytes);
+            }
+        }
+        out
+    };
+    drop(raw);
+    readback.buffer.unmap();
+    let rgba_b64 = BASE64.encode(&pixels);
+    Ok(format!(
+        r#"{{"w":{},"h":{},"rgba_b64":"{}"}}"#,
+        readback.width, readback.height, rgba_b64
+    ))
 }
 
 fn rect_contains_pos(r: &crate::layout::Rect, pos: [f32; 2]) -> bool {
@@ -14527,6 +14677,7 @@ struct DragonApp {
     last_command_drain_commands: u64,
     last_command_drain_pending: u64,
     startup_real_redraw_deadline: Option<Instant>,
+    pending_window_screenshot_requests: Vec<u64>,
 }
 
 impl DragonApp {
@@ -14606,6 +14757,7 @@ impl DragonApp {
             last_command_drain_commands: 0,
             last_command_drain_pending: 0,
             startup_real_redraw_deadline: None,
+            pending_window_screenshot_requests: Vec::new(),
         }
     }
 
@@ -17484,9 +17636,20 @@ impl DragonApp {
                 if let Some(bridge) = &self.command_bridge {
                     let json =
                         result.unwrap_or_else(|| r#"{"w":0,"h":0,"rgba_b64":""}"#.to_string());
-                    bridge.complete_debug_snapshot(request_id, json);
+                    bridge.complete_response(request_id, json);
                 }
                 self.record_runtime_command("ScatterScreenshot", Some(id), None, None, "ok", false)
+            }
+            Command::WindowScreenshot { request_id } => {
+                self.pending_window_screenshot_requests.push(request_id);
+                self.record_runtime_command(
+                    "WindowScreenshot",
+                    None,
+                    Some(format!("request_id={request_id}")),
+                    None,
+                    "queued",
+                    true,
+                )
             }
             Command::SetTableData { id, table_json } => {
                 let detail = Some(format!("table_bytes={}", table_json.len()));
@@ -17784,7 +17947,7 @@ impl DragonApp {
                     false,
                 );
                 if let Some(bridge) = &self.command_bridge {
-                    bridge.complete_debug_snapshot(request_id, self.debug_snapshot_json());
+                    bridge.complete_response(request_id, self.debug_snapshot_json());
                 }
                 if resume_deferred_rebuilds {
                     if let Some(gpu) = self.gpu.as_mut() {
@@ -21278,15 +21441,18 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
 
             WindowEvent::RedrawRequested => {
                 let mut html_report_messages = Vec::new();
+                let mut completed_window_screenshots = Vec::new();
                 if let Some(gpu) = &mut self.gpu {
-                    let timings = match gpu.render() {
-                        Ok(timings) => timings,
-                        Err(e) => {
-                            self.error = Some(e);
-                            event_loop.exit();
-                            return;
-                        }
-                    };
+                    let (timings, screenshots) =
+                        match gpu.render(&mut self.pending_window_screenshot_requests) {
+                            Ok(result) => result,
+                            Err(e) => {
+                                self.error = Some(e);
+                                event_loop.exit();
+                                return;
+                            }
+                        };
+                    completed_window_screenshots = screenshots;
                     html_report_messages = gpu.drain_html_report_messages();
                     let quality_budget_ms = timings.work_ms();
                     self.record_frame_telemetry(timings);
@@ -21302,6 +21468,11 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
                         if let Some(bridge) = &self.command_bridge {
                             bridge.wake();
                         }
+                    }
+                }
+                if let Some(bridge) = &self.command_bridge {
+                    for (request_id, json) in completed_window_screenshots {
+                        bridge.complete_response(request_id, json);
                     }
                 }
                 for (id, message) in html_report_messages {

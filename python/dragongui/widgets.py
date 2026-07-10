@@ -2111,6 +2111,9 @@ class WorkbenchLayout(VLayout):
         default_style: dict[str, object] = {
             "width": "100%",
             "height": "100%",
+            "flex": 1,
+            "flex_grow": 1,
+            "flex_shrink": 1,
             "min_width": 0,
             "min_height": 0,
             "overflow_x": "hidden",
@@ -2271,8 +2274,6 @@ class Body(ScrollArea):
             "min_width": 0,
             "min_height": 0,
         }
-        if width is None:
-            extra["width"] = 0
         merged: Mapping[str, object] = {**extra, **(style or {})}
         super().__init__(
             axis=scroll,
@@ -2307,7 +2308,6 @@ class WorkbenchMain(ScrollArea):
         default_style: dict[str, object] = {
             "width": "100%",
             "height": 0,
-            "flex": 1,
             "flex_grow": 1,
             "flex_shrink": 1,
             "min_width": 0,

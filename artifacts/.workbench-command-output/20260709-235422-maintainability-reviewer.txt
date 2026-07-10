@@ -1,0 +1,187 @@
+51:pub(crate) const TAB_INACTIVE_BOTTOM_INSET_LP: f32 = 3.0;
+52:pub(crate) const TAB_ACTIVE_BAR_LP: f32 = 3.0;
+53:
+54:pub(crate) const BADGE_GAP_LP: f32 = 8.0;
+55:pub(crate) const BADGE_PAD_X_LP: f32 = 8.0;
+56:pub(crate) const BADGE_MIN_HEIGHT_LP: f32 = 16.0;
+57:
+58:pub(crate) fn badge_font_size_lp(style: &NodeStyle, theme: &Theme) -> f32 {
+59:    style
+60:        .parts
+61:        .parts
+62:        .get("badge")
+63:        .and_then(|part| part.text.font_size)
+64:        .or(style.text.font_size)
+65:        .unwrap_or_else(|| (theme.font_size - 2.0).max(10.0))
+66:        .max(8.0)
+67:}
+68:
+69:pub(crate) fn badge_height_for_style(style: &NodeStyle, theme: &Theme, sf: f32) -> f32 {
+70:    let badge_part = style.parts.parts.get("badge");
+71:    let height_lp = badge_part
+72:        .and_then(|part| part.layout.height)
+73:        .unwrap_or_else(|| {
+74:            let font_size = badge_font_size_lp(style, theme);
+75:            if let Some(part) = badge_part {
+76:                let padding = part.layout.padding.unwrap_or(3.0).max(0.0);
+77:                let border = part.visual.border_width.unwrap_or(0.0).max(0.0);
+78:                (font_size + padding * 2.0 + border * 2.0).max(BADGE_MIN_HEIGHT_LP)
+79:            } else {
+80:                (font_size + 6.0).max(BADGE_MIN_HEIGHT_LP)
+81:            }
+82:        });
+83:    (height_lp.max(1.0) * sf).max(1.0)
+84:}
+85:
+86:pub(crate) fn badge_width_for_text(style: &NodeStyle, badge: &str, theme: &Theme, sf: f32) -> f32 {
+87:    let badge_part = style.parts.parts.get("badge");
+88:    if let Some(width_lp) = badge_part.and_then(|part| part.layout.width) {
+89:        return (width_lp.max(1.0) * sf).max(1.0);
+90:    }
+91:    let font_size = badge_font_size_lp(style, theme);
+92:    let text_w = badge.chars().count() as f32 * font_size * 0.68;
+93:    let padding = badge_part
+94:        .and_then(|part| part.layout.padding)
+95:        .unwrap_or(BADGE_PAD_X_LP)
+96:        .max(0.0);
+97:    let border = badge_part
+98:        .and_then(|part| part.visual.border_width)
+99:        .unwrap_or(0.0)
+100:        .max(0.0);
+101:    ((text_w + padding * 2.0 + border * 2.0).max(BADGE_MIN_HEIGHT_LP) * sf).max(1.0)
+102:}
+103:
+104:#[derive(Debug, Clone, Copy, PartialEq)]
+105:pub(crate) struct InlineBadgeLayout {
+106:    pub(crate) visible_rect: Option<[f32; 4]>,
+107:    pub(crate) preferred_width: f32,
+108:    pub(crate) reserved_width: f32,
+109:}
+110:
+111:pub(crate) fn inline_badge_layout_for_text(
+112:    style: &NodeStyle,
+113:    badge: &str,
+114:    theme: &Theme,
+115:    sf: f32,
+116:    parent_w: f32,
+117:    parent_h: f32,
+118:    right_inset: f32,
+119:) -> InlineBadgeLayout {
+120:    let preferred_width = badge_width_for_text(style, badge, theme, sf);
+121:    let reserved_width = preferred_width + BADGE_GAP_LP * sf;
+122:    let preferred_h = badge_height_for_style(style, theme, sf);
+123:    let visible_h = preferred_h.min((parent_h - 4.0 * sf).max(1.0));
+124:    let available_w = (parent_w - right_inset).max(0.0);
+125:    let visible_w = preferred_width.min(available_w);
+126:    let x = parent_w - right_inset - visible_w;
+127:    let y = (parent_h - visible_h) * 0.5;
+128:
+129:    // Labels reserve the preferred badge width so they yield first. The visible
+130:    // pill is clipped to the parent so narrow controls keep a badge affordance.
+131:    let visible_rect = if x >= 0.0 && visible_w > 0.0 && visible_h > 0.0 {
+132:        Some([x, y, visible_w, visible_h])
+133:    } else {
+134:        None
+135:    };
+136:
+137:    InlineBadgeLayout {
+138:        visible_rect,
+139:        preferred_width,
+140:        reserved_width,
+141:    }
+142:}
+143:
+144:pub(crate) fn standalone_badge_width_for_text(
+145:    style: &NodeStyle,
+146:    badge: &str,
+147:    theme: &Theme,
+148:    sf: f32,
+149:) -> f32 {
+150:    if let Some(width_lp) = style.layout.width {
+151:        return (width_lp.max(1.0) * sf).max(1.0);
+152:    }
+153:    let font_size = badge_font_size_lp(style, theme);
+154:    let text_w = badge.chars().count() as f32 * font_size * 0.90;
+155:    let (left, right) = standalone_badge_horizontal_padding_lp(style);
+156:    let border = style.visual.border_width.unwrap_or(0.0).max(0.0);
+157:    ((text_w + left + right + border * 2.0 + 8.0).max(BADGE_MIN_HEIGHT_LP) * sf).max(1.0)
+158:}
+159:
+160:pub(crate) fn standalone_badge_horizontal_padding_lp(style: &NodeStyle) -> (f32, f32) {
+161:    let left = style
+162:        .layout
+163:        .padding_left
+164:        .or(style.layout.padding)
+165:        .unwrap_or(BADGE_PAD_X_LP)
+166:        .max(0.0);
+2756:        let unstyled =
+2757:            badge_width_for_text(&NodeStyle::default(), "margin auto", &Theme::dark(), 1.0);
+2758:
+2759:        assert!(
+2760:            width > unstyled,
+2761:            "standalone badge width should grow with styled padding: styled={width}, unstyled={unstyled}"
+2762:        );
+2763:    }
+2764:
+2765:    #[test]
+2766:    fn inline_badge_layout_reserves_preferred_width_but_clips_visible_rect() {
+2767:        let mut style = NodeStyle::default();
+2768:        style.text.font_size = Some(12.0);
+2769:
+2770:        let layout = inline_badge_layout_for_text(
+2771:            &style,
+2772:            "owner: platform-design",
+2773:            &Theme::dark(),
+2774:            1.0,
+2775:            42.0,
+2776:            28.0,
+2777:            8.0,
+2778:        );
+2779:        let rect = layout
+2780:            .visible_rect
+2781:            .expect("narrow parent should still expose a clipped badge rect");
+2782:
+2783:        assert!(layout.reserved_width > rect[2]);
+2784:        assert_eq!(rect[0], 0.0);
+2785:        assert_eq!(rect[2], 34.0);
+2786:        assert_eq!(layout.reserved_width, layout.preferred_width + BADGE_GAP_LP);
+2787:    }
+2788:
+2789:    #[test]
+2790:    fn inline_badge_layout_accounts_for_part_padding_and_border() {
+2791:        let mut plain = NodeStyle::default();
+2792:        plain.text.font_size = Some(12.0);
+2793:
+2794:        let mut styled = plain.clone();
+2795:        styled.parts.parts.insert(
+2796:            "badge".to_string(),
+2797:            PartStyle {
+2798:                layout: PartLayoutStyle {
+2799:                    padding: Some(9.0),
+2800:                    ..Default::default()
+2801:                },
+2802:                visual: VisualStyle {
+2803:                    border_width: Some(2.0),
+2804:                    ..Default::default()
+2805:                },
+2806:                ..Default::default()
+2807:            },
+2808:        );
+2809:
+2810:        let plain_layout =
+2811:            inline_badge_layout_for_text(&plain, "99+", &Theme::dark(), 1.0, 200.0, 32.0, 8.0);
+2812:        let styled_layout =
+2813:            inline_badge_layout_for_text(&styled, "99+", &Theme::dark(), 1.0, 200.0, 32.0, 8.0);
+2814:
+2815:        assert!(styled_layout.preferred_width > plain_layout.preferred_width);
+2816:        assert!(
+2817:            styled_layout.visible_rect.expect("styled badge rect")[3]
+2818:                > plain_layout.visible_rect.expect("plain badge rect")[3]
+2819:        );
+2820:    }
+2821:
+2822:    #[test]
+2823:    fn parses_inline_web_color_strings() {
+2824:        let style = NodeStyle::from_json(Some(&json!({
+2825:            "background": "rgba(255, 128, 0, 0.25)",
+2826:            "border_color": "hwb(120 0% 50%)",

@@ -20,9 +20,9 @@ use crate::layout::{
 use crate::overlays::{find_node, menu_popup_rect, rich_tooltip_target, tooltip_target};
 use crate::scatter::colormap;
 use crate::style::{
-    badge_height_for_style, badge_width_for_text, base_part_style, checked_part_style_for_state,
-    code_editor_gutter_width_for_style, collapsed_part_style_for_state,
-    collapsible_header_height_for_style, expanded_part_style_for_state,
+    base_part_style, checked_part_style_for_state, code_editor_gutter_width_for_style,
+    collapsed_part_style_for_state, collapsible_header_height_for_style,
+    expanded_part_style_for_state, inline_badge_layout_for_text,
     merged_part_visual_for_state as style_merged_part_visual_for_state,
     number_stepper_width_for_style, open_part_style_for_state,
     part_style_active_for_state as style_part_style_active_for_state,
@@ -12814,14 +12814,11 @@ fn badge_rect(
         .badge
         .as_deref()
         .filter(|badge| !badge.is_empty())?;
-    let badge_w = badge_width_for_text(&node.style, badge, theme, sf);
-    let badge_h = badge_height_for_style(&node.style, theme, sf).min((rect[3] - 4.0 * sf).max(1.0));
-    let x = rect[0] + rect[2] - right_inset - badge_w;
-    let y = rect[1] + (rect[3] - badge_h) * 0.5;
-    if x <= rect[0] || badge_w <= 0.0 || badge_h <= 0.0 {
-        return None;
-    }
-    Some([x, y, badge_w, badge_h])
+    let layout =
+        inline_badge_layout_for_text(&node.style, badge, theme, sf, rect[2], rect[3], right_inset);
+    layout
+        .visible_rect
+        .map(|[x, y, w, h]| [rect[0] + x, rect[1] + y, w, h])
 }
 
 fn emit_badge_pill(
@@ -14279,6 +14276,103 @@ mod tests {
         assert_eq!(shadow.rect, [5.0, 7.0, 114.0, 44.0]);
         assert_eq!(shadow.color, [0.0, 0.0, 0.0, 0.25]);
         assert_eq!(shadow.params, [6.0, 6.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn narrow_button_badge_pill_rect_stays_inside_parent() {
+        let mut button = node("narrow", WidgetKind::Button);
+        button.props.badge = Some("owner: platform-design".to_string());
+
+        let parent = [10.0, 12.0, 42.0, 28.0];
+        let badge = badge_rect(&button, parent, &Theme::dark(), 1.0, 8.0)
+            .expect("narrow badge should still produce a clipped pill rect");
+
+        assert!(
+            badge[0] >= parent[0] && badge[0] + badge[2] <= parent[0] + parent[2],
+            "badge pill should stay inside parent: parent={parent:?} badge={badge:?}"
+        );
+        assert!(
+            badge[2] <= parent[2] - 8.0,
+            "badge pill width should be capped by available parent space: {badge:?}"
+        );
+    }
+
+    #[test]
+    fn narrow_tab_and_nav_badge_pill_rects_stay_inside_parent() {
+        let theme = Theme::dark();
+        for kind in [WidgetKind::Tab, WidgetKind::NavItem] {
+            let mut node = node("narrow", kind);
+            node.props.badge = Some("overflow-count".to_string());
+            let parent = [4.0, 6.0, 36.0, 26.0];
+            let badge = badge_rect(&node, parent, &theme, 1.0, 8.0)
+                .expect("narrow inline badge should still produce a clipped pill rect");
+
+            assert!(
+                badge[0] >= parent[0] && badge[0] + badge[2] <= parent[0] + parent[2],
+                "{kind:?} badge pill should stay inside parent: parent={parent:?} badge={badge:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn disabled_button_still_emits_inline_badge_pill_inside_parent() {
+        let mut button = node("disabled", WidgetKind::Button);
+        button.props.badge = Some("1234567890".to_string());
+        button.props.disabled = true;
+
+        let parent = Rect {
+            x: 10.0,
+            y: 12.0,
+            w: 54.0,
+            h: 30.0,
+        };
+        let mut layout = LayoutResult::default();
+        layout.rects.insert("disabled".to_string(), parent);
+        let theme = Theme::dark();
+        let mut out = Vec::new();
+
+        emit_rects(
+            &button,
+            &layout,
+            &theme,
+            1.0,
+            &WidgetState::default(),
+            &HashMap::new(),
+            &mut out,
+        );
+
+        let expected = badge_rect(
+            &button,
+            [parent.x, parent.y, parent.w, parent.h],
+            &theme,
+            1.0,
+            theme.spacing,
+        )
+        .expect("disabled badge rect");
+        assert!(
+            out.iter().any(|inst| inst.rect == expected),
+            "disabled button should emit badge pill at {expected:?}; emitted rects: {:?}",
+            out.iter().map(|inst| inst.rect).collect::<Vec<_>>()
+        );
+        let emitted_badge = out
+            .iter()
+            .find(|inst| {
+                let [x, y, w, h] = inst.rect;
+                x >= parent.x
+                    && y >= parent.y
+                    && x + w <= parent.x + parent.w
+                    && y + h <= parent.y + parent.h
+                    && w > 0.0
+                    && h > 0.0
+                    && w < parent.w
+                    && h < parent.h
+            })
+            .expect("disabled button should emit a positive, contained badge-sized rect");
+        assert!(
+            emitted_badge.rect[2] > 1.0 && emitted_badge.rect[3] > 1.0,
+            "disabled badge rect should have visible area: {:?}",
+            emitted_badge.rect
+        );
     }
 
     #[test]

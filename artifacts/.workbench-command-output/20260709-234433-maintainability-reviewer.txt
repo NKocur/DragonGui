@@ -1,0 +1,302 @@
+2197:    node: &WidgetNode,
+2198:    parent_allows_intrinsic_leaf_width: bool,
+2199:    sf: f32,
+2200:    theme: &Theme,
+2201:) {
+2202:    if !parent_allows_intrinsic_leaf_width && !is_compact_boolean_leaf(node.kind) {
+2203:        return;
+2204:    }
+2205:    if node.props.fixed_width.is_some()
+2206:        || authored_width_locks_intrinsic_leaf(node)
+2207:        || authored_zero_min_width(node)
+2208:    {
+2209:        return;
+2210:    }
+2211:
+2212:    let Some(width) = intrinsic_leaf_width(node, theme) else {
+2213:        return;
+2214:    };
+2215:    let mut width = width * sf;
+2216:    match style.max_size.width {
+2217:        Dimension::Length(max_width) => width = width.min(max_width.max(0.0)),
+2218:        Dimension::Percent(_) => return,
+2219:        Dimension::Auto => {}
+2220:    }
+2221:    style.min_size.width = min_dimension_at_least(style.min_size.width, width);
+2222:}
+2223:
+2224:fn apply_compact_boolean_leaf_alignment(style: &mut Style, node: &WidgetNode) {
+2225:    if !is_compact_boolean_leaf(node.kind)
+2226:        || style.align_self.is_some()
+2227:        || node.props.fixed_width.is_some()
+2228:        || authored_width_locks_intrinsic_leaf(node)
+2229:    {
+2230:        return;
+2231:    }
+2232:    style.align_self = Some(AlignItems::FlexStart);
+2233:}
+2234:
+2235:fn is_compact_boolean_leaf(kind: WidgetKind) -> bool {
+2236:    matches!(kind, WidgetKind::Checkbox | WidgetKind::ToggleSwitch)
+2237:}
+2238:
+2239:fn authored_width_locks_intrinsic_leaf(node: &WidgetNode) -> bool {
+2240:    node.style.layout.width.is_some()
+2241:        || matches!(
+2242:            node.style.layout.width_value,
+2243:            Some(LayoutLength::LogicalPx(_) | LayoutLength::Percent(_) | LayoutLength::Calc(_))
+2244:        )
+2245:}
+2246:
+2247:fn authored_zero_min_width(node: &WidgetNode) -> bool {
+2248:    matches!(node.style.layout.min_width, Some(value) if value <= 0.5)
+2249:        || matches!(
+2250:            node.style.layout.min_width_value,
+2251:            Some(LayoutLength::LogicalPx(value)) if value <= 0.5
+2252:        )
+2253:}
+2254:
+2255:fn min_dimension_at_least(value: Dimension, min_px: f32) -> Dimension {
+2256:    match value {
+2257:        Dimension::Length(current) => Dimension::Length(current.max(min_px)),
+2258:        Dimension::Auto => Dimension::Length(min_px),
+2259:        Dimension::Percent(_) => value,
+2260:    }
+2261:}
+2779:        OverflowStyle::Scroll | OverflowStyle::Auto => Overflow::Scroll,
+2780:    }
+2781:}
+2782:
+2783:fn layout_size_locks_flex(layout: &crate::style::LayoutStyle) -> bool {
+2784:    layout.width.is_some()
+2785:        || layout.height.is_some()
+2786:        || layout_length_locks_flex(layout.width_value)
+2787:        || layout_length_locks_flex(layout.height_value)
+2788:}
+2789:
+2790:fn layout_length_locks_flex(value: Option<LayoutLength>) -> bool {
+2791:    matches!(
+2792:        value,
+2793:        Some(LayoutLength::LogicalPx(_) | LayoutLength::Percent(_) | LayoutLength::Calc(_))
+2794:    )
+2795:}
+2796:
+2797:fn reserve_scrollbar_gutter_padding(style: &mut Style, node: &WidgetNode, sf: f32) {
+2798:    if reserves_vertical_scrollbar_gutter(node) {
+2799:        let reserve = scrollbar_gutter_reserve_px(node, sf);
+2800:        style.padding.right = max_length_padding(style.padding.right, reserve);
+2801:    }
+2802:    if explicitly_scrolls_x(node) {
+2803:        let reserve = scrollbar_gutter_reserve_px(node, sf);
+2804:        style.padding.bottom = max_length_padding(style.padding.bottom, reserve);
+2805:    }
+2806:}
+2807:
+2808:fn explicitly_scrolls_x(node: &WidgetNode) -> bool {
+2809:    matches!(
+2810:        node_overflow_x(node),
+2811:        Some(OverflowStyle::Scroll | OverflowStyle::Auto)
+2812:    )
+2813:}
+2814:
+2815:fn explicitly_scrolls_y(node: &WidgetNode) -> bool {
+2816:    matches!(
+2817:        node_overflow_y(node),
+2818:        Some(OverflowStyle::Scroll | OverflowStyle::Auto)
+2819:    )
+2820:}
+2821:
+2822:fn reserves_vertical_scrollbar_gutter(node: &WidgetNode) -> bool {
+2823:    explicitly_scrolls_y(node) || (implicit_panel_may_need_vertical_scrollbar_gutter(node))
+2824:}
+2825:
+2826:fn implicit_panel_may_need_vertical_scrollbar_gutter(node: &WidgetNode) -> bool {
+2827:    is_scroll_container_kind(&node.kind)
+2828:        && node.style.layout.display != Some(DisplayStyle::Grid)
+2829:        && node_overflow_x(node).is_none()
+2830:        && node_overflow_y(node).is_none()
+2831:        && (node.style.layout.height.is_some()
+2832:            || node.style.layout.height_value.is_some()
+2833:            || node.props.fixed_height.is_some())
+2834:}
+2835:
+2836:fn max_length_padding(value: LengthPercentage, min_px: f32) -> LengthPercentage {
+2837:    match value {
+2838:        LengthPercentage::Length(current) => LengthPercentage::Length(current.max(min_px)),
+2839:        LengthPercentage::Percent(_) => value,
+2840:    }
+2841:}
+2842:
+2843:fn scrollbar_gutter_reserve_px(node: &WidgetNode, sf: f32) -> f32 {
+2844:    let track = scrollbar_part_width_lp(node, "scrollbar-track", 4.0);
+2845:    let thumb = scrollbar_part_width_lp(node, "scrollbar-thumb", track);
+2846:    let track_padding = node
+2847:        .style
+2848:        .parts
+2849:        .parts
+2850:        .get("scrollbar-track")
+2851:        .and_then(|part| part.layout.padding)
+2852:        .unwrap_or(0.0)
+2853:        .max(0.0);
+2854:    let edge_pad = track_padding.max(8.0);
+2855:    let content_gap = 8.0;
+2856:    (track.max(thumb).max(2.0) + edge_pad + content_gap) * sf
+2857:}
+2858:
+2859:fn scrollbar_part_width_lp(node: &WidgetNode, part: &str, fallback: f32) -> f32 {
+2860:    node.style
+2861:        .parts
+2862:        .parts
+2863:        .get(part)
+2864:        .and_then(|part| part.layout.width)
+2865:        .unwrap_or(fallback)
+2866:        .max(0.0)
+2867:}
+2868:
+2869:fn grid_track_size(value: GridTrackSize, sf: f32) -> TrackSizingFunction {
+2870:    if let GridTrackSize::Repeat { kind, tracks } = value {
+2871:        let mut repeated: Vec<_> = tracks
+2872:            .into_iter()
+2873:            .filter_map(|track| grid_non_repeated_track_size(track, sf))
+2874:            .collect();
+2875:        if repeated.is_empty() {
+2876:            repeated.push(NonRepeatedTrackSizingFunction::AUTO);
+2877:        }
+2878:        return TrackSizingFunction::Repeat(grid_track_repeat_kind(kind), repeated);
+2879:    }
+2880:    TrackSizingFunction::Single(
+2881:        grid_non_repeated_track_size(value, sf).unwrap_or(NonRepeatedTrackSizingFunction::AUTO),
+2882:    )
+2883:}
+2884:
+2885:fn grid_non_repeated_track_size(
+2886:    value: GridTrackSize,
+2887:    sf: f32,
+2888:) -> Option<NonRepeatedTrackSizingFunction> {
+2889:    match value {
+2890:        GridTrackSize::LogicalPx(value) => Some(non_repeated_track_size_fixed(
+2891:            LengthPercentage::Length(value * sf),
+2892:        )),
+2893:        GridTrackSize::Percent(value) => Some(non_repeated_track_size_fixed(
+2894:            LengthPercentage::Percent(value / 100.0),
+2895:        )),
+2896:        GridTrackSize::Fraction(value) => Some(NonRepeatedTrackSizingFunction {
+2897:            min: MinTrackSizingFunction::Auto,
+2898:            max: MaxTrackSizingFunction::Fraction(value),
+2899:        }),
+2900:        GridTrackSize::Auto => Some(NonRepeatedTrackSizingFunction {
+2901:            min: MinTrackSizingFunction::Auto,
+2902:            max: MaxTrackSizingFunction::Auto,
+2903:        }),
+2904:        GridTrackSize::FitContent(value) => Some(NonRepeatedTrackSizingFunction::fit_content(
+2905:            grid_track_fit_content_size(value, sf),
+2906:        )),
+2907:        GridTrackSize::MinMax { min, max } => Some(NonRepeatedTrackSizingFunction {
+2908:            min: grid_track_min_size(min, sf),
+2909:            max: grid_track_max_size(max, sf),
+2910:        }),
+2911:        GridTrackSize::Repeat { .. } => None,
+2912:    }
+2913:}
+2914:
+2915:fn grid_track_repeat_kind(value: GridTrackRepeatKind) -> GridTrackRepetition {
+2916:    match value {
+2917:        GridTrackRepeatKind::AutoFit => GridTrackRepetition::AutoFit,
+2918:        GridTrackRepeatKind::AutoFill => GridTrackRepetition::AutoFill,
+2919:    }
+2920:}
+2921:
+2922:fn grid_auto_flow(value: GridAutoFlowStyle) -> taffy::style::GridAutoFlow {
+2923:    match value {
+2924:        GridAutoFlowStyle::Row => taffy::style::GridAutoFlow::Row,
+2925:        GridAutoFlowStyle::Column => taffy::style::GridAutoFlow::Column,
+2926:        GridAutoFlowStyle::RowDense => taffy::style::GridAutoFlow::RowDense,
+2927:        GridAutoFlowStyle::ColumnDense => taffy::style::GridAutoFlow::ColumnDense,
+2928:    }
+2929:}
+2930:
+2931:fn non_repeated_track_size_fixed(value: LengthPercentage) -> NonRepeatedTrackSizingFunction {
+2932:    NonRepeatedTrackSizingFunction {
+2933:        min: MinTrackSizingFunction::Fixed(value),
+2934:        max: MaxTrackSizingFunction::Fixed(value),
+2935:    }
+2936:}
+2937:
+2938:fn grid_track_fit_content_size(value: GridTrackFitContentSize, sf: f32) -> LengthPercentage {
+2939:    match value {
+2940:        GridTrackFitContentSize::LogicalPx(value) => LengthPercentage::Length(value * sf),
+2941:        GridTrackFitContentSize::Percent(value) => LengthPercentage::Percent(value / 100.0),
+2942:    }
+2943:}
+2944:
+2945:fn grid_track_min_size(value: GridTrackMinSize, sf: f32) -> MinTrackSizingFunction {
+2946:    match value {
+2947:        GridTrackMinSize::LogicalPx(value) => {
+2948:            MinTrackSizingFunction::Fixed(LengthPercentage::Length(value * sf))
+2949:        }
+2950:        GridTrackMinSize::Percent(value) => {
+2951:            MinTrackSizingFunction::Fixed(LengthPercentage::Percent(value / 100.0))
+2952:        }
+2953:        GridTrackMinSize::Auto => MinTrackSizingFunction::Auto,
+2954:    }
+2955:}
+2956:
+2957:fn grid_track_max_size(value: GridTrackMaxSize, sf: f32) -> MaxTrackSizingFunction {
+2958:    match value {
+2959:        GridTrackMaxSize::LogicalPx(value) => {
+2960:            MaxTrackSizingFunction::Fixed(LengthPercentage::Length(value * sf))
+2961:        }
+2962:        GridTrackMaxSize::Percent(value) => {
+2963:            MaxTrackSizingFunction::Fixed(LengthPercentage::Percent(value / 100.0))
+2964:        }
+2965:        GridTrackMaxSize::Fraction(value) => MaxTrackSizingFunction::Fraction(value),
+2966:        GridTrackMaxSize::Auto => MaxTrackSizingFunction::Auto,
+2967:    }
+2968:}
+2969:
+2970:fn grid_placement(value: GridPlacementStyle) -> taffy::geometry::Line<GridPlacement> {
+2971:    taffy::geometry::Line {
+2972:        start: grid_line(value.start),
+2973:        end: grid_line(value.end),
+2974:    }
+2975:}
+2976:
+2977:fn grid_line(value: GridLineStyle) -> GridPlacement {
+2978:    match value {
+2979:        GridLineStyle::Auto => GridPlacement::Auto,
+2980:        GridLineStyle::Line(value) => GridPlacement::from_line_index(value),
+2981:        GridLineStyle::Span(value) => GridPlacement::from_span(value),
+2982:    }
+2983:}
+2984:
+2985:fn lp_value(value: LengthPercentage) -> f32 {
+2986:    match value {
+2987:        LengthPercentage::Length(v) => v,
+2988:        LengthPercentage::Percent(_) => 0.0,
+2989:    }
+2990:}
+2991:
+2992:fn definite_content_size(style: &Style, parent_size: Option<(f32, f32)>) -> Option<(f32, f32)> {
+2993:    let width =
+2994:        definite_dimension_for_content(style.size.width, style, parent_size.map(|size| size.0))?;
+2995:    let height =
+2996:        definite_dimension_for_content(style.size.height, style, parent_size.map(|size| size.1))?;
+2997:    let padding_x = lp_value(style.padding.left) + lp_value(style.padding.right);
+2998:    let padding_y = lp_value(style.padding.top) + lp_value(style.padding.bottom);
+2999:    Some(((width - padding_x).max(0.0), (height - padding_y).max(0.0)))
+3000:}
+3001:
+3002:fn definite_dimension_for_content(
+3003:    value: Dimension,
+3004:    style: &Style,
+3005:    parent_axis_size: Option<f32>,
+3006:) -> Option<f32> {
+3007:    match value {
+3008:        Dimension::Length(value) if value <= 0.5 && flex_basis_is_zero(style) => parent_axis_size,
+3009:        other => definite_dimension(other).or(parent_axis_size),
+3010:    }
+3011:}
+3012:
+3013:fn flex_basis_is_zero(style: &Style) -> bool {
+3014:    style.flex_grow > 0.0 && matches!(style.flex_basis, Dimension::Length(value) if value <= 0.5)
+3015:}

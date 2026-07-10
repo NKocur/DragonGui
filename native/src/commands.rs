@@ -509,6 +509,9 @@ pub enum Command {
         id: String,
         request_id: u64,
     },
+    WindowScreenshot {
+        request_id: u64,
+    },
     DebugSnapshot {
         request_id: u64,
     },
@@ -745,9 +748,9 @@ pub struct CommandBridge {
     queue: Arc<CommandQueue>,
     proxy: Mutex<Option<EventLoopProxy<RuntimeEvent>>>,
     wake_pending: AtomicBool,
-    snapshot_seq: AtomicU64,
-    snapshots: Mutex<HashMap<u64, Option<String>>>,
-    snapshot_cv: Condvar,
+    response_seq: AtomicU64,
+    pending_responses: Mutex<HashMap<u64, Option<String>>>,
+    response_cv: Condvar,
 }
 
 impl CommandBridge {
@@ -787,7 +790,7 @@ impl CommandBridge {
             .lock()
             .expect("command bridge proxy mutex poisoned")
             .take();
-        self.snapshot_cv.notify_all();
+        self.response_cv.notify_all();
     }
 
     pub fn is_closed(&self) -> bool {
@@ -830,75 +833,88 @@ impl CommandBridge {
     }
 
     pub fn request_debug_snapshot(&self, timeout: Duration) -> Result<String, SnapshotError> {
+        self.request_response(
+            timeout,
+            |request_id| Command::DebugSnapshot { request_id },
+            "debug snapshot response disappeared",
+        )
+    }
+
+    fn request_response(
+        &self,
+        timeout: Duration,
+        make_command: impl FnOnce(u64) -> Command,
+        disappeared_message: &'static str,
+    ) -> Result<String, SnapshotError> {
         if self.is_closed() {
             return Err(SnapshotError::Closed);
         }
 
-        let request_id = self.snapshot_seq.fetch_add(1, Ordering::Relaxed);
+        let request_id = self.response_seq.fetch_add(1, Ordering::Relaxed);
         {
-            let mut snapshots = self
-                .snapshots
+            let mut responses = self
+                .pending_responses
                 .lock()
-                .expect("command bridge snapshot mutex poisoned");
-            snapshots.insert(request_id, None);
+                .expect("command bridge response mutex poisoned");
+            responses.insert(request_id, None);
         }
 
-        if self.push(Command::DebugSnapshot { request_id }).is_err() {
-            self.snapshots
+        if self.push(make_command(request_id)).is_err() {
+            self.pending_responses
                 .lock()
-                .expect("command bridge snapshot mutex poisoned")
+                .expect("command bridge response mutex poisoned")
                 .remove(&request_id);
             return Err(SnapshotError::Closed);
         }
 
         let deadline = Instant::now() + timeout;
-        let mut snapshots = self
-            .snapshots
+        let mut responses = self
+            .pending_responses
             .lock()
-            .expect("command bridge snapshot mutex poisoned");
+            .expect("command bridge response mutex poisoned");
         loop {
-            if snapshots
+            if responses
                 .get(&request_id)
                 .and_then(|slot| slot.as_ref())
                 .is_some()
             {
-                let snapshot = snapshots
+                let response = responses
                     .remove(&request_id)
                     .and_then(|slot| slot)
-                    .expect("snapshot response disappeared");
-                return Ok(snapshot);
+                    .expect(disappeared_message);
+                return Ok(response);
             }
             if self.is_closed() {
-                snapshots.remove(&request_id);
+                responses.remove(&request_id);
                 return Err(SnapshotError::Closed);
             }
 
             let now = Instant::now();
             if now >= deadline {
-                snapshots.remove(&request_id);
+                responses.remove(&request_id);
                 return Err(SnapshotError::Timeout);
             }
             let wait = deadline.saturating_duration_since(now);
             let (next, timeout_result) = self
-                .snapshot_cv
-                .wait_timeout(snapshots, wait)
-                .expect("command bridge snapshot condvar poisoned");
-            snapshots = next;
+                .response_cv
+                .wait_timeout(responses, wait)
+                .expect("command bridge response condvar poisoned");
+            responses = next;
             if timeout_result.timed_out() {
-                snapshots.remove(&request_id);
+                responses.remove(&request_id);
                 return Err(SnapshotError::Timeout);
             }
         }
     }
 
-    pub fn complete_debug_snapshot(&self, request_id: u64, snapshot_json: String) {
-        let mut snapshots = self
-            .snapshots
+    pub fn complete_response(&self, request_id: u64, response_json: String) {
+        let mut responses = self
+            .pending_responses
             .lock()
-            .expect("command bridge snapshot mutex poisoned");
-        if let Some(slot) = snapshots.get_mut(&request_id) {
-            *slot = Some(snapshot_json);
-            self.snapshot_cv.notify_all();
+            .expect("command bridge response mutex poisoned");
+        if let Some(slot) = responses.get_mut(&request_id) {
+            *slot = Some(response_json);
+            self.response_cv.notify_all();
         }
     }
 
@@ -907,63 +923,19 @@ impl CommandBridge {
         id: String,
         timeout: Duration,
     ) -> Result<String, SnapshotError> {
-        if self.is_closed() {
-            return Err(SnapshotError::Closed);
-        }
-        let request_id = self.snapshot_seq.fetch_add(1, Ordering::Relaxed);
-        {
-            let mut snapshots = self
-                .snapshots
-                .lock()
-                .expect("command bridge snapshot mutex poisoned");
-            snapshots.insert(request_id, None);
-        }
-        if self
-            .push(Command::ScatterScreenshot { id, request_id })
-            .is_err()
-        {
-            self.snapshots
-                .lock()
-                .expect("command bridge snapshot mutex poisoned")
-                .remove(&request_id);
-            return Err(SnapshotError::Closed);
-        }
-        let deadline = Instant::now() + timeout;
-        let mut snapshots = self
-            .snapshots
-            .lock()
-            .expect("command bridge snapshot mutex poisoned");
-        loop {
-            if snapshots
-                .get(&request_id)
-                .and_then(|slot| slot.as_ref())
-                .is_some()
-            {
-                return Ok(snapshots
-                    .remove(&request_id)
-                    .and_then(|slot| slot)
-                    .expect("screenshot response disappeared"));
-            }
-            if self.is_closed() {
-                snapshots.remove(&request_id);
-                return Err(SnapshotError::Closed);
-            }
-            let now = Instant::now();
-            if now >= deadline {
-                snapshots.remove(&request_id);
-                return Err(SnapshotError::Timeout);
-            }
-            let wait = deadline.saturating_duration_since(now);
-            let (next, timeout_result) = self
-                .snapshot_cv
-                .wait_timeout(snapshots, wait)
-                .expect("command bridge screenshot condvar poisoned");
-            snapshots = next;
-            if timeout_result.timed_out() {
-                snapshots.remove(&request_id);
-                return Err(SnapshotError::Timeout);
-            }
-        }
+        self.request_response(
+            timeout,
+            |request_id| Command::ScatterScreenshot { id, request_id },
+            "scatter screenshot response disappeared",
+        )
+    }
+
+    pub fn request_window_screenshot(&self, timeout: Duration) -> Result<String, SnapshotError> {
+        self.request_response(
+            timeout,
+            |request_id| Command::WindowScreenshot { request_id },
+            "window screenshot response disappeared",
+        )
     }
 }
 
@@ -1997,6 +1969,28 @@ impl NativeCommandSender {
         Ok(Some((w, h, bytes)))
     }
 
+    #[pyo3(signature = (timeout_ms=10000))]
+    fn window_screenshot(
+        &self,
+        py: Python<'_>,
+        timeout_ms: u64,
+    ) -> PyResult<Option<(u32, u32, Vec<u8>)>> {
+        use base64::{engine::general_purpose::STANDARD, Engine};
+        let timeout = Duration::from_millis(timeout_ms);
+        let json_str = py
+            .allow_threads(|| self.bridge.request_window_screenshot(timeout))
+            .map_err(|e| PyRuntimeError::new_err(format!("window screenshot failed: {e:?}")))?;
+        let v: serde_json::Value = serde_json::from_str(&json_str)
+            .map_err(|e| PyRuntimeError::new_err(format!("window screenshot JSON invalid: {e}")))?;
+        let w = v["w"].as_u64().unwrap_or(0) as u32;
+        let h = v["h"].as_u64().unwrap_or(0) as u32;
+        let b64 = v["rgba_b64"].as_str().unwrap_or("");
+        let bytes = STANDARD.decode(b64).map_err(|e| {
+            PyRuntimeError::new_err(format!("window screenshot base64 decode: {e}"))
+        })?;
+        Ok(Some((w, h, bytes)))
+    }
+
     fn enqueue_set_table_data(&self, id: String, table_json: String) -> PyResult<()> {
         let parsed: serde_json::Value = serde_json::from_str(&table_json)
             .map_err(|e| PyValueError::new_err(format!("invalid table JSON: {e}")))?;
@@ -2792,7 +2786,7 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(5));
             };
             assert_eq!(commands, vec![Command::DebugSnapshot { request_id: 0 }]);
-            worker.complete_debug_snapshot(0, r#"{"status":"ok"}"#.to_string());
+            worker.complete_response(0, r#"{"status":"ok"}"#.to_string());
         });
 
         let snapshot = bridge

@@ -1,0 +1,260 @@
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+if __name__ == "__main__" and __package__ is None:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "python"))
+
+import dragongui as dg
+
+
+def log(message: str) -> None:
+    print(message, flush=True)
+
+
+app = dg.App(theme=dg.Theme.dark(accent="#5aa9ff", radius=8, focus="#ffd36a"))
+app.stylesheet(
+    """
+    Window {
+        background: #0c111d;
+        color: rgba(246, 249, 255, 0.94);
+        padding: 0;
+        gap: 0;
+        font-size: 14px;
+    }
+
+    MenuBar {
+        background: rgba(7, 12, 22, 0.96);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+        color: rgba(246, 249, 255, 0.86);
+        padding-left: 8px;
+    }
+
+    Menu {
+        background: transparent;
+        border: 0;
+        border-radius: 6px;
+        color: rgba(246, 249, 255, 0.82);
+        padding: 6px 10px;
+    }
+
+    Menu:hover {
+        background: rgba(255, 255, 255, 0.08);
+        color: white;
+    }
+
+    Menu:open {
+        background: rgba(90, 169, 255, 0.16);
+        color: white;
+    }
+
+    HLayout.shell {
+        width: 100%;
+        height: calc(100% - 34px);
+        gap: 0;
+    }
+
+    Sidebar.nav {
+        background:
+            radial-gradient(circle at 12% 6%, rgba(90, 169, 255, 0.18), transparent 45%),
+            rgba(12, 18, 30, 0.98);
+        border-right: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 0;
+        padding: 14px;
+        gap: 8px;
+        overflow-y: auto;
+    }
+
+    Sidebar.nav::scrollbar-track {
+        width: 8px;
+        padding: 1px;
+        background: rgba(255, 255, 255, 0.08);
+        border-radius: 999px;
+    }
+
+    Sidebar.nav::scrollbar-thumb {
+        width: 6px;
+        background: rgba(90, 169, 255, 0.68);
+        border-radius: 999px;
+    }
+
+    VLayout.content {
+        width: calc(100% - 238px);
+        height: 100%;
+        padding: 16px;
+        gap: 12px;
+        overflow-y: auto;
+        padding-right: 24px;
+        padding-bottom: 64px;
+    }
+
+    VLayout.content::scrollbar-track {
+        width: 8px;
+        padding: 1px;
+        background: rgba(255, 255, 255, 0.08);
+        border-radius: 999px;
+    }
+
+    VLayout.content::scrollbar-thumb {
+        width: 6px;
+        background: rgba(90, 169, 255, 0.72);
+        border-radius: 999px;
+    }
+
+    Label.title {
+        color: white;
+        font-size: 20px;
+        font-weight: 850;
+    }
+
+    Label.caption {
+        color: rgba(246, 249, 255, 0.72);
+        line-height: 1.12;
+    }
+
+    Label.nav-title {
+        color: white;
+        font-size: 16px;
+        font-weight: 850;
+    }
+
+    NavItem {
+        color: rgba(246, 249, 255, 0.78);
+    }
+
+    NavItem::item {
+        background: transparent;
+        border-radius: 10px;
+        padding: 9px 10px;
+    }
+
+    NavItem:hover::item {
+        background: rgba(255, 255, 255, 0.07);
+    }
+
+    NavItem:selected::item {
+        background: rgba(90, 169, 255, 0.18);
+        border: 1px solid rgba(90, 169, 255, 0.36);
+    }
+
+    NavItem::accent {
+        background: #5aa9ff;
+        border-radius: 999px;
+        width: 4px;
+    }
+
+    NavItem:disabled {
+        color: rgba(246, 249, 255, 0.34);
+    }
+
+    Badge,
+    Tag {
+        font-weight: 850;
+    }
+
+    HLayout.badges {
+        height: 28px;
+        gap: 6px;
+        align-items: center;
+    }
+
+    Panel.case {
+        background:
+            radial-gradient(circle at 14% 12%, rgba(90, 169, 255, 0.13), transparent 50%),
+            rgba(18, 25, 40, 0.96);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 14px;
+        padding: 14px;
+        gap: 10px;
+        box-shadow: none;
+    }
+
+    VLayout.panel-stack {
+        width: 100%;
+        height: auto;
+        gap: 14px;
+    }
+
+    Panel.half {
+        width: 100%;
+        height: 260px;
+    }
+
+    Pages {
+        width: 100%;
+        height: 1160px;
+    }
+
+    Tabs {
+        background: rgba(255, 255, 255, 0.045);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 12px;
+    }
+
+    Tabs::header {
+        background: rgba(255, 255, 255, 0.055);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+    }
+
+    Tab::tab {
+        background: transparent;
+        border-radius: 9px 9px 0 0;
+        padding: 8px 12px;
+    }
+
+    Tab:selected::tab {
+        background: rgba(90, 169, 255, 0.18);
+        color: white;
+    }
+
+    Tab::accent {
+        background: #74ddb0;
+        height: 3px;
+        border-radius: 999px 999px 0 0;
+    }
+
+    Page {
+        padding: 12px;
+        gap: 10px;
+    }
+
+    Button.context-target {
+        background: rgba(90, 169, 255, 0.16);
+        border: 1px solid rgba(90, 169, 255, 0.34);
+        border-radius: 10px;
+        color: white;
+        font-weight: 800;
+        width: 180px;
+    }
+
+    Label.pass {
+        background: rgba(116, 221, 176, 0.12);
+        border: 1px solid rgba(116, 221, 176, 0.34);
+        border-radius: 10px;
+        color: rgba(229, 255, 244, 0.96);
+        font-weight: 800;
+        padding: 8px 10px;
+        width: 100%;
+    }
+    """
+)
+
+
+win = dg.Window("CSS Navigation Widgets Probe", width=980, height=700)
+
+with dg.MenuBar(height=34):
+    with dg.Menu("File"):
+        dg.MenuItem("New workspace", on_click=lambda: log("menu:new"))
+        dg.MenuItem("Open recent", on_click=lambda: log("menu:recent"))
+        dg.MenuItem("Disabled export", disabled=True)
+    with dg.Menu("View"):
+        dg.MenuItem("Refresh", on_click=lambda: log("menu:refresh"))
+        dg.MenuItem("Toggle inspector", on_click=lambda: log("menu:inspector"))
+    with dg.Menu("Help", disabled=True):
+        dg.MenuItem("Disabled help")
+
+with dg.HLayout(class_="shell"):
+    with dg.Sidebar(title="Navigator", width=238, class_="nav"):
+        dg.Label("Navigation", class_="nav-title")
+        with dg.HLayout(class_="badges"):

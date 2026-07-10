@@ -1,0 +1,91 @@
+ .test-cache/dragongui-wheel.zip                    |   Bin 7506323 -> 7484853 bytes
+ .test-cache/v/cache/nodeids                        |    13 +-
+ .../dragongui-0.1.0.dist-info/METADATA             |   146 +-
+ .../wheel_extract/dragongui-0.1.0.dist-info/RECORD |    49 +-
+ .../wheel_extract/dragongui-0.1.0.dist-info/WHEEL  |     2 +-
+ .../dragongui-0.1.0.dist-info/licenses/LICENSE     |   360 +-
+ .../sboms/dragongui-native.cyclonedx.json          | 16748 -------------------
+ .test-cache/wheel_extract/dragongui/__init__.py    |     4 +
+ .test-cache/wheel_extract/dragongui/app.py         |     6 +
+ .test-cache/wheel_extract/dragongui/manual.py      |    14 +
+ .test-cache/wheel_extract/dragongui/node_graph.py  |   513 +-
+ .test-cache/wheel_extract/dragongui/runtime.py     |     9 +
+ .test-cache/wheel_extract/dragongui/terminal.py    |    46 +
+ .test-cache/wheel_extract/dragongui/widgets.py     |   286 +-
+ artifacts/IMPLEMENTATION_NOTES.md                  |   128 +-
+ artifacts/TEST_RESULTS.md                          |   249 +-
+ examples/css_feature_probes/form_controls_probe.py |    40 +-
+ examples/css_feature_probes/grid_tracks_probe.py   |    34 +-
+ .../css_feature_probes/layout_flex_stress_probe.py |    35 +-
+ .../css_feature_probes/responsive_layout_probe.py  |    38 +
+ native/src/commands.rs                             |   176 +-
+ native/src/layout.rs                               |   313 +-
+ native/src/primitives/mod.rs                       |   116 +-
+ native/src/runtime.rs                              |   199 +-
+ native/src/style.rs                                |   135 +-
+ native/src/text/mod.rs                             |   255 +-
+ python/dragongui/app.py                            |     6 +
+ python/dragongui/runtime.py                        |     9 +
+ python/dragongui/widgets.py                        |     6 +-
+ tests/test_python_api.py                           |    42 +
+ 30 files changed, 2699 insertions(+), 17278 deletions(-)
+warning: LF will be replaced by CRLF in .test-cache/wheel_extract/THIRD_PARTY_NOTICES.md.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in .test-cache/wheel_extract/dragongui-0.1.0.dist-info/METADATA.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in .test-cache/wheel_extract/dragongui-0.1.0.dist-info/RECORD.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in .test-cache/wheel_extract/dragongui-0.1.0.dist-info/WHEEL.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in .test-cache/wheel_extract/dragongui/agent_messages.py.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in .test-cache/wheel_extract/dragongui/agent_session.py.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in .test-cache/wheel_extract/dragongui/app.py.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in .test-cache/wheel_extract/dragongui/colormap.py.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in .test-cache/wheel_extract/dragongui/components.py.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in .test-cache/wheel_extract/dragongui/diagnostics.py.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in .test-cache/wheel_extract/dragongui/notifications.py.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in .test-cache/wheel_extract/dragongui/py.typed.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in .test-cache/wheel_extract/dragongui/runtime.py.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in .test-cache/wheel_extract/dragongui/theme.py.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in artifacts/IMPLEMENTATION_NOTES.md.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in artifacts/TEST_RESULTS.md.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in examples/css_feature_probes/form_controls_probe.py.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in examples/css_feature_probes/grid_tracks_probe.py.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in examples/css_feature_probes/layout_flex_stress_probe.py.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in examples/css_feature_probes/responsive_layout_probe.py.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in native/src/commands.rs.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in native/src/layout.rs.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in native/src/primitives/mod.rs.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in native/src/runtime.rs.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in native/src/style.rs.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in native/src/text/mod.rs.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in python/dragongui/app.py.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in python/dragongui/runtime.py.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in python/dragongui/widgets.py.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in tests/test_python_api.py.
+The file will have its original line endings in your working directory

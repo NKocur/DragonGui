@@ -1,0 +1,59 @@
+# Maintainability Review
+
+## Findings
+
+### 1. Inline badge rectangle logic is duplicated across text and primitive rendering
+
+- Pattern: Duplication instead of reuse
+- Location: `native/src/text/mod.rs:3664`, `native/src/primitives/mod.rs:12805`
+- Severity: major
+- Description: The badge containment fix was applied twice: once for the text clip/placement path and once for the pill primitive path. The two private `badge_rect()` functions now contain the same policy for empty badges, preferred width, height clamping, available width, left-edge allowance, and invalid rect handling, but use different rect types. This is the core badge rule the pass was meant to harden, so future tweaks to right inset, minimum width, clipping, or `::badge` sizing can easily update one renderer and not the other. The tests also mirror the duplication by asserting similar behavior separately in each module, which proves current parity but does not prevent semantic drift.
+- Recommended fix: Extract the shared geometry policy into a small reusable helper in a shared module, for example a `badge_inline_rect_metrics(width, height, right_inset, preferred_w, preferred_h, sf)` helper returning `{ x, y, w, h }` relative to the parent. Keep conversion to `Rect` or `[f32; 4]` at the call site. Add one test for the shared helper plus a thin integration assertion that text and primitives consume it.
+
+### 2. Badge text reservation and badge drawing use different width policies
+
+- Pattern: Code in the wrong layer / duplication instead of reuse
+- Location: `native/src/text/mod.rs:1838`, `native/src/text/mod.rs:1998`, `native/src/text/mod.rs:2022`, `native/src/text/mod.rs:3693`, `native/src/text/mod.rs:3676`
+- Severity: major
+- Description: The label clip reserves `badge_width_for_text(...) + BADGE_GAP_LP`, while the actual inline badge is capped to the parent's available right-side space in `badge_rect()`. That split means the text layout path reasons about a preferred full-width badge, while the visual path reasons about a clipped badge. The current behavior is probably acceptable for the narrow repro because the label collapses before the badge disappears, but the rule is encoded in two places and is not documented as a deliberate priority policy. A future developer could "fix" the label clipping to match visible badge width or alter `BADGE_GAP_LP` without realizing this affects overlap behavior.
+- Recommended fix: Introduce a named helper for inline badge layout, such as `inline_badge_reservation(...)`, that returns both the visible rect width and the label-reserved width, with a short comment explaining that labels yield to preferred badge width while visible pills are clipped to the parent. Use that helper for Button, SmallButton, Tab, and NavItem.
+
+### 3. Badge pass includes unrelated layout policy changes
+
+- Pattern: God files / multi-responsibility functions; code in the wrong layer
+- Location: `native/src/layout.rs:2205`, `native/src/layout.rs:2247`, `native/src/layout.rs:2790`, `native/src/layout.rs:2992`
+- Severity: major
+- Description: The implementation notes describe a badge layout pass, but the diff also changes intrinsic leaf width locking, flex size locking, and definite content sizing for zero flex-basis scroll bodies. These changes may be needed for visual audit probes, but they are not badge-specific and alter general layout semantics. In particular, `authored_min_width_locks_intrinsic_leaf()` was replaced by `authored_zero_min_width()`, so non-zero authored min widths no longer prevent intrinsic leaf width from raising the Taffy min size. That is a broad policy change hidden inside a badge-focused workflow.
+- Recommended fix: Split the app-shell/flex-basis layout fixes into a separate change and artifact section with their own spec, tests, and review. For the badge fix, keep only badge geometry and badge probe coverage. If the layout changes stay, document the intended CSS compatibility rule and add regression tests for non-zero `min-width`, percent `min-width`, and `calc()` min-width so authored constraints do not become accidental.
+
+### 4. New probe is useful but manual expected-result text is not machine-verifiable
+
+- Pattern: Weak tests
+- Location: `examples/css_feature_probes/badge_layout_probe.py:267`, `examples/css_feature_probes/badge_layout_probe.py:308`, `examples/css_feature_probes/badge_layout_probe.py:327`
+- Severity: minor
+- Description: The badge visual probe covers the right scenarios, but the embedded `PASS:` labels are only human-readable assertions. The native tests cover rect containment for narrow buttons/tabs/nav items, but they do not cover styled `::badge` padding/borders, standalone constrained Badge/Tag text clipping, disabled-state badge rendering, or the summary first-viewport cases that motivated the visual audit. The visual audit can pass as long as a screenshot is captured; it does not assert that the PASS statements are actually true.
+- Recommended fix: Keep the probe, but add focused native tests for styled `::badge` padding/border width, standalone constrained Badge/Tag text clipping, and disabled inline badges. If possible, add snapshot metadata checks that compare badge primitive bounds against parent bounds for the probe instead of relying only on screenshots.
+
+### 5. Large renderer modules continue to absorb feature-specific policy
+
+- Pattern: God files / multi-responsibility functions
+- Location: `native/src/text/mod.rs:1837`, `native/src/text/mod.rs:3568`, `native/src/primitives/mod.rs:10139`, `native/src/primitives/mod.rs:12805`
+- Severity: minor
+- Description: The change adds more widget-specific badge policy directly into already-large text and primitive modules. The local edits are small, but the pattern is cumulative: Button, SmallButton, Tab, and NavItem each have bespoke label clipping and badge emission branches in renderer-wide functions. This makes badge behavior hard to reason about because intrinsic sizing lives in `layout.rs`, label reservation in `text/mod.rs`, and pill drawing in `primitives/mod.rs`.
+- Recommended fix: Move inline badge policy into a small shared badge layout helper owned near the style/layout helpers, then have text and primitive rendering consume those metrics. This is not a request for a broad renderer rewrite; just give badge geometry one owner.
+
+## Reuse Audit Answers
+
+- Did it reuse the existing domain model? Mostly yes. The implementation uses existing `WidgetNode.props.badge`, existing widget kinds, existing `::badge` part styling, and existing visual-audit manifest/probe conventions.
+- Did it duplicate validation/formatting/parsing/API access? It duplicated badge geometry rather than validation/parsing/API access. The duplicated `badge_rect()` logic in text and primitives is the main reuse problem.
+- Is the code in the right layer? Partly. Native badge geometry belongs in the renderer/layout layer, but the pass mixes badge rendering fixes with general flex/intrinsic layout policy changes in `layout.rs`. The probe code is correctly isolated under `examples/css_feature_probes`.
+- Does each new abstraction earn its existence? No new suspicious abstraction was added for the badge fix. The issue is the opposite: the shared badge geometry abstraction is missing, so policy remains spread across renderer modules.
+- Was dependency direction preserved? Yes. There is no backward import or new dependency inversion in the badge-specific code.
+- Did it delete obsolete code, or only add more? It mostly added more. The old badge geometry was modified in place, but no obsolete duplicated badge policy was consolidated or removed.
+- Could a future developer understand why this change exists without asking the AI? Mostly yes from `artifacts/IMPLEMENTATION_NOTES.md` and the probe name, but the code itself does not explain the key rule: labels reserve preferred badge width while visible badges are clipped to available parent space.
+
+## Overall Verdict
+
+Needs follow-up refactor.
+
+The badge behavior fix is small and directionally sound, and it reuses the existing widget/domain model. The maintainability risk is that the core badge geometry rule now exists independently in text and primitive renderers, while related label-reservation behavior is separate again. I would not block using the fix, but I would consolidate inline badge metrics before adding more badge cases or relying on the visual audit as regression coverage. The unrelated layout policy changes should also be split or documented with their own tests.

@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Failure detail</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Segoe UI, Arial, sans-serif;
+      background: #101827;
+      color: #edf3ff;
+    }
+    main { padding: 22px; }
+    h1 { margin: 0 0 6px; font-size: 23px; }
+    p { margin: 0 0 18px; color: rgba(237, 243, 255, 0.72); }
+    .plotly-graph-div {
+      min-height: 342px;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 8px;
+      background: #0d1424;
+      position: relative;
+      overflow: hidden;
+      user-select: none;
+    }
+    .modebar {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      display: flex;
+      gap: 6px;
+      z-index: 2;
+    }
+    .modebar-btn {
+      min-width: 34px;
+      height: 30px;
+      border-radius: 5px;
+      border: 1px solid rgba(255, 255, 255, 0.20);
+      background: rgba(24, 34, 53, 0.92);
+      color: #edf3ff;
+      cursor: pointer;
+    }
+    .modebar-btn.active { border-color: #f36b7f; color: white; }
+    svg { width: 100%; height: 342px; display: block; }
+    .hoverlabel {
+      position: absolute;
+      left: 18px;
+      bottom: 14px;
+      padding: 6px 8px;
+      border-radius: 5px;
+      background: rgba(3, 7, 18, 0.86);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      color: rgba(237, 243, 255, 0.82);
+      font-size: 12px;
+    }
+    .selection {
+      display: none;
+      position: absolute;
+      border: 1px solid #f36b7f;
+      background: rgba(90, 169, 255, 0.12);
+      pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Failure detail</h1>
+    <p>Self-contained Plotly-style report fixture with modebar controls, hover readout, wheel zoom, and drag selection.</p>
+    <div id="graph" class="plotly-graph-div">
+      <div class="modebar" role="toolbar" aria-label="plot tools">
+        <button class="modebar-btn active" data-mode="pan" title="Pan">Pan</button>
+        <button class="modebar-btn" data-mode="zoom" title="Zoom">Zoom</button>
+        <button class="modebar-btn" data-mode="select" title="Box select">Box</button>
+        <button class="modebar-btn" data-mode="reset" title="Reset axes">Fit</button>
+      </div>
+      <svg id="plot" viewBox="0 0 760 342" aria-label="demo chart">
+        <g stroke="rgba(255,255,255,0.14)" stroke-width="1">
+          <path d="M58 42V282M186 42V282M314 42V282M442 42V282M570 42V282M698 42V282"/>
+          <path d="M58 282H712M58 222H712M58 162H712M58 102H712M58 42H712"/>
+        </g>
+        <path id="trace" fill="none" stroke="#f36b7f" stroke-width="4" stroke-linecap="round"/>
+        <g id="markers"></g>
+        <g fill="rgba(237,243,255,0.74)" font-size="14">
+          <text x="58" y="312">0</text>
+          <text x="342" y="312">detail</text>
+          <text x="668" y="312">72s</text>
+          <text x="16" y="48">high</text>
+          <text x="20" y="286">low</text>
+        </g>
+      </svg>
+      <div id="hover" class="hoverlabel">mode: pan, point: --</div>
+      <div id="selection" class="selection"></div>
+    </div>
+  </main>
+  <script>
+    const data = [[0,57.89997772542962],[1,56.99718748404046],[2,54.95164030991608],[3,52.05220834723236],[4,48.70977373111108],[5,45.37516415476336],[6,42.45023926824129],[7,40.21112390680106],[8,38.75990058785419],[9,38.01486342487375],[10,37.741046613872996],[11,37.61399307295414],[12,37.302520123032366],[13,36.552132593731415],[14,35.25061954472021],[15,33.46127282697299],[16,31.41623652412663],[17,29.47120092094091],[18,28.031103444232564],[19,27.462857648745384],[20,28.01401852517236],[21,29.75507966771243],[22,32.55804574150344],[23,36.11612549908375],[24,40.00053523566966],[25,43.74240843972426],[26,46.922406385917846],[27,49.24898640449448],[28,50.608763734107995],[29,51.078460954326076],[30,50.89626202067382],[31,50.399171162610116],[32,49.94031625004568],[33,49.80444111630294],[34,50.14016960888825],[35,50.92392422271199],[36,51.96344845743339],[37,52.94022042946186],[38,53.48153650566872],[39,53.246535462506216],[40,52.00733970384348],[41,49.70748364952141],[42,46.48466717523709],[43,42.652560170027684],[44,38.645227158190835],[45,34.935822020195296],[46,31.94677046564908],[47,29.970505043909384],[48,29.117543512209497],[49,29.30279898890068],[50,30.272758628780064],[51,31.667354785740162],[52,33.10288832360638],[53,34.25786471984049],[54,34.94304340447773],[55,35.14049856604821],[56,35.00328449656849],[57,34.81591447737745],[58,34.92442840411399],[59,35.651480917725344],[60,37.21518319626768],[61,39.669660110336274],[62,42.88060607707934],[63,46.541551232318135],[64,50.22772591664025],[65,53.47624930057078],[66,55.875637606091885],[67,57.14557222282278],[68,57.18993485708885],[69,56.11185893696924],[70,54.187720365503],[71,51.805825803442815]];
+    const graph = document.getElementById("graph");
+    const plot = document.getElementById("plot");
+    const trace = document.getElementById("trace");
+    const markers = document.getElementById("markers");
+    const hover = document.getElementById("hover");
+    const selection = document.getElementById("selection");
+    let mode = "pan";
+    let scale = 1.0;
+    let dragStart = null;
+
+    function sx(x) { return 58 + x * (654 / 71); }
+    function sy(y) { return 282 - (y - 20) * (240 / 44) * scale; }
+    function draw() {
+      const path = data.map((p, i) => (i === 0 ? "M" : "L") + sx(p[0]).toFixed(1) + " " + sy(p[1]).toFixed(1)).join(" ");
+      trace.setAttribute("d", path);
+      markers.innerHTML = data.filter((_, i) => i % 6 === 0).map(p =>
+        '<circle cx="' + sx(p[0]).toFixed(1) + '" cy="' + sy(p[1]).toFixed(1) + '" r="3.5" fill="#f36b7f"/>'
+      ).join("");
+    }
+    draw();
+
+    document.querySelectorAll(".modebar-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".modebar-btn").forEach(item => item.classList.remove("active"));
+        btn.classList.add("active");
+        if (btn.dataset.mode === "reset") {
+          scale = 1.0;
+          mode = "pan";
+          draw();
+        } else {
+          mode = btn.dataset.mode;
+        }
+        hover.textContent = "mode: " + mode + ", point: --";
+      });
+    });
+
+    plot.addEventListener("wheel", event => {
+      event.preventDefault();
+      scale = Math.max(0.72, Math.min(1.55, scale + (event.deltaY < 0 ? 0.08 : -0.08)));
+      draw();
+      hover.textContent = "mode: wheel zoom, scale: " + scale.toFixed(2);
+    }, { passive: false });
+
+    plot.addEventListener("pointermove", event => {
+      const rect = plot.getBoundingClientRect();
+      const x = Math.max(0, Math.min(71, Math.round((event.clientX - rect.left) / rect.width * 71)));
+      const point = data[x];
+      if (point) hover.textContent = "mode: " + mode + ", point: " + point[0] + ", " + point[1].toFixed(2);
+      if (dragStart && mode === "select") {
+        const left = Math.min(dragStart.x, event.clientX - rect.left);
+        const top = Math.min(dragStart.y, event.clientY - rect.top);
+        const width = Math.abs(event.clientX - rect.left - dragStart.x);
+        const height = Math.abs(event.clientY - rect.top - dragStart.y);
+        selection.style.display = "block";
+        selection.style.left = left + "px";
+        selection.style.top = top + "px";
+        selection.style.width = width + "px";
+        selection.style.height = height + "px";
+      }
+    });
+    plot.addEventListener("pointerdown", event => {
+      const rect = plot.getBoundingClientRect();
+      dragStart = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+      plot.setPointerCapture(event.pointerId);
+    });
+    plot.addEventListener("pointerup", event => {
+      dragStart = null;
+      plot.releasePointerCapture(event.pointerId);
+      if (mode !== "select") selection.style.display = "none";
+    });
+    </script>
+</body>
+</html>

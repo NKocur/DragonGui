@@ -42,6 +42,9 @@
   "tests/test_python_api.py::test_app_handle_reports_sender_closed_after_lock_release_race",
   "tests/test_python_api.py::test_app_handle_request_redraw_and_exit_enqueue_native_commands",
   "tests/test_python_api.py::test_app_handle_runtime_change_callbacks_update_widget_state",
+  "tests/test_python_api.py::test_app_handle_window_screenshot_returns_none_for_older_native_sender",
+  "tests/test_python_api.py::test_app_handle_window_screenshot_returns_none_without_native_sender",
+  "tests/test_python_api.py::test_app_handle_window_screenshot_uses_native_sender",
   "tests/test_python_api.py::test_app_load_stylesheet_and_live_stylesheet_updates",
   "tests/test_python_api.py::test_app_loading_screen_serializes_defaults_and_custom_values",
   "tests/test_python_api.py::test_app_run_binds_live_handles_only_for_native_event_loop",
@@ -51,6 +54,7 @@
   "tests/test_python_api.py::test_app_stylesheet_serializes_startup_stylesheets",
   "tests/test_python_api.py::test_app_toast_enqueues_native_commands",
   "tests/test_python_api.py::test_app_toast_validation_and_running_requirement",
+  "tests/test_python_api.py::test_app_window_screenshot_requires_running_app",
   "tests/test_python_api.py::test_backend_info_has_python_fallback",
   "tests/test_python_api.py::test_bar_chart_serializes_direct_and_frame_data",
   "tests/test_python_api.py::test_breadcrumbs_collapses_long_paths_and_validates",
@@ -435,5 +439,12 @@
   "tests/test_vdom.py::test_vdom_scatter_detects_data_only_change_via_payload_token",
   "tests/test_vdom.py::test_vdom_scatter_unchanged_data_produces_no_patch",
   "tests/test_vdom.py::test_widget_to_vnode_rejects_non_widgets",
-  "tests/test_vdom.py::test_widget_tree_converts_to_vnode_document_shape"
+  "tests/test_vdom.py::test_widget_tree_converts_to_vnode_document_shape",
+  "tests/test_visual_audit.py::test_append_skip_existing_all_selected_noop",
+  "tests/test_visual_audit.py::test_load_existing_results_non_strict_ignores_malformed_json",
+  "tests/test_visual_audit.py::test_load_existing_results_strict_rejects_malformed_json",
+  "tests/test_visual_audit.py::test_merge_results_preserves_existing_artifacts_and_worst_status",
+  "tests/test_visual_audit.py::test_run_target_preserves_manual_manifest_notes",
+  "tests/test_visual_audit.py::test_screenshot_error_note_reads_structured_error",
+  "tests/test_visual_audit.py::test_select_targets_rejects_unknown_id"
 ]

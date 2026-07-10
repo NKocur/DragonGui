@@ -1,0 +1,303 @@
+tools/visual_audit.py:338:                "Badge bounds check failed: " + "; ".join(badge_violations[:4]),
+tools/visual_audit.py:385:                violation = inline_badge_bounds_violation(
+tools/visual_audit.py:404:def inline_badge_bounds_violation(
+tests\test_python_api.py:2215:    badge = dg.Badge("Ready", id="badge", parent=None)
+tests\test_python_api.py:3890:    badge = dg.Badge("live", level="success", parent=win)
+tests\test_python_api.py:3951:        dg.Badge("Bad", level="urgent", parent=None)
+examples/css_feature_probes\bar_chart_probe.py:130:    Badge {
+examples/css_feature_probes\bar_chart_probe.py:169:        dg.Badge("single", level="info")
+examples/css_feature_probes\bar_chart_probe.py:170:        dg.Badge("grouped", level="success")
+examples/css_feature_probes\bar_chart_probe.py:171:        dg.Badge("horizontal", level="warning")
+examples/css_feature_probes\bar_chart_probe.py:172:        dg.Badge("dense", level="danger")
+examples/css_feature_probes\badge_layout_probe.py:169:    Button.styled::badge,
+examples/css_feature_probes\badge_layout_probe.py:170:    SmallButton.styled::badge {
+examples/css_feature_probes\badge_layout_probe.py:179:    Button.tall::badge {
+examples/css_feature_probes\badge_layout_probe.py:187:    Badge.big,
+examples/css_feature_probes\badge_layout_probe.py:194:    Badge.mono {
+examples/css_feature_probes\badge_layout_probe.py:199:    Badge.constrained,
+examples/css_feature_probes\badge_layout_probe.py:233:    Tab.styled::badge {
+examples/css_feature_probes\badge_layout_probe.py:271:    NavItem.styled::badge {
+examples/css_feature_probes\badge_layout_probe.py:284:win = dg.Window("Badge layout visual probe", width=900, height=640)
+examples/css_feature_probes\badge_layout_probe.py:287:    dg.Label("Badge layout visual probe", class_="title")
+examples/css_feature_probes\badge_layout_probe.py:297:                dg.Badge("owner: platform-design", class_="constrained")
+examples/css_feature_probes\badge_layout_probe.py:313:                dg.Badge(level, level=level)
+examples/css_feature_probes\badge_layout_probe.py:314:            dg.Badge("")
+examples/css_feature_probes\badge_layout_probe.py:315:            dg.Badge("7", class_="mono")
+examples/css_feature_probes\badge_layout_probe.py:316:            dg.Badge("1234567890", class_="mono")
+examples/css_feature_probes\badge_layout_probe.py:317:            dg.Badge("owner: platform-design", level="warning")
+examples/css_feature_probes\badge_layout_probe.py:318:            dg.Badge("big padded", level="success", class_="big")
+examples/css_feature_probes\badge_layout_probe.py:322:            dg.Badge("constrained-long-badge", class_="constrained")
+examples/css_feature_probes\badge_layout_probe.py:324:            dg.Badge("99+", level="danger")
+examples/css_feature_probes\backdrop_filter_probe.py:132:    Badge {
+examples/css_feature_probes\backdrop_filter_probe.py:157:            dg.Badge("baseline")
+examples/css_feature_probes\backdrop_filter_probe.py:163:            dg.Badge("blur")
+examples/css_feature_probes\backdrop_filter_probe.py:170:            dg.Badge("bright")
+examples/css_feature_probes\backdrop_filter_probe.py:176:            dg.Badge("saturate")
+examples/css_feature_probes\backdrop_filter_probe.py:183:            dg.Badge("combo")
+examples/css_feature_probes\backdrop_filter_probe.py:189:            dg.Badge("rounded")
+examples/css_feature_probes\backdrop_filter_probe.py:196:            dg.Badge("reference")
+examples/css_feature_probes\backdrop_filter_probe.py:202:            dg.Badge("scroll check")
+examples/css_feature_probes\animations_probe.py:157:    Badge,
+examples/css_feature_probes\animations_probe.py:164:    Badge {
+examples/css_feature_probes\animations_probe.py:181:    Badge.live {
+examples/css_feature_probes\animations_probe.py:185:    Badge.steps {
+examples/css_feature_probes\animations_probe.py:189:    Badge.paused {
+examples/css_feature_probes\animations_probe.py:193:    Badge.negative-delay {
+examples/css_feature_probes\animations_probe.py:197:    Badge.fractional-count {
+examples/css_feature_probes\animations_probe.py:246:                dg.Badge("smooth pulse", class_="live")
+examples/css_feature_probes\animations_probe.py:247:                dg.Badge("steps pulse", class_="steps")
+examples/css_feature_probes\animations_probe.py:252:            dg.Badge("paused", class_="paused")
+examples/css_feature_probes\animations_probe.py:259:                dg.Badge("negative delay loop", class_="negative-delay")
+examples/css_feature_probes\animations_probe.py:260:                dg.Badge("2.5 count", class_="fractional-count")
+examples/css_feature_probes\animations_probe.py:291:            dg.Badge("static badge")
+examples/css_feature_probes\custom_composite_widget_probe.py:103:    Badge.action-pill {
+examples/css_feature_probes\custom_composite_widget_probe.py:127:        dg.Badge(level, level=level if level != "normal" else "info", key="level-badge")
+examples/css_feature_probes\custom_composite_widget_probe.py:166:                    dg.Badge("ExtensionWidget", level="info", class_="action-pill")
+examples/css_feature_probes\custom_composite_widget_probe.py:167:                    dg.Badge("CSS type selector", level="success", class_="action-pill")
+examples/css_feature_probes\core_widgets_probe.py:190:    Badge,
+examples/css_feature_probes\core_widgets_probe.py:303:                dg.Badge("info", level="info")
+examples/css_feature_probes\core_widgets_probe.py:304:                dg.Badge("success", level="success")
+examples/css_feature_probes\core_widgets_probe.py:305:                dg.Badge("warning", level="warning")
+examples/css_feature_probes\core_widgets_probe.py:307:                dg.Badge("error", level="error")
+examples/css_feature_probes\app_shell_workbench_probe.py:128:    Badge.ok {
+examples/css_feature_probes\app_shell_workbench_probe.py:159:        Badge.ok {
+examples/css_feature_probes\app_shell_workbench_probe.py:187:            dg.Badge("online", class_="ok")
+examples/css_feature_probes\app_shell_workbench_probe.py:226:                dg.Badge("3 panels", class_="ok")
+examples/css_feature_probes\app_shell_workbench_probe.py:227:                dg.Badge("bar", class_="ok")
+native/src\framework.dg.css:80:Badge,
+examples/css_feature_probes\form_controls_probe.py:175:    Button::badge {
+examples/css_feature_probes\form_controls_probe.py:528:        Button::badge {
+examples/css_feature_probes\form_controls_probe.py:611:        Button::badge {
+examples/css_feature_probes\generated_content_probe.py:82:    Badge {
+examples/css_feature_probes\generated_content_probe.py:118:    Badge.level-attr::after {
+examples/css_feature_probes\generated_content_probe.py:200:            dg.Badge("queue", level="warning", class_="level-attr")
+examples/css_feature_probes\generated_content_probe.py:209:            dg.Badge("attr(title)", level="info")
+examples/css_feature_probes\generated_content_probe.py:229:            dg.Badge("visible", level="success", class_="level-attr")
+native/src\document.rs:1163:    Badge,
+native/src\document.rs:1233:            "badge" => WidgetKind::Badge,
+native/src\document.rs:1352:    /// Semantic level for standalone Badge/Tag widgets.
+native/src\layout.rs:826:        WidgetKind::Badge | WidgetKind::Tag => Style {
+native/src\layout.rs:2067:        WidgetKind::Badge | WidgetKind::Tag => {
+native/src\layout.rs:2271:    let badge_w = badge_extra_width(node, theme);
+native/src\layout.rs:2285:        WidgetKind::Badge | WidgetKind::Tag => node
+native/src\layout.rs:2349:fn badge_extra_width(node: &WidgetNode, theme: &Theme) -> f32 {
+native/src\layout.rs:4236:                6 => WidgetKind::Badge,
+native/src\layout.rs:4395:            WidgetKind::Badge,
+native/src\layout.rs:4418:        let badge_rect = layout.rects.get("margin-auto").expect("badge rect");
+native/src\layout.rs:4421:            badge_rect.w >= 135.0,
+native/src\layout.rs:4423:            badge_rect.w
+native/src\layout.rs:4473:            WidgetKind::Badge,
+native/src\layout.rs:4500:        let badge_rect = layout.rects.get("badge").expect("badge rect");
+native/src\layout.rs:4502:            source_rect.w >= badge_rect.w && badge_rect.w >= 120.0,
+native/src\layout.rs:4503:            "drag source should size to badge child: source={source_rect:?} badge={badge_rect:?}"
+native/src\layout.rs:4571:                        WidgetKind::Badge,
+native/src\layout.rs:6272:            WidgetKind::Badge,
+native/src\layout.rs:6286:            WidgetKind::Badge,
+native/src\layout.rs:6440:        let mut pin = node("pin", WidgetKind::Badge, NodeProps::default(), vec![]);
+native/src\layout.rs:6484:        let mut pin = node("pin", WidgetKind::Badge, NodeProps::default(), vec![]);
+native/src\layout.rs:9087:                            WidgetKind::Badge,
+native/src\layout.rs:9096:                            WidgetKind::Badge,
+examples/css_feature_probes\histogram_probe.py:129:    Badge {
+examples/css_feature_probes\histogram_probe.py:144:        dg.Badge("count", level="info")
+examples/css_feature_probes\histogram_probe.py:145:        dg.Badge("density", level="success")
+examples/css_feature_probes\histogram_probe.py:146:        dg.Badge("percent", level="warning")
+examples/css_feature_probes\histogram_probe.py:147:        dg.Badge("cumulative", level="danger")
+native/src\css_style.rs:3017:        "Badge" => Some(WidgetKind::Badge),
+native/src\css_style.rs:3087:        WidgetKind::Badge => Some("Badge"),
+native/src\css_style.rs:3400:    if matches!(node.kind, WidgetKind::Badge | WidgetKind::Tag) {
+native/src\css_style.rs:11600:                6 => WidgetKind::Badge,
+native/src\css_style.rs:11626:                Label, Button, Slider, ProgressBar, TextInput, Badge, Tag {
+native/src\css_style.rs:11630:                Button.primary, Badge.metric, Tag.warning { background: accent; color: white; }
+native/src\css_style.rs:11652:                Label, Button, Slider, ProgressBar, TextInput, Badge, Tag {
+native/src\css_style.rs:11656:                Button.primary, Badge.metric, Tag.warning { background: accent; color: white; }
+native/src\css_style.rs:11674:            Label, Button, Slider, ProgressBar, TextInput, Badge, Tag {
+native/src\css_style.rs:11678:            Button.primary, Badge.metric, Tag.warning { background: accent; color: white; }
+native/src\css_style.rs:12181:            WidgetKind::Badge,
+native/src\css_style.rs:12266:            kind: WidgetKind::Badge,
+native/src\css_style.rs:12276:                .with_type(WidgetKind::Badge)
+native/src\css_style.rs:12719:                kind: WidgetKind::Badge,
+native/src\css_style.rs:12735:                    kind: WidgetKind::Badge,
+native/src\css_style.rs:12772:                            .with_type(WidgetKind::Badge)
+native/src\css_style.rs:12800:                                .with_type(WidgetKind::Badge)
+native/src\css_style.rs:12816:                                .with_type(WidgetKind::Badge)
+native/src\css_style.rs:12829:                            .with_type(WidgetKind::Badge)
+native/src\css_style.rs:12846:                                .with_type(WidgetKind::Badge)
+native/src\css_style.rs:12860:                                .with_type(WidgetKind::Badge)
+native/src\css_style.rs:13061:            Panel:has(Badge[level="warning"]) { border-color: warning; }
+native/src\css_style.rs:13064:            Panel:has(> Badge:empty) { opacity: 0.55; }
+native/src\css_style.rs:13065:            Panel:has(HLayout > Badge[level="success"]) { opacity: 0.9; }
+native/src\css_style.rs:13067:            Panel:has(~ Badge[level="success"]) { background: success; }
+native/src\css_style.rs:13069:            Panel:has(Panel:has(> Badge[level="success"]) > Button.primary) { opacity: 0.6; }
+native/src\css_style.rs:13123:            "Panel:has(Badge[level=\"warning\"])"
+native/src\css_style.rs:13145:        assert_eq!(parsed.rules[9].selector.label(), "Panel:has(> Badge:empty)");
+native/src\css_style.rs:13152:            "Panel:has(HLayout > Badge[level=\"success\"])"
+native/src\css_style.rs:13168:            "Panel:has(~ Badge[level=\"success\"])"
+native/src\css_style.rs:13184:            "Panel:has(Panel:has(> Badge[level=\"success\"]) > Button.primary)"
+native/src\css_style.rs:13199:            Panel > *:nth-child(2 of Button.primary, Badge[level="info"]) { border-color: accent; }
+native/src\css_style.rs:13201:            Panel > *:nth-child(1 of Button:first-child, Badge:last-child) { border-radius: 7px; }
+native/src\css_style.rs:13225:            "Panel > :nth-child(2 of Button.primary, Badge[level=\"info\"])"
+native/src\css_style.rs:13241:            "Panel > :nth-child(1 of Button:first-child, Badge:last-child)"
+native/src\css_style.rs:13262:            Panel > *:nth-last-child(1 of Button.metric, Badge[level="info"]) { opacity: 0.35; }
+native/src\css_style.rs:13281:            "Panel > :nth-last-child(1 of Button.metric, Badge[level=\"info\"])"
+native/src\css_style.rs:13335:            Badge[level="info"] { border-width: 2px; }
+native/src\css_style.rs:13339:            Badge[class~="pill"] { border-radius: 8px; }
+native/src\css_style.rs:13343:            Badge[level|="info"] { border-width: 1px; }
+native/src\css_style.rs:13353:        assert_eq!(parsed.rules[0].selector.label(), "Badge[level=\"info\"]");
+native/src\css_style.rs:13367:        assert_eq!(parsed.rules[4].selector.label(), "Badge[class~=\"pill\"]");
+native/src\css_style.rs:13371:        assert_eq!(parsed.rules[8].selector.label(), "Badge[level|=\"info\"]");
+native/src\css_style.rs:13671:                Panel:has(Badge[level="warning"]) { border-color: warning; }
+native/src\css_style.rs:13673:                Panel:has(> Badge:last-child) { opacity: 0.75; }
+native/src\css_style.rs:13674:                Panel:has(HLayout > Badge[level="success"]) { background: success; }
+native/src\css_style.rs:13675:                Panel:has(> Badge[level="success"]) { border-width: 8px; }
+native/src\css_style.rs:13786:                Panel:has(+ HLayout > Badge[level="success"]) { background: success; }
+native/src\css_style.rs:13787:                Panel:has(~ Badge[level="success"]) { border-color: success; }
+native/src\css_style.rs:13788:                Panel:has(+ Badge[level="success"]) { opacity: 0.75; }
+native/src\css_style.rs:13874:                Panel:has(Panel:has(> Badge[level="success"]) > Button.primary) { background: success; }
+native/src\css_style.rs:13875:                Panel:has(+ Panel:has(Badge[level="success"])) { opacity: 0.65; }
+native/src\css_style.rs:13913:                Badge[level] { border-width: 3px; }
+native/src\css_style.rs:13914:                Badge[level|="info"] { border-radius: 8px; }
+native/src\css_style.rs:13915:                Badge[class~="pill"] { opacity: 0.8; }
+native/src\css_style.rs:13916:                Badge[text*="AD" i] { color: white; }
+native/src\css_style.rs:14558:                Badge::after {
+native/src\css_style.rs:15314:            "Badge.float { position: relative; top: -6px; left: 8px; z-index: 3; } Badge.pin { position: absolute; top: 8px; right: 10px; } Badge.dock { position: fixed; bottom: 12px; left: 16px; } Badge.bad { position: sticky; }",
+native/src\css_style.rs:16147:                "Badge { animation-iteration-count: 2.5; }",
+native/src\css_style.rs:16183:                Badge.longhand { animation-delay: -250ms; }
+native/src\css_style.rs:16184:                Badge.shorthand {
+native/src\css_style.rs:16227:                Badge {
+native/src\css_style.rs:16292:                Badge {
+native/src\css_style.rs:16356:                Badge {
+native/src\css_style.rs:17107:                Badge {
+native/src\css_style.rs:17112:                    Badge { animation-play-state: paused; }
+native/src\css_style.rs:17115:                    Badge { border-width: 2px; }
+native/src\css_style.rs:17456:                Badge { border-width: 1px; opacity: 0.8; }
+native/src\css_style.rs:17458:                    Badge { border-width: 3px; }
+native/src\css_style.rs:17461:                    Badge { border-radius: 8px; }
+native/src\css_style.rs:17464:                    Badge { opacity: 0.5; }
+native/src\css_style.rs:17504:                Badge { border-width: 1px; opacity: 0.8; }
+native/src\css_style.rs:17506:                    Badge { border-width: 3px; }
+native/src\css_style.rs:17509:                    Badge { opacity: 0.5; }
+native/src\css_style.rs:17512:                    Badge { border-radius: 12px; }
+native/src\css_style.rs:18404:                Badge.info { background: success; }
+examples/css_feature_probes\layout_flex_stress_probe.py:169:    Badge,
+examples/css_feature_probes\layout_flex_stress_probe.py:259:            dg.Badge("live", level="success")
+examples/css_feature_probes\layout_flex_stress_probe.py:279:            dg.Badge("62%", level="warning")
+examples/css_feature_probes\layout_flex_stress_probe.py:290:                        dg.Badge("nominal", level="success")
+examples/css_feature_probes\layout_flex_stress_probe.py:330:                    dg.Badge("armed", level="warning")
+examples/css_feature_probes\layout_grid_masonry_probe.py:179:    Badge,
+examples/css_feature_probes\layout_grid_masonry_probe.py:352:                        dg.Badge(badge, level="success")
+examples/css_feature_probes\layout_panel_bounds_probe.py:180:    Badge,
+examples/css_feature_probes\layout_panel_bounds_probe.py:282:                dg.Badge("live", level="success")
+examples/css_feature_probes\layout_panel_bounds_probe.py:311:                        dg.Badge("ok" if index % 3 else "long-state", level="success" if index % 3 else "warning")
+examples/css_feature_probes\layout_panel_bounds_probe.py:345:                dg.Badge("footer", level="info")
+examples/css_feature_probes\layout_panel_bounds_probe.py:372:                dg.Badge("58%", level="info")
+examples/css_feature_probes\layout_scrollable_composites_probe.py:468:                        dg.Badge("ok", level="success")
+examples/css_feature_probes\layout_scrollable_composites_probe.py:538:                                    dg.Badge("local", level="info")
+examples/css_feature_probes\navigation_widgets_probe.py:151:    Badge,
+examples/css_feature_probes\navigation_widgets_probe.py:261:            dg.Badge("live", level="success")
+examples/css_feature_probes\overlay_stack_probe.py:195:Button::badge {
+examples/css_feature_probes\overlay_stack_probe.py:375:        Button::badge {
+native/src\style.rs:105:pub(crate) struct InlineBadgeLayout {
+native/src\style.rs:111:pub(crate) fn inline_badge_layout_for_text(
+native/src\style.rs:119:) -> InlineBadgeLayout {
+native/src\style.rs:137:    InlineBadgeLayout {
+native/src\style.rs:2766:    fn inline_badge_layout_reserves_preferred_width_but_clips_visible_rect() {
+native/src\style.rs:2770:        let layout = inline_badge_layout_for_text(
+native/src\style.rs:2790:    fn inline_badge_layout_accounts_for_part_padding_and_border() {
+native/src\style.rs:2811:            inline_badge_layout_for_text(&plain, "99+", &Theme::dark(), 1.0, 200.0, 32.0, 8.0);
+native/src\style.rs:2813:            inline_badge_layout_for_text(&styled, "99+", &Theme::dark(), 1.0, 200.0, 32.0, 8.0);
+examples/css_feature_probes\paint_widget_events_probe.py:19:        self.badge: dg.Badge | None = None
+examples/css_feature_probes\paint_widget_events_probe.py:29:    def bind_outputs(self, status: dg.Label, badge: dg.Badge) -> None:
+examples/css_feature_probes\paint_widget_events_probe.py:138:                badge = dg.Badge("0", level="info")
+examples/css_feature_probes\paint_widget_sparkline_probe.py:131:                dg.Badge(f"{sum(wave(index)) / 40:+.2f}", level="info")
+native/src\runtime.rs:2233:        WidgetKind::Badge => "badge",
+native/src\runtime.rs:3712:            | WidgetKind::Badge
+native/src\runtime.rs:3827:    if !matches!(target.kind, WidgetKind::Badge | WidgetKind::Tag) {
+native/src\runtime.rs:9317:                    | WidgetKind::Badge
+native/src\runtime.rs:9345:        if matches!(kind, WidgetKind::Badge | WidgetKind::Tag) && prop == "level" {
+native/src\text\mod.rs:35:    inline_badge_layout_for_text, number_stepper_width_for_style, open_part_style_for_state,
+native/src\text\mod.rs:1667:            if matches!(node.kind, WidgetKind::Badge | WidgetKind::Tag) {
+native/src\text\mod.rs:1675:    let line_height = if matches!(node.kind, WidgetKind::Badge | WidgetKind::Tag) {
+native/src\text\mod.rs:1708:            | WidgetKind::Badge
+native/src\text\mod.rs:1839:                        let reserved = badge_reserved_width(node, theme, sf, r.w, r.h, right_inset);
+native/src\text\mod.rs:1910:                    WidgetKind::Badge | WidgetKind::Tag => {
+native/src\text\mod.rs:2000:                        let reserved = badge_reserved_width(node, theme, sf, r.w, r.h, right_inset);
+native/src\text\mod.rs:2025:                        let reserved = badge_reserved_width(node, theme, sf, r.w, r.h, right_inset);
+native/src\text\mod.rs:2181:                } else if matches!(node.kind, WidgetKind::Badge | WidgetKind::Tag) && !placeholder {
+native/src\text\mod.rs:2192:                        | WidgetKind::Badge
+native/src\text\mod.rs:2816:        WidgetKind::Badge => "badge",
+native/src\text\mod.rs:3607:    let Some(rect) = badge_rect(node, *r, theme, sf, right_inset) else {
+native/src\text\mod.rs:3667:fn badge_rect(
+native/src\text\mod.rs:3680:        inline_badge_layout_for_text(&node.style, badge, theme, sf, rect.w, rect.h, right_inset);
+native/src\text\mod.rs:3690:fn badge_reserved_width(
+native/src\text\mod.rs:3703:            inline_badge_layout_for_text(
+native/src\text\mod.rs:5858:        let mut badge = node("state", WidgetKind::Badge);
+native/src\text\mod.rs:6021:        let badge = badge_rect(&button, rect, &Theme::dark(), 1.0, 8.0)
+native/src\text\mod.rs:6046:            let badge = badge_rect(&node, rect, &theme, 1.0, 8.0)
+native/src\text\mod.rs:7287:        let mut badge = node("badge", WidgetKind::Badge);
+native/src\text\mod.rs:7341:        for kind in [WidgetKind::Badge, WidgetKind::Tag] {
+native/src\text\mod.rs:7401:        let mut badge = node("badge", WidgetKind::Badge);
+native/src\text\mod.rs:7509:        let mut badge = node("badge", WidgetKind::Badge);
+examples/css_feature_probes\positioning_zindex_probe.py:80:    Badge,
+examples/css_feature_probes\positioning_zindex_probe.py:86:    Badge {
+examples/css_feature_probes\positioning_zindex_probe.py:103:    Badge.relative-offset {
+examples/css_feature_probes\positioning_zindex_probe.py:112:    Badge.relative-base {
+examples/css_feature_probes\positioning_zindex_probe.py:122:    Badge.stack-low,
+examples/css_feature_probes\positioning_zindex_probe.py:123:    Badge.stack-high,
+examples/css_feature_probes\positioning_zindex_probe.py:124:    Badge.stack-middle {
+examples/css_feature_probes\positioning_zindex_probe.py:131:    Badge.stack-low {
+examples/css_feature_probes\positioning_zindex_probe.py:139:    Badge.stack-middle {
+examples/css_feature_probes\positioning_zindex_probe.py:147:    Badge.stack-high {
+examples/css_feature_probes\positioning_zindex_probe.py:161:    Badge.corner-pin {
+examples/css_feature_probes\positioning_zindex_probe.py:186:    Badge.clipped-pin {
+examples/css_feature_probes\positioning_zindex_probe.py:195:    Badge.fixed-dock {
+examples/css_feature_probes\positioning_zindex_probe.py:222:            dg.Badge("normal badge", class_="relative-base")
+examples/css_feature_probes\positioning_zindex_probe.py:223:            dg.Badge("offset badge", class_="relative-offset")
+examples/css_feature_probes\positioning_zindex_probe.py:230:                dg.Badge("z 1", class_="stack-low")
+examples/css_feature_probes\positioning_zindex_probe.py:231:                dg.Badge("z 2", class_="stack-middle")
+examples/css_feature_probes\positioning_zindex_probe.py:232:                dg.Badge("z 4", class_="stack-high")
+examples/css_feature_probes\positioning_zindex_probe.py:239:            dg.Badge("PIN", class_="corner-pin")
+examples/css_feature_probes\positioning_zindex_probe.py:246:            dg.Badge("clipped", class_="clipped-pin")
+examples/css_feature_probes\positioning_zindex_probe.py:271:            dg.Badge("static")
+examples/css_feature_probes\positioning_zindex_probe.py:275:    dg.Badge("fixed viewport dock", class_="fixed-dock")
+native/src\primitives\mod.rs:25:    expanded_part_style_for_state, inline_badge_layout_for_text,
+native/src\primitives\mod.rs:10139:                        badge_rect(node, [x, y, w, h], theme, sf, theme.spacing * sf)
+native/src\primitives\mod.rs:10453:            WidgetKind::Badge | WidgetKind::Tag => {
+native/src\primitives\mod.rs:10811:                if let Some(rect) = badge_rect(node, [x, y, w, h], theme, sf, gap) {
+native/src\primitives\mod.rs:10951:                if let Some(rect) = badge_rect(node, [x, y, w, h], theme, sf, theme.spacing * sf) {
+native/src\primitives\mod.rs:12805:fn badge_rect(
+native/src\primitives\mod.rs:12818:        inline_badge_layout_for_text(&node.style, badge, theme, sf, rect[2], rect[3], right_inset);
+native/src\primitives\mod.rs:14287:        let badge = badge_rect(&button, parent, &Theme::dark(), 1.0, 8.0)
+native/src\primitives\mod.rs:14307:            let badge = badge_rect(&node, parent, &theme, 1.0, 8.0)
+native/src\primitives\mod.rs:14318:    fn disabled_button_still_emits_inline_badge_pill_inside_parent() {
+native/src\primitives\mod.rs:14344:        let expected = badge_rect(
+native/src\primitives\mod.rs:14702:        let mut badge = node("badge", WidgetKind::Badge);
+native/src\primitives\mod.rs:16784:        let mut badge = node("status", WidgetKind::Badge);
+native/src\primitives\mod.rs:16814:        let mut badge = node("status", WidgetKind::Badge);
+native/src\primitives\mod.rs:16996:        let mut badge = node("badge", WidgetKind::Badge);
+native/src\primitives\mod.rs:17029:        let mut back = node("back", WidgetKind::Badge);
+native/src\primitives\mod.rs:17032:        let mut front = node("front", WidgetKind::Badge);
+native/src\primitives\mod.rs:18309:        let mut badge = node("badge", WidgetKind::Badge);
+examples/css_feature_probes\responsive_layout_probe.py:76:    Badge {
+examples/css_feature_probes\responsive_layout_probe.py:251:        Panel.auto-case Badge {
+examples/css_feature_probes\responsive_layout_probe.py:296:            dg.Badge("auto")
+examples/css_feature_probes\responsive_layout_probe.py:297:            dg.Badge("min/max")
+examples/css_feature_probes\responsive_layout_probe.py:298:            dg.Badge("margin auto")
+examples/css_feature_probes\selectors_probe.py:184:    Panel.has-direct:has(> Badge[level="success"]) {
+examples/css_feature_probes\selectors_probe.py:189:    Panel.has-descendant:has(HLayout > Badge) {
+examples/css_feature_probes\selectors_probe.py:259:                dg.Badge("warning badge", level="warning")
+examples/css_feature_probes\selectors_probe.py:292:                dg.Badge("success badge", level="success")
+examples/css_feature_probes\transitions_transforms_probe.py:84:    Badge {
+examples/css_feature_probes\transitions_transforms_probe.py:179:    Badge.spin {
+examples/css_feature_probes\transitions_transforms_probe.py:187:    Badge.spin:hover {
+examples/css_feature_probes\transitions_transforms_probe.py:253:                dg.Badge("hover badge", class_="spin")
+examples/css_feature_probes\typography_probe.py:116:    Badge.tabular {
+examples/css_feature_probes\typography_probe.py:161:    Badge {
+examples/css_feature_probes\typography_probe.py:207:                dg.Badge("09:41", class_="tabular")
+examples/css_feature_probes\typography_probe.py:208:                dg.Badge("12.80", class_="tabular")
+examples/css_feature_probes\typography_probe.py:209:                dg.Badge("98.05", class_="tabular")
+examples/css_feature_probes\v4_scroll_benchmark_probe.py:273:                        dg.Badge("latency p95", level="warning")
+examples/css_feature_probes\v4_scroll_benchmark_probe.py:274:                        dg.Badge("error rate", level="danger")
+examples/css_feature_probes\v4_scroll_benchmark_probe.py:349:                                dg.Badge(f"metric {section}.{row}", level="info")
+examples/css_feature_probes\visual_audit_manifest.json:7:    "features": ["Button", "Badge", "Tag", "LED", "TextInput", "Checkbox", "Dropdown", "NumberInput", "ColorPicker", "Collapsible", "Tooltip", "Modal"],
+examples/css_feature_probes\visual_audit_manifest.json:14:    "name": "Badge Layout",
+examples/css_feature_probes\visual_audit_manifest.json:17:    "features": ["Badge", "Tag", "Button badge", "Tab badge", "NavItem badge", "badge parts", "responsive badges"],

@@ -16,6 +16,7 @@ Requires-Dist: polars>=1 ; extra == 'dataframe'
 Requires-Dist: maturin>=1.8,<2 ; extra == 'dev'
 Requires-Dist: pytest>=8 ; extra == 'dev'
 Requires-Dist: ruff>=0.8 ; extra == 'dev'
+Requires-Dist: numpy>=1.24 ; extra == 'dev'
 Requires-Dist: furo>=2024.8 ; extra == 'docs'
 Requires-Dist: myst-parser>=4 ; extra == 'docs'
 Requires-Dist: sphinx>=8 ; extra == 'docs'
@@ -43,9 +44,10 @@ Python describes the application. Rust owns the hot path: windowing, input,
 layout, text, rendering, GPU widgets, and retained widget state. Python never
 runs in the frame loop.
 
-**Status:** pre-alpha. The native backend, widget set, reactive component
-system, live update pipeline, CSS styling, and GPU data widgets are functional.
-The API is not yet stable.
+**Status:** pre-alpha. The native backend, the full widget set (including
+charts, virtualized tables, a node-graph editor, and an embedded terminal), the
+reactive component system, the live-update pipeline, CSS styling, and the GPU
+data widgets are functional. The API is not yet stable.
 
 ## Quick Look
 
@@ -74,23 +76,30 @@ app.run(win)
 ## What It Does
 
 - **Native rendering** with `wgpu` through a Rust backend built on `winit`,
-  `taffy`, and `glyphon`.
-- **45+ widgets** including panels, inputs, sliders, dropdowns, checkboxes,
-  number inputs, progress bars, menus, modals, tabs, pages, navigation,
-  color pickers, images, badges, LEDs, collapsibles, tooltips, and more.
+  `taffy`, and `glyphon`. Python never runs in the frame loop.
+- **80+ widgets** — layout containers, buttons, text/number/date-time inputs,
+  sliders, dropdowns, checkboxes, radios, toggles, trees, menus, modals, tabs,
+  pages, navigation, breadcrumbs, a command palette, color pickers, images,
+  badges, LEDs, collapsibles, tooltips, progress/loading indicators,
+  drag-and-drop, and a custom-drawing `PaintWidget`.
+- **Charts and data widgets** — GPU `Scatter3D`, `ScatterPlot2D`, `LinePlot`,
+  `Histogram`, `BarChart`, `Heatmap`, `PieChart`, a virtualized `DataFrameTable`,
+  and an `HtmlReport` webview.
+- **Node-graph editor** and an embedded **Terminal**, plus multi-agent session
+  helpers and a thread monitor.
 - **CSS styling** with type, class, id, attribute, pseudo-state, pseudo-function
   (`:not()`, `:is()`, `:has()`, `:nth-child()`), and widget-part (`::thumb`,
-  `::stepper`, `::badge`, etc.) selectors, custom variables, and media queries.
+  `::stepper`, `::badge`, etc.) selectors, custom variables, `@media`,
+  `@supports`, `@font-face`, container queries, gradients, shadows, outlines,
+  transitions, animations, and backdrop filters.
 - **Reactive components** with keyed state slots, VNode diffing, and targeted
   native patches.
 - **Live updates** from Python callbacks and background threads via a
   thread-safe command queue.
-- **GPU scatter** — 3D point clouds with 500K+ points, orbit/pan/zoom, 14
+- **GPU scatter** — 3D point clouds with 500K+ points, orbit/pan/zoom, 12
   colormaps, scalar bar, categorical legend, orientation axes, 3D labels, line
   and box overlays, multi-actor layers, lasso/rectangle selection, hover
   tooltips, LOD, and real-time frame streaming.
-- **Virtualized DataFrame tables** with column buffers, scrolling, selection,
-  and sorting.
 - **Toast notifications**, file dialogs, native image display, and debug
   snapshots.
 
@@ -98,14 +107,20 @@ app.run(win)
 
 | Category | Widgets |
 | --- | --- |
-| Layout | `Window`, `HLayout`, `VLayout`, `Panel`, `ScrollArea`, `GridLayout`, `FlowLayout`, `Sidebar`, `StatusBar`, `Separator`, `Spacer` |
-| Navigation | `Tabs`, `Tab`, `Pages`, `Page`, `NavItem`, `MenuBar`, `Menu`, `MenuItem`, `ContextMenu` |
-| Container | `Collapsible`, `Modal`, `Tooltip` |
-| Controls | `Button`, `TextInput`, `TextArea`, `NumberInput`, `Slider`, `Dropdown`, `Checkbox`, `ColorPicker` |
-| Display | `Label`, `Badge`, `Tag`, `LED`, `Image`, `ProgressBar` |
-| Data / GPU | `Scatter3D`, `DataFrameTable` |
-| Overlays | `alert()`, `confirm()`, `toast()` |
-| Utilities | `FileDialog`, `Theme` |
+| Layout & shell | `Window`, `Body`, `AppShell`, `HLayout`, `VLayout`, `Panel`, `ScrollArea`, `GridLayout`, `FlowLayout`, `Sidebar`, `StatusBar`, `Toolbar`, `ToolbarSeparator`, `Splitter`, `Pane`, `Separator`, `Spacer` |
+| Navigation | `Tabs`, `Tab`, `Pages`, `Page`, `NavItem`, `MenuBar`, `Menu`, `MenuItem`, `ContextMenu`, `Breadcrumbs`, `CommandPalette`, `SearchBox` |
+| Containers & overlays | `Collapsible`, `Modal`, `Tooltip`, `PropertyGrid`, `Property` |
+| Buttons | `Button`, `SmallButton`, `IconButton`, `ImageButton`, `ArrowButton` |
+| Text & code input | `TextInput`, `TextArea`, `NumberInput`, `DragNumber`, `CodeEditor`, `LogView` |
+| Date & time | `DateInput`, `TimeInput`, `DateTimeInput` |
+| Selection controls | `Slider`, `RangeSlider`, `Dropdown`, `Checkbox`, `RadioButton`, `RadioGroup`, `ToggleSwitch`, `Selectable`, `SelectableList`, `ColorPicker` |
+| Display | `Label`, `Badge`, `Tag`, `LED`, `Image`, `ProgressBar`, `LoadingSpinner` |
+| Trees | `TreeView`, `TreeNode` |
+| Charts & plots | `Scatter3D`, `ScatterPlot2D`, `LinePlot`, `Histogram`, `BarChart`, `Heatmap`, `PieChart` |
+| Tables & reports | `DataFrameTable`, `HtmlReport` |
+| Drag & drop | `DragSource`, `DropTarget`, `DropZone` |
+| Custom & advanced | `PaintWidget`, `ExtensionWidget`, `NodeGraph`, `Terminal` |
+| Overlays & utilities | `alert()`, `confirm()`, `toast()`, `FileDialog`, `Theme`, `ThreadMonitor` |
 
 ## 3D Scatter
 
@@ -232,14 +247,25 @@ app.stylesheet("""
     Tabs::tab:hover    { color: accent; }
     ProgressBar::fill  { background: linear-gradient(...); }
 
-    /* Media queries */
+    /* Effects: gradients, shadows, outlines */
+    Panel.card        { background: linear-gradient(135deg, #1a1a2e, #0d0d1a); }
+    Button:focus      { outline: 2px solid focus; outline-offset: 2px; }
+    Modal             { box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5); }
+
+    /* Transitions and animations */
+    Button            { transition: background 120ms ease, border-color 120ms; }
+    Panel.busy        { animation: pulse 1.2s ease-in-out infinite; }
+
+    /* At-rules: media, feature, and font queries + container queries */
     @media (max-width: 800px) { Panel.controls { display: none; } }
-    @media (prefers-color-scheme: dark) { Window { background: #0d0d0d; } }
+    @supports (backdrop-filter: blur(8px)) { Modal { backdrop-filter: blur(8px); } }
+    @font-face { font-family: "Mono"; src: url("./mono.ttf"); }
+    @container (min-width: 600px) { Panel.grid { grid-template-columns: 1fr 1fr; } }
 """)
 ```
 
 Supported pseudo-states: `:hover`, `:active`, `:focus`, `:checked`, `:disabled`,
-`:selected`, `:expanded`, `:open`
+`:selected`, `:expanded`, `:collapsed`, `:open`
 
 CSS parts vary by widget — see [docs/css-styling.md](./docs/css-styling.md) for
 the full per-widget part list.
@@ -296,13 +322,18 @@ Toast positions: `top-right`, `top-left`, `bottom-right`, `bottom-left`
 ## Repository Layout
 
 ```
-python/dragongui/    Python package
-native/src/          Rust native extension (PyO3 + maturin)
-tests/               264 tests across API, components, and VDOM
-examples/            28 runnable demos
-plans/               Implementation plans and roadmap
-docs/                CSS and widget reference documentation
+python/dragongui/          Python package
+native/src/                Rust native extension (PyO3 + maturin)
+tests/                     Python test suite (API, components, VDOM, diagnostics)
+examples/                  Flagship demos + node-graph probes
+examples/css_feature_probes/  Focused, one-feature-per-file probes
+examples/older/            Legacy single-feature demos and tools
+plans/                     Implementation plans and roadmap
+docs/                      CSS, widget, and layout reference documentation
 ```
+
+The Rust native extension carries its own unit-test suite in addition to the
+Python tests above.
 
 ## Development
 
@@ -338,36 +369,31 @@ maturin build --release --manifest-path native/Cargo.toml --out dist --target x8
 
 ## Examples
 
+Run any example from the source tree without installing (see
+[Development](#development)).
+
+**Flagship demos** (`examples/`):
+
 | Example | What It Shows |
 | --- | --- |
-| `all_features_v3_demo.py` | Full demo: scatter, table, streaming, overlays, chrome, CSS |
-| `all_features_demo.py` | All widget types on one screen |
-| `all_features_css_demo.py` | Widget set with full CSS theme |
-| `streaming_scatter_tool.py` | Background thread pushing live scatter frames |
-| `scatter_tool.py` | Scatter + table + controls |
-| `table_tool.py` | DataFrameTable with selection and sorting |
-| `css_design_system_demo.py` | Four CSS themes on the same widget tree |
-| `css_showcase.py` | CSS selectors, variables, and pseudo-states |
-| `css_theme_gallery.py` | Theme gallery with live switcher |
-| `css_widget_parts_demo.py` | Widget parts and sub-element selectors |
-| `css_web_capabilities_demo.py` | CSS media queries and responsive layout |
-| `css_julius_style_demo.py` | Custom design system demo |
-| `color_scheme_media_tool.py` | `prefers-color-scheme` media query |
-| `component_counter_tool.py` | Reactive component with keyed state |
-| `component_nested_tool.py` | Nested components with state isolation |
-| `component_node_swap_tool.py` | Component node identity and swap |
-| `multipage_tool.py` | Sidebar, pages, tabs, and status bar |
-| `live_update_tool.py` | Live prop updates from callbacks |
-| `live_table_tool.py` | Live DataFrame table replacement |
-| `live_children_tool.py` | Dynamic child insertion and removal |
-| `live_style_tool.py` | Live CSS stylesheet updates |
-| `collapsible_tool.py` | Collapsible sections |
-| `badge_tool.py` | Badge and Tag widget variants |
-| `tooltip_tool.py` | Tooltip overlay |
-| `textarea_tool.py` | Multi-line text input |
-| `toast_tool.py` | Toast notifications |
-| `meridian.py` | Full-featured application demo |
-| `debug_snapshot_tool.py` | Runtime introspection snapshot |
+| `all_features_v3_demo.py` | Full app: scatter, tables, charts, streaming, overlays, chrome, theming, and CSS |
+| `node_graph_editor_probe.py` | Node-graph editor widget |
+| `node_graph_binding_playground_probe.py` | Binding node-graph outputs to live widgets |
+
+**Feature probes** (`examples/css_feature_probes/`) — 70+ focused,
+one-feature-per-file programs used for visual verification. A sampling:
+
+| Area | Probes |
+| --- | --- |
+| Widgets | `core_widgets_probe`, `form_controls_probe`, `tree_view_probe`, `toggle_switch_probe`, `radio_group_probe`, `date_time_inputs_probe`, `command_palette_probe`, `breadcrumbs_probe`, `toolbar_probe` |
+| Charts & data | `bar_chart_probe`, `histogram_probe`, `heatmap_probe`, `pie_chart_probe`, `line_plot_probe`, `scatter3d_probe`, `scatter_plot_2d_probe`, `data_table_upgrades_probe`, `html_report_probe` |
+| CSS features | `gradients_probe`, `border_outline_shadow_probe`, `transitions_transforms_probe`, `animations_probe`, `backdrop_filter_probe`, `container_queries_probe`, `supports_probe`, `font_face_probe`, `selectors_probe`, `typography_probe` |
+| Layout | `layout_containers_probe`, `layout_grid_masonry_probe`, `responsive_layout_probe`, `overflow_scrollbar_probe`, `positioning_zindex_probe`, `splitter_probe` |
+| Custom drawing | `paint_widget_events_probe`, `paint_widget_sparkline_probe`, `custom_composite_widget_probe` |
+
+**Legacy demos and tools** (`examples/older/`) — earlier single-feature demos:
+scatter/table tools, live-update tools, CSS theme galleries, component demos, a
+terminal wrapper, the `meridian` application demo, and more.
 
 ## Architecture
 
@@ -396,12 +422,14 @@ Python widgets / components
 
 ## Requirements
 
-- Python >= 3.11
+- Python >= 3.12
 - Rust toolchain (for building the native extension)
 - Windows, macOS, or Linux with GPU support
 
-Optional: `pandas` or `polars` for DataFrame integration. `numpy` for
-`sample_colormap_numpy`.
+Optional extras: `pip install "dragongui[dataframe]"` for `pandas`/`polars`
+DataFrame integration, `[terminal]` for the embedded terminal (`pywinpty` on
+Windows), `[dev]` for build/test tooling, and `[docs]` for the Sphinx docs.
+`numpy` is used by some colormap helpers.
 
 ## License
 

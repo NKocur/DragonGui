@@ -1,0 +1,467 @@
+native\src\commands.rs:141:    SetTableData {
+native\src\commands.rs:145:    SetTableDataColumns {
+native\src\commands.rs:148:        columns: Vec<TableColumnPacket>,
+native\src\commands.rs:533:pub struct TableColumnPacket {
+native\src\commands.rs:2002:        self.enqueue(Command::SetTableData { id, table_json })
+native\src\commands.rs:2040:            columns.push(TableColumnPacket {
+native\src\commands.rs:2046:        self.enqueue(Command::SetTableDataColumns {
+native\src\commands.rs:2356:            .push(Command::SetTableData {
+native\src\commands.rs:2425:                Command::SetTableData {
+native\src\events.rs:35:pub enum TableSortColumn {
+native\src\events.rs:40:impl TableSortColumn {
+native\src\events.rs:50:pub struct TableState {
+native\src\events.rs:59:    pub sort: Option<(TableSortColumn, SortDirection)>,
+native\src\events.rs:64:impl TableState {
+native\src\events.rs:192:    pub tables: HashMap<String, TableState>,
+native\src\events.rs:193:    /// Tab child ids and route values keyed by Tabs widget id.
+native\src\events.rs:195:    /// Parent Tabs id keyed by Tab id.
+native\src\events.rs:197:    /// Route value keyed by Tab id.
+native\src\events.rs:199:    /// Active Tab route value keyed by Tabs widget id.
+native\src\events.rs:209:    /// Target Page route value keyed by NavItem id.
+native\src\events.rs:977:    pub fn table(&self, id: &str) -> Option<&TableState> {
+native\src\events.rs:1391:    pub fn toggle_table_sort(&mut self, id: &str, target: TableSortColumn) -> bool {
+native\src\events.rs:1643:        WidgetKind::DataFrameTable => {
+native\src\events.rs:1644:            s.tables.insert(node.id.clone(), TableState::new(node));
+native\src\events.rs:1646:        WidgetKind::Tabs => {
+native\src\events.rs:1650:                .filter(|child| child.kind == WidgetKind::Tab)
+native\src\events.rs:1668:        WidgetKind::Tab => {
+native\src\events.rs:1669:            if let Some(parent) = parent.filter(|p| p.kind == WidgetKind::Tabs) {
+native\src\events.rs:1711:        WidgetKind::NavItem => {
+native\src\events.rs:1967:            | WidgetKind::DataFrameTable
+native\src\events.rs:1973:            | WidgetKind::Tab
+native\src\events.rs:1974:            | WidgetKind::NavItem
+native\src\events.rs:2587:            TableState {
+native\src\events.rs:2614:            TableState {
+native\src\events.rs:2640:            TableState {
+native\src\events.rs:2655:        assert!(state.toggle_table_sort("table", TableSortColumn::Data(0)));
+native\src\events.rs:2659:            Some((TableSortColumn::Data(0), SortDirection::Asc))
+native\src\events.rs:2670:        assert!(state.toggle_table_sort("table", TableSortColumn::Data(0)));
+native\src\events.rs:2673:            Some((TableSortColumn::Data(0), SortDirection::Desc))
+native\src\events.rs:2676:        assert!(state.toggle_table_sort("table", TableSortColumn::Index));
+native\src\events.rs:2679:            Some((TableSortColumn::Index, SortDirection::Asc))
+native\src\document.rs:1163:    Badge,
+native\src\document.rs:1200:    Tabs,
+native\src\document.rs:1201:    Tab,
+native\src\document.rs:1205:    NavItem,
+native\src\document.rs:1212:    DataFrameTable,
+native\src\document.rs:1233:            "badge" => WidgetKind::Badge,
+native\src\document.rs:1270:            "tabs" => WidgetKind::Tabs,
+native\src\document.rs:1271:            "tab" => WidgetKind::Tab,
+native\src\document.rs:1275:            "nav_item" => WidgetKind::NavItem,
+native\src\document.rs:1282:            "dataframe_table" => WidgetKind::DataFrameTable,
+native\src\document.rs:1352:    /// Semantic level for standalone Badge/Tag widgets.
+native\src\document.rs:1362:    /// Stable navigation key for Tabs, Tab, Pages, and Page nodes.
+native\src\document.rs:1364:    /// Target page key for NavItem nodes.
+native\src\document.rs:2232:        WidgetKind::Tab | WidgetKind::NavItem | WidgetKind::Menu | WidgetKind::MenuItem => "label",
+native\src\html_report_webview.rs:638:        if matches!(node.kind, WidgetKind::Tabs | WidgetKind::Pages) {
+native\src\html_report_webview.rs:691:            WidgetKind::Tabs => WidgetKind::Tab,
+native\src\html_report_webview.rs:701:            WidgetKind::Tabs => state
+native\src\framework.dg.css:23:Tabs {
+native\src\framework.dg.css:80:Badge,
+native\src\framework.dg.css:279:Tab,
+native\src\framework.dg.css:280:NavItem,
+native\src\framework.dg.css:289:   padding). Apps can override any of these per NavItem. */
+native\src\framework.dg.css:290:NavItem {
+native\src\framework.dg.css:294:NavItem::accent {
+native\src\framework.dg.css:298:NavItem::item {
+native\src\overlays.rs:338:        | WidgetKind::DataFrameTable
+native\src\layout.rs:203:        WidgetKind::Tabs
+native\src\layout.rs:816:        | WidgetKind::NavItem
+native\src\layout.rs:817:        | WidgetKind::Tab => Style {
+native\src\layout.rs:826:        WidgetKind::Badge | WidgetKind::Tag => Style {
+native\src\layout.rs:1021:        | WidgetKind::DataFrameTable
+native\src\layout.rs:1022:        | WidgetKind::Tabs => Style {
+native\src\layout.rs:2058:        | WidgetKind::NavItem
+native\src\layout.rs:2059:        | WidgetKind::Tab
+native\src\layout.rs:2067:        WidgetKind::Badge | WidgetKind::Tag => {
+native\src\layout.rs:2281:        WidgetKind::Badge | WidgetKind::Tag => node
+native\src\layout.rs:2326:        WidgetKind::Label | WidgetKind::NavItem | WidgetKind::Tab => {
+native\src\layout.rs:3201:    if node.kind != WidgetKind::Tab || node.children.is_empty() {
+native\src\layout.rs:3628:        WidgetKind::Tabs => layout_tabs(node, result, sf, theme, state),
+native\src\layout.rs:3835:        .filter(|child| child.kind == WidgetKind::Tab)
+native\src\layout.rs:4098:                WidgetKind::Tabs,
+native\src\layout.rs:4106:                        WidgetKind::Tab,
+native\src\layout.rs:4121:                        WidgetKind::Tab,
+native\src\layout.rs:4232:                6 => WidgetKind::Badge,
+native\src\layout.rs:4391:            WidgetKind::Badge,
+native\src\layout.rs:4414:        let badge_rect = layout.rects.get("margin-auto").expect("badge rect");
+native\src\layout.rs:4417:            badge_rect.w >= 135.0,
+native\src\layout.rs:4419:            badge_rect.w
+native\src\layout.rs:4469:            WidgetKind::Badge,
+native\src\layout.rs:4496:        let badge_rect = layout.rects.get("badge").expect("badge rect");
+native\src\layout.rs:4498:            source_rect.w >= badge_rect.w && badge_rect.w >= 120.0,
+native\src\layout.rs:4499:            "drag source should size to badge child: source={source_rect:?} badge={badge_rect:?}"
+native\src\layout.rs:4567:                        WidgetKind::Badge,
+native\src\layout.rs:4972:                    WidgetKind::NavItem,
+native\src\layout.rs:6268:            WidgetKind::Badge,
+native\src\layout.rs:6282:            WidgetKind::Badge,
+native\src\layout.rs:6328:        let mut pin = node("pin", WidgetKind::Badge, NodeProps::default(), vec![]);
+native\src\layout.rs:6372:        let mut pin = node("pin", WidgetKind::Badge, NodeProps::default(), vec![]);
+native\src\layout.rs:8779:                text: Some("Table panel".to_string()),
+native\src\layout.rs:8839:                WidgetKind::DataFrameTable,
+native\src\layout.rs:8975:                            WidgetKind::Badge,
+native\src\layout.rs:8984:                            WidgetKind::Badge,
+native\src\css_style.rs:921:    TableRowHeight(DgCssLength),
+native\src\css_style.rs:922:    TableHeaderHeight(DgCssLength),
+native\src\css_style.rs:923:    TableColumnWidth(DgCssLength),
+native\src\css_style.rs:924:    TableIndexWidth(DgCssLength),
+native\src\css_style.rs:2792:    TableRowHeight,
+native\src\css_style.rs:2793:    TableHeaderHeight,
+native\src\css_style.rs:2794:    TableColumnWidth,
+native\src\css_style.rs:2795:    TableIndexWidth,
+native\src\css_style.rs:2995:            "table-row-height" => Ok(Self::Widget(DgWidgetPropertyName::TableRowHeight)),
+native\src\css_style.rs:2996:            "table-header-height" => Ok(Self::Widget(DgWidgetPropertyName::TableHeaderHeight)),
+native\src\css_style.rs:2997:            "table-column-width" => Ok(Self::Widget(DgWidgetPropertyName::TableColumnWidth)),
+native\src\css_style.rs:2998:            "table-index-width" => Ok(Self::Widget(DgWidgetPropertyName::TableIndexWidth)),
+native\src\css_style.rs:3017:        "Badge" => Some(WidgetKind::Badge),
+native\src\css_style.rs:3028:        "Tabs" => Some(WidgetKind::Tabs),
+native\src\css_style.rs:3029:        "Tab" => Some(WidgetKind::Tab),
+native\src\css_style.rs:3032:        "NavItem" => Some(WidgetKind::NavItem),
+native\src\css_style.rs:3066:        "DataFrameTable" => Some(WidgetKind::DataFrameTable),
+native\src\css_style.rs:3087:        WidgetKind::Badge => Some("Badge"),
+native\src\css_style.rs:3098:        WidgetKind::Tabs => Some("Tabs"),
+native\src\css_style.rs:3099:        WidgetKind::Tab => Some("Tab"),
+native\src\css_style.rs:3102:        WidgetKind::NavItem => Some("NavItem"),
+native\src\css_style.rs:3136:        WidgetKind::DataFrameTable => Some("DataFrameTable"),
+native\src\css_style.rs:3297:    push_attr_opt(&mut attributes, "badge", props.badge.as_deref());
+native\src\css_style.rs:3400:    if matches!(node.kind, WidgetKind::Badge | WidgetKind::Tag) {
+native\src\css_style.rs:4400:        WidgetKind::Button | WidgetKind::SmallButton => matches!(part, "badge"),
+native\src\css_style.rs:4441:        WidgetKind::Tabs => matches!(part, "header"),
+native\src\css_style.rs:4442:        WidgetKind::Tab => matches!(part, "tab" | "accent" | "badge"),
+native\src\css_style.rs:4443:        WidgetKind::NavItem => matches!(part, "item" | "accent" | "badge"),
+native\src\css_style.rs:4444:        WidgetKind::DataFrameTable => {
+native\src\css_style.rs:4470:            | WidgetKind::DataFrameTable
+native\src\css_style.rs:5229:        DgWidgetDeclaration::TableRowHeight(value) => style.table_row_height = length_px(value),
+native\src\css_style.rs:5230:        DgWidgetDeclaration::TableHeaderHeight(value) => {
+native\src\css_style.rs:5233:        DgWidgetDeclaration::TableColumnWidth(value) => style.table_column_width = length_px(value),
+native\src\css_style.rs:5234:        DgWidgetDeclaration::TableIndexWidth(value) => style.table_index_width = length_px(value),
+native\src\css_style.rs:5457:        "tabular-nums" | "tabular_nums" => Some(FontVariantNumeric::TabularNums),
+native\src\css_style.rs:8070:        DgWidgetPropertyName::TableRowHeight => {
+native\src\css_style.rs:8071:            DgWidgetDeclaration::TableRowHeight(parse_px_length_value(name, value, variables)?)
+native\src\css_style.rs:8073:        DgWidgetPropertyName::TableHeaderHeight => {
+native\src\css_style.rs:8074:            DgWidgetDeclaration::TableHeaderHeight(parse_px_length_value(name, value, variables)?)
+native\src\css_style.rs:8076:        DgWidgetPropertyName::TableColumnWidth => {
+native\src\css_style.rs:8077:            DgWidgetDeclaration::TableColumnWidth(parse_px_length_value(name, value, variables)?)
+native\src\css_style.rs:8079:        DgWidgetPropertyName::TableIndexWidth => {
+native\src\css_style.rs:8080:            DgWidgetDeclaration::TableIndexWidth(parse_px_length_value(name, value, variables)?)
+native\src\css_style.rs:11598:                4 => WidgetKind::DataFrameTable,
+native\src\css_style.rs:11600:                6 => WidgetKind::Badge,
+native\src\css_style.rs:11626:                Label, Button, Slider, ProgressBar, TextInput, Badge, Tag {
+native\src\css_style.rs:11630:                Button.primary, Badge.metric, Tag.warning { background: accent; color: white; }
+native\src\css_style.rs:11635:                DataFrameTable { table-row-height: 24px; table-column-width: 132px; }
+native\src\css_style.rs:11636:                DataFrameTable::header { background: #1d2836; font-weight: 700; }
+native\src\css_style.rs:11652:                Label, Button, Slider, ProgressBar, TextInput, Badge, Tag {
+native\src\css_style.rs:11656:                Button.primary, Badge.metric, Tag.warning { background: accent; color: white; }
+native\src\css_style.rs:11661:                DataFrameTable { table-row-height: 24px; table-column-width: 132px; }
+native\src\css_style.rs:11662:                DataFrameTable::header { background: #1d2836; font-weight: 700; }
+native\src\css_style.rs:11674:            Label, Button, Slider, ProgressBar, TextInput, Badge, Tag {
+native\src\css_style.rs:11678:            Button.primary, Badge.metric, Tag.warning { background: accent; color: white; }
+native\src\css_style.rs:11683:            DataFrameTable { table-row-height: 24px; table-column-width: 132px; }
+native\src\css_style.rs:11684:            DataFrameTable::header { background: #1d2836; font-weight: 700; }
+native\src\css_style.rs:12058:                DgStylePropertyName::Widget(DgWidgetPropertyName::TableRowHeight),
+native\src\css_style.rs:12062:                DgStylePropertyName::Widget(DgWidgetPropertyName::TableHeaderHeight),
+native\src\css_style.rs:12066:                DgStylePropertyName::Widget(DgWidgetPropertyName::TableColumnWidth),
+native\src\css_style.rs:12070:                DgStylePropertyName::Widget(DgWidgetPropertyName::TableIndexWidth),
+native\src\css_style.rs:12181:            WidgetKind::Badge,
+native\src\css_style.rs:12184:            WidgetKind::DataFrameTable,
+native\src\css_style.rs:12266:            kind: WidgetKind::Badge,
+native\src\css_style.rs:12276:                .with_type(WidgetKind::Badge)
+native\src\css_style.rs:12719:                kind: WidgetKind::Badge,
+native\src\css_style.rs:12735:                    kind: WidgetKind::Badge,
+native\src\css_style.rs:12772:                            .with_type(WidgetKind::Badge)
+native\src\css_style.rs:12800:                                .with_type(WidgetKind::Badge)
+native\src\css_style.rs:12816:                                .with_type(WidgetKind::Badge)
+native\src\css_style.rs:12829:                            .with_type(WidgetKind::Badge)
+native\src\css_style.rs:12846:                                .with_type(WidgetKind::Badge)
+native\src\css_style.rs:12860:                                .with_type(WidgetKind::Badge)
+native\src\css_style.rs:13061:            Panel:has(Badge[level="warning"]) { border-color: warning; }
+native\src\css_style.rs:13064:            Panel:has(> Badge:empty) { opacity: 0.55; }
+native\src\css_style.rs:13065:            Panel:has(HLayout > Badge[level="success"]) { opacity: 0.9; }
+native\src\css_style.rs:13067:            Panel:has(~ Badge[level="success"]) { background: success; }
+native\src\css_style.rs:13069:            Panel:has(Panel:has(> Badge[level="success"]) > Button.primary) { opacity: 0.6; }
+native\src\css_style.rs:13123:            "Panel:has(Badge[level=\"warning\"])"
+native\src\css_style.rs:13145:        assert_eq!(parsed.rules[9].selector.label(), "Panel:has(> Badge:empty)");
+native\src\css_style.rs:13152:            "Panel:has(HLayout > Badge[level=\"success\"])"
+native\src\css_style.rs:13168:            "Panel:has(~ Badge[level=\"success\"])"
+native\src\css_style.rs:13184:            "Panel:has(Panel:has(> Badge[level=\"success\"]) > Button.primary)"
+native\src\css_style.rs:13199:            Panel > *:nth-child(2 of Button.primary, Badge[level="info"]) { border-color: accent; }
+native\src\css_style.rs:13201:            Panel > *:nth-child(1 of Button:first-child, Badge:last-child) { border-radius: 7px; }
+native\src\css_style.rs:13225:            "Panel > :nth-child(2 of Button.primary, Badge[level=\"info\"])"
+native\src\css_style.rs:13241:            "Panel > :nth-child(1 of Button:first-child, Badge:last-child)"
+native\src\css_style.rs:13262:            Panel > *:nth-last-child(1 of Button.metric, Badge[level="info"]) { opacity: 0.35; }
+native\src\css_style.rs:13281:            "Panel > :nth-last-child(1 of Button.metric, Badge[level=\"info\"])"
+native\src\css_style.rs:13335:            Badge[level="info"] { border-width: 2px; }
+native\src\css_style.rs:13339:            Badge[class~="pill"] { border-radius: 8px; }
+native\src\css_style.rs:13343:            Badge[level|="info"] { border-width: 1px; }
+native\src\css_style.rs:13353:        assert_eq!(parsed.rules[0].selector.label(), "Badge[level=\"info\"]");
+native\src\css_style.rs:13367:        assert_eq!(parsed.rules[4].selector.label(), "Badge[class~=\"pill\"]");
+native\src\css_style.rs:13371:        assert_eq!(parsed.rules[8].selector.label(), "Badge[level|=\"info\"]");
+native\src\css_style.rs:13671:                Panel:has(Badge[level="warning"]) { border-color: warning; }
+native\src\css_style.rs:13673:                Panel:has(> Badge:last-child) { opacity: 0.75; }
+native\src\css_style.rs:13674:                Panel:has(HLayout > Badge[level="success"]) { background: success; }
+native\src\css_style.rs:13675:                Panel:has(> Badge[level="success"]) { border-width: 8px; }
+native\src\css_style.rs:13786:                Panel:has(+ HLayout > Badge[level="success"]) { background: success; }
+native\src\css_style.rs:13787:                Panel:has(~ Badge[level="success"]) { border-color: success; }
+native\src\css_style.rs:13788:                Panel:has(+ Badge[level="success"]) { opacity: 0.75; }
+native\src\css_style.rs:13874:                Panel:has(Panel:has(> Badge[level="success"]) > Button.primary) { background: success; }
+native\src\css_style.rs:13875:                Panel:has(+ Panel:has(Badge[level="success"])) { opacity: 0.65; }
+native\src\css_style.rs:13913:                Badge[level] { border-width: 3px; }
+native\src\css_style.rs:13914:                Badge[level|="info"] { border-radius: 8px; }
+native\src\css_style.rs:13915:                Badge[class~="pill"] { opacity: 0.8; }
+native\src\css_style.rs:13916:                Badge[text*="AD" i] { color: white; }
+native\src\css_style.rs:13954:            Tab:selected::accent { background: accent; }
+native\src\css_style.rs:14091:                "DataFrameTable { table-row-height: 22px; table-header-height: 26px; table-column-width: 180px; table-index-width: 72px; }",
+native\src\css_style.rs:14201:                DataFrameTable::header {
+native\src\css_style.rs:14206:                DataFrameTable::row {
+native\src\css_style.rs:14210:                DataFrameTable::row-selected {
+native\src\css_style.rs:14214:                DataFrameTable::grid-line {
+native\src\css_style.rs:14286:                Tab:selected { background: accent_mix_20; }
+native\src\css_style.rs:14287:                Tab:selected::accent { background: accent; }
+native\src\css_style.rs:14558:                Badge::after {
+native\src\css_style.rs:15314:            "Badge.float { position: relative; top: -6px; left: 8px; z-index: 3; } Badge.pin { position: absolute; top: 8px; right: 10px; } Badge.dock { position: fixed; bottom: 12px; left: 16px; } Badge.bad { position: sticky; }",
+native\src\css_style.rs:16147:                "Badge { animation-iteration-count: 2.5; }",
+native\src\css_style.rs:16183:                Badge.longhand { animation-delay: -250ms; }
+native\src\css_style.rs:16184:                Badge.shorthand {
+native\src\css_style.rs:16227:                Badge {
+native\src\css_style.rs:16292:                Badge {
+native\src\css_style.rs:16356:                Badge {
+native\src\css_style.rs:16688:            Some(FontVariantNumeric::TabularNums)
+native\src\css_style.rs:17107:                Badge {
+native\src\css_style.rs:17112:                    Badge { animation-play-state: paused; }
+native\src\css_style.rs:17115:                    Badge { border-width: 2px; }
+native\src\css_style.rs:17456:                Badge { border-width: 1px; opacity: 0.8; }
+native\src\css_style.rs:17458:                    Badge { border-width: 3px; }
+native\src\css_style.rs:17461:                    Badge { border-radius: 8px; }
+native\src\css_style.rs:17464:                    Badge { opacity: 0.5; }
+native\src\css_style.rs:17504:                Badge { border-width: 1px; opacity: 0.8; }
+native\src\css_style.rs:17506:                    Badge { border-width: 3px; }
+native\src\css_style.rs:17509:                    Badge { opacity: 0.5; }
+native\src\css_style.rs:17512:                    Badge { border-radius: 12px; }
+native\src\css_style.rs:18404:                Badge.info { background: success; }
+native\src\css_style.rs:18985:                Tabs::header {
+native\src\css_style.rs:18990:                Tab::tab {
+native\src\css_style.rs:18995:                Tab::accent {
+native\src\css_style.rs:19000:                NavItem::item {
+native\src\css_style.rs:19005:                NavItem::accent {
+native\src\resources.rs:7:use crate::commands::TableColumnPacket;
+native\src\resources.rs:12:pub enum TableColumnData {
+native\src\resources.rs:23:impl TableColumnData {
+native\src\resources.rs:24:    fn from_packet(packet: TableColumnPacket) -> Option<Self> {
+native\src\resources.rs:135:fn decode_utf8_packet(bytes: Vec<u8>) -> Option<TableColumnData> {
+native\src\resources.rs:154:    Some(TableColumnData::Utf8 { offsets, data })
+native\src\resources.rs:211:pub struct TableColumnBuffer {
+native\src\resources.rs:213:    pub data: TableColumnData,
+native\src\resources.rs:217:pub struct TableResource {
+native\src\resources.rs:224:    pub column_buffers: Vec<TableColumnBuffer>,
+native\src\resources.rs:228:impl TableResource {
+native\src\resources.rs:338:    tables: HashMap<String, TableResource>,
+native\src\resources.rs:357:    pub fn table(&self, id: &str) -> Option<&TableResource> {
+native\src\resources.rs:401:        columns: Vec<TableColumnPacket>,
+native\src\resources.rs:416:                TableColumnData::from_packet(packet).and_then(|data| {
+native\src\resources.rs:417:                    (data.len() >= resource.rows).then_some(TableColumnBuffer { name, data })
+native\src\resources.rs:482:        if node.kind == WidgetKind::DataFrameTable {
+native\src\resources.rs:511:        let mut resource = TableResource::from_props(resource_id.clone(), props, version);
+native\src\resources.rs:598:                TableColumnPacket {
+native\src\resources.rs:606:                TableColumnPacket {
+native\src\resources.rs:611:                TableColumnPacket {
+native\src\resources.rs:666:                TableColumnPacket {
+native\src\resources.rs:674:                TableColumnPacket {
+native\src\style.rs:801:    TabularNums,
+native\src\style.rs:1622:        "tabular-nums" | "tabular_nums" => Some(FontVariantNumeric::TabularNums),
+native\src\runtime.rs:34:    ScatterTelemetry, TableColumnPacket,
+native\src\runtime.rs:50:    ChangeValue, DragNumberDrag, RangeSliderDrag, SliderDrag, TableSortColumn, WidgetState,
+native\src\runtime.rs:81:use crate::table::{self, TableHit};
+native\src\runtime.rs:2233:        WidgetKind::Badge => "badge",
+native\src\runtime.rs:2270:        WidgetKind::Tabs => "tabs",
+native\src\runtime.rs:2271:        WidgetKind::Tab => "tab",
+native\src\runtime.rs:2275:        WidgetKind::NavItem => "nav_item",
+native\src\runtime.rs:2282:        WidgetKind::DataFrameTable => "dataframe_table",
+native\src\runtime.rs:2403:        FontVariantNumeric::TabularNums => "tabular_nums",
+native\src\runtime.rs:3310:        "badge": props.badge.as_deref(),
+native\src\runtime.rs:3554:                        TableSortColumn::Index => "index",
+native\src\runtime.rs:3555:                        TableSortColumn::Data(_) => "column",
+native\src\runtime.rs:3712:            | WidgetKind::Badge
+native\src\runtime.rs:3745:            WidgetKind::Tab | WidgetKind::NavItem | WidgetKind::Menu | WidgetKind::MenuItem,
+native\src\runtime.rs:3827:    if !matches!(target.kind, WidgetKind::Badge | WidgetKind::Tag) {
+native\src\runtime.rs:3918:    if !matches!(target.kind, WidgetKind::Tabs | WidgetKind::Pages) {
+native\src\runtime.rs:3950:        WidgetKind::Button | WidgetKind::SmallButton | WidgetKind::Tab | WidgetKind::NavItem
+native\src\runtime.rs:3954:    target.props.badge = badge.filter(|value| !value.is_empty());
+native\src\runtime.rs:9317:                    | WidgetKind::Badge
+native\src\runtime.rs:9333:                    | WidgetKind::Tab
+native\src\runtime.rs:9334:                    | WidgetKind::NavItem
+native\src\runtime.rs:9345:        if matches!(kind, WidgetKind::Badge | WidgetKind::Tag) && prop == "level" {
+native\src\runtime.rs:9647:            WidgetKind::Button | WidgetKind::SmallButton | WidgetKind::Tab | WidgetKind::NavItem
+native\src\runtime.rs:9737:        if matches!(kind, WidgetKind::Tabs | WidgetKind::Pages) && prop == "value" {
+native\src\runtime.rs:9745:                WidgetKind::Tabs => state.set_active_tab_value(id, &value).is_some(),
+native\src\runtime.rs:10377:        if self.widget_kind(id) != Some(WidgetKind::DataFrameTable) {
+native\src\runtime.rs:10403:        columns: Vec<TableColumnPacket>,
+native\src\runtime.rs:10405:        if self.widget_kind(id) != Some(WidgetKind::DataFrameTable) {
+native\src\runtime.rs:11628:            TableSortColumn::Index => {
+native\src\runtime.rs:11635:            TableSortColumn::Data(col) => {
+native\src\runtime.rs:12924:            .and_then(|(id, kind)| (kind == WidgetKind::DataFrameTable).then_some(id))
+native\src\runtime.rs:12927:    fn table_column_resize_at(&self, pos: [f32; 2]) -> Option<TableColumnResizeHit> {
+native\src\runtime.rs:12929:        if kind != WidgetKind::DataFrameTable {
+native\src\runtime.rs:12964:                return Some(TableColumnResizeHit {
+native\src\runtime.rs:12977:        if kind != WidgetKind::DataFrameTable {
+native\src\runtime.rs:13387:    fn table_hit(&self, pos: [f32; 2]) -> Option<(String, TableHit)> {
+native\src\runtime.rs:13389:        if kind != WidgetKind::DataFrameTable {
+native\src\runtime.rs:13426:            TableSortColumn::Index => json!({
+native\src\runtime.rs:13435:            TableSortColumn::Data(col) => {
+native\src\runtime.rs:14462:struct TableColumnResizeHit {
+native\src\runtime.rs:14470:struct TableColumnResizeDrag {
+native\src\runtime.rs:14471:    hit: TableColumnResizeHit,
+native\src\runtime.rs:14475:impl TableColumnResizeDrag {
+native\src\runtime.rs:14476:    fn new(hit: TableColumnResizeHit, pos: [f32; 2]) -> Self {
+native\src\runtime.rs:14638:    /// Active DataFrameTable scrollbar drag session.
+native\src\runtime.rs:14642:    /// Active DataFrameTable column resize drag session.
+native\src\runtime.rs:14643:    table_column_resize_drag: Option<TableColumnResizeDrag>,
+native\src\runtime.rs:17654:            Command::SetTableData { id, table_json } => {
+native\src\runtime.rs:17659:                            "SetTableData",
+native\src\runtime.rs:17683:                    "SetTableData",
+native\src\runtime.rs:17691:            Command::SetTableDataColumns {
+native\src\runtime.rs:17704:                            "SetTableDataColumns",
+native\src\runtime.rs:17730:                    "SetTableDataColumns",
+native\src\runtime.rs:18393:    fn begin_table_column_resize_drag(&mut self, hit: TableColumnResizeHit, pos: [f32; 2]) {
+native\src\runtime.rs:18394:        self.table_column_resize_drag = Some(TableColumnResizeDrag::new(hit, pos));
+native\src\runtime.rs:18608:            WidgetKind::Tab => {
+native\src\runtime.rs:18616:            WidgetKind::NavItem => {
+native\src\runtime.rs:18782:    fn toggle_table_sort(&mut self, id: &str, target: TableSortColumn) {
+native\src\runtime.rs:19096:        if matches!(&event.logical_key, Key::Named(NamedKey::Tab)) {
+native\src\runtime.rs:19367:                WidgetKind::Tab => match &event.logical_key {
+native\src\runtime.rs:19369:                        self.activate_widget(&id, WidgetKind::Tab);
+native\src\runtime.rs:19401:                WidgetKind::NavItem => match &event.logical_key {
+native\src\runtime.rs:19403:                        self.activate_widget(&id, WidgetKind::NavItem);
+native\src\runtime.rs:19435:                WidgetKind::DataFrameTable => {
+native\src\runtime.rs:20472:                                    TableHit::Header(col) => self.toggle_table_sort(&id, col),
+native\src\runtime.rs:20473:                                    TableHit::Cell { row, col } => {
+native\src\table.rs:2:use crate::events::{TableSortColumn, TableState};
+native\src\table.rs:8:pub struct TableMetrics {
+native\src\table.rs:16:pub struct VisibleTable {
+native\src\table.rs:24:pub enum TableHit {
+native\src\table.rs:25:    Header(TableSortColumn),
+native\src\table.rs:29:pub fn metrics(theme: &Theme, sf: f32) -> TableMetrics {
+native\src\table.rs:30:    TableMetrics {
+native\src\table.rs:38:pub fn metrics_for_node(node: &WidgetNode, theme: &Theme, sf: f32) -> TableMetrics {
+native\src\table.rs:55:pub fn min_column_width(metrics: TableMetrics) -> f32 {
+native\src\table.rs:59:pub fn column_width(table: &TableState, metrics: TableMetrics, col: usize) -> f32 {
+native\src\table.rs:69:pub fn total_column_width(table: &TableState, metrics: TableMetrics) -> f32 {
+native\src\table.rs:75:pub fn visible(table: &TableState, rect: &Rect, metrics: TableMetrics) -> VisibleTable {
+native\src\table.rs:91:    VisibleTable {
+native\src\table.rs:99:pub fn row_bounds(rect: &Rect, metrics: TableMetrics, row_offset: usize) -> Option<(f32, f32)> {
+native\src\table.rs:110:    table: &TableState,
+native\src\table.rs:112:    metrics: TableMetrics,
+native\src\table.rs:133:    table: &TableState,
+native\src\table.rs:135:    metrics: TableMetrics,
+native\src\table.rs:137:) -> Option<TableHit> {
+native\src\table.rs:144:            return Some(TableHit::Header(TableSortColumn::Index));
+native\src\table.rs:164:        return Some(TableHit::Header(TableSortColumn::Data(col)));
+native\src\table.rs:171:    Some(TableHit::Cell {
+native\src\table.rs:177:pub fn placeholder_cell(table: &TableState, row: usize, col: usize) -> String {
+native\src\table.rs:186:pub fn source_row(table: &TableState, display_row: usize) -> usize {
+native\src\table.rs:195:    table: &TableState,
+native\src\table.rs:209:    use crate::events::{SortDirection, TableSortColumn};
+native\src\table.rs:219:        let metrics = TableMetrics {
+native\src\table.rs:239:        let metrics = TableMetrics {
+native\src\table.rs:245:        let table = TableState {
+native\src\table.rs:278:        let metrics = TableMetrics {
+native\src\table.rs:284:        let table = TableState {
+native\src\table.rs:307:            Some(TableHit::Cell { row: 0, col: 1 })
+native\src\table.rs:333:        let table = TableState {
+native\src\table.rs:342:            sort: Some((TableSortColumn::Data(0), SortDirection::Asc)),
+native\src\table.rs:355:        let table = TableState {
+native\src\table.rs:374:        let metrics = TableMetrics {
+native\src\table.rs:383:            Some(TableHit::Header(TableSortColumn::Index))
+native\src\text\mod.rs:24:use crate::events::{TableSortColumn, WidgetState};
+native\src\text\mod.rs:36:    selected_part_style_for_state, standalone_badge_horizontal_padding_lp,
+native\src\text\mod.rs:1480:struct WoffTable {
+native\src\text\mod.rs:1539:        tables.push(WoffTable {
+native\src\text\mod.rs:1652:        WidgetKind::Tab => base_part_style(&node.style, "tab").map(|part| &part.text),
+native\src\text\mod.rs:1653:        WidgetKind::NavItem => base_part_style(&node.style, "item").map(|part| &part.text),
+native\src\text\mod.rs:1667:            if matches!(node.kind, WidgetKind::Badge | WidgetKind::Tag) {
+native\src\text\mod.rs:1675:    let line_height = if matches!(node.kind, WidgetKind::Badge | WidgetKind::Tag) {
+native\src\text\mod.rs:1708:            | WidgetKind::Badge
+native\src\text\mod.rs:1729:            | WidgetKind::Tab
+native\src\text\mod.rs:1730:            | WidgetKind::NavItem
+native\src\text\mod.rs:1914:                    WidgetKind::Badge | WidgetKind::Tag => {
+native\src\text\mod.rs:2000:                    WidgetKind::Tab => {
+native\src\text\mod.rs:2030:                    WidgetKind::NavItem => {
+native\src\text\mod.rs:2177:                } else if node.kind == WidgetKind::Tab && !placeholder {
+native\src\text\mod.rs:2185:                } else if node.kind == WidgetKind::NavItem && !placeholder {
+native\src\text\mod.rs:2193:                } else if matches!(node.kind, WidgetKind::Badge | WidgetKind::Tag) && !placeholder {
+native\src\text\mod.rs:2204:                        | WidgetKind::Badge
+native\src\text\mod.rs:2386:            WidgetKind::Button | WidgetKind::SmallButton | WidgetKind::Tab | WidgetKind::NavItem
+native\src\text\mod.rs:2828:        WidgetKind::Badge => "badge",
+native\src\text\mod.rs:2865:        WidgetKind::Tabs => "tabs",
+native\src\text\mod.rs:2866:        WidgetKind::Tab => "tab",
+native\src\text\mod.rs:2870:        WidgetKind::NavItem => "nav_item",
+native\src\text\mod.rs:2877:        WidgetKind::DataFrameTable => "dataframe_table",
+native\src\text\mod.rs:3170:    } else if (node.kind == WidgetKind::Tab && state.is_active_tab(&node.id))
+native\src\text\mod.rs:3171:        || (node.kind == WidgetKind::NavItem && state.is_active_nav_item(&node.id))
+native\src\text\mod.rs:3614:    let right_inset = if node.kind == WidgetKind::Tab {
+native\src\text\mod.rs:3619:    let Some(rect) = badge_rect(node, *r, theme, sf, right_inset) else {
+native\src\text\mod.rs:3638:    let badge_parts = &["badge"];
+native\src\text\mod.rs:3640:        text_line_height_for_parts(node, badge_parts, badge_font_size, theme, sf).max(rect.h);
+native\src\text\mod.rs:3641:    let visual = crate::style::part_visual_for_state(&node.style, &node.id, state, "badge");
+native\src\text\mod.rs:3648:    let color = part_text_color(node, state, theme, &["badge"], contrast_glyph_color(bg));
+native\src\text\mod.rs:3656:        part_font_family(node, badge_parts, node.style.text.font_family.as_ref()),
+native\src\text\mod.rs:3675:        text_options_for_parts(node, badge_parts),
+native\src\text\mod.rs:3679:fn badge_rect(
+native\src\text\mod.rs:4159:    if node.kind == WidgetKind::DataFrameTable {
+native\src\text\mod.rs:4199:                    .is_some_and(|(target, _)| target == TableSortColumn::Index)
+native\src\text\mod.rs:4263:                        .is_some_and(|(target, _)| target == TableSortColumn::Data(col))
+native\src\text\mod.rs:4950:    let tabular_nums = options.font_variant_numeric == Some(FontVariantNumeric::TabularNums);
+native\src\text\mod.rs:5173:    if options.font_variant_numeric == Some(FontVariantNumeric::TabularNums) {
+native\src\text\mod.rs:5528:    use crate::events::{NavigationItem, TableState};
+native\src\text\mod.rs:5627:        let mut table = node("table", WidgetKind::DataFrameTable);
+native\src\text\mod.rs:5856:        let mut badge = node("state", WidgetKind::Badge);
+native\src\text\mod.rs:5917:        let mut tab = node("debug", WidgetKind::Tab);
+native\src\text\mod.rs:7184:        let mut badge = node("badge", WidgetKind::Badge);
+native\src\text\mod.rs:7238:        let mut badge = node("badge", WidgetKind::Badge);
+native\src\text\mod.rs:7346:        let mut badge = node("badge", WidgetKind::Badge);
+native\src\text\mod.rs:7472:        let table = node("table", WidgetKind::DataFrameTable);
+native\src\text\mod.rs:7488:            TableState {
+native\src\text\mod.rs:7644:        let table = node("table", WidgetKind::DataFrameTable);
+native\src\text\mod.rs:7666:            TableState {
+native\src\primitives\mod.rs:14:use crate::events::{NavigationItem, SortDirection, TableSortColumn, WidgetState};
+native\src\primitives\mod.rs:10047:            WidgetKind::Tabs => {
+native\src\primitives\mod.rs:10139:                        badge_rect(node, [x, y, w, h], theme, sf, theme.spacing * sf)
+native\src\primitives\mod.rs:10453:            WidgetKind::Badge | WidgetKind::Tag => {
+native\src\primitives\mod.rs:10700:            WidgetKind::Tab => {
+native\src\primitives\mod.rs:10811:                if let Some(rect) = badge_rect(node, [x, y, w, h], theme, sf, gap) {
+native\src\primitives\mod.rs:10816:            WidgetKind::NavItem => {
+native\src\primitives\mod.rs:10843:                // NavItem::accent { width: 0px } hides it and
+native\src\primitives\mod.rs:10844:                // NavItem:selected::accent { width: 4px } overrides the base.
+native\src\primitives\mod.rs:10896:                    // 2px. NavItem::accent { padding: 6px } floats the bar in a
+native\src\primitives\mod.rs:10951:                if let Some(rect) = badge_rect(node, [x, y, w, h], theme, sf, theme.spacing * sf) {
+native\src\primitives\mod.rs:12213:            WidgetKind::DataFrameTable => {
+native\src\primitives\mod.rs:12310:                            TableSortColumn::Index if header_h > 0.0 => {
+native\src\primitives\mod.rs:12324:                            TableSortColumn::Data(sort_col)
+native\src\primitives\mod.rs:12487:    let node_is_active_tab = node.kind == WidgetKind::Tab && state.is_active_tab(&node.id);
+native\src\primitives\mod.rs:12805:fn badge_rect(
+native\src\primitives\mod.rs:12835:    let visual = part_visual_for(node, state, "badge");
+native\src\primitives\mod.rs:13738:        let mut table = node("table", WidgetKind::DataFrameTable);
+native\src\primitives\mod.rs:14608:        let mut badge = node("badge", WidgetKind::Badge);
+native\src\primitives\mod.rs:16172:        let mut table = node("table", WidgetKind::DataFrameTable);
+native\src\primitives\mod.rs:16420:        let mut tab = node("tab-a", WidgetKind::Tab);
+native\src\primitives\mod.rs:16690:        let mut badge = node("status", WidgetKind::Badge);
+native\src\primitives\mod.rs:16720:        let mut badge = node("status", WidgetKind::Badge);
+native\src\primitives\mod.rs:16764:        let mut tab = node("tab-a", WidgetKind::Tab);
+native\src\primitives\mod.rs:16902:        let mut badge = node("badge", WidgetKind::Badge);
+native\src\primitives\mod.rs:16935:        let mut back = node("back", WidgetKind::Badge);
+native\src\primitives\mod.rs:16938:        let mut front = node("front", WidgetKind::Badge);
+native\src\primitives\mod.rs:17162:        let mut table = node("table", WidgetKind::DataFrameTable);
+native\src\primitives\mod.rs:17187:            crate::events::TableState {
+native\src\primitives\mod.rs:17196:                sort: Some((TableSortColumn::Data(1), SortDirection::Asc)),
+native\src\primitives\mod.rs:17224:        let mut table = node("table", WidgetKind::DataFrameTable);
+native\src\primitives\mod.rs:17232:            crate::events::TableState {
+native\src\primitives\mod.rs:17328:        let mut tab = node("tab-a", WidgetKind::Tab);
+native\src\primitives\mod.rs:17390:        let mut tabs = node("tabs", WidgetKind::Tabs);
+native\src\primitives\mod.rs:17391:        let tab = node("tab-a", WidgetKind::Tab);
+native\src\primitives\mod.rs:17437:            "unstyled Tabs should not paint a full header box behind tab buttons"
+native\src\primitives\mod.rs:17441:            "unstyled Tabs should not paint a header divider line"
+native\src\primitives\mod.rs:17447:        let mut tabs = node("tabs", WidgetKind::Tabs);
+native\src\primitives\mod.rs:17502:        let mut tab = node("tab-a", WidgetKind::Tab);
+native\src\primitives\mod.rs:17558:        let mut nav = node("nav-overview", WidgetKind::NavItem);
+native\src\primitives\mod.rs:17632:        let mut nav = node("nav-overview", WidgetKind::NavItem);
+native\src\primitives\mod.rs:18215:        let mut badge = node("badge", WidgetKind::Badge);
+rg: native\src\*.rs: The filename, directory name, or volume label syntax is incorrect. (os error 123)

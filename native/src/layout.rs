@@ -2204,7 +2204,7 @@ fn apply_intrinsic_leaf_width(
     }
     if node.props.fixed_width.is_some()
         || authored_width_locks_intrinsic_leaf(node)
-        || authored_min_width_locks_intrinsic_leaf(node)
+        || authored_zero_min_width(node)
     {
         return;
     }
@@ -2244,11 +2244,15 @@ fn authored_width_locks_intrinsic_leaf(node: &WidgetNode) -> bool {
         )
 }
 
-fn authored_min_width_locks_intrinsic_leaf(node: &WidgetNode) -> bool {
-    node.style.layout.min_width.is_some()
+fn authored_zero_min_width(node: &WidgetNode) -> bool {
+    // `min-width: 0` is the CSS-compatible opt-out that lets dense flex/grid
+    // children shrink below intrinsic text width. Nonzero logical/calc min-width
+    // values can still be raised by intrinsic leaf minimums; percent min-width
+    // remains a parent-relative Taffy constraint.
+    matches!(node.style.layout.min_width, Some(value) if value <= 0.5)
         || matches!(
             node.style.layout.min_width_value,
-            Some(LayoutLength::LogicalPx(_) | LayoutLength::Percent(_) | LayoutLength::Calc(_))
+            Some(LayoutLength::LogicalPx(value)) if value <= 0.5
         )
 }
 
@@ -2788,7 +2792,10 @@ fn layout_size_locks_flex(layout: &crate::style::LayoutStyle) -> bool {
 }
 
 fn layout_length_locks_flex(value: Option<LayoutLength>) -> bool {
-    matches!(value, Some(LayoutLength::LogicalPx(_)))
+    matches!(
+        value,
+        Some(LayoutLength::LogicalPx(_) | LayoutLength::Percent(_) | LayoutLength::Calc(_))
+    )
 }
 
 fn reserve_scrollbar_gutter_padding(style: &mut Style, node: &WidgetNode, sf: f32) {
@@ -2987,12 +2994,28 @@ fn lp_value(value: LengthPercentage) -> f32 {
 }
 
 fn definite_content_size(style: &Style, parent_size: Option<(f32, f32)>) -> Option<(f32, f32)> {
-    let width = definite_dimension(style.size.width).or_else(|| parent_size.map(|size| size.0))?;
+    let width =
+        definite_dimension_for_content(style.size.width, style, parent_size.map(|size| size.0))?;
     let height =
-        definite_dimension(style.size.height).or_else(|| parent_size.map(|size| size.1))?;
+        definite_dimension_for_content(style.size.height, style, parent_size.map(|size| size.1))?;
     let padding_x = lp_value(style.padding.left) + lp_value(style.padding.right);
     let padding_y = lp_value(style.padding.top) + lp_value(style.padding.bottom);
     Some(((width - padding_x).max(0.0), (height - padding_y).max(0.0)))
+}
+
+fn definite_dimension_for_content(
+    value: Dimension,
+    style: &Style,
+    parent_axis_size: Option<f32>,
+) -> Option<f32> {
+    match value {
+        Dimension::Length(value) if value <= 0.5 && flex_basis_is_zero(style) => parent_axis_size,
+        other => definite_dimension(other).or(parent_axis_size),
+    }
+}
+
+fn flex_basis_is_zero(style: &Style) -> bool {
+    style.flex_grow > 0.0 && matches!(style.flex_basis, Dimension::Length(value) if value <= 0.5)
 }
 
 fn definite_dimension(value: Dimension) -> Option<f32> {
@@ -5073,6 +5096,174 @@ mod tests {
     }
 
     #[test]
+    fn app_shell_workbench_body_uses_flex_basis_without_collapsing_content() {
+        let sidebar = node(
+            "sidebar",
+            WidgetKind::Sidebar,
+            NodeProps {
+                fixed_width: Some(190.0),
+                ..NodeProps::default()
+            },
+            vec![node(
+                "nav",
+                WidgetKind::Button,
+                NodeProps {
+                    text: Some("Overview".to_string()),
+                    ..NodeProps::default()
+                },
+                vec![],
+            )],
+        );
+
+        let mut title = node(
+            "title",
+            WidgetKind::Label,
+            NodeProps {
+                text: Some("AppShell + Body + WorkbenchLayout".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        title.style.text.font_size = Some(20.0);
+
+        let mut caption = node(
+            "caption",
+            WidgetKind::Label,
+            NodeProps {
+                text: Some(
+                    "Bounded dashboard shell with a fixed sidebar, flexible scroll-owning body, \
+                     workbench main region, and fixed-height status bar."
+                        .to_string(),
+                ),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        caption.style.text.line_height = Some(LineHeight::Multiplier(1.14));
+
+        let mut main = node(
+            "main",
+            WidgetKind::ScrollArea,
+            NodeProps::default(),
+            vec![node(
+                "main-row",
+                WidgetKind::Panel,
+                NodeProps::default(),
+                vec![node(
+                    "main-label",
+                    WidgetKind::Label,
+                    NodeProps {
+                        text: Some("Workbench row".to_string()),
+                        ..NodeProps::default()
+                    },
+                    vec![],
+                )],
+            )],
+        );
+        main.style.layout.height_value = Some(LayoutLength::LogicalPx(292.0));
+        main.style.layout.flex_grow = Some(0.0);
+        main.style.layout.flex_shrink = Some(0.0);
+
+        let mut body = node(
+            "body",
+            WidgetKind::ScrollArea,
+            NodeProps::default(),
+            vec![title, caption, main],
+        );
+        body.style.layout.height_value = Some(LayoutLength::LogicalPx(0.0));
+        body.style.layout.flex_grow = Some(1.0);
+        body.style.layout.flex_shrink = Some(1.0);
+        body.style.layout.flex_basis_value = Some(LayoutLength::LogicalPx(0.0));
+        body.style.layout.min_width = Some(0.0);
+        body.style.layout.min_height = Some(0.0);
+        body.style.layout.overflow_y = Some(OverflowStyle::Auto);
+        body.style.layout.gap = Some(14.0);
+
+        let status = node(
+            "status",
+            WidgetKind::StatusBar,
+            NodeProps {
+                fixed_height: Some(34.0),
+                ..NodeProps::default()
+            },
+            vec![node(
+                "status-label",
+                WidgetKind::Label,
+                NodeProps {
+                    text: Some("Ready".to_string()),
+                    ..NodeProps::default()
+                },
+                vec![],
+            )],
+        );
+
+        let mut workbench = node(
+            "workbench",
+            WidgetKind::VLayout,
+            NodeProps::default(),
+            vec![body, status],
+        );
+        workbench.style.layout.width_value = Some(LayoutLength::Percent(100.0));
+        workbench.style.layout.height_value = Some(LayoutLength::Percent(100.0));
+        workbench.style.layout.flex_grow = Some(1.0);
+        workbench.style.layout.flex_shrink = Some(1.0);
+        workbench.style.layout.flex_basis_value = Some(LayoutLength::LogicalPx(0.0));
+        workbench.style.layout.min_width = Some(0.0);
+        workbench.style.layout.min_height = Some(0.0);
+
+        let mut shell = node(
+            "shell",
+            WidgetKind::HLayout,
+            NodeProps::default(),
+            vec![sidebar, workbench],
+        );
+        shell.style.layout.width_value = Some(LayoutLength::Percent(100.0));
+        shell.style.layout.height_value = Some(LayoutLength::Percent(100.0));
+        shell.style.layout.min_width = Some(0.0);
+        shell.style.layout.min_height = Some(0.0);
+
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![shell],
+        );
+
+        let layout = compute_layout(&root, 1040.0, 720.0, 1.0, &Theme::dark(), None);
+        let shell = layout.rects.get("shell").unwrap();
+        let sidebar = layout.rects.get("sidebar").unwrap();
+        let workbench = layout.rects.get("workbench").unwrap();
+        let body = layout.rects.get("body").unwrap();
+        let title = layout.rects.get("title").unwrap();
+        let caption = layout.rects.get("caption").unwrap();
+        let main = layout.rects.get("main").unwrap();
+        let status = layout.rects.get("status").unwrap();
+
+        assert_eq!(shell.h, 720.0);
+        assert_eq!(sidebar.w, 190.0);
+        assert!(
+            workbench.x >= sidebar.x + sidebar.w - 0.5 && workbench.x + workbench.w <= 1040.5,
+            "workbench should fill remaining visible width: sidebar={sidebar:?} workbench={workbench:?}"
+        );
+        assert!(
+            body.w > 800.0,
+            "scroll body content width should not collapse to the scrollbar gutter: {body:?}"
+        );
+        assert!(
+            title.w > 700.0 && caption.w > 700.0,
+            "body children should be measured against the grown body width: title={title:?} caption={caption:?}"
+        );
+        assert!(
+            main.h >= 291.0,
+            "fixed-height workbench main should remain visible in body content: {main:?}"
+        );
+        assert!(
+            (status.y - (720.0 - status.h)).abs() <= 0.5,
+            "status bar should stay pinned inside the workbench viewport: body={body:?} status={status:?}"
+        );
+    }
+
+    #[test]
     fn row_controls_keep_intrinsic_text_width() {
         let root = node(
             "window",
@@ -6132,6 +6323,114 @@ mod tests {
         assert!(
             right.x + right.w <= row.x + row.w + 0.5,
             "flex badges should stay inside row: row={row:?} left={left:?} right={right:?}"
+        );
+    }
+
+    #[test]
+    fn nonzero_logical_min_width_does_not_opt_out_of_intrinsic_leaf_width() {
+        let mut button = node(
+            "button",
+            WidgetKind::Button,
+            NodeProps {
+                text: Some("Deploy diagnostics".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        button.style.layout.min_width = Some(24.0);
+
+        let row = node(
+            "row",
+            WidgetKind::HLayout,
+            NodeProps::default(),
+            vec![button],
+        );
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![row],
+        );
+
+        let layout = compute_layout(&root, 60.0, 80.0, 1.0, &Theme::dark(), None);
+        let button = layout.rects.get("button").unwrap();
+
+        assert!(
+            button.w > 72.0,
+            "nonzero min-width should not suppress intrinsic button width: {button:?}"
+        );
+    }
+
+    #[test]
+    fn percent_min_width_remains_parent_relative_constraint() {
+        let mut button = node(
+            "button",
+            WidgetKind::Button,
+            NodeProps {
+                text: Some("Deploy diagnostics".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        button.style.layout.min_width_value = Some(LayoutLength::Percent(10.0));
+
+        let row = node(
+            "row",
+            WidgetKind::HLayout,
+            NodeProps::default(),
+            vec![button],
+        );
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![row],
+        );
+
+        let layout = compute_layout(&root, 60.0, 80.0, 1.0, &Theme::dark(), None);
+        let button = layout.rects.get("button").unwrap();
+
+        assert_eq!(
+            button.w, 6.0,
+            "percent min-width should remain parent-relative instead of being converted to an intrinsic fixed minimum: {button:?}"
+        );
+    }
+
+    #[test]
+    fn calc_min_width_does_not_opt_out_of_intrinsic_leaf_width() {
+        let mut button = node(
+            "button",
+            WidgetKind::Button,
+            NodeProps {
+                text: Some("Deploy diagnostics".to_string()),
+                ..NodeProps::default()
+            },
+            vec![],
+        );
+        button.style.layout.min_width_value = Some(LayoutLength::Calc(crate::style::CalcLength {
+            percent: 5.0,
+            px: 8.0,
+        }));
+
+        let row = node(
+            "row",
+            WidgetKind::HLayout,
+            NodeProps::default(),
+            vec![button],
+        );
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![row],
+        );
+
+        let layout = compute_layout(&root, 60.0, 80.0, 1.0, &Theme::dark(), None);
+        let button = layout.rects.get("button").unwrap();
+
+        assert!(
+            button.w > 72.0,
+            "calc min-width should not suppress intrinsic button width: {button:?}"
         );
     }
 

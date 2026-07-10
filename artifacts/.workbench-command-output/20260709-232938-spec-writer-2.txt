@@ -1,0 +1,205 @@
+        TextAlign::Center,
+        cache,
+        None,
+        caret_positions,
+        text_options_for_parts(node, badge_parts),
+    );
+}
+
+fn badge_rect(
+    node: &WidgetNode,
+    rect: Rect,
+    theme: &Theme,
+    sf: f32,
+    right_inset: f32,
+) -> Option<Rect> {
+    let badge = node
+        .props
+        .badge
+        .as_deref()
+        .filter(|badge| !badge.is_empty())?;
+    let badge_w = badge_width_for_text(&node.style, badge, theme, sf);
+    let badge_h = badge_height_for_style(&node.style, theme, sf).min((rect.h - 4.0 * sf).max(1.0));
+    let x = rect.x + rect.w - right_inset - badge_w;
+    let y = rect.y + (rect.h - badge_h) * 0.5;
+    if x <= rect.x || badge_w <= 0.0 || badge_h <= 0.0 {
+        return None;
+    }
+    Some(Rect {
+        x,
+        y,
+        w: badge_w,
+        h: badge_h,
+    })
+}
+
+fn badge_reserved_width(node: &WidgetNode, theme: &Theme, sf: f32) -> f32 {
+    node.props
+        .badge
+        .as_deref()
+        .filter(|badge| !badge.is_empty())
+        .map(|badge| badge_width_for_text(&node.style, badge, theme, sf) + BADGE_GAP_LP * sf)
+        .unwrap_or(0.0)
+}
+
+fn contrast_glyph_color(bg: [f32; 4]) -> Color {
+    let luminance = 0.2126 * bg[0] + 0.7152 * bg[1] + 0.0722 * bg[2];
+    if luminance > 0.55 {
+        Color::rgba(20, 20, 24, 255)
+    } else {
+        Color::rgba(255, 255, 255, 255)
+    }
+}
+
+fn collect_dropdown_overlay_text(
+    node: &WidgetNode,
+                            .get("indicator")
+                            .and_then(|part| part.layout.width)
+                            .unwrap_or(14.0)
+                            .max(1.0)
+                            * sf;
+                        let row_h = tree_node_row_height_for_style(node, theme, sf, Some(r.h))
+                            .min(r.h)
+                            .max(1.0);
+                        let row_pad = part_padding(node, &["row"], pad, sf);
+                        let left = r.x + row_pad + indicator_w + pad * 0.75;
+                        let top = r.y + ((row_h - line_height) * 0.5).max(0.0);
+                        (left, top, left, r.y, r.x + r.w - row_pad, r.y + row_h)
+                    }
+                    WidgetKind::Badge | WidgetKind::Tag => {
+                        let (pad_left, pad_right) =
+                            standalone_badge_horizontal_padding_lp(&node.style);
+                        let pad_left = pad_left * sf;
+                        let pad_right = pad_right * sf;
+                        let top = standalone_badge_text_top(*r, line_height);
+                        (
+                            r.x + pad_left,
+                            top,
+                            r.x + pad_left,
+                            r.y,
+                            r.x + r.w - pad_right,
+                            r.y + r.h,
+                        )
+                    }
+                    WidgetKind::NumberInput => {
+                        let step_w = number_stepper_width_for_style(&node.style, r.w, sf);
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        let text_left = r.x + step_w + pad;
+                        (
+                            text_left,
+                            top,
+                            text_left,
+                            r.y,
+                            r.x + r.w - step_w - pad * 0.5,
+                            r.y + r.h,
+                        )
+                    }
+                    WidgetKind::DragNumber => {
+                        let grip_w = node
+                            .style
+                            .parts
+                            .parts
+                            .get("grip")
+                            .and_then(|part| part.layout.width)
+                            .unwrap_or(16.0)
+                            .max(1.0)
+                            * sf;
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        let text_left = r.x + pad;
+                        (
+                            text_left,
+                            top,
+                            text_left,
+                            r.y,
+                            r.x + r.w - grip_w - pad * 0.5,
+                            r.y + r.h,
+                        )
+                    }
+                    WidgetKind::TextArea | WidgetKind::CodeEditor => {
+                        let visible_h = (r.h - pad * 2.0).max(1.0);
+                        let scroll_y = state.text_area_scroll_y(&node.id, visible_h, line_height);
+                        let scroll_x = if node.props.wrap.unwrap_or(true) {
+                            0.0
+                        } else {
+                            state.text_area_scroll_x(&node.id)
+                        };
+                        let gutter_w = if node.kind == WidgetKind::CodeEditor {
+                            code_editor_gutter_width_for_style(&node.style, sf)
+                                .min((r.w - pad * 2.0).max(1.0) * 0.5)
+                        } else {
+                            0.0
+                        };
+                        let top = r.y + pad;
+                        (
+                            r.x + pad + gutter_w - scroll_x,
+                            top - scroll_y,
+                            r.x + pad + gutter_w,
+                            r.y + pad,
+                            r.x + r.w - pad,
+                            r.y + r.h - pad,
+                        )
+                    }
+                    WidgetKind::LogView => {
+                        let visible_h = (r.h - pad * 2.0).max(1.0);
+                        let scroll_y = state.text_area_scroll_y(&node.id, visible_h, line_height);
+                        let top = r.y + pad;
+                        (
+                            r.x + pad,
+                            top - scroll_y,
+                            r.x + pad,
+                            r.y + pad,
+                            r.x + r.w - pad,
+                            r.y + r.h - pad,
+                        )
+                    }
+                    WidgetKind::Tab => {
+                        let scale = text_scale(font_size, theme);
+                        let tab_pad = part_padding(node, &["tab"], pad, sf);
+                        let reserved = badge_reserved_width(node, theme, sf);
+                        let left = r.x + tab_pad + TAB_GAP_LP * scale * 0.5;
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        (
+                            left,
+                            top,
+                            left,
+                            r.y,
+                            r.x + r.w - tab_pad - TAB_GAP_LP * scale * 0.5 - reserved,
+                            r.y + r.h,
+                        )
+                    }
+                    WidgetKind::ProgressBar => {
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        (r.x + pad, top, r.x + pad, r.y, r.x + r.w - pad, r.y + r.h)
+                    }
+                    WidgetKind::LoadingSpinner => {
+                        let spinner_size = loading_spinner_size_lp(node) * sf;
+                        let gap = LOADING_SPINNER_GAP_LP * sf;
+                        let left = r.x + spinner_size + gap;
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        (left, top, left, r.y, r.x + r.w - pad, r.y + r.h)
+                    }
+                    WidgetKind::IconButton => {
+                        let top = centered_control_text_top(*r, line_height);
+                        (r.x, top, r.x, r.y, r.x + r.w, r.y + r.h)
+                    }
+                    WidgetKind::NavItem => {
+                        let item_pad = part_padding(node, &["item"], pad, sf);
+                        let reserved = badge_reserved_width(node, theme, sf);
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        (
+                            r.x + item_pad,
+                            top,
+                            r.x + item_pad,
+                            r.y,
+                            r.x + r.w - item_pad - reserved,
+                            r.y + r.h,
+                        )
+                    }
+                    WidgetKind::Menu => {
+                        let menu_pad = pad * 0.5;
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        (
+                            r.x + menu_pad,
+                            top,
+                            r.x + menu_pad,
+                            r.y,

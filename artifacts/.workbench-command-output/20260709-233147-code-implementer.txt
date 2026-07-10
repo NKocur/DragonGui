@@ -1,0 +1,260 @@
+                            .map(|width| width.max(1.0) * sf)
+                            .unwrap_or(CHECKBOX_BOX_LP * sf);
+                        let left = r.x + CHECKBOX_LEFT_PAD_LP * sf + box_w + pad;
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        (left, top, left, r.y, r.x + r.w - pad, r.y + r.h)
+                    }
+                    WidgetKind::Collapsible => {
+                        let header_h =
+                            collapsible_header_height_for_style(&node.style, theme, sf).min(r.h);
+                        let indicator_w = node
+                            .style
+                            .parts
+                            .parts
+                            .get("indicator")
+                            .and_then(|part| part.layout.width)
+                            .unwrap_or(16.0)
+                            .max(1.0)
+                            * sf;
+                        let header_pad = part_padding(node, &["header"], pad, sf);
+                        let left = r.x + header_pad + indicator_w + pad * 0.75;
+                        let top = r.y + ((header_h - line_height) * 0.5).max(0.0);
+                        (left, top, left, r.y, r.x + r.w - header_pad, r.y + header_h)
+                    }
+                    WidgetKind::Dropdown => {
+                        let chevron_w = dropdown_chevron_width(node, font_size, theme, sf);
+                        let chevron_left = r.x + r.w - pad - chevron_w;
+                        let top = centered_control_text_top(*r, line_height);
+                        (
+                            r.x + pad,
+                            top,
+                            r.x + pad,
+                            r.y,
+                            chevron_left - pad * 0.5,
+                            r.y + r.h,
+                        )
+                    }
+                    WidgetKind::Button | WidgetKind::SmallButton => {
+                        let reserved = badge_reserved_width(node, theme, sf);
+                        let top = centered_control_text_top(*r, line_height);
+                        (
+                            r.x + pad,
+                            top,
+                            r.x + pad,
+                            r.y,
+                            r.x + r.w - pad - reserved,
+                            r.y + r.h,
+                        )
+                    }
+                    WidgetKind::Selectable => {
+                        let row_pad = part_padding(node, &["row"], pad, sf);
+                        let indicator_slot = 14.0 * sf;
+                        let left = r.x + row_pad + indicator_slot;
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        (left, top, left, r.y, r.x + r.w - row_pad, r.y + r.h)
+                    }
+                    WidgetKind::RadioButton => {
+                        let indicator_w = node
+                            .style
+                            .parts
+                            .parts
+                            .get("indicator")
+                            .and_then(|part| part.layout.width)
+                            .unwrap_or(14.0)
+                            .max(1.0)
+                            * sf;
+                        let left = r.x + pad + indicator_w + pad * 0.9;
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        (left, top, left, r.y, r.x + r.w - pad, r.y + r.h)
+                    }
+                    WidgetKind::ToggleSwitch => {
+                        let track_w = node
+                            .style
+                            .parts
+                            .parts
+                            .get("track")
+                            .and_then(|part| part.layout.width)
+                            .map(|width| width.max(1.0) * sf)
+                            .unwrap_or(TOGGLE_SWITCH_TRACK_WIDTH_LP * sf)
+                            .min(r.w.max(1.0));
+                        let label_left = node
+                            .props
+                            .raw_props
+                            .get("label_position")
+                            .and_then(|value| value.as_str())
+                            .is_some_and(|value| value.eq_ignore_ascii_case("left"));
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        if label_left {
+                            let track_x = r.x + r.w - CHECKBOX_LEFT_PAD_LP * sf - track_w;
+                            let left = r.x + pad;
+                            (left, top, left, r.y, (track_x - pad).max(left), r.y + r.h)
+                        } else {
+                            let left = r.x + CHECKBOX_LEFT_PAD_LP * sf + track_w + pad;
+                            (left, top, left, r.y, r.x + r.w - pad, r.y + r.h)
+                        }
+                    }
+                    WidgetKind::TreeNode => {
+                        let indicator_w = node
+                            .style
+                            .parts
+                            .parts
+                            .get("indicator")
+                            .and_then(|part| part.layout.width)
+                            .unwrap_or(14.0)
+                            .max(1.0)
+                            * sf;
+                        let row_h = tree_node_row_height_for_style(node, theme, sf, Some(r.h))
+                            .min(r.h)
+                            .max(1.0);
+                        let row_pad = part_padding(node, &["row"], pad, sf);
+                        let left = r.x + row_pad + indicator_w + pad * 0.75;
+                        let top = r.y + ((row_h - line_height) * 0.5).max(0.0);
+                        (left, top, left, r.y, r.x + r.w - row_pad, r.y + row_h)
+                    }
+                    WidgetKind::Badge | WidgetKind::Tag => {
+                        let (pad_left, pad_right) =
+                            standalone_badge_horizontal_padding_lp(&node.style);
+                        let pad_left = pad_left * sf;
+                        let pad_right = pad_right * sf;
+                        let top = standalone_badge_text_top(*r, line_height);
+                        (
+                            r.x + pad_left,
+                            top,
+                            r.x + pad_left,
+                            r.y,
+                            r.x + r.w - pad_right,
+                            r.y + r.h,
+                        )
+                    }
+                    WidgetKind::NumberInput => {
+                        let step_w = number_stepper_width_for_style(&node.style, r.w, sf);
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        let text_left = r.x + step_w + pad;
+                        (
+                            text_left,
+                            top,
+                            text_left,
+                            r.y,
+                            r.x + r.w - step_w - pad * 0.5,
+                            r.y + r.h,
+                        )
+                    }
+                    WidgetKind::DragNumber => {
+                        let grip_w = node
+                            .style
+                            .parts
+                            .parts
+                            .get("grip")
+                            .and_then(|part| part.layout.width)
+                            .unwrap_or(16.0)
+                            .max(1.0)
+                            * sf;
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        let text_left = r.x + pad;
+                        (
+                            text_left,
+                            top,
+                            text_left,
+                            r.y,
+                            r.x + r.w - grip_w - pad * 0.5,
+                            r.y + r.h,
+                        )
+                    }
+                    WidgetKind::TextArea | WidgetKind::CodeEditor => {
+                        let visible_h = (r.h - pad * 2.0).max(1.0);
+                        let scroll_y = state.text_area_scroll_y(&node.id, visible_h, line_height);
+                        let scroll_x = if node.props.wrap.unwrap_or(true) {
+                            0.0
+                        } else {
+                            state.text_area_scroll_x(&node.id)
+                        };
+                        let gutter_w = if node.kind == WidgetKind::CodeEditor {
+                            code_editor_gutter_width_for_style(&node.style, sf)
+                                .min((r.w - pad * 2.0).max(1.0) * 0.5)
+                        } else {
+                            0.0
+                        };
+                        let top = r.y + pad;
+                        (
+                            r.x + pad + gutter_w - scroll_x,
+                            top - scroll_y,
+                            r.x + pad + gutter_w,
+                            r.y + pad,
+                            r.x + r.w - pad,
+                            r.y + r.h - pad,
+                        )
+                    }
+                    WidgetKind::LogView => {
+                        let visible_h = (r.h - pad * 2.0).max(1.0);
+                        let scroll_y = state.text_area_scroll_y(&node.id, visible_h, line_height);
+                        let top = r.y + pad;
+                        (
+                            r.x + pad,
+                            top - scroll_y,
+                            r.x + pad,
+                            r.y + pad,
+                            r.x + r.w - pad,
+                            r.y + r.h - pad,
+                        )
+                    }
+                    WidgetKind::Tab => {
+                        let scale = text_scale(font_size, theme);
+                        let tab_pad = part_padding(node, &["tab"], pad, sf);
+                        let reserved = badge_reserved_width(node, theme, sf);
+                        let left = r.x + tab_pad + TAB_GAP_LP * scale * 0.5;
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        (
+                            left,
+                            top,
+                            left,
+                            r.y,
+                            r.x + r.w - tab_pad - TAB_GAP_LP * scale * 0.5 - reserved,
+                            r.y + r.h,
+                        )
+                    }
+                    WidgetKind::ProgressBar => {
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        (r.x + pad, top, r.x + pad, r.y, r.x + r.w - pad, r.y + r.h)
+                    }
+                    WidgetKind::LoadingSpinner => {
+                        let spinner_size = loading_spinner_size_lp(node) * sf;
+                        let gap = LOADING_SPINNER_GAP_LP * sf;
+                        let left = r.x + spinner_size + gap;
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        (left, top, left, r.y, r.x + r.w - pad, r.y + r.h)
+                    }
+                    WidgetKind::IconButton => {
+                        let top = centered_control_text_top(*r, line_height);
+                        (r.x, top, r.x, r.y, r.x + r.w, r.y + r.h)
+                    }
+                    WidgetKind::NavItem => {
+                        let item_pad = part_padding(node, &["item"], pad, sf);
+                        let reserved = badge_reserved_width(node, theme, sf);
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        (
+                            r.x + item_pad,
+                            top,
+                            r.x + item_pad,
+                            r.y,
+                            r.x + r.w - item_pad - reserved,
+                            r.y + r.h,
+                        )
+                    }
+                    WidgetKind::Menu => {
+                        let menu_pad = pad * 0.5;
+                        let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+                        (
+                            r.x + menu_pad,
+                            top,
+                            r.x + menu_pad,
+                            r.y,
+                            r.x + r.w - menu_pad,
+                            r.y + r.h,
+                        )
+                    }
+                    _ => {
+                        let top = if label_text_should_top_align(
+                            node,
+                            text,
+                            *r,
+                            font_size,

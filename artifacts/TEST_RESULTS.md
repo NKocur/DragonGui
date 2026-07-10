@@ -1,193 +1,166 @@
-# Test Results: Wrapped Text Selection and Caret Geometry
+# Test Results: Badge Layout Visual Audit Pass
 
 ## Environment
+
 - Workspace: `J:\Projects\DragonFrame`
-- Date: 2026-07-03
+- Date: 2026-07-10
 - Shell: PowerShell
-- PyO3/MSVC setup used for Rust tests:
-  - `PYO3_PYTHON=C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe`
-  - `LIB=C:\Users\nashk\AppData\Local\Programs\Python\Python313\libs;...`
+- Python used for validation: `C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe`
+- Role: Test Writer
 
 ## Summary
-Post-fix verification passed for the selection/caret scope. The wrapped-caret regression that previously reproduced the user symptom now passes.
 
-Covered and passing:
-- Shaped multi-line selection rectangles.
-- Short full-line selection stopping at shaped text width.
-- Proportional glyph selection width.
-- Wrapped logical line selection emitting multiple visual-line rects.
-- Shaped hit-testing using glyph positions.
-- Wrapped caret y-position using the correct visual run.
-- Non-wrapping `TextArea` horizontal scroll shifting selection geometry.
+Badge-focused validation passed. The new `badge-layout` visual-audit target is present, covers desktop/mobile/narrow sizes, and currently reports `pass`.
 
-Full native suite still fails in five apparently unrelated layout/chart tests.
+Current `artifacts/visual_audit/report.json`:
 
-## Workspace Inspection
+- Entries: 67
+- Screenshot references: 77
+- Snapshot references: 77
+- `pass`: 46
+- `needs_manual_interaction`: 21
+- `fail`: 0
+- `blocked`: 0
 
-```powershell
-git status --short
-```
+Badge-relevant rerun statuses:
 
-Result:
-```text
- M native/src/events.rs
- M native/src/primitives/mod.rs
- M native/src/runtime.rs
- M native/src/text/mod.rs
-?? artifacts/
-```
+- `badge-layout`: `pass`
+- `core-widgets`: `needs_manual_interaction`
+- `navigation-widgets`: `needs_manual_interaction`
+- `typography`: `pass`
+
+`core-widgets` and `navigation-widgets` remain interaction-gated because they include overlay/stateful controls; they did not report visual failures in this pass.
+
+## Commands And Results
 
 ```powershell
-rg -n "visual_run_byte_range|shaped_caret_xy_uses_wrapped_visual_run|fn caret_xy_for_buffer|pub\(crate\) fn shaped_text_cursor_at_point|shaped_text_selection_rects" native/src/text/mod.rs native/src/primitives/mod.rs native/src/runtime.rs
-```
-
-Result: confirmed the current fix and tests are present:
-- `native/src/text/mod.rs::caret_xy_for_buffer`
-- `native/src/text/mod.rs::visual_run_byte_range`
-- `native/src/text/mod.rs::shaped_text_cursor_at_point`
-- `native/src/text/mod.rs::shaped_text_selection_rects`
-- `native/src/text/mod.rs::shaped_caret_xy_uses_wrapped_visual_run`
-- `native/src/primitives/mod.rs` selection painting calls `shaped_text_selection_rects`
-
-Implementation spot-check:
-- `caret_xy_for_buffer` now obtains `visual_run_byte_range(&run, line_start)`.
-- It skips wrapped visual runs where `cursor < run_start || cursor > run_end`.
-- This prevents the first visual run of a wrapped logical line from claiming cursors that belong to later visual runs.
-
-## Commands and Results
-
-```powershell
-cargo fmt --manifest-path native/Cargo.toml -- --check
-```
-
-Result: passed.
-
-```powershell
+$py='C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe'
 $env:LIB='C:\Users\nashk\AppData\Local\Programs\Python\Python313\libs;' + $env:LIB
-$env:PYO3_PYTHON='C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe'
+$env:PYO3_PYTHON=$py
+& $py -m py_compile examples/css_feature_probes/badge_layout_probe.py tools/visual_audit.py
+cargo fmt --manifest-path native/Cargo.toml -- --check
 cargo check --manifest-path native/Cargo.toml
 ```
 
 Result: passed.
 
-```powershell
-$env:LIB='C:\Users\nashk\AppData\Local\Programs\Python\Python313\libs;' + $env:LIB
-$env:PYO3_PYTHON='C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe'
-cargo test --manifest-path native/Cargo.toml shaped_caret_xy_uses_wrapped_visual_run -- --nocapture
-```
-
-Result: passed.
-
-Summary:
 ```text
-running 1 test
-test text::tests::shaped_caret_xy_uses_wrapped_visual_run ... ok
-
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 584 filtered out
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.02s
 ```
+
+Focused native badge regression tests:
 
 ```powershell
 $env:LIB='C:\Users\nashk\AppData\Local\Programs\Python\Python313\libs;' + $env:LIB
 $env:PYO3_PYTHON='C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe'
-cargo test --manifest-path native/Cargo.toml shaped -- --nocapture
+$tests=@(
+  'narrow_button_badge_text_rect_stays_inside_parent',
+  'narrow_tab_and_nav_badge_text_rects_stay_inside_parent',
+  'button_label_clip_is_not_inverted_when_badge_consumes_width',
+  'narrow_button_badge_pill_rect_stays_inside_parent',
+  'narrow_tab_and_nav_badge_pill_rects_stay_inside_parent'
+)
+foreach ($t in $tests) {
+  cargo test --manifest-path native/Cargo.toml $t -- --nocapture
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
 ```
 
-Result: passed.
+Result: passed. Each focused test ran as one selected test and reported `ok`.
 
-Summary:
 ```text
-running 6 tests
-test text::tests::shaped_caret_xy_uses_wrapped_visual_run ... ok
-test text::tests::shaped_selection_wraps_long_logical_line_into_visual_rects ... ok
-test text::tests::shaped_selection_short_full_line_does_not_fill_control_width ... ok
-test text::tests::shaped_selection_select_all_multiline_emits_per_line_rects ... ok
-test text::tests::shaped_selection_uses_proportional_glyph_widths ... ok
-test text::tests::shaped_hit_testing_uses_glyph_positions ... ok
-
-test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 579 filtered out
+text::tests::narrow_button_badge_text_rect_stays_inside_parent ... ok
+text::tests::narrow_tab_and_nav_badge_text_rects_stay_inside_parent ... ok
+text::tests::button_label_clip_is_not_inverted_when_badge_consumes_width ... ok
+primitives::tests::narrow_button_badge_pill_rect_stays_inside_parent ... ok
+primitives::tests::narrow_tab_and_nav_badge_pill_rects_stay_inside_parent ... ok
 ```
+
+Badge-related visual audit rerun:
 
 ```powershell
+$py='C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe'
 $env:LIB='C:\Users\nashk\AppData\Local\Programs\Python\Python313\libs;' + $env:LIB
-$env:PYO3_PYTHON='C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe'
-cargo test --manifest-path native/Cargo.toml text_area_selection_rect_honors_horizontal_scroll_when_unwrapped -- --nocapture
+$env:PYO3_PYTHON=$py
+& $py tools/visual_audit.py --target badge-layout --sizes desktop,mobile,320x640 --append --wait-ms 1200 --timeout-ms 12000
+& $py tools/visual_audit.py --target core-widgets --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
+& $py tools/visual_audit.py --target navigation-widgets --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
+& $py tools/visual_audit.py --target typography --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
 ```
 
-Result: passed.
+Result: completed without command failures.
 
-Summary:
 ```text
-running 1 test
-test primitives::tests::text_area_selection_rect_honors_horizontal_scroll_when_unwrapped ... ok
-
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 584 filtered out
+badge-layout: pass
+core-widgets: needs_manual_interaction
+navigation-widgets: needs_manual_interaction
+typography: pass
 ```
+
+Report JSON and badge PNG consistency check:
 
 ```powershell
-$env:LIB='C:\Users\nashk\AppData\Local\Programs\Python\Python313\libs;' + $env:LIB
-$env:PYO3_PYTHON='C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe'
-cargo test --manifest-path native/Cargo.toml
+@'
+import glob, json, os, struct
+from collections import Counter
+with open('artifacts/visual_audit/report.json', encoding='utf-8') as f:
+    data = json.load(f)
+print('entries', len(data))
+print('statuses', dict(sorted(Counter(d['status'] for d in data).items())))
+print('screenshots', sum(len(d.get('screenshots', [])) for d in data))
+print('snapshots', sum(len(d.get('snapshots', [])) for d in data))
+print('failures', [d['id'] for d in data if d['status'] == 'fail'])
+print('blocked', [d['id'] for d in data if d['status'] == 'blocked'])
+for target in ['badge-layout','core-widgets','navigation-widgets','typography']:
+    item = next(d for d in data if d['id'] == target)
+    print(target, item['status'], len(item.get('screenshots', [])), len(item.get('snapshots', [])))
+for p in sorted(glob.glob('artifacts/visual_audit/screenshots/badge-layout*.png')):
+    with open(p, 'rb') as f:
+        sig = f.read(8); _ = f.read(4); chunk = f.read(4); w,h = struct.unpack('>II', f.read(8))
+    print(os.path.basename(p), w, h, 'ok' if sig == b'\x89PNG\r\n\x1a\n' and chunk == b'IHDR' else 'bad')
+'@ | & 'C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe' -
 ```
 
-Result: failed in five tests that do not appear related to text selection.
+Result:
 
-Summary:
 ```text
-test result: FAILED. 568 passed; 5 failed; 12 ignored; 0 measured; 0 filtered out
+entries 67
+statuses {'needs_manual_interaction': 21, 'pass': 46}
+screenshots 77
+snapshots 77
+failures []
+blocked []
+badge-layout pass 3 3
+core-widgets needs_manual_interaction 2 2
+navigation-widgets needs_manual_interaction 2 2
+typography pass 2 2
+badge-layout-320x640.png 320 640 ok
+badge-layout-390x720.png 390 720 ok
+badge-layout-desktop-1.png 900 640 ok
 ```
 
-Failures:
-```text
-layout::tests::calc_style_width_lowers_when_expression_is_single_unit
-layout::tests::flow_layout_auto_width_controls_do_not_reserve_wrapped_height
-layout::tests::horizontal_scroll_offset_moves_children_and_preserves_clip
-layout::tests::percent_style_width_uses_parent_space
-primitives::tests::bar_chart_value_labels_auto_contrast_and_accept_style_part_color
-```
+## Visual Inspection Notes
 
-Failure details:
-```text
-layout::tests::calc_style_width_lowers_when_expression_is_single_unit
-assertion `left == right` failed
-left: 340.0
-right: 280.0
+- `badge-layout-desktop-1.png`: pass. Standalone badges/tags and inline button, tab, and nav badges render with visible pill geometry and contained text in the desktop stress layout.
+- `badge-layout-390x720.png`: pass. Mobile badge cases remain visible and contained; no badge disappears due to narrow parent geometry.
+- `badge-layout-320x640.png`: pass. Narrow stress cases clip within controls rather than painting outside parent bounds or vanishing.
+- `navigation-widgets` mobile remains visually dense, consistent with the implementation notes, but the rerun did not show a badge-specific failure.
 
-layout::tests::flow_layout_auto_width_controls_do_not_reserve_wrapped_height
-auto-width button should grow beyond min-width for longer labels: Rect { x: 82.0, y: 0.0, w: 74.0, h: 32.0 }
+## Failures / Issues
 
-layout::tests::horizontal_scroll_offset_moves_children_and_preserves_clip
-assertion failed: scroll_container_max_x(root.children.first().unwrap(), &unscrolled) > 0.0
+- No `fail` or `blocked` targets are present in `artifacts/visual_audit/report.json`.
+- No focused badge regression test failed.
+- `core-widgets` and `navigation-widgets` remain marked `needs_manual_interaction`; this is expected for their overlay/stateful coverage and is not a badge-layout failure.
 
-layout::tests::percent_style_width_uses_parent_space
-assertion `left == right` failed
-left: 590.0
-right: 400.0
+## Not Run
 
-primitives::tests::bar_chart_value_labels_auto_contrast_and_accept_style_part_color
-styled pie legend label
-```
-
-## Manual Smoke Status
-Manual GUI smoke testing was not completed in this tester session. The automated geometry coverage now directly covers the wrapped-caret failure mode and the previous selection rectangle issues, but a real visual pass is still recommended before release.
-
-Recommended manual cases:
-- `TextInput`: select short text, select all, drag both directions.
-- `NumberInput`: same checks with stepper offsets.
-- `TextArea`: multi-line select-all and drag across lines.
-- Wrapped `TextArea`: one long logical line wraps; click/drag on second and third visual lines; caret and highlight should move there.
-- Wrapped `LogView`: same wrapped-line caret/highlight behavior.
-- Non-wrapping text area: horizontally scroll, then select visible text.
-- `CodeEditor`: verify gutter offset does not shift highlight or caret.
-- Proportional string such as `iiii WWWW`: selection should follow shaped glyph width.
-
-## Risk Notes
-- The full native suite failures are unchanged in class from prior artifacts and are outside the text-selection scope.
-- The PyO3/MSVC test environment still needs explicit Python 3.13 and `Python313\libs`; default `python` may link incorrectly.
-- The shaped geometry helpers still construct a fresh/default font system and alias map, so custom loaded font aliases may diverge from renderer geometry.
-- Additional BiDi, ligature, and complex-script coverage would be useful if those are expected to be first-class visual cases.
+- Full `cargo test --manifest-path native/Cargo.toml` was not run.
+- Full all-target visual audit was not rerun from scratch.
+- Manual interaction coverage for the 21 `needs_manual_interaction` visual targets was not performed.
+- Scrolled captures for long/overflowing probe content were not performed.
 
 ## Next Steps
-1. Proceed to Archivist/release handoff for the automated text-selection and wrapped-caret fix.
-2. Run the manual GUI smoke checklist above before release.
-3. Triage the five full-suite layout/chart failures separately unless they are already known baseline failures.
-4. Keep the Python 3.13 PyO3/MSVC setup documented for future native test runs.
+
+1. Run full native tests before release or before merging a broader layout batch.
+2. Add automated interaction-state coverage for the 21 `needs_manual_interaction` targets.
+3. Consider scrolled or staged visual captures for dense mobile navigation probes so non-badge cramped states are easier to review.

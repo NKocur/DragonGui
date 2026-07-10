@@ -29,16 +29,16 @@ use crate::overlays::{
 };
 use crate::resources::ResourceRegistry;
 use crate::style::{
-    badge_font_size_lp, badge_height_for_style, badge_width_for_text, base_part_style,
-    checked_part_style_for_state, code_editor_gutter_width_for_style,
-    collapsed_part_style_for_state, collapsible_header_height_for_style,
-    expanded_part_style_for_state, number_stepper_width_for_style, open_part_style_for_state,
+    badge_font_size_lp, base_part_style, checked_part_style_for_state,
+    code_editor_gutter_width_for_style, collapsed_part_style_for_state,
+    collapsible_header_height_for_style, expanded_part_style_for_state,
+    inline_badge_layout_for_text, number_stepper_width_for_style, open_part_style_for_state,
     selected_part_style_for_state, standalone_badge_horizontal_padding_lp,
     state_part_style_for_state, uniform_layout_padding, ColorRef, FontFamily, FontStyle,
     FontVariantNumeric, GeneratedContent, LineHeight, NodeStyle, PartLayoutStyle, PartStyle,
     PositionStyle, TextAlign, TextOverflow, TextSpacing, TextStyle, TextTransform, TransformStyle,
-    VisualStyle, BADGE_GAP_LP, BORDER_WIDTH_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP,
-    DROPDOWN_CHEVRON_WIDTH_LP, TAB_GAP_LP, TOGGLE_SWITCH_TRACK_WIDTH_LP,
+    VisualStyle, BORDER_WIDTH_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP, DROPDOWN_CHEVRON_WIDTH_LP,
+    TAB_GAP_LP, TOGGLE_SWITCH_TRACK_WIDTH_LP,
 };
 use crate::table;
 use crate::theme::{parse_hex_color, parse_web_color, Theme};
@@ -1835,16 +1835,12 @@ fn collect_text(
                         )
                     }
                     WidgetKind::Button | WidgetKind::SmallButton => {
-                        let reserved = badge_reserved_width(node, theme, sf);
+                        let right_inset = theme.spacing * sf;
+                        let reserved = badge_reserved_width(node, theme, sf, r.w, r.h, right_inset);
+                        let left = r.x + pad;
+                        let right = (r.x + r.w - pad - reserved).max(left);
                         let top = centered_control_text_top(*r, line_height);
-                        (
-                            r.x + pad,
-                            top,
-                            r.x + pad,
-                            r.y,
-                            r.x + r.w - pad - reserved,
-                            r.y + r.h,
-                        )
+                        (left, top, left, r.y, right, r.y + r.h)
                     }
                     WidgetKind::Selectable => {
                         let row_pad = part_padding(node, &["row"], pad, sf);
@@ -2000,17 +1996,13 @@ fn collect_text(
                     WidgetKind::Tab => {
                         let scale = text_scale(font_size, theme);
                         let tab_pad = part_padding(node, &["tab"], pad, sf);
-                        let reserved = badge_reserved_width(node, theme, sf);
+                        let right_inset = TAB_GAP_LP * sf;
+                        let reserved = badge_reserved_width(node, theme, sf, r.w, r.h, right_inset);
                         let left = r.x + tab_pad + TAB_GAP_LP * scale * 0.5;
+                        let right =
+                            (r.x + r.w - tab_pad - TAB_GAP_LP * scale * 0.5 - reserved).max(left);
                         let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
-                        (
-                            left,
-                            top,
-                            left,
-                            r.y,
-                            r.x + r.w - tab_pad - TAB_GAP_LP * scale * 0.5 - reserved,
-                            r.y + r.h,
-                        )
+                        (left, top, left, r.y, right, r.y + r.h)
                     }
                     WidgetKind::ProgressBar => {
                         let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
@@ -2029,16 +2021,12 @@ fn collect_text(
                     }
                     WidgetKind::NavItem => {
                         let item_pad = part_padding(node, &["item"], pad, sf);
-                        let reserved = badge_reserved_width(node, theme, sf);
+                        let right_inset = theme.spacing * sf;
+                        let reserved = badge_reserved_width(node, theme, sf, r.w, r.h, right_inset);
+                        let left = r.x + item_pad;
+                        let right = (r.x + r.w - item_pad - reserved).max(left);
                         let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
-                        (
-                            r.x + item_pad,
-                            top,
-                            r.x + item_pad,
-                            r.y,
-                            r.x + r.w - item_pad - reserved,
-                            r.y + r.h,
-                        )
+                        (left, top, left, r.y, right, r.y + r.h)
                     }
                     WidgetKind::Menu => {
                         let menu_pad = pad * 0.5;
@@ -3688,27 +3676,41 @@ fn badge_rect(
         .badge
         .as_deref()
         .filter(|badge| !badge.is_empty())?;
-    let badge_w = badge_width_for_text(&node.style, badge, theme, sf);
-    let badge_h = badge_height_for_style(&node.style, theme, sf).min((rect.h - 4.0 * sf).max(1.0));
-    let x = rect.x + rect.w - right_inset - badge_w;
-    let y = rect.y + (rect.h - badge_h) * 0.5;
-    if x <= rect.x || badge_w <= 0.0 || badge_h <= 0.0 {
-        return None;
-    }
+    let layout =
+        inline_badge_layout_for_text(&node.style, badge, theme, sf, rect.w, rect.h, right_inset);
+    let [x, y, w, h] = layout.visible_rect?;
     Some(Rect {
-        x,
-        y,
-        w: badge_w,
-        h: badge_h,
+        x: rect.x + x,
+        y: rect.y + y,
+        w,
+        h,
     })
 }
 
-fn badge_reserved_width(node: &WidgetNode, theme: &Theme, sf: f32) -> f32 {
+fn badge_reserved_width(
+    node: &WidgetNode,
+    theme: &Theme,
+    sf: f32,
+    parent_w: f32,
+    parent_h: f32,
+    right_inset: f32,
+) -> f32 {
     node.props
         .badge
         .as_deref()
         .filter(|badge| !badge.is_empty())
-        .map(|badge| badge_width_for_text(&node.style, badge, theme, sf) + BADGE_GAP_LP * sf)
+        .map(|badge| {
+            inline_badge_layout_for_text(
+                &node.style,
+                badge,
+                theme,
+                sf,
+                parent_w,
+                parent_h,
+                right_inset,
+            )
+            .reserved_width
+        })
         .unwrap_or(0.0)
 }
 
@@ -6006,6 +6008,107 @@ mod tests {
     }
 
     #[test]
+    fn narrow_button_badge_text_rect_stays_inside_parent() {
+        let mut button = node("narrow", WidgetKind::Button);
+        button.props.badge = Some("owner: platform-design".to_string());
+
+        let rect = Rect {
+            x: 10.0,
+            y: 12.0,
+            w: 42.0,
+            h: 28.0,
+        };
+        let badge = badge_rect(&button, rect, &Theme::dark(), 1.0, 8.0)
+            .expect("narrow badge should still produce a clipped rect");
+
+        assert!(
+            badge.x >= rect.x && badge.x + badge.w <= rect.x + rect.w,
+            "badge should stay inside parent: parent={rect:?} badge={badge:?}"
+        );
+        assert!(
+            badge.w <= rect.w - 8.0,
+            "badge width should be capped by available parent space: {badge:?}"
+        );
+    }
+
+    #[test]
+    fn narrow_tab_and_nav_badge_text_rects_stay_inside_parent() {
+        let theme = Theme::dark();
+        for kind in [WidgetKind::Tab, WidgetKind::NavItem] {
+            let mut node = node("narrow", kind);
+            node.props.badge = Some("overflow-count".to_string());
+            let rect = Rect {
+                x: 4.0,
+                y: 6.0,
+                w: 36.0,
+                h: 26.0,
+            };
+            let badge = badge_rect(&node, rect, &theme, 1.0, 8.0)
+                .expect("narrow inline badge should still produce a clipped rect");
+
+            assert!(
+                badge.x >= rect.x && badge.x + badge.w <= rect.x + rect.w,
+                "{kind:?} badge should stay inside parent: parent={rect:?} badge={badge:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn button_label_clip_is_not_inverted_when_badge_consumes_width() {
+        let mut button = node("narrow", WidgetKind::Button);
+        button.props.text = Some("Long deploy action label".to_string());
+        button.props.badge = Some("1234567890".to_string());
+
+        let mut layout = LayoutResult::default();
+        layout.rects.insert(
+            "narrow".to_string(),
+            Rect {
+                x: 10.0,
+                y: 12.0,
+                w: 160.0,
+                h: 30.0,
+            },
+        );
+
+        let theme = Theme::dark();
+        let state = WidgetState::default();
+        let mut font_system = FontSystem::new();
+        let font_aliases = FontFamilyAliases::default();
+        let mut cache = TextBufferCache::default();
+        let mut caret_positions = HashMap::new();
+        let mut entries = Vec::new();
+        collect_text(
+            &button,
+            &layout,
+            &state,
+            &theme,
+            None,
+            None,
+            [None, None],
+            None,
+            &[],
+            false,
+            &mut font_system,
+            &font_aliases,
+            1.0,
+            theme.spacing,
+            &mut cache,
+            &mut caret_positions,
+            &mut entries,
+        );
+
+        let label = entries
+            .iter()
+            .find(|entry| entry.key.text == "Long deploy action label")
+            .expect("button label text entry");
+        assert!(
+            label.clip.right >= label.clip.left,
+            "label clip should not invert when badge consumes the button: {:?}",
+            label.clip
+        );
+    }
+
+    #[test]
     fn shaped_selection_select_all_multiline_emits_per_line_rects() {
         let theme = Theme::dark();
         let mut area = node("area", WidgetKind::TextArea);
@@ -7231,6 +7334,66 @@ mod tests {
             "badge text should stay inside clip: text_right={text_right}, clip_right={}",
             entry.clip.right
         );
+    }
+
+    #[test]
+    fn constrained_standalone_badge_and_tag_text_clip_to_pill_rect() {
+        for kind in [WidgetKind::Badge, WidgetKind::Tag] {
+            let mut badge = node("badge", kind);
+            badge.props.text = Some("owner: platform-design".to_string());
+            badge.style.text.font_size = Some(13.0);
+            badge.style.layout.padding_left = Some(10.0);
+            badge.style.layout.padding_right = Some(10.0);
+            badge.style.visual.border_width = Some(2.0);
+
+            let mut layout = LayoutResult::default();
+            layout.rects.insert(
+                "badge".to_string(),
+                Rect {
+                    x: 8.0,
+                    y: 10.0,
+                    w: 72.0,
+                    h: 24.0,
+                },
+            );
+
+            let theme = Theme::dark();
+            let state = WidgetState::default();
+            let mut font_system = FontSystem::new();
+            let font_aliases = FontFamilyAliases::default();
+            let mut cache = TextBufferCache::default();
+            let mut caret_positions = HashMap::new();
+            let mut entries = Vec::new();
+            collect_text(
+                &badge,
+                &layout,
+                &state,
+                &theme,
+                None,
+                None,
+                [None, None],
+                None,
+                &[],
+                false,
+                &mut font_system,
+                &font_aliases,
+                1.0,
+                theme.spacing,
+                &mut cache,
+                &mut caret_positions,
+                &mut entries,
+            );
+
+            let entry = entries.first().expect("standalone badge text entry");
+            assert!(
+                entry.clip.left >= 8
+                    && entry.clip.right <= 80
+                    && entry.clip.top >= 10
+                    && entry.clip.bottom <= 34,
+                "{kind:?} text should clip to the constrained badge rect: {:?}",
+                entry.clip
+            );
+        }
     }
 
     #[test]

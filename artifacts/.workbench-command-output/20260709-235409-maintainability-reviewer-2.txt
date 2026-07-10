@@ -1,0 +1,871 @@
+diff --git a/native/src/layout.rs b/native/src/layout.rs
+index 8367f1b..72d5f69 100644
+--- a/native/src/layout.rs
++++ b/native/src/layout.rs
+@@ -2204,7 +2204,7 @@ fn apply_intrinsic_leaf_width(
+     }
+     if node.props.fixed_width.is_some()
+         || authored_width_locks_intrinsic_leaf(node)
+-        || authored_min_width_locks_intrinsic_leaf(node)
++        || authored_zero_min_width(node)
+     {
+         return;
+     }
+@@ -2244,11 +2244,11 @@ fn authored_width_locks_intrinsic_leaf(node: &WidgetNode) -> bool {
+         )
+ }
+ 
+-fn authored_min_width_locks_intrinsic_leaf(node: &WidgetNode) -> bool {
+-    node.style.layout.min_width.is_some()
++fn authored_zero_min_width(node: &WidgetNode) -> bool {
++    matches!(node.style.layout.min_width, Some(value) if value <= 0.5)
+         || matches!(
+             node.style.layout.min_width_value,
+-            Some(LayoutLength::LogicalPx(_) | LayoutLength::Percent(_) | LayoutLength::Calc(_))
++            Some(LayoutLength::LogicalPx(value)) if value <= 0.5
+         )
+ }
+ 
+@@ -2788,7 +2788,10 @@ fn layout_size_locks_flex(layout: &crate::style::LayoutStyle) -> bool {
+ }
+ 
+ fn layout_length_locks_flex(value: Option<LayoutLength>) -> bool {
+-    matches!(value, Some(LayoutLength::LogicalPx(_)))
++    matches!(
++        value,
++        Some(LayoutLength::LogicalPx(_) | LayoutLength::Percent(_) | LayoutLength::Calc(_))
++    )
+ }
+ 
+ fn reserve_scrollbar_gutter_padding(style: &mut Style, node: &WidgetNode, sf: f32) {
+@@ -2987,14 +2990,30 @@ fn lp_value(value: LengthPercentage) -> f32 {
+ }
+ 
+ fn definite_content_size(style: &Style, parent_size: Option<(f32, f32)>) -> Option<(f32, f32)> {
+-    let width = definite_dimension(style.size.width).or_else(|| parent_size.map(|size| size.0))?;
++    let width =
++        definite_dimension_for_content(style.size.width, style, parent_size.map(|size| size.0))?;
+     let height =
+-        definite_dimension(style.size.height).or_else(|| parent_size.map(|size| size.1))?;
++        definite_dimension_for_content(style.size.height, style, parent_size.map(|size| size.1))?;
+     let padding_x = lp_value(style.padding.left) + lp_value(style.padding.right);
+     let padding_y = lp_value(style.padding.top) + lp_value(style.padding.bottom);
+     Some(((width - padding_x).max(0.0), (height - padding_y).max(0.0)))
+ }
+ 
++fn definite_dimension_for_content(
++    value: Dimension,
++    style: &Style,
++    parent_axis_size: Option<f32>,
++) -> Option<f32> {
++    match value {
++        Dimension::Length(value) if value <= 0.5 && flex_basis_is_zero(style) => parent_axis_size,
++        other => definite_dimension(other).or(parent_axis_size),
++    }
++}
++
++fn flex_basis_is_zero(style: &Style) -> bool {
++    style.flex_grow > 0.0 && matches!(style.flex_basis, Dimension::Length(value) if value <= 0.5)
++}
++
+ fn definite_dimension(value: Dimension) -> Option<f32> {
+     match value {
+         Dimension::Length(value) => Some(value),
+@@ -5072,6 +5091,174 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn app_shell_workbench_body_uses_flex_basis_without_collapsing_content() {
++        let sidebar = node(
++            "sidebar",
++            WidgetKind::Sidebar,
++            NodeProps {
++                fixed_width: Some(190.0),
++                ..NodeProps::default()
++            },
++            vec![node(
++                "nav",
++                WidgetKind::Button,
++                NodeProps {
++                    text: Some("Overview".to_string()),
++                    ..NodeProps::default()
++                },
++                vec![],
++            )],
++        );
++
++        let mut title = node(
++            "title",
++            WidgetKind::Label,
++            NodeProps {
++                text: Some("AppShell + Body + WorkbenchLayout".to_string()),
++                ..NodeProps::default()
++            },
++            vec![],
++        );
++        title.style.text.font_size = Some(20.0);
++
++        let mut caption = node(
++            "caption",
++            WidgetKind::Label,
++            NodeProps {
++                text: Some(
++                    "Bounded dashboard shell with a fixed sidebar, flexible scroll-owning body, \
++                     workbench main region, and fixed-height status bar."
++                        .to_string(),
++                ),
++                ..NodeProps::default()
++            },
++            vec![],
++        );
++        caption.style.text.line_height = Some(LineHeight::Multiplier(1.14));
++
++        let mut main = node(
++            "main",
++            WidgetKind::ScrollArea,
++            NodeProps::default(),
++            vec![node(
++                "main-row",
++                WidgetKind::Panel,
++                NodeProps::default(),
++                vec![node(
++                    "main-label",
++                    WidgetKind::Label,
++                    NodeProps {
++                        text: Some("Workbench row".to_string()),
++                        ..NodeProps::default()
++                    },
++                    vec![],
++                )],
++            )],
++        );
++        main.style.layout.height_value = Some(LayoutLength::LogicalPx(292.0));
++        main.style.layout.flex_grow = Some(0.0);
++        main.style.layout.flex_shrink = Some(0.0);
++
++        let mut body = node(
++            "body",
++            WidgetKind::ScrollArea,
++            NodeProps::default(),
++            vec![title, caption, main],
++        );
++        body.style.layout.height_value = Some(LayoutLength::LogicalPx(0.0));
++        body.style.layout.flex_grow = Some(1.0);
++        body.style.layout.flex_shrink = Some(1.0);
++        body.style.layout.flex_basis_value = Some(LayoutLength::LogicalPx(0.0));
++        body.style.layout.min_width = Some(0.0);
++        body.style.layout.min_height = Some(0.0);
++        body.style.layout.overflow_y = Some(OverflowStyle::Auto);
++        body.style.layout.gap = Some(14.0);
++
++        let status = node(
++            "status",
++            WidgetKind::StatusBar,
++            NodeProps {
++                fixed_height: Some(34.0),
++                ..NodeProps::default()
++            },
++            vec![node(
++                "status-label",
++                WidgetKind::Label,
++                NodeProps {
++                    text: Some("Ready".to_string()),
++                    ..NodeProps::default()
++                },
++                vec![],
++            )],
++        );
++
++        let mut workbench = node(
++            "workbench",
++            WidgetKind::VLayout,
++            NodeProps::default(),
++            vec![body, status],
++        );
++        workbench.style.layout.width_value = Some(LayoutLength::Percent(100.0));
++        workbench.style.layout.height_value = Some(LayoutLength::Percent(100.0));
++        workbench.style.layout.flex_grow = Some(1.0);
++        workbench.style.layout.flex_shrink = Some(1.0);
++        workbench.style.layout.flex_basis_value = Some(LayoutLength::LogicalPx(0.0));
++        workbench.style.layout.min_width = Some(0.0);
++        workbench.style.layout.min_height = Some(0.0);
++
++        let mut shell = node(
++            "shell",
++            WidgetKind::HLayout,
++            NodeProps::default(),
++            vec![sidebar, workbench],
++        );
++        shell.style.layout.width_value = Some(LayoutLength::Percent(100.0));
++        shell.style.layout.height_value = Some(LayoutLength::Percent(100.0));
++        shell.style.layout.min_width = Some(0.0);
++        shell.style.layout.min_height = Some(0.0);
++
++        let root = node(
++            "window",
++            WidgetKind::Window,
++            NodeProps::default(),
++            vec![shell],
++        );
++
++        let layout = compute_layout(&root, 1040.0, 720.0, 1.0, &Theme::dark(), None);
++        let shell = layout.rects.get("shell").unwrap();
++        let sidebar = layout.rects.get("sidebar").unwrap();
++        let workbench = layout.rects.get("workbench").unwrap();
++        let body = layout.rects.get("body").unwrap();
++        let title = layout.rects.get("title").unwrap();
++        let caption = layout.rects.get("caption").unwrap();
++        let main = layout.rects.get("main").unwrap();
++        let status = layout.rects.get("status").unwrap();
++
++        assert_eq!(shell.h, 720.0);
++        assert_eq!(sidebar.w, 190.0);
++        assert!(
++            workbench.x >= sidebar.x + sidebar.w - 0.5 && workbench.x + workbench.w <= 1040.5,
++            "workbench should fill remaining visible width: sidebar={sidebar:?} workbench={workbench:?}"
++        );
++        assert!(
++            body.w > 800.0,
++            "scroll body content width should not collapse to the scrollbar gutter: {body:?}"
++        );
++        assert!(
++            title.w > 700.0 && caption.w > 700.0,
++            "body children should be measured against the grown body width: title={title:?} caption={caption:?}"
++        );
++        assert!(
++            main.h >= 291.0,
++            "fixed-height workbench main should remain visible in body content: {main:?}"
++        );
++        assert!(
++            (status.y - (720.0 - status.h)).abs() <= 0.5,
++            "status bar should stay pinned inside the workbench viewport: body={body:?} status={status:?}"
++        );
++    }
++
+     #[test]
+     fn row_controls_keep_intrinsic_text_width() {
+         let root = node(
+diff --git a/native/src/primitives/mod.rs b/native/src/primitives/mod.rs
+index 98821f3..681d6c6 100644
+--- a/native/src/primitives/mod.rs
++++ b/native/src/primitives/mod.rs
+@@ -20,9 +20,9 @@ use crate::layout::{
+ use crate::overlays::{find_node, menu_popup_rect, rich_tooltip_target, tooltip_target};
+ use crate::scatter::colormap;
+ use crate::style::{
+-    badge_height_for_style, badge_width_for_text, base_part_style, checked_part_style_for_state,
+-    code_editor_gutter_width_for_style, collapsed_part_style_for_state,
+-    collapsible_header_height_for_style, expanded_part_style_for_state,
++    base_part_style, checked_part_style_for_state, code_editor_gutter_width_for_style,
++    collapsed_part_style_for_state, collapsible_header_height_for_style,
++    expanded_part_style_for_state, inline_badge_layout_for_text,
+     merged_part_visual_for_state as style_merged_part_visual_for_state,
+     number_stepper_width_for_style, open_part_style_for_state,
+     part_style_active_for_state as style_part_style_active_for_state,
+@@ -12814,14 +12814,11 @@ fn badge_rect(
+         .badge
+         .as_deref()
+         .filter(|badge| !badge.is_empty())?;
+-    let badge_w = badge_width_for_text(&node.style, badge, theme, sf);
+-    let badge_h = badge_height_for_style(&node.style, theme, sf).min((rect[3] - 4.0 * sf).max(1.0));
+-    let x = rect[0] + rect[2] - right_inset - badge_w;
+-    let y = rect[1] + (rect[3] - badge_h) * 0.5;
+-    if x <= rect[0] || badge_w <= 0.0 || badge_h <= 0.0 {
+-        return None;
+-    }
+-    Some([x, y, badge_w, badge_h])
++    let layout =
++        inline_badge_layout_for_text(&node.style, badge, theme, sf, rect[2], rect[3], right_inset);
++    layout
++        .visible_rect
++        .map(|[x, y, w, h]| [rect[0] + x, rect[1] + y, w, h])
+ }
+ 
+ fn emit_badge_pill(
+@@ -14281,6 +14278,84 @@ mod tests {
+         assert_eq!(shadow.params, [6.0, 6.0, 1.0, 0.0]);
+     }
+ 
++    #[test]
++    fn narrow_button_badge_pill_rect_stays_inside_parent() {
++        let mut button = node("narrow", WidgetKind::Button);
++        button.props.badge = Some("owner: platform-design".to_string());
++
++        let parent = [10.0, 12.0, 42.0, 28.0];
++        let badge = badge_rect(&button, parent, &Theme::dark(), 1.0, 8.0)
++            .expect("narrow badge should still produce a clipped pill rect");
++
++        assert!(
++            badge[0] >= parent[0] && badge[0] + badge[2] <= parent[0] + parent[2],
++            "badge pill should stay inside parent: parent={parent:?} badge={badge:?}"
++        );
++        assert!(
++            badge[2] <= parent[2] - 8.0,
++            "badge pill width should be capped by available parent space: {badge:?}"
++        );
++    }
++
++    #[test]
++    fn narrow_tab_and_nav_badge_pill_rects_stay_inside_parent() {
++        let theme = Theme::dark();
++        for kind in [WidgetKind::Tab, WidgetKind::NavItem] {
++            let mut node = node("narrow", kind);
++            node.props.badge = Some("overflow-count".to_string());
++            let parent = [4.0, 6.0, 36.0, 26.0];
++            let badge = badge_rect(&node, parent, &theme, 1.0, 8.0)
++                .expect("narrow inline badge should still produce a clipped pill rect");
++
++            assert!(
++                badge[0] >= parent[0] && badge[0] + badge[2] <= parent[0] + parent[2],
++                "{kind:?} badge pill should stay inside parent: parent={parent:?} badge={badge:?}"
++            );
++        }
++    }
++
++    #[test]
++    fn disabled_button_still_emits_inline_badge_pill_inside_parent() {
++        let mut button = node("disabled", WidgetKind::Button);
++        button.props.badge = Some("1234567890".to_string());
++        button.props.disabled = true;
++
++        let parent = Rect {
++            x: 10.0,
++            y: 12.0,
++            w: 54.0,
++            h: 30.0,
++        };
++        let mut layout = LayoutResult::default();
++        layout.rects.insert("disabled".to_string(), parent);
++        let theme = Theme::dark();
++        let mut out = Vec::new();
++
++        emit_rects(
++            &button,
++            &layout,
++            &theme,
++            1.0,
++            &WidgetState::default(),
++            &HashMap::new(),
++            &mut out,
++        );
++
++        let expected = badge_rect(
++            &button,
++            [parent.x, parent.y, parent.w, parent.h],
++            &theme,
++            1.0,
++            theme.spacing,
++        )
++        .expect("disabled badge rect");
++        assert!(
++            out.iter().any(|inst| inst.rect == expected),
++            "disabled button should emit badge pill at {expected:?}; emitted rects: {:?}",
++            out.iter().map(|inst| inst.rect).collect::<Vec<_>>()
++        );
++    }
++
+     #[test]
+     fn backdrop_filter_brightness_and_saturation_affect_tint_instance() {
+         let mut out = Vec::new();
+diff --git a/native/src/style.rs b/native/src/style.rs
+index 909d71a..0de8ba6 100644
+--- a/native/src/style.rs
++++ b/native/src/style.rs
+@@ -67,27 +67,78 @@ pub(crate) fn badge_font_size_lp(style: &NodeStyle, theme: &Theme) -> f32 {
+ }
+ 
+ pub(crate) fn badge_height_for_style(style: &NodeStyle, theme: &Theme, sf: f32) -> f32 {
+-    let height_lp = style
+-        .parts
+-        .parts
+-        .get("badge")
++    let badge_part = style.parts.parts.get("badge");
++    let height_lp = badge_part
+         .and_then(|part| part.layout.height)
+-        .unwrap_or_else(|| (badge_font_size_lp(style, theme) + 6.0).max(BADGE_MIN_HEIGHT_LP));
++        .unwrap_or_else(|| {
++            let font_size = badge_font_size_lp(style, theme);
++            if let Some(part) = badge_part {
++                let padding = part.layout.padding.unwrap_or(3.0).max(0.0);
++                let border = part.visual.border_width.unwrap_or(0.0).max(0.0);
++                (font_size + padding * 2.0 + border * 2.0).max(BADGE_MIN_HEIGHT_LP)
++            } else {
++                (font_size + 6.0).max(BADGE_MIN_HEIGHT_LP)
++            }
++        });
+     (height_lp.max(1.0) * sf).max(1.0)
+ }
+ 
+ pub(crate) fn badge_width_for_text(style: &NodeStyle, badge: &str, theme: &Theme, sf: f32) -> f32 {
+-    if let Some(width_lp) = style
+-        .parts
+-        .parts
+-        .get("badge")
+-        .and_then(|part| part.layout.width)
+-    {
++    let badge_part = style.parts.parts.get("badge");
++    if let Some(width_lp) = badge_part.and_then(|part| part.layout.width) {
+         return (width_lp.max(1.0) * sf).max(1.0);
+     }
+     let font_size = badge_font_size_lp(style, theme);
+     let text_w = badge.chars().count() as f32 * font_size * 0.68;
+-    ((text_w + BADGE_PAD_X_LP * 2.0).max(BADGE_MIN_HEIGHT_LP) * sf).max(1.0)
++    let padding = badge_part
++        .and_then(|part| part.layout.padding)
++        .unwrap_or(BADGE_PAD_X_LP)
++        .max(0.0);
++    let border = badge_part
++        .and_then(|part| part.visual.border_width)
++        .unwrap_or(0.0)
++        .max(0.0);
++    ((text_w + padding * 2.0 + border * 2.0).max(BADGE_MIN_HEIGHT_LP) * sf).max(1.0)
++}
++
++#[derive(Debug, Clone, Copy, PartialEq)]
++pub(crate) struct InlineBadgeLayout {
++    pub(crate) visible_rect: Option<[f32; 4]>,
++    pub(crate) preferred_width: f32,
++    pub(crate) reserved_width: f32,
++}
++
++pub(crate) fn inline_badge_layout_for_text(
++    style: &NodeStyle,
++    badge: &str,
++    theme: &Theme,
++    sf: f32,
++    parent_w: f32,
++    parent_h: f32,
++    right_inset: f32,
++) -> InlineBadgeLayout {
++    let preferred_width = badge_width_for_text(style, badge, theme, sf);
++    let reserved_width = preferred_width + BADGE_GAP_LP * sf;
++    let preferred_h = badge_height_for_style(style, theme, sf);
++    let visible_h = preferred_h.min((parent_h - 4.0 * sf).max(1.0));
++    let available_w = (parent_w - right_inset).max(0.0);
++    let visible_w = preferred_width.min(available_w);
++    let x = parent_w - right_inset - visible_w;
++    let y = (parent_h - visible_h) * 0.5;
++
++    // Labels reserve the preferred badge width so they yield first. The visible
++    // pill is clipped to the parent so narrow controls keep a badge affordance.
++    let visible_rect = if x >= 0.0 && visible_w > 0.0 && visible_h > 0.0 {
++        Some([x, y, visible_w, visible_h])
++    } else {
++        None
++    };
++
++    InlineBadgeLayout {
++        visible_rect,
++        preferred_width,
++        reserved_width,
++    }
+ }
+ 
+ pub(crate) fn standalone_badge_width_for_text(
+@@ -102,7 +153,8 @@ pub(crate) fn standalone_badge_width_for_text(
+     let font_size = badge_font_size_lp(style, theme);
+     let text_w = badge.chars().count() as f32 * font_size * 0.90;
+     let (left, right) = standalone_badge_horizontal_padding_lp(style);
+-    ((text_w + left + right + 8.0).max(BADGE_MIN_HEIGHT_LP) * sf).max(1.0)
++    let border = style.visual.border_width.unwrap_or(0.0).max(0.0);
++    ((text_w + left + right + border * 2.0 + 8.0).max(BADGE_MIN_HEIGHT_LP) * sf).max(1.0)
+ }
+ 
+ pub(crate) fn standalone_badge_horizontal_padding_lp(style: &NodeStyle) -> (f32, f32) {
+@@ -2710,6 +2762,63 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn inline_badge_layout_reserves_preferred_width_but_clips_visible_rect() {
++        let mut style = NodeStyle::default();
++        style.text.font_size = Some(12.0);
++
++        let layout = inline_badge_layout_for_text(
++            &style,
++            "owner: platform-design",
++            &Theme::dark(),
++            1.0,
++            42.0,
++            28.0,
++            8.0,
++        );
++        let rect = layout
++            .visible_rect
++            .expect("narrow parent should still expose a clipped badge rect");
++
++        assert!(layout.reserved_width > rect[2]);
++        assert_eq!(rect[0], 0.0);
++        assert_eq!(rect[2], 34.0);
++        assert_eq!(layout.reserved_width, layout.preferred_width + BADGE_GAP_LP);
++    }
++
++    #[test]
++    fn inline_badge_layout_accounts_for_part_padding_and_border() {
++        let mut plain = NodeStyle::default();
++        plain.text.font_size = Some(12.0);
++
++        let mut styled = plain.clone();
++        styled.parts.parts.insert(
++            "badge".to_string(),
++            PartStyle {
++                layout: PartLayoutStyle {
++                    padding: Some(9.0),
++                    ..Default::default()
++                },
++                visual: VisualStyle {
++                    border_width: Some(2.0),
++                    ..Default::default()
++                },
++                ..Default::default()
++            },
++        );
++
++        let plain_layout =
++            inline_badge_layout_for_text(&plain, "99+", &Theme::dark(), 1.0, 200.0, 32.0, 8.0);
++        let styled_layout =
++            inline_badge_layout_for_text(&styled, "99+", &Theme::dark(), 1.0, 200.0, 32.0, 8.0);
++
++        assert!(styled_layout.preferred_width > plain_layout.preferred_width);
++        assert!(
++            styled_layout.visible_rect.expect("styled badge rect")[3]
++                > plain_layout.visible_rect.expect("plain badge rect")[3]
++        );
++    }
++
+     #[test]
+     fn parses_inline_web_color_strings() {
+         let style = NodeStyle::from_json(Some(&json!({
+diff --git a/native/src/text/mod.rs b/native/src/text/mod.rs
+index f6adbb7..022a9ab 100644
+--- a/native/src/text/mod.rs
++++ b/native/src/text/mod.rs
+@@ -29,16 +29,16 @@ use crate::overlays::{
+ };
+ use crate::resources::ResourceRegistry;
+ use crate::style::{
+-    badge_font_size_lp, badge_height_for_style, badge_width_for_text, base_part_style,
+-    checked_part_style_for_state, code_editor_gutter_width_for_style,
+-    collapsed_part_style_for_state, collapsible_header_height_for_style,
+-    expanded_part_style_for_state, number_stepper_width_for_style, open_part_style_for_state,
++    badge_font_size_lp, base_part_style, checked_part_style_for_state,
++    code_editor_gutter_width_for_style, collapsed_part_style_for_state,
++    collapsible_header_height_for_style, expanded_part_style_for_state,
++    inline_badge_layout_for_text, number_stepper_width_for_style, open_part_style_for_state,
+     selected_part_style_for_state, standalone_badge_horizontal_padding_lp,
+     state_part_style_for_state, uniform_layout_padding, ColorRef, FontFamily, FontStyle,
+     FontVariantNumeric, GeneratedContent, LineHeight, NodeStyle, PartLayoutStyle, PartStyle,
+     PositionStyle, TextAlign, TextOverflow, TextSpacing, TextStyle, TextTransform, TransformStyle,
+-    VisualStyle, BADGE_GAP_LP, BORDER_WIDTH_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP,
+-    DROPDOWN_CHEVRON_WIDTH_LP, TAB_GAP_LP, TOGGLE_SWITCH_TRACK_WIDTH_LP,
++    VisualStyle, BORDER_WIDTH_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP, DROPDOWN_CHEVRON_WIDTH_LP,
++    TAB_GAP_LP, TOGGLE_SWITCH_TRACK_WIDTH_LP,
+ };
+ use crate::table;
+ use crate::theme::{parse_hex_color, parse_web_color, Theme};
+@@ -1835,16 +1835,12 @@ fn collect_text(
+                         )
+                     }
+                     WidgetKind::Button | WidgetKind::SmallButton => {
+-                        let reserved = badge_reserved_width(node, theme, sf);
++                        let right_inset = theme.spacing * sf;
++                        let reserved = badge_reserved_width(node, theme, sf, r.w, r.h, right_inset);
++                        let left = r.x + pad;
++                        let right = (r.x + r.w - pad - reserved).max(left);
+                         let top = centered_control_text_top(*r, line_height);
+-                        (
+-                            r.x + pad,
+-                            top,
+-                            r.x + pad,
+-                            r.y,
+-                            r.x + r.w - pad - reserved,
+-                            r.y + r.h,
+-                        )
++                        (left, top, left, r.y, right, r.y + r.h)
+                     }
+                     WidgetKind::Selectable => {
+                         let row_pad = part_padding(node, &["row"], pad, sf);
+@@ -2000,17 +1996,13 @@ fn collect_text(
+                     WidgetKind::Tab => {
+                         let scale = text_scale(font_size, theme);
+                         let tab_pad = part_padding(node, &["tab"], pad, sf);
+-                        let reserved = badge_reserved_width(node, theme, sf);
++                        let right_inset = TAB_GAP_LP * sf;
++                        let reserved = badge_reserved_width(node, theme, sf, r.w, r.h, right_inset);
+                         let left = r.x + tab_pad + TAB_GAP_LP * scale * 0.5;
++                        let right =
++                            (r.x + r.w - tab_pad - TAB_GAP_LP * scale * 0.5 - reserved).max(left);
+                         let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+-                        (
+-                            left,
+-                            top,
+-                            left,
+-                            r.y,
+-                            r.x + r.w - tab_pad - TAB_GAP_LP * scale * 0.5 - reserved,
+-                            r.y + r.h,
+-                        )
++                        (left, top, left, r.y, right, r.y + r.h)
+                     }
+                     WidgetKind::ProgressBar => {
+                         let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+@@ -2029,16 +2021,12 @@ fn collect_text(
+                     }
+                     WidgetKind::NavItem => {
+                         let item_pad = part_padding(node, &["item"], pad, sf);
+-                        let reserved = badge_reserved_width(node, theme, sf);
++                        let right_inset = theme.spacing * sf;
++                        let reserved = badge_reserved_width(node, theme, sf, r.w, r.h, right_inset);
++                        let left = r.x + item_pad;
++                        let right = (r.x + r.w - item_pad - reserved).max(left);
+                         let top = r.y + ((r.h - line_height) * 0.5).max(0.0);
+-                        (
+-                            r.x + item_pad,
+-                            top,
+-                            r.x + item_pad,
+-                            r.y,
+-                            r.x + r.w - item_pad - reserved,
+-                            r.y + r.h,
+-                        )
++                        (left, top, left, r.y, right, r.y + r.h)
+                     }
+                     WidgetKind::Menu => {
+                         let menu_pad = pad * 0.5;
+@@ -3688,27 +3676,41 @@ fn badge_rect(
+         .badge
+         .as_deref()
+         .filter(|badge| !badge.is_empty())?;
+-    let badge_w = badge_width_for_text(&node.style, badge, theme, sf);
+-    let badge_h = badge_height_for_style(&node.style, theme, sf).min((rect.h - 4.0 * sf).max(1.0));
+-    let x = rect.x + rect.w - right_inset - badge_w;
+-    let y = rect.y + (rect.h - badge_h) * 0.5;
+-    if x <= rect.x || badge_w <= 0.0 || badge_h <= 0.0 {
+-        return None;
+-    }
++    let layout =
++        inline_badge_layout_for_text(&node.style, badge, theme, sf, rect.w, rect.h, right_inset);
++    let [x, y, w, h] = layout.visible_rect?;
+     Some(Rect {
+-        x,
+-        y,
+-        w: badge_w,
+-        h: badge_h,
++        x: rect.x + x,
++        y: rect.y + y,
++        w,
++        h,
+     })
+ }
+ 
+-fn badge_reserved_width(node: &WidgetNode, theme: &Theme, sf: f32) -> f32 {
++fn badge_reserved_width(
++    node: &WidgetNode,
++    theme: &Theme,
++    sf: f32,
++    parent_w: f32,
++    parent_h: f32,
++    right_inset: f32,
++) -> f32 {
+     node.props
+         .badge
+         .as_deref()
+         .filter(|badge| !badge.is_empty())
+-        .map(|badge| badge_width_for_text(&node.style, badge, theme, sf) + BADGE_GAP_LP * sf)
++        .map(|badge| {
++            inline_badge_layout_for_text(
++                &node.style,
++                badge,
++                theme,
++                sf,
++                parent_w,
++                parent_h,
++                right_inset,
++            )
++            .reserved_width
++        })
+         .unwrap_or(0.0)
+ }
+ 
+@@ -6005,6 +6007,107 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn narrow_button_badge_text_rect_stays_inside_parent() {
++        let mut button = node("narrow", WidgetKind::Button);
++        button.props.badge = Some("owner: platform-design".to_string());
++
++        let rect = Rect {
++            x: 10.0,
++            y: 12.0,
++            w: 42.0,
++            h: 28.0,
++        };
++        let badge = badge_rect(&button, rect, &Theme::dark(), 1.0, 8.0)
++            .expect("narrow badge should still produce a clipped rect");
++
++        assert!(
++            badge.x >= rect.x && badge.x + badge.w <= rect.x + rect.w,
++            "badge should stay inside parent: parent={rect:?} badge={badge:?}"
++        );
++        assert!(
++            badge.w <= rect.w - 8.0,
++            "badge width should be capped by available parent space: {badge:?}"
++        );
++    }
++
++    #[test]
++    fn narrow_tab_and_nav_badge_text_rects_stay_inside_parent() {
++        let theme = Theme::dark();
++        for kind in [WidgetKind::Tab, WidgetKind::NavItem] {
++            let mut node = node("narrow", kind);
++            node.props.badge = Some("overflow-count".to_string());
++            let rect = Rect {
++                x: 4.0,
++                y: 6.0,
++                w: 36.0,
++                h: 26.0,
++            };
++            let badge = badge_rect(&node, rect, &theme, 1.0, 8.0)
++                .expect("narrow inline badge should still produce a clipped rect");
++
++            assert!(
++                badge.x >= rect.x && badge.x + badge.w <= rect.x + rect.w,
++                "{kind:?} badge should stay inside parent: parent={rect:?} badge={badge:?}"
++            );
++        }
++    }
++
++    #[test]
++    fn button_label_clip_is_not_inverted_when_badge_consumes_width() {
++        let mut button = node("narrow", WidgetKind::Button);
++        button.props.text = Some("Long deploy action label".to_string());
++        button.props.badge = Some("1234567890".to_string());
++
++        let mut layout = LayoutResult::default();
++        layout.rects.insert(
++            "narrow".to_string(),
++            Rect {
++                x: 10.0,
++                y: 12.0,
++                w: 160.0,
++                h: 30.0,
++            },
++        );
++
++        let theme = Theme::dark();
++        let state = WidgetState::default();
++        let mut font_system = FontSystem::new();
++        let font_aliases = FontFamilyAliases::default();
++        let mut cache = TextBufferCache::default();
++        let mut caret_positions = HashMap::new();
++        let mut entries = Vec::new();
++        collect_text(
++            &button,
++            &layout,
++            &state,
++            &theme,
++            None,
++            None,
++            [None, None],
++            None,
++            &[],
++            false,
++            &mut font_system,
++            &font_aliases,
++            1.0,
++            theme.spacing,
++            &mut cache,
++            &mut caret_positions,
++            &mut entries,
++        );
++
++        let label = entries
++            .iter()
++            .find(|entry| entry.key.text == "Long deploy action label")
++            .expect("button label text entry");
++        assert!(
++            label.clip.right >= label.clip.left,
++            "label clip should not invert when badge consumes the button: {:?}",
++            label.clip
++        );
++    }
++
+     #[test]
+     fn shaped_selection_select_all_multiline_emits_per_line_rects() {
+         let theme = Theme::dark();
+@@ -7233,6 +7336,66 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn constrained_standalone_badge_and_tag_text_clip_to_pill_rect() {
++        for kind in [WidgetKind::Badge, WidgetKind::Tag] {
++            let mut badge = node("badge", kind);
++            badge.props.text = Some("owner: platform-design".to_string());
++            badge.style.text.font_size = Some(13.0);
++            badge.style.layout.padding_left = Some(10.0);
++            badge.style.layout.padding_right = Some(10.0);
++            badge.style.visual.border_width = Some(2.0);
++
++            let mut layout = LayoutResult::default();
++            layout.rects.insert(
++                "badge".to_string(),
++                Rect {
++                    x: 8.0,
++                    y: 10.0,
++                    w: 72.0,
++                    h: 24.0,
++                },
++            );
++
++            let theme = Theme::dark();
++            let state = WidgetState::default();
++            let mut font_system = FontSystem::new();
++            let font_aliases = FontFamilyAliases::default();
++            let mut cache = TextBufferCache::default();
++            let mut caret_positions = HashMap::new();
++            let mut entries = Vec::new();
++            collect_text(
++                &badge,
++                &layout,
++                &state,
++                &theme,
++                None,
++                None,
++                [None, None],
++                None,
++                &[],
++                false,
++                &mut font_system,
++                &font_aliases,
++                1.0,
++                theme.spacing,
++                &mut cache,
++                &mut caret_positions,
++                &mut entries,
++            );
++
++            let entry = entries.first().expect("standalone badge text entry");
++            assert!(
++                entry.clip.left >= 8
++                    && entry.clip.right <= 80
++                    && entry.clip.top >= 10
++                    && entry.clip.bottom <= 34,
++                "{kind:?} text should clip to the constrained badge rect: {:?}",
++                entry.clip
++            );
++        }
++    }
++
+     #[test]
+     fn standalone_badge_text_uses_pill_height_line_box() {
+         let mut badge = node("badge", WidgetKind::Badge);
+warning: LF will be replaced by CRLF in native/src/layout.rs.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in native/src/primitives/mod.rs.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in native/src/style.rs.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in native/src/text/mod.rs.
+The file will have its original line endings in your working directory

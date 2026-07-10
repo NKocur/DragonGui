@@ -1,0 +1,214 @@
+# Spec: Badge Visual Layout Audit And Fixes
+
+## Goal
+
+Run a badge-focused visual analysis similar to the existing `artifacts/visual_audit` work, identify remaining badge layout defects, fix the product code that causes them, and record the reviewed result in the visual-audit artifacts.
+
+The prior visual audit fixed the broad layout failures and now reports 45 `pass`, 21 `needs_manual_interaction`, 0 `fail`, and 0 `blocked`. This follow-up is narrower: badge rendering and layout in standalone `Badge` / `Tag` widgets and inline badges on `Button`, `SmallButton`, `Tab`, and `NavItem`.
+
+## Source Of Truth
+
+Relevant existing artifacts:
+
+- `artifacts/visual_audit/REPORT.md`
+- `artifacts/visual_audit/report.json`
+- `artifacts/visual_audit/screenshots/core-widgets-desktop-1.png`
+- `artifacts/visual_audit/screenshots/navigation-widgets-desktop-1.png`
+- `artifacts/visual_audit/screenshots/typography-desktop-1.png`
+- `artifacts/visual_audit/snapshots/core-widgets-desktop-1.json`
+- `artifacts/visual_audit/snapshots/navigation-widgets-desktop-1.json`
+- `artifacts/visual_audit/snapshots/typography-desktop-1.json`
+
+Existing coverage is not enough:
+
+- `core-widgets` includes standalone badges and button badges, but only the desktop screenshot exists in the current artifact set.
+- `navigation-widgets` includes `NavItem` and `Tab` badges, but only the desktop screenshot exists.
+- `typography` includes standalone tabular-number badges, but only desktop is present.
+- There is no dedicated badge stress probe for long badge text, narrow parents, high font scale, custom `::badge` padding/border, disabled/selected states, or mobile widths.
+
+## Current Code Findings
+
+The badge paths are split:
+
+- Standalone `Badge` and `Tag` layout is handled in `native/src/layout.rs`, with text emitted in `native/src/text/mod.rs` and paint in `native/src/primitives/mod.rs`.
+- Inline badge parts are stored as `node.props.badge` and are supported for `Button`, `SmallButton`, `Tab`, and `NavItem`.
+- Inline badge text reserves width via `badge_reserved_width()` in `native/src/text/mod.rs`.
+- Inline badge pills are painted by a separate `badge_rect()` in `native/src/primitives/mod.rs`.
+- There is a second `badge_rect()` in `native/src/text/mod.rs` for inline badge text. These two functions should stay behaviorally consistent.
+- `badge_rect()` currently hides the badge when its computed x position is at or left of the parent x. This can make inline badges disappear entirely in narrow controls instead of producing a controlled, clipped, or ellipsized result.
+- Inline badge height is clamped against the parent height. Large badge font/padding/border styles can therefore make badge text clip vertically unless the control height or text bounds account for the styled badge.
+- `native/src/layout.rs::intrinsic_leaf_width()` adds `badge_extra_width()` for `Button`, `SmallButton`, `Tab`, and `NavItem`, but narrow flex/grid/mobile cases can still reduce the final parent rect below the reserved badge width.
+
+## Required Visual Analysis
+
+Add a dedicated badge visual-audit target. Prefer a new probe:
+
+- `examples/css_feature_probes/badge_layout_probe.py`
+- add manifest entry in `examples/css_feature_probes/visual_audit_manifest.json`
+- category: `widgets`
+- features: `Badge`, `Tag`, `Button badge`, `Tab badge`, `NavItem badge`, `badge parts`, `responsive badges`
+- sizes: at least `[900, 640]`, `[390, 720]`, and a narrow stress size such as `[320, 640]`
+- `manual`: `false` unless the probe adds hover/open interaction
+
+The probe should include visible pass/fail labels and dense cases for:
+
+- Standalone badges: all semantic levels, empty/short/count/long labels, tabular numbers, custom font size, custom padding, custom border width, and constrained parent width.
+- Tags next to badges in wrapping rows and narrow `FlowLayout`.
+- Buttons with badges: normal, small, disabled, fixed narrow width, long button label with badge, long badge value, and CSS-styled `Button::badge`.
+- Tabs with badges: selected/unselected/disabled tabs, long labels, long badge values, narrow tab strip, and custom `Tab::badge` padding/border/background.
+- NavItems with badges: active/inactive/disabled rows, active accent bar plus badge, long label plus count, long badge value, narrow sidebar, and overflowed scroll sidebar.
+- Mobile layouts where parent width is smaller than the badge's preferred width.
+- High font scale or CSS `font-size` cases where the badge should not clip vertically.
+
+Use screenshots and debug snapshots to identify concrete failures before editing. Record the actual observed issues in `artifacts/IMPLEMENTATION_NOTES.md` after implementation.
+
+## Expected Behavior
+
+Standalone `Badge` and `Tag`:
+
+- Intrinsic width includes styled horizontal padding, border, and text width.
+- Text stays inside the pill bounds.
+- Long text is clipped or ellipsized consistently, but must not paint outside the badge rect or overlap neighboring widgets.
+- Styled border radius, border width, background, foreground, opacity, and font variant remain visually aligned with the rounded pill.
+- Badges in wrapping rows do not force sibling overlap or parent overflow unless horizontal scrolling is explicitly configured.
+
+Inline badges on `Button` and `SmallButton`:
+
+- Parent intrinsic width includes label width, badge width, badge gap, and relevant padding.
+- Narrow fixed-width buttons should keep badge and label within the button bounds. If both cannot fit, label text should give way before the badge disappears.
+- A badge should not paint outside the control, overlap the label text, or vanish solely because the preferred badge x would start at or before the parent left edge.
+- Disabled and styled states should still paint readable badge text.
+
+Inline badges on `Tab`:
+
+- The selected tab accent, tab label, and badge should align without overlapping.
+- Long tab labels should ellipsize or clip before colliding with the badge.
+- Disabled tabs with badges should remain readable enough and not create negative text bounds.
+- Badge geometry used for pill paint and text paint must match.
+
+Inline badges on `NavItem`:
+
+- Active accent bars, item padding, label text, and badges should all reserve space from the same box model.
+- Long labels should not push badges outside the sidebar.
+- Long badge values should be clipped/ellipsized within the nav item rather than overlapping the label or right edge.
+- Disabled nav items should not lose badge layout.
+
+## Affected Files And Modules
+
+Primary native implementation targets:
+
+- `native/src/layout.rs`
+  - intrinsic widths for standalone and inline badge cases
+  - flex/grid shrink behavior when badge reserved width exceeds available width
+  - focused regression tests for badge sizing in narrow parents
+- `native/src/text/mod.rs`
+  - inline badge text bounds
+  - standalone badge text bounds
+  - `badge_rect()` behavior for narrow controls
+  - label available width when `badge_reserved_width()` consumes most of the parent
+- `native/src/primitives/mod.rs`
+  - inline badge pill paint bounds
+  - standalone badge/tag pill paint
+  - keep `badge_rect()` behavior in sync with text
+
+Potential supporting files:
+
+- `native/src/css_style.rs` if badge part style parsing or `::badge` selector behavior is implicated.
+- `native/src/framework.dg.css` only if framework defaults make supported badge combinations impossible.
+- `python/dragongui/widgets.py` only if Python serialization/defaults omit needed badge data. Do not change public APIs unless required.
+- `examples/css_feature_probes/badge_layout_probe.py`
+- `examples/css_feature_probes/visual_audit_manifest.json`
+- `tests/test_python_api.py` only for serialization/API regressions.
+
+## Implementation Guidance
+
+Start with measurement, not guesses:
+
+1. Run the existing badge-containing targets with mobile sizes:
+   - `core-widgets`
+   - `navigation-widgets`
+   - `typography`
+2. Add and run the new `badge-layout` probe at desktop, `390x720`, and `320x640`.
+3. Inspect screenshots and snapshots for:
+   - badge rects outside parent rects
+   - badges missing despite non-empty `props.badge`
+   - label text bounds with negative or zero width
+   - standalone badge text painting outside the pill
+   - parent rows/panels whose children overlap after badge shrink
+4. Add native regression tests before or alongside fixes. Cover at minimum:
+   - narrow fixed-width `Button` with a badge keeps badge paint/text inside the button
+   - long `Button` label plus badge reserves badge space and clips/ellipsizes label
+   - `Tab` badge rect and text rect agree under narrow tab width
+   - `NavItem` active accent plus badge does not overlap label or right edge
+   - standalone long `Badge` in a constrained row does not exceed its own layout rect
+
+Prefer a shared helper for inline badge rect calculation if practical. There are currently separate `badge_rect()` implementations in text and primitives; divergence here is a regression risk.
+
+Do not fix this by only making the new probe easier. Probe edits should describe real supported scenarios. If a deliberately extreme style is outside supported behavior, keep it as a documented clipping case rather than marking it pass.
+
+## Validation Required
+
+Use the Python 3.13 environment documented by prior artifacts:
+
+```powershell
+$py = 'C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe'
+$env:LIB='C:\Users\nashk\AppData\Local\Programs\Python\Python313\libs;' + $env:LIB
+$env:PYO3_PYTHON=$py
+```
+
+Minimum validation:
+
+```powershell
+& $py -m py_compile examples/css_feature_probes/badge_layout_probe.py tools/visual_audit.py
+cargo fmt --manifest-path native/Cargo.toml -- --check
+cargo check --manifest-path native/Cargo.toml
+```
+
+Run focused native tests added or changed for badge layout/text/paint behavior.
+
+If native code changes affect the Python extension used by the visual harness, rebuild and copy the extension using the existing workflow. Prior artifacts used:
+
+```powershell
+Copy-Item native/target/release/_dragongui.dll python/dragongui/_dragongui.pyd -Force
+```
+
+Required visual audit commands after implementation:
+
+```powershell
+& $py tools/visual_audit.py --target badge-layout --sizes desktop,mobile,320x640 --append --wait-ms 1200 --timeout-ms 12000
+& $py tools/visual_audit.py --target core-widgets --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
+& $py tools/visual_audit.py --target navigation-widgets --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
+& $py tools/visual_audit.py --target typography --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
+```
+
+If `tools/visual_audit.py` does not accept `320x640` by label, extend the harness size parser or run the new target with an explicit supported size in the manifest. Do not skip the narrow stress capture.
+
+Update:
+
+- `artifacts/visual_audit/report.json`
+- `artifacts/visual_audit/REPORT.md`
+- `artifacts/IMPLEMENTATION_NOTES.md`
+- `artifacts/TEST_RESULTS.md` if acting as test writer later in the workflow
+
+## Edge Cases
+
+- `badge=None` and empty string badges remain hidden and reserve no space.
+- Numeric badges serialized from Python still render as text.
+- Very long badge values such as `1234567890`, `overflow-count`, and `owner: platform-design`.
+- Parent width smaller than badge preferred width.
+- High font size on `Badge`, `Tag`, and `::badge` parts.
+- Large `border-width` and `padding` on `Button::badge`, `Tab::badge`, and `NavItem::badge`.
+- Selected, disabled, hover, and focus styles where state-specific part styles override base badge styles.
+- Active `NavItem::accent` plus badge in a narrow sidebar.
+- Scroll containers that clip child paint; badge paint should respect visible clips.
+- DPI/scale factor paths where text and primitive badge rects can diverge by rounding.
+
+## Out Of Scope
+
+- Redesigning the public badge API.
+- Adding a new badge placement API.
+- Reworking all visual-audit manual interaction coverage.
+- Fixing unrelated grid, flex, AppShell, plot, scrollbar, or overlay issues unless the badge probe exposes a direct badge-caused regression.
+- Full theme redesign or color palette changes.
+- Treating intentionally impossible author CSS as a product bug when it only demonstrates clipping.
+

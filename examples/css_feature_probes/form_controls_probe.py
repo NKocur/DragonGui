@@ -104,7 +104,8 @@ BASE_FORM_CSS = """
         min-height: 118px;
     }
 
-    HLayout.theme-row {
+    HLayout.theme-row,
+    FlowLayout.theme-row {
         height: 40px;
         gap: 10px;
         align-items: center;
@@ -272,6 +273,41 @@ BASE_FORM_CSS = """
 
     .disabled-note {
         color: rgba(247, 250, 255, 0.54);
+    }
+
+    @media (max-width: 520px) {
+        Window {
+            padding: 0;
+        }
+
+        VLayout.root {
+            padding-right: 8px;
+        }
+
+        Panel.theme-switcher {
+            min-height: 156px;
+        }
+
+        HLayout.theme-row,
+        FlowLayout.theme-row {
+            height: auto;
+        }
+
+        Button.theme-toggle {
+            min-width: 74px;
+        }
+
+        Button,
+        Button.ghost,
+        Button.primary {
+            min-width: 78px;
+        }
+
+        TextInput.compact {
+            width: 0;
+            flex: 1;
+            min-width: 0;
+        }
     }
 """
 
@@ -626,7 +662,7 @@ with dg.VLayout(class_="root"):
             "Switch between extreme CSS themes to check control geometry, contrast, focus rings, and part styling.",
             class_="case-title",
         )
-        with dg.HLayout(class_="theme-row"):
+        with dg.FlowLayout(class_="theme-row", cross_align="center"):
             for theme_name in FORM_THEME_CSS:
                 dg.Button(
                     theme_name,

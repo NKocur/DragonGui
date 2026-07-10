@@ -1,0 +1,80 @@
+native/src/style.rs:163:        .padding_left
+native/src/style.rs:169:        .padding_right
+native/src/style.rs:202:    let right = style.padding_right.or(style.padding)?;
+native/src/style.rs:204:    let left = style.padding_left.or(style.padding)?;
+native/src/style.rs:461:pub struct LayoutStyle {
+native/src/style.rs:479:    pub padding_left: Option<f32>,
+native/src/style.rs:480:    pub padding_right: Option<f32>,
+native/src/style.rs:484:    pub padding_left_value: Option<LayoutLength>,
+native/src/style.rs:485:    pub padding_right_value: Option<LayoutLength>,
+native/src/style.rs:905:pub struct PartLayoutStyle {
+native/src/style.rs:1256:    out.padding_left = number(map.get("padding_left"));
+native/src/style.rs:1257:    out.padding_right = number(map.get("padding_right"));
+native/src/style.rs:1261:    out.padding_left_value = out.padding_left.map(LayoutLength::LogicalPx);
+native/src/style.rs:1262:    out.padding_right_value = out.padding_right.map(LayoutLength::LogicalPx);
+native/src/style.rs:2751:        style.layout.padding_left = Some(12.0);
+native/src/style.rs:2752:        style.layout.padding_right = Some(18.0);
+native/src\css_style.rs:4510:    base.padding_left = overlay.padding_left.or(base.padding_left);
+native/src\css_style.rs:4511:    base.padding_right = overlay.padding_right.or(base.padding_right);
+native/src\css_style.rs:4515:    base.padding_left_value = overlay.padding_left_value.or(base.padding_left_value);
+native/src\css_style.rs:4516:    base.padding_right_value = overlay.padding_right_value.or(base.padding_right_value);
+native/src\css_style.rs:4845:            style.padding_right = length_px(&edges.right);
+native/src\css_style.rs:4847:            style.padding_left = length_px(&edges.left);
+native/src\css_style.rs:4849:            style.padding_right_value = layout_length(&edges.right);
+native/src\css_style.rs:4851:            style.padding_left_value = layout_length(&edges.left);
+native/src\css_style.rs:4862:            style.padding_left = length_px(value);
+native/src\css_style.rs:4863:            style.padding_left_value = layout_length(value);
+native/src\css_style.rs:4866:            style.padding_right = length_px(value);
+native/src\css_style.rs:4867:            style.padding_right_value = layout_length(value);
+native/src\css_style.rs:18462:        assert_eq!(tooltip.layout.padding_right, Some(10.0));
+native/src\layout.rs:2730:        || layout.padding_left.is_some()
+native/src\layout.rs:2731:        || layout.padding_right.is_some()
+native/src\layout.rs:2734:        || layout.padding_left_value.is_some()
+native/src\layout.rs:2735:        || layout.padding_right_value.is_some()
+native/src\layout.rs:2743:                layout.padding_left_value.or(pad_all_value),
+native/src\layout.rs:2744:                layout.padding_left.or(layout.padding),
+native/src\layout.rs:2750:                layout.padding_right_value.or(pad_all_value),
+native/src\layout.rs:2751:                layout.padding_right.or(layout.padding),
+native/src\layout.rs:3427:        .padding_right
+native/src\layout.rs:4398:        badge.style.layout.padding_left = Some(10.0);
+native/src\layout.rs:4399:        badge.style.layout.padding_right = Some(10.0);
+native/src\layout.rs:6561:        row.style.layout.padding_left_value = Some(LayoutLength::Percent(10.0));
+native/src\layout.rs:6562:        row.style.layout.padding_right_value = Some(LayoutLength::Calc(crate::style::CalcLength {
+native/src\layout.rs:7671:        body.style.layout.padding_right = Some(26.0);
+native/src\layout.rs:7760:                "padding_right": 26,
+native/src\layout.rs:8046:        body.style.layout.padding_right = Some(26.0);
+native/src\layout.rs:8080:        root_scroller.style.layout.padding_right = Some(22.0);
+native/src\layout.rs:8303:        panel.style.layout.padding_right = Some(26.0);
+native/src\layout.rs:8930:        root_scroller.style.layout.padding_right = Some(20.0);
+native/src\runtime.rs:2627:        "padding_left",
+native/src\runtime.rs:2628:        style.padding_left_value,
+native/src\runtime.rs:2629:        style.padding_left,
+native/src\runtime.rs:2633:        "padding_right",
+native/src\runtime.rs:2634:        style.padding_right_value,
+native/src\runtime.rs:2635:        style.padding_right,
+native/src\runtime.rs:4080:            | "padding_left"
+native/src\runtime.rs:4081:            | "padding_right"
+native/src\runtime.rs:5192:                            "padding_right": 26,
+native/src\style.rs:163:        .padding_left
+native/src\style.rs:169:        .padding_right
+native/src\style.rs:202:    let right = style.padding_right.or(style.padding)?;
+native/src\style.rs:204:    let left = style.padding_left.or(style.padding)?;
+native/src\style.rs:461:pub struct LayoutStyle {
+native/src\style.rs:479:    pub padding_left: Option<f32>,
+native/src\style.rs:480:    pub padding_right: Option<f32>,
+native/src\style.rs:484:    pub padding_left_value: Option<LayoutLength>,
+native/src\style.rs:485:    pub padding_right_value: Option<LayoutLength>,
+native/src\style.rs:905:pub struct PartLayoutStyle {
+native/src\style.rs:1256:    out.padding_left = number(map.get("padding_left"));
+native/src\style.rs:1257:    out.padding_right = number(map.get("padding_right"));
+native/src\style.rs:1261:    out.padding_left_value = out.padding_left.map(LayoutLength::LogicalPx);
+native/src\style.rs:1262:    out.padding_right_value = out.padding_right.map(LayoutLength::LogicalPx);
+native/src\style.rs:2751:        style.layout.padding_left = Some(12.0);
+native/src\style.rs:2752:        style.layout.padding_right = Some(18.0);
+native/src\text\mod.rs:2969:        left: layout.padding_left.or(all).unwrap_or(default) * sf,
+native/src\text\mod.rs:2970:        right: layout.padding_right.or(all).unwrap_or(default) * sf,
+native/src\text\mod.rs:5879:        panel.style.layout.padding_right = Some(20.0);
+native/src\text\mod.rs:7289:        badge.style.layout.padding_left = Some(10.0);
+native/src\text\mod.rs:7290:        badge.style.layout.padding_right = Some(10.0);
+native/src\text\mod.rs:7345:            badge.style.layout.padding_left = Some(10.0);
+native/src\text\mod.rs:7346:            badge.style.layout.padding_right = Some(10.0);

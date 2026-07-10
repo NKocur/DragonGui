@@ -4788,10 +4788,14 @@ fn apply_part_layout_declaration(style: &mut PartLayoutStyle, declaration: &DgLa
         DgLayoutDeclaration::Width(value) => style.width = length_px(value),
         DgLayoutDeclaration::Height(value) => style.height = length_px(value),
         DgLayoutDeclaration::Padding(edges) => {
-            if edges.top == edges.right && edges.right == edges.bottom && edges.bottom == edges.left
-            {
-                style.padding = length_px(&edges.top);
-            }
+            let top = length_px(&edges.top);
+            let right = length_px(&edges.right);
+            let bottom = length_px(&edges.bottom);
+            let left = length_px(&edges.left);
+            style.padding = [top, right, bottom, left]
+                .into_iter()
+                .flatten()
+                .reduce(f32::max);
         }
         DgLayoutDeclaration::Gap(value) => style.gap = length_px(value),
         _ => {}
@@ -13698,6 +13702,46 @@ mod tests {
             Some(ColorRef::Token("success".to_string()))
         );
         assert_ne!(tree.children[3].style.visual.border_width, Some(8.0));
+    }
+
+    #[test]
+    fn non_uniform_part_padding_is_preserved_for_badge_sizing() {
+        let mut tree = crate::document::parse_widget_node(&serde_json::json!({
+            "id": "root",
+            "type": "window",
+            "children": [{
+                "id": "run",
+                "type": "button",
+                "class": "styled",
+                "props": {"text": "Run", "badge": "99+"}
+            }]
+        }))
+        .unwrap();
+        let mut store = StylesheetStore::default();
+        store
+            .set_stylesheet(
+                StylesheetOrigin::User,
+                "Button.styled::badge { padding: 5px 9px; border-width: 2px; font-size: 13px; }",
+            )
+            .unwrap();
+
+        apply_stylesheets_to_tree(&mut tree, &mut store);
+        let button = &tree.children[0];
+        let badge_part = button
+            .style
+            .parts
+            .parts
+            .get("badge")
+            .expect("badge part style");
+
+        assert_eq!(badge_part.layout.padding, Some(9.0));
+        let unstyled =
+            crate::style::badge_width_for_text(&NodeStyle::default(), "99+", &Theme::dark(), 1.0);
+        let styled = crate::style::badge_width_for_text(&button.style, "99+", &Theme::dark(), 1.0);
+        assert!(
+            styled > unstyled,
+            "CSS-applied non-uniform ::badge padding should increase badge width: styled={styled}, unstyled={unstyled}"
+        );
     }
 
     #[test]

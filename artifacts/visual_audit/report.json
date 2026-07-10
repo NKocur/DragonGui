@@ -1,0 +1,2270 @@
+[
+  {
+    "category": "widgets",
+    "features": [
+      "Button",
+      "Badge",
+      "Tag",
+      "LED",
+      "TextInput",
+      "Checkbox",
+      "Dropdown",
+      "NumberInput",
+      "ColorPicker",
+      "Collapsible",
+      "Tooltip",
+      "Modal"
+    ],
+    "id": "core-widgets",
+    "logs": [
+      "logs/core-widgets-desktop-1.stdout.txt",
+      "logs/core-widgets-desktop-1.stderr.txt",
+      "logs/core-widgets-390x720.stdout.txt",
+      "logs/core-widgets-390x720.stderr.txt"
+    ],
+    "manual": true,
+    "name": "Core Widgets",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Includes overlays and stateful controls that benefit from follow-up interaction checks. Additional run: Static capture visual review: first-viewport screenshot inspected; captured closed/default state is usable, but listed interactive states still need manual or automated checks. Additional run: Includes overlays and stateful controls that benefit from follow-up interaction checks. Additional run: Captured with native DragonGUI window screenshot API.",
+    "priority": "medium",
+    "reproduction": [
+      "python tools/visual_audit.py --target core-widgets --sizes desktop-1",
+      "python tools/visual_audit.py --target core-widgets --sizes 390x720"
+    ],
+    "screenshots": [
+      "screenshots/core-widgets-desktop-1.png",
+      "screenshots/core-widgets-390x720.png"
+    ],
+    "script": "examples\\css_feature_probes\\core_widgets_probe.py",
+    "snapshots": [
+      "snapshots/core-widgets-desktop-1.json",
+      "snapshots/core-widgets-390x720.json"
+    ],
+    "status": "needs_manual_interaction",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/text/mod.rs"
+    ]
+  },
+  {
+    "category": "widgets",
+    "features": [
+      "Badge",
+      "Tag",
+      "Button badge",
+      "Tab badge",
+      "NavItem badge",
+      "badge parts",
+      "responsive badges"
+    ],
+    "id": "badge-layout",
+    "logs": [
+      "logs/badge-layout-desktop-1.stdout.txt",
+      "logs/badge-layout-desktop-1.stderr.txt",
+      "logs/badge-layout-390x720.stdout.txt",
+      "logs/badge-layout-390x720.stderr.txt",
+      "logs/badge-layout-320x640.stdout.txt",
+      "logs/badge-layout-320x640.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Badge Layout",
+    "notes": "No visual issue recorded by automated first pass. Additional run: Captured with native DragonGUI window screenshot API.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target badge-layout --sizes desktop-1",
+      "python tools/visual_audit.py --target badge-layout --sizes 390x720",
+      "python tools/visual_audit.py --target badge-layout --sizes 320x640"
+    ],
+    "screenshots": [
+      "screenshots/badge-layout-desktop-1.png",
+      "screenshots/badge-layout-390x720.png",
+      "screenshots/badge-layout-320x640.png"
+    ],
+    "script": "examples\\css_feature_probes\\badge_layout_probe.py",
+    "snapshots": [
+      "snapshots/badge-layout-desktop-1.json",
+      "snapshots/badge-layout-390x720.json",
+      "snapshots/badge-layout-320x640.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "widgets",
+    "features": [
+      "TextInput",
+      "TextArea",
+      "Checkbox",
+      "Dropdown",
+      "Button",
+      "Slider",
+      "NumberInput",
+      "ProgressBar"
+    ],
+    "id": "form-controls",
+    "logs": [
+      "logs/form-controls-390x720.stdout.txt",
+      "logs/form-controls-390x720.stderr.txt",
+      "logs/form-controls-desktop-1.stdout.txt",
+      "logs/form-controls-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Form Controls",
+    "notes": "Visual review after fix: desktop and 390x720 captures now show the Theme stress controls fully visible above the Text entry panel, with the following panel starting after the theme panel. The previous mobile overlap/clipping is resolved in the saved screenshots. Additional run: No visual issue recorded by automated first pass. Additional run: Captured with native DragonGUI window screenshot API.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target form-controls --sizes 390x720",
+      "python tools/visual_audit.py --target form-controls --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/form-controls-390x720.png",
+      "screenshots/form-controls-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\form_controls_probe.py",
+    "snapshots": [
+      "snapshots/form-controls-390x720.json",
+      "snapshots/form-controls-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/text/mod.rs"
+    ]
+  },
+  {
+    "category": "widgets",
+    "features": [
+      "SmallButton",
+      "IconButton",
+      "ImageButton",
+      "ArrowButton",
+      "Selectable"
+    ],
+    "id": "tool-buttons",
+    "logs": [
+      "logs/tool-buttons-desktop-1.stdout.txt",
+      "logs/tool-buttons-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Tool Buttons",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target tool-buttons --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/tool-buttons-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\tool_buttons_probe.py",
+    "snapshots": [
+      "snapshots/tool-buttons-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "widgets",
+    "features": [
+      "ToggleSwitch"
+    ],
+    "id": "toggle-switch",
+    "logs": [
+      "logs/toggle-switch-desktop-1.stdout.txt",
+      "logs/toggle-switch-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Toggle Switch",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target toggle-switch --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/toggle-switch-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\toggle_switch_probe.py",
+    "snapshots": [
+      "snapshots/toggle-switch-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "widgets",
+    "features": [
+      "DateInput",
+      "TimeInput",
+      "DateTimeInput"
+    ],
+    "id": "date-time-inputs",
+    "logs": [
+      "logs/date-time-inputs-desktop-1.stdout.txt",
+      "logs/date-time-inputs-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Date And Time Inputs",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target date-time-inputs --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/date-time-inputs-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\date_time_inputs_probe.py",
+    "snapshots": [
+      "snapshots/date-time-inputs-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "widgets",
+    "features": [
+      "RangeSlider",
+      "Slider"
+    ],
+    "id": "range-slider",
+    "logs": [
+      "logs/range-slider-desktop-1.stdout.txt",
+      "logs/range-slider-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Range Slider",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target range-slider --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/range-slider-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\range_slider_probe.py",
+    "snapshots": [
+      "snapshots/range-slider-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "widgets",
+    "features": [
+      "RadioGroup",
+      "RadioButton"
+    ],
+    "id": "radio-group",
+    "logs": [
+      "logs/radio-group-desktop-1.stdout.txt",
+      "logs/radio-group-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Radio Group",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target radio-group --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/radio-group-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\radio_group_probe.py",
+    "snapshots": [
+      "snapshots/radio-group-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "widgets",
+    "features": [
+      "SelectableList",
+      "Selectable"
+    ],
+    "id": "selectable-list",
+    "logs": [
+      "logs/selectable-list-desktop-1.stdout.txt",
+      "logs/selectable-list-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Selectable List",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target selectable-list --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/selectable-list-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\selectable_list_probe.py",
+    "snapshots": [
+      "snapshots/selectable-list-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "widgets",
+    "features": [
+      "Property",
+      "PropertyGrid",
+      "TextInput",
+      "NumberInput",
+      "Dropdown",
+      "Checkbox"
+    ],
+    "id": "property-grid",
+    "logs": [
+      "logs/property-grid-desktop-1.stdout.txt",
+      "logs/property-grid-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Property Grid",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target property-grid --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/property-grid-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\property_grid_probe.py",
+    "snapshots": [
+      "snapshots/property-grid-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/layout.rs",
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/text/mod.rs"
+    ]
+  },
+  {
+    "category": "widgets",
+    "features": [
+      "DragNumber",
+      "DragVector"
+    ],
+    "id": "drag-number",
+    "logs": [
+      "logs/drag-number-desktop-1.stdout.txt",
+      "logs/drag-number-desktop-1.stderr.txt"
+    ],
+    "manual": true,
+    "name": "Drag Number And Vector",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Static capture visual review: first-viewport screenshot inspected; captured closed/default state is usable, but listed interactive states still need manual or automated checks.",
+    "priority": "medium",
+    "reproduction": [
+      "python tools/visual_audit.py --target drag-number --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/drag-number-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\drag_number_probe.py",
+    "snapshots": [
+      "snapshots/drag-number-desktop-1.json"
+    ],
+    "status": "needs_manual_interaction",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "widgets",
+    "features": [
+      "MenuBar",
+      "Menu",
+      "MenuItem",
+      "Sidebar",
+      "NavItem",
+      "Tabs",
+      "Tab",
+      "Pages",
+      "Page",
+      "ContextMenu"
+    ],
+    "id": "navigation-widgets",
+    "logs": [
+      "logs/navigation-widgets-desktop-1.stdout.txt",
+      "logs/navigation-widgets-desktop-1.stderr.txt",
+      "logs/navigation-widgets-390x720.stdout.txt",
+      "logs/navigation-widgets-390x720.stderr.txt"
+    ],
+    "manual": true,
+    "name": "Navigation Widgets",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Static capture visual review: first-viewport screenshot inspected; captured closed/default state is usable, but listed interactive states still need manual or automated checks. Additional run: No visual issue recorded by automated first pass. Additional run: Captured with native DragonGUI window screenshot API.",
+    "priority": "medium",
+    "reproduction": [
+      "python tools/visual_audit.py --target navigation-widgets --sizes desktop-1",
+      "python tools/visual_audit.py --target navigation-widgets --sizes 390x720"
+    ],
+    "screenshots": [
+      "screenshots/navigation-widgets-desktop-1.png",
+      "screenshots/navigation-widgets-390x720.png"
+    ],
+    "script": "examples\\css_feature_probes\\navigation_widgets_probe.py",
+    "snapshots": [
+      "snapshots/navigation-widgets-desktop-1.json",
+      "snapshots/navigation-widgets-390x720.json"
+    ],
+    "status": "needs_manual_interaction",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/text/mod.rs"
+    ]
+  },
+  {
+    "category": "widgets",
+    "features": [
+      "MenuBar",
+      "Menu",
+      "MenuItem",
+      "ContextMenu"
+    ],
+    "id": "menu-overlays",
+    "logs": [
+      "logs/menu-overlays-desktop-1.stdout.txt",
+      "logs/menu-overlays-desktop-1.stderr.txt"
+    ],
+    "manual": true,
+    "name": "Menu Overlays",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Static capture visual review: first-viewport screenshot inspected; captured closed/default state is usable, but listed interactive states still need manual or automated checks.",
+    "priority": "medium",
+    "reproduction": [
+      "python tools/visual_audit.py --target menu-overlays --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/menu-overlays-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\menu_overlays_probe.py",
+    "snapshots": [
+      "snapshots/menu-overlays-desktop-1.json"
+    ],
+    "status": "needs_manual_interaction",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/text/mod.rs"
+    ]
+  },
+  {
+    "category": "widgets",
+    "features": [
+      "Modal",
+      "Tooltip",
+      "Dropdown",
+      "ContextMenu",
+      "MenuBar",
+      "Toast"
+    ],
+    "id": "overlay-stack",
+    "logs": [
+      "logs/overlay-stack-desktop-1.stdout.txt",
+      "logs/overlay-stack-desktop-1.stderr.txt"
+    ],
+    "manual": true,
+    "name": "Overlay Stack",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Static capture visual review: first-viewport screenshot inspected; captured closed/default state is usable, but listed interactive states still need manual or automated checks.",
+    "priority": "medium",
+    "reproduction": [
+      "python tools/visual_audit.py --target overlay-stack --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/overlay-stack-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\overlay_stack_probe.py",
+    "snapshots": [
+      "snapshots/overlay-stack-desktop-1.json"
+    ],
+    "status": "needs_manual_interaction",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/text/mod.rs"
+    ]
+  },
+  {
+    "category": "widgets",
+    "features": [
+      "Breadcrumbs"
+    ],
+    "id": "breadcrumbs",
+    "logs": [
+      "logs/breadcrumbs-desktop-1.stdout.txt",
+      "logs/breadcrumbs-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Breadcrumbs",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target breadcrumbs --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/breadcrumbs-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\breadcrumbs_probe.py",
+    "snapshots": [
+      "snapshots/breadcrumbs-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "widgets",
+    "features": [
+      "CommandPalette",
+      "SearchBox"
+    ],
+    "id": "command-palette",
+    "logs": [
+      "logs/command-palette-desktop-1.stdout.txt",
+      "logs/command-palette-desktop-1.stderr.txt"
+    ],
+    "manual": true,
+    "name": "Command Palette",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Static capture visual review: first-viewport screenshot inspected; captured closed/default state is usable, but listed interactive states still need manual or automated checks.",
+    "priority": "medium",
+    "reproduction": [
+      "python tools/visual_audit.py --target command-palette --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/command-palette-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\command_palette_probe.py",
+    "snapshots": [
+      "snapshots/command-palette-desktop-1.json"
+    ],
+    "status": "needs_manual_interaction",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "widgets",
+    "features": [
+      "Toolbar",
+      "ToolbarSeparator"
+    ],
+    "id": "toolbar",
+    "logs": [
+      "logs/toolbar-desktop-1.stdout.txt",
+      "logs/toolbar-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Toolbar",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target toolbar --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/toolbar-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\toolbar_probe.py",
+    "snapshots": [
+      "snapshots/toolbar-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "widgets",
+    "features": [
+      "TreeView",
+      "TreeNode"
+    ],
+    "id": "tree-view",
+    "logs": [
+      "logs/tree-view-desktop-1.stdout.txt",
+      "logs/tree-view-desktop-1.stderr.txt"
+    ],
+    "manual": true,
+    "name": "Tree View",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Static capture visual review: first-viewport screenshot inspected; captured closed/default state is usable, but listed interactive states still need manual or automated checks.",
+    "priority": "medium",
+    "reproduction": [
+      "python tools/visual_audit.py --target tree-view --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/tree-view-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\tree_view_probe.py",
+    "snapshots": [
+      "snapshots/tree-view-desktop-1.json"
+    ],
+    "status": "needs_manual_interaction",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "layout",
+    "features": [
+      "Splitter",
+      "Pane"
+    ],
+    "id": "splitter",
+    "logs": [
+      "logs/splitter-desktop-1.stdout.txt",
+      "logs/splitter-desktop-1.stderr.txt"
+    ],
+    "manual": true,
+    "name": "Splitter",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Static capture visual review: first-viewport screenshot inspected; captured closed/default state is usable, but listed interactive states still need manual or automated checks.",
+    "priority": "medium",
+    "reproduction": [
+      "python tools/visual_audit.py --target splitter --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/splitter-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\splitter_probe.py",
+    "snapshots": [
+      "snapshots/splitter-desktop-1.json"
+    ],
+    "status": "needs_manual_interaction",
+    "suspected_modules": [
+      "native/src/layout.rs",
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "widgets",
+    "features": [
+      "DragSource",
+      "DropTarget",
+      "DropZone"
+    ],
+    "id": "drag-drop",
+    "logs": [
+      "logs/drag-drop-desktop-1.stdout.txt",
+      "logs/drag-drop-desktop-1.stderr.txt"
+    ],
+    "manual": true,
+    "name": "Drag And Drop",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Static capture visual review: first-viewport screenshot inspected; captured closed/default state is usable, but listed interactive states still need manual or automated checks.",
+    "priority": "medium",
+    "reproduction": [
+      "python tools/visual_audit.py --target drag-drop --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/drag-drop-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\drag_drop_probe.py",
+    "snapshots": [
+      "snapshots/drag-drop-desktop-1.json"
+    ],
+    "status": "needs_manual_interaction",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "widgets",
+    "features": [
+      "CodeEditor"
+    ],
+    "id": "code-editor",
+    "logs": [
+      "logs/code-editor-desktop-1.stdout.txt",
+      "logs/code-editor-desktop-1.stderr.txt"
+    ],
+    "manual": true,
+    "name": "Code Editor",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Static capture visual review: first-viewport screenshot inspected; captured closed/default state is usable, but listed interactive states still need manual or automated checks.",
+    "priority": "medium",
+    "reproduction": [
+      "python tools/visual_audit.py --target code-editor --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/code-editor-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\code_editor_probe.py",
+    "snapshots": [
+      "snapshots/code-editor-desktop-1.json"
+    ],
+    "status": "needs_manual_interaction",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/text/mod.rs"
+    ]
+  },
+  {
+    "category": "widgets",
+    "features": [
+      "LogView"
+    ],
+    "id": "log-view",
+    "logs": [
+      "logs/log-view-desktop-1.stdout.txt",
+      "logs/log-view-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Log View",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target log-view --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/log-view-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\log_view_probe.py",
+    "snapshots": [
+      "snapshots/log-view-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/text/mod.rs"
+    ]
+  },
+  {
+    "category": "css",
+    "features": [
+      "Label",
+      "Text wrapping",
+      "Ellipsis",
+      "Line height"
+    ],
+    "id": "typography",
+    "logs": [
+      "logs/typography-desktop-1.stdout.txt",
+      "logs/typography-desktop-1.stderr.txt",
+      "logs/typography-390x720.stdout.txt",
+      "logs/typography-390x720.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Typography",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state. Additional run: No visual issue recorded by automated first pass. Additional run: Captured with native DragonGUI window screenshot API.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target typography --sizes desktop-1",
+      "python tools/visual_audit.py --target typography --sizes 390x720"
+    ],
+    "screenshots": [
+      "screenshots/typography-desktop-1.png",
+      "screenshots/typography-390x720.png"
+    ],
+    "script": "examples\\css_feature_probes\\typography_probe.py",
+    "snapshots": [
+      "snapshots/typography-desktop-1.json",
+      "snapshots/typography-390x720.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/text/mod.rs"
+    ]
+  },
+  {
+    "category": "layout",
+    "features": [
+      "HLayout",
+      "VLayout",
+      "Panel",
+      "ScrollArea",
+      "Spacer",
+      "Separator"
+    ],
+    "id": "layout-containers",
+    "logs": [
+      "logs/layout-containers-desktop-1.stdout.txt",
+      "logs/layout-containers-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Layout Containers",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target layout-containers --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/layout-containers-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\layout_containers_probe.py",
+    "snapshots": [
+      "snapshots/layout-containers-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/layout.rs",
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "layout",
+    "features": [
+      "AppShell",
+      "Sidebar",
+      "Body",
+      "WorkbenchLayout",
+      "WorkbenchMain",
+      "StatusBar"
+    ],
+    "id": "app-shell-workbench",
+    "logs": [
+      "logs/app-shell-workbench-desktop-1.stdout.txt",
+      "logs/app-shell-workbench-desktop-1.stderr.txt",
+      "logs/app-shell-workbench-390x720.stdout.txt",
+      "logs/app-shell-workbench-390x720.stderr.txt"
+    ],
+    "manual": false,
+    "name": "App Shell And Workbench Layout",
+    "notes": "Visual review after fix: desktop and 390x720 captures now show the fixed sidebar, visible WorkbenchLayout/Body content, a visible scroll-owned WorkbenchMain region, and a StatusBar pinned inside the viewport. The previous blank workbench/body area, zero-width body descendants, and missing status bar are resolved in the saved screenshots. Additional run: Covers the documented bounded AppShell + Sidebar + Body dashboard pattern plus WorkbenchMain scroll ownership and StatusBar reservation. Additional run: Captured with native DragonGUI window screenshot API.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target app-shell-workbench --sizes desktop-1",
+      "python tools/visual_audit.py --target app-shell-workbench --sizes 390x720"
+    ],
+    "screenshots": [
+      "screenshots/app-shell-workbench-desktop-1.png",
+      "screenshots/app-shell-workbench-390x720.png"
+    ],
+    "script": "examples\\css_feature_probes\\app_shell_workbench_probe.py",
+    "snapshots": [
+      "snapshots/app-shell-workbench-desktop-1.json",
+      "snapshots/app-shell-workbench-390x720.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/layout.rs",
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "layout",
+    "features": [
+      "HLayout",
+      "VLayout",
+      "FlowLayout",
+      "Fixed and flexible children",
+      "Long labels"
+    ],
+    "id": "layout-flex-stress",
+    "logs": [
+      "logs/layout-flex-stress-390x720.stdout.txt",
+      "logs/layout-flex-stress-390x720.stderr.txt",
+      "logs/layout-flex-stress-desktop-1.stdout.txt",
+      "logs/layout-flex-stress-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Layout Flex Stress",
+    "notes": "Visual review after fix: desktop and 390x720 captures now keep dense controls inside their panels with visible usable inputs/actions. The previous zero-width controls and right-edge clipping in the sampled mobile rows are resolved in the saved screenshots. Additional run: No visual issue recorded by automated first pass. Additional run: Captured with native DragonGUI window screenshot API.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target layout-flex-stress --sizes 390x720",
+      "python tools/visual_audit.py --target layout-flex-stress --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/layout-flex-stress-390x720.png",
+      "screenshots/layout-flex-stress-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\layout_flex_stress_probe.py",
+    "snapshots": [
+      "snapshots/layout-flex-stress-390x720.json",
+      "snapshots/layout-flex-stress-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/layout.rs",
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "layout",
+    "features": [
+      "Panel",
+      "Collapsible",
+      "ScrollArea",
+      "Nested panels"
+    ],
+    "id": "layout-panel-bounds",
+    "logs": [
+      "logs/layout-panel-bounds-desktop-1.stdout.txt",
+      "logs/layout-panel-bounds-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Layout Panel Bounds",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target layout-panel-bounds --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/layout-panel-bounds-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\layout_panel_bounds_probe.py",
+    "snapshots": [
+      "snapshots/layout-panel-bounds-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/layout.rs",
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "layout",
+    "features": [
+      "GridLayout",
+      "CSS grid",
+      "Responsive collapse",
+      "Nested grids"
+    ],
+    "id": "layout-grid-masonry",
+    "logs": [
+      "logs/layout-grid-masonry-desktop-1.stdout.txt",
+      "logs/layout-grid-masonry-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Layout Grid And Masonry",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target layout-grid-masonry --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/layout-grid-masonry-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\layout_grid_masonry_probe.py",
+    "snapshots": [
+      "snapshots/layout-grid-masonry-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/layout.rs",
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "layout",
+    "features": [
+      "Modal",
+      "Tooltip",
+      "Dropdown",
+      "ContextMenu",
+      "CommandPalette",
+      "Z-index"
+    ],
+    "id": "layout-overlay-collision",
+    "logs": [
+      "logs/layout-overlay-collision-desktop-1.stdout.txt",
+      "logs/layout-overlay-collision-desktop-1.stderr.txt"
+    ],
+    "manual": true,
+    "name": "Layout Overlay Collision",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Static capture visual review: first-viewport screenshot inspected; captured closed/default state is usable, but listed interactive states still need manual or automated checks.",
+    "priority": "medium",
+    "reproduction": [
+      "python tools/visual_audit.py --target layout-overlay-collision --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/layout-overlay-collision-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\layout_overlay_collision_probe.py",
+    "snapshots": [
+      "snapshots/layout-overlay-collision-desktop-1.json"
+    ],
+    "status": "needs_manual_interaction",
+    "suspected_modules": [
+      "native/src/layout.rs",
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/text/mod.rs"
+    ]
+  },
+  {
+    "category": "layout",
+    "features": [
+      "ScrollArea",
+      "DataFrameTable",
+      "LogView",
+      "CodeEditor",
+      "TreeView",
+      "PropertyGrid"
+    ],
+    "id": "layout-scrollable-composites",
+    "logs": [
+      "logs/layout-scrollable-composites-desktop-1.stdout.txt",
+      "logs/layout-scrollable-composites-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Layout Scrollable Composites",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target layout-scrollable-composites --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/layout-scrollable-composites-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\layout_scrollable_composites_probe.py",
+    "snapshots": [
+      "snapshots/layout-scrollable-composites-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/layout.rs",
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/text/mod.rs"
+    ]
+  },
+  {
+    "category": "layout",
+    "features": [
+      "LinePlot",
+      "ScatterPlot2D",
+      "Heatmap",
+      "Histogram",
+      "BarChart",
+      "DataFrameTable",
+      "Splitter"
+    ],
+    "id": "layout-plot-embedding",
+    "logs": [
+      "logs/layout-plot-embedding-desktop-1.stdout.txt",
+      "logs/layout-plot-embedding-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Layout Plot Embedding",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target layout-plot-embedding --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/layout-plot-embedding-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\layout_plot_embedding_probe.py",
+    "snapshots": [
+      "snapshots/layout-plot-embedding-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/layout.rs",
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/scatter/mod.rs",
+      "native/src/table.rs"
+    ]
+  },
+  {
+    "category": "layout",
+    "features": [
+      "Percent sizing",
+      "calc()",
+      "Grid tracks",
+      "Named grid areas"
+    ],
+    "id": "responsive-layout",
+    "logs": [
+      "logs/responsive-layout-390x720.stdout.txt",
+      "logs/responsive-layout-390x720.stderr.txt",
+      "logs/responsive-layout-desktop-1.stdout.txt",
+      "logs/responsive-layout-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Responsive Layout",
+    "notes": "Visual review after fix: desktop and 390x720 captures now keep responsive panels within the visible horizontal bounds and stack sections without the previous left-edge clipping or vertical overlap. The mobile auto-size/min-width probe constraints were corrected so this target exercises responsive collapse instead of intentional overflow. Additional run: No visual issue recorded by automated first pass. Additional run: Captured with native DragonGUI window screenshot API.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target responsive-layout --sizes 390x720",
+      "python tools/visual_audit.py --target responsive-layout --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/responsive-layout-390x720.png",
+      "screenshots/responsive-layout-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\responsive_layout_probe.py",
+    "snapshots": [
+      "snapshots/responsive-layout-390x720.json",
+      "snapshots/responsive-layout-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/layout.rs",
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "layout",
+    "features": [
+      "CSS grid",
+      "fr",
+      "auto",
+      "repeat()",
+      "grid-row",
+      "grid-column"
+    ],
+    "id": "grid-tracks",
+    "logs": [
+      "logs/grid-tracks-desktop-1.stdout.txt",
+      "logs/grid-tracks-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Grid Tracks",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target grid-tracks --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/grid-tracks-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\grid_tracks_probe.py",
+    "snapshots": [
+      "snapshots/grid-tracks-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/layout.rs",
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "layout",
+    "features": [
+      "ScrollArea",
+      "Overflow clipping",
+      "Scrollbar parts"
+    ],
+    "id": "overflow-scrollbar",
+    "logs": [
+      "logs/overflow-scrollbar-390x720.stdout.txt",
+      "logs/overflow-scrollbar-390x720.stderr.txt",
+      "logs/overflow-scrollbar-desktop-1.stdout.txt",
+      "logs/overflow-scrollbar-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Overflow And Scrollbars",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target overflow-scrollbar --sizes 390x720",
+      "python tools/visual_audit.py --target overflow-scrollbar --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/overflow-scrollbar-390x720.png",
+      "screenshots/overflow-scrollbar-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\overflow_scrollbar_probe.py",
+    "snapshots": [
+      "snapshots/overflow-scrollbar-390x720.json",
+      "snapshots/overflow-scrollbar-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/layout.rs",
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "layout",
+    "features": [
+      "Relative positioning",
+      "Absolute positioning",
+      "Fixed positioning",
+      "Z-index",
+      "Clipping"
+    ],
+    "id": "positioning-zindex",
+    "logs": [
+      "logs/positioning-zindex-desktop-1.stdout.txt",
+      "logs/positioning-zindex-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Positioning And Z Index",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target positioning-zindex --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/positioning-zindex-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\positioning_zindex_probe.py",
+    "snapshots": [
+      "snapshots/positioning-zindex-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/layout.rs",
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "layout",
+    "features": [
+      "@container",
+      "container-type",
+      "Responsive cards"
+    ],
+    "id": "container-queries",
+    "logs": [
+      "logs/container-queries-desktop-1.stdout.txt",
+      "logs/container-queries-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Container Queries",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target container-queries --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/container-queries-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\container_queries_probe.py",
+    "snapshots": [
+      "snapshots/container-queries-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/layout.rs",
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "plots",
+    "features": [
+      "DataFrameTable",
+      "Scatter3D"
+    ],
+    "id": "data-widgets",
+    "logs": [
+      "logs/data-widgets-desktop-1.stdout.txt",
+      "logs/data-widgets-desktop-1.stderr.txt"
+    ],
+    "manual": true,
+    "name": "Data Widgets",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Static capture visual review: first-viewport screenshot inspected; captured closed/default state is usable, but listed interactive states still need manual or automated checks.",
+    "priority": "medium",
+    "reproduction": [
+      "python tools/visual_audit.py --target data-widgets --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/data-widgets-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\data_widgets_probe.py",
+    "snapshots": [
+      "snapshots/data-widgets-desktop-1.json"
+    ],
+    "status": "needs_manual_interaction",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/scatter/mod.rs",
+      "native/src/table.rs"
+    ]
+  },
+  {
+    "category": "plots",
+    "features": [
+      "DataFrameTable"
+    ],
+    "id": "data-table-upgrades",
+    "logs": [
+      "logs/data-table-upgrades-desktop-1.stdout.txt",
+      "logs/data-table-upgrades-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Data Table Upgrades",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target data-table-upgrades --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/data-table-upgrades-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\data_table_upgrades_probe.py",
+    "snapshots": [
+      "snapshots/data-table-upgrades-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/scatter/mod.rs",
+      "native/src/table.rs"
+    ]
+  },
+  {
+    "category": "plots",
+    "features": [
+      "Histogram"
+    ],
+    "id": "histogram",
+    "logs": [
+      "logs/histogram-desktop-1.stdout.txt",
+      "logs/histogram-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Histogram",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target histogram --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/histogram-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\histogram_probe.py",
+    "snapshots": [
+      "snapshots/histogram-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/scatter/mod.rs",
+      "native/src/table.rs"
+    ]
+  },
+  {
+    "category": "plots",
+    "features": [
+      "Histogram",
+      "Live updates"
+    ],
+    "id": "histogram-live-update",
+    "logs": [
+      "logs/histogram-live-update-desktop-1.stdout.txt",
+      "logs/histogram-live-update-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Histogram Live Update",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target histogram-live-update --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/histogram-live-update-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\histogram_live_update_probe.py",
+    "snapshots": [
+      "snapshots/histogram-live-update-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/scatter/mod.rs",
+      "native/src/table.rs"
+    ]
+  },
+  {
+    "category": "plots",
+    "features": [
+      "BarChart"
+    ],
+    "id": "bar-chart",
+    "logs": [
+      "logs/bar-chart-desktop-1.stdout.txt",
+      "logs/bar-chart-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Bar Chart",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target bar-chart --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/bar-chart-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\bar_chart_probe.py",
+    "snapshots": [
+      "snapshots/bar-chart-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/scatter/mod.rs",
+      "native/src/table.rs"
+    ]
+  },
+  {
+    "category": "plots",
+    "features": [
+      "Heatmap"
+    ],
+    "id": "heatmap",
+    "logs": [
+      "logs/heatmap-desktop-1.stdout.txt",
+      "logs/heatmap-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Heatmap",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target heatmap --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/heatmap-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\heatmap_probe.py",
+    "snapshots": [
+      "snapshots/heatmap-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/scatter/mod.rs",
+      "native/src/table.rs"
+    ]
+  },
+  {
+    "category": "plots",
+    "features": [
+      "LinePlot"
+    ],
+    "id": "line-plot",
+    "logs": [
+      "logs/line-plot-desktop-1.stdout.txt",
+      "logs/line-plot-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Line Plot",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target line-plot --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/line-plot-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\line_plot_probe.py",
+    "snapshots": [
+      "snapshots/line-plot-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/scatter/mod.rs",
+      "native/src/table.rs"
+    ]
+  },
+  {
+    "category": "plots",
+    "features": [
+      "LinePlot",
+      "Streaming",
+      "Diagnostics"
+    ],
+    "id": "line-plot-stream-benchmark",
+    "logs": [
+      "logs/line-plot-stream-benchmark-desktop-1.stdout.txt",
+      "logs/line-plot-stream-benchmark-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Line Plot Stream Benchmark",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target line-plot-stream-benchmark --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/line-plot-stream-benchmark-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\line_plot_stream_benchmark_probe.py",
+    "snapshots": [
+      "snapshots/line-plot-stream-benchmark-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/scatter/mod.rs",
+      "native/src/table.rs"
+    ]
+  },
+  {
+    "category": "plots",
+    "features": [
+      "PieChart"
+    ],
+    "id": "pie-chart",
+    "logs": [
+      "logs/pie-chart-desktop-1.stdout.txt",
+      "logs/pie-chart-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Pie Chart",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target pie-chart --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/pie-chart-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\pie_chart_probe.py",
+    "snapshots": [
+      "snapshots/pie-chart-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/scatter/mod.rs",
+      "native/src/table.rs"
+    ]
+  },
+  {
+    "category": "plots",
+    "features": [
+      "Scatter3D"
+    ],
+    "id": "scatter3d",
+    "logs": [
+      "logs/scatter3d-desktop-1.stdout.txt",
+      "logs/scatter3d-desktop-1.stderr.txt"
+    ],
+    "manual": true,
+    "name": "Scatter3D",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Static capture visual review: first-viewport screenshot inspected; captured closed/default state is usable, but listed interactive states still need manual or automated checks.",
+    "priority": "medium",
+    "reproduction": [
+      "python tools/visual_audit.py --target scatter3d --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/scatter3d-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\scatter3d_probe.py",
+    "snapshots": [
+      "snapshots/scatter3d-desktop-1.json"
+    ],
+    "status": "needs_manual_interaction",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/scatter/mod.rs",
+      "native/src/table.rs"
+    ]
+  },
+  {
+    "category": "plots",
+    "features": [
+      "Scatter3D",
+      "Legend",
+      "Axes",
+      "Grid planes"
+    ],
+    "id": "scatter3d-css-chrome",
+    "logs": [
+      "logs/scatter3d-css-chrome-desktop-1.stdout.txt",
+      "logs/scatter3d-css-chrome-desktop-1.stderr.txt"
+    ],
+    "manual": true,
+    "name": "Scatter3D CSS Chrome",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Static capture visual review: first-viewport screenshot inspected; captured closed/default state is usable, but listed interactive states still need manual or automated checks.",
+    "priority": "medium",
+    "reproduction": [
+      "python tools/visual_audit.py --target scatter3d-css-chrome --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/scatter3d-css-chrome-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\scatter3d_css_chrome_probe.py",
+    "snapshots": [
+      "snapshots/scatter3d-css-chrome-desktop-1.json"
+    ],
+    "status": "needs_manual_interaction",
+    "suspected_modules": [
+      "native/src/layout.rs",
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/scatter/mod.rs",
+      "native/src/table.rs"
+    ]
+  },
+  {
+    "category": "plots",
+    "features": [
+      "ScatterPlot2D"
+    ],
+    "id": "scatter-plot-2d",
+    "logs": [
+      "logs/scatter-plot-2d-desktop-1.stdout.txt",
+      "logs/scatter-plot-2d-desktop-1.stderr.txt"
+    ],
+    "manual": true,
+    "name": "Scatter Plot 2D",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Static capture visual review: first-viewport screenshot inspected; captured closed/default state is usable, but listed interactive states still need manual or automated checks.",
+    "priority": "medium",
+    "reproduction": [
+      "python tools/visual_audit.py --target scatter-plot-2d --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/scatter-plot-2d-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\scatter_plot_2d_probe.py",
+    "snapshots": [
+      "snapshots/scatter-plot-2d-desktop-1.json"
+    ],
+    "status": "needs_manual_interaction",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/scatter/mod.rs",
+      "native/src/table.rs"
+    ]
+  },
+  {
+    "category": "plots",
+    "features": [
+      "Scatter3D",
+      "Dense volume",
+      "Depth behavior"
+    ],
+    "id": "scatter3d-dense",
+    "logs": [
+      "logs/scatter3d-dense-desktop-1.stdout.txt",
+      "logs/scatter3d-dense-desktop-1.stderr.txt"
+    ],
+    "manual": true,
+    "name": "Scatter3D Dense",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Static capture visual review: first-viewport screenshot inspected; captured closed/default state is usable, but listed interactive states still need manual or automated checks.",
+    "priority": "medium",
+    "reproduction": [
+      "python tools/visual_audit.py --target scatter3d-dense --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/scatter3d-dense-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\scatter3d_dense_probe.py",
+    "snapshots": [
+      "snapshots/scatter3d-dense-desktop-1.json"
+    ],
+    "status": "needs_manual_interaction",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/scatter/mod.rs",
+      "native/src/table.rs"
+    ]
+  },
+  {
+    "category": "plots",
+    "features": [
+      "Scatter3D",
+      "Frame replacement",
+      "Diagnostics"
+    ],
+    "id": "scatter3d-frame-benchmark",
+    "logs": [
+      "logs/scatter3d-frame-benchmark-desktop-1.stdout.txt",
+      "logs/scatter3d-frame-benchmark-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Scatter3D Frame Benchmark",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target scatter3d-frame-benchmark --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/scatter3d-frame-benchmark-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\scatter3d_frame_benchmark_probe.py",
+    "snapshots": [
+      "snapshots/scatter3d-frame-benchmark-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/scatter/mod.rs",
+      "native/src/table.rs"
+    ]
+  },
+  {
+    "category": "widgets",
+    "features": [
+      "HtmlReport"
+    ],
+    "id": "html-report",
+    "logs": [
+      "logs/html-report-desktop-1.stdout.txt",
+      "logs/html-report-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "HTML Report",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target html-report --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/html-report-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\html_report_probe.py",
+    "snapshots": [
+      "snapshots/html-report-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/html_report_webview.rs",
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "css",
+    "features": [
+      "Image",
+      "@media"
+    ],
+    "id": "media",
+    "logs": [
+      "logs/media-desktop-1.stdout.txt",
+      "logs/media-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Media Queries And Image",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target media --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/media-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\media_probe.py",
+    "snapshots": [
+      "snapshots/media-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "widgets",
+    "features": [
+      "LoadingSpinner"
+    ],
+    "id": "loading-spinner",
+    "logs": [
+      "logs/loading-spinner-desktop-1.stdout.txt",
+      "logs/loading-spinner-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Loading Spinner",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target loading-spinner --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/loading-spinner-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\loading_spinner_probe.py",
+    "snapshots": [
+      "snapshots/loading-spinner-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "css",
+    "features": [
+      "@font-face",
+      "Font fallback"
+    ],
+    "id": "font-face",
+    "logs": [
+      "logs/font-face-desktop-1.stdout.txt",
+      "logs/font-face-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Font Face",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target font-face --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/font-face-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\font_face_probe.py",
+    "snapshots": [
+      "snapshots/font-face-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "css",
+    "features": [
+      "Selectors",
+      "Pseudo-states",
+      "Parts"
+    ],
+    "id": "selectors",
+    "logs": [
+      "logs/selectors-desktop-1.stdout.txt",
+      "logs/selectors-desktop-1.stderr.txt"
+    ],
+    "manual": true,
+    "name": "Selectors",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Static capture visual review: first-viewport screenshot inspected; captured closed/default state is usable, but listed interactive states still need manual or automated checks.",
+    "priority": "medium",
+    "reproduction": [
+      "python tools/visual_audit.py --target selectors --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/selectors-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\selectors_probe.py",
+    "snapshots": [
+      "snapshots/selectors-desktop-1.json"
+    ],
+    "status": "needs_manual_interaction",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "css",
+    "features": [
+      "CSS variables",
+      "var()"
+    ],
+    "id": "custom-properties",
+    "logs": [
+      "logs/custom-properties-desktop-1.stdout.txt",
+      "logs/custom-properties-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Custom Properties",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target custom-properties --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/custom-properties-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\custom_properties_probe.py",
+    "snapshots": [
+      "snapshots/custom-properties-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "css",
+    "features": [
+      "@supports"
+    ],
+    "id": "supports",
+    "logs": [
+      "logs/supports-desktop-1.stdout.txt",
+      "logs/supports-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Supports Queries",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target supports --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/supports-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\supports_probe.py",
+    "snapshots": [
+      "snapshots/supports-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "css",
+    "features": [
+      "Color parsing",
+      "Named colors",
+      "Lab",
+      "LCH",
+      "Oklab",
+      "Oklch"
+    ],
+    "id": "color-syntax",
+    "logs": [
+      "logs/color-syntax-desktop-1.stdout.txt",
+      "logs/color-syntax-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Color Syntax",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target color-syntax --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/color-syntax-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\color_syntax_probe.py",
+    "snapshots": [
+      "snapshots/color-syntax-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "css",
+    "features": [
+      "Gradients",
+      "Layered backgrounds"
+    ],
+    "id": "gradients",
+    "logs": [
+      "logs/gradients-desktop-1.stdout.txt",
+      "logs/gradients-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Gradients",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target gradients --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/gradients-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\gradients_probe.py",
+    "snapshots": [
+      "snapshots/gradients-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "css",
+    "features": [
+      "Borders",
+      "Outlines",
+      "Shadows"
+    ],
+    "id": "border-outline-shadow",
+    "logs": [
+      "logs/border-outline-shadow-desktop-1.stdout.txt",
+      "logs/border-outline-shadow-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Border Outline Shadow",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target border-outline-shadow --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/border-outline-shadow-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\border_outline_shadow_probe.py",
+    "snapshots": [
+      "snapshots/border-outline-shadow-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "css",
+    "features": [
+      "::before",
+      "::after",
+      "attr()",
+      "Generated content"
+    ],
+    "id": "generated-content",
+    "logs": [
+      "logs/generated-content-desktop-1.stdout.txt",
+      "logs/generated-content-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Generated Content",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target generated-content --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/generated-content-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\generated_content_probe.py",
+    "snapshots": [
+      "snapshots/generated-content-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "css",
+    "features": [
+      "Transitions",
+      "Transforms"
+    ],
+    "id": "transitions-transforms",
+    "logs": [
+      "logs/transitions-transforms-desktop-1.stdout.txt",
+      "logs/transitions-transforms-desktop-1.stderr.txt"
+    ],
+    "manual": true,
+    "name": "Transitions And Transforms",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Static capture visual review: first-viewport screenshot inspected; captured closed/default state is usable, but listed interactive states still need manual or automated checks.",
+    "priority": "medium",
+    "reproduction": [
+      "python tools/visual_audit.py --target transitions-transforms --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/transitions-transforms-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\transitions_transforms_probe.py",
+    "snapshots": [
+      "snapshots/transitions-transforms-desktop-1.json"
+    ],
+    "status": "needs_manual_interaction",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "css",
+    "features": [
+      "@keyframes",
+      "Animation timing",
+      "Fill modes"
+    ],
+    "id": "animations",
+    "logs": [
+      "logs/animations-desktop-1.stdout.txt",
+      "logs/animations-desktop-1.stderr.txt"
+    ],
+    "manual": true,
+    "name": "Animations",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Static capture visual review: first-viewport screenshot inspected; captured closed/default state is usable, but listed interactive states still need manual or automated checks.",
+    "priority": "medium",
+    "reproduction": [
+      "python tools/visual_audit.py --target animations --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/animations-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\animations_probe.py",
+    "snapshots": [
+      "snapshots/animations-desktop-1.json"
+    ],
+    "status": "needs_manual_interaction",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "css",
+    "features": [
+      "Backdrop filter",
+      "Rounded clipping"
+    ],
+    "id": "backdrop-filter",
+    "logs": [
+      "logs/backdrop-filter-desktop-1.stdout.txt",
+      "logs/backdrop-filter-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Backdrop Filter",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target backdrop-filter --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/backdrop-filter-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\backdrop_filter_probe.py",
+    "snapshots": [
+      "snapshots/backdrop-filter-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "widgets",
+    "features": [
+      "ExtensionWidget",
+      "Composite widget"
+    ],
+    "id": "custom-composite-widget",
+    "logs": [
+      "logs/custom-composite-widget-desktop-1.stdout.txt",
+      "logs/custom-composite-widget-desktop-1.stderr.txt"
+    ],
+    "manual": true,
+    "name": "Custom Composite Widget",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Static capture visual review: first-viewport screenshot inspected; captured closed/default state is usable, but listed interactive states still need manual or automated checks.",
+    "priority": "medium",
+    "reproduction": [
+      "python tools/visual_audit.py --target custom-composite-widget --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/custom-composite-widget-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\custom_composite_widget_probe.py",
+    "snapshots": [
+      "snapshots/custom-composite-widget-desktop-1.json"
+    ],
+    "status": "needs_manual_interaction",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "widgets",
+    "features": [
+      "PaintWidget"
+    ],
+    "id": "paint-widget-sparkline",
+    "logs": [
+      "logs/paint-widget-sparkline-desktop-1.stdout.txt",
+      "logs/paint-widget-sparkline-desktop-1.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Paint Widget Sparkline",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target paint-widget-sparkline --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/paint-widget-sparkline-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\paint_widget_sparkline_probe.py",
+    "snapshots": [
+      "snapshots/paint-widget-sparkline-desktop-1.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "widgets",
+    "features": [
+      "PaintWidget",
+      "Hit testing"
+    ],
+    "id": "paint-widget-events",
+    "logs": [
+      "logs/paint-widget-events-desktop-1.stdout.txt",
+      "logs/paint-widget-events-desktop-1.stderr.txt"
+    ],
+    "manual": true,
+    "name": "Paint Widget Events",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Static capture visual review: first-viewport screenshot inspected; captured closed/default state is usable, but listed interactive states still need manual or automated checks.",
+    "priority": "medium",
+    "reproduction": [
+      "python tools/visual_audit.py --target paint-widget-events --sizes desktop-1"
+    ],
+    "screenshots": [
+      "screenshots/paint-widget-events-desktop-1.png"
+    ],
+    "script": "examples\\css_feature_probes\\paint_widget_events_probe.py",
+    "snapshots": [
+      "snapshots/paint-widget-events-desktop-1.json"
+    ],
+    "status": "needs_manual_interaction",
+    "suspected_modules": [
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  }
+]

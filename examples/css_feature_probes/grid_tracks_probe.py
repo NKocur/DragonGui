@@ -1,19 +1,17 @@
-"""GridLayout track-mode probe.
+"""GridLayout explicit-template probe.
 
-Exercises explicit track lists for compact key/value, fixed-label tables,
+Exercises explicit template track lists for compact key/value, fixed-label tables,
 and mixed fixed/flex columns. Verifies:
 
-- ``tracks=(72, "1fr")`` keeps the first column at 72px and gives the rest
+- ``template_columns=(72, "1fr")`` keeps the first column at 72px and gives the rest
   to the second column.
-- ``tracks=("auto", "1fr")`` shrinks the first column to its content width.
-- ``tracks=("1fr", "2fr")`` divides remaining space proportionally.
-- ``tracks=(10, "1fr", 72)`` produces a three-column row layout suitable
+- ``template_columns=("auto", "1fr")`` shrinks the first column to its content width.
+- ``template_columns=("1fr", "2fr")`` divides remaining space proportionally.
+- ``template_columns=(10, "1fr", 72)`` produces a three-column row layout suitable
   for status/name/stat tables.
-- ``rows=(...)`` fixes per-row heights.
-- ``row_height=N`` applies a uniform fixed height to every child.
+- ``template_rows=(...)`` fixes row heights.
 - Card mode (``columns=N, min_column_width=W``) still works after the
-  track-mode addition (backwards compat).
-- Track mode and card mode are mutually exclusive (raises ValueError).
+  explicit-template addition (backwards compat).
 """
 from __future__ import annotations
 
@@ -62,9 +60,9 @@ def GridTracksProbe(_ctx: dg.ComponentCtx) -> dg.Window:
 
     with dg.VLayout(parent=win, style={"gap": 12, "width": "100%"}):
         # ── 1. Fixed key column + flex value column ─────────────────────
-        with dg.Panel("Compact key/value (tracks=(72, '1fr'))", class_="box"):
+        with dg.Panel("Compact key/value (template_columns=(72, '1fr'))", class_="box"):
             dg.Label("Use case: diagnostics, property panels", class_="section")
-            with dg.GridLayout(tracks=(72, "1fr"), gap=6, row_gap=2, row_height=17):
+            with dg.GridLayout(template_columns=(72, "1fr"), gap=6, row_gap=2):
                 for k, v in [
                     ("depth / max", "3 / 100"),
                     ("avg",         "2.4"),
@@ -76,9 +74,9 @@ def GridTracksProbe(_ctx: dg.ComponentCtx) -> dg.Window:
                     dg.Label(v, class_="kv-val")
 
         # ── 2. Intrinsic-width labels ────────────────────────────────────
-        with dg.Panel("Intrinsic labels (tracks=('auto', '1fr'))", class_="box"):
+        with dg.Panel("Intrinsic labels (template_columns=('auto', '1fr'))", class_="box"):
             dg.Label("Label column shrinks to its content; values fill the rest.", class_="section")
-            with dg.GridLayout(tracks=("auto", "1fr"), gap=8, row_gap=2, row_height=17):
+            with dg.GridLayout(template_columns=("auto", "1fr"), gap=8, row_gap=2):
                 for k, v in [
                     ("hostname",            "machine-42.local"),
                     ("ip",                  "10.0.0.42"),
@@ -88,18 +86,18 @@ def GridTracksProbe(_ctx: dg.ComponentCtx) -> dg.Window:
                     dg.Label(v, class_="kv-val")
 
         # ── 3. Proportional fr tracks ────────────────────────────────────
-        with dg.Panel("Proportional (tracks=('1fr', '2fr'))", class_="box"):
+        with dg.Panel("Proportional (template_columns=('1fr', '2fr'))", class_="box"):
             dg.Label("First column gets 1/3 of remaining width, second gets 2/3.", class_="section")
-            with dg.GridLayout(tracks=("1fr", "2fr"), gap=8, row_gap=4, row_height=22):
+            with dg.GridLayout(template_columns=("1fr", "2fr"), gap=8, row_gap=4):
                 dg.Label("L", class_="tile")
                 dg.Label("R", class_="tile")
                 dg.Label("L", class_="tile")
                 dg.Label("R", class_="tile")
 
         # ── 4. Three-column status row ──────────────────────────────────
-        with dg.Panel("Status table (tracks=(10, '1fr', 72))", class_="box"):
+        with dg.Panel("Status table (template_columns=(10, '1fr', 72))", class_="box"):
             dg.Label("Dot indicator + flex name + fixed-width stat column.", class_="section")
-            with dg.GridLayout(tracks=(10, "1fr", 72), gap=6, row_gap=2, row_height=18):
+            with dg.GridLayout(template_columns=(10, "1fr", 72), gap=6, row_gap=2):
                 for alive, name, stat in [
                     (True,  "main",          "12.4k  3/s"),
                     (True,  "dg-render",     "8.2k  120/s"),

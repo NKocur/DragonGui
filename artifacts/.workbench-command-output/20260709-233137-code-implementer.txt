@@ -1,0 +1,944 @@
+from __future__ import annotations
+
+import argparse
+import ctypes
+from ctypes import wintypes
+from dataclasses import dataclass
+import json
+import os
+from pathlib import Path
+import platform
+import subprocess
+import sys
+import tempfile
+import textwrap
+import time
+from typing import Any
+
+
+ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_MANIFEST = ROOT / "examples" / "css_feature_probes" / "visual_audit_manifest.json"
+DEFAULT_OUT = ROOT / "artifacts" / "visual_audit"
+SIZE_ALIASES = {
+    "desktop": None,
+    "mobile": (390, 720),
+}
+
+
+@dataclass(frozen=True)
+class WindowInfo:
+    hwnd: int
+    title: str
+    rect: tuple[int, int, int, int]
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Run DragonGUI visual audit probes.")
+    parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST))
+    parser.add_argument("--list", action="store_true", help="List manifest targets and exit.")
+    parser.add_argument("--target", action="append", default=[], help="Target id to run; repeatable.")
+    parser.add_argument(
+        "--category",
+        default="all",
+        choices=["widgets", "layout", "css", "plots", "all"],
+        help="Target category to run when --target is omitted.",
+    )
+    parser.add_argument("--out", default=str(DEFAULT_OUT), help="Artifact output directory.")
+    parser.add_argument("--wait-ms", type=int, default=1800, help="Delay before screenshot capture.")
+    parser.add_argument(
+        "--sizes",
+        default="desktop",
+        help="Comma-separated aliases desktop,mobile or explicit WIDTHxHEIGHT values.",
+    )
+    parser.add_argument("--no-capture", action="store_true", help="Generate report shell only.")
+    parser.add_argument(
+        "--append",
+        action="store_true",
+        help="Merge new results into an existing report.json instead of replacing it.",
+    )
+    parser.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="When appending, skip target ids already present in report.json.",
+    )
+    parser.add_argument(
+        "--timeout-ms",
+        type=int,
+        default=12000,
+        help="Maximum time to wait for each probe process.",
+    )
+    args = parser.parse_args()
+
+    manifest_path = resolve_path(args.manifest)
+    targets = load_manifest(manifest_path)
+
+    if args.list:
+        for target in targets:
+            manual = " manual" if target.get("manual") else ""
+            print(f"{target['id']}\t{target.get('category', '')}\t{target['script']}{manual}")
+        return 0
+
+    out_dir = resolve_path(args.out)
+    existing_results = load_existing_results(out_dir, strict=args.append) if args.append else []
+    selected = select_targets(targets, args.target, args.category)
+    if args.append and args.skip_existing:
+        existing_ids = {str(result.get("id")) for result in existing_results}
+        selected = [target for target in selected if str(target.get("id")) not in existing_ids]
+    if not selected:
+        if args.append and existing_results:
+            print("All selected targets are already present; no audit probes were run.")
+            write_report(out_dir, order_results(existing_results, targets))
+            return 0
+        print("No targets selected.", file=sys.stderr)
+        return 2
+
+    sizes = parse_sizes(args.sizes)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "screenshots").mkdir(exist_ok=True)
+    (out_dir / "snapshots").mkdir(exist_ok=True)
+    (out_dir / "logs").mkdir(exist_ok=True)
+
+    results = []
+    for target in selected:
+        result = run_target(
+            target,
+            out_dir=out_dir,
+            wait_ms=max(0, args.wait_ms),
+            timeout_ms=max(args.timeout_ms, args.wait_ms + 1000),
+            size_selectors=sizes,
+            no_capture=args.no_capture,
+        )
+        results.append(result)
+        print(f"{result['id']}: {result['status']} ({result['notes']})")
+
+    if args.append:
+        results = merge_results(existing_results, results, targets)
+    write_report(out_dir, results)
+    return 1 if any(result["status"] == "fail" for result in results) else 0
+
+
+def resolve_path(value: str | Path) -> Path:
+    path = Path(value)
+    if not path.is_absolute():
+        path = ROOT / path
+    return path
+
+
+def load_manifest(path: Path) -> list[dict[str, Any]]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, list):
+        raise ValueError("visual audit manifest must be a JSON list")
+    seen: set[str] = set()
+    for item in data:
+        if not isinstance(item, dict):
+            raise ValueError("manifest entries must be JSON objects")
+        for key in ("id", "name", "script", "category", "features", "sizes", "manual"):
+            if key not in item:
+                raise ValueError(f"manifest entry is missing {key!r}: {item!r}")
+        target_id = str(item["id"])
+        if target_id in seen:
+            raise ValueError(f"duplicate visual audit target id: {target_id}")
+        seen.add(target_id)
+        script = resolve_path(str(item["script"]))
+        if not script.exists():
+            raise ValueError(f"probe script does not exist for {target_id}: {script}")
+    return data
+
+
+def select_targets(
+    targets: list[dict[str, Any]],
+    target_ids: list[str],
+    category: str,
+) -> list[dict[str, Any]]:
+    if target_ids:
+        by_id = {str(target["id"]): target for target in targets}
+        missing = [target_id for target_id in target_ids if target_id not in by_id]
+        if missing:
+            raise SystemExit(f"Unknown target id(s): {', '.join(missing)}")
+        return [by_id[target_id] for target_id in target_ids]
+    if category == "all":
+        return targets
+    return [target for target in targets if target.get("category") == category]
+
+
+def load_existing_results(out_dir: Path, *, strict: bool = False) -> list[dict[str, Any]]:
+    path = out_dir / "report.json"
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        if strict:
+            raise SystemExit(f"Could not read existing visual audit report {path}: {exc}") from exc
+        return []
+    except json.JSONDecodeError as exc:
+        if strict:
+            raise SystemExit(f"Existing visual audit report is malformed JSON: {path}: {exc}") from exc
+        return []
+    if not isinstance(data, list):
+        if strict:
+            raise SystemExit(f"Existing visual audit report must be a JSON list: {path}")
+        return []
+    return [item for item in data if isinstance(item, dict) and "id" in item]
+
+
+def merge_results(
+    existing: list[dict[str, Any]],
+    new: list[dict[str, Any]],
+    manifest_targets: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    merged = {str(result["id"]): result for result in existing if "id" in result}
+    for result in new:
+        result_id = str(result["id"])
+        if result_id not in merged:
+            merged[result_id] = result
+            continue
+        previous = merged[result_id]
+        combined = {**previous, **result}
+        for key in ("screenshots", "snapshots", "logs", "reproduction"):
+            combined[key] = unique_list(previous.get(key, []), result.get(key, []))
+        combined["notes"] = combine_notes(previous.get("notes", ""), result.get("notes", ""))
+        combined["status"] = combined_status(str(previous.get("status")), str(result.get("status")))
+        combined["priority"] = combined_priority(str(previous.get("priority")), str(result.get("priority")))
+        merged[result_id] = combined
+    return order_results(list(merged.values()), manifest_targets)
+
+
+def order_results(
+    results: list[dict[str, Any]],
+    manifest_targets: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    order = {str(target["id"]): index for index, target in enumerate(manifest_targets)}
+    return sorted(results, key=lambda result: order.get(str(result.get("id")), len(order)))
+
+
+def unique_list(*values: Any) -> list[Any]:
+    out: list[Any] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, list):
+            continue
+        for item in value:
+            key = str(item)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(item)
+    return out
+
+
+def combine_notes(previous: str, current: str) -> str:
+    previous = str(previous).strip()
+    current = str(current).strip()
+    if not previous:
+        return current
+    if not current or current == previous:
+        return previous
+    if current in previous:
+        return previous
+    return f"{previous} Additional run: {current}"
+
+
+def combined_status(previous: str, current: str) -> str:
+    rank = {"pass": 0, "needs_manual_interaction": 1, "blocked": 2, "fail": 3}
+    return previous if rank.get(previous, 0) >= rank.get(current, 0) else current
+
+
+def combined_priority(previous: str, current: str) -> str:
+    rank = {"low": 0, "medium": 1, "high": 2}
+    return previous if rank.get(previous, 0) >= rank.get(current, 0) else current
+
+
+def parse_sizes(value: str) -> list[tuple[int, int] | None]:
+    parsed: list[tuple[int, int] | None] = []
+    for raw in value.split(","):
+        part = raw.strip().lower()
+        if not part:
+            continue
+        if part in SIZE_ALIASES:
+            parsed.append(SIZE_ALIASES[part])
+            continue
+        if "x" not in part:
+            raise SystemExit(f"Invalid --sizes entry {raw!r}; use desktop, mobile, or WIDTHxHEIGHT.")
+        width_text, height_text = part.split("x", 1)
+        parsed.append((int(width_text), int(height_text)))
+    return parsed or [None]
+
+
+def run_target(
+    target: dict[str, Any],
+    *,
+    out_dir: Path,
+    wait_ms: int,
+    timeout_ms: int,
+    size_selectors: list[tuple[int, int] | None],
+    no_capture: bool,
+) -> dict[str, Any]:
+    target_id = str(target["id"])
+    script = resolve_path(str(target["script"]))
+    selected_sizes = target_sizes(target, size_selectors)
+    result = {
+        "id": target_id,
+        "name": target["name"],
+        "script": str(script.relative_to(ROOT)),
+        "category": target["category"],
+        "features": target["features"],
+        "manual": bool(target.get("manual")),
+        "status": "needs_manual_interaction" if target.get("manual") else "pass",
+        "priority": "medium" if target.get("manual") else "low",
+        "notes": str(target.get("notes") or "No visual issue recorded by automated first pass."),
+        "suspected_modules": suspected_modules(target),
+        "screenshots": [],
+        "snapshots": [],
+        "logs": [],
+        "reproduction": [],
+    }
+
+    if no_capture:
+        result["status"] = "blocked"
+        result["priority"] = "low"
+        result["notes"] = "--no-capture was used; report shell generated without launching probe."
+        result["reproduction"] = [f"python {target['script']}"]
+        return result
+
+    for index, size in enumerate(selected_sizes, start=1):
+        label = size_label(size, index)
+        stdout_path = out_dir / "logs" / f"{target_id}-{label}.stdout.txt"
+        stderr_path = out_dir / "logs" / f"{target_id}-{label}.stderr.txt"
+        snapshot_path = out_dir / "snapshots" / f"{target_id}-{label}.json"
+        screenshot_path = out_dir / "screenshots" / f"{target_id}-{label}.png"
+        run_result = run_probe_process(
+            script,
+            target_id=target_id,
+            snapshot_path=snapshot_path,
+            wait_ms=wait_ms,
+            timeout_ms=timeout_ms,
+            size=size,
+            screenshot_path=screenshot_path,
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+        )
+        result["logs"].extend(
+            [relative_artifact(stdout_path, out_dir), relative_artifact(stderr_path, out_dir)]
+        )
+        result["reproduction"].append(
+            f"python tools/visual_audit.py --target {target_id} --sizes {label}"
+        )
+        if run_result["screenshot"]:
+            result["screenshots"].append(relative_artifact(screenshot_path, out_dir))
+        if run_result["snapshot"]:
+            result["snapshots"].append(relative_artifact(snapshot_path, out_dir))
+        if run_result["status"] == "blocked":
+            result["status"] = "blocked"
+            result["priority"] = "high"
+            result["notes"] = combine_notes(result["notes"], run_result["notes"])
+        elif run_result["status"] == "fail":
+            result["status"] = "fail"
+            result["priority"] = "high"
+            result["notes"] = combine_notes(result["notes"], run_result["notes"])
+        else:
+            result["notes"] = combine_notes(result["notes"], run_result["notes"])
+
+    return result
+
+
+def target_sizes(
+    target: dict[str, Any],
+    selectors: list[tuple[int, int] | None],
+) -> list[tuple[int, int] | None]:
+    manifest_sizes = [tuple(size) for size in target.get("sizes", [])]
+    sizes: list[tuple[int, int] | None] = []
+    for selector in selectors:
+        if selector is None:
+            sizes.append(None)
+        elif selector in manifest_sizes:
+            sizes.append(selector)
+        else:
+            sizes.append(selector)
+    return sizes
+
+
+def screenshot_capture_available() -> tuple[bool, str]:
+    if platform.system() != "Windows":
+        return False, "Whole-window external capture currently supports Windows only."
+    try:
+        from PIL import ImageGrab  # noqa: F401
+    except Exception as exc:
+        return False, f"Pillow ImageGrab is unavailable: {exc!r}"
+    return True, "ok"
+
+
+def screenshot_error_path(screenshot_path: Path) -> Path:
+    return screenshot_path.with_suffix(".error.json")
+
+
+def read_screenshot_error(screenshot_path: Path) -> str | None:
+    error_path = screenshot_error_path(screenshot_path)
+    if not error_path.exists():
+        return None
+    try:
+        payload = json.loads(error_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return f"could not read screenshot error {error_path.name}: {exc}"
+    if not isinstance(payload, dict):
+        return f"screenshot error file {error_path.name} is not a JSON object"
+    message = str(payload.get("error") or payload.get("message") or "unknown error")
+    kind = str(payload.get("kind") or "native_screenshot_error")
+    return f"{kind}: {message}"
+
+
+def with_screenshot_error_note(note: str, screenshot_path: Path) -> str:
+    error = read_screenshot_error(screenshot_path)
+    if not error:
+        return note
+    return f"{note} Native screenshot error: {error}"
+
+
+def collect_process_output(
+    proc: subprocess.Popen[str],
+    *,
+    timeout_s: float,
+) -> tuple[str, str, bool]:
+    try:
+        stdout, stderr = proc.communicate(timeout=max(1.0, timeout_s))
+        return stdout, stderr, False
+    except subprocess.TimeoutExpired:
+        proc.terminate()
+        try:
+            stdout, stderr = proc.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            stdout, stderr = proc.communicate(timeout=2)
+        return stdout, stderr, True
+
+
+def write_process_logs(
+    stdout_path: Path,
+    stderr_path: Path,
+    stdout: str,
+    stderr: str,
+) -> None:
+    stdout_path.write_text(stdout, encoding="utf-8")
+    stderr_path.write_text(stderr, encoding="utf-8")
+
+
+def run_probe_process(
+    script: Path,
+    *,
+    target_id: str,
+    snapshot_path: Path,
+    wait_ms: int,
+    timeout_ms: int,
+    size: tuple[int, int] | None,
+    screenshot_path: Path,
+    stdout_path: Path,
+    stderr_path: Path,
+) -> dict[str, Any]:
+    wrapper = make_wrapper(script)
+    screenshot_error = screenshot_error_path(screenshot_path)
+    screenshot_error.unlink(missing_ok=True)
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "python") + os.pathsep + env.get("PYTHONPATH", "")
+    env["DRAGONGUI_VISUAL_AUDIT"] = "1"
+    env["DRAGONGUI_AUDIT_TARGET"] = target_id
+    env["DRAGONGUI_AUDIT_WAIT_MS"] = str(wait_ms)
+    env["DRAGONGUI_AUDIT_EXIT_MS"] = str(wait_ms + 1200)
+    env["DRAGONGUI_AUDIT_SNAPSHOT"] = str(snapshot_path)
+    env["DRAGONGUI_AUDIT_SCREENSHOT"] = str(screenshot_path)
+    env["DRAGONGUI_AUDIT_SCREENSHOT_ERROR"] = str(screenshot_error)
+    if size is not None:
+        env["DRAGONGUI_AUDIT_WIDTH"] = str(size[0])
+        env["DRAGONGUI_AUDIT_HEIGHT"] = str(size[1])
+    env.pop("DRAGONGUI_DEV_FALLBACK", None)
+
+    proc = subprocess.Popen(
+        [sys.executable, str(wrapper)],
+        cwd=str(ROOT),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    screenshot_ok = False
+    notes = "No visual issue recorded by automated first pass."
+    try:
+        native_deadline = time.monotonic() + (wait_ms + 4000) / 1000
+        while time.monotonic() < native_deadline and proc.poll() is None:
+            if screenshot_path.exists() and screenshot_path.stat().st_size > 0:
+                screenshot_ok = True
+                stdout, stderr, _terminated = collect_process_output(
+                    proc, timeout_s=timeout_ms / 1000
+                )
+                write_process_logs(stdout_path, stderr_path, stdout, stderr)
+                if proc.returncode not in (0, None):
+                    return {
+                        "status": "blocked",
+                        "notes": f"Probe exited with code {proc.returncode}; native screenshot was still written.",
+                        "screenshot": screenshot_ok,
+                        "snapshot": snapshot_path.exists(),
+                    }
+                return {
+                    "status": "pass",
+                    "notes": "Captured with native DragonGUI window screenshot API.",
+                    "screenshot": screenshot_ok,
+                    "snapshot": snapshot_path.exists(),
+                }
+            time.sleep(0.05)
+
+        if proc.poll() is not None:
+            stdout, stderr = proc.communicate(timeout=1)
+            write_process_logs(stdout_path, stderr_path, stdout, stderr)
+            return {
+                "status": "blocked",
+                "notes": with_screenshot_error_note(
+                    window_blocker(proc.returncode, stdout, stderr), screenshot_path
+                ),
+                "screenshot": False,
+                "snapshot": snapshot_path.exists(),
+            }
+
+        capture_available, capture_reason = screenshot_capture_available()
+        if not capture_available:
+            stdout, stderr, _terminated = collect_process_output(
+                proc, timeout_s=timeout_ms / 1000
+            )
+            write_process_logs(stdout_path, stderr_path, stdout, stderr)
+            return {
+                "status": "blocked",
+                "notes": with_screenshot_error_note(
+                    f"Native screenshot was not written and external capture is unavailable: {capture_reason}",
+                    screenshot_path,
+                ),
+                "screenshot": False,
+                "snapshot": snapshot_path.exists(),
+            }
+
+        hwnd = wait_for_window(proc.pid, timeout_ms=max(wait_ms, 1000))
+        if hwnd is None:
+            if proc.poll() is None:
+                screenshot_ok = capture_screen(screenshot_path)
+                stdout, stderr, _terminated = collect_process_output(
+                    proc, timeout_s=timeout_ms / 1000
+                )
+                write_process_logs(stdout_path, stderr_path, stdout, stderr)
+                if proc.returncode not in (0, None):
+                    return {
+                        "status": "blocked",
+                        "notes": with_screenshot_error_note(
+                            f"Probe exited with code {proc.returncode}; full-screen fallback captured because window bounds were not detected.",
+                            screenshot_path,
+                        ),
+                        "screenshot": screenshot_ok,
+                        "snapshot": snapshot_path.exists(),
+                    }
+                return {
+                    "status": "blocked",
+                    "notes": with_screenshot_error_note(
+                        "Whole-window bounds were not detected; captured the desktop as diagnostic evidence only.",
+                        screenshot_path,
+                    ),
+                    "screenshot": screenshot_ok,
+                    "snapshot": snapshot_path.exists(),
+                }
+            stdout, stderr = proc.communicate(timeout=timeout_ms / 1000)
+            write_process_logs(stdout_path, stderr_path, stdout, stderr)
+            return {
+                "status": "blocked",
+                "notes": with_screenshot_error_note(
+                    window_blocker(proc.returncode, stdout, stderr), screenshot_path
+                ),
+                "screenshot": False,
+                "snapshot": snapshot_path.exists(),
+            }
+        if size is not None:
+            move_window(hwnd.hwnd, size[0], size[1])
+        time.sleep(wait_ms / 1000)
+        hwnd = window_for_pid(proc.pid) or hwnd
+        if not likely_probe_window(hwnd):
+            screenshot_ok = capture_screen(screenshot_path)
+            stdout, stderr, _terminated = collect_process_output(
+                proc, timeout_s=(timeout_ms - wait_ms) / 1000
+            )
+            write_process_logs(stdout_path, stderr_path, stdout, stderr)
+            return {
+                "status": "blocked",
+                "notes": with_screenshot_error_note(
+                    f"Detected window title/rect was not a reliable DragonGUI probe crop: {hwnd.title!r} {hwnd.rect}; captured desktop as diagnostic evidence only.",
+                    screenshot_path,
+                ),
+                "screenshot": screenshot_ok,
+                "snapshot": snapshot_path.exists(),
+            }
+        screenshot_ok = capture_window(hwnd.rect, screenshot_path)
+        stdout, stderr, terminated = collect_process_output(
+            proc, timeout_s=(timeout_ms - wait_ms) / 1000
+        )
+        if terminated:
+            notes = "Probe did not exit after audit capture and was terminated."
+        write_process_logs(stdout_path, stderr_path, stdout, stderr)
+        if proc.returncode not in (0, None):
+            return {
+                "status": "blocked",
+                "notes": f"Probe exited with code {proc.returncode}; see stderr log.",
+                "screenshot": screenshot_ok,
+                "snapshot": snapshot_path.exists(),
+            }
+        return {
+            "status": "pass",
+            "notes": notes,
+            "screenshot": screenshot_ok,
+            "snapshot": snapshot_path.exists(),
+        }
+    finally:
+        try:
+            wrapper.unlink(missing_ok=True)
+        except OSError:
+            pass
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+
+def make_wrapper(script: Path) -> Path:
+    content = f"""
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import runpy
+import sys
+import threading
+import time
+import traceback
+import struct
+import zlib
+
+sys.path.insert(0, {str(ROOT / "python")!r})
+sys.path.insert(0, {str(script.parent)!r})
+
+import dragongui as dg
+
+_original_run = dg.App.run
+_original_window_init = dg.Window.__init__
+
+
+def _png_chunk(kind, data):
+    return (
+        struct.pack(">I", len(data))
+        + kind
+        + data
+        + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+    )
+
+
+def _write_rgba_png(path, width, height, rgba):
+    rows = []
+    stride = width * 4
+    for y in range(height):
+        start = y * stride
+        rows.append(b"\\x00" + rgba[start:start + stride])
+    payload = b"".join(rows)
+    png = (
+        b"\\x89PNG\\r\\n\\x1a\\n"
+        + _png_chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+        + _png_chunk(b"IDAT", zlib.compress(payload))
+        + _png_chunk(b"IEND", b"")
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(png)
+
+
+def _write_screenshot_error(path, kind, error, **extra):
+    payload = {{"kind": kind, "error": str(error), **extra}}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    print(f"DragonGUI visual audit screenshot error: {{kind}}: {{error}}", file=sys.stderr)
+
+
+def _audited_window_init(self, *args, **kwargs):
+    width = os.environ.get("DRAGONGUI_AUDIT_WIDTH")
+    height = os.environ.get("DRAGONGUI_AUDIT_HEIGHT")
+    if width and height:
+        kwargs["width"] = int(width)
+        kwargs["height"] = int(height)
+    return _original_window_init(self, *args, **kwargs)
+
+
+def _audited_run(self, window):
+    wait_ms = int(os.environ.get("DRAGONGUI_AUDIT_WAIT_MS", "1800"))
+    exit_ms = int(os.environ.get("DRAGONGUI_AUDIT_EXIT_MS", str(wait_ms + 1200)))
+    snapshot_path = Path(os.environ["DRAGONGUI_AUDIT_SNAPSHOT"])
+    screenshot_path = Path(os.environ["DRAGONGUI_AUDIT_SCREENSHOT"])
+    screenshot_error_path = Path(os.environ["DRAGONGUI_AUDIT_SCREENSHOT_ERROR"])
+
+    def worker():
+        deadline = time.monotonic() + max(1.0, wait_ms / 1000.0)
+        while time.monotonic() < deadline:
+            if getattr(self, "_handle", None) is not None:
+                break
+            time.sleep(0.025)
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(remaining)
+        try:
+            snapshot = self.debug_snapshot(timeout_ms=3000)
+            snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+            snapshot_path.write_text(json.dumps(snapshot, indent=2, sort_keys=True), encoding="utf-8")
+        except Exception as exc:
+            snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {{"error": repr(exc), "traceback": traceback.format_exc()}}
+            snapshot_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        try:
+            raw = self._window_screenshot(timeout_ms=5000)
+            if raw is None:
+                _write_screenshot_error(
+                    screenshot_error_path,
+                    "native_unavailable",
+                    "app._window_screenshot() returned None",
+                )
+            else:
+                width, height, rgba = raw
+                expected_len = int(width) * int(height) * 4
+                if int(width) <= 0 or int(height) <= 0:
+                    _write_screenshot_error(
+                        screenshot_error_path,
+                        "invalid_dimensions",
+                        f"window screenshot returned {{width}}x{{height}}",
+                    )
+                elif not rgba:
+                    _write_screenshot_error(
+                        screenshot_error_path,
+                        "empty_rgba",
+                        "window screenshot returned empty RGBA bytes",
+                        width=int(width),
+                        height=int(height),
+                    )
+                elif len(rgba) != expected_len:
+                    _write_screenshot_error(
+                        screenshot_error_path,
+                        "wrong_rgba_length",
+                        f"expected {{expected_len}} bytes, got {{len(rgba)}}",
+                        width=int(width),
+                        height=int(height),
+                    )
+                else:
+                    _write_rgba_png(screenshot_path, int(width), int(height), bytes(rgba))
+        except Exception as exc:
+            _write_screenshot_error(
+                screenshot_error_path,
+                "exception",
+                repr(exc),
+                traceback=traceback.format_exc(),
+            )
+        extra = max(0.0, (exit_ms - wait_ms) / 1000.0)
+        if extra:
+            time.sleep(extra)
+        try:
+            self.request_exit()
+        except Exception:
+            pass
+
+    threading.Thread(target=worker, daemon=True).start()
+    return _original_run(self, window)
+
+
+dg.App.run = _audited_run
+dg.Window.__init__ = _audited_window_init
+runpy.run_path({str(script)!r}, run_name="__main__")
+"""
+    handle = tempfile.NamedTemporaryFile(
+        "w",
+        suffix="_dragongui_visual_audit.py",
+        prefix="",
+        delete=False,
+        encoding="utf-8",
+    )
+    with handle:
+        handle.write(textwrap.dedent(content))
+    return Path(handle.name)
+
+
+def wait_for_window(pid: int, *, timeout_ms: int) -> WindowInfo | None:
+    deadline = time.monotonic() + timeout_ms / 1000
+    while time.monotonic() < deadline:
+        info = window_for_pid(pid)
+        if info is not None:
+            return info
+        time.sleep(0.05)
+    return None
+
+
+def likely_probe_window(window: WindowInfo) -> bool:
+    title = window.title.lower()
+    if any(token in title for token in ("probe", "benchmark", "dragongui", "css")):
+        return True
+    left, top, right, bottom = window.rect
+    width = right - left
+    height = bottom - top
+    # A borderless full-desktop capture is not a useful per-probe screenshot.
+    return width < 2500 and height < 1600
+
+
+def window_for_pid(pid: int) -> WindowInfo | None:
+    user32 = ctypes.windll.user32
+    windows: list[WindowInfo] = []
+
+    enum_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def callback(hwnd: int, _lparam: int) -> bool:
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        proc_id = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(proc_id))
+        if proc_id.value != pid:
+            return True
+        title_len = user32.GetWindowTextLengthW(hwnd)
+        if title_len <= 0:
+            return True
+        buffer = ctypes.create_unicode_buffer(title_len + 1)
+        user32.GetWindowTextW(hwnd, buffer, title_len + 1)
+        rect = wintypes.RECT()
+        user32.GetWindowRect(hwnd, ctypes.byref(rect))
+        if rect.right <= rect.left or rect.bottom <= rect.top:
+            return True
+        windows.append(
+            WindowInfo(
+                hwnd=int(hwnd),
+                title=buffer.value,
+                rect=(int(rect.left), int(rect.top), int(rect.right), int(rect.bottom)),
+            )
+        )
+        return True
+
+    user32.EnumWindows(enum_proc(callback), 0)
+    if not windows:
+        return None
+    return max(windows, key=lambda item: (item.rect[2] - item.rect[0]) * (item.rect[3] - item.rect[1]))
+
+
+def move_window(hwnd: int, width: int, height: int) -> None:
+    user32 = ctypes.windll.user32
+    rect = wintypes.RECT()
+    user32.GetWindowRect(hwnd, ctypes.byref(rect))
+    user32.MoveWindow(hwnd, rect.left, rect.top, int(width), int(height), True)
+
+
+def capture_window(rect: tuple[int, int, int, int], path: Path) -> bool:
+    from PIL import ImageGrab
+
+    image = ImageGrab.grab(bbox=rect, all_screens=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(path)
+    return path.exists()
+
+
+def capture_screen(path: Path) -> bool:
+    from PIL import ImageGrab
+
+    image = ImageGrab.grab(all_screens=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(path)
+    return path.exists()
+
+
+def window_blocker(returncode: int | None, stdout: str, stderr: str) -> str:
+    combined = "\n".join(part for part in (stdout, stderr) if part).strip()
+    if "native extension is not built" in combined:
+        return "Native extension is not built; screenshot inspection requires a real window."
+    if "dev-fallback" in combined or "event_loop': 'not_started'" in combined:
+        return "Probe used DragonGUI dev fallback; screenshot inspection requires native event loop."
+    if "requires " in combined:
+        return combined.splitlines()[0]
+    if returncode not in (0, None):
+        return f"Probe exited before a window was detected with code {returncode}; see logs."
+    return "No visible DragonGUI window was detected before capture timeout."
+
+
+def size_label(size: tuple[int, int] | None, index: int) -> str:
+    if size is None:
+        return f"desktop-{index}"
+    return f"{size[0]}x{size[1]}"
+
+
+def relative_artifact(path: Path, out_dir: Path) -> str:
+    return str(path.relative_to(out_dir)).replace("\\", "/")
+
+
+def suspected_modules(target: dict[str, Any]) -> list[str]:
+    category = target.get("category")
+    features = {str(feature).lower() for feature in target.get("features", [])}
+    modules = ["native/src/runtime.rs", "native/src/primitives/mod.rs"]
+    if category == "layout" or any("layout" in feature or "grid" in feature for feature in features):
+        modules.append("native/src/layout.rs")
+    if category == "plots" or any(
+        feature in features for feature in {"scatter3d", "scatterplot2d", "lineplot", "histogram"}
+    ):
+        modules.extend(["native/src/scatter/mod.rs", "native/src/table.rs"])
+    if any("text" in feature or "codeeditor" in feature or "logview" in feature for feature in features):
+        modules.append("native/src/text/mod.rs")
+    if any("htmlreport" in feature for feature in features):
+        modules.append("native/src/html_report_webview.rs")
+    return sorted(set(modules))
+
+
+def write_report(out_dir: Path, results: list[dict[str, Any]]) -> None:
+    report_json = out_dir / "report.json"
+    report_json.write_text(json.dumps(results, indent=2, sort_keys=True), encoding="utf-8")
+
+    lines = [
+        "# DragonGUI Visual Audit Report",
+        "",
+        f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S %Z')}",
+        "",
+        "This is a manifest-driven visual audit. `pass` means the saved screenshot state was visually reviewed against `artifacts/SPEC.md` and no obvious defect was recorded. `needs_manual_interaction` means the static capture was reviewed, but important hover/open/drag/focus or animated states still need manual or automated interaction coverage.",
+        "",
+        "## Summary",
+        "",
+    ]
+    counts: dict[str, int] = {}
+    for result in results:
+        counts[result["status"]] = counts.get(result["status"], 0) + 1
+    for status in ("pass", "needs_manual_interaction", "fail", "blocked"):
+        lines.append(f"- {status}: {counts.get(status, 0)}")
+    lines.extend(["", "## Targets", ""])
+
+    for result in results:
+        lines.extend(
+            [
+                f"### {result['name']} (`{result['id']}`)",
+                "",
+                f"- Status: `{result['status']}`",
+                f"- Priority: `{result['priority']}`",
+                f"- Probe: `{result['script']}`",
+                f"- Features: {', '.join(f'`{feature}`' for feature in result['features'])}",
+                f"- Screenshots: {format_paths(result['screenshots'])}",
+                f"- Debug snapshots: {format_paths(result['snapshots'])}",
+                f"- Logs: {format_paths(result['logs'])}",
+                f"- Notes: {result['notes']}",
+                f"- Suspected modules: {', '.join(f'`{module}`' for module in result['suspected_modules'])}",
+                f"- Reproduction: {format_repro(result['reproduction'])}",
+                "",
+            ]
+        )
+
+    (out_dir / "REPORT.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+def format_paths(paths: list[str]) -> str:
+    if not paths:
+        return "_none_"
+    return ", ".join(f"`{path}`" for path in paths)
+
+
+def format_repro(steps: list[str]) -> str:
+    if not steps:
+        return "_none_"
+    return "; ".join(f"`{step}`" for step in steps)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

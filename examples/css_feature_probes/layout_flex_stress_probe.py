@@ -86,7 +86,8 @@ app.stylesheet(
         gap: 8px;
     }
 
-    HLayout.stress-row {
+    HLayout.stress-row,
+    FlowLayout.stress-row {
         width: 100%;
         min-width: 0;
         min-height: 36px;
@@ -202,6 +203,36 @@ app.stylesheet(
         background: rgba(255, 255, 255, 0.040);
         border-color: rgba(255, 255, 255, 0.10);
     }
+
+    @media (max-width: 520px) {
+        Window {
+            padding: 10px;
+        }
+
+        VLayout.root {
+            padding-right: 8px;
+        }
+
+        Panel.case,
+        Panel.narrow-card {
+            padding: 10px;
+        }
+
+        HLayout.stress-row,
+        FlowLayout.stress-row {
+            gap: 6px;
+            padding: 6px;
+        }
+
+        Label.field-label {
+            width: 124px;
+        }
+
+        Button.shrink-action,
+        SmallButton.shrink-action {
+            min-width: 72px;
+        }
+    }
     """
 )
 
@@ -268,7 +299,7 @@ with dg.VLayout(class_="root"):
                         dg.Tag("range locked", level="neutral")
 
     with dg.Panel("Action rows under pressure", class_="case"):
-        with dg.HLayout(class_="stress-row"):
+        with dg.FlowLayout(class_="stress-row", cross_align="center"):
             dg.Label("Toolbar-like action row", class_="field-label")
             dg.Button("Run full diagnostics", class_="shrink-action", on_click=lambda: mark("Diagnostics started"))
             dg.Button("Export selected report", class_="shrink-action", on_click=lambda: mark("Report exported"))

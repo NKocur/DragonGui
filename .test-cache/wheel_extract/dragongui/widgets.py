@@ -2080,6 +2080,55 @@ class VLayout(Container):
     kind = "v_layout"
 
 
+
+class WorkbenchLayout(VLayout):
+    """Full-height vertical shell for prompt-first workbench applications."""
+
+    def __init__(
+        self,
+        *,
+        gap: int | float | None = 10,
+        padding: int | float | None = 12,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: "Container | None | object" = _AUTO_PARENT,
+    ) -> None:
+        if gap is not None:
+            gap_f = float(gap)
+            if not math.isfinite(gap_f) or gap_f < 0:
+                raise ValueError("WorkbenchLayout gap must be a non-negative finite number")
+        else:
+            gap_f = None
+        if padding is not None:
+            padding_f = float(padding)
+            if not math.isfinite(padding_f) or padding_f < 0:
+                raise ValueError("WorkbenchLayout padding must be a non-negative finite number")
+        else:
+            padding_f = None
+        default_style: dict[str, object] = {
+            "width": "100%",
+            "height": "100%",
+            "min_width": 0,
+            "min_height": 0,
+            "overflow_x": "hidden",
+            "overflow_y": "hidden",
+        }
+        if gap_f is not None:
+            default_style["gap"] = gap_f
+        if padding_f is not None:
+            default_style["padding"] = padding_f
+        super().__init__(
+            id=id,
+            key=key,
+            class_=_merge_widget_class("workbench-layout", class_),
+            style={**default_style, **(style or {})},
+            tooltip=tooltip,
+            parent=parent,
+        )
+
 class AppShell(HLayout):
     """Bounded application root for sidebar plus main-body layouts.
 
@@ -2238,6 +2287,42 @@ class Body(ScrollArea):
             parent=parent,
         )
 
+
+
+class WorkbenchMain(ScrollArea):
+    """Flexible scroll-owning main region for conversation/detail workbench panes."""
+
+    def __init__(
+        self,
+        *,
+        scroll: str = "y",
+        gap: int | None = 10,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: "Container | None | object" = _AUTO_PARENT,
+    ) -> None:
+        default_style: dict[str, object] = {
+            "width": "100%",
+            "height": 0,
+            "flex": 1,
+            "flex_grow": 1,
+            "flex_shrink": 1,
+            "min_width": 0,
+            "min_height": 0,
+        }
+        super().__init__(
+            axis=scroll,
+            gap=gap,
+            id=id,
+            key=key,
+            class_=_merge_widget_class("workbench-main", class_),
+            style={**default_style, **(style or {})},
+            tooltip=tooltip,
+            parent=parent,
+        )
 
 GridTrackValue = int | float | str | Mapping[str, object]
 GridTrackTemplate = Sequence[GridTrackValue] | str
@@ -3130,8 +3215,14 @@ class Tabs(Container):
     def add(self, child: Widget) -> Widget:
         if not isinstance(child, Tab):
             raise TypeError("Tabs can only contain Tab children")
-        if any(isinstance(existing, Tab) and existing.value == child.value for existing in self.children):
-            raise ValueError(f"duplicate Tab value: {child.value!r}")
+        duplicate = next(
+            (existing for existing in self.children if isinstance(existing, Tab) and existing.value == child.value),
+            None,
+        )
+        if duplicate is not None:
+            raise ValueError(
+                f"duplicate Tab value {child.value!r}: {duplicate.label!r} and {child.label!r} use the same value"
+            )
         if self.value is None:
             self.value = child.value
         return super().add(child)
@@ -4223,6 +4314,31 @@ class CodeEditor(Widget):
         }
 
 
+
+_LOG_VIEW_UNSET = object()
+_LOG_VIEW_VARIANTS = {"default", "conversation", "activity", "debug"}
+_LOG_VIEW_VARIANT_DEFAULTS: dict[str, dict[str, object]] = {
+    "default": {"rows": 12, "wrap": False, "class": ""},
+    "conversation": {
+        "rows": 18,
+        "wrap": True,
+        "class": "log-view-conversation",
+        "style": {"width": "100%", "min_height": 0, "flex_grow": 1, "line_height": "1.45", "padding_bottom": 12},
+    },
+    "activity": {
+        "rows": 8,
+        "wrap": True,
+        "class": "log-view-activity",
+        "style": {"width": "100%", "font_size": 12, "line_height": "1.35", "padding_bottom": 8},
+    },
+    "debug": {
+        "rows": 8,
+        "wrap": False,
+        "class": "log-view-debug",
+        "style": {"width": "100%", "font_family": "Consolas", "font_size": 12, "padding_bottom": 8},
+    },
+}
+
 class LogView(Widget):
     kind = "log_view"
 
@@ -4232,8 +4348,9 @@ class LogView(Widget):
         *,
         follow: bool = True,
         max_lines: int = 10_000,
-        rows: int = 12,
-        wrap: bool = False,
+        rows: int | object = _LOG_VIEW_UNSET,
+        wrap: bool | object = _LOG_VIEW_UNSET,
+        variant: str = "default",
         disabled: bool = False,
         id: str | None = None,
         key: str | None = None,
@@ -4242,22 +4359,37 @@ class LogView(Widget):
         tooltip: str | None = None,
         parent: Container | None | object = _AUTO_PARENT,
     ) -> None:
-        rows_i = int(rows)
+        variant_value = str(variant).strip().lower()
+        if variant_value not in _LOG_VIEW_VARIANTS:
+            raise ValueError("LogView variant must be 'default', 'conversation', 'activity', or 'debug'")
+        defaults = _LOG_VIEW_VARIANT_DEFAULTS[variant_value]
+        resolved_rows = defaults["rows"] if rows is _LOG_VIEW_UNSET else rows
+        resolved_wrap = defaults["wrap"] if wrap is _LOG_VIEW_UNSET else wrap
+        rows_i = int(resolved_rows)
         if rows_i < 1:
             raise ValueError("LogView rows must be at least 1")
         max_lines_i = int(max_lines)
         if max_lines_i < 1:
             raise ValueError("LogView max_lines must be at least 1")
+        variant_style = defaults.get("style")
+        merged_style = {**variant_style, **(style or {})} if isinstance(variant_style, Mapping) else style
+        variant_class = str(defaults.get("class", "") or "")
+        merged_class = class_ if not variant_class else _merge_widget_class(variant_class, class_)
+        self.variant = variant_value
         self.follow = bool(follow)
         self.max_lines = max_lines_i
         self.rows = rows_i
-        self.wrap = bool(wrap)
+        self.wrap = bool(resolved_wrap)
         self.disabled = bool(disabled)
         self.lines = self._normalize_lines(lines)
         self._stream_carriage_return = False
+        self._terminal_escape_buffer = ""
+        self._terminal_cursor_row: int | None = None
+        self._terminal_rewrite_rows = False
+        self._terminal_rewritten_rows: set[int] = set()
         self._trim()
         self.value = self._joined()
-        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+        super().__init__(id=id, key=key, class_=merged_class, style=merged_style, tooltip=tooltip, parent=parent)
 
     @staticmethod
     def _normalize_lines(lines: str | Iterable[object]) -> list[str]:
@@ -4290,11 +4422,17 @@ class LogView(Widget):
     def append_line(self, line: object = "") -> None:
         self.lines.extend(self._normalize_lines([line]))
         self._stream_carriage_return = False
+        self._terminal_cursor_row = None
+        self._terminal_rewrite_rows = False
+        self._terminal_rewritten_rows.clear()
         self._sync_value()
 
     def append_lines(self, lines: Iterable[object]) -> None:
         self.lines.extend(self._normalize_lines(lines))
         self._stream_carriage_return = False
+        self._terminal_cursor_row = None
+        self._terminal_rewrite_rows = False
+        self._terminal_rewritten_rows.clear()
         self._sync_value()
 
     def append_text(self, text: object = "") -> None:
@@ -4303,9 +4441,86 @@ class LogView(Widget):
         data = str(text)
         if not data:
             return
+        self._append_plain_stream_text(data)
+        self._sync_value()
+
+    def append_terminal_text(self, text: object = "") -> None:
+        """Append terminal output while honoring common screen redraw controls."""
+
+        data = str(text)
+        if not data:
+            return
+        index = 0
+        if self._terminal_escape_buffer:
+            data = self._terminal_escape_buffer + data
+            self._terminal_escape_buffer = ""
+        plain: list[str] = []
+        while index < len(data):
+            char = data[index]
+            if char != "\x1b":
+                plain.append(char)
+                index += 1
+                continue
+            if plain:
+                self._append_terminal_stream_text("".join(plain))
+                plain = []
+            consumed = self._consume_terminal_escape(data, index)
+            if consumed is None:
+                self._terminal_escape_buffer = data[index:]
+                break
+            index = consumed
+        if plain:
+            self._append_terminal_stream_text("".join(plain))
+        self._sync_value()
+
+    def _ensure_terminal_cursor_row(self) -> int:
+        if self._terminal_cursor_row is None:
+            self._terminal_cursor_row = max(len(self.lines) - 1, 0)
+        while len(self.lines) <= self._terminal_cursor_row:
+            self.lines.append("")
+        return self._terminal_cursor_row
+
+    def _append_terminal_stream_text(self, data: str) -> None:
+        row = self._ensure_terminal_cursor_row()
+        for char in data:
+            if char == "\f":
+                self.lines = [""]
+                row = 0
+                self._terminal_cursor_row = row
+                self._stream_carriage_return = False
+                self._terminal_rewrite_rows = False
+                continue
+            if char == "\r":
+                self._stream_carriage_return = True
+                continue
+            if char == "\n":
+                row += 1
+                self._terminal_cursor_row = row
+                while len(self.lines) <= row:
+                    self.lines.append("")
+                self._stream_carriage_return = False
+                continue
+            while len(self.lines) <= row:
+                self.lines.append("")
+            should_rewrite_row = self._terminal_rewrite_rows and row not in self._terminal_rewritten_rows
+            if self._stream_carriage_return or should_rewrite_row:
+                self.lines[row] = ""
+                self._terminal_rewritten_rows.add(row)
+                self._stream_carriage_return = False
+            if char == "\b":
+                self.lines[row] = self.lines[row][:-1]
+            else:
+                self.lines[row] += char
+        self._terminal_cursor_row = row
+
+    def _append_plain_stream_text(self, data: str) -> None:
         if not self.lines:
             self.lines = [""]
         for char in data:
+            if char == "\f":
+                self.lines = [""]
+                self._stream_carriage_return = False
+                continue
             if char == "\r":
                 self._stream_carriage_return = True
                 continue
@@ -4320,13 +4535,68 @@ class LogView(Widget):
                 self.lines[-1] = self.lines[-1][:-1]
             else:
                 self.lines[-1] += char
-        self._sync_value()
+
+    def _consume_terminal_escape(self, data: str, start: int) -> int | None:
+        if start + 1 >= len(data):
+            return None
+        kind = data[start + 1]
+        if kind == "]":
+            index = start + 2
+            while index < len(data):
+                if data[index] == "\x07":
+                    return index + 1
+                if data[index] == "\x1b":
+                    if index + 1 >= len(data):
+                        return None
+                    if data[index + 1] == "\\":
+                        return index + 2
+                index += 1
+            return None
+        if kind == "[":
+            index = start + 2
+            while index < len(data):
+                code = ord(data[index])
+                if 0x40 <= code <= 0x7E:
+                    self._apply_terminal_csi(data[start + 2 : index], data[index])
+                    return index + 1
+                index += 1
+            return None
+        return min(start + 2, len(data))
+
+    def _apply_terminal_csi(self, params: str, final: str) -> None:
+        normalized = params.replace("?", "")
+        if final in {"H", "f"} and normalized in {"", "1", "1;1"}:
+            self._terminal_cursor_row = 0
+            self._stream_carriage_return = False
+            self._terminal_rewrite_rows = True
+            self._terminal_rewritten_rows.clear()
+            return
+        if final == "J" and (normalized in {"", "0", "2", "3"} or normalized.endswith(";2")):
+            self.lines = [""]
+            self._terminal_cursor_row = 0
+            self._stream_carriage_return = False
+            self._terminal_rewrite_rows = False
+            self._terminal_rewritten_rows.clear()
+            return
+        if final == "K":
+            if not self.lines:
+                self.lines = [""]
+            row = self._ensure_terminal_cursor_row()
+            self.lines[row] = ""
+            self._stream_carriage_return = False
+            return
+        if final == "G":
+            self._stream_carriage_return = True
 
     append_stream = append_text
 
     def clear(self) -> None:
         self.lines = []
         self._stream_carriage_return = False
+        self._terminal_escape_buffer = ""
+        self._terminal_cursor_row = None
+        self._terminal_rewrite_rows = False
+        self._terminal_rewritten_rows.clear()
         self._sync_value()
 
     def props(self) -> dict[str, Any]:

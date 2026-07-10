@@ -1,0 +1,67 @@
+# Maintainability Review
+
+## Findings
+
+### 1. Duplicated request/response plumbing for runtime commands
+
+- Pattern: Duplication instead of reuse
+- Location: `native/src/commands.rs:835`, `native/src/commands.rs:908`, `native/src/commands.rs:972`
+- Severity: major
+- Description: `request_window_screenshot()` copies almost the entire timeout/condvar/request-slot loop from `request_debug_snapshot()` and `request_scatter_screenshot()`. The only meaningful variation is the `Command` payload and the panic message. This is real duplication in a concurrency-sensitive path: cleanup on push failure, closed bridge handling, timeout removal, and response extraction now have to stay in sync across three methods.
+- Recommended fix: Extract a private helper on `CommandBridge`, for example `request_response(timeout, make_command, disappeared_message)`, that allocates the request id, inserts/removes the response slot, pushes the command, waits on `snapshot_cv`, and returns the response string. Then implement debug snapshot, scatter screenshot, and window screenshot by passing only the command constructor.
+
+### 2. Screenshot responses are stored in the debug snapshot channel
+
+- Pattern: Shallow/cargo-culted abstraction; modular mirage
+- Location: `native/src/commands.rs:751`, `native/src/commands.rs:897`, `native/src/runtime.rs:17639`, `native/src/runtime.rs:21475`
+- Severity: minor
+- Description: The implementation reuses the existing `snapshots` map and `complete_debug_snapshot()` method for three different response types: debug snapshots, scatter screenshots, and whole-window screenshots. Reusing the synchronization primitive is reasonable, but the naming now lies about ownership and behavior. Future code will have to know that "debug snapshot" also means "generic command response containing screenshot JSON."
+- Recommended fix: Rename the shared pieces to response-oriented names, such as `response_seq`, `pending_responses`, `complete_response()`, and keep `request_debug_snapshot()` as a semantic wrapper. This can be done independently from the feature behavior.
+
+### 3. `tools/visual_audit.py` is a god script
+
+- Pattern: God files / multi-responsibility functions
+- Location: `tools/visual_audit.py:1` through `tools/visual_audit.py:849`, especially `run_probe_process()` at `tools/visual_audit.py:363` and `make_wrapper()` at `tools/visual_audit.py:552`
+- Severity: major
+- Description: The new tool handles CLI parsing, manifest validation, target selection, report merging, process lifecycle, native wrapper source generation, PNG encoding, Win32 window enumeration, Pillow fallback capture, blocker detection, suspected-module heuristics, and Markdown report rendering in one 849-line file. `run_probe_process()` alone owns subprocess setup, readiness polling, native screenshot detection, external fallback, stdout/stderr persistence, cleanup, and status classification. This makes future extensions requested in the implementation notes, such as scrolled captures and interaction automation, likely to add more branching into the same function.
+- Recommended fix: Split by responsibility while keeping the CLI entry point small. Suggested modules or sections: manifest/result model, probe runner/process lifecycle, capture backends, wrapper template, and report writer. At minimum, extract the native-wrapper string into a checked-in helper script or template and split `run_probe_process()` into `run_native_capture()`, `run_external_capture_fallback()`, and `finalize_process_logs()`.
+
+### 4. Screenshot failures are swallowed in the generated wrapper
+
+- Pattern: Happy-path logic and swallowed errors
+- Location: `tools/visual_audit.py:635` through `tools/visual_audit.py:641`
+- Severity: major
+- Description: The generated wrapper catches every exception from `self._window_screenshot()` and silently ignores it. The parent process then waits for a screenshot file and eventually reports a generic fallback/blocker message. That loses the actual failure cause, such as native timeout, base64 decode failure, zero-size readback, or Python API mismatch. This is especially risky because screenshot capture is the core feature being validated.
+- Recommended fix: Write a structured screenshot error file or append the exception/traceback to stderr before falling back. Include zero-size/empty screenshot results as explicit errors. The parent should surface that reason in `notes` and logs instead of only saying the native screenshot was not written.
+
+### 5. Corrupt existing reports are silently discarded
+
+- Pattern: Happy-path logic and swallowed errors
+- Location: `tools/visual_audit.py:164` through `tools/visual_audit.py:171`
+- Severity: minor
+- Description: `load_existing_results()` catches any exception while reading `report.json` and returns an empty result set. In append mode this can silently overwrite or drop prior audit results if the file is malformed, partially written, or encoded incorrectly.
+- Recommended fix: Treat malformed existing reports as a hard error in `--append` mode, or move the bad file aside with a clear warning and timestamp. Avoid broad `except Exception` here; catch `OSError` and `json.JSONDecodeError` separately.
+
+### 6. Weak automated coverage for new API and harness behavior
+
+- Pattern: Weak tests
+- Location: `tests/test_python_api.py` has existing `debug_snapshot` and `scatter_screenshot` checks, but no `window_screenshot` coverage; no test file covers `tools/visual_audit.py`
+- Severity: major
+- Description: Validation was mostly compile/check plus live manual harness runs. That is valuable for this visual-audit feature, but there are no focused tests for the new Python `AppHandle.window_screenshot()` forwarding behavior, `App._window_screenshot()` live-state guard, manifest validation, report merging, `--append --skip-existing`, `--no-capture`, or blocker classification. Several of these are pure Python and can be tested without opening native windows.
+- Recommended fix: Add unit tests for the pure Python pieces: manifest validation, target selection, `merge_results()`, malformed `report.json` behavior, `window_blocker()`, `AppHandle.window_screenshot()` forwarding/absence, and `App._window_screenshot()` raising when not running. Keep live screenshot capture as an integration/manual test, but cover the contract around it.
+
+## Reuse Audit Answers
+
+- Did it reuse the existing domain model? Mostly yes. The manifest reuses existing probe scripts instead of building a new showcase, and the private screenshot API follows the existing `App`/`AppHandle`/native command bridge shape.
+- Did it duplicate validation/formatting/parsing/API access? Yes. The native command response wait loop is duplicated for debug snapshots, scatter screenshots, and window screenshots. The wrapper also duplicates stdlib PNG encoding that already exists in `python/dragongui/widgets.py`, though the duplication is partly caused by needing a self-contained temporary wrapper.
+- Is the code in the right layer? Mostly yes. Window screenshot readback belongs in the native renderer/runtime, and the Python API is private. The main layering concern is that the audit runner monkey-patches `dg.App.run` and `dg.Window.__init__` from outside the library, which is acceptable for a tool but brittle if promoted to CI infrastructure.
+- Does each new abstraction earn its existence? The manifest earns its existence. `App._window_screenshot()` and `AppHandle.window_screenshot()` are thin but appropriate API seams. The generic response channel exists already but its debug-snapshot naming no longer earns its expanded role. `tools/visual_audit.py` lacks enough internal abstraction for its current size.
+- Was dependency direction preserved? Yes. Python calls into the runtime/native sender, and native rendering does not import higher layers. The generated wrapper is an external test harness concern and does not invert library dependencies.
+- Did it delete obsolete code, or only add more? It mostly added more. The only cleanup was updating `grid_tracks_probe.py` away from obsolete `tracks=`/`row_height=` usage. No obsolete screenshot/debug plumbing was removed or generalized.
+- Could a future developer understand why this change exists without asking the AI? Mostly yes because `artifacts/SPEC.md`, `artifacts/IMPLEMENTATION_NOTES.md`, and the generated audit report explain the purpose. The code itself would be clearer with response-channel naming and smaller units in the audit runner.
+
+## Overall Verdict
+
+Needs follow-up refactor.
+
+The implementation is directionally sound and reuses the existing probes and runtime command path, but it leaves maintainability debt in the exact places likely to change next: command-response plumbing, capture error reporting, and the visual audit runner. I would not block the feature from being used for the current audit, but I would refactor the duplicated native request loop and split/error-harden `tools/visual_audit.py` before building scrolled captures, interaction automation, or CI usage on top of it.

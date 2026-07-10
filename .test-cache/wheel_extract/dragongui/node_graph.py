@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 import json
 import math
+import os
 import re
+import shlex
+import shutil
+import subprocess
 import time
 from typing import Any
 
@@ -454,6 +458,7 @@ class NodeGraphRuntimeSession:
         self._handles: dict[str, NodeGraphRuntimeHandle] = {}
         self._port_values: dict[tuple[str, str], list[object]] = {}
         self._widgets: dict[str, Any] = {}
+        self._terminal_event_listener_removers: dict[str, Callable[[], None]] = {}
         self._parser_state: dict[str, AgentEnvelopeParser] = {}
         self._execution_depth = 0
         for obj in binding.registry:
@@ -585,7 +590,9 @@ class NodeGraphRuntimeSession:
 
     def attach_handle(self, object_id: str, handle: Any, *, status: str = "attached") -> NodeGraphRuntimeHandle:
         runtime_handle = self.require_object_handle(object_id)
+        self._detach_terminal_event_listener(runtime_handle.object_id)
         runtime_handle.attach(handle, status=status)
+        self._attach_terminal_event_listener(runtime_handle)
         self.emit_event(
             "object_handle_attached",
             object_id=runtime_handle.object_id,
@@ -596,6 +603,7 @@ class NodeGraphRuntimeSession:
 
     def detach_handle(self, object_id: str, *, status: str = "detached") -> Any | None:
         runtime_handle = self.require_object_handle(object_id)
+        self._detach_terminal_event_listener(runtime_handle.object_id)
         detached = runtime_handle.detach(status=status)
         self.emit_event(
             "object_handle_detached",
@@ -604,6 +612,27 @@ class NodeGraphRuntimeSession:
             data={"object_type": runtime_handle.object_type, "status": runtime_handle.status},
         )
         return detached
+
+    def _attach_terminal_event_listener(self, runtime_handle: NodeGraphRuntimeHandle) -> None:
+        if runtime_handle.object_type != "terminal_session" or runtime_handle.handle is None:
+            return
+        add_listener = getattr(runtime_handle.handle, "add_event_listener", None)
+        if not callable(add_listener):
+            return
+
+        object_id = runtime_handle.object_id
+
+        def handle_terminal_event(event: Any) -> None:
+            self.apply_terminal_event(object_id, event)
+
+        remover = add_listener(handle_terminal_event)
+        if callable(remover):
+            self._terminal_event_listener_removers[object_id] = remover
+
+    def _detach_terminal_event_listener(self, object_id: str) -> None:
+        remover = self._terminal_event_listener_removers.pop(str(object_id), None)
+        if remover is not None:
+            remover()
 
     def set_object_status(self, object_id: str, status: str, *, error: object | None = None) -> NodeGraphRuntimeHandle:
         runtime_handle = self.require_object_handle(object_id)
@@ -649,11 +678,6 @@ class NodeGraphRuntimeSession:
 
         from .terminal import TerminalBridge
 
-        def handle_terminal_event(event: Any) -> None:
-            self.apply_terminal_event(runtime_handle.object_id, event)
-            if on_event is not None:
-                on_event(event)
-
         bridge = TerminalBridge(
             command,
             args=args,
@@ -663,7 +687,7 @@ class NodeGraphRuntimeSession:
             rows=int(config.get("rows", 30)),
             prefer_pty=bool(config.get("prefer_pty", True)),
             on_output=on_output,
-            on_event=handle_terminal_event,
+            on_event=on_event,
             capture_transcript=bool(config.get("capture_transcript", True)),
             max_transcript_entries=int(config.get("max_transcript_entries", 10000)),
         )
@@ -835,9 +859,10 @@ class NodeGraphRuntimeSession:
             "session_ended": "terminal_stopped",
             "bridge_stopped": "terminal_bridge_stopped",
             "output": "terminal_stdout",
+            "screen_snapshot": "terminal_screen",
             "input": "terminal_stdin",
         }.get(name, f"terminal_{name}" if name else "terminal_event")
-        port_id = {"output": "stdout", "input": "stdin"}.get(name)
+        port_id = {"output": "stdout", "screen_snapshot": "screen", "input": "stdin"}.get(name)
         status = {
             "bridge_started": "starting",
             "session_started": "running",
@@ -847,7 +872,7 @@ class NodeGraphRuntimeSession:
         if status is not None:
             runtime_handle.set_status(status)
         data = {"terminal_event": _json_safe_value(payload), "object_type": runtime_handle.object_type}
-        value = payload.get("data") if name == "output" else None
+        value = payload.get("data") if name in {"output", "screen_snapshot"} else None
         return self.emit_event(
             runtime_event,
             node_id=runtime_handle.owner_node_id,
@@ -1638,6 +1663,7 @@ class NodeGraph(HtmlReport):
         self.editor_actions = tuple(_editor_action_payload(action) for action in editor_actions)
         self._managed_runtime_session: NodeGraphRuntimeSession | None = None
         self._managed_runtime_policy: str | None = None
+        self._managed_runtime_binding_signature: str | None = None
         self._refreshing_auto_binding_targets = False
         self.on_graph_event = on_graph_event
         self._callback_compat = dict(callbacks)
@@ -2218,14 +2244,21 @@ class NodeGraph(HtmlReport):
         """Return a widget-managed runtime session, creating one on demand."""
 
         resolved = self._runtime_policy_from_value(self.runtime_policy if policy is None else policy)
+        binding = self.runtime_binding(registry)
+        binding_signature = json.dumps(binding.to_dict(), sort_keys=True)
         session = self._managed_runtime_session
+        if session is not None and self._managed_runtime_binding_signature != binding_signature:
+            self.cleanup_managed_runtime()
+            session = None
         if session is None or session.status in {"stopped", "failed"}:
-            session = self.runtime_session(registry, session_id=session_id)
+            session = NodeGraphRuntimeSession(binding, session_id=session_id)
             self._managed_runtime_session = session
+            self._managed_runtime_binding_signature = binding_signature
         self._managed_runtime_policy = resolved
         self._register_managed_runtime_widgets(session)
         session.ensure_runtime_dependencies()
         return session
+
 
     @property
     def managed_runtime(self) -> NodeGraphRuntimeSession | None:
@@ -2301,6 +2334,7 @@ class NodeGraph(HtmlReport):
         session = self._managed_runtime_session
         self._managed_runtime_session = None
         self._managed_runtime_policy = None
+        self._managed_runtime_binding_signature = None
         if session is None:
             return {"stopped": [], "errors": {}}
         return session.cleanup()
@@ -7134,6 +7168,7 @@ def multi_agent_node_templates() -> tuple[NodeGraphTemplate, ...]:
             ),
             outputs=(
                 NodeGraphPort("stdout", "stdout", port_type="terminal_output"),
+                NodeGraphPort("screen", "screen", port_type="text"),
                 NodeGraphPort("stderr", "stderr", port_type="terminal_error"),
                 NodeGraphPort("transcript", "transcript", port_type="stream:text"),
                 NodeGraphPort("status", "status", port_type="status"),
@@ -7171,6 +7206,44 @@ def multi_agent_node_templates() -> tuple[NodeGraphTemplate, ...]:
                     {"key": "text", "label": "Text"},
                     {"key": "emit_on_start", "label": "Emit On Start", "type": "bool", "default": False},
                     {"key": "output_mode", "label": "Mode", "type": "select", "options": ["once", "manual"], "default": "manual"},
+                ],
+            ),
+        ),
+        NodeGraphTemplate(
+            "codex_exec",
+            "Codex Exec",
+            inputs=(
+                NodeGraphPort("prompt", "prompt", port_type="text"),
+                NodeGraphPort("cwd", "cwd", port_type="text"),
+                NodeGraphPort("model", "model", port_type="text"),
+            ),
+            outputs=(
+                NodeGraphPort("final", "final", port_type="text"),
+                NodeGraphPort("activity", "activity", port_type="text"),
+                NodeGraphPort("raw_jsonl", "raw_jsonl", port_type="text"),
+                NodeGraphPort("events", "events", port_type="json"),
+                NodeGraphPort("stderr", "stderr", port_type="error"),
+                NodeGraphPort("exit_code", "exit_code", port_type="number"),
+                NodeGraphPort("ok", "ok", port_type="bool"),
+            ),
+            subtitle="codex exec json",
+            status="idle",
+            color="#bb9af7",
+            width=260,
+            data=_template_data(
+                "codex_exec",
+                "idle",
+                [
+                    {"key": "prompt", "label": "Prompt"},
+                    {"key": "cwd", "label": "Working Dir"},
+                    {"key": "model", "label": "Model"},
+                    {"key": "codex_cmd", "label": "Codex Command", "default": "codex"},
+                    {"key": "sandbox", "label": "Sandbox", "type": "select", "options": ["read-only", "workspace-write", "danger-full-access"], "default": "workspace-write"},
+                    {"key": "bypass_approvals_and_sandbox", "label": "Bypass Approvals", "type": "bool", "default": False},
+                    {"key": "skip_git_check", "label": "Skip Git Check", "type": "bool", "default": True},
+                    {"key": "ephemeral", "label": "Ephemeral", "type": "bool", "default": False},
+                    {"key": "extra_args", "label": "Extra Args"},
+                    {"key": "timeout_seconds", "label": "Timeout Seconds", "type": "number", "default": 0},
                 ],
             ),
         ),
@@ -7253,6 +7326,25 @@ def multi_agent_node_templates() -> tuple[NodeGraphTemplate, ...]:
                     {"key": "end_marker", "label": "End Marker", "default": "@end"},
                     {"key": "include_markers", "label": "Include Markers", "type": "bool", "default": False},
                     {"key": "max_matches", "label": "Max Matches", "type": "number", "default": 1},
+                ],
+            ),
+        ),
+        NodeGraphTemplate(
+            "tui_screen_diff",
+            "TUI Screen Diff",
+            inputs=(NodeGraphPort("screen", "screen", port_type="text"),),
+            outputs=(NodeGraphPort("text", "text", port_type="text"),),
+            subtitle="rendered screen -> new text",
+            status="watching",
+            color="#9ece6a",
+            width=240,
+            data=_template_data(
+                "tui_screen_diff",
+                "watching",
+                [
+                    {"key": "drop_chrome", "label": "Drop Chrome", "type": "bool", "default": True},
+                    {"key": "dedupe", "label": "Dedupe", "type": "bool", "default": True},
+                    {"key": "emit_trailing_newline", "label": "Trailing Newline", "type": "bool", "default": False},
                 ],
             ),
         ),
@@ -7419,6 +7511,58 @@ def multi_agent_node_templates() -> tuple[NodeGraphTemplate, ...]:
                         "default": "text",
                     },
                 ],
+            ),
+        ),
+        NodeGraphTemplate(
+            "terminal_log_sink",
+            "Terminal Log Sink",
+            inputs=(NodeGraphPort("value", "terminal_output", port_type="terminal_output"),),
+            outputs=(NodeGraphPort("value", "terminal_output", port_type="terminal_output"),),
+            subtitle="terminal stdout -> GUI log",
+            status="watching",
+            color="#2ac3de",
+            width=240,
+            data=_template_data(
+                "widget_sink",
+                "watching",
+                [
+                    {"key": "widget_id", "label": "Widget ID"},
+                    {
+                        "key": "widget_type",
+                        "label": "Widget Type",
+                        "type": "select",
+                        "options": ["", "log_view"],
+                        "default": "log_view",
+                    },
+                    {
+                        "key": "port_profile",
+                        "label": "Port Profile",
+                        "type": "select",
+                        "options": ["terminal_output", "text"],
+                        "default": "terminal_output",
+                    },
+                    {
+                        "key": "update_mode",
+                        "label": "Update",
+                        "type": "select",
+                        "options": ["append", "auto", "set"],
+                        "default": "append",
+                    },
+                    {
+                        "key": "format",
+                        "label": "Format",
+                        "type": "select",
+                        "options": ["clean_stream_text", "stream_text", "terminal_text", "text", "repr"],
+                        "default": "clean_stream_text",
+                    },
+                ],
+                template_id="terminal_log_sink",
+                config={
+                    "widget_type": "log_view",
+                    "port_profile": "terminal_output",
+                    "update_mode": "append",
+                    "format": "clean_stream_text",
+                },
             ),
         ),
         NodeGraphTemplate(
@@ -7621,7 +7765,9 @@ _RUNTIME_SOURCE_NODE_TYPES = {
 _RUNTIME_EXECUTABLE_NODE_TYPES = {
     "append_text",
     "build_text",
+    "codex_exec",
     "extract_between_markers",
+    "tui_screen_diff",
     "envelope_parser",
     "parser",
     "message_router",
@@ -7645,6 +7791,7 @@ _ANSI_CONTROL_SEQUENCE_RE = re.compile(
     r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[PX^_].*?\x1b\\|[@-Z\\-_])",
     re.DOTALL,
 )
+_ANSI_TERMINAL_LINE_REWRITE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[GK]")
 _TERMINAL_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _BUILD_TEXT_MIN_INPUTS = 1
 _BUILD_TEXT_DEFAULT_INPUTS = 3
@@ -7653,9 +7800,15 @@ _BUILD_TEXT_MAX_INPUTS = 12
 
 def _terminal_display_text(value: object) -> str:
     text = str(value)
+    text = _ANSI_TERMINAL_LINE_REWRITE_RE.sub("\r", text)
     text = _ANSI_CONTROL_SEQUENCE_RE.sub("", text)
     return _TERMINAL_CONTROL_CHAR_RE.sub("", text)
 
+
+def _terminal_clean_stream_text(value: object) -> str:
+    text = str(value)
+    text = _ANSI_CONTROL_SEQUENCE_RE.sub("", text)
+    return _TERMINAL_CONTROL_CHAR_RE.sub("", text)
 
 def _widget_kind(widget: object) -> str:
     kind = getattr(widget, "kind", None)
@@ -7744,8 +7897,6 @@ def _widget_sink_text(value: object, value_format: str) -> str:
         return json.dumps(_json_safe_value(value), sort_keys=True)
     if mode == "repr":
         return repr(value)
-    if mode == "terminal_text":
-        return _terminal_display_text(value)
     if mode == "message_body" and isinstance(value, Mapping):
         body = value.get("body")
         if body is not None:
@@ -7765,8 +7916,30 @@ def _update_widget_sink(widget: object, value: object, *, update_mode: str, valu
             mode = "set"
     if mode == "append":
         text = _widget_sink_text(value, value_format)
-        if value_format == "terminal_text":
+        if value_format == "clean_stream_text":
+            text = _terminal_clean_stream_text(value)
             append_stream = getattr(widget, "append_stream", None)
+            if not callable(append_stream):
+                append_stream = getattr(widget, "append_text", None)
+            if not callable(append_stream):
+                append_stream = getattr(widget, "write", None)
+            if callable(append_stream):
+                append_stream(text)
+                return mode
+        if value_format == "stream_text":
+            append_stream = getattr(widget, "append_stream", None)
+            if not callable(append_stream):
+                append_stream = getattr(widget, "append_text", None)
+            if not callable(append_stream):
+                append_stream = getattr(widget, "write", None)
+            if callable(append_stream):
+                append_stream(text)
+                return mode
+        if value_format == "terminal_text":
+            append_stream = getattr(widget, "append_terminal_text", None)
+            if not callable(append_stream):
+                text = _terminal_display_text(value)
+                append_stream = getattr(widget, "append_stream", None)
             if not callable(append_stream):
                 append_stream = getattr(widget, "append_text", None)
             if not callable(append_stream):
@@ -8230,7 +8403,7 @@ def _pending_flow_inputs(
 def _execute_flow_node(
     node: NodeGraphNode,
     inputs: Mapping[str, list[object]],
-    parser_state: dict[str, AgentEnvelopeParser],
+    parser_state: dict[str, object],
     log: list[dict[str, object]],
 ) -> dict[str, list[object]]:
     node_type = _node_type(node)
@@ -8252,8 +8425,12 @@ def _execute_flow_node(
         return {"text": output}
     if node_type == "build_text":
         return _execute_build_text(inputs, config)
+    if node_type == "codex_exec":
+        return _execute_codex_exec(inputs, config, log)
     if node_type == "extract_between_markers":
         return _execute_extract_between_markers(inputs, config)
+    if node_type == "tui_screen_diff":
+        return _execute_tui_screen_diff(node, inputs, config, parser_state, log)
     if node_type in {"envelope_parser", "parser"}:
         return _execute_envelope_parser(node, inputs, parser_state, log)
     if node_type == "message_router":
@@ -8360,6 +8537,291 @@ def _execute_extract_between_markers(inputs: Mapping[str, list[object]], config:
     return outputs
 
 
+_TUI_BOX_CODE_RANGES = (
+    (0x2500, 0x257F),
+    (0x2550, 0x256C),
+)
+_TUI_ASCII_FRAME_CHARS = set("+-|=:_.,[]()<>/\\")
+_TUI_CHROME_PHRASES = (
+    "openai codex",
+    "/model to change",
+    "directory:",
+    "use /skills",
+    "esc to interrupt",
+    "booting mcp server",
+    "usage limit resets",
+    "tip:",
+    "model:",
+    "working",
+    "microsoft windows",
+    "microsoft corporation",
+    "all rights reserved",
+    "gpt-",
+    ">_",
+)
+_TUI_PROMPT_PREFIXES = (
+    chr(0x203A),
+    "$ ",
+    "# ",
+)
+_TUI_WINDOWS_PROMPT_RE = re.compile(r"^[A-Za-z]:\\.*>")
+_TUI_POWERSHELL_PROMPT_RE = re.compile(r"^PS [A-Za-z]:\\.*>")
+
+
+def _config_bool(value: object, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if not text:
+        return default
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off"}:
+        return False
+    return bool(value)
+
+
+def _resolve_codex_command(value: object = None) -> str:
+    configured = "" if value is None else str(value).strip()
+    if configured:
+        return configured
+    for candidate in ("codex", "codex.cmd", "codex.exe"):
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        for name in ("codex.cmd", "codex.exe", "codex.ps1"):
+            path = os.path.join(appdata, "npm", name)
+            if os.path.exists(path):
+                return path
+    return "codex"
+
+
+def _codex_exec_build_command(config: Mapping[str, object], cwd: str, model: str) -> list[str]:
+    command = [
+        _resolve_codex_command(config.get("codex_cmd")),
+        "exec",
+        "--json",
+        "--color",
+        "never",
+    ]
+    if _config_bool(config.get("bypass_approvals_and_sandbox"), False):
+        command.append("--dangerously-bypass-approvals-and-sandbox")
+    else:
+        sandbox = str(config.get("sandbox", "workspace-write") or "workspace-write").strip()
+        if sandbox:
+            command.extend(["--sandbox", sandbox])
+    if cwd:
+        command.extend(["--cd", cwd])
+    if _config_bool(config.get("skip_git_check"), True):
+        command.append("--skip-git-repo-check")
+    if _config_bool(config.get("ephemeral"), False):
+        command.append("--ephemeral")
+    if model:
+        command.extend(["--model", model])
+    extra_args = str(config.get("extra_args", "") or "").strip()
+    if extra_args:
+        command.extend(shlex.split(extra_args))
+    command.append("-")
+    return command
+
+
+def _codex_exec_text_from_value(value: object) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, Mapping):
+        for key in ("text", "message", "body", "output"):
+            if key in value:
+                text = _codex_exec_text_from_value(value.get(key))
+                if text:
+                    return text
+        content = value.get("content")
+        if content is not None:
+            return _codex_exec_text_from_value(content)
+        return ""
+    if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+        parts = [_codex_exec_text_from_value(item) for item in value]
+        return "".join(part for part in parts if part)
+    return str(value)
+
+
+def _codex_exec_event_activity(event: Mapping[str, object]) -> str | None:
+    event_type = str(event.get("type", event.get("event", "")) or "")
+    item = event.get("item") if isinstance(event.get("item"), Mapping) else None
+    item_type = "" if item is None else str(item.get("type", item.get("item_type", "")) or "")
+    if event_type in {"thread.started", "turn.started", "turn.completed", "turn.failed"}:
+        return event_type.replace(".", " ")
+    if item_type == "command_execution":
+        command = _codex_exec_text_from_value(item.get("command") or item.get("cmd")) if item is not None else ""
+        status = str(item.get("status", "") or "") if item is not None else ""
+        label = "command" if not status else f"command {status}"
+        return f"{label}: {command}" if command else label
+    if item_type == "file_change":
+        action = str(item.get("action", item.get("change", "file_change")) or "file_change") if item is not None else "file_change"
+        path = str(item.get("path", item.get("file", "")) or "") if item is not None else ""
+        return f"{action}: {path}" if path else action
+    if "error" in event_type or "failed" in event_type:
+        text = _codex_exec_text_from_value(event.get("message") or event.get("error"))
+        return f"{event_type}: {text}" if text else event_type
+    return None
+
+
+def _execute_codex_exec(
+    inputs: Mapping[str, list[object]],
+    config: Mapping[str, object],
+    log: list[dict[str, object]],
+) -> dict[str, list[object]]:
+    prompt_values = _flow_input_values(inputs, "prompt", "text", "in")
+    prompt = str(prompt_values[-1] if prompt_values else config.get("prompt", "") or "")
+    if not prompt.strip():
+        log.append({"event": "codex_exec_skipped", "reason": "prompt is required"})
+        return {}
+    cwd_values = _flow_input_values(inputs, "cwd")
+    model_values = _flow_input_values(inputs, "model")
+    cwd = str(cwd_values[-1] if cwd_values else config.get("cwd", "") or "").strip()
+    model = str(model_values[-1] if model_values else config.get("model", "") or "").strip()
+    command = _codex_exec_build_command(config, cwd, model)
+    timeout_value = config.get("timeout_seconds", 0) or 0
+    timeout = float(timeout_value) if float(timeout_value) > 0 else None
+    stdin_text = prompt if prompt.endswith("\n") else f"{prompt}\n"
+    log.append({"event": "codex_exec_started", "command": command, "cwd": cwd or None})
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=cwd or None,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+        )
+        try:
+            stdout, stderr = process.communicate(stdin_text, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            stdout, stderr = process.communicate()
+            stderr = (stderr or "") + f"\nCodex exec timed out after {timeout:g} seconds."
+    except Exception as exc:
+        message = str(exc)
+        log.append({"event": "codex_exec_failed", "reason": message})
+        return {"stderr": [message], "exit_code": [-1], "ok": [False]}
+
+    events: list[object] = []
+    activity: list[str] = []
+    final_parts: list[str] = []
+    raw_lines = stdout.splitlines()
+    for raw_line in raw_lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            activity.append(f"unparsed: {line}")
+            continue
+        events.append(_json_safe_value(event))
+        if isinstance(event, Mapping):
+            item = event.get("item") if isinstance(event.get("item"), Mapping) else None
+            item_type = "" if item is None else str(item.get("type", item.get("item_type", "")) or "")
+            if item_type in {"agent_message", "assistant_message", "message"}:
+                text = _codex_exec_text_from_value(item)
+                if text:
+                    final_parts.append(text)
+            event_type = str(event.get("type", event.get("event", "")) or "")
+            if event_type in {"agent_message", "assistant_message"}:
+                text = _codex_exec_text_from_value(event)
+                if text:
+                    final_parts.append(text)
+            event_text = _codex_exec_event_activity(event)
+            if event_text:
+                activity.append(event_text)
+    return_code = int(process.returncode or 0)
+    final_text = "\n".join(part.strip() for part in final_parts if part.strip())
+    activity_text = "\n".join(line for line in activity if line)
+    outputs: dict[str, list[object]] = {
+        "raw_jsonl": ["\n".join(raw_lines)] if raw_lines else [],
+        "events": [events] if events else [],
+        "stderr": [stderr.strip()] if stderr and stderr.strip() else [],
+        "exit_code": [return_code],
+        "ok": [return_code == 0],
+    }
+    if final_text:
+        outputs["final"] = [final_text]
+    if activity_text:
+        outputs["activity"] = [activity_text]
+    log.append({"event": "codex_exec_completed", "exit_code": return_code, "events": len(events), "final": bool(final_text)})
+    return outputs
+
+
+def _tui_screen_char_is_frame(char: str) -> bool:
+    codepoint = ord(char)
+    return any(start <= codepoint <= end for start, end in _TUI_BOX_CODE_RANGES) or char in _TUI_ASCII_FRAME_CHARS
+
+
+def _tui_screen_line_is_chrome(line: str) -> bool:
+    text = line.strip()
+    if not text:
+        return True
+    if all(_tui_screen_char_is_frame(char) or char.isspace() for char in text):
+        return True
+    if text.startswith(_TUI_PROMPT_PREFIXES):
+        return True
+    if _TUI_WINDOWS_PROMPT_RE.match(text) or _TUI_POWERSHELL_PROMPT_RE.match(text):
+        return True
+    lowered = text.lower()
+    return any(phrase in lowered for phrase in _TUI_CHROME_PHRASES)
+
+
+def _execute_tui_screen_diff(
+    node: NodeGraphNode,
+    inputs: Mapping[str, list[object]],
+    config: Mapping[str, object],
+    state: dict[str, object],
+    log: list[dict[str, object]],
+) -> dict[str, list[object]]:
+    drop_chrome = bool(config.get("drop_chrome", True))
+    dedupe = bool(config.get("dedupe", True))
+    trailing_newline = bool(config.get("emit_trailing_newline", False))
+    state_key = f"{node.id}:tui_screen_diff"
+    record = state.setdefault(state_key, {"previous_lines": [], "emitted_lines": []})
+    previous_lines: set[str] = set()
+    emitted_lines: set[str] = set()
+    if dedupe and isinstance(record, MutableMapping):
+        previous_lines = {str(line) for line in record.get("previous_lines", [])}
+        emitted_lines = {str(line) for line in record.get("emitted_lines", [])}
+    emitted: list[str] = []
+    for value in _flow_input_values(inputs, "screen", "text", "in"):
+        lines = [line.rstrip() for line in str(value).splitlines()]
+        normalized_lines = [line.strip() for line in lines if line.strip()]
+        for normalized in normalized_lines:
+            if drop_chrome and _tui_screen_line_is_chrome(normalized):
+                continue
+            if dedupe and (normalized in previous_lines or normalized in emitted_lines):
+                continue
+            emitted.append(normalized)
+            if dedupe:
+                emitted_lines.add(normalized)
+        if isinstance(record, MutableMapping):
+            record["previous_lines"] = normalized_lines
+            if dedupe:
+                record["emitted_lines"] = list(emitted_lines)[-500:]
+            previous_lines = set(normalized_lines) if dedupe else set()
+    if not emitted:
+        return {}
+    text = "\n".join(emitted)
+    if trailing_newline and not text.endswith("\n"):
+        text += "\n"
+    log.append({"event": "tui_screen_diff", "node": node.id, "lines": len(emitted)})
+    return {"text": [text]}
+
+
 def _execute_envelope_parser(
     node: NodeGraphNode, inputs: Mapping[str, list[object]], parser_state: dict[str, AgentEnvelopeParser], log: list[dict[str, object]]
 ) -> dict[str, list[object]]:
@@ -8462,26 +8924,3 @@ __all__ = [
     "multi_agent_node_templates",
     "node_graph_port_type_color",
 ]
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

@@ -67,27 +67,78 @@ pub(crate) fn badge_font_size_lp(style: &NodeStyle, theme: &Theme) -> f32 {
 }
 
 pub(crate) fn badge_height_for_style(style: &NodeStyle, theme: &Theme, sf: f32) -> f32 {
-    let height_lp = style
-        .parts
-        .parts
-        .get("badge")
+    let badge_part = style.parts.parts.get("badge");
+    let height_lp = badge_part
         .and_then(|part| part.layout.height)
-        .unwrap_or_else(|| (badge_font_size_lp(style, theme) + 6.0).max(BADGE_MIN_HEIGHT_LP));
+        .unwrap_or_else(|| {
+            let font_size = badge_font_size_lp(style, theme);
+            if let Some(part) = badge_part {
+                let padding = part.layout.padding.unwrap_or(3.0).max(0.0);
+                let border = part.visual.border_width.unwrap_or(0.0).max(0.0);
+                (font_size + padding * 2.0 + border * 2.0).max(BADGE_MIN_HEIGHT_LP)
+            } else {
+                (font_size + 6.0).max(BADGE_MIN_HEIGHT_LP)
+            }
+        });
     (height_lp.max(1.0) * sf).max(1.0)
 }
 
 pub(crate) fn badge_width_for_text(style: &NodeStyle, badge: &str, theme: &Theme, sf: f32) -> f32 {
-    if let Some(width_lp) = style
-        .parts
-        .parts
-        .get("badge")
-        .and_then(|part| part.layout.width)
-    {
+    let badge_part = style.parts.parts.get("badge");
+    if let Some(width_lp) = badge_part.and_then(|part| part.layout.width) {
         return (width_lp.max(1.0) * sf).max(1.0);
     }
     let font_size = badge_font_size_lp(style, theme);
     let text_w = badge.chars().count() as f32 * font_size * 0.68;
-    ((text_w + BADGE_PAD_X_LP * 2.0).max(BADGE_MIN_HEIGHT_LP) * sf).max(1.0)
+    let padding = badge_part
+        .and_then(|part| part.layout.padding)
+        .unwrap_or(BADGE_PAD_X_LP)
+        .max(0.0);
+    let border = badge_part
+        .and_then(|part| part.visual.border_width)
+        .unwrap_or(0.0)
+        .max(0.0);
+    ((text_w + padding * 2.0 + border * 2.0).max(BADGE_MIN_HEIGHT_LP) * sf).max(1.0)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct InlineBadgeLayout {
+    pub(crate) visible_rect: Option<[f32; 4]>,
+    pub(crate) preferred_width: f32,
+    pub(crate) reserved_width: f32,
+}
+
+pub(crate) fn inline_badge_layout_for_text(
+    style: &NodeStyle,
+    badge: &str,
+    theme: &Theme,
+    sf: f32,
+    parent_w: f32,
+    parent_h: f32,
+    right_inset: f32,
+) -> InlineBadgeLayout {
+    let preferred_width = badge_width_for_text(style, badge, theme, sf);
+    let reserved_width = preferred_width + BADGE_GAP_LP * sf;
+    let preferred_h = badge_height_for_style(style, theme, sf);
+    let visible_h = preferred_h.min((parent_h - 4.0 * sf).max(1.0));
+    let available_w = (parent_w - right_inset).max(0.0);
+    let visible_w = preferred_width.min(available_w);
+    let x = parent_w - right_inset - visible_w;
+    let y = (parent_h - visible_h) * 0.5;
+
+    // Labels reserve the preferred badge width so they yield first. The visible
+    // pill is clipped to the parent so narrow controls keep a badge affordance.
+    let visible_rect = if x >= 0.0 && visible_w > 0.0 && visible_h > 0.0 {
+        Some([x, y, visible_w, visible_h])
+    } else {
+        None
+    };
+
+    InlineBadgeLayout {
+        visible_rect,
+        preferred_width,
+        reserved_width,
+    }
 }
 
 pub(crate) fn standalone_badge_width_for_text(
@@ -102,7 +153,8 @@ pub(crate) fn standalone_badge_width_for_text(
     let font_size = badge_font_size_lp(style, theme);
     let text_w = badge.chars().count() as f32 * font_size * 0.90;
     let (left, right) = standalone_badge_horizontal_padding_lp(style);
-    ((text_w + left + right + 8.0).max(BADGE_MIN_HEIGHT_LP) * sf).max(1.0)
+    let border = style.visual.border_width.unwrap_or(0.0).max(0.0);
+    ((text_w + left + right + border * 2.0 + 8.0).max(BADGE_MIN_HEIGHT_LP) * sf).max(1.0)
 }
 
 pub(crate) fn standalone_badge_horizontal_padding_lp(style: &NodeStyle) -> (f32, f32) {
@@ -2707,6 +2759,63 @@ mod tests {
         assert!(
             width > unstyled,
             "standalone badge width should grow with styled padding: styled={width}, unstyled={unstyled}"
+        );
+    }
+
+    #[test]
+    fn inline_badge_layout_reserves_preferred_width_but_clips_visible_rect() {
+        let mut style = NodeStyle::default();
+        style.text.font_size = Some(12.0);
+
+        let layout = inline_badge_layout_for_text(
+            &style,
+            "owner: platform-design",
+            &Theme::dark(),
+            1.0,
+            42.0,
+            28.0,
+            8.0,
+        );
+        let rect = layout
+            .visible_rect
+            .expect("narrow parent should still expose a clipped badge rect");
+
+        assert!(layout.reserved_width > rect[2]);
+        assert_eq!(rect[0], 0.0);
+        assert_eq!(rect[2], 34.0);
+        assert_eq!(layout.reserved_width, layout.preferred_width + BADGE_GAP_LP);
+    }
+
+    #[test]
+    fn inline_badge_layout_accounts_for_part_padding_and_border() {
+        let mut plain = NodeStyle::default();
+        plain.text.font_size = Some(12.0);
+
+        let mut styled = plain.clone();
+        styled.parts.parts.insert(
+            "badge".to_string(),
+            PartStyle {
+                layout: PartLayoutStyle {
+                    padding: Some(9.0),
+                    ..Default::default()
+                },
+                visual: VisualStyle {
+                    border_width: Some(2.0),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        );
+
+        let plain_layout =
+            inline_badge_layout_for_text(&plain, "99+", &Theme::dark(), 1.0, 200.0, 32.0, 8.0);
+        let styled_layout =
+            inline_badge_layout_for_text(&styled, "99+", &Theme::dark(), 1.0, 200.0, 32.0, 8.0);
+
+        assert!(styled_layout.preferred_width > plain_layout.preferred_width);
+        assert!(
+            styled_layout.visible_rect.expect("styled badge rect")[3]
+                > plain_layout.visible_rect.expect("plain badge rect")[3]
         );
     }
 

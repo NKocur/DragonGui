@@ -1186,6 +1186,15 @@ class AppHandle:
             return None
         return sender.scatter_screenshot(widget_id, timeout_ms)
 
+    def window_screenshot(self, timeout_ms: int = 10000) -> "tuple[int, int, bytes] | None":
+        with self._lock:
+            sender = self._native_sender
+        if sender is None:
+            return None
+        if not hasattr(sender, "window_screenshot"):
+            return None
+        return sender.window_screenshot(timeout_ms)
+
     def enqueue_set_scatter_camera_state(
         self,
         widget_id: str,

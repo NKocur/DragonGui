@@ -1905,9 +1905,51 @@ def test_app_handle_debug_snapshot_uses_native_sender() -> None:
     assert snapshot["runtime"]["frames_rendered"] == 3
 
 
+def test_app_handle_window_screenshot_uses_native_sender() -> None:
+    class Sender:
+        def __init__(self) -> None:
+            self.timeout_ms: int | None = None
+
+        def window_screenshot(self, timeout_ms: int) -> tuple[int, int, bytes]:
+            self.timeout_ms = timeout_ms
+            return (2, 1, b"\x00\x01\x02\x03\x04\x05\x06\x07")
+
+        def close(self) -> None:
+            pass
+
+    handle = AppHandle()
+    sender = Sender()
+    handle._bind_native_sender(sender)
+
+    screenshot = handle.window_screenshot(timeout_ms=350)
+
+    assert sender.timeout_ms == 350
+    assert screenshot == (2, 1, b"\x00\x01\x02\x03\x04\x05\x06\x07")
+
+
+def test_app_handle_window_screenshot_returns_none_without_native_sender() -> None:
+    assert AppHandle().window_screenshot() is None
+
+
+def test_app_handle_window_screenshot_returns_none_for_older_native_sender() -> None:
+    class Sender:
+        def close(self) -> None:
+            pass
+
+    handle = AppHandle()
+    handle._bind_native_sender(Sender())
+
+    assert handle.window_screenshot() is None
+
+
 def test_app_debug_snapshot_requires_running_app() -> None:
     with pytest.raises(RuntimeError, match="not running"):
         dg.App().debug_snapshot()
+
+
+def test_app_window_screenshot_requires_running_app() -> None:
+    with pytest.raises(RuntimeError, match="not running"):
+        dg.App()._window_screenshot()
 
 
 def test_app_toast_enqueues_native_commands() -> None:

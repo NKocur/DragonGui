@@ -1,0 +1,2640 @@
+{
+  "gpu": {
+    "computed_styles": {
+      "dg-1": {
+        "matched_rules": [
+          "framework: Window",
+          "user: Window"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "gap": 12.0,
+            "padding": 16.0,
+            "padding_bottom": 16.0,
+            "padding_left": 16.0,
+            "padding_right": 16.0,
+            "padding_top": 16.0
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.95686274766922,
+                0.9686274528503418,
+                0.9882352948188782,
+                0.9607843160629272
+              ]
+            },
+            "font_size": 14.0
+          },
+          "visual": {
+            "background": {
+              "rgba": [
+                0.054901961237192154,
+                0.0784313753247261,
+                0.13333334028720856,
+                1.0
+              ]
+            },
+            "background_paint": {
+              "color": {
+                "rgba": [
+                  0.054901961237192154,
+                  0.0784313753247261,
+                  0.13333334028720856,
+                  1.0
+                ]
+              },
+              "type": "color"
+            }
+          },
+          "widget": {}
+        }
+      },
+      "dg-10": {
+        "matched_rules": [
+          "framework: Scatter3D",
+          "user: Scatter3D",
+          "user: Scatter3D.css-minimal"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "height": 380.0
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.95686274766922,
+                0.9686274528503418,
+                0.9882352948188782,
+                0.9607843160629272
+              ]
+            },
+            "font_size": 14.0
+          },
+          "visual": {
+            "background": {
+              "rgba": [
+                0.03921568766236305,
+                0.05882352963089943,
+                0.10196078568696976,
+                1.0
+              ]
+            },
+            "background_paint": {
+              "color": {
+                "rgba": [
+                  0.03921568766236305,
+                  0.05882352963089943,
+                  0.10196078568696976,
+                  1.0
+                ]
+              },
+              "type": "color"
+            },
+            "border_color": {
+              "rgba": [
+                0.545098066329956,
+                0.6431372761726379,
+                0.7960784435272217,
+                0.21960784494876862
+              ]
+            },
+            "border_radius": 8.0,
+            "border_width": 1.0
+          },
+          "widget": {
+            "scatter_grid_planes": "none",
+            "scatter_grid_visible": false,
+            "scatter_legend_position": "top-right",
+            "scatter_orientation_axes": false,
+            "scatter_point_size": 3.0,
+            "scatter_point_style": "circle"
+          }
+        }
+      },
+      "dg-11": {
+        "matched_rules": [
+          "user: Label.caption"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {},
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.8470588326454163,
+                0.886274516582489,
+                0.9490196108818054,
+                0.7411764860153198
+              ]
+            },
+            "font_size": 14.0
+          },
+          "visual": {},
+          "widget": {}
+        }
+      },
+      "dg-2": {
+        "matched_rules": [
+          "user: VLayout.root"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "gap": 12.0,
+            "height": {
+              "percent": 100.0
+            },
+            "width": {
+              "percent": 100.0
+            }
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.95686274766922,
+                0.9686274528503418,
+                0.9882352948188782,
+                0.9607843160629272
+              ]
+            },
+            "font_size": 14.0
+          },
+          "visual": {},
+          "widget": {}
+        }
+      },
+      "dg-3": {
+        "matched_rules": [
+          "user: Label.title"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {},
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.95686274766922,
+                0.9686274528503418,
+                0.9882352948188782,
+                1.0
+              ]
+            },
+            "font_size": 16.0,
+            "font_weight": 700
+          },
+          "visual": {},
+          "widget": {}
+        }
+      },
+      "dg-4": {
+        "matched_rules": [
+          "user: Label.caption"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {},
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.8470588326454163,
+                0.886274516582489,
+                0.9490196108818054,
+                0.7411764860153198
+              ]
+            },
+            "font_size": 14.0
+          },
+          "visual": {},
+          "widget": {}
+        }
+      },
+      "dg-5": {
+        "matched_rules": [],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "gap": 12.0
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.95686274766922,
+                0.9686274528503418,
+                0.9882352948188782,
+                0.9607843160629272
+              ]
+            },
+            "font_size": 14.0
+          },
+          "visual": {},
+          "widget": {}
+        }
+      },
+      "dg-6": {
+        "matched_rules": [
+          "framework: Panel",
+          "user: Panel.case"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "gap": 10.0,
+            "min_height": 520.0,
+            "padding": 12.0,
+            "padding_bottom": 12.0,
+            "padding_left": 12.0,
+            "padding_right": 12.0,
+            "padding_top": 12.0
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.95686274766922,
+                0.9686274528503418,
+                0.9882352948188782,
+                0.9607843160629272
+              ]
+            },
+            "font_size": 14.0
+          },
+          "visual": {
+            "accent": {
+              "token": "accent"
+            },
+            "background": {
+              "rgba": [
+                0.08235294371843338,
+                0.11372549086809158,
+                0.1764705926179886,
+                1.0
+              ]
+            },
+            "background_paint": {
+              "color": {
+                "rgba": [
+                  0.08235294371843338,
+                  0.11372549086809158,
+                  0.1764705926179886,
+                  1.0
+                ]
+              },
+              "type": "color"
+            },
+            "border_color": {
+              "rgba": [
+                0.545098066329956,
+                0.6431372761726379,
+                0.7960784435272217,
+                0.239215686917305
+              ]
+            },
+            "border_radius": 8.0,
+            "border_width": 1.0
+          },
+          "widget": {}
+        }
+      },
+      "dg-7": {
+        "matched_rules": [
+          "framework: Scatter3D",
+          "user: Scatter3D",
+          "user: Scatter3D.css-chrome"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "height": 380.0
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.95686274766922,
+                0.9686274528503418,
+                0.9882352948188782,
+                0.9607843160629272
+              ]
+            },
+            "font_size": 14.0
+          },
+          "visual": {
+            "background": {
+              "rgba": [
+                0.03921568766236305,
+                0.05882352963089943,
+                0.10196078568696976,
+                1.0
+              ]
+            },
+            "background_paint": {
+              "color": {
+                "rgba": [
+                  0.03921568766236305,
+                  0.05882352963089943,
+                  0.10196078568696976,
+                  1.0
+                ]
+              },
+              "type": "color"
+            },
+            "border_color": {
+              "rgba": [
+                0.545098066329956,
+                0.6431372761726379,
+                0.7960784435272217,
+                0.21960784494876862
+              ]
+            },
+            "border_radius": 8.0,
+            "border_width": 1.0
+          },
+          "widget": {
+            "scatter_grid_planes": "all",
+            "scatter_grid_visible": true,
+            "scatter_legend_position": "bottom-left",
+            "scatter_orientation_axes": true,
+            "scatter_point_size": 6.0,
+            "scatter_point_style": "square"
+          }
+        }
+      },
+      "dg-8": {
+        "matched_rules": [
+          "user: Label.caption"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {},
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.8470588326454163,
+                0.886274516582489,
+                0.9490196108818054,
+                0.7411764860153198
+              ]
+            },
+            "font_size": 14.0
+          },
+          "visual": {},
+          "widget": {}
+        }
+      },
+      "dg-9": {
+        "matched_rules": [
+          "framework: Panel",
+          "user: Panel.case"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "gap": 10.0,
+            "min_height": 520.0,
+            "padding": 12.0,
+            "padding_bottom": 12.0,
+            "padding_left": 12.0,
+            "padding_right": 12.0,
+            "padding_top": 12.0
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.95686274766922,
+                0.9686274528503418,
+                0.9882352948188782,
+                0.9607843160629272
+              ]
+            },
+            "font_size": 14.0
+          },
+          "visual": {
+            "accent": {
+              "token": "accent"
+            },
+            "background": {
+              "rgba": [
+                0.08235294371843338,
+                0.11372549086809158,
+                0.1764705926179886,
+                1.0
+              ]
+            },
+            "background_paint": {
+              "color": {
+                "rgba": [
+                  0.08235294371843338,
+                  0.11372549086809158,
+                  0.1764705926179886,
+                  1.0
+                ]
+              },
+              "type": "color"
+            },
+            "border_color": {
+              "rgba": [
+                0.545098066329956,
+                0.6431372761726379,
+                0.7960784435272217,
+                0.239215686917305
+              ]
+            },
+            "border_radius": 8.0,
+            "border_width": 1.0
+          },
+          "widget": {}
+        }
+      }
+    },
+    "framework": {
+      "apply_layout": {
+        "avg_ms": 0.9111666666666666,
+        "count": 3,
+        "last_ms": 0.2639,
+        "total_ms": 2.7335
+      },
+      "container_style": {
+        "avg_ms": 0.0006666666666666665,
+        "count": 3,
+        "last_ms": 9.999999999999999e-05,
+        "total_ms": 0.0019999999999999996
+      },
+      "image_rebuild": {
+        "avg_ms": 0.0123,
+        "count": 3,
+        "last_ms": 0.0099,
+        "total_ms": 0.0369
+      },
+      "layout_compute": {
+        "avg_ms": 0.12806666666666666,
+        "count": 3,
+        "last_ms": 0.0959,
+        "total_ms": 0.3842
+      },
+      "line_plot_rebuild": {
+        "avg_ms": 0.021199999999999997,
+        "count": 3,
+        "last_ms": 0.0202,
+        "total_ms": 0.06359999999999999
+      },
+      "prewarm_scatter_widgets": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "primitive_rebuild": {
+        "avg_ms": 0.032,
+        "count": 3,
+        "last_ms": 0.023799999999999998,
+        "total_ms": 0.096
+      },
+      "rebuild_primitives": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "rebuild_text": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "rebuild_visuals": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "replace_children_maps": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "replace_children_parse": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "replace_children_swap": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "replace_node_maps": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "replace_node_parse": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "replace_node_swap": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_line_plot_sync": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_maps": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_resources": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_scatter_chrome": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_scatter_collect": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_scatter_decode": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_scatter_new_widget": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_scatter_retain": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_scatter_sync": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_scatter_upload": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_state_preserve": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_widget_kinds": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_widget_state": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "scatter_layout": {
+        "avg_ms": 0.07213333333333333,
+        "count": 3,
+        "last_ms": 0.0662,
+        "total_ms": 0.21639999999999998
+      },
+      "style_reapply": {
+        "avg_ms": 0.022066666666666665,
+        "count": 3,
+        "last_ms": 0.0026,
+        "total_ms": 0.0662
+      },
+      "text_rebuild": {
+        "avg_ms": 0.6068333333333332,
+        "count": 3,
+        "last_ms": 0.0312,
+        "total_ms": 1.8204999999999998
+      },
+      "transition_sync": {
+        "avg_ms": 0.0089,
+        "count": 3,
+        "last_ms": 0.0086,
+        "total_ms": 0.026699999999999998
+      }
+    },
+    "layout": {
+      "clips": {
+        "dg-1": {
+          "h": 760.0,
+          "w": 1040.0,
+          "x": 0.0,
+          "y": 0.0
+        },
+        "dg-10": {
+          "h": 380.0,
+          "w": 474.0,
+          "x": 538.0,
+          "y": 152.0
+        },
+        "dg-11": {
+          "h": 34.0,
+          "w": 474.0,
+          "x": 538.0,
+          "y": 542.0
+        },
+        "dg-2": {
+          "h": 728.0,
+          "w": 1008.0,
+          "x": 16.0,
+          "y": 16.0
+        },
+        "dg-3": {
+          "h": 36.0,
+          "w": 1008.0,
+          "x": 16.0,
+          "y": 16.0
+        },
+        "dg-4": {
+          "h": 34.0,
+          "w": 1008.0,
+          "x": 16.0,
+          "y": 64.0
+        },
+        "dg-5": {
+          "h": 634.0,
+          "w": 1008.0,
+          "x": 16.0,
+          "y": 110.0
+        },
+        "dg-6": {
+          "h": 634.0,
+          "w": 498.0,
+          "x": 16.0,
+          "y": 110.0
+        },
+        "dg-7": {
+          "h": 380.0,
+          "w": 474.0,
+          "x": 28.0,
+          "y": 152.0
+        },
+        "dg-8": {
+          "h": 34.0,
+          "w": 474.0,
+          "x": 28.0,
+          "y": 542.0
+        },
+        "dg-9": {
+          "h": 634.0,
+          "w": 498.0,
+          "x": 526.0,
+          "y": 110.0
+        }
+      },
+      "diagnostics": {
+        "dg-1": {
+          "available": {
+            "height": 760.0,
+            "width": 1040.0,
+            "x": 0.0,
+            "y": 0.0
+          },
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 760.0,
+            "width": 1040.0,
+            "x": 0.0,
+            "y": 0.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-10": {
+          "available": {
+            "height": 380.0,
+            "width": 474.0,
+            "x": 538.0,
+            "y": 152.0
+          },
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 380.0,
+            "width": 474.0,
+            "x": 538.0,
+            "y": 152.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-11": {
+          "available": {
+            "height": 34.0,
+            "width": 474.0,
+            "x": 538.0,
+            "y": 542.0
+          },
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 34.0,
+            "width": 474.0,
+            "x": 538.0,
+            "y": 542.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-2": {
+          "available": {
+            "height": 728.0,
+            "width": 1008.0,
+            "x": 16.0,
+            "y": 16.0
+          },
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 728.0,
+            "width": 1008.0,
+            "x": 16.0,
+            "y": 16.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-3": {
+          "available": {
+            "height": 36.0,
+            "width": 1008.0,
+            "x": 16.0,
+            "y": 16.0
+          },
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 36.0,
+            "width": 1008.0,
+            "x": 16.0,
+            "y": 16.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-4": {
+          "available": {
+            "height": 34.0,
+            "width": 1008.0,
+            "x": 16.0,
+            "y": 64.0
+          },
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 34.0,
+            "width": 1008.0,
+            "x": 16.0,
+            "y": 64.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-5": {
+          "available": {
+            "height": 634.0,
+            "width": 1008.0,
+            "x": 16.0,
+            "y": 110.0
+          },
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 634.0,
+            "width": 1008.0,
+            "x": 16.0,
+            "y": 110.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-6": {
+          "available": {
+            "height": 634.0,
+            "width": 498.0,
+            "x": 16.0,
+            "y": 110.0
+          },
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 634.0,
+            "width": 498.0,
+            "x": 16.0,
+            "y": 110.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-7": {
+          "available": {
+            "height": 380.0,
+            "width": 474.0,
+            "x": 28.0,
+            "y": 152.0
+          },
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 380.0,
+            "width": 474.0,
+            "x": 28.0,
+            "y": 152.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-8": {
+          "available": {
+            "height": 34.0,
+            "width": 474.0,
+            "x": 28.0,
+            "y": 542.0
+          },
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 34.0,
+            "width": 474.0,
+            "x": 28.0,
+            "y": 542.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-9": {
+          "available": {
+            "height": 634.0,
+            "width": 498.0,
+            "x": 526.0,
+            "y": 110.0
+          },
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 634.0,
+            "width": 498.0,
+            "x": 526.0,
+            "y": 110.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        }
+      },
+      "rects": {
+        "dg-1": {
+          "h": 760.0,
+          "w": 1040.0,
+          "x": 0.0,
+          "y": 0.0
+        },
+        "dg-10": {
+          "h": 380.0,
+          "w": 474.0,
+          "x": 538.0,
+          "y": 152.0
+        },
+        "dg-11": {
+          "h": 34.0,
+          "w": 474.0,
+          "x": 538.0,
+          "y": 542.0
+        },
+        "dg-2": {
+          "h": 728.0,
+          "w": 1008.0,
+          "x": 16.0,
+          "y": 16.0
+        },
+        "dg-3": {
+          "h": 36.0,
+          "w": 1008.0,
+          "x": 16.0,
+          "y": 16.0
+        },
+        "dg-4": {
+          "h": 34.0,
+          "w": 1008.0,
+          "x": 16.0,
+          "y": 64.0
+        },
+        "dg-5": {
+          "h": 634.0,
+          "w": 1008.0,
+          "x": 16.0,
+          "y": 110.0
+        },
+        "dg-6": {
+          "h": 634.0,
+          "w": 498.0,
+          "x": 16.0,
+          "y": 110.0
+        },
+        "dg-7": {
+          "h": 380.0,
+          "w": 474.0,
+          "x": 28.0,
+          "y": 152.0
+        },
+        "dg-8": {
+          "h": 34.0,
+          "w": 474.0,
+          "x": 28.0,
+          "y": 542.0
+        },
+        "dg-9": {
+          "h": 634.0,
+          "w": 498.0,
+          "x": 526.0,
+          "y": 110.0
+        }
+      },
+      "scroll_max_x": {
+        "dg-6": 0.0,
+        "dg-9": 0.0
+      },
+      "scroll_max_y": {
+        "dg-6": 0.0,
+        "dg-9": 0.0
+      },
+      "scroll_x": {
+        "dg-6": 0.0,
+        "dg-9": 0.0
+      },
+      "scroll_y": {
+        "dg-6": 0.0,
+        "dg-9": 0.0
+      }
+    },
+    "renderer": {
+      "caret_positions": {},
+      "desired_maximum_frame_latency": 2,
+      "font_warnings": [],
+      "has_primitives": true,
+      "has_scatter": true,
+      "has_text": true,
+      "html_reports": {
+        "enabled": true,
+        "environment_ready": false,
+        "instances": {},
+        "last_error": null,
+        "platform": "windows",
+        "profile_generation": 0,
+        "profile_recovered": false,
+        "reason": null,
+        "user_data_dir": null
+      },
+      "line_plot_renderer": {
+        "aa_width": 1.0,
+        "buffer_bytes": 0,
+        "decimated_series_count": 0,
+        "decimation_mode": "auto",
+        "enabled": true,
+        "last_decimate_ms": 0.0,
+        "last_emit_ms": 0.0009,
+        "last_encode_ms": 0.00019999999999999998,
+        "last_upload_ms": 9.999999999999999e-05,
+        "max_segments_per_series": 8192,
+        "point_bytes": 0,
+        "point_count": 0,
+        "segment_count": 0,
+        "series_bytes": 0,
+        "series_count": 0,
+        "source_point_count": 0
+      },
+      "present_mode": "fifo",
+      "present_mode_env": null,
+      "primitives": {
+        "base_batches": 8,
+        "buffer_bytes": 1216,
+        "complex_batches": 4,
+        "complex_bytes": 960,
+        "complex_count": 4,
+        "last_base_encode_ms": 0.0076,
+        "last_emit_ms": 0.01,
+        "last_overlay_encode_ms": 0.00019999999999999998,
+        "last_split_ms": 0.0007,
+        "last_upload_ms": 0.0099,
+        "line_batches": 0,
+        "line_bytes": 0,
+        "line_count": 0,
+        "overlay_batches": 0,
+        "rect_count": 8,
+        "simple_batches": 4,
+        "simple_bytes": 256,
+        "simple_count": 4,
+        "source_bytes": 1920,
+        "split_collapsed": false,
+        "split_enabled": true
+      },
+      "scatter_count": 2,
+      "scatter_widget_id": "dg-7",
+      "scatter_widget_pool": 0,
+      "supported_present_modes": [
+        "fifo",
+        "fifo-relaxed",
+        "mailbox",
+        "immediate"
+      ],
+      "surface_format": "Bgra8UnormSrgb",
+      "widget_count": 11
+    },
+    "resources": {
+      "buffers": {
+        "resources": 0
+      },
+      "line_plot": null,
+      "line_plots": {},
+      "registry": {
+        "buffers": {
+          "count": 0,
+          "items": {}
+        },
+        "tables": {
+          "count": 0,
+          "items": {}
+        }
+      },
+      "scatter": {
+        "active_render_scale": 1.0,
+        "auto_point_size": true,
+        "auto_quality": false,
+        "effective_draw_point_count": 900,
+        "id": "dg-7",
+        "interactive_render_scale": 1.0,
+        "last_bounds_ms": 0.0033,
+        "last_decode_ms": 0.0,
+        "last_grid_ms": 0.0387,
+        "last_lod_ms": 0.0003,
+        "last_overlay_ms": 0.0024,
+        "last_pack_ms": 0.0,
+        "last_payload_bytes": 28800,
+        "last_point_count": 900,
+        "last_primary_upload_ms": 0.0045000000000000005,
+        "last_queue_latency_ms": 848.691650390625,
+        "last_render_cache_hit": false,
+        "last_render_composite_ms": 0.0,
+        "last_render_encode_ms": 3.1029999999999998,
+        "last_render_redraw_ms": 0.0134,
+        "last_total_native_ms": 0.059,
+        "last_upload_ms": 0.0456,
+        "payload_status": "Ok",
+        "point_size_scale": 1.0,
+        "primary_compact_colormap": "viridis",
+        "quality_level": 0,
+        "quality_target_frame_ms": 100.0,
+        "render_cache_hit_rate": 0.0,
+        "render_cache_hits": 0,
+        "render_cache_revision": null,
+        "render_composite_avg_ms": 0.0,
+        "render_count": 1,
+        "render_encode_avg_ms": 3.1029999999999998,
+        "render_redraw_avg_ms": 0.0134,
+        "scalar_bar": {
+          "colormap": "viridis",
+          "log_scale": false,
+          "title": "group",
+          "visible": false,
+          "vmax": 1.0,
+          "vmin": 0.0
+        },
+        "scene_revision": 33,
+        "updates": 1
+      },
+      "scatters": {
+        "dg-10": {
+          "active_render_scale": 1.0,
+          "auto_point_size": true,
+          "auto_quality": false,
+          "camera": {
+            "distance": 9.584917068481445,
+            "parallel": false,
+            "pitch": 0.4000000059604645,
+            "target": [
+              -0.13263237476348877,
+              0.13330793380737305,
+              0.0
+            ],
+            "yaw": 0.4000000059604645
+          },
+          "effective_draw_point_count": 900,
+          "fitted_once": true,
+          "interactive_render_scale": 1.0,
+          "last_bounds_ms": 0.0021,
+          "last_decode_ms": 0.0,
+          "last_grid_ms": 0.0003,
+          "last_lod_ms": 0.00019999999999999998,
+          "last_overlay_ms": 0.044700000000000004,
+          "last_pack_ms": 0.0,
+          "last_payload_bytes": 28800,
+          "last_point_count": 900,
+          "last_primary_upload_ms": 0.0043,
+          "last_queue_latency_ms": 848.74169921875,
+          "last_render_cache_hit": false,
+          "last_render_composite_ms": 0.0,
+          "last_render_encode_ms": 1.7681,
+          "last_render_redraw_ms": 0.0048,
+          "last_total_native_ms": 0.0571,
+          "last_upload_ms": 0.049300000000000004,
+          "lod": {
+            "active": false,
+            "enabled": false,
+            "factor": 8,
+            "threshold": 200000
+          },
+          "payload_format": "point_instance_v1",
+          "payload_status": "Ok",
+          "point_size_scale": 1.0,
+          "primary_compact_colormap": "viridis",
+          "quality_level": 0,
+          "quality_target_frame_ms": 100.0,
+          "render_cache_hit_rate": 0.0,
+          "render_cache_hits": 0,
+          "render_cache_revision": null,
+          "render_composite_avg_ms": 0.0,
+          "render_count": 1,
+          "render_encode_avg_ms": 1.7681,
+          "render_redraw_avg_ms": 0.0048,
+          "scalar_bar": {
+            "colormap": "viridis",
+            "log_scale": false,
+            "title": "group",
+            "visible": false,
+            "vmax": 1.0,
+            "vmin": 0.0
+          },
+          "scene_revision": 29,
+          "updates": 1
+        },
+        "dg-7": {
+          "active_render_scale": 1.0,
+          "auto_point_size": true,
+          "auto_quality": false,
+          "camera": {
+            "distance": 9.584917068481445,
+            "parallel": false,
+            "pitch": 0.4000000059604645,
+            "target": [
+              -0.13263237476348877,
+              0.13330793380737305,
+              0.0
+            ],
+            "yaw": 0.4000000059604645
+          },
+          "effective_draw_point_count": 900,
+          "fitted_once": true,
+          "interactive_render_scale": 1.0,
+          "last_bounds_ms": 0.0033,
+          "last_decode_ms": 0.0,
+          "last_grid_ms": 0.0387,
+          "last_lod_ms": 0.0003,
+          "last_overlay_ms": 0.0024,
+          "last_pack_ms": 0.0,
+          "last_payload_bytes": 28800,
+          "last_point_count": 900,
+          "last_primary_upload_ms": 0.0045000000000000005,
+          "last_queue_latency_ms": 848.691650390625,
+          "last_render_cache_hit": false,
+          "last_render_composite_ms": 0.0,
+          "last_render_encode_ms": 3.1029999999999998,
+          "last_render_redraw_ms": 0.0134,
+          "last_total_native_ms": 0.059,
+          "last_upload_ms": 0.0456,
+          "lod": {
+            "active": false,
+            "enabled": false,
+            "factor": 8,
+            "threshold": 200000
+          },
+          "payload_format": "point_instance_v1",
+          "payload_status": "Ok",
+          "point_size_scale": 1.0,
+          "primary_compact_colormap": "viridis",
+          "quality_level": 0,
+          "quality_target_frame_ms": 100.0,
+          "render_cache_hit_rate": 0.0,
+          "render_cache_hits": 0,
+          "render_cache_revision": null,
+          "render_composite_avg_ms": 0.0,
+          "render_count": 1,
+          "render_encode_avg_ms": 3.1029999999999998,
+          "render_redraw_avg_ms": 0.0134,
+          "scalar_bar": {
+            "colormap": "viridis",
+            "log_scale": false,
+            "title": "group",
+            "visible": false,
+            "vmax": 1.0,
+            "vmin": 0.0
+          },
+          "scene_revision": 33,
+          "updates": 1
+        }
+      },
+      "tables": {
+        "resources": 0,
+        "widgets": 0
+      }
+    },
+    "state": {
+      "active_pages": {},
+      "active_t": {},
+      "active_tabs": {},
+      "checked": {},
+      "checked_t": {},
+      "container_scroll_x": {
+        "dg-6": 0.0,
+        "dg-9": 0.0
+      },
+      "container_scroll_y": {
+        "dg-6": 0.0,
+        "dg-9": 0.0
+      },
+      "context_menu_pos": null,
+      "context_targets": {},
+      "disabled": [],
+      "drag_hover_target": null,
+      "drag_kind": null,
+      "drag_pos": null,
+      "drag_source": null,
+      "dropdown_hover": null,
+      "dropdown_index": {},
+      "dropdown_items_count": {},
+      "expanded": {},
+      "expanded_t": {},
+      "float_range": {},
+      "float_val": {},
+      "focus_order": [],
+      "focus_t": {},
+      "focused": null,
+      "hover_t": {},
+      "hovered": null,
+      "menu_items_count": {},
+      "open_context_menu": null,
+      "open_dropdown": null,
+      "open_menu": null,
+      "open_t": {},
+      "pane_sizes": {},
+      "pressed": null,
+      "range_val": {},
+      "selectable_selected": {},
+      "selected_t": {},
+      "tables": {},
+      "text_cursor": {},
+      "text_scroll_x": {},
+      "text_scroll_y": {},
+      "text_val": {}
+    },
+    "stylesheets": {
+      "framework_rules": 123,
+      "last_error": null,
+      "theme_rules": 0,
+      "user_rules": 8,
+      "warning_count": 0
+    },
+    "theme": {
+      "accent": [
+        0.3529411852359772,
+        0.6627451181411743,
+        1.0,
+        1.0
+      ],
+      "background": [
+        0.07058823853731155,
+        0.07058823853731155,
+        0.10196078568696976,
+        1.0
+      ],
+      "border": [
+        0.21960784494876862,
+        0.21960784494876862,
+        0.3137255012989044,
+        1.0
+      ],
+      "danger": [
+        1.0,
+        0.3607843220233917,
+        0.47843137383461,
+        1.0
+      ],
+      "disabled": [
+        0.4000000059604645,
+        0.4000000059604645,
+        0.47843137383461,
+        1.0
+      ],
+      "focus": [
+        0.41960784792900085,
+        0.8627451062202454,
+        1.0,
+        1.0
+      ],
+      "font_size": 14.0,
+      "muted_text": [
+        0.658823549747467,
+        0.658823549747467,
+        0.729411780834198,
+        1.0
+      ],
+      "radius": 8.0,
+      "spacing": 8.0,
+      "success": [
+        0.26274511218070984,
+        0.8313725590705872,
+        0.5607843399047852,
+        1.0
+      ],
+      "surface": [
+        0.11764705926179886,
+        0.11764705926179886,
+        0.18039216101169586,
+        1.0
+      ],
+      "surface_alt": [
+        0.19607843458652496,
+        0.19607843458652496,
+        0.29019609093666077,
+        1.0
+      ],
+      "text": [
+        0.9411764740943909,
+        0.9411764740943909,
+        0.9686274528503418,
+        1.0
+      ],
+      "warning": [
+        1.0,
+        0.7490196228027344,
+        0.27843138575553894,
+        1.0
+      ]
+    },
+    "toasts": {
+      "count": 0,
+      "items": []
+    },
+    "tree": {
+      "children": [
+        {
+          "children": [
+            {
+              "children": [],
+              "class": "title",
+              "id": "dg-3",
+              "key": null,
+              "props": {
+                "badge": null,
+                "checked": null,
+                "disabled": false,
+                "expanded": null,
+                "extension_type": null,
+                "fixed_height": null,
+                "fixed_width": null,
+                "flow_align": null,
+                "flow_cross_align": null,
+                "grid_columns": null,
+                "grid_masonry": false,
+                "grid_min_column_width": null,
+                "grid_template_columns": null,
+                "grid_template_rows": null,
+                "gutter_size": null,
+                "image_fit": null,
+                "image_path": null,
+                "intrinsic_height": null,
+                "intrinsic_width": null,
+                "items_count": 0,
+                "led_size": null,
+                "led_state": null,
+                "level": null,
+                "max": null,
+                "min": null,
+                "open": null,
+                "orientation": null,
+                "page": null,
+                "pane_flex": null,
+                "pane_max_size": null,
+                "pane_min_size": null,
+                "pane_size": null,
+                "placeholder": null,
+                "route_value": null,
+                "rows": null,
+                "step": null,
+                "table": {
+                  "columns": 0,
+                  "page_size": null,
+                  "resizable_columns": true,
+                  "resource_id": null,
+                  "rows": null,
+                  "sample_rows": null,
+                  "sortable": true
+                },
+                "target": null,
+                "text": "Scatter3D CSS chrome",
+                "toggle": null,
+                "tooltip": null,
+                "value": null,
+                "wrap": true
+              },
+              "style": {},
+              "type": "label"
+            },
+            {
+              "children": [],
+              "class": "caption",
+              "id": "dg-4",
+              "key": null,
+              "props": {
+                "badge": null,
+                "checked": null,
+                "disabled": false,
+                "expanded": null,
+                "extension_type": null,
+                "fixed_height": null,
+                "fixed_width": null,
+                "flow_align": null,
+                "flow_cross_align": null,
+                "grid_columns": null,
+                "grid_masonry": false,
+                "grid_min_column_width": null,
+                "grid_template_columns": null,
+                "grid_template_rows": null,
+                "gutter_size": null,
+                "image_fit": null,
+                "image_path": null,
+                "intrinsic_height": null,
+                "intrinsic_width": null,
+                "items_count": 0,
+                "led_size": null,
+                "led_state": null,
+                "level": null,
+                "max": null,
+                "min": null,
+                "open": null,
+                "orientation": null,
+                "page": null,
+                "pane_flex": null,
+                "pane_max_size": null,
+                "pane_min_size": null,
+                "pane_size": null,
+                "placeholder": null,
+                "route_value": null,
+                "rows": null,
+                "step": null,
+                "table": {
+                  "columns": 0,
+                  "page_size": null,
+                  "resizable_columns": true,
+                  "resource_id": null,
+                  "rows": null,
+                  "sample_rows": null,
+                  "sortable": true
+                },
+                "target": null,
+                "text": "Left plot gets grid, planes, legend position, orientation axes, point size, and point style from CSS.",
+                "toggle": null,
+                "tooltip": null,
+                "value": null,
+                "wrap": true
+              },
+              "style": {},
+              "type": "label"
+            },
+            {
+              "children": [
+                {
+                  "children": [
+                    {
+                      "children": [],
+                      "class": "css-chrome",
+                      "id": "dg-7",
+                      "key": null,
+                      "props": {
+                        "badge": null,
+                        "checked": null,
+                        "disabled": false,
+                        "expanded": null,
+                        "extension_type": null,
+                        "fixed_height": null,
+                        "fixed_width": null,
+                        "flow_align": null,
+                        "flow_cross_align": null,
+                        "grid_columns": null,
+                        "grid_masonry": false,
+                        "grid_min_column_width": null,
+                        "grid_template_columns": null,
+                        "grid_template_rows": null,
+                        "gutter_size": null,
+                        "image_fit": null,
+                        "image_path": null,
+                        "intrinsic_height": null,
+                        "intrinsic_width": null,
+                        "items_count": 0,
+                        "led_size": null,
+                        "led_state": null,
+                        "level": null,
+                        "max": null,
+                        "min": null,
+                        "open": null,
+                        "orientation": null,
+                        "page": null,
+                        "pane_flex": null,
+                        "pane_max_size": null,
+                        "pane_min_size": null,
+                        "pane_size": null,
+                        "placeholder": null,
+                        "route_value": null,
+                        "rows": null,
+                        "step": null,
+                        "table": {
+                          "columns": 4,
+                          "page_size": null,
+                          "resizable_columns": true,
+                          "resource_id": null,
+                          "rows": 900,
+                          "sample_rows": null,
+                          "sortable": true
+                        },
+                        "target": null,
+                        "text": null,
+                        "toggle": null,
+                        "tooltip": null,
+                        "value": null,
+                        "wrap": null
+                      },
+                      "style": {},
+                      "type": "scatter_3d"
+                    },
+                    {
+                      "children": [],
+                      "class": "caption",
+                      "id": "dg-8",
+                      "key": null,
+                      "props": {
+                        "badge": null,
+                        "checked": null,
+                        "disabled": false,
+                        "expanded": null,
+                        "extension_type": null,
+                        "fixed_height": null,
+                        "fixed_width": null,
+                        "flow_align": null,
+                        "flow_cross_align": null,
+                        "grid_columns": null,
+                        "grid_masonry": false,
+                        "grid_min_column_width": null,
+                        "grid_template_columns": null,
+                        "grid_template_rows": null,
+                        "gutter_size": null,
+                        "image_fit": null,
+                        "image_path": null,
+                        "intrinsic_height": null,
+                        "intrinsic_width": null,
+                        "items_count": 0,
+                        "led_size": null,
+                        "led_state": null,
+                        "level": null,
+                        "max": null,
+                        "min": null,
+                        "open": null,
+                        "orientation": null,
+                        "page": null,
+                        "pane_flex": null,
+                        "pane_max_size": null,
+                        "pane_min_size": null,
+                        "pane_size": null,
+                        "placeholder": null,
+                        "route_value": null,
+                        "rows": null,
+                        "step": null,
+                        "table": {
+                          "columns": 0,
+                          "page_size": null,
+                          "resizable_columns": true,
+                          "resource_id": null,
+                          "rows": null,
+                          "sample_rows": null,
+                          "sortable": true
+                        },
+                        "target": null,
+                        "text": "PASS: square points, grid/planes, bottom-left legend, and orientation axes are visible.",
+                        "toggle": null,
+                        "tooltip": null,
+                        "value": null,
+                        "wrap": true
+                      },
+                      "style": {},
+                      "type": "label"
+                    }
+                  ],
+                  "class": "case",
+                  "id": "dg-6",
+                  "key": null,
+                  "props": {
+                    "badge": null,
+                    "checked": null,
+                    "disabled": false,
+                    "expanded": null,
+                    "extension_type": null,
+                    "fixed_height": null,
+                    "fixed_width": null,
+                    "flow_align": null,
+                    "flow_cross_align": null,
+                    "grid_columns": null,
+                    "grid_masonry": false,
+                    "grid_min_column_width": null,
+                    "grid_template_columns": null,
+                    "grid_template_rows": null,
+                    "gutter_size": null,
+                    "image_fit": null,
+                    "image_path": null,
+                    "intrinsic_height": null,
+                    "intrinsic_width": null,
+                    "items_count": 0,
+                    "led_size": null,
+                    "led_state": null,
+                    "level": null,
+                    "max": null,
+                    "min": null,
+                    "open": null,
+                    "orientation": null,
+                    "page": null,
+                    "pane_flex": null,
+                    "pane_max_size": null,
+                    "pane_min_size": null,
+                    "pane_size": null,
+                    "placeholder": null,
+                    "route_value": null,
+                    "rows": null,
+                    "step": null,
+                    "table": {
+                      "columns": 0,
+                      "page_size": null,
+                      "resizable_columns": true,
+                      "resource_id": null,
+                      "rows": null,
+                      "sample_rows": null,
+                      "sortable": true
+                    },
+                    "target": null,
+                    "text": "CSS chrome enabled",
+                    "toggle": null,
+                    "tooltip": null,
+                    "value": null,
+                    "wrap": null
+                  },
+                  "style": {},
+                  "type": "panel"
+                },
+                {
+                  "children": [
+                    {
+                      "children": [],
+                      "class": "css-minimal",
+                      "id": "dg-10",
+                      "key": null,
+                      "props": {
+                        "badge": null,
+                        "checked": null,
+                        "disabled": false,
+                        "expanded": null,
+                        "extension_type": null,
+                        "fixed_height": null,
+                        "fixed_width": null,
+                        "flow_align": null,
+                        "flow_cross_align": null,
+                        "grid_columns": null,
+                        "grid_masonry": false,
+                        "grid_min_column_width": null,
+                        "grid_template_columns": null,
+                        "grid_template_rows": null,
+                        "gutter_size": null,
+                        "image_fit": null,
+                        "image_path": null,
+                        "intrinsic_height": null,
+                        "intrinsic_width": null,
+                        "items_count": 0,
+                        "led_size": null,
+                        "led_state": null,
+                        "level": null,
+                        "max": null,
+                        "min": null,
+                        "open": null,
+                        "orientation": null,
+                        "page": null,
+                        "pane_flex": null,
+                        "pane_max_size": null,
+                        "pane_min_size": null,
+                        "pane_size": null,
+                        "placeholder": null,
+                        "route_value": null,
+                        "rows": null,
+                        "step": null,
+                        "table": {
+                          "columns": 4,
+                          "page_size": null,
+                          "resizable_columns": true,
+                          "resource_id": null,
+                          "rows": 900,
+                          "sample_rows": null,
+                          "sortable": true
+                        },
+                        "target": null,
+                        "text": null,
+                        "toggle": null,
+                        "tooltip": null,
+                        "value": null,
+                        "wrap": null
+                      },
+                      "style": {},
+                      "type": "scatter_3d"
+                    },
+                    {
+                      "children": [],
+                      "class": "caption",
+                      "id": "dg-11",
+                      "key": null,
+                      "props": {
+                        "badge": null,
+                        "checked": null,
+                        "disabled": false,
+                        "expanded": null,
+                        "extension_type": null,
+                        "fixed_height": null,
+                        "fixed_width": null,
+                        "flow_align": null,
+                        "flow_cross_align": null,
+                        "grid_columns": null,
+                        "grid_masonry": false,
+                        "grid_min_column_width": null,
+                        "grid_template_columns": null,
+                        "grid_template_rows": null,
+                        "gutter_size": null,
+                        "image_fit": null,
+                        "image_path": null,
+                        "intrinsic_height": null,
+                        "intrinsic_width": null,
+                        "items_count": 0,
+                        "led_size": null,
+                        "led_state": null,
+                        "level": null,
+                        "max": null,
+                        "min": null,
+                        "open": null,
+                        "orientation": null,
+                        "page": null,
+                        "pane_flex": null,
+                        "pane_max_size": null,
+                        "pane_min_size": null,
+                        "pane_size": null,
+                        "placeholder": null,
+                        "route_value": null,
+                        "rows": null,
+                        "step": null,
+                        "table": {
+                          "columns": 0,
+                          "page_size": null,
+                          "resizable_columns": true,
+                          "resource_id": null,
+                          "rows": null,
+                          "sample_rows": null,
+                          "sortable": true
+                        },
+                        "target": null,
+                        "text": "PASS: CSS removes grid/planes/orientation axes and keeps the legend at top-right.",
+                        "toggle": null,
+                        "tooltip": null,
+                        "value": null,
+                        "wrap": true
+                      },
+                      "style": {},
+                      "type": "label"
+                    }
+                  ],
+                  "class": "case",
+                  "id": "dg-9",
+                  "key": null,
+                  "props": {
+                    "badge": null,
+                    "checked": null,
+                    "disabled": false,
+                    "expanded": null,
+                    "extension_type": null,
+                    "fixed_height": null,
+                    "fixed_width": null,
+                    "flow_align": null,
+                    "flow_cross_align": null,
+                    "grid_columns": null,
+                    "grid_masonry": false,
+                    "grid_min_column_width": null,
+                    "grid_template_columns": null,
+                    "grid_template_rows": null,
+                    "gutter_size": null,
+                    "image_fit": null,
+                    "image_path": null,
+                    "intrinsic_height": null,
+                    "intrinsic_width": null,
+                    "items_count": 0,
+                    "led_size": null,
+                    "led_state": null,
+                    "level": null,
+                    "max": null,
+                    "min": null,
+                    "open": null,
+                    "orientation": null,
+                    "page": null,
+                    "pane_flex": null,
+                    "pane_max_size": null,
+                    "pane_min_size": null,
+                    "pane_size": null,
+                    "placeholder": null,
+                    "route_value": null,
+                    "rows": null,
+                    "step": null,
+                    "table": {
+                      "columns": 0,
+                      "page_size": null,
+                      "resizable_columns": true,
+                      "resource_id": null,
+                      "rows": null,
+                      "sample_rows": null,
+                      "sortable": true
+                    },
+                    "target": null,
+                    "text": "CSS chrome disabled",
+                    "toggle": null,
+                    "tooltip": null,
+                    "value": null,
+                    "wrap": null
+                  },
+                  "style": {},
+                  "type": "panel"
+                }
+              ],
+              "class": "grid",
+              "id": "dg-5",
+              "key": null,
+              "props": {
+                "badge": null,
+                "checked": null,
+                "disabled": false,
+                "expanded": null,
+                "extension_type": null,
+                "fixed_height": null,
+                "fixed_width": null,
+                "flow_align": null,
+                "flow_cross_align": null,
+                "grid_columns": 2,
+                "grid_masonry": false,
+                "grid_min_column_width": 390.0,
+                "grid_template_columns": null,
+                "grid_template_rows": null,
+                "gutter_size": null,
+                "image_fit": null,
+                "image_path": null,
+                "intrinsic_height": null,
+                "intrinsic_width": null,
+                "items_count": 0,
+                "led_size": null,
+                "led_state": null,
+                "level": null,
+                "max": null,
+                "min": null,
+                "open": null,
+                "orientation": null,
+                "page": null,
+                "pane_flex": null,
+                "pane_max_size": null,
+                "pane_min_size": null,
+                "pane_size": null,
+                "placeholder": null,
+                "route_value": null,
+                "rows": null,
+                "step": null,
+                "table": {
+                  "columns": 0,
+                  "page_size": null,
+                  "resizable_columns": true,
+                  "resource_id": null,
+                  "rows": null,
+                  "sample_rows": null,
+                  "sortable": true
+                },
+                "target": null,
+                "text": null,
+                "toggle": null,
+                "tooltip": null,
+                "value": null,
+                "wrap": null
+              },
+              "style": {
+                "gap": 12
+              },
+              "type": "grid_layout"
+            }
+          ],
+          "class": "root",
+          "id": "dg-2",
+          "key": null,
+          "props": {
+            "badge": null,
+            "checked": null,
+            "disabled": false,
+            "expanded": null,
+            "extension_type": null,
+            "fixed_height": null,
+            "fixed_width": null,
+            "flow_align": null,
+            "flow_cross_align": null,
+            "grid_columns": null,
+            "grid_masonry": false,
+            "grid_min_column_width": null,
+            "grid_template_columns": null,
+            "grid_template_rows": null,
+            "gutter_size": null,
+            "image_fit": null,
+            "image_path": null,
+            "intrinsic_height": null,
+            "intrinsic_width": null,
+            "items_count": 0,
+            "led_size": null,
+            "led_state": null,
+            "level": null,
+            "max": null,
+            "min": null,
+            "open": null,
+            "orientation": null,
+            "page": null,
+            "pane_flex": null,
+            "pane_max_size": null,
+            "pane_min_size": null,
+            "pane_size": null,
+            "placeholder": null,
+            "route_value": null,
+            "rows": null,
+            "step": null,
+            "table": {
+              "columns": 0,
+              "page_size": null,
+              "resizable_columns": true,
+              "resource_id": null,
+              "rows": null,
+              "sample_rows": null,
+              "sortable": true
+            },
+            "target": null,
+            "text": null,
+            "toggle": null,
+            "tooltip": null,
+            "value": null,
+            "wrap": null
+          },
+          "style": {},
+          "type": "v_layout"
+        }
+      ],
+      "class": null,
+      "id": "dg-1",
+      "key": null,
+      "props": {
+        "badge": null,
+        "checked": null,
+        "disabled": false,
+        "expanded": null,
+        "extension_type": null,
+        "fixed_height": 760.0,
+        "fixed_width": 1040.0,
+        "flow_align": null,
+        "flow_cross_align": null,
+        "grid_columns": null,
+        "grid_masonry": false,
+        "grid_min_column_width": null,
+        "grid_template_columns": null,
+        "grid_template_rows": null,
+        "gutter_size": null,
+        "image_fit": null,
+        "image_path": null,
+        "intrinsic_height": null,
+        "intrinsic_width": null,
+        "items_count": 0,
+        "led_size": null,
+        "led_state": null,
+        "level": null,
+        "max": null,
+        "min": null,
+        "open": null,
+        "orientation": null,
+        "page": null,
+        "pane_flex": null,
+        "pane_max_size": null,
+        "pane_min_size": null,
+        "pane_size": null,
+        "placeholder": null,
+        "route_value": null,
+        "rows": null,
+        "step": null,
+        "table": {
+          "columns": 0,
+          "page_size": null,
+          "resizable_columns": true,
+          "resource_id": null,
+          "rows": null,
+          "sample_rows": null,
+          "sortable": true
+        },
+        "target": null,
+        "text": null,
+        "toggle": null,
+        "tooltip": null,
+        "value": null,
+        "wrap": null
+      },
+      "style": {},
+      "type": "window"
+    },
+    "window": {
+      "height": 760,
+      "scale_factor": 1.0,
+      "width": 1040
+    }
+  },
+  "runtime": {
+    "command_drain": {
+      "apply": {
+        "avg_ms": 0.05163333333333334,
+        "count": 3,
+        "last_ms": 0.0,
+        "total_ms": 0.1549
+      },
+      "coalesce": {
+        "avg_ms": 0.0013333333333333333,
+        "count": 3,
+        "last_ms": 0.0,
+        "total_ms": 0.004
+      },
+      "fetch": {
+        "avg_ms": 0.0009666666666666666,
+        "count": 3,
+        "last_ms": 0.0,
+        "total_ms": 0.0029
+      },
+      "flush_rebuilds": {
+        "avg_ms": 0.0,
+        "count": 3,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "last_batches": 0,
+      "last_commands": 0,
+      "last_pending": 0,
+      "timing": {
+        "avg_ms": 0.0542,
+        "count": 3,
+        "last_ms": 9.999999999999999e-05,
+        "total_ms": 0.1626
+      }
+    },
+    "command_queue_depth": 0,
+    "command_timings": {
+      "DebugSnapshot": {
+        "avg_ms": 0.0035,
+        "count": 1,
+        "last_ms": 0.0035,
+        "total_ms": 0.0035
+      },
+      "SetScatterAutoPointSize": {
+        "avg_ms": 0.0009499999999999999,
+        "count": 2,
+        "last_ms": 0.0003,
+        "total_ms": 0.0018999999999999998
+      },
+      "SetScatterAutoQuality": {
+        "avg_ms": 0.00135,
+        "count": 2,
+        "last_ms": 0.00039999999999999996,
+        "total_ms": 0.0027
+      },
+      "SetScatterHoverTooltip": {
+        "avg_ms": 0.00175,
+        "count": 2,
+        "last_ms": 0.00019999999999999998,
+        "total_ms": 0.0035
+      },
+      "SetScatterInteractiveRenderScale": {
+        "avg_ms": 0.0006,
+        "count": 2,
+        "last_ms": 0.00039999999999999996,
+        "total_ms": 0.0012
+      },
+      "SetScatterLod": {
+        "avg_ms": 0.0028499999999999997,
+        "count": 2,
+        "last_ms": 0.0009,
+        "total_ms": 0.005699999999999999
+      },
+      "SetScatterPickingMode": {
+        "avg_ms": 0.00065,
+        "count": 2,
+        "last_ms": 0.0,
+        "total_ms": 0.0013
+      },
+      "SetScatterPointsPacked": {
+        "avg_ms": 0.0629,
+        "count": 2,
+        "last_ms": 0.058,
+        "total_ms": 0.1258
+      },
+      "SetScatterTooltipAxisLabels": {
+        "avg_ms": 0.00165,
+        "count": 2,
+        "last_ms": 0.00039999999999999996,
+        "total_ms": 0.0033
+      }
+    },
+    "commands": {
+      "count": 17,
+      "limit": 64,
+      "recent": [
+        {
+          "command": "SetScatterPointsPacked",
+          "detail": "payload_bytes=28800, colormap=viridis, format=point_instance_v1, fit=false",
+          "dirty": "gpu_data",
+          "elapsed_ms": 0.0678,
+          "frame": 0,
+          "outcome": "applied",
+          "requested_redraw": true,
+          "seq": 1,
+          "target": "dg-7"
+        },
+        {
+          "command": "SetScatterHoverTooltip",
+          "detail": "true",
+          "dirty": null,
+          "elapsed_ms": 0.0033,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": false,
+          "seq": 2,
+          "target": "dg-7"
+        },
+        {
+          "command": "SetScatterTooltipAxisLabels",
+          "detail": null,
+          "dirty": null,
+          "elapsed_ms": 0.0029000000000000002,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": false,
+          "seq": 3,
+          "target": "dg-7"
+        },
+        {
+          "command": "SetScatterLod",
+          "detail": null,
+          "dirty": null,
+          "elapsed_ms": 0.0048,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 4,
+          "target": "dg-7"
+        },
+        {
+          "command": "SetScatterAutoPointSize",
+          "detail": null,
+          "dirty": null,
+          "elapsed_ms": 0.0015999999999999999,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 5,
+          "target": "dg-7"
+        },
+        {
+          "command": "SetScatterInteractiveRenderScale",
+          "detail": "1.000",
+          "dirty": null,
+          "elapsed_ms": 0.0007999999999999999,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 6,
+          "target": "dg-7"
+        },
+        {
+          "command": "SetScatterAutoQuality",
+          "detail": "enabled=false, target_fps=10.00",
+          "dirty": null,
+          "elapsed_ms": 0.0023,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 7,
+          "target": "dg-7"
+        },
+        {
+          "command": "SetScatterPickingMode",
+          "detail": null,
+          "dirty": null,
+          "elapsed_ms": 0.0013,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 8,
+          "target": "dg-7"
+        },
+        {
+          "command": "SetScatterPointsPacked",
+          "detail": "payload_bytes=28800, colormap=viridis, format=point_instance_v1, fit=false",
+          "dirty": "gpu_data",
+          "elapsed_ms": 0.058,
+          "frame": 0,
+          "outcome": "applied",
+          "requested_redraw": true,
+          "seq": 9,
+          "target": "dg-10"
+        },
+        {
+          "command": "SetScatterHoverTooltip",
+          "detail": "true",
+          "dirty": null,
+          "elapsed_ms": 0.00019999999999999998,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": false,
+          "seq": 10,
+          "target": "dg-10"
+        },
+        {
+          "command": "SetScatterTooltipAxisLabels",
+          "detail": null,
+          "dirty": null,
+          "elapsed_ms": 0.00039999999999999996,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": false,
+          "seq": 11,
+          "target": "dg-10"
+        },
+        {
+          "command": "SetScatterLod",
+          "detail": null,
+          "dirty": null,
+          "elapsed_ms": 0.0009,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 12,
+          "target": "dg-10"
+        },
+        {
+          "command": "SetScatterAutoPointSize",
+          "detail": null,
+          "dirty": null,
+          "elapsed_ms": 0.0003,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 13,
+          "target": "dg-10"
+        },
+        {
+          "command": "SetScatterInteractiveRenderScale",
+          "detail": "1.000",
+          "dirty": null,
+          "elapsed_ms": 0.00039999999999999996,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 14,
+          "target": "dg-10"
+        },
+        {
+          "command": "SetScatterAutoQuality",
+          "detail": "enabled=false, target_fps=10.00",
+          "dirty": null,
+          "elapsed_ms": 0.00039999999999999996,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 15,
+          "target": "dg-10"
+        },
+        {
+          "command": "SetScatterPickingMode",
+          "detail": null,
+          "dirty": null,
+          "elapsed_ms": 0.0,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 16,
+          "target": "dg-10"
+        },
+        {
+          "command": "DebugSnapshot",
+          "detail": "request_id=0",
+          "dirty": null,
+          "elapsed_ms": 0.0035,
+          "frame": 1,
+          "outcome": "completed",
+          "requested_redraw": false,
+          "seq": 17,
+          "target": null
+        }
+      ]
+    },
+    "cpu_frame_ms": 9.6434,
+    "dirty": {
+      "current": null,
+      "note": "DragonGUI applies coarse dirty flags immediately; this history records the recent command reasons that triggered them.",
+      "recent": [
+        {
+          "command": "SetScatterPointsPacked",
+          "detail": "payload_bytes=28800, colormap=viridis, format=point_instance_v1, fit=false",
+          "dirty": "gpu_data",
+          "elapsed_ms": 0.0678,
+          "frame": 0,
+          "outcome": "applied",
+          "requested_redraw": true,
+          "seq": 1,
+          "target": "dg-7"
+        },
+        {
+          "command": "SetScatterPointsPacked",
+          "detail": "payload_bytes=28800, colormap=viridis, format=point_instance_v1, fit=false",
+          "dirty": "gpu_data",
+          "elapsed_ms": 0.058,
+          "frame": 0,
+          "outcome": "applied",
+          "requested_redraw": true,
+          "seq": 9,
+          "target": "dg-10"
+        }
+      ]
+    },
+    "drag_drop_session": null,
+    "drag_number_drag": null,
+    "frame_acquire_ms": 0.06430000000000001,
+    "frame_acquire_ms_avg": 0.06430000000000001,
+    "frame_encode_ms": 4.9143,
+    "frame_encode_ms_avg": 4.9143,
+    "frame_ms": 9.6434,
+    "frame_ms_avg": 9.6434,
+    "frame_prepare_ms": 4.153300000000001,
+    "frame_prepare_ms_avg": 4.153300000000001,
+    "frame_present_ms": 0.0736,
+    "frame_present_ms_avg": 0.0736,
+    "frame_submit_ms": 0.437,
+    "frame_submit_ms_avg": 0.437,
+    "frame_window_count": 1,
+    "frame_work_ms": 9.5046,
+    "frame_work_ms_avg": 9.5046,
+    "frames_rendered": 1,
+    "gpu_ready": true,
+    "last_frame_ms": 9.6434,
+    "last_mouse_pos": null,
+    "loading_screen": {
+      "enabled": true,
+      "frames": 1,
+      "min_duration_ms": 120,
+      "present_ms": 117.3743,
+      "shown": true,
+      "startup_resource_ms": 0.31179999999999997
+    },
+    "orbit_active": false,
+    "pan_active": false,
+    "pan_button": null,
+    "pending_slider_emit": null,
+    "pressed_id": null,
+    "python": {
+      "drain_requested": false,
+      "last_task": null,
+      "last_task_drain": null,
+      "pending_native_commands": 0,
+      "queued_tasks": 0,
+      "startup": {},
+      "task_drain_timing": {},
+      "task_timings": {}
+    },
+    "scrollbar_drag": null,
+    "smoke_frames": null,
+    "splitter_drag": null,
+    "table_column_resize_drag": null,
+    "table_scrollbar_drag": null,
+    "upload_ms": 0.31179999999999997,
+    "wall_fps": 0.0,
+    "window_open": true
+  },
+  "schema": 1
+}

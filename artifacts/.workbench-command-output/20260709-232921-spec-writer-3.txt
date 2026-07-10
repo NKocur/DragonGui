@@ -1,0 +1,750 @@
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+if __name__ == "__main__" and __package__ is None:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "python"))
+
+import dragongui as dg
+
+
+app = dg.App(theme=dg.Theme.dark(accent="#5aa9ff", radius=8, focus="#ffd36a"))
+app.stylesheet(
+    """
+    Window {
+        background: #0c111d;
+        color: rgba(246, 249, 255, 0.94);
+        padding: 18px;
+        gap: 12px;
+        font-size: 14px;
+    }
+
+    VLayout.root {
+        width: 100%;
+        height: 100%;
+        gap: 12px;
+        overflow-y: auto;
+        padding-right: 24px;
+        padding-bottom: 72px;
+    }
+
+    VLayout.root::scrollbar-track {
+        width: 8px;
+        padding: 1px;
+        background: rgba(255, 255, 255, 0.08);
+        border-radius: 999px;
+    }
+
+    VLayout.root::scrollbar-thumb {
+        width: 6px;
+        background: rgba(90, 169, 255, 0.72);
+        border-radius: 999px;
+    }
+
+    HLayout.grid {
+        gap: 12px;
+        height: auto;
+    }
+
+    HLayout.wrap-row {
+        gap: 8px;
+        height: 34px;
+        align-items: center;
+    }
+
+    Panel {
+        background:
+            radial-gradient(circle at 12% 18%, rgba(90, 169, 255, 0.12), transparent 54%),
+            rgba(18, 25, 40, 0.96);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 14px;
+        padding: 14px;
+        gap: 10px;
+        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.24);
+    }
+
+    Panel.case {
+        width: calc(50% - 6px);
+        min-width: 380px;
+        min-height: 270px;
+    }
+
+    Panel.controls-case {
+        min-height: 328px;
+    }
+
+    Label.title {
+        color: white;
+        font-size: 20px;
+        font-weight: 850;
+    }
+
+    Label.caption {
+        color: rgba(246, 249, 255, 0.72);
+        line-height: 1.12;
+    }
+
+    Label.status {
+        background: rgba(116, 221, 176, 0.12);
+        border: 1px solid rgba(116, 221, 176, 0.34);
+        border-radius: 10px;
+        color: rgba(229, 255, 244, 0.95);
+        font-weight: 750;
+        padding: 8px 10px;
+        width: 100%;
+    }
+
+    Label.case-title {
+        color: white;
+        font-weight: 850;
+    }
+
+    Button.primary {
+        background: #5aa9ff;
+        color: #07111f;
+        font-weight: 850;
+    }
+
+    Button.danger {
+        background: rgba(255, 107, 107, 0.18);
+        border-color: rgba(255, 107, 107, 0.42);
+        color: #ffd1d1;
+    }
+
+    TextInput,
+    TextArea,
+    Dropdown,
+    NumberInput {
+        background: rgba(255, 255, 255, 0.07);
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        border-radius: 10px;
+        color: rgba(246, 249, 255, 0.92);
+    }
+
+    TextArea.notes {
+        text-area-rows: 4;
+        line-height: 1.16;
+    }
+
+    Checkbox::row {
+        background: rgba(255, 255, 255, 0.045);
+        border-radius: 10px;
+        padding: 8px;
+    }
+
+    Checkbox::box {
+        border-color: rgba(90, 169, 255, 0.52);
+    }
+
+    Checkbox::indicator {
+        background: #74ddb0;
+    }
+
+    Slider::track,
+    ProgressBar::track {
+        background: rgba(255, 255, 255, 0.12);
+        border-radius: 999px;
+    }
+
+    Slider::fill,
+    ProgressBar::fill {
+        background: linear-gradient(90deg, #5aa9ff, #74ddb0);
+        border-radius: 999px;
+    }
+
+    Slider::thumb {
+        background: white;
+        border-color: rgba(90, 169, 255, 0.75);
+        width: 18px;
+        height: 18px;
+    }
+
+    NumberInput::field {
+        background: rgba(255, 255, 255, 0.055);
+    }
+
+    NumberInput::stepper {
+        background: rgba(90, 169, 255, 0.14);
+    }
+
+    Dropdown::field {
+        background: rgba(255, 255, 255, 0.055);
+    }
+
+    Dropdown::menu {
+        background: rgba(16, 23, 37, 0.98);
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        border-radius: 12px;
+    }
+
+    Dropdown::item-selected {
+        background: rgba(90, 169, 255, 0.24);
+        color: white;
+    }
+
+    ProgressBar {
+        height: 24px;
+    }
+
+    Badge,
+    Tag {
+        font-weight: 850;
+    }
+
+    Collapsible {
+        background: rgba(255, 255, 255, 0.045);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 12px;
+    }
+
+    Collapsible:expanded {
+        border-color: rgba(116, 221, 176, 0.38);
+    }
+
+    Collapsible:collapsed {
+        border-color: rgba(255, 211, 106, 0.34);
+    }
+
+    Modal {
+        background:
+            linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(241, 246, 255, 0.98)),
+            radial-gradient(circle at 8% 0%, rgba(90, 169, 255, 0.18), transparent 42%);
+        accent: #2563eb;
+        border: 2px solid #0b2f6b;
+        border-radius: 18px;
+        box-shadow: 0 26px 70px rgba(2, 8, 23, 0.36);
+        color: #101828;
+        padding: 18px;
+        gap: 10px;
+        font-size: 14px;
+        font-weight: 650;
+    }
+
+    Modal Label.case-title {
+        color: #0f172a;
+        font-size: 15px;
+        font-weight: 850;
+    }
+
+    Modal Label.caption {
+        color: rgba(15, 23, 42, 0.66);
+    }
+
+    Modal Button {
+        background: #2563eb;
+        border: 1px solid rgba(37, 99, 235, 0.72);
+        border-radius: 10px;
+        color: white;
+        font-weight: 850;
+        width: 104px;
+    }
+
+    Modal::scrim {
+        background:
+            radial-gradient(circle at 50% 36%, rgba(37, 99, 235, 0.18), transparent 38%),
+            rgba(2, 8, 23, 0.58);
+    }
+
+    Tooltip {
+        background: rgba(17, 24, 38, 0.98);
+        border: 1px solid rgba(90, 169, 255, 0.32);
+        border-radius: 12px;
+        padding: 10px;
+        gap: 6px;
+    }
+    """
+)
+
+
+win = dg.Window("CSS Core Widgets Probe", width=980, height=760)
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+if __name__ == "__main__" and __package__ is None:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "python"))
+
+import dragongui as dg
+
+
+def log(message: str) -> None:
+    print(message, flush=True)
+
+
+app = dg.App(theme=dg.Theme.dark(accent="#5aa9ff", radius=8, focus="#ffd36a"))
+app.stylesheet(
+    """
+    Window {
+        background: #0c111d;
+        color: rgba(246, 249, 255, 0.94);
+        padding: 0;
+        gap: 0;
+        font-size: 14px;
+    }
+
+    MenuBar {
+        background: rgba(7, 12, 22, 0.96);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+        color: rgba(246, 249, 255, 0.86);
+        padding-left: 8px;
+    }
+
+    Menu {
+        background: transparent;
+        border: 0;
+        border-radius: 6px;
+        color: rgba(246, 249, 255, 0.82);
+        padding: 6px 10px;
+    }
+
+    Menu:hover {
+        background: rgba(255, 255, 255, 0.08);
+        color: white;
+    }
+
+    Menu:open {
+        background: rgba(90, 169, 255, 0.16);
+        color: white;
+    }
+
+    HLayout.shell {
+        width: 100%;
+        height: calc(100% - 34px);
+        gap: 0;
+    }
+
+    Sidebar.nav {
+        background:
+            radial-gradient(circle at 12% 6%, rgba(90, 169, 255, 0.18), transparent 45%),
+            rgba(12, 18, 30, 0.98);
+        border-right: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 0;
+        padding: 14px;
+        gap: 8px;
+        overflow-y: auto;
+    }
+
+    Sidebar.nav::scrollbar-track {
+        width: 8px;
+        padding: 1px;
+        background: rgba(255, 255, 255, 0.08);
+        border-radius: 999px;
+    }
+
+    Sidebar.nav::scrollbar-thumb {
+        width: 6px;
+        background: rgba(90, 169, 255, 0.68);
+        border-radius: 999px;
+    }
+
+    VLayout.content {
+        width: calc(100% - 238px);
+        height: 100%;
+        padding: 16px;
+        gap: 12px;
+        overflow-y: auto;
+        padding-right: 24px;
+        padding-bottom: 64px;
+    }
+
+    VLayout.content::scrollbar-track {
+        width: 8px;
+        padding: 1px;
+        background: rgba(255, 255, 255, 0.08);
+        border-radius: 999px;
+    }
+
+    VLayout.content::scrollbar-thumb {
+        width: 6px;
+        background: rgba(90, 169, 255, 0.72);
+        border-radius: 999px;
+    }
+
+    Label.title {
+        color: white;
+        font-size: 20px;
+        font-weight: 850;
+    }
+
+    Label.caption {
+        color: rgba(246, 249, 255, 0.72);
+        line-height: 1.12;
+    }
+
+    Label.nav-title {
+        color: white;
+        font-size: 16px;
+        font-weight: 850;
+    }
+
+    NavItem {
+        color: rgba(246, 249, 255, 0.78);
+    }
+
+    NavItem::item {
+        background: transparent;
+        border-radius: 10px;
+        padding: 9px 10px;
+    }
+
+    NavItem:hover::item {
+        background: rgba(255, 255, 255, 0.07);
+    }
+
+    NavItem:selected::item {
+        background: rgba(90, 169, 255, 0.18);
+        border: 1px solid rgba(90, 169, 255, 0.36);
+    }
+
+    NavItem::accent {
+        background: #5aa9ff;
+        border-radius: 999px;
+        width: 4px;
+    }
+
+    NavItem:disabled {
+        color: rgba(246, 249, 255, 0.34);
+    }
+
+    Badge,
+    Tag {
+        font-weight: 850;
+    }
+
+    HLayout.badges {
+        height: 28px;
+        gap: 6px;
+        align-items: center;
+    }
+
+    Panel.case {
+        background:
+            radial-gradient(circle at 14% 12%, rgba(90, 169, 255, 0.13), transparent 50%),
+            rgba(18, 25, 40, 0.96);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 14px;
+        padding: 14px;
+        gap: 10px;
+        box-shadow: none;
+    }
+
+    VLayout.panel-stack {
+        width: 100%;
+        height: auto;
+        gap: 14px;
+    }
+
+    Panel.half {
+        width: 100%;
+        height: 260px;
+    }
+
+    Pages {
+        width: 100%;
+        height: 1160px;
+    }
+
+    Tabs {
+        background: rgba(255, 255, 255, 0.045);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 12px;
+    }
+
+    Tabs::header {
+        background: rgba(255, 255, 255, 0.055);
+        border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+    }
+
+    Tab::tab {
+        background: transparent;
+        border-radius: 9px 9px 0 0;
+        padding: 8px 12px;
+    }
+
+    Tab:selected::tab {
+        background: rgba(90, 169, 255, 0.18);
+        color: white;
+    }
+
+    Tab::accent {
+        background: #74ddb0;
+        height: 3px;
+        border-radius: 999px 999px 0 0;
+    }
+
+    Page {
+        padding: 12px;
+        gap: 10px;
+    }
+
+    Button.context-target {
+        background: rgba(90, 169, 255, 0.16);
+        border: 1px solid rgba(90, 169, 255, 0.34);
+        border-radius: 10px;
+        color: white;
+        font-weight: 800;
+        width: 180px;
+    }
+
+    Label.pass {
+        background: rgba(116, 221, 176, 0.12);
+        border: 1px solid rgba(116, 221, 176, 0.34);
+        border-radius: 10px;
+        color: rgba(229, 255, 244, 0.96);
+        font-weight: 800;
+        padding: 8px 10px;
+        width: 100%;
+    }
+    """
+)
+
+
+win = dg.Window("CSS Navigation Widgets Probe", width=980, height=700)
+
+with dg.MenuBar(height=34):
+    with dg.Menu("File"):
+        dg.MenuItem("New workspace", on_click=lambda: log("menu:new"))
+        dg.MenuItem("Open recent", on_click=lambda: log("menu:recent"))
+        dg.MenuItem("Disabled export", disabled=True)
+    with dg.Menu("View"):
+        dg.MenuItem("Refresh", on_click=lambda: log("menu:refresh"))
+        dg.MenuItem("Toggle inspector", on_click=lambda: log("menu:inspector"))
+    with dg.Menu("Help", disabled=True):
+        dg.MenuItem("Disabled help")
+
+with dg.HLayout(class_="shell"):
+    with dg.Sidebar(title="Navigator", width=238, class_="nav"):
+        dg.Label("Navigation", class_="nav-title")
+        with dg.HLayout(class_="badges"):
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+if __name__ == "__main__" and __package__ is None:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "python"))
+
+import dragongui as dg
+
+
+app = dg.App(theme=dg.Theme.dark(accent="#5aa9ff", radius=8))
+app.stylesheet(
+    """
+    Window {
+        background: #0d1320;
+        color: rgba(245, 248, 255, 0.94);
+        padding: 18px;
+        gap: 12px;
+        font-size: 14px;
+    }
+
+    VLayout.scroll-root {
+        width: 100%;
+        height: 100%;
+        min-height: 560px;
+        overflow-y: auto;
+        padding-right: 18px;
+        padding-bottom: 84px;
+        gap: 12px;
+    }
+
+    VLayout.scroll-root::scrollbar-track {
+        width: 8px;
+        padding: 8px;
+        background: rgba(255, 255, 255, 0.08);
+        border-radius: 999px;
+    }
+
+    VLayout.scroll-root::scrollbar-thumb {
+        width: 6px;
+        background: rgba(90, 169, 255, 0.72);
+        border-radius: 999px;
+    }
+
+    Panel {
+        background: rgba(18, 25, 39, 0.92);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 16px;
+        box-shadow: 0 12px 30px rgba(0, 0, 0, 0.24);
+        padding: 12px;
+        gap: 8px;
+    }
+
+    Panel.case {
+        width: 360px;
+        min-height: 168px;
+    }
+
+    Label.title {
+        color: white;
+        font-size: 20px;
+        font-weight: 800;
+    }
+
+    Label.caption {
+        color: rgba(245, 248, 255, 0.74);
+        line-height: 1.12;
+    }
+
+    Label.case-title {
+        color: rgba(245, 248, 255, 0.96);
+        font-weight: 800;
+    }
+
+    Label.pass {
+        color: #74ddb0;
+        font-weight: 800;
+    }
+
+    Label.upper {
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: #ffd36a;
+        font-weight: 800;
+    }
+
+    Label.lower {
+        text-transform: lowercase;
+        color: #74ddb0;
+        font-weight: 800;
+    }
+
+    Label.capitalize {
+        text-transform: capitalize;
+        color: #c7d2fe;
+        font-weight: 800;
+    }
+
+    Label.tight {
+        line-height: 1.02;
+        color: rgba(245, 248, 255, 0.92);
+    }
+
+    Label.loose {
+        line-height: 1.55;
+        color: rgba(245, 248, 255, 0.92);
+    }
+
+    Label.italic {
+        font-style: italic;
+        color: rgba(245, 248, 255, 0.80);
+    }
+
+    Label.tabular,
+    Badge.tabular {
+        font-variant-numeric: tabular-nums;
+        font-family: "Segoe UI";
+    }
+
+    Label.metric {
+        font-size: 18px;
+        color: #74ddb0;
+        font-weight: 800;
+    }
+
+    Label.ellipsis {
+        width: 230px;
+        text-overflow: ellipsis;
+        color: rgba(245, 248, 255, 0.92);
+    }
+
+    Label.clip {
+        width: 230px;
+        text-overflow: clip;
+        color: rgba(245, 248, 255, 0.72);
+    }
+
+    Button.long {
+        width: 240px;
+        text-overflow: ellipsis;
+    }
+
+    Panel.wrap-case {
+        width: calc(100% - 24px);
+        min-height: 160px;
+    }
+
+    Label.wrap-demo {
+        width: 420px;
+        line-height: 1.18;
+        color: rgba(245, 248, 255, 0.88);
+    }
+
+    Label.no-wrap-demo {
+        width: 420px;
+        text-overflow: ellipsis;
+        color: rgba(255, 211, 106, 0.92);
+    }
+
+    Badge {
+        background: rgba(255, 255, 255, 0.10);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 999px;
+        color: white;
+        padding: 5px 10px;
+    }
+    """
+)
+
+
+win = dg.Window("CSS Typography Probe", width=850, height=700)
+
+long_text = (
+    "Quarterly operating forecast changed after late-arriving usage data "
+    "and should wrap cleanly inside this fixed-width label."
+)
+
+with dg.VLayout(class_="scroll-root"):
+    dg.Label("Typography", class_="title")
+    dg.Label(
+        "This probe isolates display-only text styling: casing, tracking, line height, "
+        "italic style, tabular numbers, ellipsis, and wrapping behavior.",
+        class_="caption",
+    )
+
+    with dg.HLayout(style={"gap": 12}):
+        with dg.Panel("Transform and spacing", class_="case"):
+            dg.Label("Text transform", class_="case-title")
+            dg.Label("report status", class_="upper")
+            dg.Label("WARNING MIXED CASE", class_="lower")
+            dg.Label("monthly active accounts", class_="capitalize")
+            dg.Label("PASS: casing changes without changing source strings.", class_="pass")
+
+        with dg.Panel("Line height and italic", class_="case"):
+            dg.Label("Line-height comparison", class_="case-title")
+            dg.Label("Tight line one\nTight line two", class_="tight")
+            dg.Label("Loose line one\nLoose line two", class_="loose")
+            dg.Label("Italic caption style should render slanted.", class_="italic")
+
+    with dg.HLayout(style={"gap": 12}):
+        with dg.Panel("Tabular numbers", class_="case"):
+            dg.Label("Aligned dashboard values", class_="case-title")
+            dg.Label("001.25   124.90   987.10", class_="metric tabular")
+            dg.Label("111.25   444.90   222.10", class_="metric tabular")
+            with dg.HLayout(style={"gap": 8}):
+                dg.Badge("09:41", class_="tabular")
+                dg.Badge("12.80", class_="tabular")
+                dg.Badge("98.05", class_="tabular")
+            dg.Label("PASS: numeric columns should feel evenly spaced.", class_="pass")
+
+        with dg.Panel("Overflow", class_="case"):
+            dg.Label("Ellipsis vs clip", class_="case-title")
+            dg.Label("This label should end with an ellipsis marker", class_="ellipsis", wrap=False)
+            dg.Label("This label clips abruptly without an ellipsis marker", class_="clip", wrap=False)
+            dg.Button("Long button label should ellipsize here", class_="long")
+            dg.Label("PASS: ellipsis is visible where enabled.", class_="pass")
+
+    with dg.Panel("Wrapping behavior", class_="wrap-case"):
+        dg.Label("Wrapped and non-wrapped labels", class_="case-title")
+        dg.Label(long_text, class_="wrap-demo")
+        dg.Label(long_text, class_="no-wrap-demo", wrap=False)
+        dg.Label(
+            "PASS: the first paragraph wraps into multiple lines; the second remains single-line with ellipsis.",
+            class_="pass",
+        )
+
+
+if __name__ == "__main__":
+    print(app.run(win))

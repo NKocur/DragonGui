@@ -224,6 +224,44 @@ app.stylesheet(
         border-radius: 10px;
         box-shadow: none;
     }
+
+    @media (max-width: 520px) {
+        Window {
+            padding: 12px;
+        }
+
+        VLayout.scroll-root {
+            padding-right: 8px;
+        }
+
+        Panel.percent-case,
+        Panel.named-grid,
+        Panel.auto-fit-grid,
+        Panel.fit-row {
+            width: auto;
+        }
+
+        Panel.auto-case {
+            width: auto;
+            min-width: 0;
+            margin-left: 0;
+            margin-right: 0;
+        }
+
+        Panel.auto-case Badge {
+            width: 96px;
+            min-width: 0;
+        }
+
+        Panel.percent-child {
+            min-width: 0;
+        }
+
+        Button.half,
+        Button.calc-width {
+            min-width: 92px;
+        }
+    }
     """
 )
 

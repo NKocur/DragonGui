@@ -372,6 +372,12 @@ class App:
             raise RuntimeError("DragonGUI app is not running")
         return self._handle.debug_snapshot(timeout_ms)
 
+    def _window_screenshot(self, timeout_ms: int = 10000) -> tuple[int, int, bytes] | None:
+        """Return a private live whole-window RGBA screenshot tuple."""
+        if self._handle is None:
+            raise RuntimeError("DragonGUI app is not running")
+        return self._handle.window_screenshot(timeout_ms)
+
     def request_redraw(self) -> None:
         """Request one native redraw without changing widget state."""
         if self._handle is None:

@@ -1,0 +1,150 @@
+[('dg-10', None, {'badge': '1234567890', 'checked': None, 'disabled': False, 'expanded': None, 'extension_type': None, 'fixed_height': None, 'fixed_width': None, 'flow_align': None, 'flow_cross_align': None, 'grid_columns': None, 'grid_masonry': False, 'grid_min_column_width': None, 'grid_template_columns': None, 'grid_template_rows': None, 'gutter_size': None, 'image_fit': None, 'image_path': None, 'intrinsic_height': None, 'intrinsic_width': None, 'items_count': 0, 'led_size': None, 'led_state': None, 'level': None, 'max': None, 'min': None, 'open': None, 'orientation': None, 'page': None, 'pane_flex': None, 'pane_max_size': None, 'pane_min_size': None, 'pane_size': None, 'placeholder': None, 'route_value': None, 'rows': None, 'step': None, 'table': {'columns': 0, 'page_size': None, 'resizable_columns': True, 'resource_id': None, 'rows': None, 'sample_rows': None, 'sortable': True}, 'target': None, 'text': 'N', 'toggle': None, 'tooltip': None, 'value': None, 'wrap': None}), ('dg-12', None, {'badge': '1234567890', 'checked': None, 'disabled': False, 'expanded': None, 'extension_type': None, 'fixed_height': None, 'fixed_width': None, 'flow_align': None, 'flow_cross_align': None, 'grid_columns': None, 'grid_masonry': False, 'grid_min_column_width': None, 'grid_template_columns': None, 'grid_template_rows': None, 'gutter_size': None, 'image_fit': None, 'image_path': None, 'intrinsic_height': None, 'intrinsic_width': None, 'items_count': 0, 'led_size': None, 'led_state': None, 'level': None, 'max': None, 'min': None, 'open': None, 'orientation': None, 'page': None, 'pane_flex': None, 'pane_max_size': None, 'pane_min_size': None, 'pane_size': None, 'placeholder': None, 'route_value': 'tiny', 'rows': None, 'step': None, 'table': {'columns': 0, 'page_size': None, 'resizable_columns': True, 'resource_id': None, 'rows': None, 'sample_rows': None, 'sortable': True}, 'target': None, 'text': 'Tiny', 'toggle': None, 'tooltip': None, 'value': None, 'wrap': None}), ('dg-14', None, {'badge': 'owner: platform-design', 'checked': None, 'disabled': False, 'expanded': None, 'extension_type': None, 'fixed_height': None, 'fixed_width': None, 'flow_align': None, 'flow_cross_align': None, 'grid_columns': None, 'grid_masonry': False, 'grid_min_column_width': None, 'grid_template_columns': None, 'grid_template_rows': None, 'gutter_size': None, 'image_fit': None, 'image_path': None, 'intrinsic_height': None, 'intrinsic_width': None, 'items_count': 0, 'led_size': None, 'led_state': None, 'level': None, 'max': None, 'min': None, 'open': None, 'orientation': None, 'page': None, 'pane_flex': None, 'pane_max_size': None, 'pane_min_size': None, 'pane_size': None, 'placeholder': None, 'route_value': 'long', 'rows': None, 'step': None, 'table': {'columns': 0, 'page_size': None, 'resizable_columns': True, 'resource_id': None, 'rows': None, 'sample_rows': None, 'sortable': True}, 'target': None, 'text': 'Long', 'toggle': None, 'tooltip': None, 'value': None, 'wrap': None}), ('dg-17', None, {'badge': '1234567890', 'checked': None, 'disabled': False, 'expanded': None, 'extension_type': None, 'fixed_height': None, 'fixed_width': None, 'flow_align': None, 'flow_cross_align': None, 'grid_columns': None, 'grid_masonry': False, 'grid_min_column_width': None, 'grid_template_columns': None, 'grid_template_rows': None, 'gutter_size': None, 'image_fit': None, 'image_path': None, 'intrinsic_height': None, 'intrinsic_width': None, 'items_count': 0, 'led_size': None, 'led_state': None, 'level': None, 'max': None, 'min': None, 'open': None, 'orientation': None, 'page': 'active-summary', 'pane_flex': None, 'pane_max_size': None, 'pane_min_size': None, 'pane_size': None, 'placeholder': None, 'route_value': None, 'rows': None, 'step': None, 'table': {'columns': 0, 'page_size': None, 'resizable_columns': True, 'resource_id': None, 'rows': None, 'sample_rows': None, 'sortable': True}, 'target': None, 'text': 'Active', 'toggle': None, 'tooltip': None, 'value': None, 'wrap': None}), ('dg-18', None, {'badge': 'overflow-count', 'checked': None, 'disabled': False, 'expanded': None, 'extension_type': None, 'fixed_height': None, 'fixed_width': None, 'flow_align': None, 'flow_cross_align': None, 'grid_columns': None, 'grid_masonry': False, 'grid_min_column_width': None, 'grid_template_columns': None, 'grid_template_rows': None, 'gutter_size': None, 'image_fit': None, 'image_path': None, 'intrinsic_height': None, 'intrinsic_width': None, 'items_count': 0, 'led_size': None, 'led_state': None, 'level': None, 'max': None, 'min': None, 'open': None, 'orientation': None, 'page': 'long-summary', 'pane_flex': None, 'pane_max_size': None, 'pane_min_size': None, 'pane_size': None, 'placeholder': None, 'route_value': None, 'rows': None, 'step': None, 'table': {'columns': 0, 'page_size': None, 'resizable_columns': True, 'resource_id': None, 'rows': None, 'sample_rows': None, 'sortable': True}, 'target': None, 'text': 'Long label', 'toggle': None, 'tooltip': None, 'value': None, 'wrap': None}), ('dg-41', None, {'badge': '3', 'checked': None, 'disabled': False, 'expanded': None, 'extension_type': None, 'fixed_height': None, 'fixed_width': None, 'flow_align': None, 'flow_cross_align': None, 'grid_columns': None, 'grid_masonry': False, 'grid_min_column_width': None, 'grid_template_columns': None, 'grid_template_rows': None, 'gutter_size': None, 'image_fit': None, 'image_path': None, 'intrinsic_height': None, 'intrinsic_width': None, 'items_count': 0, 'led_size': None, 'led_state': None, 'level': None, 'max': None, 'min': None, 'open': None, 'orientation': None, 'page': None, 'pane_flex': None, 'pane_max_size': None, 'pane_min_size': None, 'pane_size': None, 'placeholder': None, 'route_value': None, 'rows': None, 'step': None, 'table': {'columns': 0, 'page_size': None, 'resizable_columns': True, 'resource_id': None, 'rows': None, 'sample_rows': None, 'sortable': True}, 'target': None, 'text': 'Deploy', 'toggle': None, 'tooltip': None, 'value': None, 'wrap': None}), ('dg-42', None, {'badge': 'new', 'checked': None, 'disabled': True, 'expanded': None, 'extension_type': None, 'fixed_height': None, 'fixed_width': None, 'flow_align': None, 'flow_cross_align': None, 'grid_columns': None, 'grid_masonry': False, 'grid_min_column_width': None, 'grid_template_columns': None, 'grid_template_rows': None, 'gutter_size': None, 'image_fit': None, 'image_path': None, 'intrinsic_height': None, 'intrinsic_width': None, 'items_count': 0, 'led_size': None, 'led_state': None, 'level': None, 'max': None, 'min': None, 'open': None, 'orientation': None, 'page': None, 'pane_flex': None, 'pane_max_size': None, 'pane_min_size': None, 'pane_size': None, 'placeholder': None, 'route_value': None, 'rows': None, 'step': None, 'table': {'columns': 0, 'page_size': None, 'resizable_columns': True, 'resource_id': None, 'rows': None, 'sample_rows': None, 'sortable': True}, 'target': None, 'text': 'Disabled', 'toggle': None, 'tooltip': None, 'value': None, 'wrap': None}), ('dg-43', None, {'badge': '1234567890', 'checked': None, 'disabled': False, 'expanded': None, 'extension_type': None, 'fixed_height': None, 'fixed_width': None, 'flow_align': None, 'flow_cross_align': None, 'grid_columns': None, 'grid_masonry': False, 'grid_min_column_width': None, 'grid_template_columns': None, 'grid_template_rows': None, 'gutter_size': None, 'image_fit': None, 'image_path': None, 'intrinsic_height': None, 'intrinsic_width': None, 'items_count': 0, 'led_size': None, 'led_state': None, 'level': None, 'max': None, 'min': None, 'open': None, 'orientation': None, 'page': None, 'pane_flex': None, 'pane_max_size': None, 'pane_min_size': None, 'pane_size': None, 'placeholder': None, 'route_value': None, 'rows': None, 'step': None, 'table': {'columns': 0, 'page_size': None, 'resizable_columns': True, 'resource_id': None, 'rows': None, 'sample_rows': None, 'sortable': True}, 'target': None, 'text': 'Narrow', 'toggle': None, 'tooltip': None, 'value': None, 'wrap': None}), ('dg-44', None, {'badge': '99+', 'checked': None, 'disabled': False, 'expanded': None, 'extension_type': None, 'fixed_height': None, 'fixed_width': None, 'flow_align': None, 'flow_cross_align': None, 'grid_columns': None, 'grid_masonry': False, 'grid_min_column_width': None, 'grid_template_columns': None, 'grid_template_rows': None, 'gutter_size': None, 'image_fit': None, 'image_path': None, 'intrinsic_height': None, 'intrinsic_width': None, 'items_count': 0, 'led_size': None, 'led_state': None, 'level': None, 'max': None, 'min': None, 'open': None, 'orientation': None, 'page': None, 'pane_flex': None, 'pane_max_size': None, 'pane_min_size': None, 'pane_size': None, 'placeholder': None, 'route_value': None, 'rows': None, 'step': None, 'table': {'columns': 0, 'page_size': None, 'resizable_columns': True, 'resource_id': None, 'rows': None, 'sample_rows': None, 'sortable': True}, 'target': None, 'text': 'Long deploy label', 'toggle': None, 'tooltip': None, 'value': None, 'wrap': None}), ('dg-45', None, {'badge': 'owner: platform-design', 'checked': None, 'disabled': False, 'expanded': None, 'extension_type': None, 'fixed_height': None, 'fixed_width': None, 'flow_align': None, 'flow_cross_align': None, 'grid_columns': None, 'grid_masonry': False, 'grid_min_column_width': None, 'grid_template_columns': None, 'grid_template_rows': None, 'gutter_size': None, 'image_fit': None, 'image_path': None, 'intrinsic_height': None, 'intrinsic_width': None, 'items_count': 0, 'led_size': None, 'led_state': None, 'level': None, 'max': None, 'min': None, 'open': None, 'orientation': None, 'page': None, 'pane_flex': None, 'pane_max_size': None, 'pane_min_size': None, 'pane_size': None, 'placeholder': None, 'route_value': None, 'rows': None, 'step': None, 'table': {'columns': 0, 'page_size': None, 'resizable_columns': True, 'resource_id': None, 'rows': None, 'sample_rows': None, 'sortable': True}, 'target': None, 'text': 'Styled', 'toggle': None, 'tooltip': None, 'value': None, 'wrap': None})]
+style dg-10 {
+  "matched_rules": [
+    "framework: Button",
+    "framework: Button:hover",
+    "framework: Button:focus",
+    "framework: Button:active",
+    "framework: Button:disabled",
+    "user: Button.summary-narrow",
+    "user: Button",
+    "user: Button.styled::badge"
+  ],
+  "style": {
+    "active": {
+      "background": {
+        "token": "accent_dark"
+      },
+      "background_paint": {
+        "color": {
+          "token": "accent_dark"
+        },
+        "type": "color"
+      },
+      "border_color": {
+        "token": "accent_dark"
+      }
+    },
+    "checked": {},
+    "collapsed": {},
+    "disabled": {
+      "border_color": {
+        "token": "disabled"
+      },
+      "opacity": 0.6200000047683716
+    },
+    "expanded": {},
+    "focus": {
+      "border_color": {
+        "token": "focus"
+      }
+    },
+    "hover": {
+      "background": {
+        "token": "accent_mix_20"
+      },
+      "background_paint": {
+        "color": {
+          "token": "accent_mix_20"
+        },
+        "type
+rect {'h': 34.0, 'w': 66.0, 'x': 24.0, 'y': 276.0}
+style dg-12 {
+  "matched_rules": [
+    "framework: Tab",
+    "user: Tab::tab",
+    "user: Tab:selected::tab",
+    "user: Tab::accent"
+  ],
+  "style": {
+    "active": {},
+    "checked": {},
+    "collapsed": {},
+    "disabled": {},
+    "expanded": {},
+    "focus": {},
+    "hover": {},
+    "layout": {},
+    "open": {},
+    "parts": {
+      "accent": {
+        "layout": {
+          "height": 3.0
+        },
+        "matched_rules": [
+          "user: Tab::accent"
+        ],
+        "visual": {
+          "background": {
+            "rgba": [
+              0.42352941632270813,
+              0.8274509906768799,
+              0.5921568870544434,
+              1.0
+            ]
+          },
+          "background_paint": {
+            "color": {
+              "rgba": [
+                0.42352941632270813,
+                0.8274509906768799,
+                0.5921568870544434,
+                1.0
+              ]
+            },
+            "type": "color"
+          }
+        }
+      },
+      "tab": {
+        "
+rect {'h': 34.0, 'w': 63.0, 'x': 24.0, 'y': 318.0}
+style dg-14 {
+  "matched_rules": [
+    "framework: Tab",
+    "user: Tab::tab",
+    "user: Tab:selected::tab",
+    "user: Tab::accent",
+    "user: Tab.styled::badge"
+  ],
+  "style": {
+    "active": {},
+    "checked": {},
+    "collapsed": {},
+    "disabled": {},
+    "expanded": {},
+    "focus": {},
+    "hover": {},
+    "layout": {},
+    "open": {},
+    "parts": {
+      "accent": {
+        "layout": {
+          "height": 3.0
+        },
+        "matched_rules": [
+          "user: Tab::accent"
+        ],
+        "visual": {
+          "background": {
+            "rgba": [
+              0.42352941632270813,
+              0.8274509906768799,
+              0.5921568870544434,
+              1.0
+            ]
+          },
+          "background_paint": {
+            "color": {
+              "rgba": [
+                0.42352941632270813,
+                0.8274509906768799,
+                0.5921568870544434,
+                1.0
+              ]
+            },
+            "type": "color"
+          }
+        }
+  
+rect {'h': 34.0, 'w': 63.0, 'x': 87.0, 'y': 318.0}
