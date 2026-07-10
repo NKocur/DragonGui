@@ -1,0 +1,359 @@
+native/src\toast.rs:227:        let colors = toast_colors(ToastLevel::Info, &Theme::dark(), 0.42);
+native/src\theme.rs:589:    pub fn control_height(&self) -> f32 {
+native/src\layout.rs:14:    BADGE_GAP_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP, TOGGLE_SWITCH_TRACK_WIDTH_LP,
+native/src\layout.rs:2463:        .unwrap_or(CHECKBOX_BOX_LP)
+native/src\layout.rs:2473:        .unwrap_or(TOGGLE_SWITCH_TRACK_WIDTH_LP)
+native/src\layout.rs:3242:    scroll_container_max_x_with_viewport(node, result, false, result.scale_factor, &Theme::dark())
+native/src\layout.rs:3277:    scroll_container_max_y_with_viewport(node, result, false, result.scale_factor, &Theme::dark())
+native/src\layout.rs:4147:        let layout = compute_layout(&root, 800.0, 480.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:4217:        let layout = compute_layout(&root, 800.0, 480.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:4278:        let theme = Theme::dark();
+native/src\layout.rs:4331:        let layout = compute_layout(&root, 1200.0, 800.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:4380:        let layout = compute_layout(&root, 320.0, 220.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:4417:        let layout = compute_layout(&root, 420.0, 120.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:4459:        let layout = compute_layout(&root, 420.0, 120.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:4498:        let layout = compute_layout(&root, 420.0, 120.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:4549:        let layout = compute_layout(&root, 800.0, 600.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:4593:        let layout = compute_layout(&root, 320.0, 90.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:4629:        let layout = compute_layout(&root, 320.0, 90.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:4682:        let layout = compute_layout(&root, 800.0, 600.0, 1.0, &Theme::dark(), Some(&state));
+native/src\layout.rs:4717:        let layout = compute_layout(&root, 400.0, 300.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:4720:        assert_eq!(section.h, Theme::dark().control_height());
+native/src\layout.rs:4747:        let layout = compute_layout(&root, 400.0, 300.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:4751:        assert!(section.h > Theme::dark().control_height());
+native/src\layout.rs:4752:        assert!(child.y >= section.y + Theme::dark().control_height());
+native/src\layout.rs:4779:        let theme = Theme::dark();
+native/src\layout.rs:4786:            first.y >= section.y + theme.control_height() + 8.0,
+native/src\layout.rs:4850:        let layout = compute_layout(&root, 400.0, 300.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:4880:        let layout = compute_layout(&root, 400.0, 300.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:4883:        assert!(notes.h > Theme::dark().control_height() * 2.0);
+native/src\layout.rs:4906:        let layout = compute_layout(&root, 400.0, 300.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:4909:        assert!(notes.h > Theme::dark().control_height() * 2.0);
+native/src\layout.rs:4953:        let layout = compute_layout(&root, 1000.0, 800.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:5069:        let layout = compute_layout(&root, 900.0, 520.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:5232:        let layout = compute_layout(&root, 1040.0, 720.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:5300:        let layout = compute_layout(&root, 420.0, 120.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:5326:        let height_layout = compute_layout(&height_root, 600.0, 240.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:5365:        let width_layout = compute_layout(&width_root, 800.0, 120.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:5403:        let layout = compute_layout(&root, 420.0, 260.0, 1.0, &Theme::dark(), Some(&state));
+native/src\layout.rs:5410:                    &Theme::dark()
+native/src\layout.rs:5452:        let layout = compute_layout(&root, 480.0, 120.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:5497:        let layout = compute_layout(&root, 520.0, 120.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:5534:        let layout = compute_layout(&root, 360.0, 120.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:5569:        let layout = compute_layout(&root, 360.0, 80.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:5620:        let layout = compute_layout(&root, 360.0, 80.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:5624:            checkbox.w <= CHECKBOX_BOX_LP + CHECKBOX_LEFT_PAD_LP * 2.0 + 0.5,
+native/src\layout.rs:5657:        let layout = compute_layout(&root, 400.0, 240.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:5707:        let theme = Theme::dark();
+native/src\layout.rs:5756:        let layout = compute_layout(&root, 400.0, 240.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:5796:        let layout = compute_layout(&root, 240.0, 100.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:5841:        let layout = compute_layout(&root, 640.0, 80.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:5893:        let layout = compute_layout(&root, 640.0, 200.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:5898:        assert_eq!(menu_bar.h, Theme::dark().control_height());
+native/src\layout.rs:5929:        let theme = Theme::dark();
+native/src\layout.rs:5968:        let layout = compute_layout(&root, 1000.0, 500.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:5993:        let layout = compute_layout(&root, 900.0, 400.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:6052:        let layout = compute_layout(&root, 500.0, 220.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:6091:        let layout = compute_layout(&root, 700.0, 300.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:6135:        let layout = compute_layout(&root, 700.0, 300.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:6202:        let layout = compute_layout(&root, 980.0, 300.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:6251:        let layout = compute_layout(&root, 500.0, 120.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:6315:        let layout = compute_layout(&root, 320.0, 120.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:6355:        let layout = compute_layout(&root, 60.0, 80.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:6390:        let layout = compute_layout(&root, 60.0, 80.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:6428:        let layout = compute_layout(&root, 60.0, 80.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:6464:        let layout = compute_layout(&root, 640.0, 360.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:6511:        let theme = Theme::dark();
+native/src\layout.rs:6551:        let layout = compute_layout(&root, 800.0, 600.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:6590:        let layout = compute_layout(&root, 800.0, 400.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:6620:        let layout = compute_layout(&root, 800.0, 400.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:6649:        let layout = compute_layout(&root, 800.0, 400.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:6689:        let layout = compute_layout(&root, 400.0, 160.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:6717:        let layout = compute_layout(&root, 400.0, 160.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:6751:        let layout = compute_layout(&root, 400.0, 160.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:6803:        let layout = compute_layout(&root, 800.0, 400.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:6838:        let layout = compute_layout(&root, 520.0, 220.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:6885:        let layout = compute_layout(&root, 260.0, 400.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:6948:        let layout = compute_layout(&root, 260.0, 420.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:7043:        let layout = compute_layout(&root, 300.0, 520.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:7083:        let layout = compute_layout(&root, 470.0, 260.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:7123:        let layout = compute_layout(&root, 240.0, 120.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:7158:        let layout = compute_layout(&root, 260.0, 180.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:7210:        let layout = compute_layout(&root, 360.0, 180.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:7278:        let layout = compute_layout(&root, 800.0, 400.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:7400:        let layout = compute_layout(&root, 300.0, 200.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:7432:        let unscrolled = compute_layout(&root, 240.0, 100.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:7436:        let scrolled = compute_layout(&root, 240.0, 100.0, 1.0, &Theme::dark(), Some(&state));
+native/src\layout.rs:7476:        let layout = compute_layout(&root, 240.0, 80.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:7548:        let unscrolled = compute_layout(&root, 240.0, 80.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:7554:        let scrolled = compute_layout(&root, 240.0, 80.0, 1.0, &Theme::dark(), Some(&state));
+native/src\layout.rs:7604:        let layout = compute_layout(&root, 240.0, 100.0, 1.0, &Theme::dark(), Some(&state));
+native/src\layout.rs:7633:        let layout = compute_layout(&root, 200.0, 120.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:7661:        let layout = compute_layout(&root, 220.0, 80.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:7694:        let layout = compute_layout(&root, 220.0, 80.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:7735:        let layout = compute_layout(&root, 240.0, 100.0, 1.0, &Theme::dark(), Some(&state));
+native/src\layout.rs:7809:        let layout = compute_layout(&root, 700.0, 430.0, 1.0, &Theme::dark(), Some(&state));
+native/src\layout.rs:7829:        let scrolled = compute_layout(&root, 700.0, 430.0, 1.0, &Theme::dark(), Some(&state));
+native/src\layout.rs:7929:        let theme = Theme::dark();
+native/src\layout.rs:8024:        let layout = compute_layout(&root, 260.0, 180.0, 1.0, &Theme::dark(), Some(&state));
+native/src\layout.rs:8096:        let layout = compute_layout(&root, 420.0, 260.0, 1.0, &Theme::dark(), Some(&state));
+native/src\layout.rs:8205:        let layout = compute_layout(&root, 900.0, 720.0, 1.0, &Theme::dark(), Some(&state));
+native/src\layout.rs:8272:        let layout = compute_layout(&root, 240.0, 120.0, 1.0, &Theme::dark(), Some(&state));
+native/src\layout.rs:8353:            &Theme::dark(),
+native/src\layout.rs:8426:        let layout = compute_layout(&root, 700.0, 400.0, 1.0, &Theme::dark(), Some(&state));
+native/src\layout.rs:8441:        let scrolled = compute_layout(&root, 700.0, 400.0, 1.0, &Theme::dark(), Some(&state));
+native/src\layout.rs:8476:        let theme = Theme::dark();
+native/src\layout.rs:8546:        let layout = compute_layout(&root, 360.0, 240.0, 1.0, &Theme::dark(), Some(&state));
+native/src\layout.rs:8657:        let layout = compute_layout(&root, 780.0, 700.0, 1.0, &Theme::dark(), Some(&state));
+native/src\layout.rs:8709:        let layout = compute_layout(&root, 300.0, 300.0, 1.0, &Theme::dark(), Some(&state));
+native/src\layout.rs:8782:        let layout = compute_layout(&root, 420.0, 320.0, 1.0, &Theme::dark(), Some(&state));
+native/src\layout.rs:8831:        let layout = compute_layout(&root, 420.0, 240.0, 1.0, &Theme::dark(), Some(&state));
+native/src\layout.rs:8875:        let layout = compute_layout(&root, 420.0, 240.0, 1.0, &Theme::dark(), Some(&state));
+native/src\layout.rs:8930:            let layout = compute_layout(&root, 320.0, 220.0, 1.0, &Theme::dark(), Some(&state));
+native/src\layout.rs:9058:            let layout = compute_layout(&root, 940.0, 720.0, 1.0, &Theme::dark(), Some(&state));
+native/src\layout.rs:9163:        let theme = Theme::dark();
+native/src\layout.rs:9252:        let layout = compute_layout(&root, 320.0, 180.0, 1.0, &Theme::dark(), Some(&state));
+native/src\layout.rs:9335:        let theme = Theme::dark();
+native/src\layout.rs:9406:        let layout = compute_layout(&root, 320.0, 240.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:9454:        let layout = compute_layout(&root, 320.0, 220.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:9650:            &Theme::dark(),
+native/src\layout.rs:9742:        let layout = compute_layout(&root, 800.0, 600.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:9819:        let layout = compute_layout(&root, 420.0, 420.0, 1.0, &Theme::dark(), None);
+native/src\layout.rs:9873:        let layout = compute_layout(&root, 480.0, 360.0, 1.0, &Theme::dark(), Some(&state));
+native/src\image_widget.rs:784:        collect_image_specs(&image, &layout, &Theme::dark(), 2.0, None, &mut specs);
+native/src\image_widget.rs:824:        collect_image_specs(&extension, &layout, &Theme::dark(), 1.0, None, &mut specs);
+native/src\image_widget.rs:866:            &Theme::dark(),
+native/src\image_widget.rs:913:        collect_image_specs(&panel, &layout, &Theme::dark(), 1.0, None, &mut specs);
+native/src\events.rs:5:use crate::style::{VisualStyle, SLIDER_TRACK_MARGIN_LP};
+native/src\events.rs:2127:        let margin = SLIDER_TRACK_MARGIN_LP * sf;
+native/src\events.rs:2174:        let margin = SLIDER_TRACK_MARGIN_LP * sf;
+native/src\document.rs:358:/// `Theme::dark()`.  Unknown or malformed color values are replaced with
+native/src\document.rs:362:    let dark = Theme::dark();
+native/src\document.rs:2410:        assert_eq!(theme.border, Theme::dark().border);
+native/src\document.rs:2594:                .resolve(&Theme::dark()),
+native/src\css_style.rs:3164:const FRAMEWORK_STYLESHEET: &str = include_str!("framework.dg.css");
+native/src\css_style.rs:4608:    base.table_row_height = overlay.table_row_height.or(base.table_row_height);
+native/src\css_style.rs:5233:        DgWidgetDeclaration::TableRowHeight(value) => style.table_row_height = length_px(value),
+native/src\css_style.rs:13739:            crate::style::badge_width_for_text(&NodeStyle::default(), "99+", &Theme::dark(), 1.0);
+native/src\css_style.rs:13740:        let styled = crate::style::badge_width_for_text(&button.style, "99+", &Theme::dark(), 1.0);
+native/src\css_style.rs:14142:        assert_eq!(table.style.widget.table_row_height, Some(22.0));
+native/src\css_style.rs:18339:        store.install_framework_defaults(&Theme::dark());
+native/src\css_style.rs:18352:            Some(Theme::dark().radius)
+native/src\table.rs:29:pub fn metrics(theme: &Theme, sf: f32) -> TableMetrics {
+native/src\table.rs:31:        header_h: theme.control_height() * sf,
+native/src\table.rs:39:    let mut metrics = metrics(theme, sf);
+native/src\table.rs:43:    if let Some(row_h) = node.style.widget.table_row_height {
+native/src\table.rs:319:        node.style.widget.table_row_height = Some(28.0);
+native/src\table.rs:323:        let metrics = metrics_for_node(&node, &Theme::dark(), 1.5);
+native/src\style.rs:10:pub(crate) const CHECKBOX_BOX_LP: f32 = 18.0;
+native/src\style.rs:12:pub(crate) const TOGGLE_SWITCH_TRACK_WIDTH_LP: f32 = 42.0;
+native/src\style.rs:13:pub(crate) const TOGGLE_SWITCH_TRACK_HEIGHT_LP: f32 = 22.0;
+native/src\style.rs:14:pub(crate) const TOGGLE_SWITCH_THUMB_SIZE_LP: f32 = 18.0;
+native/src\style.rs:18:pub(crate) const SLIDER_TRACK_MARGIN_LP: f32 = 8.0;
+native/src\style.rs:19:pub(crate) const SLIDER_TRACK_HEIGHT_LP: f32 = 4.0;
+native/src\style.rs:20:pub(crate) const SLIDER_THUMB_WIDTH_LP: f32 = 16.0;
+native/src\style.rs:22:pub(crate) const NUMBER_STEPPER_WIDTH_LP: f32 = 26.0;
+native/src\style.rs:25:    (NUMBER_STEPPER_WIDTH_LP * sf).min(widget_width * 0.45)
+native/src\style.rs:34:        .unwrap_or(NUMBER_STEPPER_WIDTH_LP);
+native/src\style.rs:49:pub(crate) const TAB_GAP_LP: f32 = 8.0;
+native/src\style.rs:182:        .unwrap_or_else(|| theme.control_height());
+native/src\style.rs:196:        .unwrap_or_else(|| theme.control_height());
+native/src\style.rs:898:    pub table_row_height: Option<f32>,
+native/src\style.rs:1427:    out.table_row_height =
+native/src\style.rs:1428:        number(map.get("table_row_height")).or_else(|| number(map.get("table-row-height")));
+native/src\style.rs:2755:        let width = standalone_badge_width_for_text(&style, "margin auto", &Theme::dark(), 1.0);
+native/src\style.rs:2757:            badge_width_for_text(&NodeStyle::default(), "margin auto", &Theme::dark(), 1.0);
+native/src\style.rs:2773:            &Theme::dark(),
+native/src\style.rs:2811:            inline_badge_layout_for_text(&plain, "99+", &Theme::dark(), 1.0, 200.0, 32.0, 8.0);
+native/src\style.rs:2813:            inline_badge_layout_for_text(&styled, "99+", &Theme::dark(), 1.0, 200.0, 32.0, 8.0);
+native/src\runtime.rs:174:    /// Python-provided theme overrides; `None` → use `Theme::dark()` defaults.
+native/src\runtime.rs:3120:    insert_number(&mut map, "table_row_height", style.table_row_height);
+native/src\runtime.rs:4102:            | "table_row_height"
+native/src\runtime.rs:4861:        let visual = animation_visual_at(&keyframes, 0.25, &Theme::dark()).unwrap();
+native/src\runtime.rs:5217:                &Theme::dark(),
+native/src\runtime.rs:5288:            crate::layout::compute_layout(&tree, 420.0, 320.0, 1.0, &Theme::dark(), Some(&state));
+native/src\runtime.rs:12787:        let row_h = self.theme.control_height() * self.scale_factor;
+native/src\runtime.rs:12809:        let row_h = self.theme.control_height() * self.scale_factor;
+native/src\runtime.rs:12886:        let row_h = self.theme.control_height() * self.scale_factor;
+native/src\runtime.rs:13319:        let line = self.theme.control_height() * self.scale_factor * 0.75;
+native/src\runtime.rs:13401:            .unwrap_or_else(|| table::metrics(&self.theme, self.scale_factor));
+native/src\runtime.rs:13461:            .unwrap_or_else(|| table::metrics(&self.theme, self.scale_factor));
+native/src\runtime.rs:14284:const SLIDER_CALLBACK_INTERVAL: Duration = Duration::from_millis(33);
+native/src\runtime.rs:14285:const SLIDER_CHANGE_EPSILON: f32 = 0.000_001;
+native/src\runtime.rs:18014:                last.widget_id == id && (last.value - value).abs() <= SLIDER_CHANGE_EPSILON
+native/src\runtime.rs:18026:                    now.duration_since(last.at) >= SLIDER_CALLBACK_INTERVAL
+native/src\runtime.rs:18071:                    && (last.value.0 - value.0).abs() <= SLIDER_CHANGE_EPSILON
+native/src\runtime.rs:18072:                    && (last.value.1 - value.1).abs() <= SLIDER_CHANGE_EPSILON
+native/src\runtime.rs:18084:                    now.duration_since(last.at) >= SLIDER_CALLBACK_INTERVAL
+native/src\runtime.rs:18144:                    .map(|old| (old - changed_val).abs() > SLIDER_CHANGE_EPSILON)
+native/src\runtime.rs:18179:                            (old.0 - changed_pair.0).abs() > SLIDER_CHANGE_EPSILON
+native/src\runtime.rs:18180:                                || (old.1 - changed_pair.1).abs() > SLIDER_CHANGE_EPSILON
+native/src\runtime.rs:18210:                        .map(|old| (old - changed_val).abs() > SLIDER_CHANGE_EPSILON)
+native/src\runtime.rs:18373:                        .map(|old| (old - before).abs() > SLIDER_CHANGE_EPSILON)
+native/src\runtime.rs:18376:                            .map(|old| (old - after).abs() > SLIDER_CHANGE_EPSILON)
+native/src\runtime.rs:18417:                    changed = (old_width - applied).abs() > SLIDER_CHANGE_EPSILON;
+native/src\runtime.rs:19557:                    .map(|old| (old - value).abs() > SLIDER_CHANGE_EPSILON)
+native/src\runtime.rs:19579:                    .map(|old| (old - value).abs() > SLIDER_CHANGE_EPSILON)
+native/src\primitives\mod.rs:33:    CARET_WIDTH_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP, DROPDOWN_CHEVRON_WIDTH_LP,
+native/src\primitives\mod.rs:34:    FOCUS_RING_LP, PANEL_ACCENT_WIDTH_LP, SLIDER_THUMB_WIDTH_LP, SLIDER_TRACK_HEIGHT_LP,
+native/src\primitives\mod.rs:35:    SLIDER_TRACK_MARGIN_LP, TAB_ACTIVE_BAR_LP, TAB_GAP_LP, TAB_INACTIVE_BOTTOM_INSET_LP,
+native/src\primitives\mod.rs:36:    TAB_TOP_INSET_LP, TOGGLE_SWITCH_THUMB_SIZE_LP, TOGGLE_SWITCH_TRACK_HEIGHT_LP,
+native/src\primitives\mod.rs:37:    TOGGLE_SWITCH_TRACK_WIDTH_LP,
+native/src\primitives\mod.rs:10704:                let gap = TAB_GAP_LP * sf;
+native/src\primitives\mod.rs:11418:                    .unwrap_or(CHECKBOX_BOX_LP * sf)
+native/src\primitives\mod.rs:11423:                    .unwrap_or(CHECKBOX_BOX_LP * sf)
+native/src\primitives\mod.rs:11555:                    .unwrap_or(TOGGLE_SWITCH_TRACK_WIDTH_LP * sf)
+native/src\primitives\mod.rs:11560:                    .unwrap_or(TOGGLE_SWITCH_TRACK_HEIGHT_LP * sf)
+native/src\primitives\mod.rs:11644:                    .min(TOGGLE_SWITCH_THUMB_SIZE_LP * sf);
+native/src\primitives\mod.rs:11887:                    .unwrap_or(SLIDER_TRACK_HEIGHT_LP * sf)
+native/src\primitives\mod.rs:11890:                let margin = SLIDER_TRACK_MARGIN_LP * sf;
+native/src\primitives\mod.rs:11938:                    .unwrap_or(SLIDER_THUMB_WIDTH_LP * sf);
+native/src\primitives\mod.rs:11993:                    .unwrap_or(SLIDER_TRACK_HEIGHT_LP * sf)
+native/src\primitives\mod.rs:11996:                let margin = SLIDER_TRACK_MARGIN_LP * sf;
+native/src\primitives\mod.rs:12052:                    .unwrap_or(SLIDER_THUMB_WIDTH_LP * sf);
+native/src\primitives\mod.rs:12100:                    .unwrap_or(SLIDER_THUMB_WIDTH_LP * sf);
+native/src\primitives\mod.rs:12933:    let row_h = theme.control_height() * sf;
+native/src\primitives\mod.rs:13042:            let row_h = theme.control_height() * sf;
+native/src\primitives\mod.rs:13396:        let theme = Theme::dark();
+native/src\primitives\mod.rs:13522:            &Theme::dark(),
+native/src\primitives\mod.rs:13551:        let labels = bar_chart_text_labels(&chart, &Theme::dark(), 1.0, [0.0, 0.0, 220.0, 160.0]);
+native/src\primitives\mod.rs:13571:        let labels = bar_chart_text_labels(&chart, &Theme::dark(), 1.0, [0.0, 0.0, 220.0, 160.0]);
+native/src\primitives\mod.rs:13620:        let labels = pie_chart_text_labels(&chart, &Theme::dark(), 1.0, [0.0, 0.0, 260.0, 190.0]);
+native/src\primitives\mod.rs:13703:            &Theme::dark(),
+native/src\primitives\mod.rs:13756:                let metrics = table::metrics_for_node(&table, &Theme::dark(), 1.0);
+native/src\primitives\mod.rs:13852:        let theme = Theme::dark();
+native/src\primitives\mod.rs:13902:        let theme = Theme::dark();
+native/src\primitives\mod.rs:13959:        let theme = Theme::dark();
+native/src\primitives\mod.rs:14268:            &Theme::dark(),
+native/src\primitives\mod.rs:14287:        let badge = badge_rect(&button, parent, &Theme::dark(), 1.0, 8.0)
+native/src\primitives\mod.rs:14302:        let theme = Theme::dark();
+native/src\primitives\mod.rs:14331:        let theme = Theme::dark();
+native/src\primitives\mod.rs:14424:            &Theme::dark(),
+native/src\primitives\mod.rs:14466:            &Theme::dark(),
+native/src\primitives\mod.rs:14566:            &Theme::dark(),
+native/src\primitives\mod.rs:14629:            &Theme::dark(),
+native/src\primitives\mod.rs:14685:            &Theme::dark(),
+native/src\primitives\mod.rs:14742:            &Theme::dark(),
+native/src\primitives\mod.rs:14781:            &Theme::dark(),
+native/src\primitives\mod.rs:14790:            .position(|inst| inst.color == Theme::dark().surface_alt)
+native/src\primitives\mod.rs:14849:            &Theme::dark(),
+native/src\primitives\mod.rs:14898:            &Theme::dark(),
+native/src\primitives\mod.rs:14940:            &Theme::dark(),
+native/src\primitives\mod.rs:14996:            &Theme::dark(),
+native/src\primitives\mod.rs:15048:            &Theme::dark(),
+native/src\primitives\mod.rs:15068:                .any(|inst| inst.color == Theme::dark().success
+native/src\primitives\mod.rs:15112:            &Theme::dark(),
+native/src\primitives\mod.rs:15181:            &Theme::dark(),
+native/src\primitives\mod.rs:15235:            &Theme::dark(),
+native/src\primitives\mod.rs:15283:            &Theme::dark(),
+native/src\primitives\mod.rs:15327:            &Theme::dark(),
+native/src\primitives\mod.rs:15399:            &Theme::dark(),
+native/src\primitives\mod.rs:15463:            &Theme::dark(),
+native/src\primitives\mod.rs:15512:            &Theme::dark(),
+native/src\primitives\mod.rs:15547:        let theme = Theme::dark();
+native/src\primitives\mod.rs:15635:            &Theme::dark(),
+native/src\primitives\mod.rs:15646:        let title_inset = panel_scrollbar_title_inset(&panel, &Theme::dark(), 1.0);
+native/src\primitives\mod.rs:15723:            &Theme::dark(),
+native/src\primitives\mod.rs:15734:        let title_inset = panel_scrollbar_title_inset(&modal, &Theme::dark(), 1.0);
+native/src\primitives\mod.rs:15816:        let theme = Theme::dark();
+native/src\primitives\mod.rs:15873:            &Theme::dark(),
+native/src\primitives\mod.rs:15929:            &Theme::dark(),
+native/src\primitives\mod.rs:15965:        let theme = Theme::dark();
+native/src\primitives\mod.rs:16034:            &Theme::dark(),
+native/src\primitives\mod.rs:16118:            &Theme::dark(),
+native/src\primitives\mod.rs:16180:            &Theme::dark(),
+native/src\primitives\mod.rs:16224:        let theme = Theme::dark();
+native/src\primitives\mod.rs:16287:            &Theme::dark(),
+native/src\primitives\mod.rs:16345:        let theme = Theme::dark();
+native/src\primitives\mod.rs:16428:            &Theme::dark(),
+native/src\primitives\mod.rs:16483:            &Theme::dark(),
+native/src\primitives\mod.rs:16510:        let theme = Theme::dark();
+native/src\primitives\mod.rs:16527:        let theme = Theme::dark();
+native/src\primitives\mod.rs:16534:        let theme = Theme::dark();
+native/src\primitives\mod.rs:16581:        let theme = Theme::dark();
+native/src\primitives\mod.rs:16600:        let theme = Theme::dark();
+native/src\primitives\mod.rs:16634:        let theme = Theme::dark();
+native/src\primitives\mod.rs:16669:        let theme = Theme::dark();
+native/src\primitives\mod.rs:16720:            &Theme::dark(),
+native/src\primitives\mod.rs:16749:        let theme = Theme::dark();
+native/src\primitives\mod.rs:16772:        let theme = Theme::dark();
+native/src\primitives\mod.rs:16796:        let theme = Theme::dark();
+native/src\primitives\mod.rs:16821:        let theme = Theme::dark();
+native/src\primitives\mod.rs:16846:        let theme = Theme::dark();
+native/src\primitives\mod.rs:16875:        let theme = Theme::dark();
+native/src\primitives\mod.rs:16898:        let theme = Theme::dark();
+native/src\primitives\mod.rs:16934:            &Theme::dark(),
+native/src\primitives\mod.rs:16982:            &Theme::dark(),
+native/src\primitives\mod.rs:17016:            &Theme::dark(),
+native/src\primitives\mod.rs:17071:            &Theme::dark(),
+native/src\primitives\mod.rs:17120:            &Theme::dark(),
+native/src\primitives\mod.rs:17170:            &Theme::dark(),
+native/src\primitives\mod.rs:17218:            &Theme::dark(),
+native/src\primitives\mod.rs:17238:            &Theme::dark(),
+native/src\primitives\mod.rs:17300:            &Theme::dark(),
+native/src\primitives\mod.rs:17320:        table.style.widget.table_row_height = Some(24.0);
+native/src\primitives\mod.rs:17344:            &Theme::dark(),
+native/src\primitives\mod.rs:17401:            &Theme::dark(),
+native/src\primitives\mod.rs:17459:            &Theme::dark(),
+native/src\primitives\mod.rs:17522:            &Theme::dark(),
+native/src\primitives\mod.rs:17574:            &Theme::dark(),
+native/src\primitives\mod.rs:17633:            &Theme::dark(),
+native/src\primitives\mod.rs:17703:            &Theme::dark(),
+native/src\primitives\mod.rs:17773:        let theme = Theme::dark();
+native/src\primitives\mod.rs:17831:        let theme = Theme::dark();
+native/src\primitives\mod.rs:17940:            &Theme::dark(),
+native/src\primitives\mod.rs:18035:            &Theme::dark(),
+native/src\primitives\mod.rs:18152:            &Theme::dark(),
+native/src\primitives\mod.rs:18225:            &Theme::dark(),
+native/src\primitives\mod.rs:18279:        let mut theme = Theme::dark();
+native/src\primitives\mod.rs:18345:        let theme = Theme::dark();
+native/src\overlays.rs:19:        h: theme.control_height() * sf * items.len() as f32,
+native/src\overlays.rs:55:    let row_h = theme.control_height() * sf;
+native/src\text\mod.rs:40:    VisualStyle, BORDER_WIDTH_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP, DROPDOWN_CHEVRON_WIDTH_LP,
+native/src\text\mod.rs:41:    TAB_GAP_LP, TOGGLE_SWITCH_TRACK_WIDTH_LP,
+native/src\text\mod.rs:1802:                            .unwrap_or(CHECKBOX_BOX_LP * sf);
+native/src\text\mod.rs:1874:                            .unwrap_or(TOGGLE_SWITCH_TRACK_WIDTH_LP * sf)
+native/src\text\mod.rs:1999:                        let right_inset = TAB_GAP_LP * sf;
+native/src\text\mod.rs:2001:                        let left = r.x + tab_pad + TAB_GAP_LP * scale * 0.5;
+native/src\text\mod.rs:2003:                            (r.x + r.w - tab_pad - TAB_GAP_LP * scale * 0.5 - reserved).max(left);
+native/src\text\mod.rs:3603:        TAB_GAP_LP * sf
+native/src\text\mod.rs:3750:            let row_h = theme.control_height() * sf;
+native/src\text\mod.rs:3897:    let row_h = theme.control_height() * sf;
+native/src\text\mod.rs:5581:        let theme = Theme::dark();
+native/src\text\mod.rs:5650:                let metrics = table::metrics_for_node(&table, &Theme::dark(), 1.0);
+native/src\text\mod.rs:5701:        let theme = Theme::dark();
+native/src\text\mod.rs:5787:        let theme = Theme::dark();
+native/src\text\mod.rs:5881:        let padding = panel_title_padding(&panel, &Theme::dark(), 1.0);
+native/src\text\mod.rs:5937:        let theme = Theme::dark();
+native/src\text\mod.rs:5962:        let theme = Theme::dark();
+native/src\text\mod.rs:6021:        let badge = badge_rect(&button, rect, &Theme::dark(), 1.0, 8.0)
+native/src\text\mod.rs:6036:        let theme = Theme::dark();
+native/src\text\mod.rs:6073:        let theme = Theme::dark();
+native/src\text\mod.rs:6113:        let theme = Theme::dark();
+native/src\text\mod.rs:6133:        let theme = Theme::dark();
+native/src\text\mod.rs:6151:        let theme = Theme::dark();
+native/src\text\mod.rs:6183:        let theme = Theme::dark();
+native/src\text\mod.rs:6199:        let theme = Theme::dark();
+native/src\text\mod.rs:6224:        let theme = Theme::dark();
+native/src\text\mod.rs:6291:        let theme = Theme::dark();
+native/src\text\mod.rs:6349:        let row_h = theme.control_height();
+native/src\text\mod.rs:6380:            &Theme::dark(),
+native/src\text\mod.rs:6603:        let theme = Theme::dark();
+native/src\text\mod.rs:6654:        let theme = Theme::dark();
+native/src\text\mod.rs:6720:        let theme = Theme::dark();
+native/src\text\mod.rs:6769:        let theme = Theme::dark();
+native/src\text\mod.rs:6821:        let theme = Theme::dark();
+native/src\text\mod.rs:6880:        let theme = Theme::dark();
+native/src\text\mod.rs:6973:        let theme = Theme::dark();
+native/src\text\mod.rs:7083:        let theme = Theme::dark();
+native/src\text\mod.rs:7171:        let theme = Theme::dark();
+native/src\text\mod.rs:7241:        let theme = Theme::dark();
+native/src\text\mod.rs:7303:        let theme = Theme::dark();
+native/src\text\mod.rs:7360:            let theme = Theme::dark();
+native/src\text\mod.rs:7413:        let theme = Theme::dark();
+native/src\text\mod.rs:7469:        let theme = Theme::dark();
+native/src\text\mod.rs:7523:        let theme = Theme::dark();
+native/src\text\mod.rs:7589:        let theme = Theme::dark();
+native/src\text\mod.rs:7636:        let theme = Theme::dark();
+native/src\text\mod.rs:7764:        let theme = Theme::dark();
+native/src\text\mod.rs:7808:        let theme = Theme::dark();

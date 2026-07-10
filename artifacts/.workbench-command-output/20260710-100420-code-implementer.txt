@@ -1,0 +1,280 @@
+class VLayout(Container):
+    kind = "v_layout"
+
+
+
+class WorkbenchLayout(VLayout):
+    """Full-height vertical shell for prompt-first workbench applications."""
+
+    def __init__(
+        self,
+        *,
+        gap: int | float | None = 10,
+        padding: int | float | None = 12,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: "Container | None | object" = _AUTO_PARENT,
+    ) -> None:
+        if gap is not None:
+            gap_f = float(gap)
+            if not math.isfinite(gap_f) or gap_f < 0:
+                raise ValueError("WorkbenchLayout gap must be a non-negative finite number")
+        else:
+            gap_f = None
+        if padding is not None:
+            padding_f = float(padding)
+            if not math.isfinite(padding_f) or padding_f < 0:
+                raise ValueError("WorkbenchLayout padding must be a non-negative finite number")
+        else:
+            padding_f = None
+        default_style: dict[str, object] = {
+            "width": "100%",
+            "height": "100%",
+            "flex": 1,
+            "flex_grow": 1,
+            "flex_shrink": 1,
+            "min_width": 0,
+            "min_height": 0,
+            "overflow_x": "hidden",
+            "overflow_y": "hidden",
+        }
+        if gap_f is not None:
+            default_style["gap"] = gap_f
+        if padding_f is not None:
+            default_style["padding"] = padding_f
+        super().__init__(
+            id=id,
+            key=key,
+            class_=_merge_widget_class("workbench-layout", class_),
+            style={**default_style, **(style or {})},
+            tooltip=tooltip,
+            parent=parent,
+        )
+
+class AppShell(HLayout):
+    """Bounded application root for sidebar plus main-body layouts.
+
+    ``AppShell`` gives the top-level layout a definite window-sized region and
+    hides accidental outer overflow. Pair it with ``Body`` for the flexible
+    scroll-owning pane instead of hand-writing the same flex/min-size styles in
+    every app.
+    """
+
+    def __init__(
+        self,
+        *,
+        gap: int | None = 0,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: "Container | None | object" = _AUTO_PARENT,
+    ) -> None:
+        if gap is not None and int(gap) < 0:
+            raise ValueError("AppShell gap must be non-negative")
+        extra: dict[str, object] = {
+            "width": "100%",
+            "height": "100%",
+            "min_width": 0,
+            "min_height": 0,
+            "overflow_x": "hidden",
+            "overflow_y": "hidden",
+        }
+        if gap is not None:
+            extra["gap"] = int(gap)
+        merged: Mapping[str, object] = {**extra, **(style or {})}
+        super().__init__(
+            id=id,
+            key=key,
+            class_=_merge_widget_class("app-shell", class_),
+            style=merged,
+            tooltip=tooltip,
+            parent=parent,
+        )
+
+
+class ScrollArea(Container):
+    """Bounded scroll viewport for content that may exceed available space.
+
+    ``axis`` controls which overflow direction scrolls: ``"y"`` (default),
+    ``"x"``, ``"both"``, or ``"none"``.  The widget behaves like a vertical
+    layout by default and is intended for cases where the parent provides a
+    bounded rectangle, such as a page, panel body, or grid cell.
+    """
+
+    kind = "scroll_area"
+    _AXES = {"x", "y", "both", "none"}
+
+    def __init__(
+        self,
+        *,
+        axis: str = "y",
+        gap: "int | None" = None,
+        width: "int | float | None" = None,
+        height: "int | float | None" = None,
+        id: "str | None" = None,
+        key: "str | None" = None,
+        class_: "str | None" = None,
+        style: "Mapping[str, object] | None" = None,
+        tooltip: "str | None" = None,
+        parent: "Container | None | object" = _AUTO_PARENT,
+    ) -> None:
+        axis_value = axis.strip().lower()
+        if axis_value not in self._AXES:
+            raise ValueError("ScrollArea axis must be 'x', 'y', 'both', or 'none'")
+        if gap is not None and int(gap) < 0:
+            raise ValueError("ScrollArea gap must be non-negative")
+        if width is not None and float(width) < 0:
+            raise ValueError("ScrollArea width cannot be negative")
+        if height is not None and float(height) < 0:
+            raise ValueError("ScrollArea height cannot be negative")
+
+        extra: "dict[str, object]" = {
+            "display": "flex",
+            "flex_direction": "column",
+            "flex_grow": 1,
+            "flex_shrink": 1,
+            "min_height": 0,
+        }
+        extra["overflow_x"] = "auto" if axis_value in {"x", "both"} else "hidden"
+        extra["overflow_y"] = "auto" if axis_value in {"y", "both"} else "hidden"
+        if gap is not None:
+            extra["gap"] = int(gap)
+        if width is not None:
+            extra["width"] = float(width)
+        if height is not None:
+            extra["height"] = float(height)
+        merged: "Mapping[str, object]" = {**extra, **(style or {})}
+        super().__init__(id=id, key=key, class_=class_, style=merged, tooltip=tooltip, parent=parent)
+
+    def scroll_to(
+        self,
+        *,
+        x: "int | float | None" = None,
+        y: "int | float | None" = None,
+    ) -> None:
+        """Set the live scroll offset for this scroll area, in logical pixels."""
+        handle = self._live()
+        if handle is None:
+            return
+        if x is not None:
+            handle.enqueue_set_prop("scroll_x", float(x))
+        if y is not None:
+            handle.enqueue_set_prop("scroll_y", float(y))
+
+
+class Body(ScrollArea):
+    """Flexible main app region with explicit scroll ownership.
+
+    ``Body`` is the safe default for the main content area in an ``AppShell``:
+    it can shrink inside horizontal layouts, fills remaining space, and owns
+    overflow on the configured axis.
+    """
+
+    def __init__(
+        self,
+        *,
+        scroll: str = "y",
+        gap: int | None = None,
+        width: "int | float | None" = None,
+        height: "int | float | None" = None,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: "Container | None | object" = _AUTO_PARENT,
+    ) -> None:
+        extra: dict[str, object] = {
+            "flex": 1,
+            "flex_grow": 1,
+            "flex_shrink": 1,
+            "min_width": 0,
+            "min_height": 0,
+        }
+        merged: Mapping[str, object] = {**extra, **(style or {})}
+        super().__init__(
+            axis=scroll,
+            gap=gap,
+            width=width,
+            height=height,
+            id=id,
+            key=key,
+            class_=_merge_widget_class("body", class_),
+            style=merged,
+            tooltip=tooltip,
+            parent=parent,
+    return {"width": 0, "flex": 1, "min_width": 0, **(extra or {})}
+
+
+class Property(HLayout):
+    """Single label/editor row for PropertyGrid."""
+
+    def __init__(
+        self,
+        label: str,
+        editor: Widget | None = None,
+        *,
+        label_width: int | float | None = None,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.label = str(label)
+        if not self.label:
+            raise ValueError("Property label cannot be empty")
+        actual_parent = _BuildContext.parent() if parent is _AUTO_PARENT else parent
+        grid = actual_parent if isinstance(actual_parent, PropertyGrid) else None
+        width = grid.label_width if label_width is None and grid is not None else label_width
+        if width is None:
+            width = 140.0
+        width_f = float(width)
+        if not math.isfinite(width_f) or width_f <= 0:
+            raise ValueError("Property label_width must be a positive finite number")
+        row_style = {
+            "gap": 10,
+            "align_items": "center",
+            "width": "100%",
+            **(style or {}),
+        }
+        super().__init__(
+            id=id,
+            key=key,
+            class_=_merge_widget_class("property-row", class_),
+            style=row_style,
+            tooltip=tooltip,
+            parent=actual_parent,
+        )
+        Label(
+            self.label,
+            class_="property-label",
+            style={"width": width_f, "flex_shrink": 0, "text_overflow": "ellipsis"},
+            parent=self,
+        )
+        self._editor_slot = HLayout(
+            class_="property-editor",
+            style={
+                "gap": 8,
+                "align_items": "center",
+                "flex": 1,
+                "min_width": 0,
+            },
+            parent=self,
+        )
+        if editor is not None:
+            self.set_editor(editor)
+
+    def set_editor(self, editor: Widget) -> None:
+        if not isinstance(editor, Widget):
+            raise TypeError("Property editor must be a DragonGUI widget")
+        self._editor_slot.add(editor)
+
+    def __enter__(self) -> Self:
+        _BuildContext.push(self._editor_slot)

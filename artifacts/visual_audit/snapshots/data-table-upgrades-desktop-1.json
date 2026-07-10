@@ -94,6 +94,12 @@
       },
       "dg-11": {
         "matched_rules": [
+          "framework: DataFrameTable",
+          "framework: DataFrameTable::header",
+          "framework: DataFrameTable::row",
+          "framework: DataFrameTable::row-selected",
+          "framework: DataFrameTable::scrollbar-track",
+          "framework: DataFrameTable::scrollbar-thumb",
           "user: DataFrameTable.upgrade-table",
           "user: DataFrameTable.upgrade-table::header",
           "user: DataFrameTable.upgrade-table::row",
@@ -145,6 +151,7 @@
             },
             "header": {
               "matched_rules": [
+                "framework: DataFrameTable::header",
                 "user: DataFrameTable.upgrade-table::header",
                 "user: DataFrameTable.locked-table::header"
               ],
@@ -157,6 +164,7 @@
                     0.7803921699523926
                   ]
                 },
+                "font_size": 12.0,
                 "font_weight": 850,
                 "letter_spacing": {
                   "em": 0.05000000074505806
@@ -187,8 +195,15 @@
             },
             "row": {
               "matched_rules": [
+                "framework: DataFrameTable::row",
                 "user: DataFrameTable.upgrade-table::row"
               ],
+              "text": {
+                "color": {
+                  "token": "text"
+                },
+                "font_size": 12.0
+              },
               "visual": {
                 "background": {
                   "rgba": [
@@ -213,6 +228,7 @@
             },
             "row-selected": {
               "matched_rules": [
+                "framework: DataFrameTable::row-selected",
                 "user: DataFrameTable.upgrade-table::row-selected"
               ],
               "text": {
@@ -252,6 +268,7 @@
                 "width": 6.0
               },
               "matched_rules": [
+                "framework: DataFrameTable::scrollbar-thumb",
                 "user: DataFrameTable.upgrade-table::scrollbar-thumb"
               ],
               "visual": {
@@ -273,14 +290,17 @@
                     ]
                   },
                   "type": "color"
-                }
+                },
+                "border_radius": 999.0
               }
             },
             "scrollbar-track": {
               "layout": {
+                "padding": 1.0,
                 "width": 5.0
               },
               "matched_rules": [
+                "framework: DataFrameTable::scrollbar-track",
                 "user: DataFrameTable.upgrade-table::scrollbar-track"
               ],
               "visual": {
@@ -569,6 +589,8 @@
       "dg-6": {
         "matched_rules": [
           "framework: Panel",
+          "framework: Panel::scrollbar-track",
+          "framework: Panel::scrollbar-thumb",
           "user: Panel.case"
         ],
         "style": {
@@ -599,6 +621,54 @@
             }
           },
           "open": {},
+          "parts": {
+            "scrollbar-thumb": {
+              "matched_rules": [
+                "framework: Panel::scrollbar-thumb"
+              ],
+              "visual": {
+                "background": {
+                  "token": "border"
+                },
+                "background_paint": {
+                  "color": {
+                    "token": "border"
+                  },
+                  "type": "color"
+                },
+                "border_radius": 999.0
+              }
+            },
+            "scrollbar-track": {
+              "layout": {
+                "padding": 1.0
+              },
+              "matched_rules": [
+                "framework: Panel::scrollbar-track"
+              ],
+              "visual": {
+                "background": {
+                  "rgba": [
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0
+                  ]
+                },
+                "background_paint": {
+                  "color": {
+                    "rgba": [
+                      0.0,
+                      0.0,
+                      0.0,
+                      0.0
+                    ]
+                  },
+                  "type": "color"
+                }
+              }
+            }
+          },
           "selected": {},
           "text": {
             "color": {
@@ -683,6 +753,12 @@
       },
       "dg-8": {
         "matched_rules": [
+          "framework: DataFrameTable",
+          "framework: DataFrameTable::header",
+          "framework: DataFrameTable::row",
+          "framework: DataFrameTable::row-selected",
+          "framework: DataFrameTable::scrollbar-track",
+          "framework: DataFrameTable::scrollbar-thumb",
           "user: DataFrameTable.upgrade-table",
           "user: DataFrameTable.upgrade-table::header",
           "user: DataFrameTable.upgrade-table::row",
@@ -732,6 +808,7 @@
             },
             "header": {
               "matched_rules": [
+                "framework: DataFrameTable::header",
                 "user: DataFrameTable.upgrade-table::header"
               ],
               "text": {
@@ -743,6 +820,7 @@
                     1.0
                   ]
                 },
+                "font_size": 12.0,
                 "font_weight": 850,
                 "letter_spacing": {
                   "em": 0.05000000074505806
@@ -773,8 +851,15 @@
             },
             "row": {
               "matched_rules": [
+                "framework: DataFrameTable::row",
                 "user: DataFrameTable.upgrade-table::row"
               ],
+              "text": {
+                "color": {
+                  "token": "text"
+                },
+                "font_size": 12.0
+              },
               "visual": {
                 "background": {
                   "rgba": [
@@ -799,6 +884,7 @@
             },
             "row-selected": {
               "matched_rules": [
+                "framework: DataFrameTable::row-selected",
                 "user: DataFrameTable.upgrade-table::row-selected"
               ],
               "text": {
@@ -838,6 +924,7 @@
                 "width": 6.0
               },
               "matched_rules": [
+                "framework: DataFrameTable::scrollbar-thumb",
                 "user: DataFrameTable.upgrade-table::scrollbar-thumb"
               ],
               "visual": {
@@ -859,14 +946,17 @@
                     ]
                   },
                   "type": "color"
-                }
+                },
+                "border_radius": 999.0
               }
             },
             "scrollbar-track": {
               "layout": {
+                "padding": 1.0,
                 "width": 5.0
               },
               "matched_rules": [
+                "framework: DataFrameTable::scrollbar-track",
                 "user: DataFrameTable.upgrade-table::scrollbar-track"
               ],
               "visual": {
@@ -946,6 +1036,8 @@
       "dg-9": {
         "matched_rules": [
           "framework: Panel",
+          "framework: Panel::scrollbar-track",
+          "framework: Panel::scrollbar-thumb",
           "user: Panel.case"
         ],
         "style": {
@@ -976,6 +1068,54 @@
             }
           },
           "open": {},
+          "parts": {
+            "scrollbar-thumb": {
+              "matched_rules": [
+                "framework: Panel::scrollbar-thumb"
+              ],
+              "visual": {
+                "background": {
+                  "token": "border"
+                },
+                "background_paint": {
+                  "color": {
+                    "token": "border"
+                  },
+                  "type": "color"
+                },
+                "border_radius": 999.0
+              }
+            },
+            "scrollbar-track": {
+              "layout": {
+                "padding": 1.0
+              },
+              "matched_rules": [
+                "framework: Panel::scrollbar-track"
+              ],
+              "visual": {
+                "background": {
+                  "rgba": [
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0
+                  ]
+                },
+                "background_paint": {
+                  "color": {
+                    "rgba": [
+                      0.0,
+                      0.0,
+                      0.0,
+                      0.0
+                    ]
+                  },
+                  "type": "color"
+                }
+              }
+            }
+          },
           "selected": {},
           "text": {
             "color": {
@@ -1028,34 +1168,34 @@
     },
     "framework": {
       "apply_layout": {
-        "avg_ms": 1.4298333333333335,
+        "avg_ms": 0.8380666666666667,
         "count": 3,
-        "last_ms": 0.2026,
-        "total_ms": 4.2895
+        "last_ms": 0.5252,
+        "total_ms": 2.5142
       },
       "container_style": {
-        "avg_ms": 0.0006333333333333334,
+        "avg_ms": 0.0009666666666666666,
         "count": 3,
         "last_ms": 0.0,
-        "total_ms": 0.0019000000000000002
+        "total_ms": 0.0029
       },
       "image_rebuild": {
-        "avg_ms": 0.020733333333333333,
+        "avg_ms": 0.049966666666666666,
         "count": 3,
-        "last_ms": 0.013,
-        "total_ms": 0.0622
+        "last_ms": 0.0718,
+        "total_ms": 0.1499
       },
       "layout_compute": {
-        "avg_ms": 0.08206666666666666,
+        "avg_ms": 0.08600000000000001,
         "count": 3,
-        "last_ms": 0.058,
-        "total_ms": 0.2462
+        "last_ms": 0.088,
+        "total_ms": 0.258
       },
       "line_plot_rebuild": {
-        "avg_ms": 0.017666666666666667,
-        "count": 3,
-        "last_ms": 0.0161,
-        "total_ms": 0.053000000000000005
+        "avg_ms": 0.051475,
+        "count": 4,
+        "last_ms": 0.1751,
+        "total_ms": 0.2059
       },
       "prewarm_scatter_widgets": {
         "avg_ms": 0.0,
@@ -1064,28 +1204,28 @@
         "total_ms": 0.0
       },
       "primitive_rebuild": {
-        "avg_ms": 0.04296666666666666,
-        "count": 3,
-        "last_ms": 0.028900000000000002,
-        "total_ms": 0.1289
+        "avg_ms": 0.0414,
+        "count": 4,
+        "last_ms": 0.0494,
+        "total_ms": 0.1656
       },
       "rebuild_primitives": {
-        "avg_ms": 0.0,
-        "count": 0,
-        "last_ms": 0.0,
-        "total_ms": 0.0
+        "avg_ms": 0.0171,
+        "count": 1,
+        "last_ms": 0.0171,
+        "total_ms": 0.0171
       },
       "rebuild_text": {
-        "avg_ms": 0.0,
-        "count": 0,
-        "last_ms": 0.0,
-        "total_ms": 0.0
+        "avg_ms": 0.3851,
+        "count": 1,
+        "last_ms": 0.3851,
+        "total_ms": 0.3851
       },
       "rebuild_visuals": {
-        "avg_ms": 0.0,
-        "count": 0,
-        "last_ms": 0.0,
-        "total_ms": 0.0
+        "avg_ms": 0.40640000000000004,
+        "count": 1,
+        "last_ms": 0.40640000000000004,
+        "total_ms": 0.40640000000000004
       },
       "replace_children_maps": {
         "avg_ms": 0.0,
@@ -1124,22 +1264,22 @@
         "total_ms": 0.0
       },
       "retained_line_plot_sync": {
-        "avg_ms": 0.0,
-        "count": 0,
+        "avg_ms": 4.9999999999999996e-05,
+        "count": 2,
         "last_ms": 0.0,
-        "total_ms": 0.0
+        "total_ms": 9.999999999999999e-05
       },
       "retained_maps": {
-        "avg_ms": 0.0,
-        "count": 0,
-        "last_ms": 0.0,
-        "total_ms": 0.0
+        "avg_ms": 0.0138,
+        "count": 2,
+        "last_ms": 0.0056,
+        "total_ms": 0.0276
       },
       "retained_resources": {
-        "avg_ms": 0.0,
-        "count": 0,
-        "last_ms": 0.0,
-        "total_ms": 0.0
+        "avg_ms": 0.002,
+        "count": 2,
+        "last_ms": 0.0015999999999999999,
+        "total_ms": 0.004
       },
       "retained_scatter_chrome": {
         "avg_ms": 0.0,
@@ -1148,10 +1288,10 @@
         "total_ms": 0.0
       },
       "retained_scatter_collect": {
-        "avg_ms": 0.0,
-        "count": 0,
-        "last_ms": 0.0,
-        "total_ms": 0.0
+        "avg_ms": 0.00030000000000000003,
+        "count": 2,
+        "last_ms": 9.999999999999999e-05,
+        "total_ms": 0.0006000000000000001
       },
       "retained_scatter_decode": {
         "avg_ms": 0.0,
@@ -1167,15 +1307,15 @@
       },
       "retained_scatter_retain": {
         "avg_ms": 0.0,
-        "count": 0,
+        "count": 2,
         "last_ms": 0.0,
         "total_ms": 0.0
       },
       "retained_scatter_sync": {
-        "avg_ms": 0.0,
-        "count": 0,
-        "last_ms": 0.0,
-        "total_ms": 0.0
+        "avg_ms": 0.0014,
+        "count": 2,
+        "last_ms": 0.00019999999999999998,
+        "total_ms": 0.0028
       },
       "retained_scatter_upload": {
         "avg_ms": 0.0,
@@ -1184,128 +1324,128 @@
         "total_ms": 0.0
       },
       "retained_state_preserve": {
-        "avg_ms": 0.0,
-        "count": 0,
-        "last_ms": 0.0,
-        "total_ms": 0.0
+        "avg_ms": 0.0037,
+        "count": 2,
+        "last_ms": 0.00039999999999999996,
+        "total_ms": 0.0074
       },
       "retained_widget_kinds": {
-        "avg_ms": 0.0,
-        "count": 0,
-        "last_ms": 0.0,
-        "total_ms": 0.0
+        "avg_ms": 0.0010999999999999998,
+        "count": 2,
+        "last_ms": 0.001,
+        "total_ms": 0.0021999999999999997
       },
       "retained_widget_state": {
-        "avg_ms": 0.0,
-        "count": 0,
-        "last_ms": 0.0,
-        "total_ms": 0.0
+        "avg_ms": 0.00255,
+        "count": 2,
+        "last_ms": 0.0015,
+        "total_ms": 0.0051
       },
       "scatter_layout": {
-        "avg_ms": 0.0008999999999999999,
+        "avg_ms": 0.0012,
         "count": 3,
-        "last_ms": 0.0006,
-        "total_ms": 0.0026999999999999997
+        "last_ms": 0.0013,
+        "total_ms": 0.0036
       },
       "style_reapply": {
-        "avg_ms": 0.0272,
+        "avg_ms": 0.024633333333333337,
         "count": 3,
-        "last_ms": 0.0014,
-        "total_ms": 0.08159999999999999
+        "last_ms": 0.0048,
+        "total_ms": 0.07390000000000001
       },
       "text_rebuild": {
-        "avg_ms": 1.2256333333333334,
-        "count": 3,
-        "last_ms": 0.076,
-        "total_ms": 3.6769000000000003
+        "avg_ms": 0.501625,
+        "count": 4,
+        "last_ms": 0.1137,
+        "total_ms": 2.0065
       },
       "transition_sync": {
-        "avg_ms": 0.007033333333333333,
+        "avg_ms": 0.010733333333333333,
         "count": 3,
-        "last_ms": 0.0045000000000000005,
-        "total_ms": 0.0211
+        "last_ms": 0.0134,
+        "total_ms": 0.0322
       }
     },
     "layout": {
       "clips": {
         "dg-1": {
-          "h": 560.0,
-          "w": 980.0,
+          "h": 700.0,
+          "w": 1225.0,
           "x": 0.0,
           "y": 0.0
         },
         "dg-10": {
-          "h": 34.0,
-          "w": 432.0,
-          "x": 510.0,
-          "y": 162.0
+          "h": 39.0,
+          "w": 540.0,
+          "x": 639.0,
+          "y": 184.0
         },
         "dg-11": {
-          "h": 260.0,
-          "w": 432.0,
-          "x": 510.0,
-          "y": 208.0
+          "h": 325.0,
+          "w": 540.0,
+          "x": 639.0,
+          "y": 238.0
         },
         "dg-12": {
-          "h": 34.0,
-          "w": 944.0,
-          "x": 18.0,
-          "y": 508.0
+          "h": 33.0,
+          "w": 1180.0,
+          "x": 23.0,
+          "y": 646.0
         },
         "dg-2": {
-          "h": 524.0,
-          "w": 944.0,
-          "x": 18.0,
-          "y": 18.0
+          "h": 655.0,
+          "w": 1180.0,
+          "x": 23.0,
+          "y": 23.0
         },
         "dg-3": {
           "h": 40.0,
-          "w": 944.0,
-          "x": 18.0,
-          "y": 18.0
+          "w": 1180.0,
+          "x": 23.0,
+          "y": 23.0
         },
         "dg-4": {
-          "h": 34.0,
-          "w": 944.0,
-          "x": 18.0,
-          "y": 70.0
+          "h": 32.0,
+          "w": 1180.0,
+          "x": 23.0,
+          "y": 78.0
         },
         "dg-5": {
-          "h": 380.0,
-          "w": 944.0,
-          "x": 18.0,
-          "y": 116.0
+          "h": 505.0,
+          "w": 1180.0,
+          "x": 23.0,
+          "y": 126.0
         },
         "dg-6": {
-          "h": 380.0,
-          "w": 466.0,
-          "x": 18.0,
-          "y": 116.0
+          "h": 505.0,
+          "w": 582.0,
+          "x": 23.0,
+          "y": 126.0
         },
         "dg-7": {
-          "h": 34.0,
-          "w": 432.0,
-          "x": 32.0,
-          "y": 162.0
+          "h": 39.0,
+          "w": 540.0,
+          "x": 41.0,
+          "y": 184.0
         },
         "dg-8": {
-          "h": 260.0,
-          "w": 432.0,
-          "x": 32.0,
-          "y": 208.0
+          "h": 325.0,
+          "w": 540.0,
+          "x": 41.0,
+          "y": 238.0
         },
         "dg-9": {
-          "h": 380.0,
-          "w": 466.0,
-          "x": 496.0,
-          "y": 116.0
+          "h": 505.0,
+          "w": 583.0,
+          "x": 621.0,
+          "y": 126.0
         }
       },
       "diagnostics": {
         "dg-1": {
           "available": {
-            "height": 560.0,
-            "width": 980.0,
+            "height": 700.0,
+            "width": 1225.0,
             "x": 0.0,
             "y": 0.0
           },
@@ -1318,8 +1458,8 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 560.0,
-            "width": 980.0,
+            "height": 700.0,
+            "width": 1225.0,
             "x": 0.0,
             "y": 0.0
           },
@@ -1330,10 +1470,10 @@
         },
         "dg-10": {
           "available": {
-            "height": 34.0,
-            "width": 432.0,
-            "x": 510.0,
-            "y": 162.0
+            "height": 39.0,
+            "width": 540.0,
+            "x": 639.0,
+            "y": 184.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -1344,10 +1484,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 34.0,
-            "width": 432.0,
-            "x": 510.0,
-            "y": 162.0
+            "height": 39.0,
+            "width": 540.0,
+            "x": 639.0,
+            "y": 184.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -1356,10 +1496,10 @@
         },
         "dg-11": {
           "available": {
-            "height": 260.0,
-            "width": 432.0,
-            "x": 510.0,
-            "y": 208.0
+            "height": 325.0,
+            "width": 540.0,
+            "x": 639.0,
+            "y": 238.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -1370,10 +1510,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 260.0,
-            "width": 432.0,
-            "x": 510.0,
-            "y": 208.0
+            "height": 325.0,
+            "width": 540.0,
+            "x": 639.0,
+            "y": 238.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -1382,10 +1522,10 @@
         },
         "dg-12": {
           "available": {
-            "height": 34.0,
-            "width": 944.0,
-            "x": 18.0,
-            "y": 508.0
+            "height": 33.0,
+            "width": 1180.0,
+            "x": 23.0,
+            "y": 646.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -1396,10 +1536,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 34.0,
-            "width": 944.0,
-            "x": 18.0,
-            "y": 508.0
+            "height": 33.0,
+            "width": 1180.0,
+            "x": 23.0,
+            "y": 646.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -1408,10 +1548,10 @@
         },
         "dg-2": {
           "available": {
-            "height": 524.0,
-            "width": 944.0,
-            "x": 18.0,
-            "y": 18.0
+            "height": 655.0,
+            "width": 1180.0,
+            "x": 23.0,
+            "y": 23.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -1422,10 +1562,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 524.0,
-            "width": 944.0,
-            "x": 18.0,
-            "y": 18.0
+            "height": 655.0,
+            "width": 1180.0,
+            "x": 23.0,
+            "y": 23.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -1435,9 +1575,9 @@
         "dg-3": {
           "available": {
             "height": 40.0,
-            "width": 944.0,
-            "x": 18.0,
-            "y": 18.0
+            "width": 1180.0,
+            "x": 23.0,
+            "y": 23.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -1449,9 +1589,9 @@
           },
           "resolved": {
             "height": 40.0,
-            "width": 944.0,
-            "x": 18.0,
-            "y": 18.0
+            "width": 1180.0,
+            "x": 23.0,
+            "y": 23.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -1460,10 +1600,10 @@
         },
         "dg-4": {
           "available": {
-            "height": 34.0,
-            "width": 944.0,
-            "x": 18.0,
-            "y": 70.0
+            "height": 32.0,
+            "width": 1180.0,
+            "x": 23.0,
+            "y": 78.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -1474,10 +1614,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 34.0,
-            "width": 944.0,
-            "x": 18.0,
-            "y": 70.0
+            "height": 32.0,
+            "width": 1180.0,
+            "x": 23.0,
+            "y": 78.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -1486,10 +1626,10 @@
         },
         "dg-5": {
           "available": {
-            "height": 380.0,
-            "width": 944.0,
-            "x": 18.0,
-            "y": 116.0
+            "height": 505.0,
+            "width": 1180.0,
+            "x": 23.0,
+            "y": 126.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -1500,10 +1640,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 380.0,
-            "width": 944.0,
-            "x": 18.0,
-            "y": 116.0
+            "height": 505.0,
+            "width": 1180.0,
+            "x": 23.0,
+            "y": 126.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -1512,10 +1652,10 @@
         },
         "dg-6": {
           "available": {
-            "height": 380.0,
-            "width": 466.0,
-            "x": 18.0,
-            "y": 116.0
+            "height": 505.0,
+            "width": 582.0,
+            "x": 23.0,
+            "y": 126.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -1526,10 +1666,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 380.0,
-            "width": 466.0,
-            "x": 18.0,
-            "y": 116.0
+            "height": 505.0,
+            "width": 582.0,
+            "x": 23.0,
+            "y": 126.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -1538,10 +1678,10 @@
         },
         "dg-7": {
           "available": {
-            "height": 34.0,
-            "width": 432.0,
-            "x": 32.0,
-            "y": 162.0
+            "height": 39.0,
+            "width": 540.0,
+            "x": 41.0,
+            "y": 184.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -1552,10 +1692,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 34.0,
-            "width": 432.0,
-            "x": 32.0,
-            "y": 162.0
+            "height": 39.0,
+            "width": 540.0,
+            "x": 41.0,
+            "y": 184.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -1564,10 +1704,10 @@
         },
         "dg-8": {
           "available": {
-            "height": 260.0,
-            "width": 432.0,
-            "x": 32.0,
-            "y": 208.0
+            "height": 325.0,
+            "width": 540.0,
+            "x": 41.0,
+            "y": 238.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -1578,10 +1718,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 260.0,
-            "width": 432.0,
-            "x": 32.0,
-            "y": 208.0
+            "height": 325.0,
+            "width": 540.0,
+            "x": 41.0,
+            "y": 238.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -1590,10 +1730,10 @@
         },
         "dg-9": {
           "available": {
-            "height": 380.0,
-            "width": 466.0,
-            "x": 496.0,
-            "y": 116.0
+            "height": 505.0,
+            "width": 583.0,
+            "x": 621.0,
+            "y": 126.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -1604,10 +1744,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 380.0,
-            "width": 466.0,
-            "x": 496.0,
-            "y": 116.0
+            "height": 505.0,
+            "width": 583.0,
+            "x": 621.0,
+            "y": 126.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -1617,76 +1757,76 @@
       },
       "rects": {
         "dg-1": {
-          "h": 560.0,
-          "w": 980.0,
+          "h": 700.0,
+          "w": 1225.0,
           "x": 0.0,
           "y": 0.0
         },
         "dg-10": {
-          "h": 34.0,
-          "w": 432.0,
-          "x": 510.0,
-          "y": 162.0
+          "h": 39.0,
+          "w": 540.0,
+          "x": 639.0,
+          "y": 184.0
         },
         "dg-11": {
-          "h": 260.0,
-          "w": 432.0,
-          "x": 510.0,
-          "y": 208.0
+          "h": 325.0,
+          "w": 540.0,
+          "x": 639.0,
+          "y": 238.0
         },
         "dg-12": {
-          "h": 34.0,
-          "w": 944.0,
-          "x": 18.0,
-          "y": 508.0
+          "h": 33.0,
+          "w": 1180.0,
+          "x": 23.0,
+          "y": 646.0
         },
         "dg-2": {
-          "h": 524.0,
-          "w": 944.0,
-          "x": 18.0,
-          "y": 18.0
+          "h": 655.0,
+          "w": 1180.0,
+          "x": 23.0,
+          "y": 23.0
         },
         "dg-3": {
           "h": 40.0,
-          "w": 944.0,
-          "x": 18.0,
-          "y": 18.0
+          "w": 1180.0,
+          "x": 23.0,
+          "y": 23.0
         },
         "dg-4": {
-          "h": 34.0,
-          "w": 944.0,
-          "x": 18.0,
-          "y": 70.0
+          "h": 32.0,
+          "w": 1180.0,
+          "x": 23.0,
+          "y": 78.0
         },
         "dg-5": {
-          "h": 380.0,
-          "w": 944.0,
-          "x": 18.0,
-          "y": 116.0
+          "h": 505.0,
+          "w": 1180.0,
+          "x": 23.0,
+          "y": 126.0
         },
         "dg-6": {
-          "h": 380.0,
-          "w": 466.0,
-          "x": 18.0,
-          "y": 116.0
+          "h": 505.0,
+          "w": 582.0,
+          "x": 23.0,
+          "y": 126.0
         },
         "dg-7": {
-          "h": 34.0,
-          "w": 432.0,
-          "x": 32.0,
-          "y": 162.0
+          "h": 39.0,
+          "w": 540.0,
+          "x": 41.0,
+          "y": 184.0
         },
         "dg-8": {
-          "h": 260.0,
-          "w": 432.0,
-          "x": 32.0,
-          "y": 208.0
+          "h": 325.0,
+          "w": 540.0,
+          "x": 41.0,
+          "y": 238.0
         },
         "dg-9": {
-          "h": 380.0,
-          "w": 466.0,
-          "x": 496.0,
-          "y": 116.0
+          "h": 505.0,
+          "w": 583.0,
+          "x": 621.0,
+          "y": 126.0
         }
       },
       "scroll_max_x": {
@@ -1731,9 +1871,9 @@
         "decimation_mode": "auto",
         "enabled": true,
         "last_decimate_ms": 0.0,
-        "last_emit_ms": 0.0007999999999999999,
-        "last_encode_ms": 9.999999999999999e-05,
-        "last_upload_ms": 0.0,
+        "last_emit_ms": 0.005,
+        "last_encode_ms": 0.00019999999999999998,
+        "last_upload_ms": 0.0005,
         "max_segments_per_series": 8192,
         "point_bytes": 0,
         "point_count": 0,
@@ -1742,7 +1882,7 @@
         "series_count": 0,
         "source_point_count": 0
       },
-      "present_mode": "fifo",
+      "present_mode": "immediate",
       "present_mode_env": null,
       "primitives": {
         "base_batches": 8,
@@ -1751,10 +1891,10 @@
         "complex_bytes": 960,
         "complex_count": 4,
         "last_base_encode_ms": 0.0039,
-        "last_emit_ms": 0.0172,
+        "last_emit_ms": 0.0292,
         "last_overlay_encode_ms": 0.0,
-        "last_split_ms": 0.001,
-        "last_upload_ms": 0.007,
+        "last_split_ms": 0.0018,
+        "last_upload_ms": 0.0097,
         "line_batches": 0,
         "line_bytes": 0,
         "line_count": 0,
@@ -1771,10 +1911,8 @@
       "scatter_widget_id": null,
       "scatter_widget_pool": 0,
       "supported_present_modes": [
-        "fifo",
-        "fifo-relaxed",
-        "mailbox",
-        "immediate"
+        "immediate",
+        "fifo"
       ],
       "surface_format": "Bgra8UnormSrgb",
       "widget_count": 12
@@ -1794,22 +1932,22 @@
           "count": 2,
           "items": {
             "dg-11:table": {
-              "buffer_bytes": 0,
-              "buffer_columns": 0,
+              "buffer_bytes": 1492,
+              "buffer_columns": 5,
               "columns": 5,
               "rows": 36,
               "sample_rows": 36,
-              "sampled_cells": 180,
-              "version": 1
+              "sampled_cells": 0,
+              "version": 2
             },
             "dg-8:table": {
-              "buffer_bytes": 0,
-              "buffer_columns": 0,
+              "buffer_bytes": 1492,
+              "buffer_columns": 5,
               "columns": 5,
               "rows": 36,
               "sample_rows": 36,
-              "sampled_cells": 180,
-              "version": 1
+              "sampled_cells": 0,
+              "version": 2
             }
           }
         }
@@ -1899,7 +2037,7 @@
       "text_val": {}
     },
     "stylesheets": {
-      "framework_rules": 123,
+      "framework_rules": 145,
       "last_error": null,
       "theme_rules": 0,
       "user_rules": 16,
@@ -1913,27 +2051,27 @@
         1.0
       ],
       "background": [
-        0.07058823853731155,
-        0.07058823853731155,
-        0.10196078568696976,
+        0.03921568766236305,
+        0.05882352963089943,
+        0.0784313753247261,
         1.0
       ],
       "border": [
-        0.21960784494876862,
-        0.21960784494876862,
-        0.3137255012989044,
+        0.14901961386203766,
+        0.2078431397676468,
+        0.26274511218070984,
         1.0
       ],
       "danger": [
         1.0,
-        0.3607843220233917,
-        0.47843137383461,
+        0.37254902720451355,
+        0.4470588266849518,
         1.0
       ],
       "disabled": [
-        0.4000000059604645,
-        0.4000000059604645,
-        0.47843137383461,
+        0.364705890417099,
+        0.4156862795352936,
+        0.4588235318660736,
         1.0
       ],
       "focus": [
@@ -1942,43 +2080,43 @@
         0.4000000059604645,
         1.0
       ],
-      "font_size": 14.0,
+      "font_size": 13.0,
       "muted_text": [
-        0.658823549747467,
-        0.658823549747467,
-        0.729411780834198,
+        0.5686274766921997,
+        0.6274510025978088,
+        0.6784313917160034,
         1.0
       ],
       "radius": 7.0,
-      "spacing": 8.0,
+      "spacing": 5.0,
       "success": [
-        0.26274511218070984,
-        0.8313725590705872,
-        0.5607843399047852,
+        0.2705882489681244,
+        0.7686274647712708,
+        0.5411764979362488,
         1.0
       ],
       "surface": [
-        0.11764705926179886,
-        0.11764705926179886,
-        0.18039216101169586,
+        0.07058823853731155,
+        0.09803921729326248,
+        0.13333334028720856,
         1.0
       ],
       "surface_alt": [
-        0.19607843458652496,
-        0.19607843458652496,
-        0.29019609093666077,
+        0.11372549086809158,
+        0.1568627506494522,
+        0.20000000298023224,
         1.0
       ],
       "text": [
-        0.9411764740943909,
-        0.9411764740943909,
-        0.9686274528503418,
+        0.9490196108818054,
+        0.9647058844566345,
+        0.9725490212440491,
         1.0
       ],
       "warning": [
-        1.0,
-        0.7490196228027344,
-        0.27843138575553894,
+        0.95686274766922,
+        0.7215686440467834,
+        0.29019609093666077,
         1.0
       ]
     },
@@ -2724,105 +2862,156 @@
       "type": "window"
     },
     "window": {
-      "height": 560,
-      "scale_factor": 1.0,
-      "width": 980
+      "height": 700,
+      "scale_factor": 1.25,
+      "width": 1225
     }
   },
   "runtime": {
     "command_drain": {
       "apply": {
-        "avg_ms": 0.0,
-        "count": 1,
+        "avg_ms": 0.03286666666666666,
+        "count": 3,
         "last_ms": 0.0,
-        "total_ms": 0.0
+        "total_ms": 0.0986
       },
       "coalesce": {
-        "avg_ms": 0.0007999999999999999,
-        "count": 1,
-        "last_ms": 0.0007999999999999999,
-        "total_ms": 0.0007999999999999999
+        "avg_ms": 0.0007,
+        "count": 3,
+        "last_ms": 0.0,
+        "total_ms": 0.0021
       },
       "fetch": {
-        "avg_ms": 0.00039999999999999996,
-        "count": 1,
-        "last_ms": 0.00039999999999999996,
-        "total_ms": 0.00039999999999999996
+        "avg_ms": 0.0009000000000000001,
+        "count": 3,
+        "last_ms": 0.0,
+        "total_ms": 0.0027
       },
       "flush_rebuilds": {
-        "avg_ms": 0.0,
-        "count": 1,
+        "avg_ms": 0.13553333333333334,
+        "count": 3,
         "last_ms": 0.0,
-        "total_ms": 0.0
+        "total_ms": 0.4066
       },
       "last_batches": 0,
       "last_commands": 0,
       "last_pending": 0,
       "timing": {
-        "avg_ms": 0.0014,
-        "count": 1,
-        "last_ms": 0.0014,
-        "total_ms": 0.0014
+        "avg_ms": 0.17086666666666664,
+        "count": 3,
+        "last_ms": 9.999999999999999e-05,
+        "total_ms": 0.5126
       }
     },
     "command_queue_depth": 0,
     "command_timings": {
       "DebugSnapshot": {
-        "avg_ms": 0.0072,
+        "avg_ms": 0.0185,
         "count": 1,
-        "last_ms": 0.0072,
-        "total_ms": 0.0072
+        "last_ms": 0.0185,
+        "total_ms": 0.0185
+      },
+      "SetTableDataColumns": {
+        "avg_ms": 0.0474,
+        "count": 2,
+        "last_ms": 0.017900000000000003,
+        "total_ms": 0.0948
       }
     },
     "commands": {
-      "count": 1,
+      "count": 3,
       "limit": 64,
       "recent": [
+        {
+          "command": "SetTableDataColumns",
+          "detail": "table_bytes=329, buffer_columns=5",
+          "dirty": "text",
+          "elapsed_ms": 0.0769,
+          "frame": 0,
+          "outcome": "applied",
+          "requested_redraw": true,
+          "seq": 1,
+          "target": "dg-8"
+        },
+        {
+          "command": "SetTableDataColumns",
+          "detail": "table_bytes=332, buffer_columns=5",
+          "dirty": "text",
+          "elapsed_ms": 0.017900000000000003,
+          "frame": 0,
+          "outcome": "applied",
+          "requested_redraw": true,
+          "seq": 2,
+          "target": "dg-11"
+        },
         {
           "command": "DebugSnapshot",
           "detail": "request_id=0",
           "dirty": null,
-          "elapsed_ms": 0.0072,
-          "frame": 1,
+          "elapsed_ms": 0.0185,
+          "frame": 2,
           "outcome": "completed",
           "requested_redraw": false,
-          "seq": 1,
+          "seq": 3,
           "target": null
         }
       ]
     },
-    "cpu_frame_ms": 2.5923000000000003,
+    "cpu_frame_ms": 1.6626,
     "dirty": {
       "current": null,
       "note": "DragonGUI applies coarse dirty flags immediately; this history records the recent command reasons that triggered them.",
-      "recent": []
+      "recent": [
+        {
+          "command": "SetTableDataColumns",
+          "detail": "table_bytes=329, buffer_columns=5",
+          "dirty": "text",
+          "elapsed_ms": 0.0769,
+          "frame": 0,
+          "outcome": "applied",
+          "requested_redraw": true,
+          "seq": 1,
+          "target": "dg-8"
+        },
+        {
+          "command": "SetTableDataColumns",
+          "detail": "table_bytes=332, buffer_columns=5",
+          "dirty": "text",
+          "elapsed_ms": 0.017900000000000003,
+          "frame": 0,
+          "outcome": "applied",
+          "requested_redraw": true,
+          "seq": 2,
+          "target": "dg-11"
+        }
+      ]
     },
     "drag_drop_session": null,
     "drag_number_drag": null,
-    "frame_acquire_ms": 0.036000000000000004,
-    "frame_acquire_ms_avg": 0.036000000000000004,
-    "frame_encode_ms": 0.0204,
-    "frame_encode_ms_avg": 0.0204,
-    "frame_ms": 2.5923000000000003,
-    "frame_ms_avg": 2.5923000000000003,
-    "frame_prepare_ms": 2.226,
-    "frame_prepare_ms_avg": 2.226,
-    "frame_present_ms": 0.0539,
-    "frame_present_ms_avg": 0.0539,
-    "frame_submit_ms": 0.2553,
-    "frame_submit_ms_avg": 0.2553,
-    "frame_window_count": 1,
-    "frame_work_ms": 2.5017,
-    "frame_work_ms_avg": 2.5017,
-    "frames_rendered": 1,
+    "frame_acquire_ms": 0.0157,
+    "frame_acquire_ms_avg": 0.0175,
+    "frame_encode_ms": 0.0177,
+    "frame_encode_ms_avg": 0.01795,
+    "frame_ms": 2.2648,
+    "frame_ms_avg": 2.2648,
+    "frame_prepare_ms": 0.0813,
+    "frame_prepare_ms_avg": 1.2177,
+    "frame_present_ms": 0.0129,
+    "frame_present_ms_avg": 0.10709999999999999,
+    "frame_submit_ms": 1.5345,
+    "frame_submit_ms_avg": 0.90395,
+    "frame_window_count": 2,
+    "frame_work_ms": 1.6335,
+    "frame_work_ms_avg": 2.1396,
+    "frames_rendered": 2,
     "gpu_ready": true,
-    "last_frame_ms": 2.5923000000000003,
+    "last_frame_ms": 1.6626,
     "last_mouse_pos": null,
     "loading_screen": {
       "enabled": true,
       "frames": 1,
       "min_duration_ms": 120,
-      "present_ms": 121.9148,
+      "present_ms": 22.552,
       "shown": true,
       "startup_resource_ms": 0.0
     },
@@ -2847,7 +3036,7 @@
     "table_column_resize_drag": null,
     "table_scrollbar_drag": null,
     "upload_ms": 0.0,
-    "wall_fps": 0.0,
+    "wall_fps": 276.25072515815356,
     "window_open": true
   },
   "schema": 1

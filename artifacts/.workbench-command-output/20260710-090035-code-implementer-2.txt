@@ -1,0 +1,240 @@
+        gap
+    }
+}
+
+pub(crate) fn panel_title_top_padding_lp(node: &WidgetNode, theme: &Theme) -> f32 {
+    let default = theme.spacing + 2.0;
+    let layout = &node.style.layout;
+    layout
+        .padding_top
+        .or(layout.padding)
+        .unwrap_or(default)
+        .max(0.0)
+}
+
+fn apply_intrinsic_leaf_width(
+    style: &mut Style,
+    node: &WidgetNode,
+    parent_allows_intrinsic_leaf_width: bool,
+    sf: f32,
+    theme: &Theme,
+) {
+    if !parent_allows_intrinsic_leaf_width && !is_compact_boolean_leaf(node.kind) {
+        return;
+    }
+    if node.props.fixed_width.is_some()
+        || authored_width_locks_intrinsic_leaf(node)
+        || authored_zero_min_width(node)
+    {
+        return;
+    }
+
+    let Some(width) = intrinsic_leaf_width(node, theme) else {
+        return;
+    };
+    let mut width = width * sf;
+    match style.max_size.width {
+        Dimension::Length(max_width) => width = width.min(max_width.max(0.0)),
+        Dimension::Percent(_) => return,
+        Dimension::Auto => {}
+    }
+    style.min_size.width = min_dimension_at_least(style.min_size.width, width);
+}
+
+fn apply_compact_boolean_leaf_alignment(style: &mut Style, node: &WidgetNode) {
+    if !is_compact_boolean_leaf(node.kind)
+        || style.align_self.is_some()
+        || node.props.fixed_width.is_some()
+        || authored_width_locks_intrinsic_leaf(node)
+    {
+        return;
+    }
+    style.align_self = Some(AlignItems::FlexStart);
+}
+
+fn is_compact_boolean_leaf(kind: WidgetKind) -> bool {
+    matches!(kind, WidgetKind::Checkbox | WidgetKind::ToggleSwitch)
+}
+
+fn authored_width_locks_intrinsic_leaf(node: &WidgetNode) -> bool {
+    node.style.layout.width.is_some()
+        || matches!(
+            node.style.layout.width_value,
+            Some(LayoutLength::LogicalPx(_) | LayoutLength::Percent(_) | LayoutLength::Calc(_))
+        )
+}
+
+fn authored_zero_min_width(node: &WidgetNode) -> bool {
+    // `min-width: 0` is the CSS-compatible opt-out that lets dense flex/grid
+    // children shrink below intrinsic text width. Nonzero logical/calc min-width
+    // values can still be raised by intrinsic leaf minimums; percent min-width
+    // remains a parent-relative Taffy constraint.
+    matches!(node.style.layout.min_width, Some(value) if value <= 0.5)
+        || matches!(
+            node.style.layout.min_width_value,
+            Some(LayoutLength::LogicalPx(value)) if value <= 0.5
+        )
+}
+
+fn min_dimension_at_least(value: Dimension, min_px: f32) -> Dimension {
+    match value {
+        Dimension::Length(current) => Dimension::Length(current.max(min_px)),
+        Dimension::Auto => Dimension::Length(min_px),
+        Dimension::Percent(_) => value,
+    }
+}
+
+fn intrinsic_leaf_width(node: &WidgetNode, theme: &Theme) -> Option<f32> {
+    let text = intrinsic_text(node);
+    let text_w = text.map(|t| estimate_text_width(t, node_font_size_lp(node, theme)));
+    let pad = theme.spacing * 2.0;
+    let badge_w = badge_extra_width(node, theme);
+    match node.kind {
+        WidgetKind::Button => Some((text_w.unwrap_or(0.0) + pad + badge_w).clamp(72.0, 280.0)),
+        WidgetKind::SmallButton => {
+            Some((text_w.unwrap_or(0.0) + pad * 1.4 + badge_w).clamp(48.0, 180.0))
+        }
+        WidgetKind::IconButton | WidgetKind::ImageButton | WidgetKind::ArrowButton => {
+            Some(node_control_height_lp(node, theme))
+        }
+        WidgetKind::Selectable => Some((text_w.unwrap_or(0.0) + pad * 2.0).clamp(72.0, 320.0)),
+        WidgetKind::RadioButton => {
+            Some((text_w.unwrap_or(0.0) + pad * 2.0 + 18.0).clamp(72.0, 320.0))
+        }
+        WidgetKind::TreeNode => Some((text_w.unwrap_or(0.0) + pad * 2.0 + 18.0).clamp(72.0, 360.0)),
+        WidgetKind::Badge | WidgetKind::Tag => node
+            .props
+            .text
+            .as_deref()
+            .filter(|text| !text.is_empty())
+            .map(|text| {
+                standalone_badge_width_for_text(&node.style, text, theme, 1.0).clamp(24.0, 220.0)
+            }),
+        WidgetKind::Menu => {
+            let menu_pad = theme.spacing;
+            Some((text_w.unwrap_or(0.0) + menu_pad + MENU_LABEL_WIDTH_SAFETY_LP).clamp(28.0, 180.0))
+        }
+        WidgetKind::Dropdown => Some((text_w.unwrap_or(0.0) + pad + 22.0).clamp(112.0, 260.0)),
+        WidgetKind::NumberInput => Some((text_w.unwrap_or(0.0) + pad + 34.0).clamp(96.0, 220.0)),
+        WidgetKind::DragNumber => {
+            Some((text_w.unwrap_or(0.0) + pad * 2.0 + 18.0).clamp(88.0, 180.0))
+        }
+        WidgetKind::TextInput => Some((text_w.unwrap_or(0.0) + pad).clamp(120.0, 280.0)),
+        WidgetKind::TextArea => Some((text_w.unwrap_or(0.0) + pad).clamp(180.0, 420.0)),
+        WidgetKind::CodeEditor => Some(
+            (text_w.unwrap_or(0.0) + pad + code_editor_gutter_width_for_style(&node.style, 1.0))
+                .clamp(220.0, 560.0),
+        ),
+        WidgetKind::LogView => Some((text_w.unwrap_or(0.0) + pad).clamp(220.0, 560.0)),
+        WidgetKind::Checkbox => {
+            let box_w = checkbox_box_width_lp(node);
+            if text.is_some() {
+                Some(
+                    (text_w.unwrap_or(0.0) + CHECKBOX_LEFT_PAD_LP + box_w + pad).clamp(48.0, 280.0),
+                )
+            } else {
+                Some((box_w + CHECKBOX_LEFT_PAD_LP * 2.0).max(1.0))
+            }
+        }
+        WidgetKind::ToggleSwitch => {
+            let track_w = toggle_switch_track_width_lp(node);
+            if text.is_some() {
+                Some(
+                    (text_w.unwrap_or(0.0) + CHECKBOX_LEFT_PAD_LP + track_w + pad)
+                        .clamp(64.0, 320.0),
+                )
+            } else {
+                Some((track_w + CHECKBOX_LEFT_PAD_LP * 2.0).max(1.0))
+            }
+        }
+        WidgetKind::Label | WidgetKind::NavItem | WidgetKind::Tab => {
+            Some((text_w.unwrap_or(0.0) + pad + badge_w).clamp(32.0, 320.0))
+        }
+        WidgetKind::Slider | WidgetKind::RangeSlider => Some(140.0),
+        WidgetKind::ProgressBar => Some(160.0),
+        WidgetKind::LoadingSpinner => {
+            let size = loading_spinner_size_lp(node);
+            let text_w = text_w.unwrap_or(0.0);
+            let gap = if text_w > 0.0 {
+                LOADING_SPINNER_GAP_LP
+            } else {
+                0.0
+            };
+            Some((size + gap + text_w + pad).clamp(size, 360.0))
+        }
+        _ => None,
+    }
+}
+
+fn badge_extra_width(node: &WidgetNode, theme: &Theme) -> f32 {
+    node.props
+        .badge
+        .as_deref()
+        .filter(|badge| !badge.is_empty())
+        .map(|badge| badge_width_for_text(&node.style, badge, theme, 1.0) + BADGE_GAP_LP)
+        .unwrap_or(0.0)
+}
+
+fn intrinsic_text(node: &WidgetNode) -> Option<&str> {
+    node.props
+        .text
+        .as_deref()
+        .or_else(|| node.props.placeholder.as_deref())
+        .or_else(|| node.props.items.first().map(String::as_str))
+        .filter(|text| !text.is_empty())
+}
+
+fn estimate_text_width(text: &str, font_size: f32) -> f32 {
+    let chars = text
+        .lines()
+        .map(|line| line.chars().count())
+        .max()
+        .unwrap_or(0) as f32;
+    chars * font_size * 0.56
+}
+
+fn text_area_height_lp(node: &WidgetNode, theme: &Theme) -> f32 {
+    let rows = node
+        .style
+        .widget
+        .text_area_rows
+        .unwrap_or_else(|| node.props.rows.unwrap_or(4) as f32)
+        .round()
+        .max(1.0);
+    let font_size = node_font_size_lp(node, theme);
+    let line_height = (font_size + 6.0).max(theme.font_size + 4.0);
+    rows * line_height + theme.spacing * 2.0
+}
+
+fn label_height_lp(node: &WidgetNode, theme: &Theme, parent_size: Option<(f32, f32)>) -> f32 {
+    let control_h = node_control_height_lp(node, theme);
+    if !label_wraps(node) {
+        return control_h;
+    }
+    let Some(text) = node.props.text.as_deref().filter(|text| !text.is_empty()) else {
+        return control_h;
+    };
+    let Some((parent_width, _)) = parent_size else {
+        return control_h;
+    };
+    let font_size = node_font_size_lp(node, theme);
+    let line_height = node_line_height_lp(node, theme);
+    let available_width = parent_width.max(font_size);
+    (estimate_wrapped_text_lines(text, font_size, available_width) as f32 * line_height)
+        .max(control_h)
+}
+
+fn label_wraps(node: &WidgetNode) -> bool {
+    node.props.wrap.unwrap_or(true) && node.style.text.text_overflow != Some(TextOverflow::Ellipsis)
+}
+
+fn node_line_height_lp(node: &WidgetNode, theme: &Theme) -> f32 {
+    let font_size = node_font_size_lp(node, theme);
+    match node.style.text.line_height {
+        Some(LineHeight::Multiplier(value)) => (font_size * value.max(0.1)).max(1.0),
+        Some(LineHeight::LogicalPx(value)) => value.max(1.0),
+        None => (font_size + 5.0).max(theme.font_size + 3.0),
+    }
+}
+
+fn estimate_wrapped_text_lines(text: &str, font_size: f32, available_width: f32) -> usize {

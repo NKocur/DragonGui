@@ -1,0 +1,67 @@
+examples/css_feature_probes\default_polish_stress_probe.py:65:            with dg.Toolbar():
+examples/css_feature_probes\default_polish_stress_probe.py:68:                dg.ToolbarSeparator()
+python/dragongui\__init__.py:153:    Toolbar,
+python/dragongui\__init__.py:154:    ToolbarSeparator,
+python/dragongui\__init__.py:321:    "Toolbar",
+python/dragongui\__init__.py:322:    "ToolbarSeparator",
+examples/css_feature_probes\layout_flex_stress_probe.py:322:            dg.Label("Toolbar-like action row", class_="field-label")
+native/src\framework.dg.css:399:.toolbar-horizontal {
+native/src\framework.dg.css:403:.toolbar-vertical {
+examples/css_feature_probes\layout_grid_masonry_probe.py:286:            with dg.Panel("Toolbar card", class_="card"):
+examples/css_feature_probes\layout_grid_masonry_probe.py:288:                with dg.Toolbar():
+examples/css_feature_probes\layout_grid_masonry_probe.py:292:                    dg.ToolbarSeparator()
+examples/css_feature_probes\layout_plot_embedding_probe.py:455:                dg.Label("Toolbar and axes should remain usable in a short panel.", class_="caption")
+examples/css_feature_probes\line_plot_probe.py:436:                dg.Checkbox("Toolbar", checked=True, on_change=_set_toolbar)
+examples/css_feature_probes\line_plot_probe.py:460:                "Toolbar buttons: Fit refits data, Pan drags the view, Zoom uses the mouse wheel, Box drag-zooms a selected area, Grid toggles grid lines, Axes toggles axes and ticks. The plot supports solid, dashed, dotted, and dash-dot series with an in-plot legend.",
+python/dragongui\node_graph.py:3573:    function hitToolbar(sx, sy) {{
+python/dragongui\node_graph.py:5655:    function drawToolbar(width) {{
+python/dragongui\node_graph.py:5675:        drawToolbarIcon(item.icon, x, TOOLBAR_Y, TOOLBAR_W, TOOLBAR_H, active ? '#eef4ff' : '#cbd6e2');
+python/dragongui\node_graph.py:5682:    function drawToolbarIcon(icon, x, y, w, h, color) {{
+python/dragongui\node_graph.py:5689:      if (icon === 'fit') drawFitToolbarIcon(x, y, w, h);
+python/dragongui\node_graph.py:5690:      else if (icon === 'zoom_in' || icon === 'zoom_out') drawZoomToolbarIcon(x, y, w, h, icon === 'zoom_in' ? 1 : -1);
+python/dragongui\node_graph.py:5691:      else if (icon === 'grid') drawGridToolbarIcon(x, y, w, h);
+python/dragongui\node_graph.py:5692:      else if (icon === 'inspect') drawInspectToolbarIcon(x, y, w, h);
+python/dragongui\node_graph.py:5696:    function drawFitToolbarIcon(x, y, w, h) {{
+python/dragongui\node_graph.py:5719:    function drawZoomToolbarIcon(x, y, w, h, sign) {{
+python/dragongui\node_graph.py:5740:    function drawGridToolbarIcon(x, y, w, h) {{
+python/dragongui\node_graph.py:5757:    function drawInspectToolbarIcon(x, y, w, h) {{
+python/dragongui\node_graph.py:5768:    function runToolbarAction(action) {{
+python/dragongui\node_graph.py:6181:      drawToolbar(rect.width);
+python/dragongui\node_graph.py:6281:      const toolbarAction = hitToolbar(p.sx, p.sy);
+python/dragongui\node_graph.py:6283:        runToolbarAction(toolbarAction);
+python/dragongui\widgets.py:2857:class Toolbar(HLayout):
+python/dragongui\widgets.py:2877:            raise ValueError("Toolbar orientation must be 'horizontal' or 'vertical'")
+python/dragongui\widgets.py:2881:                raise ValueError("Toolbar gap must be a non-negative finite number")
+python/dragongui\widgets.py:2903:            "toolbar toolbar-vertical" if value == "vertical" else "toolbar toolbar-horizontal",
+python/dragongui\widgets.py:2922:class ToolbarSeparator(Separator):
+python/dragongui\widgets.py:2923:    """Separator that chooses the correct axis when placed inside a Toolbar."""
+python/dragongui\widgets.py:2938:        if orientation == "auto" and isinstance(resolved_parent, Toolbar):
+python/dragongui\widgets.py:2951:            class_=_merge_widget_class("toolbar-separator", class_),
+python/dragongui\manual.py:225:    "Toolbar",
+python/dragongui\manual.py:226:    "ToolbarSeparator",
+python/dragongui\manual.py:430:    "ToolbarSeparator": "toolbar_separator",
+python/dragongui\manual.py:693:        "Pair it with `Toolbar`, `WorkbenchMain`, `Tabs`, and `StatusBar` for focused app layouts.",
+python/dragongui\manual.py:895:    "Toolbar": {"probes": ("examples/css_feature_probes/toolbar_probe.py",)},
+python/dragongui\manual.py:2079:        "Menus And Toolbars",
+python/dragongui\manual.py:2085:- `Toolbar(orientation="horizontal", compact=True)` for dense commands.
+python/dragongui\manual.py:2089:Toolbars should use icons for obvious repeated actions and tooltips for
+python/dragongui\manual.py:2090:meaning. Use `ToolbarSeparator` to group commands.
+python/dragongui\manual.py:2132:`Toolbar` and `IconButton`/tool buttons are for dense command rows. Keep labels
+examples/css_feature_probes\visual_audit_manifest.json:149:    "name": "Toolbar",
+examples/css_feature_probes\visual_audit_manifest.json:152:    "features": ["Toolbar", "ToolbarSeparator"],
+examples/css_feature_probes\visual_audit_manifest.json:243:    "features": ["Default theme", "AppShell", "Sidebar", "Toolbar", "Tabs", "DataFrameTable", "PropertyGrid", "Nested scroll"],
+examples/css_feature_probes\v4_scroll_benchmark_probe.py:153:    Toolbar,
+examples/css_feature_probes\v4_scroll_benchmark_probe.py:268:                    with dg.Toolbar():
+examples/css_feature_probes\tool_buttons_probe.py:219:        with dg.HLayout(class_="toolbar"):
+examples/css_feature_probes\tool_buttons_probe.py:226:        with dg.HLayout(class_="toolbar"):
+examples/css_feature_probes\toolbar_probe.py:79:    HLayout.toolbar-horizontal {
+examples/css_feature_probes\toolbar_probe.py:83:    HLayout.toolbar-vertical {
+examples/css_feature_probes\toolbar_probe.py:136:win = dg.Window("Toolbar probe", width=900, height=520)
+examples/css_feature_probes\toolbar_probe.py:140:    dg.Label("Toolbar", class_="title")
+examples/css_feature_probes\toolbar_probe.py:147:        dg.Label("Toolbars keep common actions compact while preserving grouped spacing and embedded controls.", class_="caption")
+examples/css_feature_probes\toolbar_probe.py:148:        with dg.Toolbar():
+examples/css_feature_probes\toolbar_probe.py:152:            dg.ToolbarSeparator()
+examples/css_feature_probes\toolbar_probe.py:155:            dg.ToolbarSeparator()
+examples/css_feature_probes\toolbar_probe.py:162:            with dg.Toolbar(orientation="vertical"):
+examples/css_feature_probes\toolbar_probe.py:165:                dg.ToolbarSeparator()
+examples/css_feature_probes\README.md:71:40. `toolbar_probe.py` - Toolbar and ToolbarSeparator grouped actions, embedded controls, vertical layout, and disabled states.

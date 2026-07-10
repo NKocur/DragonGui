@@ -1,0 +1,220 @@
+    "name": "App Shell And Workbench Layout",
+    "script": "examples/css_feature_probes/app_shell_workbench_probe.py",
+    "category": "layout",
+    "features": ["AppShell", "Sidebar", "Body", "WorkbenchLayout", "WorkbenchMain", "StatusBar"],
+    "sizes": [[1040, 720], [390, 720]],
+    "manual": false,
+    "notes": "Covers the documented bounded AppShell + Sidebar + Body dashboard pattern plus WorkbenchMain scroll ownership and StatusBar reservation."
+  },
+  {
+    "id": "layout-flex-stress",
+    "name": "Layout Flex Stress",
+    "script": "examples/css_feature_probes/layout_flex_stress_probe.py",
+    "category": "layout",
+    "features": ["HLayout", "VLayout", "FlowLayout", "Fixed and flexible children", "Long labels"],
+    "sizes": [[1120, 760], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "layout-panel-bounds",
+    "name": "Layout Panel Bounds",
+    "script": "examples/css_feature_probes/layout_panel_bounds_probe.py",
+    "category": "layout",
+    "features": ["Panel", "Collapsible", "ScrollArea", "Nested panels"],
+    "sizes": [[1100, 760], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "layout-grid-masonry",
+    "name": "Layout Grid And Masonry",
+    "script": "examples/css_feature_probes/layout_grid_masonry_probe.py",
+    "category": "layout",
+    "features": ["GridLayout", "CSS grid", "Responsive collapse", "Nested grids"],
+    "sizes": [[1120, 760], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "layout-overlay-collision",
+    "name": "Layout Overlay Collision",
+    "script": "examples/css_feature_probes/layout_overlay_collision_probe.py",
+    "category": "layout",
+    "features": ["Modal", "Tooltip", "Dropdown", "ContextMenu", "CommandPalette", "Z-index"],
+    "sizes": [[1120, 760], [390, 720]],
+    "manual": true
+  },
+  {
+    "id": "layout-scrollable-composites",
+    "name": "Layout Scrollable Composites",
+    "script": "examples/css_feature_probes/layout_scrollable_composites_probe.py",
+    "category": "layout",
+    "features": ["ScrollArea", "DataFrameTable", "LogView", "CodeEditor", "TreeView", "PropertyGrid"],
+    "sizes": [[1120, 760], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "layout-plot-embedding",
+    "name": "Layout Plot Embedding",
+    "script": "examples/css_feature_probes/layout_plot_embedding_probe.py",
+    "category": "layout",
+    "features": ["LinePlot", "ScatterPlot2D", "Heatmap", "Histogram", "BarChart", "DataFrameTable", "Splitter"],
+    "sizes": [[1200, 800], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "responsive-layout",
+    "name": "Responsive Layout",
+    "script": "examples/css_feature_probes/responsive_layout_probe.py",
+    "category": "layout",
+    "features": ["Percent sizing", "calc()", "Grid tracks", "Named grid areas"],
+    "sizes": [[860, 700], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "grid-tracks",
+    "name": "Grid Tracks",
+    "script": "examples/css_feature_probes/grid_tracks_probe.py",
+    "category": "layout",
+    "features": ["CSS grid", "fr", "auto", "repeat()", "grid-row", "grid-column"],
+    "sizes": [[960, 720], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "overflow-scrollbar",
+    "name": "Overflow And Scrollbars",
+    "script": "examples/css_feature_probes/overflow_scrollbar_probe.py",
+    "category": "layout",
+    "features": ["ScrollArea", "Overflow clipping", "Scrollbar parts"],
+    "sizes": [[780, 700], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "positioning-zindex",
+    "name": "Positioning And Z Index",
+    "script": "examples/css_feature_probes/positioning_zindex_probe.py",
+    "category": "layout",
+    "features": ["Relative positioning", "Absolute positioning", "Fixed positioning", "Z-index", "Clipping"],
+    "sizes": [[820, 660], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "container-queries",
+    "name": "Container Queries",
+    "script": "examples/css_feature_probes/container_queries_probe.py",
+    "category": "layout",
+    "features": ["@container", "container-type", "Responsive cards"],
+    "sizes": [[900, 700], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "data-widgets",
+    "name": "Data Widgets",
+    "script": "examples/css_feature_probes/data_widgets_probe.py",
+    "category": "plots",
+    "features": ["DataFrameTable", "Scatter3D"],
+    "sizes": [[1000, 760], [390, 720]],
+    "manual": true
+  },
+  {
+    "id": "data-table-upgrades",
+    "name": "Data Table Upgrades",
+    "script": "examples/css_feature_probes/data_table_upgrades_probe.py",
+    "category": "plots",
+    "features": ["DataFrameTable"],
+    "sizes": [[980, 560], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "histogram",
+    "name": "Histogram",
+    "script": "examples/css_feature_probes/histogram_probe.py",
+    "category": "plots",
+    "features": ["Histogram"],
+    "sizes": [[1040, 760], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "histogram-live-update",
+    "name": "Histogram Live Update",
+    "script": "examples/css_feature_probes/histogram_live_update_probe.py",
+    "category": "plots",
+    "features": ["Histogram", "Live updates"],
+    "sizes": [[900, 620], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "bar-chart",
+    "name": "Bar Chart",
+    "script": "examples/css_feature_probes/bar_chart_probe.py",
+    "category": "plots",
+    "features": ["BarChart"],
+    "sizes": [[1040, 760], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "heatmap",
+    "name": "Heatmap",
+    "script": "examples/css_feature_probes/heatmap_probe.py",
+    "category": "plots",
+    "features": ["Heatmap"],
+    "sizes": [[1040, 760], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "line-plot",
+    "name": "Line Plot",
+    "script": "examples/css_feature_probes/line_plot_probe.py",
+    "category": "plots",
+    "features": ["LinePlot"],
+    "sizes": [[1120, 760], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "line-plot-stream-benchmark",
+    "name": "Line Plot Stream Benchmark",
+    "script": "examples/css_feature_probes/line_plot_stream_benchmark_probe.py",
+    "category": "plots",
+    "features": ["LinePlot", "Streaming", "Diagnostics"],
+    "sizes": [[1120, 720]],
+    "manual": false
+  },
+  {
+    "id": "pie-chart",
+    "name": "Pie Chart",
+    "script": "examples/css_feature_probes/pie_chart_probe.py",
+    "category": "plots",
+    "features": ["PieChart"],
+    "sizes": [[1520, 1000], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "scatter3d",
+    "name": "Scatter3D",
+    "script": "examples/css_feature_probes/scatter3d_probe.py",
+    "category": "plots",
+    "features": ["Scatter3D"],
+    "sizes": [[1160, 820], [390, 720]],
+    "manual": true
+  },
+  {
+    "id": "scatter3d-css-chrome",
+    "name": "Scatter3D CSS Chrome",
+    "script": "examples/css_feature_probes/scatter3d_css_chrome_probe.py",
+    "category": "plots",
+    "features": ["Scatter3D", "Legend", "Axes", "Grid planes"],
+    "sizes": [[1040, 760], [390, 720]],
+    "manual": true
+  },
+  {
+    "id": "scatter-plot-2d",
+    "name": "Scatter Plot 2D",
+    "script": "examples/css_feature_probes/scatter_plot_2d_probe.py",
+    "category": "plots",
+    "features": ["ScatterPlot2D"],
+    "sizes": [[1040, 760], [390, 720]],
+    "manual": true
+  },
+  {
+    "id": "scatter3d-dense",
+    "name": "Scatter3D Dense",
+    "script": "examples/css_feature_probes/scatter3d_dense_probe.py",
+    "category": "plots",

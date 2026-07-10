@@ -1,0 +1,211 @@
+# Spec: Default GUI Visual Polish And Density Audit
+
+## Goal
+
+Run a visual design audit similar to the existing `artifacts/visual_audit` workflow, but judge the default DragonGUI look and feel instead of only troubleshooting rendering defects. The output should identify and implement a first pass of default-theme and default-widget polish that makes GUI components, widgets, arrangements, and layouts look sleeker, more professional, and able to fit more useful data without requiring application authors to add custom CSS.
+
+This is not a custom stylesheet showcase. Focus on the built-in defaults shipped by DragonGUI: default theme tokens, framework CSS, native primitive drawing, default control metrics, and default layout/chrome behavior.
+
+## Source Of Truth
+
+Existing audit artifacts to inspect before editing:
+
+- `artifacts/visual_audit/REPORT.md`
+- `artifacts/visual_audit/report.json`
+- `artifacts/visual_audit/contact_sheets/contact-sheet-01.png`
+- `artifacts/visual_audit/contact_sheets/contact-sheet-02.png`
+- `artifacts/visual_audit/contact_sheets/contact-sheet-03.png`
+- `artifacts/visual_audit/contact_sheets/contact-sheet-04.png`
+- `artifacts/visual_audit/contact_sheets/contact-sheet-05.png`
+- `artifacts/visual_audit/contact_sheets/contact-sheet-06.png`
+- representative screenshots in `artifacts/visual_audit/screenshots/`
+- representative snapshots in `artifacts/visual_audit/snapshots/`
+
+Important context from the current audit:
+
+- The existing report is mostly defect-clean: 46 `pass`, 21 `needs_manual_interaction`, 0 `fail`, 0 `blocked`.
+- Many captures are visually usable but read as heavy and demo-like: large gutters, repeated boxed panels, soft low-density surfaces, broad borders, and similar card treatments across unrelated widgets.
+- Default dark theme values in `python/dragongui/theme.py` and `native/src/theme.rs` use a purple-blue accent, broad surface steps, 6px radius, 8px spacing, and 14px font size.
+- `native/src/framework.dg.css` defines the default widget chrome and currently gives many controls the same surface, border, and radius treatment.
+- Several probes override styles heavily, so distinguish actual defaults from probe-local CSS before deciding that a product default needs changing.
+
+## Visual Findings To Validate
+
+Use screenshots and snapshots to confirm these design issues before making changes:
+
+- Density: forms, property grids, sidebars, toolbars, and data-heavy panels use more vertical and horizontal space than needed for a professional workbench UI.
+- Hierarchy: panels, cards, controls, tables, and plot frames often use similar borders and fills, so important interactive regions do not stand out clearly.
+- Surface palette: the default dark palette leans heavily on nearby blue/purple surface colors. It is coherent but can read flat and monotonous across dense dashboards.
+- Borders: many components rely on visible 1px borders. On clustered screens this creates visual noise and reduces perceived polish.
+- Controls: buttons, small buttons, icon buttons, inputs, dropdowns, nav items, tabs, tree nodes, and selectable rows need more consistent default metrics and state contrast.
+- Navigation: sidebars, nav rows, menu bars, and tabs should feel more like compact application chrome and less like standalone cards.
+- Data surfaces: tables, property grids, log/code views, and plot containers should default to tighter rows, clearer headers, calmer gridlines, and less wasted padding.
+- Mobile/narrow layouts: controls should remain readable and compact without text collisions, excessive empty space, or overly chunky chrome.
+
+Do not treat every visual preference as a defect. Implement only changes that improve the default across many widgets and preserve existing behavior.
+
+## Required Scope
+
+Create a concrete default-look audit and polish pass covering at least these targets:
+
+- Core controls: `Button`, `SmallButton`, `IconButton`, `ImageButton`, `ArrowButton`, `Dropdown`, `TextInput`, `TextArea`, `NumberInput`, `DragNumber`, `Checkbox`, `RadioButton`, `ToggleSwitch`, `Slider`, `RangeSlider`, `ProgressBar`.
+- Navigation and workbench chrome: `Sidebar`, `NavItem`, `MenuBar`, `Menu`, `MenuItem`, `Tabs`, `Tab`, `Toolbar`, `Breadcrumbs`, `StatusBar`, `AppShell`, `WorkbenchLayout`.
+- Data-heavy widgets: `DataFrameTable`, `PropertyGrid`, `TreeView`, `TreeNode`, `SelectableList`, `LogView`, `CodeEditor`.
+- Layout containers: `Panel`, `Collapsible`, `ScrollArea`, `Splitter`, separators, nested panels, scrollable composites, plot embedding surfaces.
+- Plot wrappers/chrome only where controlled by GUI defaults; do not redesign plot rendering algorithms.
+
+Deliver a first pass that should be visible in default probes without requiring app authors to set custom styles.
+
+## Affected Files And Modules
+
+Primary default styling targets:
+
+- `native/src/framework.dg.css`
+  - Default widget selectors, pseudo-states, part styling, shared radius, border, background, hover/focus/selected/disabled treatments.
+- `python/dragongui/theme.py`
+  - Python-facing default theme tokens and light/dark parity.
+- `native/src/theme.rs`
+  - Native default theme tokens, control height calculation, color definitions.
+
+Likely native rendering/layout targets:
+
+- `native/src/primitives/mod.rs`
+  - Default primitive fill, border, focus, scrollbar, badge/tag, table-like, nav/tab/control drawing where CSS tokens are resolved into paint.
+- `native/src/text/mod.rs`
+  - Default text bounds, muted text contrast, row/control vertical alignment, ellipsis/clipping behavior.
+- `native/src/layout.rs`
+  - Default intrinsic sizes, padding/gap handling, compact row heights, sidebar/tab/control sizing, scrollable container behavior.
+- `native/src/table.rs`
+  - Table row/header metrics, gridline contrast, selected row treatment, dense data readability.
+- `native/src/style.rs` and `native/src/css_style.rs`
+  - Only if new supported default properties require parser/style propagation changes.
+
+Probe and audit targets:
+
+- `examples/css_feature_probes/visual_audit_manifest.json`
+- Existing probes under `examples/css_feature_probes/`
+- Optionally add a new probe such as `examples/css_feature_probes/default_theme_polish_probe.py` if current probes are too styled to isolate defaults.
+- `tools/visual_audit.py` only if the existing audit flow cannot capture the necessary comparison data.
+
+Documentation/artifacts:
+
+- `artifacts/IMPLEMENTATION_NOTES.md`
+- `artifacts/TEST_RESULTS.md`
+- `artifacts/visual_audit/REPORT.md`
+- `artifacts/visual_audit/report.json`
+
+## Implementation Guidance
+
+Start with analysis:
+
+1. Inspect the current contact sheets and representative screenshots for `core-widgets`, `form-controls`, `tool-buttons`, `navigation-widgets`, `toolbar`, `tree-view`, `property-grid`, `data-table-upgrades`, `layout-scrollable-composites`, `layout-plot-embedding`, `app-shell-workbench`, and `responsive-layout`.
+2. For each proposed polish change, identify whether the source is default theme/CSS/native metrics or probe-local CSS. Avoid changing product defaults to compensate for a probe-specific showcase style.
+3. Record a concise before/after checklist in `artifacts/IMPLEMENTATION_NOTES.md`.
+
+Default design direction:
+
+- Keep the UI work-focused and compact. Prefer clearer information hierarchy and tighter metrics over decorative effects.
+- Reduce repeated card heaviness: panels can remain framed, but nested panels and dense rows should avoid looking like stacks of thick boxes.
+- Make controls slightly more compact by default while preserving touch/mouse usability and readable text.
+- Use calmer surface separation: darker window background, slightly lifted panels, subtler borders, and stronger selected/focus states.
+- Improve state contrast: hover, active, selected, disabled, and focus states should be obvious without overusing bright fills.
+- Make data widgets denser by default: tighter rows, quieter gridlines, clear headers, and consistent numeric/text alignment where supported.
+- Keep radii restrained. Do not make the default theme rounded or playful.
+- Avoid a one-note purple/blue look. The built-in dark theme can keep an accent, but neutral surfaces should carry more of the interface.
+
+Potential concrete changes to consider:
+
+- Tune `Theme.dark()` and `Theme.light()` token values for more professional contrast and less saturated default surfaces.
+- Reduce default `spacing` or selected component padding where it creates obvious waste, but do not globally shrink until text clipping is checked.
+- Adjust `control_height()` and matching CSS heights only if button/input/text alignment remains correct.
+- Differentiate `surface`, `surface_alt`, `border`, `muted_text`, `focus`, and disabled tokens enough that hierarchy is clearer.
+- Add or adjust framework CSS for default part styling on `NavItem::item`, `NavItem::accent`, `Menu::item`, `ContextMenu::item`, scrollbar parts, table-like parts, toolbar separators, and tab/nav selected states if supported.
+- Prefer subtle border opacity/color changes over adding large shadows. Use shadows only if already supported and visually restrained.
+
+## Expected Behavior
+
+After implementation:
+
+- Default screens should show more data in the same viewport without feeling cramped.
+- Dense widgets should have compact, legible rows and headers.
+- Primary interactive controls should be visually identifiable but not oversized.
+- Navigation and toolbar chrome should read as application structure, not as a collection of individual cards.
+- Nested panels should maintain boundaries without excessive border noise.
+- Focus and selected states should be clear for keyboard and mouse users.
+- Disabled controls should still be recognizable and readable enough.
+- Mobile/narrow captures should avoid overlap, clipped labels where avoidable, and unnecessarily large blank regions.
+- Existing CSS override behavior should continue to work.
+
+## Validation Required
+
+Use the Python 3.13 environment documented by prior artifacts:
+
+```powershell
+$py = 'C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe'
+$env:LIB='C:\Users\nashk\AppData\Local\Programs\Python\Python313\libs;' + $env:LIB
+$env:PYO3_PYTHON=$py
+```
+
+Minimum checks:
+
+```powershell
+cargo fmt --manifest-path native/Cargo.toml -- --check
+cargo check --manifest-path native/Cargo.toml
+& $py -m pytest tests/test_components.py tests/test_vdom.py tests/test_python_api.py tests/test_visual_audit.py
+```
+
+If Python files are added or changed:
+
+```powershell
+& $py -m py_compile tools/visual_audit.py examples/css_feature_probes/*.py python/dragongui/*.py
+```
+
+If native code changes affect the Python extension used by the visual harness, rebuild and copy the extension using the existing workflow. Prior artifacts used:
+
+```powershell
+Copy-Item native/target/release/_dragongui.dll python/dragongui/_dragongui.pyd -Force
+```
+
+Required visual audit after implementation:
+
+```powershell
+& $py tools/visual_audit.py --target core-widgets --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
+& $py tools/visual_audit.py --target form-controls --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
+& $py tools/visual_audit.py --target tool-buttons --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
+& $py tools/visual_audit.py --target navigation-widgets --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
+& $py tools/visual_audit.py --target toolbar --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
+& $py tools/visual_audit.py --target tree-view --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
+& $py tools/visual_audit.py --target property-grid --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
+& $py tools/visual_audit.py --target data-table-upgrades --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
+& $py tools/visual_audit.py --target layout-scrollable-composites --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
+& $py tools/visual_audit.py --target layout-plot-embedding --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
+& $py tools/visual_audit.py --target app-shell-workbench --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
+& $py tools/visual_audit.py --target responsive-layout --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
+```
+
+If a new default-theme polish probe is added, include it in the manifest and run it at desktop and `390x720`.
+
+Update the visual audit artifacts and include a short visual-review summary in `artifacts/IMPLEMENTATION_NOTES.md`.
+
+## Edge Cases
+
+- Long labels in buttons, tabs, nav items, property names, table headers, and tree nodes.
+- Very narrow mobile width around `390x720`, plus any existing `320x640` stress targets.
+- High DPI / scale-factor rounding where 1px borders and text baselines can look uneven.
+- Focus rings on small controls and icon-only buttons.
+- Disabled, selected, active, hover, open, and checked states.
+- Nested panels inside scroll areas, especially data-heavy dashboards.
+- Tables with many columns and mixed numeric/text content.
+- Scrollbar thumb visibility on dark surfaces.
+- Existing app-level CSS that relies on default tokens or widget part names.
+- Light theme parity if dark theme token names or metrics change.
+
+## Out Of Scope
+
+- Building a custom CSS theme for a single demo.
+- Redesigning public widget APIs.
+- Replacing the visual-audit harness.
+- Large feature work such as new layout engines, new table virtualization, or new plotting behavior.
+- Fixing unrelated rendering correctness bugs unless exposed directly by the default-polish work.
+- Adding decorative hero/marketing styling, large gradients, or playful visuals to default workbench components.
+- Removing application authors' ability to override defaults with CSS.

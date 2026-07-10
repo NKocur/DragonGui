@@ -211,11 +211,13 @@ app.stylesheet(
 
         VLayout.root {
             padding-right: 8px;
+            gap: 10px;
         }
 
         Panel.case,
         Panel.narrow-card {
-            padding: 10px;
+            padding: 8px;
+            gap: 8px;
         }
 
         HLayout.stress-row,
@@ -225,12 +227,29 @@ app.stylesheet(
         }
 
         Label.field-label {
-            width: 124px;
+            width: 104px;
+            font-size: 12px;
+            line-height: 1.08;
         }
 
         Button.shrink-action,
         SmallButton.shrink-action {
             min-width: 72px;
+        }
+
+        HLayout.two-up {
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        Panel.half {
+            width: 100%;
+        }
+
+        Label.long-value {
+            padding: 6px 7px;
+            font-size: 12px;
+            line-height: 1.1;
         }
     }
     """

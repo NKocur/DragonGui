@@ -1,0 +1,220 @@
+[
+  {
+    "id": "core-widgets",
+    "name": "Core Widgets",
+    "script": "examples/css_feature_probes/core_widgets_probe.py",
+    "category": "widgets",
+    "features": ["Button", "Badge", "Tag", "LED", "TextInput", "Checkbox", "Dropdown", "NumberInput", "ColorPicker", "Collapsible", "Tooltip", "Modal"],
+    "sizes": [[980, 760], [390, 720]],
+    "manual": true,
+    "notes": "Includes overlays and stateful controls that benefit from follow-up interaction checks."
+  },
+  {
+    "id": "badge-layout",
+    "name": "Badge Layout",
+    "script": "examples/css_feature_probes/badge_layout_probe.py",
+    "category": "widgets",
+    "features": ["Badge", "Tag", "Button badge", "Tab badge", "NavItem badge", "badge parts", "responsive badges"],
+    "sizes": [[900, 640], [390, 720], [320, 640]],
+    "manual": false
+  },
+  {
+    "id": "form-controls",
+    "name": "Form Controls",
+    "script": "examples/css_feature_probes/form_controls_probe.py",
+    "category": "widgets",
+    "features": ["TextInput", "TextArea", "Checkbox", "Dropdown", "Button", "Slider", "NumberInput", "ProgressBar"],
+    "sizes": [[980, 760], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "tool-buttons",
+    "name": "Tool Buttons",
+    "script": "examples/css_feature_probes/tool_buttons_probe.py",
+    "category": "widgets",
+    "features": ["SmallButton", "IconButton", "ImageButton", "ArrowButton", "Selectable"],
+    "sizes": [[900, 640], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "toggle-switch",
+    "name": "Toggle Switch",
+    "script": "examples/css_feature_probes/toggle_switch_probe.py",
+    "category": "widgets",
+    "features": ["ToggleSwitch"],
+    "sizes": [[860, 420], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "date-time-inputs",
+    "name": "Date And Time Inputs",
+    "script": "examples/css_feature_probes/date_time_inputs_probe.py",
+    "category": "widgets",
+    "features": ["DateInput", "TimeInput", "DateTimeInput"],
+    "sizes": [[880, 430], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "range-slider",
+    "name": "Range Slider",
+    "script": "examples/css_feature_probes/range_slider_probe.py",
+    "category": "widgets",
+    "features": ["RangeSlider", "Slider"],
+    "sizes": [[900, 500], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "radio-group",
+    "name": "Radio Group",
+    "script": "examples/css_feature_probes/radio_group_probe.py",
+    "category": "widgets",
+    "features": ["RadioGroup", "RadioButton"],
+    "sizes": [[980, 580], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "selectable-list",
+    "name": "Selectable List",
+    "script": "examples/css_feature_probes/selectable_list_probe.py",
+    "category": "widgets",
+    "features": ["SelectableList", "Selectable"],
+    "sizes": [[980, 620], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "property-grid",
+    "name": "Property Grid",
+    "script": "examples/css_feature_probes/property_grid_probe.py",
+    "category": "widgets",
+    "features": ["Property", "PropertyGrid", "TextInput", "NumberInput", "Dropdown", "Checkbox"],
+    "sizes": [[920, 560], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "drag-number",
+    "name": "Drag Number And Vector",
+    "script": "examples/css_feature_probes/drag_number_probe.py",
+    "category": "widgets",
+    "features": ["DragNumber", "DragVector"],
+    "sizes": [[900, 500], [390, 720]],
+    "manual": true
+  },
+  {
+    "id": "navigation-widgets",
+    "name": "Navigation Widgets",
+    "script": "examples/css_feature_probes/navigation_widgets_probe.py",
+    "category": "widgets",
+    "features": ["MenuBar", "Menu", "MenuItem", "Sidebar", "NavItem", "Tabs", "Tab", "Pages", "Page", "ContextMenu"],
+    "sizes": [[980, 700], [390, 720]],
+    "manual": true
+  },
+  {
+    "id": "menu-overlays",
+    "name": "Menu Overlays",
+    "script": "examples/css_feature_probes/menu_overlays_probe.py",
+    "category": "widgets",
+    "features": ["MenuBar", "Menu", "MenuItem", "ContextMenu"],
+    "sizes": [[900, 680], [390, 720]],
+    "manual": true
+  },
+  {
+    "id": "overlay-stack",
+    "name": "Overlay Stack",
+    "script": "examples/css_feature_probes/overlay_stack_probe.py",
+    "category": "widgets",
+    "features": ["Modal", "Tooltip", "Dropdown", "ContextMenu", "MenuBar", "Toast"],
+    "sizes": [[960, 720], [390, 720]],
+    "manual": true
+  },
+  {
+    "id": "breadcrumbs",
+    "name": "Breadcrumbs",
+    "script": "examples/css_feature_probes/breadcrumbs_probe.py",
+    "category": "widgets",
+    "features": ["Breadcrumbs"],
+    "sizes": [[860, 540], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "command-palette",
+    "name": "Command Palette",
+    "script": "examples/css_feature_probes/command_palette_probe.py",
+    "category": "widgets",
+    "features": ["CommandPalette", "SearchBox"],
+    "sizes": [[920, 520], [390, 720]],
+    "manual": true
+  },
+  {
+    "id": "toolbar",
+    "name": "Toolbar",
+    "script": "examples/css_feature_probes/toolbar_probe.py",
+    "category": "widgets",
+    "features": ["Toolbar", "ToolbarSeparator"],
+    "sizes": [[900, 520], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "tree-view",
+    "name": "Tree View",
+    "script": "examples/css_feature_probes/tree_view_probe.py",
+    "category": "widgets",
+    "features": ["TreeView", "TreeNode"],
+    "sizes": [[980, 620], [390, 720]],
+    "manual": true
+  },
+  {
+    "id": "splitter",
+    "name": "Splitter",
+    "script": "examples/css_feature_probes/splitter_probe.py",
+    "category": "layout",
+    "features": ["Splitter", "Pane"],
+    "sizes": [[1060, 620], [390, 720]],
+    "manual": true
+  },
+  {
+    "id": "drag-drop",
+    "name": "Drag And Drop",
+    "script": "examples/css_feature_probes/drag_drop_probe.py",
+    "category": "widgets",
+    "features": ["DragSource", "DropTarget", "DropZone"],
+    "sizes": [[980, 600], [390, 720]],
+    "manual": true
+  },
+  {
+    "id": "code-editor",
+    "name": "Code Editor",
+    "script": "examples/css_feature_probes/code_editor_probe.py",
+    "category": "widgets",
+    "features": ["CodeEditor"],
+    "sizes": [[960, 560], [390, 720]],
+    "manual": true
+  },
+  {
+    "id": "log-view",
+    "name": "Log View",
+    "script": "examples/css_feature_probes/log_view_probe.py",
+    "category": "widgets",
+    "features": ["LogView"],
+    "sizes": [[960, 560], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "typography",
+    "name": "Typography",
+    "script": "examples/css_feature_probes/typography_probe.py",
+    "category": "css",
+    "features": ["Label", "Text wrapping", "Ellipsis", "Line height"],
+    "sizes": [[850, 700], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "layout-containers",
+    "name": "Layout Containers",
+    "script": "examples/css_feature_probes/layout_containers_probe.py",
+    "category": "layout",
+    "features": ["HLayout", "VLayout", "Panel", "ScrollArea", "Spacer", "Separator"],
+    "sizes": [[900, 720], [390, 720]],
+    "manual": false
+  },
+  {
+    "id": "app-shell-workbench",

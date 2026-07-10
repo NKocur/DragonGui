@@ -1,0 +1,260 @@
+
+use taffy::prelude::*;
+use taffy::style::Overflow;
+
+use crate::document::{WidgetKind, WidgetNode};
+use crate::events::WidgetState;
+use crate::style::{
+    badge_width_for_text, code_editor_gutter_width_for_style, collapsible_header_height_for_style,
+    standalone_badge_width_for_text, tabs_header_height_for_style, AlignItemsStyle, DisplayStyle,
+    FlexDirectionStyle, GridAutoFlowStyle, GridLineStyle, GridPlacementStyle, GridTemplateAreas,
+    GridTrackFitContentSize, GridTrackMaxSize, GridTrackMinSize, GridTrackRepeatKind,
+    GridTrackSize, LayoutLength, LineHeight, OverflowStyle, PositionStyle, TextOverflow,
+    BADGE_GAP_LP, CHECKBOX_BOX_LP, CHECKBOX_LEFT_PAD_LP, TOGGLE_SWITCH_TRACK_WIDTH_LP,
+};
+use crate::theme::Theme;
+
+const MENU_LABEL_WIDTH_SAFETY_LP: f32 = 6.0;
+const PANEL_BODY_VISUAL_INSET_LP: f32 = 1.0;
+const LOADING_SPINNER_DEFAULT_SIZE_LP: f32 = 18.0;
+const LOADING_SPINNER_GAP_LP: f32 = 8.0;
+
+fn raw_prop_f32(node: &WidgetNode, name: &str) -> Option<f32> {
+    node.props
+        .raw_props
+        .get(name)
+        .and_then(|value| value.as_f64())
+        .map(|value| value as f32)
+        .filter(|value| value.is_finite())
+}
+
+fn loading_spinner_size_lp(node: &WidgetNode) -> f32 {
+    raw_prop_f32(node, "size")
+        .filter(|value| *value > 0.0)
+        .unwrap_or(LOADING_SPINNER_DEFAULT_SIZE_LP)
+}
+
+// ---------------------------------------------------------------------------
+// Public result type
+// ---------------------------------------------------------------------------
+
+/// Axis-aligned pixel rectangle in window space (top-left origin).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Rect {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+impl Rect {
+    pub fn intersect(self, other: Rect) -> Option<Rect> {
+        let left = self.x.max(other.x);
+        let top = self.y.max(other.y);
+        let right = (self.x + self.w).min(other.x + other.w);
+        let bottom = (self.y + self.h).min(other.y + other.h);
+        if right <= left || bottom <= top {
+            return None;
+        }
+        Some(Rect {
+            x: left,
+            y: top,
+            w: right - left,
+            h: bottom - top,
+        })
+    }
+}
+
+/// Maps each widget `id` to its computed pixel rect and visible clipped rect.
+#[derive(Debug, Default)]
+pub struct LayoutResult {
+    pub rects: HashMap<String, Rect>,
+    pub clips: HashMap<String, Rect>,
+    pub paint_clips: HashMap<String, Rect>,
+    pub scroll_x: HashMap<String, f32>,
+    pub scroll_y: HashMap<String, f32>,
+    pub scroll_max_x: HashMap<String, f32>,
+    pub scroll_max_y: HashMap<String, f32>,
+    pub scale_factor: f32,
+}
+
+impl LayoutResult {
+    pub fn visible_rect(&self, id: &str) -> Option<Rect> {
+        self.clips
+            .get(id)
+            .copied()
+            .or_else(|| self.rects.get(id).copied())
+            .filter(|rect| rect.w > 0.0 && rect.h > 0.0)
+    }
+
+    pub fn paint_clip_rect(&self, id: &str) -> Option<Rect> {
+        self.paint_clips
+            .get(id)
+            .copied()
+            .filter(|rect| rect.w > 0.0 && rect.h > 0.0)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Public entry point
+// ---------------------------------------------------------------------------
+
+/// Compute a flexbox layout for `root` given a `window_w Ã— window_h` physical
+/// pixel canvas and a HiDPI `scale_factor`.
+///
+/// Layout constants (control height, padding, gap) are defined in logical
+/// pixels and multiplied by `scale_factor` to yield physical pixel sizes,
+/// matching the physical pixel coordinates that wgpu uses.
+///
+/// Returns absolute physical pixel rects for every node in the tree.
+pub fn compute_layout(
+    root: &WidgetNode,
+    window_w: f32,
+    window_h: f32,
+    scale_factor: f32,
+    theme: &Theme,
+    state: Option<&WidgetState>,
+) -> LayoutResult {
+    let mut tree: TaffyTree<()> = TaffyTree::new();
+    let root_id = build_node(
+        &mut tree,
+        root,
+        scale_factor,
+        theme,
+        Some((window_w, window_h)),
+        None,
+        None,
+        false,
+        false,
+        false,
+        state,
+        None,
+    );
+
+    tree.compute_layout(
+        root_id,
+        Size {
+            width: AvailableSpace::Definite(window_w),
+            height: AvailableSpace::Definite(window_h),
+        },
+    )
+    .expect("taffy layout failed");
+
+    let mut result = LayoutResult {
+        scale_factor,
+        ..LayoutResult::default()
+    };
+    collect(&tree, root_id, root, 0.0, 0.0, &mut result);
+    apply_titled_container_absolute_offsets(root, &mut result, scale_factor, theme);
+    apply_navigation_layout(root, &mut result, scale_factor, theme, state);
+    apply_modal_layout(root, &mut result, scale_factor, theme);
+    apply_tooltip_layout(root, &mut result, scale_factor, theme, state);
+    apply_grid_auto_row_positions(root, &mut result, scale_factor, theme);
+    compute_clips(root, &mut result, scale_factor, theme);
+    apply_scroll_offsets(root, &mut result, scale_factor, theme, state);
+    apply_fixed_positions(root, &mut result, scale_factor);
+    result.clips.clear();
+    result.paint_clips.clear();
+    compute_clips(root, &mut result, scale_factor, theme);
+    result
+}
+
+// ---------------------------------------------------------------------------
+// Tree builder
+// ---------------------------------------------------------------------------
+
+fn build_node(
+    tree: &mut TaffyTree<()>,
+    node: &WidgetNode,
+    sf: f32,
+    theme: &Theme,
+    size_override: Option<(f32, f32)>,
+    parent_size: Option<(f32, f32)>,
+    parent_kind: Option<&WidgetKind>,
+    parent_allows_intrinsic_leaf_width: bool,
+    layout_modal_children: bool,
+    window_shell_body_child: bool,
+    state: Option<&WidgetState>,
+    parent_grid_areas: Option<&GridTemplateAreas>,
+) -> NodeId {
+    let mut style = style_for(
+        node,
+        sf,
+        theme,
+        parent_size,
+        parent_kind,
+        parent_allows_intrinsic_leaf_width,
+        layout_modal_children,
+        window_shell_body_child,
+        state,
+    );
+    apply_parent_grid_area_placement(&mut style, node, parent_grid_areas);
+    if let Some((w, h)) = size_override {
+        style.size = taffy::geometry::Size {
+            width: Dimension::Length(w),
+            height: Dimension::Length(h),
+        };
+    }
+    let child_allows_intrinsic_leaf_width = allows_intrinsic_leaf_width_for_children(node, &style);
+    let child_parent_size = definite_content_size(&style, parent_size);
+    let skip_children = matches!(
+        node.kind,
+        WidgetKind::Tabs
+            | WidgetKind::Pages
+            | WidgetKind::Menu
+            | WidgetKind::ContextMenu
+            | WidgetKind::Tooltip
+            | WidgetKind::Toast
+    ) || (node.kind == WidgetKind::Modal && !layout_modal_children)
+        || (node.kind == WidgetKind::Collapsible && !collapsible_expanded(node, state));
+    let skip_children =
+        skip_children || (node.kind == WidgetKind::TreeNode && !tree_node_expanded(node, state));
+    let child_ids: Vec<NodeId> = if skip_children {
+        Vec::new()
+    } else if titled_container_uses_body_layout(node) {
+        let body_style = titled_container_body_style(node, sf, theme);
+        let body_parent_size = definite_content_size(&body_style, child_parent_size);
+        let body_child_ids: Vec<NodeId> = node
+            .children
+            .iter()
+            .map(|c| {
+                build_node(
+                    tree,
+                    c,
+                    sf,
+                    theme,
+                    None,
+                    body_parent_size,
+                    Some(&node.kind),
+                    child_allows_intrinsic_leaf_width,
+                    layout_modal_children,
+                    false,
+                    state,
+                    node.style.layout.grid_template_areas.as_ref(),
+                )
+            })
+            .collect();
+        vec![tree
+            .new_with_children(body_style, &body_child_ids)
+            .expect("taffy titled body node failed")]
+    } else {
+        let window_has_shell_bars = window_has_app_shell_bars(node);
+        node.children
+            .iter()
+            .map(|c| {
+                build_node(
+                    tree,
+                    c,
+                    sf,
+                    theme,
+                    None,
+                    child_parent_size,
+                    Some(&node.kind),
+                    child_allows_intrinsic_leaf_width,
+                    layout_modal_children,
+                    window_body_child_needs_shell_shrink(node, c, window_has_shell_bars),
+                    state,
+                    node.style.layout.grid_template_areas.as_ref(),
+                )
+            })
+            .collect()

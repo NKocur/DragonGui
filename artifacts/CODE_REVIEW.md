@@ -1,10 +1,10 @@
-# Code Review: Badge Layout Visual Audit Pass
+# Code Review: Dramatic Default GUI Polish Pass
 
 ## Approval Status
 
 Approved.
 
-The prior code-review finding has been addressed. Non-uniform `::badge` padding authored in CSS is now preserved for part layout by storing the maximum resolved edge in the existing single-value `PartLayoutStyle.padding` model, and the new CSS-level regression verifies that this path affects badge sizing.
+The blocking toolbar/SearchBox overlap finding is resolved. I found no remaining blocking issue in the reviewed diff, targeted screenshots, toolbar snapshots, or focused validation artifacts.
 
 ## Findings
 
@@ -12,26 +12,36 @@ No blocking findings remain.
 
 ## Review Notes
 
-- Reviewed the badge geometry changes in `native/src/style.rs`, `native/src/text/mod.rs`, and `native/src/primitives/mod.rs`.
-- Reviewed the CSS part-padding fix in `native/src/css_style.rs`: `apply_part_layout_declaration()` now preserves non-uniform part padding by resolving the four shorthand edges and storing the maximum value.
-- Reviewed the new regression `css_style::tests::non_uniform_part_padding_is_preserved_for_badge_sizing`, which applies `Button.styled::badge { padding: 5px 9px; border-width: 2px; font-size: 13px; }` through the stylesheet system and verifies styled badge width increases.
-- Verified the regenerated `badge-layout-320x640` snapshot now exposes computed part padding for styled badges:
-  - `Button.styled::badge`: `layout.padding: 9.0`
-  - `Tab.styled::badge`: `layout.padding: 9.0`
-  - `NavItem.styled::badge`: `layout.padding: 8.0`
-- Reviewed `artifacts/visual_audit/REPORT.md`: 67 entries, 46 `pass`, 21 `needs_manual_interaction`, 0 `fail`, 0 `blocked`; `badge-layout` remains `pass` with desktop, mobile, and `320x640` screenshots/snapshots.
-
-## Residual Risks
-
-- Full `cargo test --manifest-path native/Cargo.toml` was not run.
-- The part padding model remains single-value and conservative; it does not represent separate horizontal/vertical/per-edge part padding.
-- `core-widgets` and `navigation-widgets` remain `needs_manual_interaction`; static badge captures were rerun, but interaction states are still not covered.
-- The visual badge snapshot validator is conservative and approximate rather than pixel-perfect.
-- The working tree includes generated `.test-cache` churn and broader prior layout/runtime changes outside the badge-focused fix; those should be intentionally included or separated before merge.
+- Reviewed the SearchBox fix in `python/dragongui/widgets.py`: composed `SearchBox` now reserves `min_width: 164`, preventing the wrapper from shrinking to zero while its icon/input/clear children keep painting.
+- Reviewed the toolbar probe update in `examples/css_feature_probes/toolbar_probe.py`: the previous overfull toolbar row is split into an icon-command row and a search/action row, preserving coverage without forcing overlap in desktop or mobile captures.
+- Reviewed regenerated toolbar artifacts:
+  - `artifacts/visual_audit/screenshots/toolbar-desktop-1.png`
+  - `artifacts/visual_audit/screenshots/toolbar-390x720.png`
+  - `artifacts/visual_audit/snapshots/toolbar-desktop-1.json`
+  - `artifacts/visual_audit/snapshots/toolbar-390x720.json`
+- The prior overlap is gone. Snapshot geometry now shows the SearchBox wrapper (`dg-16`) at `w: 205.0`, with the following `Deploy` and disabled buttons starting after the search controls in both desktop and 390px captures.
+- Reviewed `artifacts/visual_audit/report.json`: `68` entries, `47 pass`, `21 needs_manual_interaction`, `0 fail`, `0 blocked`; `toolbar` remains `pass` with updated notes for the SearchBox fix.
+- The broader dramatic default-polish pass remains visually stronger than the first pass, and the previously reviewed app-shell, responsive-layout, flex-stress, and default-polish-stress screenshots remain acceptable.
 
 ## Validation Reviewed
 
-- Artifact-reported validation passed for Python compile, `cargo fmt --check`, `cargo check`, focused native badge tests, and visual audit reruns.
-- I reran the focused CSS regression locally:
-  - `cargo test --manifest-path native/Cargo.toml non_uniform_part_padding_is_preserved_for_badge_sizing -- --nocapture`
-  - Result: passed.
+- Reran locally:
+  - `python -m py_compile python\dragongui\widgets.py examples\css_feature_probes\toolbar_probe.py`: passed
+- Reviewed reported validation in `artifacts/TEST_RESULTS.md`:
+  - py_compile for changed probes and `widgets.py`: passed
+  - `cargo fmt --check`: passed
+  - `cargo check`: passed
+  - focused native theme/table/framework tests: passed
+  - `default-polish-stress` visual audit: passed
+  - `toolbar --sizes desktop,mobile`: passed
+
+## Residual Risks
+
+- Full native `cargo test --manifest-path native/Cargo.toml` was not run.
+- Full all-target visual audit from scratch was not run.
+- Python pytest was not rerun in this pass because Python 3.12 lacks pytest locally; prior Python 3.11 failures remain documented as unrelated.
+- The 21 `needs_manual_interaction` targets still need hover/open/focus/overlay coverage.
+- `SearchBox` now has a stronger default minimum width, which is the right guard for composed children but may require callers who intentionally want very narrow search fields to override `min_width`.
+- `artifacts/MAINTAINABILITY_REVIEW.md` is still stale from an earlier badge-focused pass and does not review this dramatic visual-polish implementation.
+- The working tree includes generated visual-audit artifacts, `.test-cache` churn, and untracked command-output/session files; those should be intentionally included or cleaned before merge.
+

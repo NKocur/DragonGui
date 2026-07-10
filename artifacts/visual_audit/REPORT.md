@@ -1,12 +1,12 @@
 # DragonGUI Visual Audit Report
 
-Generated: 2026-07-10 00:07:32 Eastern Daylight Time
+Generated: 2026-07-10 12:04:18 Pacific Daylight Time
 
 This is a manifest-driven visual audit. `pass` means the saved screenshot state was visually reviewed against `artifacts/SPEC.md` and no obvious defect was recorded. `needs_manual_interaction` means the static capture was reviewed, but important hover/open/drag/focus or animated states still need manual or automated interaction coverage.
 
 ## Summary
 
-- pass: 46
+- pass: 47
 - needs_manual_interaction: 21
 - fail: 0
 - blocked: 0
@@ -58,12 +58,12 @@ This is a manifest-driven visual audit. `pass` means the saved screenshot state 
 - Priority: `low`
 - Probe: `examples\css_feature_probes\tool_buttons_probe.py`
 - Features: `SmallButton`, `IconButton`, `ImageButton`, `ArrowButton`, `Selectable`
-- Screenshots: `screenshots/tool-buttons-desktop-1.png`
-- Debug snapshots: `snapshots/tool-buttons-desktop-1.json`
-- Logs: `logs/tool-buttons-desktop-1.stdout.txt`, `logs/tool-buttons-desktop-1.stderr.txt`
-- Notes: Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.
+- Screenshots: `screenshots/tool-buttons-desktop-1.png`, `screenshots/tool-buttons-390x720.png`
+- Debug snapshots: `snapshots/tool-buttons-desktop-1.json`, `snapshots/tool-buttons-390x720.json`
+- Logs: `logs/tool-buttons-desktop-1.stdout.txt`, `logs/tool-buttons-desktop-1.stderr.txt`, `logs/tool-buttons-390x720.stdout.txt`, `logs/tool-buttons-390x720.stderr.txt`
+- Notes: Visual review: desktop and 390x720 captures show compact tool buttons without static clipping or overlap in the saved state.
 - Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`
-- Reproduction: `python tools/visual_audit.py --target tool-buttons --sizes desktop-1`
+- Reproduction: `python tools/visual_audit.py --target tool-buttons --sizes desktop-1`; `python tools/visual_audit.py --target tool-buttons --sizes 390x720`
 
 ### Toggle Switch (`toggle-switch`)
 
@@ -136,12 +136,12 @@ This is a manifest-driven visual audit. `pass` means the saved screenshot state 
 - Priority: `low`
 - Probe: `examples\css_feature_probes\property_grid_probe.py`
 - Features: `Property`, `PropertyGrid`, `TextInput`, `NumberInput`, `Dropdown`, `Checkbox`
-- Screenshots: `screenshots/property-grid-desktop-1.png`
-- Debug snapshots: `snapshots/property-grid-desktop-1.json`
-- Logs: `logs/property-grid-desktop-1.stdout.txt`, `logs/property-grid-desktop-1.stderr.txt`
-- Notes: Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.
+- Screenshots: `screenshots/property-grid-desktop-1.png`, `screenshots/property-grid-390x720.png`
+- Debug snapshots: `snapshots/property-grid-desktop-1.json`, `snapshots/property-grid-390x720.json`
+- Logs: `logs/property-grid-desktop-1.stdout.txt`, `logs/property-grid-desktop-1.stderr.txt`, `logs/property-grid-390x720.stdout.txt`, `logs/property-grid-390x720.stderr.txt`
+- Notes: Visual review: desktop and 390x720 captures show property editors, labels, and dense rows contained without static clipping or overlap in the saved state.
 - Suspected modules: `native/src/layout.rs`, `native/src/primitives/mod.rs`, `native/src/runtime.rs`, `native/src/text/mod.rs`
-- Reproduction: `python tools/visual_audit.py --target property-grid --sizes desktop-1`
+- Reproduction: `python tools/visual_audit.py --target property-grid --sizes desktop-1`; `python tools/visual_audit.py --target property-grid --sizes 390x720`
 
 ### Drag Number And Vector (`drag-number`)
 
@@ -227,12 +227,12 @@ This is a manifest-driven visual audit. `pass` means the saved screenshot state 
 - Priority: `low`
 - Probe: `examples\css_feature_probes\toolbar_probe.py`
 - Features: `Toolbar`, `ToolbarSeparator`
-- Screenshots: `screenshots/toolbar-desktop-1.png`
-- Debug snapshots: `snapshots/toolbar-desktop-1.json`
-- Logs: `logs/toolbar-desktop-1.stdout.txt`, `logs/toolbar-desktop-1.stderr.txt`
-- Notes: Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.
+- Screenshots: `screenshots/toolbar-desktop-1.png`, `screenshots/toolbar-390x720.png`
+- Debug snapshots: `snapshots/toolbar-desktop-1.json`, `snapshots/toolbar-390x720.json`
+- Logs: `logs/toolbar-desktop-1.stdout.txt`, `logs/toolbar-desktop-1.stderr.txt`, `logs/toolbar-390x720.stdout.txt`, `logs/toolbar-390x720.stderr.txt`
+- Notes: Visual review after SearchBox toolbar fix: desktop and 390x720 captures show the search/action controls in a separate toolbar row with nonzero SearchBox width. The previous static overlap over Deploy/Disabled is resolved.
 - Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`
-- Reproduction: `python tools/visual_audit.py --target toolbar --sizes desktop-1`
+- Reproduction: `python tools/visual_audit.py --target toolbar --sizes desktop-1`; `python tools/visual_audit.py --target toolbar --sizes 390x720`
 
 ### Tree View (`tree-view`)
 
@@ -240,12 +240,12 @@ This is a manifest-driven visual audit. `pass` means the saved screenshot state 
 - Priority: `medium`
 - Probe: `examples\css_feature_probes\tree_view_probe.py`
 - Features: `TreeView`, `TreeNode`
-- Screenshots: `screenshots/tree-view-desktop-1.png`
-- Debug snapshots: `snapshots/tree-view-desktop-1.json`
-- Logs: `logs/tree-view-desktop-1.stdout.txt`, `logs/tree-view-desktop-1.stderr.txt`
-- Notes: Captured with native DragonGUI window screenshot API. Additional run: Static capture visual review: first-viewport screenshot inspected; captured closed/default state is usable, but listed interactive states still need manual or automated checks.
+- Screenshots: `screenshots/tree-view-desktop-1.png`, `screenshots/tree-view-390x720.png`
+- Debug snapshots: `snapshots/tree-view-desktop-1.json`, `snapshots/tree-view-390x720.json`
+- Logs: `logs/tree-view-desktop-1.stdout.txt`, `logs/tree-view-desktop-1.stderr.txt`, `logs/tree-view-390x720.stdout.txt`, `logs/tree-view-390x720.stderr.txt`
+- Notes: Captured with native DragonGUI window screenshot API. Additional run: Static capture visual review: first-viewport screenshot inspected; captured closed/default state is usable, but listed interactive states still need manual or automated checks. Additional run: No visual issue recorded by automated first pass. Additional run: Captured with native DragonGUI window screenshot API.
 - Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`
-- Reproduction: `python tools/visual_audit.py --target tree-view --sizes desktop-1`
+- Reproduction: `python tools/visual_audit.py --target tree-view --sizes desktop-1`; `python tools/visual_audit.py --target tree-view --sizes 390x720`
 
 ### Splitter (`splitter`)
 
@@ -351,18 +351,31 @@ This is a manifest-driven visual audit. `pass` means the saved screenshot state 
 - Suspected modules: `native/src/layout.rs`, `native/src/primitives/mod.rs`, `native/src/runtime.rs`
 - Reproduction: `python tools/visual_audit.py --target layout-flex-stress --sizes 390x720`; `python tools/visual_audit.py --target layout-flex-stress --sizes desktop-1`
 
+### Default Polish Stress (`default-polish-stress`)
+
+- Status: `pass`
+- Priority: `high`
+- Probe: `examples\css_feature_probes\default_polish_stress_probe.py`
+- Features: `Default theme`, `AppShell`, `Sidebar`, `Toolbar`, `Tabs`, `DataFrameTable`, `PropertyGrid`, `Nested scroll`
+- Screenshots: `screenshots/default-polish-stress-desktop-1.png`, `screenshots/default-polish-stress-390x720.png`, `screenshots/default-polish-stress-320x640.png`
+- Debug snapshots: `snapshots/default-polish-stress-desktop-1.json`, `snapshots/default-polish-stress-390x720.json`, `snapshots/default-polish-stress-320x640.json`
+- Logs: `logs/default-polish-stress-desktop-1.stdout.txt`, `logs/default-polish-stress-desktop-1.stderr.txt`, `logs/default-polish-stress-390x720.stdout.txt`, `logs/default-polish-stress-390x720.stderr.txt`, `logs/default-polish-stress-320x640.stdout.txt`, `logs/default-polish-stress-320x640.stderr.txt`
+- Notes: Default-only visual stress target with minimal layout styling and no custom visual theme. Visual review after rerun: desktop, 390x720, and 320x640 captures render without static clipping/overlap defects in first viewport; 390px and 320px stack the shell vertically and remaining overflow is scroll-owned.
+- Suspected modules: `native/src/layout.rs`, `native/src/primitives/mod.rs`, `native/src/runtime.rs`
+- Reproduction: `python tools/visual_audit.py --target default-polish-stress --sizes desktop-1`; `python tools/visual_audit.py --target default-polish-stress --sizes 390x720`; `python tools/visual_audit.py --target default-polish-stress --sizes 320x640`
+
 ### Layout Panel Bounds (`layout-panel-bounds`)
 
 - Status: `pass`
 - Priority: `low`
 - Probe: `examples\css_feature_probes\layout_panel_bounds_probe.py`
 - Features: `Panel`, `Collapsible`, `ScrollArea`, `Nested panels`
-- Screenshots: `screenshots/layout-panel-bounds-desktop-1.png`
-- Debug snapshots: `snapshots/layout-panel-bounds-desktop-1.json`
-- Logs: `logs/layout-panel-bounds-desktop-1.stdout.txt`, `logs/layout-panel-bounds-desktop-1.stderr.txt`
-- Notes: Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.
+- Screenshots: `screenshots/layout-panel-bounds-desktop-1.png`, `screenshots/layout-panel-bounds-390x720.png`
+- Debug snapshots: `snapshots/layout-panel-bounds-desktop-1.json`, `snapshots/layout-panel-bounds-390x720.json`
+- Logs: `logs/layout-panel-bounds-desktop-1.stdout.txt`, `logs/layout-panel-bounds-desktop-1.stderr.txt`, `logs/layout-panel-bounds-390x720.stdout.txt`, `logs/layout-panel-bounds-390x720.stderr.txt`
+- Notes: Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state. Additional run: No visual issue recorded by automated first pass. Additional run: Captured with native DragonGUI window screenshot API.
 - Suspected modules: `native/src/layout.rs`, `native/src/primitives/mod.rs`, `native/src/runtime.rs`
-- Reproduction: `python tools/visual_audit.py --target layout-panel-bounds --sizes desktop-1`
+- Reproduction: `python tools/visual_audit.py --target layout-panel-bounds --sizes desktop-1`; `python tools/visual_audit.py --target layout-panel-bounds --sizes 390x720`
 
 ### Layout Grid And Masonry (`layout-grid-masonry`)
 
@@ -370,12 +383,12 @@ This is a manifest-driven visual audit. `pass` means the saved screenshot state 
 - Priority: `low`
 - Probe: `examples\css_feature_probes\layout_grid_masonry_probe.py`
 - Features: `GridLayout`, `CSS grid`, `Responsive collapse`, `Nested grids`
-- Screenshots: `screenshots/layout-grid-masonry-desktop-1.png`
-- Debug snapshots: `snapshots/layout-grid-masonry-desktop-1.json`
-- Logs: `logs/layout-grid-masonry-desktop-1.stdout.txt`, `logs/layout-grid-masonry-desktop-1.stderr.txt`
-- Notes: Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.
+- Screenshots: `screenshots/layout-grid-masonry-desktop-1.png`, `screenshots/layout-grid-masonry-390x720.png`
+- Debug snapshots: `snapshots/layout-grid-masonry-desktop-1.json`, `snapshots/layout-grid-masonry-390x720.json`
+- Logs: `logs/layout-grid-masonry-desktop-1.stdout.txt`, `logs/layout-grid-masonry-desktop-1.stderr.txt`, `logs/layout-grid-masonry-390x720.stdout.txt`, `logs/layout-grid-masonry-390x720.stderr.txt`
+- Notes: Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state. Additional run: No visual issue recorded by automated first pass. Additional run: Captured with native DragonGUI window screenshot API.
 - Suspected modules: `native/src/layout.rs`, `native/src/primitives/mod.rs`, `native/src/runtime.rs`
-- Reproduction: `python tools/visual_audit.py --target layout-grid-masonry --sizes desktop-1`
+- Reproduction: `python tools/visual_audit.py --target layout-grid-masonry --sizes desktop-1`; `python tools/visual_audit.py --target layout-grid-masonry --sizes 390x720`
 
 ### Layout Overlay Collision (`layout-overlay-collision`)
 
@@ -396,12 +409,12 @@ This is a manifest-driven visual audit. `pass` means the saved screenshot state 
 - Priority: `low`
 - Probe: `examples\css_feature_probes\layout_scrollable_composites_probe.py`
 - Features: `ScrollArea`, `DataFrameTable`, `LogView`, `CodeEditor`, `TreeView`, `PropertyGrid`
-- Screenshots: `screenshots/layout-scrollable-composites-desktop-1.png`
-- Debug snapshots: `snapshots/layout-scrollable-composites-desktop-1.json`
-- Logs: `logs/layout-scrollable-composites-desktop-1.stdout.txt`, `logs/layout-scrollable-composites-desktop-1.stderr.txt`
-- Notes: Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.
+- Screenshots: `screenshots/layout-scrollable-composites-desktop-1.png`, `screenshots/layout-scrollable-composites-390x720.png`
+- Debug snapshots: `snapshots/layout-scrollable-composites-desktop-1.json`, `snapshots/layout-scrollable-composites-390x720.json`
+- Logs: `logs/layout-scrollable-composites-desktop-1.stdout.txt`, `logs/layout-scrollable-composites-desktop-1.stderr.txt`, `logs/layout-scrollable-composites-390x720.stdout.txt`, `logs/layout-scrollable-composites-390x720.stderr.txt`
+- Notes: Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state. Additional run: No visual issue recorded by automated first pass. Additional run: Captured with native DragonGUI window screenshot API.
 - Suspected modules: `native/src/layout.rs`, `native/src/primitives/mod.rs`, `native/src/runtime.rs`, `native/src/text/mod.rs`
-- Reproduction: `python tools/visual_audit.py --target layout-scrollable-composites --sizes desktop-1`
+- Reproduction: `python tools/visual_audit.py --target layout-scrollable-composites --sizes desktop-1`; `python tools/visual_audit.py --target layout-scrollable-composites --sizes 390x720`
 
 ### Layout Plot Embedding (`layout-plot-embedding`)
 
@@ -409,12 +422,12 @@ This is a manifest-driven visual audit. `pass` means the saved screenshot state 
 - Priority: `low`
 - Probe: `examples\css_feature_probes\layout_plot_embedding_probe.py`
 - Features: `LinePlot`, `ScatterPlot2D`, `Heatmap`, `Histogram`, `BarChart`, `DataFrameTable`, `Splitter`
-- Screenshots: `screenshots/layout-plot-embedding-desktop-1.png`
-- Debug snapshots: `snapshots/layout-plot-embedding-desktop-1.json`
-- Logs: `logs/layout-plot-embedding-desktop-1.stdout.txt`, `logs/layout-plot-embedding-desktop-1.stderr.txt`
-- Notes: Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.
+- Screenshots: `screenshots/layout-plot-embedding-desktop-1.png`, `screenshots/layout-plot-embedding-390x720.png`
+- Debug snapshots: `snapshots/layout-plot-embedding-desktop-1.json`, `snapshots/layout-plot-embedding-390x720.json`
+- Logs: `logs/layout-plot-embedding-desktop-1.stdout.txt`, `logs/layout-plot-embedding-desktop-1.stderr.txt`, `logs/layout-plot-embedding-390x720.stdout.txt`, `logs/layout-plot-embedding-390x720.stderr.txt`
+- Notes: Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state. Additional run: No visual issue recorded by automated first pass. Additional run: Captured with native DragonGUI window screenshot API.
 - Suspected modules: `native/src/layout.rs`, `native/src/primitives/mod.rs`, `native/src/runtime.rs`, `native/src/scatter/mod.rs`, `native/src/table.rs`
-- Reproduction: `python tools/visual_audit.py --target layout-plot-embedding --sizes desktop-1`
+- Reproduction: `python tools/visual_audit.py --target layout-plot-embedding --sizes desktop-1`; `python tools/visual_audit.py --target layout-plot-embedding --sizes 390x720`
 
 ### Responsive Layout (`responsive-layout`)
 
@@ -500,12 +513,12 @@ This is a manifest-driven visual audit. `pass` means the saved screenshot state 
 - Priority: `low`
 - Probe: `examples\css_feature_probes\data_table_upgrades_probe.py`
 - Features: `DataFrameTable`
-- Screenshots: `screenshots/data-table-upgrades-desktop-1.png`
-- Debug snapshots: `snapshots/data-table-upgrades-desktop-1.json`
-- Logs: `logs/data-table-upgrades-desktop-1.stdout.txt`, `logs/data-table-upgrades-desktop-1.stderr.txt`
-- Notes: Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.
+- Screenshots: `screenshots/data-table-upgrades-desktop-1.png`, `screenshots/data-table-upgrades-390x720.png`
+- Debug snapshots: `snapshots/data-table-upgrades-desktop-1.json`, `snapshots/data-table-upgrades-390x720.json`
+- Logs: `logs/data-table-upgrades-desktop-1.stdout.txt`, `logs/data-table-upgrades-desktop-1.stderr.txt`, `logs/data-table-upgrades-390x720.stdout.txt`, `logs/data-table-upgrades-390x720.stderr.txt`
+- Notes: Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state. Additional run: No visual issue recorded by automated first pass. Additional run: Captured with native DragonGUI window screenshot API.
 - Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`, `native/src/scatter/mod.rs`, `native/src/table.rs`
-- Reproduction: `python tools/visual_audit.py --target data-table-upgrades --sizes desktop-1`
+- Reproduction: `python tools/visual_audit.py --target data-table-upgrades --sizes desktop-1`; `python tools/visual_audit.py --target data-table-upgrades --sizes 390x720`
 
 ### Histogram (`histogram`)
 

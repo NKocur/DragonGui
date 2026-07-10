@@ -153,6 +153,7 @@ with dg.VLayout(class_="root"):
             dg.IconButton("save", tooltip="Save", on_click=lambda: mark("save"))
             dg.IconButton("search", tooltip="Find", on_click=lambda: mark("find"))
             dg.ToolbarSeparator()
+        with dg.Toolbar():
             dg.SearchBox("", placeholder="Filter commands...", on_change=lambda value: mark(f"filter {value}"))
             dg.SmallButton("Deploy", class_="primary", on_click=lambda: mark("deploy"))
             dg.SmallButton("Disabled", disabled=True)

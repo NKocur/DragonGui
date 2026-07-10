@@ -2484,7 +2484,7 @@ fn node_font_size_lp(node: &WidgetNode, theme: &Theme) -> f32 {
 
 fn node_control_height_lp(node: &WidgetNode, theme: &Theme) -> f32 {
     let font_size = node_font_size_lp(node, theme);
-    (font_size + theme.spacing * 2.0 + 4.0).max(28.0)
+    (font_size + theme.spacing * 2.0 + 2.0).max(25.0)
 }
 
 fn apply_node_style(

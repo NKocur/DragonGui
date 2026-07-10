@@ -100,6 +100,7 @@ app.stylesheet(
         color: white;
         font-size: 20px;
         font-weight: 850;
+        line-height: 1.08;
     }
 
     Label.sidebar-title {
@@ -138,17 +139,19 @@ app.stylesheet(
 
     @media (max-width: 520px) {
         Sidebar.audit-sidebar {
-            width: 118px;
-            padding: 10px;
+            width: 88px;
+            padding: 8px;
+            gap: 8px;
         }
 
         .audit-body,
         .audit-main {
-            padding: 10px;
+            padding: 8px;
+            gap: 8px;
         }
 
         .audit-main {
-            height: 270px;
+            height: 250px;
         }
 
         .audit-status {
@@ -161,15 +164,29 @@ app.stylesheet(
         }
 
         HLayout.summary-grid {
-            gap: 8px;
+            flex-direction: column;
+            gap: 7px;
         }
 
+        Panel.card,
         Panel.fixed-card {
-            width: 112px;
+            width: 100%;
+            padding: 8px;
+            gap: 5px;
         }
 
         Label.title {
-            font-size: 17px;
+            font-size: 16px;
+            height: 38px;
+        }
+
+        Label.metric {
+            font-size: 18px;
+        }
+
+        Panel.card Label.caption {
+            text-overflow: ellipsis;
+            height: 36px;
         }
     }
     """

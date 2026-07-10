@@ -1,109 +1,83 @@
-# Implementation Notes: Badge Layout Pass
+# Implementation Notes: Dramatic Default GUI Polish Pass
+
+## Initial Defects Documented
+
+- `artifacts/visual_audit/screenshots/app-shell-workbench-390x720.png`
+  - Heading was clipped (`AppShell + Body + ...`).
+  - Summary cards preserved desktop row assumptions and clipped/wasted label/body text in the narrow viewport.
+- `artifacts/visual_audit/screenshots/responsive-layout-390x720.png`
+  - Narrow capture showed cramped nested scrolling and fixed grid/panel sizing that hid content behind narrow regions.
+- `artifacts/visual_audit/screenshots/layout-flex-stress-390x720.png`
+  - Dense rows with long labels and mixed fixed/flexible controls were too squeezed on mobile.
+- The first pass made defaults more compact, but the visual change was subtle. The screenshots still read as broad filled cards with similar surfaces and weak hierarchy.
 
 ## Changed
 
-- Added a dedicated badge visual-audit target:
-  - `examples/css_feature_probes/badge_layout_probe.py`
-  - manifest id: `badge-layout`
-  - sizes: `900x640`, `390x720`, `320x640`
-  - category: `widgets`
-  - covers standalone `Badge` / `Tag`, inline `Button` / `SmallButton` badges, `Tab` badges, `NavItem` badges, styled `::badge` parts, long badge values, constrained parents, disabled states, and narrow/mobile cases.
-- Updated inline badge geometry in `native/src/text/mod.rs` and `native/src/primitives/mod.rs`.
-  - The previous inline `badge_rect()` returned `None` when a badge's preferred x position was at or left of the parent x. In narrow controls this made non-empty badges disappear.
-  - Inline badge rects now cap badge width to the available right-side space inside the parent and allow the badge to sit flush against the parent left edge.
-  - Text and primitive badge rect behavior now flows through a shared helper instead of duplicated local implementations.
-- Consolidated inline badge sizing and geometry policy in `native/src/style.rs`.
-  - Added `InlineBadgeLayout` and `inline_badge_layout_for_text()`.
-  - The helper explicitly returns both `reserved_width` and the clipped `visible_rect`.
-  - Policy: labels reserve the badge's preferred width plus gap so labels yield first; the visible pill is clipped to available parent width so narrow controls keep a badge affordance.
-- Updated badge sizing helpers in `native/src/style.rs`.
-  - Inline `::badge` preferred width now accounts for part padding and border width when no explicit part width is set.
-  - Inline `::badge` preferred height now accounts for part padding and border width when no explicit part height is set.
-  - Standalone badge/tag intrinsic width now includes styled border width.
-- Updated CSS part layout application in `native/src/css_style.rs`.
-  - Non-uniform part padding shorthands such as `Button::badge { padding: 5px 9px; }` are no longer dropped.
-  - Because `PartLayoutStyle` currently stores a single padding value, non-uniform part padding is preserved as the maximum resolved edge. This conservatively retains the horizontal padding value used by the badge probe and badge sizing helper.
-- Updated label text bounds for `Button`, `SmallButton`, `Tab`, and `NavItem` in `native/src/text/mod.rs`.
-  - When reserved badge width consumes most of a parent, the main label clip right edge is clamped so text bounds do not invert.
-  - The label can now collapse/clamp before the badge disappears.
-- Added focused native regression tests:
-  - `style::tests::inline_badge_layout_reserves_preferred_width_but_clips_visible_rect`
-  - `style::tests::inline_badge_layout_accounts_for_part_padding_and_border`
-  - `text::tests::narrow_button_badge_text_rect_stays_inside_parent`
-  - `text::tests::narrow_tab_and_nav_badge_text_rects_stay_inside_parent`
-  - `text::tests::button_label_clip_is_not_inverted_when_badge_consumes_width`
-  - `text::tests::constrained_standalone_badge_and_tag_text_clip_to_pill_rect`
-  - `primitives::tests::narrow_button_badge_pill_rect_stays_inside_parent`
-  - `primitives::tests::narrow_tab_and_nav_badge_pill_rects_stay_inside_parent`
-  - `primitives::tests::disabled_button_still_emits_inline_badge_pill_inside_parent`
-  - `css_style::tests::non_uniform_part_padding_is_preserved_for_badge_sizing`
-- Added targeted layout-policy tests documenting the non-badge `native/src/layout.rs` changes that were already present from the prior visual-audit pass:
-  - `layout::tests::nonzero_logical_min_width_does_not_opt_out_of_intrinsic_leaf_width`
-  - `layout::tests::percent_min_width_remains_parent_relative_constraint`
-  - `layout::tests::calc_min_width_does_not_opt_out_of_intrinsic_leaf_width`
-- Tightened `disabled_button_still_emits_inline_badge_pill_inside_parent` so it independently asserts the emitted badge-sized primitive has positive dimensions and stays within the disabled button parent.
-- Added a conservative `badge-layout` snapshot bounds check to `tools/visual_audit.py`.
-  - It walks inline badge nodes in the saved debug snapshot and fails the target if the computed visible badge rect has no area or exceeds its parent rect.
-  - Native unit tests remain the authoritative coverage for exact styled padding/border sizing because the debug snapshot does not expose every part layout detail needed for exact renderer parity.
-- Rebuilt and copied the native Python extension:
-  - `native/target/release/_dragongui.dll`
-  - `python/dragongui/_dragongui.pyd`
-- Updated visual-audit artifacts:
-  - `artifacts/visual_audit/report.json`
-  - `artifacts/visual_audit/REPORT.md`
-  - new badge screenshots and snapshots under `artifacts/visual_audit/screenshots/` and `artifacts/visual_audit/snapshots/`
+- Made default dark/light theme changes more visible in `python/dragongui/theme.py` and `native/src/theme.rs`.
+  - Dark defaults now use a deeper app background, clearer panel/surface separation, brighter foreground text, cyan accent/focus tokens, `13px` default text, `5px` spacing, and `3px` radius.
+  - Light defaults keep parity on density/radius while using crisper border/accent tokens.
+  - Native `Theme::control_height()` now resolves to `25px` for the default theme.
+- Reworked default framework styling in `native/src/framework.dg.css`.
+  - App chrome, sidebars, workbench areas, status bars, toolbars, tabs, nav rows, tables, property rows, inputs, and buttons now use tighter metrics and stronger hierarchy.
+  - Controls are flatter and denser, with smaller icon buttons, clearer active/focus states, compact nav/tab rows, and data-table defaults closer to a professional tool surface.
+  - Added default class styling for common app-shell/workbench/property-grid arrangements so apps get a cleaner baseline without custom visual CSS.
+- Tightened native metrics in `native/src/style.rs`, `native/src/layout.rs`, and `native/src/table.rs`.
+  - Checkbox, toggle, slider, stepper, tab, table header/row, index-column, and data-column defaults are smaller and more data-dense.
+  - Table defaults now use a `25px` header, `21px` rows, `48px` index column, and `116px` data columns.
+- Fixed probe layouts where local CSS was creating screenshot-visible defects while preserving the stress content.
+  - `examples/css_feature_probes/app_shell_workbench_probe.py`: mobile title gets adequate height, summary cards stack, card text wraps/ellipsizes inside bounds, and narrow workbench spacing is reduced.
+  - `examples/css_feature_probes/responsive_layout_probe.py`: mobile panels use auto height, single-column named-grid areas, reduced padding/gaps, and scroll-owned overflow.
+  - `examples/css_feature_probes/layout_flex_stress_probe.py`: mobile stress rows stack instead of forcing side-by-side cards and use tighter label/control metrics.
+- Fixed the blocking toolbar review finding.
+  - `python/dragongui/widgets.py`: `SearchBox` now reserves a default `164px` minimum width so its composed icon/input/clear children do not paint over following siblings when the wrapper is squeezed.
+  - `examples/css_feature_probes/toolbar_probe.py`: the overfull single toolbar row is now split into icon-command and search/action toolbar rows, preserving Toolbar coverage without clipping controls on mobile.
+- Added `examples/css_feature_probes/default_polish_stress_probe.py`.
+  - Uses defaults as much as possible, with only minimal responsive layout CSS.
+  - Covers AppShell/sidebar, toolbar/status density, nav badges, long labels, summary cards, table, property grid, and nested scroll text.
+  - Stacks the shell at `390px` and `320px` so long nav labels are visible instead of clipped.
+- Added `default-polish-stress` to `examples/css_feature_probes/visual_audit_manifest.json`.
+- Regenerated focused visual-audit screenshots, snapshots, logs, `artifacts/visual_audit/REPORT.md`, and `artifacts/visual_audit/report.json`.
 
-## Observed Issues
+## Visual Review After Fix
 
-- The new `badge-layout` probe reproduced the risky narrow cases from the spec: badge preferred width can exceed the available control width for buttons, tabs, and nav items.
-- Before the fix, the native code path would drop the inline badge entirely when the computed badge x was at or before the parent left edge.
-- The maintainability review found the first implementation duplicated that rule in the text and primitive renderers; the follow-up moved the rule to `native/src/style.rs`.
-- The later maintainability review found the older broad layout policy changes were still undocumented in this badge-focused pass; this follow-up added targeted tests and an inline comment documenting the `min-width: 0` opt-out policy.
-- The code review found the badge probe's non-uniform `::badge` padding was authored in CSS but dropped by the part layout application path. This follow-up preserves that padding conservatively and adds a CSS-level regression.
-- After the fix, the `320x640` badge-layout capture shows narrow button, tab, and nav badges still visible and clipped inside their parents.
-- The regenerated `badge-layout-320x640` snapshot shows `Button.styled::badge` with computed `layout.padding: 9.0`, confirming the probe now exercises the styled padding path.
-- Existing mobile `navigation-widgets` remains generally cramped in the content pane, but the badge-specific failure is not present in the rerun: nav and tab badges remain visible within their controls.
+- `app-shell-workbench-390x720.png`: heading and summary card copy are now visible; summary cards stack and remaining rows are scroll-owned.
+- `responsive-layout-390x720.png`: first viewport no longer shows text hidden by nested fixed regions; lower content is reachable through the main scroll.
+- `layout-flex-stress-390x720.png`: dense controls stay inside panels; below-fold action rows are scroll-owned rather than overlapping.
+- `default-polish-stress-390x720.png` and `default-polish-stress-320x640.png`: long sidebar labels, toolbar controls, status badges, summary cards, and table/property panels render without static overlap or clipped labels in the first viewport.
+- `toolbar-desktop-1.png` and `toolbar-390x720.png`: SearchBox has nonzero width and no longer overlaps or clips the `Deploy`/disabled controls.
+- Current visual-audit report summary: `68` entries, `47 pass`, `21 needs_manual_interaction`, `0 fail`, `0 blocked`.
 
 ## Validation
 
-- `C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe -m py_compile examples/css_feature_probes/badge_layout_probe.py tools/visual_audit.py` passed.
-- `cargo fmt --manifest-path native/Cargo.toml -- --check` passed.
-- `cargo check --manifest-path native/Cargo.toml` passed with the Python 3.13 PyO3/MSVC environment.
-- Focused native tests passed:
-  - `inline_badge_layout_reserves_preferred_width_but_clips_visible_rect`
-  - `inline_badge_layout_accounts_for_part_padding_and_border`
-  - `narrow_button_badge_text_rect_stays_inside_parent`
-  - `narrow_tab_and_nav_badge_text_rects_stay_inside_parent`
-  - `button_label_clip_is_not_inverted_when_badge_consumes_width`
-  - `constrained_standalone_badge_and_tag_text_clip_to_pill_rect`
-  - `narrow_button_badge_pill_rect_stays_inside_parent`
-  - `narrow_tab_and_nav_badge_pill_rects_stay_inside_parent`
-  - `disabled_button_still_emits_inline_badge_pill_inside_parent`
-  - `non_uniform_part_padding_is_preserved_for_badge_sizing`
-  - `nonzero_logical_min_width_does_not_opt_out_of_intrinsic_leaf_width`
-  - `percent_min_width_remains_parent_relative_constraint`
-  - `calc_min_width_does_not_opt_out_of_intrinsic_leaf_width`
-- Visual audit reruns passed:
-  - `badge-layout --sizes desktop,mobile,320x640` after the CSS part-padding fix
-  - `core-widgets --sizes desktop,mobile`
-  - `navigation-widgets --sizes desktop,mobile`
-  - `typography --sizes desktop,mobile`
-- Current report summary:
-  - entries: 67
-  - `pass`: 46
-  - `needs_manual_interaction`: 21
-  - `fail`: 0
-  - `blocked`: 0
-- PNG header and dimensions checked for the new badge screenshots:
-  - `badge-layout-desktop-1.png`: `900x640`
-  - `badge-layout-390x720.png`: `390x720`
-  - `badge-layout-320x640.png`: `320x640`
+- Used Python 3.12 because the spec's previously referenced Python 3.13 path is not present in this workspace:
+  - `C:\Users\nashk\AppData\Local\Programs\Python\Python312\python.exe`
+- Passed:
+  - `python -m py_compile examples/css_feature_probes/default_polish_stress_probe.py examples/css_feature_probes/app_shell_workbench_probe.py examples/css_feature_probes/responsive_layout_probe.py examples/css_feature_probes/layout_flex_stress_probe.py`
+  - `cargo fmt --manifest-path native/Cargo.toml -- --check`
+  - `cargo check --manifest-path native/Cargo.toml`
+  - `cargo test --manifest-path native/Cargo.toml dark_theme_defaults_are_compact_and_neutral -- --nocapture`
+  - `cargo test --manifest-path native/Cargo.toml default_metrics_are_compact_for_dense_data -- --nocapture`
+  - `cargo test --manifest-path native/Cargo.toml framework_defaults_install_and_remain_lower_precedence_than_user_css -- --nocapture`
+  - `python tools/visual_audit.py --target default-polish-stress --sizes desktop,390x720,320x640 --append --wait-ms 1200 --timeout-ms 12000`
+  - `python -m py_compile python/dragongui/widgets.py examples/css_feature_probes/toolbar_probe.py`
+  - `python tools/visual_audit.py --target toolbar --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000`
+- Earlier in this pass, the focused required visual targets were rerun and recorded in the report:
+  - `app-shell-workbench`: `pass`
+  - `responsive-layout`: `pass`
+  - `layout-flex-stress`: `pass`
+  - `layout-panel-bounds`: `pass`
+  - `layout-grid-masonry`: `pass`
+  - `layout-scrollable-composites`: `pass`
+  - `form-controls`: `pass`
+  - `property-grid`: `pass`
+  - `toolbar`: `pass`
+  - `data-table-upgrades`: `pass`
+  - `core-widgets`, `navigation-widgets`, `tree-view`: `needs_manual_interaction`
 
 ## Remaining
 
-- Full `cargo test --manifest-path native/Cargo.toml` was not run.
-- The 21 `needs_manual_interaction` visual targets still require interaction-state coverage.
-- The `navigation-widgets` mobile probe is still visually dense/cramped outside the badge-specific behavior; that appears to be broader probe/layout pressure, not the disappearing inline badge bug.
-- Earlier broad visual-audit layout changes in `native/src/layout.rs` remain in the working tree from the prior pass; this follow-up documented their min-width behavior with targeted tests but did not split them into a separate branch/change.
-- The visual badge probe now has a conservative snapshot bounds check, but it is not a pixel-perfect renderer assertion. Exact badge sizing policy is still covered by native helper/text/primitive tests.
-- The working tree still contains pre-existing dirty/generated files from earlier workflow passes; this pass did not revert unrelated changes.
+- Full native `cargo test --manifest-path native/Cargo.toml` was not run.
+- Python 3.13 validation was not run because that interpreter path is absent here.
+- Python pytest was not rerun in this second pass; Python 3.12 does not have `pytest` installed, and a previous Python 3.11 run had four unrelated failures outside this theme/layout polish work.
+- The `21 needs_manual_interaction` visual-audit targets still need hover/open/focus/overlay interaction coverage.
+- Some long content intentionally continues below the first mobile viewport; that is expected where the owning scroll area is visible and content does not overlap or paint outside bounds.

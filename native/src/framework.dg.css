@@ -1,6 +1,6 @@
 :root {
-    --dg-radius: 6px;
-    --dg-font-size: 14px;
+    --dg-radius: 3px;
+    --dg-font-size: 13px;
 }
 
 Window {
@@ -21,7 +21,7 @@ Sidebar,
 StatusBar,
 MenuBar,
 Tabs {
-    background: surface;
+    background: background;
     border-color: border;
     border-width: 1px;
 }
@@ -46,6 +46,7 @@ Dropdown {
     border-radius: var(--dg-radius);
     accent: accent;
     color: text;
+    padding: 4px 8px;
 }
 
 Selectable {
@@ -72,7 +73,7 @@ TreeView {
 TreeNode {
     background: transparent;
     border: 1px solid transparent;
-    border-radius: 4px;
+    border-radius: 2px;
     accent: accent;
     color: text;
 }
@@ -84,15 +85,16 @@ Tag {
 }
 
 SmallButton {
-    height: 26px;
+    height: 22px;
+    padding: 2px 7px;
 }
 
 IconButton,
 ImageButton,
 ArrowButton {
-    width: 30px;
-    height: 30px;
-    padding: 5px;
+    width: 25px;
+    height: 25px;
+    padding: 3px;
 }
 
 Button:hover,
@@ -101,20 +103,20 @@ IconButton:hover,
 ImageButton:hover,
 ArrowButton:hover,
 Dropdown:hover {
-    background: accent_mix_20;
-    border-color: accent;
+    background: accent_mix_12;
+    border-color: accent_mix_20;
 }
 
 Selectable:hover {
-    background: accent_mix_20;
+    background: accent_mix_12;
 }
 
 RadioButton:hover {
-    background: accent_mix_20;
+    background: accent_mix_12;
 }
 
 TreeNode:hover {
-    background: accent_mix_20;
+    background: accent_mix_12;
 }
 
 Button:focus,
@@ -168,7 +170,7 @@ RadioButton:selected {
 
 TreeNode:selected {
     background: accent_mix_20;
-    border-color: accent;
+    border-color: accent_mix_20;
 }
 
 Button:disabled,
@@ -196,10 +198,12 @@ CodeEditor,
 LogView,
 NumberInput,
 DragNumber {
+    background: surface;
     border: 1px solid border;
     border-radius: var(--dg-radius);
     accent: accent;
     color: text;
+    padding: 4px 7px;
 }
 
 TextInput:hover,
@@ -208,15 +212,17 @@ CodeEditor:hover,
 LogView:hover,
 NumberInput:hover,
 DragNumber:hover {
-    border-color: accent;
+    border-color: accent_mix_20;
 }
 
 CodeEditor {
     font-family: "Consolas";
+    font-size: 12px;
 }
 
 LogView {
     font-family: "Consolas";
+    font-size: 12px;
 }
 
 DragNumber:active {
@@ -236,7 +242,7 @@ ToggleSwitch {
 }
 
 Splitter {
-    gap: 6px;
+    gap: 3px;
 }
 
 Splitter::gutter {
@@ -288,15 +294,24 @@ Menu {
    (via the accent part's padding) and the label clears it by 4px (11px item
    padding). Apps can override any of these per NavItem. */
 NavItem {
-    border-radius: 5px;
+    border-radius: 2px;
 }
 
 NavItem::accent {
-    padding: 4px;
+    padding: 2px;
 }
 
 NavItem::item {
-    padding: 11px;
+    padding: 5px;
+}
+
+Tab::tab {
+    padding: 5px;
+}
+
+Menu::item,
+ContextMenu::item {
+    padding: 5px;
 }
 
 Menu:hover,
@@ -314,7 +329,7 @@ ContextMenu::menu {
 
 Menu::item,
 ContextMenu::item {
-    background: surface_alt;
+    background: surface;
     color: text;
 }
 
@@ -326,4 +341,82 @@ ContextMenu::item-hover {
 Menu::item-disabled,
 ContextMenu::item-disabled {
     color: muted_text;
+}
+
+DataFrameTable {
+    background: surface;
+    border: 1px solid border;
+    border-radius: var(--dg-radius);
+    color: text;
+    table-header-height: 24px;
+    table-row-height: 21px;
+}
+
+DataFrameTable::header {
+    background: surface_alt;
+    color: text;
+    font-size: 12px;
+}
+
+DataFrameTable::row {
+    color: text;
+    font-size: 12px;
+}
+
+DataFrameTable::row-selected {
+    background: accent_mix_20;
+}
+
+Panel::scrollbar-track,
+DataFrameTable::scrollbar-track {
+    background: transparent;
+    padding: 1px;
+}
+
+Panel::scrollbar-thumb,
+DataFrameTable::scrollbar-thumb {
+    background: border;
+    border-radius: 999px;
+}
+
+.app-shell {
+    background: background;
+}
+
+.workbench-layout,
+.body,
+.workbench-main {
+    background: background;
+}
+
+.toolbar {
+    background: surface;
+    border: 1px solid border;
+    border-radius: var(--dg-radius);
+    padding: 3px;
+}
+
+.toolbar-horizontal {
+    height: 30px;
+}
+
+.toolbar-vertical {
+    width: 30px;
+}
+
+.property-grid {
+    gap: 4px;
+}
+
+.property-row {
+    gap: 6px;
+}
+
+.property-label {
+    color: muted_text;
+    font-size: 12px;
+}
+
+.property-editor {
+    gap: 5px;
 }

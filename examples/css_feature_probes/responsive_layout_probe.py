@@ -227,11 +227,13 @@ app.stylesheet(
 
     @media (max-width: 520px) {
         Window {
-            padding: 12px;
+            padding: 10px;
         }
 
         VLayout.scroll-root {
             padding-right: 8px;
+            padding-bottom: 28px;
+            gap: 10px;
         }
 
         Panel.percent-case,
@@ -239,6 +241,9 @@ app.stylesheet(
         Panel.auto-fit-grid,
         Panel.fit-row {
             width: auto;
+            min-height: auto;
+            padding: 10px;
+            gap: 8px;
         }
 
         Panel.auto-case {
@@ -255,11 +260,42 @@ app.stylesheet(
 
         Panel.percent-child {
             min-width: 0;
+            width: 100%;
         }
 
         Button.half,
         Button.calc-width {
             min-width: 92px;
+        }
+
+        Panel.named-grid {
+            grid-template-columns: 1fr;
+            grid-template-rows: repeat(5, auto);
+            grid-template-areas:
+                "side"
+                "main"
+                "stats"
+                "detail"
+                "foot";
+        }
+
+        Panel.fit-row {
+            grid-template-columns: 1fr;
+        }
+
+        Panel.auto-fit-grid {
+            grid-template-columns: 1fr;
+            grid-template-rows: repeat(auto-fill, 40px);
+        }
+
+        Panel.tile-wide {
+            grid-column: auto;
+        }
+
+        Panel.grid-item,
+        Panel.fit-row > Panel {
+            min-height: auto;
+            padding: 8px;
         }
     }
     """

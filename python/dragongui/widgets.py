@@ -6344,6 +6344,7 @@ class SearchBox(HLayout):
             "gap": 6,
             "align_items": "center",
             "height": 38,
+            "min_width": 164,
             "flex_grow": 0,
             "flex_shrink": 0,
             "width": "100%",

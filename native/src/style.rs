@@ -7,19 +7,19 @@ pub(crate) const BORDER_WIDTH_LP: f32 = 1.0;
 pub(crate) const CARET_WIDTH_LP: f32 = 1.5;
 pub(crate) const CODE_EDITOR_GUTTER_WIDTH_LP: f32 = 48.0;
 
-pub(crate) const CHECKBOX_BOX_LP: f32 = 18.0;
-pub(crate) const CHECKBOX_LEFT_PAD_LP: f32 = 6.0;
-pub(crate) const TOGGLE_SWITCH_TRACK_WIDTH_LP: f32 = 42.0;
-pub(crate) const TOGGLE_SWITCH_TRACK_HEIGHT_LP: f32 = 22.0;
-pub(crate) const TOGGLE_SWITCH_THUMB_SIZE_LP: f32 = 18.0;
+pub(crate) const CHECKBOX_BOX_LP: f32 = 15.0;
+pub(crate) const CHECKBOX_LEFT_PAD_LP: f32 = 5.0;
+pub(crate) const TOGGLE_SWITCH_TRACK_WIDTH_LP: f32 = 34.0;
+pub(crate) const TOGGLE_SWITCH_TRACK_HEIGHT_LP: f32 = 18.0;
+pub(crate) const TOGGLE_SWITCH_THUMB_SIZE_LP: f32 = 14.0;
 
 pub(crate) const DROPDOWN_CHEVRON_WIDTH_LP: f32 = 8.0;
 
-pub(crate) const SLIDER_TRACK_MARGIN_LP: f32 = 8.0;
-pub(crate) const SLIDER_TRACK_HEIGHT_LP: f32 = 4.0;
-pub(crate) const SLIDER_THUMB_WIDTH_LP: f32 = 16.0;
+pub(crate) const SLIDER_TRACK_MARGIN_LP: f32 = 6.0;
+pub(crate) const SLIDER_TRACK_HEIGHT_LP: f32 = 3.0;
+pub(crate) const SLIDER_THUMB_WIDTH_LP: f32 = 12.0;
 
-pub(crate) const NUMBER_STEPPER_WIDTH_LP: f32 = 26.0;
+pub(crate) const NUMBER_STEPPER_WIDTH_LP: f32 = 22.0;
 
 pub(crate) fn number_stepper_width(widget_width: f32, sf: f32) -> f32 {
     (NUMBER_STEPPER_WIDTH_LP * sf).min(widget_width * 0.45)
@@ -46,10 +46,10 @@ pub(crate) fn code_editor_gutter_width_for_style(style: &NodeStyle, sf: f32) -> 
         * sf
 }
 
-pub(crate) const TAB_GAP_LP: f32 = 8.0;
-pub(crate) const TAB_TOP_INSET_LP: f32 = 4.0;
-pub(crate) const TAB_INACTIVE_BOTTOM_INSET_LP: f32 = 3.0;
-pub(crate) const TAB_ACTIVE_BAR_LP: f32 = 3.0;
+pub(crate) const TAB_GAP_LP: f32 = 5.0;
+pub(crate) const TAB_TOP_INSET_LP: f32 = 2.0;
+pub(crate) const TAB_INACTIVE_BOTTOM_INSET_LP: f32 = 2.0;
+pub(crate) const TAB_ACTIVE_BAR_LP: f32 = 2.0;
 
 pub(crate) const BADGE_GAP_LP: f32 = 8.0;
 pub(crate) const BADGE_PAD_X_LP: f32 = 8.0;

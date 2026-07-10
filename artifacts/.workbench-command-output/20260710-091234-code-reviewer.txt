@@ -1,0 +1,166 @@
+# Test Results: Badge Layout Visual Audit Pass
+
+## Environment
+
+- Workspace: `J:\Projects\DragonFrame`
+- Date: 2026-07-10
+- Shell: PowerShell
+- Python used for validation: `C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe`
+- Role: Test Writer
+
+## Summary
+
+Badge-focused validation passed. The new `badge-layout` visual-audit target is present, covers desktop/mobile/narrow sizes, and currently reports `pass`.
+
+Current `artifacts/visual_audit/report.json`:
+
+- Entries: 67
+- Screenshot references: 77
+- Snapshot references: 77
+- `pass`: 46
+- `needs_manual_interaction`: 21
+- `fail`: 0
+- `blocked`: 0
+
+Badge-relevant rerun statuses:
+
+- `badge-layout`: `pass`
+- `core-widgets`: `needs_manual_interaction`
+- `navigation-widgets`: `needs_manual_interaction`
+- `typography`: `pass`
+
+`core-widgets` and `navigation-widgets` remain interaction-gated because they include overlay/stateful controls; they did not report visual failures in this pass.
+
+## Commands And Results
+
+```powershell
+$py='C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe'
+$env:LIB='C:\Users\nashk\AppData\Local\Programs\Python\Python313\libs;' + $env:LIB
+$env:PYO3_PYTHON=$py
+& $py -m py_compile examples/css_feature_probes/badge_layout_probe.py tools/visual_audit.py
+cargo fmt --manifest-path native/Cargo.toml -- --check
+cargo check --manifest-path native/Cargo.toml
+```
+
+Result: passed.
+
+```text
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.02s
+```
+
+Focused native badge regression tests:
+
+```powershell
+$env:LIB='C:\Users\nashk\AppData\Local\Programs\Python\Python313\libs;' + $env:LIB
+$env:PYO3_PYTHON='C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe'
+$tests=@(
+  'narrow_button_badge_text_rect_stays_inside_parent',
+  'narrow_tab_and_nav_badge_text_rects_stay_inside_parent',
+  'button_label_clip_is_not_inverted_when_badge_consumes_width',
+  'narrow_button_badge_pill_rect_stays_inside_parent',
+  'narrow_tab_and_nav_badge_pill_rects_stay_inside_parent'
+)
+foreach ($t in $tests) {
+  cargo test --manifest-path native/Cargo.toml $t -- --nocapture
+  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+```
+
+Result: passed. Each focused test ran as one selected test and reported `ok`.
+
+```text
+text::tests::narrow_button_badge_text_rect_stays_inside_parent ... ok
+text::tests::narrow_tab_and_nav_badge_text_rects_stay_inside_parent ... ok
+text::tests::button_label_clip_is_not_inverted_when_badge_consumes_width ... ok
+primitives::tests::narrow_button_badge_pill_rect_stays_inside_parent ... ok
+primitives::tests::narrow_tab_and_nav_badge_pill_rects_stay_inside_parent ... ok
+```
+
+Badge-related visual audit rerun:
+
+```powershell
+$py='C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe'
+$env:LIB='C:\Users\nashk\AppData\Local\Programs\Python\Python313\libs;' + $env:LIB
+$env:PYO3_PYTHON=$py
+& $py tools/visual_audit.py --target badge-layout --sizes desktop,mobile,320x640 --append --wait-ms 1200 --timeout-ms 12000
+& $py tools/visual_audit.py --target core-widgets --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
+& $py tools/visual_audit.py --target navigation-widgets --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
+& $py tools/visual_audit.py --target typography --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
+```
+
+Result: completed without command failures.
+
+```text
+badge-layout: pass
+core-widgets: needs_manual_interaction
+navigation-widgets: needs_manual_interaction
+typography: pass
+```
+
+Report JSON and badge PNG consistency check:
+
+```powershell
+@'
+import glob, json, os, struct
+from collections import Counter
+with open('artifacts/visual_audit/report.json', encoding='utf-8') as f:
+    data = json.load(f)
+print('entries', len(data))
+print('statuses', dict(sorted(Counter(d['status'] for d in data).items())))
+print('screenshots', sum(len(d.get('screenshots', [])) for d in data))
+print('snapshots', sum(len(d.get('snapshots', [])) for d in data))
+print('failures', [d['id'] for d in data if d['status'] == 'fail'])
+print('blocked', [d['id'] for d in data if d['status'] == 'blocked'])
+for target in ['badge-layout','core-widgets','navigation-widgets','typography']:
+    item = next(d for d in data if d['id'] == target)
+    print(target, item['status'], len(item.get('screenshots', [])), len(item.get('snapshots', [])))
+for p in sorted(glob.glob('artifacts/visual_audit/screenshots/badge-layout*.png')):
+    with open(p, 'rb') as f:
+        sig = f.read(8); _ = f.read(4); chunk = f.read(4); w,h = struct.unpack('>II', f.read(8))
+    print(os.path.basename(p), w, h, 'ok' if sig == b'\x89PNG\r\n\x1a\n' and chunk == b'IHDR' else 'bad')
+'@ | & 'C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe' -
+```
+
+Result:
+
+```text
+entries 67
+statuses {'needs_manual_interaction': 21, 'pass': 46}
+screenshots 77
+snapshots 77
+failures []
+blocked []
+badge-layout pass 3 3
+core-widgets needs_manual_interaction 2 2
+navigation-widgets needs_manual_interaction 2 2
+typography pass 2 2
+badge-layout-320x640.png 320 640 ok
+badge-layout-390x720.png 390 720 ok
+badge-layout-desktop-1.png 900 640 ok
+```
+
+## Visual Inspection Notes
+
+- `badge-layout-desktop-1.png`: pass. Standalone badges/tags and inline button, tab, and nav badges render with visible pill geometry and contained text in the desktop stress layout.
+- `badge-layout-390x720.png`: pass. Mobile badge cases remain visible and contained; no badge disappears due to narrow parent geometry.
+- `badge-layout-320x640.png`: pass. Narrow stress cases clip within controls rather than painting outside parent bounds or vanishing.
+- `navigation-widgets` mobile remains visually dense, consistent with the implementation notes, but the rerun did not show a badge-specific failure.
+
+## Failures / Issues
+
+- No `fail` or `blocked` targets are present in `artifacts/visual_audit/report.json`.
+- No focused badge regression test failed.
+- `core-widgets` and `navigation-widgets` remain marked `needs_manual_interaction`; this is expected for their overlay/stateful coverage and is not a badge-layout failure.
+
+## Not Run
+
+- Full `cargo test --manifest-path native/Cargo.toml` was not run.
+- Full all-target visual audit was not rerun from scratch.
+- Manual interaction coverage for the 21 `needs_manual_interaction` visual targets was not performed.
+- Scrolled captures for long/overflowing probe content were not performed.
+
+## Next Steps
+
+1. Run full native tests before release or before merging a broader layout batch.
+2. Add automated interaction-state coverage for the 21 `needs_manual_interaction` targets.
+3. Consider scrolled or staged visual captures for dense mobile navigation probes so non-badge cramped states are easier to review.

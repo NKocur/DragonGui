@@ -147,21 +147,26 @@
     "id": "tool-buttons",
     "logs": [
       "logs/tool-buttons-desktop-1.stdout.txt",
-      "logs/tool-buttons-desktop-1.stderr.txt"
+      "logs/tool-buttons-desktop-1.stderr.txt",
+      "logs/tool-buttons-390x720.stdout.txt",
+      "logs/tool-buttons-390x720.stderr.txt"
     ],
     "manual": false,
     "name": "Tool Buttons",
-    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "notes": "Visual review: desktop and 390x720 captures show compact tool buttons without static clipping or overlap in the saved state.",
     "priority": "low",
     "reproduction": [
-      "python tools/visual_audit.py --target tool-buttons --sizes desktop-1"
+      "python tools/visual_audit.py --target tool-buttons --sizes desktop-1",
+      "python tools/visual_audit.py --target tool-buttons --sizes 390x720"
     ],
     "screenshots": [
-      "screenshots/tool-buttons-desktop-1.png"
+      "screenshots/tool-buttons-desktop-1.png",
+      "screenshots/tool-buttons-390x720.png"
     ],
     "script": "examples\\css_feature_probes\\tool_buttons_probe.py",
     "snapshots": [
-      "snapshots/tool-buttons-desktop-1.json"
+      "snapshots/tool-buttons-desktop-1.json",
+      "snapshots/tool-buttons-390x720.json"
     ],
     "status": "pass",
     "suspected_modules": [
@@ -337,21 +342,26 @@
     "id": "property-grid",
     "logs": [
       "logs/property-grid-desktop-1.stdout.txt",
-      "logs/property-grid-desktop-1.stderr.txt"
+      "logs/property-grid-desktop-1.stderr.txt",
+      "logs/property-grid-390x720.stdout.txt",
+      "logs/property-grid-390x720.stderr.txt"
     ],
     "manual": false,
     "name": "Property Grid",
-    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state. Additional run: No visual issue recorded by automated first pass. Additional run: Captured with native DragonGUI window screenshot API.",
     "priority": "low",
     "reproduction": [
-      "python tools/visual_audit.py --target property-grid --sizes desktop-1"
+      "python tools/visual_audit.py --target property-grid --sizes desktop-1",
+      "python tools/visual_audit.py --target property-grid --sizes 390x720"
     ],
     "screenshots": [
-      "screenshots/property-grid-desktop-1.png"
+      "screenshots/property-grid-desktop-1.png",
+      "screenshots/property-grid-390x720.png"
     ],
     "script": "examples\\css_feature_probes\\property_grid_probe.py",
     "snapshots": [
-      "snapshots/property-grid-desktop-1.json"
+      "snapshots/property-grid-desktop-1.json",
+      "snapshots/property-grid-390x720.json"
     ],
     "status": "pass",
     "suspected_modules": [
@@ -577,21 +587,26 @@
     "id": "toolbar",
     "logs": [
       "logs/toolbar-desktop-1.stdout.txt",
-      "logs/toolbar-desktop-1.stderr.txt"
+      "logs/toolbar-desktop-1.stderr.txt",
+      "logs/toolbar-390x720.stdout.txt",
+      "logs/toolbar-390x720.stderr.txt"
     ],
     "manual": false,
     "name": "Toolbar",
-    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "notes": "Visual review after SearchBox toolbar fix: desktop and 390x720 captures show the search/action controls in a separate toolbar row with nonzero SearchBox width. The previous static overlap over Deploy/Disabled is resolved.",
     "priority": "low",
     "reproduction": [
-      "python tools/visual_audit.py --target toolbar --sizes desktop-1"
+      "python tools/visual_audit.py --target toolbar --sizes desktop-1",
+      "python tools/visual_audit.py --target toolbar --sizes 390x720"
     ],
     "screenshots": [
-      "screenshots/toolbar-desktop-1.png"
+      "screenshots/toolbar-desktop-1.png",
+      "screenshots/toolbar-390x720.png"
     ],
     "script": "examples\\css_feature_probes\\toolbar_probe.py",
     "snapshots": [
-      "snapshots/toolbar-desktop-1.json"
+      "snapshots/toolbar-desktop-1.json",
+      "snapshots/toolbar-390x720.json"
     ],
     "status": "pass",
     "suspected_modules": [
@@ -608,21 +623,26 @@
     "id": "tree-view",
     "logs": [
       "logs/tree-view-desktop-1.stdout.txt",
-      "logs/tree-view-desktop-1.stderr.txt"
+      "logs/tree-view-desktop-1.stderr.txt",
+      "logs/tree-view-390x720.stdout.txt",
+      "logs/tree-view-390x720.stderr.txt"
     ],
     "manual": true,
     "name": "Tree View",
-    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Static capture visual review: first-viewport screenshot inspected; captured closed/default state is usable, but listed interactive states still need manual or automated checks.",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Static capture visual review: first-viewport screenshot inspected; captured closed/default state is usable, but listed interactive states still need manual or automated checks. Additional run: No visual issue recorded by automated first pass. Additional run: Captured with native DragonGUI window screenshot API.",
     "priority": "medium",
     "reproduction": [
-      "python tools/visual_audit.py --target tree-view --sizes desktop-1"
+      "python tools/visual_audit.py --target tree-view --sizes desktop-1",
+      "python tools/visual_audit.py --target tree-view --sizes 390x720"
     ],
     "screenshots": [
-      "screenshots/tree-view-desktop-1.png"
+      "screenshots/tree-view-desktop-1.png",
+      "screenshots/tree-view-390x720.png"
     ],
     "script": "examples\\css_feature_probes\\tree_view_probe.py",
     "snapshots": [
-      "snapshots/tree-view-desktop-1.json"
+      "snapshots/tree-view-desktop-1.json",
+      "snapshots/tree-view-390x720.json"
     ],
     "status": "needs_manual_interaction",
     "suspected_modules": [
@@ -915,6 +935,54 @@
   {
     "category": "layout",
     "features": [
+      "Default theme",
+      "AppShell",
+      "Sidebar",
+      "Toolbar",
+      "Tabs",
+      "DataFrameTable",
+      "PropertyGrid",
+      "Nested scroll"
+    ],
+    "id": "default-polish-stress",
+    "logs": [
+      "logs/default-polish-stress-desktop-1.stdout.txt",
+      "logs/default-polish-stress-desktop-1.stderr.txt",
+      "logs/default-polish-stress-390x720.stdout.txt",
+      "logs/default-polish-stress-390x720.stderr.txt",
+      "logs/default-polish-stress-320x640.stdout.txt",
+      "logs/default-polish-stress-320x640.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Default Polish Stress",
+    "notes": "Default-only visual stress target with minimal layout styling and no custom visual theme. Visual review after rerun: desktop, 390x720, and 320x640 captures render without static clipping/overlap defects in first viewport; 390px and 320px stack the shell vertically and remaining overflow is scroll-owned.",
+    "priority": "high",
+    "reproduction": [
+      "python tools/visual_audit.py --target default-polish-stress --sizes desktop-1",
+      "python tools/visual_audit.py --target default-polish-stress --sizes 390x720",
+      "python tools/visual_audit.py --target default-polish-stress --sizes 320x640"
+    ],
+    "screenshots": [
+      "screenshots/default-polish-stress-desktop-1.png",
+      "screenshots/default-polish-stress-390x720.png",
+      "screenshots/default-polish-stress-320x640.png"
+    ],
+    "script": "examples\\css_feature_probes\\default_polish_stress_probe.py",
+    "snapshots": [
+      "snapshots/default-polish-stress-desktop-1.json",
+      "snapshots/default-polish-stress-390x720.json",
+      "snapshots/default-polish-stress-320x640.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/layout.rs",
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs"
+    ]
+  },
+  {
+    "category": "layout",
+    "features": [
       "Panel",
       "Collapsible",
       "ScrollArea",
@@ -923,21 +991,26 @@
     "id": "layout-panel-bounds",
     "logs": [
       "logs/layout-panel-bounds-desktop-1.stdout.txt",
-      "logs/layout-panel-bounds-desktop-1.stderr.txt"
+      "logs/layout-panel-bounds-desktop-1.stderr.txt",
+      "logs/layout-panel-bounds-390x720.stdout.txt",
+      "logs/layout-panel-bounds-390x720.stderr.txt"
     ],
     "manual": false,
     "name": "Layout Panel Bounds",
-    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state. Additional run: No visual issue recorded by automated first pass. Additional run: Captured with native DragonGUI window screenshot API.",
     "priority": "low",
     "reproduction": [
-      "python tools/visual_audit.py --target layout-panel-bounds --sizes desktop-1"
+      "python tools/visual_audit.py --target layout-panel-bounds --sizes desktop-1",
+      "python tools/visual_audit.py --target layout-panel-bounds --sizes 390x720"
     ],
     "screenshots": [
-      "screenshots/layout-panel-bounds-desktop-1.png"
+      "screenshots/layout-panel-bounds-desktop-1.png",
+      "screenshots/layout-panel-bounds-390x720.png"
     ],
     "script": "examples\\css_feature_probes\\layout_panel_bounds_probe.py",
     "snapshots": [
-      "snapshots/layout-panel-bounds-desktop-1.json"
+      "snapshots/layout-panel-bounds-desktop-1.json",
+      "snapshots/layout-panel-bounds-390x720.json"
     ],
     "status": "pass",
     "suspected_modules": [
@@ -957,21 +1030,26 @@
     "id": "layout-grid-masonry",
     "logs": [
       "logs/layout-grid-masonry-desktop-1.stdout.txt",
-      "logs/layout-grid-masonry-desktop-1.stderr.txt"
+      "logs/layout-grid-masonry-desktop-1.stderr.txt",
+      "logs/layout-grid-masonry-390x720.stdout.txt",
+      "logs/layout-grid-masonry-390x720.stderr.txt"
     ],
     "manual": false,
     "name": "Layout Grid And Masonry",
-    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state. Additional run: No visual issue recorded by automated first pass. Additional run: Captured with native DragonGUI window screenshot API.",
     "priority": "low",
     "reproduction": [
-      "python tools/visual_audit.py --target layout-grid-masonry --sizes desktop-1"
+      "python tools/visual_audit.py --target layout-grid-masonry --sizes desktop-1",
+      "python tools/visual_audit.py --target layout-grid-masonry --sizes 390x720"
     ],
     "screenshots": [
-      "screenshots/layout-grid-masonry-desktop-1.png"
+      "screenshots/layout-grid-masonry-desktop-1.png",
+      "screenshots/layout-grid-masonry-390x720.png"
     ],
     "script": "examples\\css_feature_probes\\layout_grid_masonry_probe.py",
     "snapshots": [
-      "snapshots/layout-grid-masonry-desktop-1.json"
+      "snapshots/layout-grid-masonry-desktop-1.json",
+      "snapshots/layout-grid-masonry-390x720.json"
     ],
     "status": "pass",
     "suspected_modules": [
@@ -1030,21 +1108,26 @@
     "id": "layout-scrollable-composites",
     "logs": [
       "logs/layout-scrollable-composites-desktop-1.stdout.txt",
-      "logs/layout-scrollable-composites-desktop-1.stderr.txt"
+      "logs/layout-scrollable-composites-desktop-1.stderr.txt",
+      "logs/layout-scrollable-composites-390x720.stdout.txt",
+      "logs/layout-scrollable-composites-390x720.stderr.txt"
     ],
     "manual": false,
     "name": "Layout Scrollable Composites",
-    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state. Additional run: No visual issue recorded by automated first pass. Additional run: Captured with native DragonGUI window screenshot API.",
     "priority": "low",
     "reproduction": [
-      "python tools/visual_audit.py --target layout-scrollable-composites --sizes desktop-1"
+      "python tools/visual_audit.py --target layout-scrollable-composites --sizes desktop-1",
+      "python tools/visual_audit.py --target layout-scrollable-composites --sizes 390x720"
     ],
     "screenshots": [
-      "screenshots/layout-scrollable-composites-desktop-1.png"
+      "screenshots/layout-scrollable-composites-desktop-1.png",
+      "screenshots/layout-scrollable-composites-390x720.png"
     ],
     "script": "examples\\css_feature_probes\\layout_scrollable_composites_probe.py",
     "snapshots": [
-      "snapshots/layout-scrollable-composites-desktop-1.json"
+      "snapshots/layout-scrollable-composites-desktop-1.json",
+      "snapshots/layout-scrollable-composites-390x720.json"
     ],
     "status": "pass",
     "suspected_modules": [
@@ -1068,21 +1151,26 @@
     "id": "layout-plot-embedding",
     "logs": [
       "logs/layout-plot-embedding-desktop-1.stdout.txt",
-      "logs/layout-plot-embedding-desktop-1.stderr.txt"
+      "logs/layout-plot-embedding-desktop-1.stderr.txt",
+      "logs/layout-plot-embedding-390x720.stdout.txt",
+      "logs/layout-plot-embedding-390x720.stderr.txt"
     ],
     "manual": false,
     "name": "Layout Plot Embedding",
-    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state. Additional run: No visual issue recorded by automated first pass. Additional run: Captured with native DragonGUI window screenshot API.",
     "priority": "low",
     "reproduction": [
-      "python tools/visual_audit.py --target layout-plot-embedding --sizes desktop-1"
+      "python tools/visual_audit.py --target layout-plot-embedding --sizes desktop-1",
+      "python tools/visual_audit.py --target layout-plot-embedding --sizes 390x720"
     ],
     "screenshots": [
-      "screenshots/layout-plot-embedding-desktop-1.png"
+      "screenshots/layout-plot-embedding-desktop-1.png",
+      "screenshots/layout-plot-embedding-390x720.png"
     ],
     "script": "examples\\css_feature_probes\\layout_plot_embedding_probe.py",
     "snapshots": [
-      "snapshots/layout-plot-embedding-desktop-1.json"
+      "snapshots/layout-plot-embedding-desktop-1.json",
+      "snapshots/layout-plot-embedding-390x720.json"
     ],
     "status": "pass",
     "suspected_modules": [
@@ -1315,21 +1403,26 @@
     "id": "data-table-upgrades",
     "logs": [
       "logs/data-table-upgrades-desktop-1.stdout.txt",
-      "logs/data-table-upgrades-desktop-1.stderr.txt"
+      "logs/data-table-upgrades-desktop-1.stderr.txt",
+      "logs/data-table-upgrades-390x720.stdout.txt",
+      "logs/data-table-upgrades-390x720.stderr.txt"
     ],
     "manual": false,
     "name": "Data Table Upgrades",
-    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state.",
+    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Visual review: saved first-viewport screenshot(s) inspected; no obvious blank content, unexpected clipping, text overlap, unreadable contrast, or layout regression recorded for the captured state. Additional run: No visual issue recorded by automated first pass. Additional run: Captured with native DragonGUI window screenshot API.",
     "priority": "low",
     "reproduction": [
-      "python tools/visual_audit.py --target data-table-upgrades --sizes desktop-1"
+      "python tools/visual_audit.py --target data-table-upgrades --sizes desktop-1",
+      "python tools/visual_audit.py --target data-table-upgrades --sizes 390x720"
     ],
     "screenshots": [
-      "screenshots/data-table-upgrades-desktop-1.png"
+      "screenshots/data-table-upgrades-desktop-1.png",
+      "screenshots/data-table-upgrades-390x720.png"
     ],
     "script": "examples\\css_feature_probes\\data_table_upgrades_probe.py",
     "snapshots": [
-      "snapshots/data-table-upgrades-desktop-1.json"
+      "snapshots/data-table-upgrades-desktop-1.json",
+      "snapshots/data-table-upgrades-390x720.json"
     ],
     "status": "pass",
     "suspected_modules": [

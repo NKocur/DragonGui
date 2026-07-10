@@ -29,9 +29,9 @@ pub enum TableHit {
 pub fn metrics(theme: &Theme, sf: f32) -> TableMetrics {
     TableMetrics {
         header_h: theme.control_height() * sf,
-        row_h: (theme.font_size + theme.spacing + 8.0).max(24.0) * sf,
-        index_w: 64.0 * sf,
-        col_w: 140.0 * sf,
+        row_h: (theme.font_size + theme.spacing + 3.0).max(20.0) * sf,
+        index_w: 48.0 * sf,
+        col_w: 116.0 * sf,
     }
 }
 
@@ -326,6 +326,16 @@ mod tests {
         assert_eq!(metrics.row_h, 42.0);
         assert_eq!(metrics.index_w, 108.0);
         assert_eq!(metrics.col_w, 270.0);
+    }
+
+    #[test]
+    fn default_metrics_are_compact_for_dense_data() {
+        let metrics = metrics(&Theme::dark(), 1.0);
+
+        assert_eq!(metrics.header_h, 25.0);
+        assert_eq!(metrics.row_h, 21.0);
+        assert_eq!(metrics.index_w, 48.0);
+        assert_eq!(metrics.col_w, 116.0);
     }
 
     #[test]

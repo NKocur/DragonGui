@@ -236,6 +236,16 @@
     "manual": false
   },
   {
+    "id": "default-polish-stress",
+    "name": "Default Polish Stress",
+    "script": "examples/css_feature_probes/default_polish_stress_probe.py",
+    "category": "layout",
+    "features": ["Default theme", "AppShell", "Sidebar", "Toolbar", "Tabs", "DataFrameTable", "PropertyGrid", "Nested scroll"],
+    "sizes": [[1180, 760], [900, 640], [390, 720], [320, 640]],
+    "manual": false,
+    "notes": "Default-only visual stress target with minimal layout styling and no custom visual theme."
+  },
+  {
     "id": "layout-panel-bounds",
     "name": "Layout Panel Bounds",
     "script": "examples/css_feature_probes/layout_panel_bounds_probe.py",

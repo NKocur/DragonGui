@@ -568,32 +568,45 @@ pub struct Theme {
 impl Theme {
     pub fn dark() -> Self {
         Self {
-            background: rgb(0x12, 0x12, 0x1a),
-            surface: rgb(0x1e, 0x1e, 0x2e),
-            surface_alt: rgb(0x32, 0x32, 0x4a),
-            text: rgb(0xf0, 0xf0, 0xf7),
-            muted_text: rgb(0xa8, 0xa8, 0xba),
-            accent: rgb(0x7b, 0x73, 0xff),
-            border: rgb(0x38, 0x38, 0x50),
-            danger: rgb(0xff, 0x5c, 0x7a),
-            warning: rgb(0xff, 0xbf, 0x47),
-            success: rgb(0x43, 0xd4, 0x8f),
-            focus: rgb(0x6b, 0xdc, 0xff),
-            disabled: rgb(0x66, 0x66, 0x7a),
-            radius: 6.0,
-            spacing: 8.0,
-            font_size: 14.0,
+            background: rgb(0x0a, 0x0f, 0x14),
+            surface: rgb(0x12, 0x19, 0x22),
+            surface_alt: rgb(0x1d, 0x28, 0x33),
+            text: rgb(0xf2, 0xf6, 0xf8),
+            muted_text: rgb(0x91, 0xa0, 0xad),
+            accent: rgb(0x37, 0xc6, 0xd0),
+            border: rgb(0x26, 0x35, 0x43),
+            danger: rgb(0xff, 0x5f, 0x72),
+            warning: rgb(0xf4, 0xb8, 0x4a),
+            success: rgb(0x45, 0xc4, 0x8a),
+            focus: rgb(0x7b, 0xdc, 0xff),
+            disabled: rgb(0x5d, 0x6a, 0x75),
+            radius: 3.0,
+            spacing: 5.0,
+            font_size: 13.0,
         }
     }
 
     pub fn control_height(&self) -> f32 {
-        (self.font_size + self.spacing * 2.0 + 4.0).max(28.0)
+        (self.font_size + self.spacing * 2.0 + 2.0).max(25.0)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dark_theme_defaults_are_compact_and_neutral() {
+        let theme = Theme::dark();
+        assert_color_close(theme.background, rgb(0x0a, 0x0f, 0x14));
+        assert_color_close(theme.surface, rgb(0x12, 0x19, 0x22));
+        assert_color_close(theme.surface_alt, rgb(0x1d, 0x28, 0x33));
+        assert_color_close(theme.accent, rgb(0x37, 0xc6, 0xd0));
+        assert_eq!(theme.radius, 3.0);
+        assert_eq!(theme.spacing, 5.0);
+        assert_eq!(theme.font_size, 13.0);
+        assert_eq!(theme.control_height(), 25.0);
+    }
 
     #[test]
     fn web_color_parser_accepts_lab_lch_oklab_and_oklch() {

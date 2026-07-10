@@ -1,0 +1,70 @@
+tests\test_python_api.py:438:            ctx.rounded_rect(0, 0, ctx.width, ctx.height, radius=6, fill="surface")
+tests\test_python_api.py:3880:    app = dg.App(theme=dg.Theme.light(accent="#0055ff", spacing=10.0, font_size=14.0))
+native/src\document.rs:2749:                "inner_radius": 0.6,
+native/src\document.rs:2765:        assert_eq!(node.props.pie_chart.inner_radius, 0.6);
+native/src\css_style.rs:11632:                    border-radius: 6px;
+native/src\css_style.rs:11658:                    border-radius: 6px;
+native/src\css_style.rs:11680:                border-radius: 6px;
+native/src\css_style.rs:13029:            "Button { border-radius: 4px; padding: 6px 10px; }",
+native/src\css_style.rs:14047:            :root { --radius: 4px; --brand: #ff6b35; }
+native/src\css_style.rs:16028:        assert_eq!(gradient.blobs[1].radius, 0.36);
+native/src\css_style.rs:16707:                    letter-spacing: 0.08em;
+native/src\css_style.rs:16724:        assert_eq!(label.style.text.letter_spacing, Some(TextSpacing::Em(0.08)));
+native/src\css_style.rs:16749:                ":root { --radius: 6px; } .primary { background: accent; }",
+native/src\css_style.rs:18396:                .primary { background: #336699; border-radius: 6px; }
+native/src\layout.rs:354:    let ctrl_h = node_control_height_lp(node, theme) * sf;
+native/src\layout.rs:625:                        .unwrap_or_else(|| node_control_height_lp(node, theme))
+native/src\layout.rs:626:                        .max(node_control_height_lp(node, theme))
+native/src\layout.rs:775:                        left: LengthPercentage::Length((theme.spacing + 8.0) * sf),
+native/src\layout.rs:2065:        | WidgetKind::TextInput => node_control_height_lp(node, theme) * sf,
+native/src\layout.rs:2108:    let fallback = node_control_height_lp(node, theme) * sf;
+native/src\layout.rs:2278:            Some(node_control_height_lp(node, theme))
+native/src\layout.rs:2390:    let control_h = node_control_height_lp(node, theme);
+native/src\layout.rs:2485:fn node_control_height_lp(node: &WidgetNode, theme: &Theme) -> f32 {
+native/src\layout.rs:3723:        _ => node_control_height_lp(node, theme) * sf,
+native/src\layout.rs:4720:        assert_eq!(section.h, Theme::dark().control_height());
+native/src\layout.rs:4751:        assert!(section.h > Theme::dark().control_height());
+native/src\layout.rs:4752:        assert!(child.y >= section.y + Theme::dark().control_height());
+native/src\layout.rs:4786:            first.y >= section.y + theme.control_height() + 8.0,
+native/src\layout.rs:4883:        assert!(notes.h > Theme::dark().control_height() * 2.0);
+native/src\layout.rs:4909:        assert!(notes.h > Theme::dark().control_height() * 2.0);
+native/src\layout.rs:5408:                > node_control_height_lp(
+native/src\layout.rs:5898:        assert_eq!(menu_bar.h, Theme::dark().control_height());
+native/src\overlays.rs:19:        h: theme.control_height() * sf * items.len() as f32,
+native/src\overlays.rs:55:    let row_h = theme.control_height() * sf;
+python\dragongui\manual.py:1601:app = dg.App(theme=dg.Theme.dark())
+python\dragongui\manual.py:1631:app = dg.App(theme=dg.Theme.dark())
+python\dragongui\manual.py:1734:- `Theme.dark()` and `Theme.light()` provide token values used by CSS.
+native/src\style.rs:182:        .unwrap_or_else(|| theme.control_height());
+native/src\style.rs:196:        .unwrap_or_else(|| theme.control_height());
+native/src\primitives\mod.rs:7511:    let radius = (w.min(h) * 0.265).max(stroke * 4.2);
+native/src\primitives\mod.rs:7512:    let inner_ratio = ((radius - stroke) / radius).clamp(0.58, 0.86);
+native/src\primitives\mod.rs:7586:        [radius * 0.65; 4],
+native/src\primitives\mod.rs:7632:    let inner_ratio = ((radius - stroke) / radius).clamp(0.66, 0.88);
+native/src\primitives\mod.rs:7689:    let shackle_radius_y = shackle_h * if unlocked { 0.66 } else { 0.76 };
+native/src\primitives\mod.rs:8058:    let radius = (icon * 0.26).max(stroke * 4.2);
+native/src\primitives\mod.rs:8059:    let inner_ratio = ((radius - stroke) / radius).clamp(0.58, 0.86);
+native/src\primitives\mod.rs:8089:    let radius = (0.9 * sf).max(0.6);
+native/src\primitives\mod.rs:8327:        let default_vertical_pad = (border_w + gap * 1.5).max(right_radius * 0.6);
+native/src\primitives\mod.rs:8372:        let default_horizontal_pad = (border_w + gap * 1.5).max(bottom_radius * 0.6);
+native/src\primitives\mod.rs:12933:    let row_h = theme.control_height() * sf;
+native/src\primitives\mod.rs:13042:            let row_h = theme.control_height() * sf;
+native/src\primitives\mod.rs:13717:        // Fill corners are concentric with the track: track radius 6 (dark
+python\dragongui\widgets.py:1697:        radius: int | float = 6.0,
+native/src\runtime.rs:12787:        let row_h = self.theme.control_height() * self.scale_factor;
+native/src\runtime.rs:12809:        let row_h = self.theme.control_height() * self.scale_factor;
+native/src\runtime.rs:12886:        let row_h = self.theme.control_height() * self.scale_factor;
+native/src\runtime.rs:13319:        let line = self.theme.control_height() * self.scale_factor * 0.75;
+native/src\table.rs:31:        header_h: theme.control_height() * sf,
+python\dragongui\theme.py:40:            theme = dg.Theme.dark(accent="#4ea1ff", radius=8.0)
+native/src\theme.rs:589:    pub fn control_height(&self) -> f32 {
+native/src\theme.rs:607:        assert_eq!(theme.control_height(), 28.0);
+native/src\scatter\mod.rs:4683:        // Base radius = 8px, effective threshold = max(8, 80*0.75) = 60px.
+native/src\scatter\mod.rs:4684:        // With base_radius=8 the cell at (90,50) is outside; with 60px it's inside.
+native/src\scatter\mod.rs:4706:        // Expanded query: radius = max(8, 80*0.75) = 60.
+native/src\text\mod.rs:716:        let radius = radius.round().clamp(0.0, width.min(height) as f32 * 0.5) as u16;
+native/src\text\mod.rs:774:        radius: u16,
+native/src\text\mod.rs:1112:fn panel_rect_glyph_image(width: u16, height: u16, radius: u16) -> AxisLabelGlyphImage {
+native/src\text\mod.rs:3750:            let row_h = theme.control_height() * sf;
+native/src\text\mod.rs:3897:    let row_h = theme.control_height() * sf;
+native/src\text\mod.rs:6349:        let row_h = theme.control_height();

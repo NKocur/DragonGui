@@ -1,0 +1,280 @@
+    if node.kind == WidgetKind::DataFrameTable {
+        if let (Some(r), Some(_visible), Some(table_state)) = (
+            layout.rects.get(&node.id).copied(),
+            layout.visible_rect(&node.id),
+            state.table(&node.id),
+        ) {
+            if r.w > 0.0 && r.h > 0.0 {
+                let font_size = text_font_size(node, theme, sf);
+                let font_family = node.style.text.font_family.as_ref();
+                let font_weight = node.style.text.font_weight.unwrap_or(Weight::NORMAL.0);
+                let metrics = table::metrics_for_node(node, theme, sf);
+                let visible = table::visible(table_state, &r, metrics);
+                let table_text_color = text_color(node, state, theme, false);
+                let muted = glyph_color(theme.muted_text);
+                let table_bottom = r.y + r.h;
+                let header_bottom = (r.y + metrics.header_h).min(table_bottom);
+                let table_radii = table_text_radii(node, theme, sf);
+                let header_parts = &["header"];
+                let header_font_size = part_font_size(node, header_parts, font_size, sf);
+                let header_line_height =
+                    text_line_height_for_parts(node, header_parts, header_font_size, theme, sf);
+                let header_font_family = part_font_family(node, header_parts, font_family);
+                let header_font_weight = part_font_weight(node, header_parts, font_weight);
+                let header_text_options = text_options_for_parts(node, header_parts);
+                let header_color =
+                    part_text_color(node, state, theme, header_parts, table_text_color);
+                let header_muted = part_text_color(node, state, theme, header_parts, muted);
+                let mut index_header_bounds = table_text_bounds(
+                    r,
+                    Rect {
+                        x: r.x,
+                        y: r.y,
+                        w: metrics.index_w,
+                        h: header_h_for_bounds(metrics.header_h, r.h),
+                    },
+                    pad,
+                    table_radii,
+                );
+                if table_state
+                    .sort
+                    .is_some_and(|(target, _)| target == TableSortColumn::Index)
+                {
+                    let reserve = (DROPDOWN_CHEVRON_WIDTH_LP * sf + pad).ceil() as i32;
+                    index_header_bounds.right =
+                        (index_header_bounds.right - reserve).max(index_header_bounds.left + 1);
+                }
+                let index_header_bounds =
+                    clamp_text_bounds_bottom(index_header_bounds, header_bottom);
+
+                if !text_bounds_obscured_by_overlay(
+                    node,
+                    index_header_bounds,
+                    open_dropdown,
+                    dropdown_overlay,
+                    menu_overlays,
+                    tooltip_overlay,
+                    extra_overlays,
+                ) {
+                    push_text_entry(
+                        font_system,
+                        font_aliases,
+                        out,
+                        "#",
+                        header_font_size,
+                        header_line_height,
+                        header_font_family,
+                        header_font_weight,
+                        index_header_bounds.left as f32,
+                        r.y + ((metrics.header_h - header_line_height) * 0.5).max(0.0),
+                        index_header_bounds,
+                        header_muted,
+                        TextAlign::Left,
+                        cache,
+                        None,
+                        caret_positions,
+                        header_text_options,
+                    );
+                }
+
+                for col_offset in 0..visible.col_count {
+                    let col = visible.first_col + col_offset;
+                    let Some((col_x, col_right)) =
+                        table::column_bounds(table_state, &r, metrics, col_offset)
+                    else {
+                        continue;
+                    };
+                    let name = table_state
+                        .columns
+                        .get(col)
+                        .map(String::as_str)
+                        .unwrap_or("");
+                    let mut bounds = table_text_bounds(
+                        r,
+                        Rect {
+                            x: col_x,
+                            y: r.y,
+                            w: col_right - col_x,
+                            h: header_h_for_bounds(metrics.header_h, r.h),
+                        },
+                        pad,
+                        table_radii,
+                    );
+                    if table_state
+                        .sort
+                        .is_some_and(|(target, _)| target == TableSortColumn::Data(col))
+                    {
+                        let reserve = (DROPDOWN_CHEVRON_WIDTH_LP * sf + pad).ceil() as i32;
+                        bounds.right = (bounds.right - reserve).max(bounds.left + 1);
+                    }
+                    let bounds = clamp_text_bounds_bottom(bounds, header_bottom);
+                    if !text_bounds_obscured_by_overlay(
+                        node,
+                        bounds,
+                        open_dropdown,
+                        dropdown_overlay,
+                        menu_overlays,
+                        tooltip_overlay,
+                        extra_overlays,
+                    ) {
+                        push_text_entry(
+                            font_system,
+                            font_aliases,
+                            out,
+                            name,
+                            header_font_size,
+                            header_line_height,
+                            header_font_family,
+                            header_font_weight,
+                            bounds.left as f32,
+                            r.y + ((metrics.header_h - header_line_height) * 0.5).max(0.0),
+                            bounds,
+                            header_color,
+                            TextAlign::Left,
+                            cache,
+                            None,
+                            caret_positions,
+                            header_text_options,
+                        );
+                    }
+                }
+
+                for row_offset in 0..visible.row_count {
+                    let row = visible.first_row + row_offset;
+                    let Some((row_y, row_bottom)) = table::row_bounds(&r, metrics, row_offset)
+                    else {
+                        continue;
+                    };
+
+                    let selected = table_state
+                        .selected
+                        .is_some_and(|(selected_row, _)| selected_row == row);
+                    let row_parts: &[&str] = if selected {
+                        &["row-selected", "row"]
+                    } else {
+                        &["row"]
+                    };
+                    let row_font_size = part_font_size(node, row_parts, font_size, sf);
+                    let row_line_height =
+                        text_line_height_for_parts(node, row_parts, row_font_size, theme, sf);
+                    let row_font_family = part_font_family(node, row_parts, font_family);
+                    let row_font_weight = part_font_weight(node, row_parts, font_weight);
+                    let row_text_options = text_options_for_parts(node, row_parts);
+                    let row_text_color =
+                        part_text_color(node, state, theme, row_parts, table_text_color);
+                    let row_muted = part_text_color(node, state, theme, row_parts, muted);
+                    let row_index_bounds = table_text_bounds(
+                        r,
+                        Rect {
+                            x: r.x,
+                            y: row_y,
+                            w: metrics.index_w,
+                            h: row_bottom - row_y,
+                        },
+                        pad,
+                        table_radii,
+                    );
+
+                    if !text_bounds_obscured_by_overlay(
+                        node,
+                        row_index_bounds,
+                        open_dropdown,
+                        dropdown_overlay,
+                        menu_overlays,
+                        tooltip_overlay,
+                        extra_overlays,
+                    ) {
+                        push_text_entry(
+                            font_system,
+                            font_aliases,
+                            out,
+                            &table::source_row(table_state, row).to_string(),
+                            row_font_size,
+                            row_line_height,
+                            row_font_family,
+                            row_font_weight,
+                            row_index_bounds.left as f32,
+                            row_y + ((metrics.row_h - row_line_height) * 0.5).max(0.0),
+                            row_index_bounds,
+                            row_muted,
+                            TextAlign::Left,
+                            cache,
+                            None,
+                            caret_positions,
+                            row_text_options,
+                        );
+                    }
+
+                    for col_offset in 0..visible.col_count {
+                        let col = visible.first_col + col_offset;
+                        let Some((col_x, col_right)) =
+                            table::column_bounds(table_state, &r, metrics, col_offset)
+                        else {
+                            continue;
+                        };
+                        let value = table::cell_text(table_state, resources, row, col);
+                        let bounds = table_text_bounds(
+                            r,
+                            Rect {
+                                x: col_x,
+                                y: row_y,
+                                w: col_right - col_x,
+                                h: row_bottom - row_y,
+                            },
+                            pad,
+                            table_radii,
+                        );
+                        if !text_bounds_obscured_by_overlay(
+                            node,
+                            bounds,
+                            open_dropdown,
+                            dropdown_overlay,
+                            menu_overlays,
+                            tooltip_overlay,
+                            extra_overlays,
+                        ) {
+                            push_text_entry(
+                                font_system,
+                                font_aliases,
+                                out,
+                                &value,
+                                row_font_size,
+                                row_line_height,
+                                row_font_family,
+                                row_font_weight,
+                                bounds.left as f32,
+                                row_y + ((metrics.row_h - row_line_height) * 0.5).max(0.0),
+                                bounds,
+                                row_text_color,
+                                TextAlign::Left,
+                                cache,
+                                None,
+                                caret_positions,
+                                row_text_options,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    visit_stacking_children(node, |child| {
+        collect_table_text(
+            child,
+            layout,
+            state,
+            resources,
+            theme,
+            open_dropdown,
+            dropdown_overlay,
+            menu_overlays,
+            tooltip_overlay,
+            extra_overlays,
+            skip_open_modals,
+            font_system,
+            font_aliases,
+            sf,
+            pad,
+            cache,
+            caret_positions,

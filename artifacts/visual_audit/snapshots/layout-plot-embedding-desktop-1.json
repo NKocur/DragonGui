@@ -62,6 +62,8 @@
       "dg-10": {
         "matched_rules": [
           "framework: Panel",
+          "framework: Panel::scrollbar-track",
+          "framework: Panel::scrollbar-thumb",
           "user: Panel.case",
           "user: Panel.wide"
         ],
@@ -89,6 +91,54 @@
             }
           },
           "open": {},
+          "parts": {
+            "scrollbar-thumb": {
+              "matched_rules": [
+                "framework: Panel::scrollbar-thumb"
+              ],
+              "visual": {
+                "background": {
+                  "token": "border"
+                },
+                "background_paint": {
+                  "color": {
+                    "token": "border"
+                  },
+                  "type": "color"
+                },
+                "border_radius": 999.0
+              }
+            },
+            "scrollbar-track": {
+              "layout": {
+                "padding": 1.0
+              },
+              "matched_rules": [
+                "framework: Panel::scrollbar-track"
+              ],
+              "visual": {
+                "background": {
+                  "rgba": [
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0
+                  ]
+                },
+                "background_paint": {
+                  "color": {
+                    "rgba": [
+                      0.0,
+                      0.0,
+                      0.0,
+                      0.0
+                    ]
+                  },
+                  "type": "color"
+                }
+              }
+            }
+          },
           "selected": {},
           "text": {
             "color": {
@@ -395,6 +445,12 @@
       },
       "dg-17": {
         "matched_rules": [
+          "framework: DataFrameTable",
+          "framework: DataFrameTable::header",
+          "framework: DataFrameTable::row",
+          "framework: DataFrameTable::row-selected",
+          "framework: DataFrameTable::scrollbar-track",
+          "framework: DataFrameTable::scrollbar-thumb",
           "user: DataFrameTable::scrollbar-track",
           "user: DataFrameTable::scrollbar-thumb",
           "user: DataFrameTable.embedded-table",
@@ -421,6 +477,7 @@
           "parts": {
             "header": {
               "matched_rules": [
+                "framework: DataFrameTable::header",
                 "user: DataFrameTable.embedded-table::header"
               ],
               "text": {
@@ -432,6 +489,7 @@
                     1.0
                   ]
                 },
+                "font_size": 13.0,
                 "font_weight": 850
               },
               "visual": {
@@ -456,11 +514,39 @@
                 }
               }
             },
+            "row": {
+              "matched_rules": [
+                "framework: DataFrameTable::row"
+              ],
+              "text": {
+                "color": {
+                  "token": "text"
+                },
+                "font_size": 13.0
+              }
+            },
+            "row-selected": {
+              "matched_rules": [
+                "framework: DataFrameTable::row-selected"
+              ],
+              "visual": {
+                "background": {
+                  "token": "accent_mix_20"
+                },
+                "background_paint": {
+                  "color": {
+                    "token": "accent_mix_20"
+                  },
+                  "type": "color"
+                }
+              }
+            },
             "scrollbar-thumb": {
               "layout": {
                 "width": 6.0
               },
               "matched_rules": [
+                "framework: DataFrameTable::scrollbar-thumb",
                 "user: DataFrameTable::scrollbar-thumb"
               ],
               "visual": {
@@ -492,6 +578,7 @@
                 "width": 8.0
               },
               "matched_rules": [
+                "framework: DataFrameTable::scrollbar-track",
                 "user: DataFrameTable::scrollbar-track"
               ],
               "visual": {
@@ -608,6 +695,8 @@
       "dg-19": {
         "matched_rules": [
           "framework: Panel",
+          "framework: Panel::scrollbar-track",
+          "framework: Panel::scrollbar-thumb",
           "user: Panel.case"
         ],
         "style": {
@@ -634,6 +723,54 @@
             }
           },
           "open": {},
+          "parts": {
+            "scrollbar-thumb": {
+              "matched_rules": [
+                "framework: Panel::scrollbar-thumb"
+              ],
+              "visual": {
+                "background": {
+                  "token": "border"
+                },
+                "background_paint": {
+                  "color": {
+                    "token": "border"
+                  },
+                  "type": "color"
+                },
+                "border_radius": 999.0
+              }
+            },
+            "scrollbar-track": {
+              "layout": {
+                "padding": 1.0
+              },
+              "matched_rules": [
+                "framework: Panel::scrollbar-track"
+              ],
+              "visual": {
+                "background": {
+                  "rgba": [
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0
+                  ]
+                },
+                "background_paint": {
+                  "color": {
+                    "rgba": [
+                      0.0,
+                      0.0,
+                      0.0,
+                      0.0
+                    ]
+                  },
+                  "type": "color"
+                }
+              }
+            }
+          },
           "selected": {},
           "text": {
             "color": {
@@ -906,6 +1043,8 @@
       "dg-22": {
         "matched_rules": [
           "framework: Panel",
+          "framework: Panel::scrollbar-track",
+          "framework: Panel::scrollbar-thumb",
           "user: Panel.case"
         ],
         "style": {
@@ -932,6 +1071,54 @@
             }
           },
           "open": {},
+          "parts": {
+            "scrollbar-thumb": {
+              "matched_rules": [
+                "framework: Panel::scrollbar-thumb"
+              ],
+              "visual": {
+                "background": {
+                  "token": "border"
+                },
+                "background_paint": {
+                  "color": {
+                    "token": "border"
+                  },
+                  "type": "color"
+                },
+                "border_radius": 999.0
+              }
+            },
+            "scrollbar-track": {
+              "layout": {
+                "padding": 1.0
+              },
+              "matched_rules": [
+                "framework: Panel::scrollbar-track"
+              ],
+              "visual": {
+                "background": {
+                  "rgba": [
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0
+                  ]
+                },
+                "background_paint": {
+                  "color": {
+                    "rgba": [
+                      0.0,
+                      0.0,
+                      0.0,
+                      0.0
+                    ]
+                  },
+                  "type": "color"
+                }
+              }
+            }
+          },
           "selected": {},
           "text": {
             "color": {
@@ -1099,6 +1286,8 @@
       "dg-25": {
         "matched_rules": [
           "framework: Panel",
+          "framework: Panel::scrollbar-track",
+          "framework: Panel::scrollbar-thumb",
           "user: Panel.case",
           "user: Panel.compact"
         ],
@@ -1126,6 +1315,54 @@
             }
           },
           "open": {},
+          "parts": {
+            "scrollbar-thumb": {
+              "matched_rules": [
+                "framework: Panel::scrollbar-thumb"
+              ],
+              "visual": {
+                "background": {
+                  "token": "border"
+                },
+                "background_paint": {
+                  "color": {
+                    "token": "border"
+                  },
+                  "type": "color"
+                },
+                "border_radius": 999.0
+              }
+            },
+            "scrollbar-track": {
+              "layout": {
+                "padding": 1.0
+              },
+              "matched_rules": [
+                "framework: Panel::scrollbar-track"
+              ],
+              "visual": {
+                "background": {
+                  "rgba": [
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0
+                  ]
+                },
+                "background_paint": {
+                  "color": {
+                    "rgba": [
+                      0.0,
+                      0.0,
+                      0.0,
+                      0.0
+                    ]
+                  },
+                  "type": "color"
+                }
+              }
+            }
+          },
           "selected": {},
           "text": {
             "color": {
@@ -1287,6 +1524,8 @@
       "dg-28": {
         "matched_rules": [
           "framework: Panel",
+          "framework: Panel::scrollbar-track",
+          "framework: Panel::scrollbar-thumb",
           "user: Panel.case",
           "user: Panel.compact"
         ],
@@ -1314,6 +1553,54 @@
             }
           },
           "open": {},
+          "parts": {
+            "scrollbar-thumb": {
+              "matched_rules": [
+                "framework: Panel::scrollbar-thumb"
+              ],
+              "visual": {
+                "background": {
+                  "token": "border"
+                },
+                "background_paint": {
+                  "color": {
+                    "token": "border"
+                  },
+                  "type": "color"
+                },
+                "border_radius": 999.0
+              }
+            },
+            "scrollbar-track": {
+              "layout": {
+                "padding": 1.0
+              },
+              "matched_rules": [
+                "framework: Panel::scrollbar-track"
+              ],
+              "visual": {
+                "background": {
+                  "rgba": [
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0
+                  ]
+                },
+                "background_paint": {
+                  "color": {
+                    "rgba": [
+                      0.0,
+                      0.0,
+                      0.0,
+                      0.0
+                    ]
+                  },
+                  "type": "color"
+                }
+              }
+            }
+          },
           "selected": {},
           "text": {
             "color": {
@@ -1504,6 +1791,8 @@
       "dg-31": {
         "matched_rules": [
           "framework: Panel",
+          "framework: Panel::scrollbar-track",
+          "framework: Panel::scrollbar-thumb",
           "user: Panel.case",
           "user: Panel.compact"
         ],
@@ -1531,6 +1820,54 @@
             }
           },
           "open": {},
+          "parts": {
+            "scrollbar-thumb": {
+              "matched_rules": [
+                "framework: Panel::scrollbar-thumb"
+              ],
+              "visual": {
+                "background": {
+                  "token": "border"
+                },
+                "background_paint": {
+                  "color": {
+                    "token": "border"
+                  },
+                  "type": "color"
+                },
+                "border_radius": 999.0
+              }
+            },
+            "scrollbar-track": {
+              "layout": {
+                "padding": 1.0
+              },
+              "matched_rules": [
+                "framework: Panel::scrollbar-track"
+              ],
+              "visual": {
+                "background": {
+                  "rgba": [
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0
+                  ]
+                },
+                "background_paint": {
+                  "color": {
+                    "rgba": [
+                      0.0,
+                      0.0,
+                      0.0,
+                      0.0
+                    ]
+                  },
+                  "type": "color"
+                }
+              }
+            }
+          },
           "selected": {},
           "text": {
             "color": {
@@ -1691,6 +2028,8 @@
       "dg-34": {
         "matched_rules": [
           "framework: Panel",
+          "framework: Panel::scrollbar-track",
+          "framework: Panel::scrollbar-thumb",
           "user: Panel.case",
           "user: Panel.tiny"
         ],
@@ -1718,6 +2057,54 @@
             }
           },
           "open": {},
+          "parts": {
+            "scrollbar-thumb": {
+              "matched_rules": [
+                "framework: Panel::scrollbar-thumb"
+              ],
+              "visual": {
+                "background": {
+                  "token": "border"
+                },
+                "background_paint": {
+                  "color": {
+                    "token": "border"
+                  },
+                  "type": "color"
+                },
+                "border_radius": 999.0
+              }
+            },
+            "scrollbar-track": {
+              "layout": {
+                "padding": 1.0
+              },
+              "matched_rules": [
+                "framework: Panel::scrollbar-track"
+              ],
+              "visual": {
+                "background": {
+                  "rgba": [
+                    0.0,
+                    0.0,
+                    0.0,
+                    0.0
+                  ]
+                },
+                "background_paint": {
+                  "color": {
+                    "rgba": [
+                      0.0,
+                      0.0,
+                      0.0,
+                      0.0
+                    ]
+                  },
+                  "type": "color"
+                }
+              }
+            }
+          },
           "selected": {},
           "text": {
             "color": {
@@ -2095,14 +2482,16 @@
               "type": "color"
             },
             "border_color": {
-              "token": "accent"
+              "token": "accent_mix_20"
             }
           },
           "layout": {
             "height": 32.0,
             "min_width": 74.0,
+            "padding_bottom": 5.0,
             "padding_left": 10.0,
             "padding_right": 10.0,
+            "padding_top": 5.0,
             "width": "auto"
           },
           "open": {},
@@ -2205,14 +2594,16 @@
               "type": "color"
             },
             "border_color": {
-              "token": "accent"
+              "token": "accent_mix_20"
             }
           },
           "layout": {
             "height": 32.0,
             "min_width": 74.0,
+            "padding_bottom": 5.0,
             "padding_left": 10.0,
             "padding_right": 10.0,
+            "padding_top": 5.0,
             "width": "auto"
           },
           "open": {},
@@ -2295,14 +2686,16 @@
               "type": "color"
             },
             "border_color": {
-              "token": "accent"
+              "token": "accent_mix_20"
             }
           },
           "layout": {
             "height": 32.0,
             "min_width": 74.0,
+            "padding_bottom": 5.0,
             "padding_left": 10.0,
             "padding_right": 10.0,
+            "padding_top": 5.0,
             "width": "auto"
           },
           "open": {},
@@ -2339,34 +2732,34 @@
     },
     "framework": {
       "apply_layout": {
-        "avg_ms": 2.635625,
+        "avg_ms": 1.01705,
         "count": 4,
-        "last_ms": 0.7176,
-        "total_ms": 10.5425
+        "last_ms": 0.4015,
+        "total_ms": 4.0682
       },
       "container_style": {
-        "avg_ms": 0.000525,
+        "avg_ms": 0.000725,
         "count": 4,
         "last_ms": 9.999999999999999e-05,
-        "total_ms": 0.0021
+        "total_ms": 0.0029
       },
       "image_rebuild": {
-        "avg_ms": 0.0176,
+        "avg_ms": 0.014124999999999999,
         "count": 4,
-        "last_ms": 0.0201,
-        "total_ms": 0.0704
+        "last_ms": 0.0115,
+        "total_ms": 0.056499999999999995
       },
       "layout_compute": {
-        "avg_ms": 0.2303,
+        "avg_ms": 0.153325,
         "count": 4,
-        "last_ms": 0.26830000000000004,
-        "total_ms": 0.9212
+        "last_ms": 0.1249,
+        "total_ms": 0.6133
       },
       "line_plot_rebuild": {
-        "avg_ms": 0.0451875,
+        "avg_ms": 0.0351375,
         "count": 8,
-        "last_ms": 0.07669999999999999,
-        "total_ms": 0.3615
+        "last_ms": 0.022099999999999998,
+        "total_ms": 0.2811
       },
       "prewarm_scatter_widgets": {
         "avg_ms": 0.0,
@@ -2375,28 +2768,28 @@
         "total_ms": 0.0
       },
       "primitive_rebuild": {
-        "avg_ms": 0.33442500000000003,
+        "avg_ms": 0.1091125,
         "count": 8,
-        "last_ms": 0.0704,
-        "total_ms": 2.6754000000000002
+        "last_ms": 0.050899999999999994,
+        "total_ms": 0.8729
       },
       "rebuild_primitives": {
-        "avg_ms": 0.078575,
+        "avg_ms": 0.19005,
         "count": 4,
-        "last_ms": 0.0577,
-        "total_ms": 0.3143
+        "last_ms": 0.592,
+        "total_ms": 0.7602
       },
       "rebuild_text": {
-        "avg_ms": 0.0675,
+        "avg_ms": 0.0445,
         "count": 1,
-        "last_ms": 0.0675,
-        "total_ms": 0.0675
+        "last_ms": 0.0445,
+        "total_ms": 0.0445
       },
       "rebuild_visuals": {
-        "avg_ms": 0.1296,
+        "avg_ms": 0.6402,
         "count": 1,
-        "last_ms": 0.1296,
-        "total_ms": 0.1296
+        "last_ms": 0.6402,
+        "total_ms": 0.6402
       },
       "replace_children_maps": {
         "avg_ms": 0.0,
@@ -2417,40 +2810,40 @@
         "total_ms": 0.0
       },
       "replace_node_maps": {
-        "avg_ms": 0.0519,
+        "avg_ms": 0.0184,
         "count": 1,
-        "last_ms": 0.0519,
-        "total_ms": 0.0519
+        "last_ms": 0.0184,
+        "total_ms": 0.0184
       },
       "replace_node_parse": {
-        "avg_ms": 0.0449,
+        "avg_ms": 0.017,
         "count": 1,
-        "last_ms": 0.0449,
-        "total_ms": 0.0449
+        "last_ms": 0.017,
+        "total_ms": 0.017
       },
       "replace_node_swap": {
-        "avg_ms": 3.2941,
+        "avg_ms": 0.026699999999999998,
         "count": 1,
-        "last_ms": 3.2941,
-        "total_ms": 3.2941
+        "last_ms": 0.026699999999999998,
+        "total_ms": 0.026699999999999998
       },
       "retained_line_plot_sync": {
-        "avg_ms": 0.00039999999999999996,
+        "avg_ms": 0.00015,
         "count": 2,
-        "last_ms": 0.0005,
-        "total_ms": 0.0007999999999999999
+        "last_ms": 9.999999999999999e-05,
+        "total_ms": 0.0003
       },
       "retained_maps": {
-        "avg_ms": 0.2539,
+        "avg_ms": 0.024,
         "count": 2,
-        "last_ms": 0.0516,
-        "total_ms": 0.5078
+        "last_ms": 0.0183,
+        "total_ms": 0.048
       },
       "retained_resources": {
-        "avg_ms": 0.01015,
+        "avg_ms": 0.0045000000000000005,
         "count": 2,
-        "last_ms": 0.011600000000000001,
-        "total_ms": 0.0203
+        "last_ms": 0.0037,
+        "total_ms": 0.009000000000000001
       },
       "retained_scatter_chrome": {
         "avg_ms": 0.0,
@@ -2459,10 +2852,10 @@
         "total_ms": 0.0
       },
       "retained_scatter_collect": {
-        "avg_ms": 0.00075,
+        "avg_ms": 0.00039999999999999996,
         "count": 2,
-        "last_ms": 0.0006,
-        "total_ms": 0.0015
+        "last_ms": 0.0003,
+        "total_ms": 0.0007999999999999999
       },
       "retained_scatter_decode": {
         "avg_ms": 0.0,
@@ -2477,16 +2870,16 @@
         "total_ms": 0.0
       },
       "retained_scatter_retain": {
-        "avg_ms": 0.00045,
+        "avg_ms": 9.999999999999999e-05,
         "count": 2,
-        "last_ms": 0.00039999999999999996,
-        "total_ms": 0.0009
+        "last_ms": 0.0,
+        "total_ms": 0.00019999999999999998
       },
       "retained_scatter_sync": {
-        "avg_ms": 0.005849999999999999,
+        "avg_ms": 0.0028000000000000004,
         "count": 2,
-        "last_ms": 0.0048,
-        "total_ms": 0.011699999999999999
+        "last_ms": 0.0011,
+        "total_ms": 0.005600000000000001
       },
       "retained_scatter_upload": {
         "avg_ms": 0.0,
@@ -2495,278 +2888,278 @@
         "total_ms": 0.0
       },
       "retained_state_preserve": {
-        "avg_ms": 0.20895,
+        "avg_ms": 0.003,
         "count": 2,
-        "last_ms": 0.0031999999999999997,
-        "total_ms": 0.4179
+        "last_ms": 0.0005,
+        "total_ms": 0.006
       },
       "retained_widget_kinds": {
-        "avg_ms": 0.0127,
+        "avg_ms": 0.00325,
         "count": 2,
-        "last_ms": 0.0166,
-        "total_ms": 0.0254
+        "last_ms": 0.0026,
+        "total_ms": 0.0065
       },
       "retained_widget_state": {
-        "avg_ms": 0.0091,
+        "avg_ms": 0.006750000000000001,
         "count": 2,
-        "last_ms": 0.0099,
-        "total_ms": 0.0182
+        "last_ms": 0.0085,
+        "total_ms": 0.013500000000000002
       },
       "scatter_layout": {
-        "avg_ms": 0.0746,
+        "avg_ms": 0.073975,
         "count": 4,
-        "last_ms": 0.092,
-        "total_ms": 0.2984
+        "last_ms": 0.0753,
+        "total_ms": 0.2959
       },
       "style_reapply": {
-        "avg_ms": 0.09035,
+        "avg_ms": 0.06119999999999999,
         "count": 4,
-        "last_ms": 0.0031999999999999997,
-        "total_ms": 0.3614
+        "last_ms": 0.0022,
+        "total_ms": 0.24479999999999996
       },
       "text_rebuild": {
-        "avg_ms": 1.23034,
+        "avg_ms": 0.48980000000000007,
         "count": 5,
-        "last_ms": 0.158,
-        "total_ms": 6.1517
+        "last_ms": 0.0991,
+        "total_ms": 2.4490000000000003
       },
       "transition_sync": {
-        "avg_ms": 0.010925,
+        "avg_ms": 0.008650000000000001,
         "count": 4,
-        "last_ms": 0.015099999999999999,
-        "total_ms": 0.0437
+        "last_ms": 0.009300000000000001,
+        "total_ms": 0.034600000000000006
       }
     },
     "layout": {
       "clips": {
         "dg-1": {
-          "h": 780.0,
-          "w": 1120.0,
+          "h": 975.0,
+          "w": 1400.0,
           "x": 0.0,
           "y": 0.0
         },
         "dg-10": {
-          "h": 342.0,
-          "w": 1064.0,
-          "x": 16.0,
-          "y": 204.0
+          "h": 428.0,
+          "w": 1330.0,
+          "x": 20.0,
+          "y": 237.0
         },
         "dg-11": {
-          "h": 289.0,
-          "w": 1040.0,
-          "x": 28.0,
-          "y": 245.0
+          "h": 361.0,
+          "w": 1300.0,
+          "x": 35.0,
+          "y": 288.0
         },
         "dg-12": {
-          "h": 289.0,
-          "w": 610.0,
-          "x": 28.0,
-          "y": 245.0
+          "h": 361.0,
+          "w": 763.0,
+          "x": 35.0,
+          "y": 288.0
         },
         "dg-13": {
-          "h": 34.0,
-          "w": 610.0,
-          "x": 28.0,
-          "y": 245.0
+          "h": 35.0,
+          "w": 763.0,
+          "x": 35.0,
+          "y": 288.0
         },
         "dg-14": {
-          "h": 248.0,
-          "w": 610.0,
-          "x": 28.0,
-          "y": 286.0
+          "h": 318.0,
+          "w": 763.0,
+          "x": 35.0,
+          "y": 332.0
         },
         "dg-15": {
-          "h": 289.0,
-          "w": 420.0,
-          "x": 648.0,
-          "y": 245.0
+          "h": 361.0,
+          "w": 525.0,
+          "x": 810.0,
+          "y": 288.0
         },
         "dg-16": {
-          "h": 34.0,
-          "w": 420.0,
-          "x": 648.0,
-          "y": 245.0
+          "h": 35.0,
+          "w": 525.0,
+          "x": 810.0,
+          "y": 288.0
         },
         "dg-17": {
-          "h": 248.0,
-          "w": 420.0,
-          "x": 648.0,
-          "y": 286.0
+          "h": 318.0,
+          "w": 525.0,
+          "x": 810.0,
+          "y": 332.0
         },
         "dg-18": {
-          "h": 206.0,
-          "w": 1064.0,
-          "x": 16.0,
-          "y": 558.0
+          "h": 275.0,
+          "w": 1330.0,
+          "x": 20.0,
+          "y": 680.0
         },
         "dg-19": {
-          "h": 206.0,
-          "w": 526.0,
-          "x": 16.0,
-          "y": 558.0
+          "h": 275.0,
+          "w": 658.0,
+          "x": 20.0,
+          "y": 680.0
         },
         "dg-2": {
-          "h": 748.0,
-          "w": 1088.0,
-          "x": 16.0,
-          "y": 16.0
+          "h": 935.0,
+          "w": 1360.0,
+          "x": 20.0,
+          "y": 20.0
         },
         "dg-20": {
-          "h": 34.0,
-          "w": 502.0,
-          "x": 28.0,
-          "y": 599.0
+          "h": 35.0,
+          "w": 628.0,
+          "x": 35.0,
+          "y": 731.0
         },
         "dg-21": {
-          "h": 122.0,
-          "w": 502.0,
-          "x": 28.0,
-          "y": 642.0
+          "h": 178.0,
+          "w": 628.0,
+          "x": 35.0,
+          "y": 777.0
         },
         "dg-22": {
-          "h": 206.0,
-          "w": 526.0,
-          "x": 554.0,
-          "y": 558.0
+          "h": 275.0,
+          "w": 657.0,
+          "x": 693.0,
+          "y": 680.0
         },
         "dg-23": {
-          "h": 34.0,
-          "w": 502.0,
-          "x": 566.0,
-          "y": 599.0
+          "h": 35.0,
+          "w": 627.0,
+          "x": 708.0,
+          "y": 731.0
         },
         "dg-24": {
-          "h": 122.0,
-          "w": 502.0,
-          "x": 566.0,
-          "y": 642.0
+          "h": 178.0,
+          "w": 627.0,
+          "x": 708.0,
+          "y": 777.0
         },
         "dg-25": {
           "h": 0.0,
           "w": 0.0,
-          "x": 16.0,
-          "y": 888.0
+          "x": 20.0,
+          "y": 1092.0
         },
         "dg-26": {
           "h": 0.0,
           "w": 0.0,
-          "x": 28.0,
-          "y": 929.0
+          "x": 35.0,
+          "y": 1143.0
         },
         "dg-27": {
           "h": 0.0,
           "w": 0.0,
-          "x": 28.0,
-          "y": 972.0
+          "x": 35.0,
+          "y": 1189.0
         },
         "dg-28": {
           "h": 0.0,
           "w": 0.0,
-          "x": 554.0,
-          "y": 888.0
+          "x": 693.0,
+          "y": 1092.0
         },
         "dg-29": {
           "h": 0.0,
           "w": 0.0,
-          "x": 566.0,
-          "y": 929.0
+          "x": 708.0,
+          "y": 1143.0
         },
         "dg-3": {
-          "h": 40.0,
-          "w": 1064.0,
-          "x": 16.0,
-          "y": 16.0
+          "h": 43.0,
+          "w": 1330.0,
+          "x": 20.0,
+          "y": 20.0
         },
         "dg-30": {
           "h": 0.0,
           "w": 0.0,
-          "x": 566.0,
-          "y": 972.0
+          "x": 708.0,
+          "y": 1189.0
         },
         "dg-31": {
           "h": 0.0,
           "w": 0.0,
-          "x": 16.0,
-          "y": 1148.0
+          "x": 20.0,
+          "y": 1417.0
         },
         "dg-32": {
           "h": 0.0,
           "w": 0.0,
-          "x": 28.0,
-          "y": 1189.0
+          "x": 35.0,
+          "y": 1468.0
         },
         "dg-33": {
           "h": 0.0,
           "w": 0.0,
-          "x": 28.0,
-          "y": 1232.0
+          "x": 35.0,
+          "y": 1514.0
         },
         "dg-34": {
           "h": 0.0,
           "w": 0.0,
-          "x": 554.0,
-          "y": 1148.0
+          "x": 693.0,
+          "y": 1417.0
         },
         "dg-35": {
           "h": 0.0,
           "w": 0.0,
-          "x": 564.0,
-          "y": 1185.0
+          "x": 706.0,
+          "y": 1463.0
         },
         "dg-36": {
           "h": 0.0,
           "w": 0.0,
-          "x": 564.0,
-          "y": 1226.0
+          "x": 706.0,
+          "y": 1507.0
         },
         "dg-37": {
           "h": 0.0,
           "w": 0.0,
-          "x": 16.0,
-          "y": 1408.0
+          "x": 20.0,
+          "y": 1742.0
         },
         "dg-4": {
-          "h": 34.0,
-          "w": 1064.0,
-          "x": 16.0,
-          "y": 68.0
+          "h": 39.0,
+          "w": 1330.0,
+          "x": 20.0,
+          "y": 78.0
         },
         "dg-5": {
-          "h": 34.0,
-          "w": 1064.0,
-          "x": 16.0,
-          "y": 114.0
+          "h": 35.0,
+          "w": 1330.0,
+          "x": 20.0,
+          "y": 132.0
         },
         "dg-6": {
-          "h": 32.0,
-          "w": 1064.0,
-          "x": 16.0,
-          "y": 160.0
+          "h": 40.0,
+          "w": 1330.0,
+          "x": 20.0,
+          "y": 182.0
         },
         "dg-7": {
-          "h": 32.0,
-          "w": 74.0,
-          "x": 16.0,
-          "y": 160.0
+          "h": 40.0,
+          "w": 93.0,
+          "x": 20.0,
+          "y": 182.0
         },
         "dg-8": {
-          "h": 32.0,
-          "w": 74.0,
-          "x": 98.0,
-          "y": 160.0
+          "h": 40.0,
+          "w": 132.0,
+          "x": 123.0,
+          "y": 182.0
         },
         "dg-9": {
-          "h": 32.0,
-          "w": 74.0,
-          "x": 180.0,
-          "y": 160.0
+          "h": 40.0,
+          "w": 93.0,
+          "x": 265.0,
+          "y": 182.0
         }
       },
       "diagnostics": {
         "dg-1": {
           "available": {
-            "height": 780.0,
-            "width": 1120.0,
+            "height": 975.0,
+            "width": 1400.0,
             "x": 0.0,
             "y": 0.0
           },
@@ -2779,8 +3172,8 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 780.0,
-            "width": 1120.0,
+            "height": 975.0,
+            "width": 1400.0,
             "x": 0.0,
             "y": 0.0
           },
@@ -2791,10 +3184,10 @@
         },
         "dg-10": {
           "available": {
-            "height": 342.0,
-            "width": 1064.0,
-            "x": 16.0,
-            "y": 204.0
+            "height": 428.0,
+            "width": 1330.0,
+            "x": 20.0,
+            "y": 237.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -2805,10 +3198,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 342.0,
-            "width": 1064.0,
-            "x": 16.0,
-            "y": 204.0
+            "height": 428.0,
+            "width": 1330.0,
+            "x": 20.0,
+            "y": 237.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -2817,10 +3210,10 @@
         },
         "dg-11": {
           "available": {
-            "height": 289.0,
-            "width": 1040.0,
-            "x": 28.0,
-            "y": 245.0
+            "height": 361.0,
+            "width": 1300.0,
+            "x": 35.0,
+            "y": 288.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -2831,10 +3224,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 289.0,
-            "width": 1040.0,
-            "x": 28.0,
-            "y": 245.0
+            "height": 361.0,
+            "width": 1300.0,
+            "x": 35.0,
+            "y": 288.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -2843,10 +3236,10 @@
         },
         "dg-12": {
           "available": {
-            "height": 289.0,
-            "width": 610.0,
-            "x": 28.0,
-            "y": 245.0
+            "height": 361.0,
+            "width": 763.0,
+            "x": 35.0,
+            "y": 288.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -2857,10 +3250,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 289.0,
-            "width": 610.0,
-            "x": 28.0,
-            "y": 245.0
+            "height": 361.0,
+            "width": 763.0,
+            "x": 35.0,
+            "y": 288.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -2869,10 +3262,10 @@
         },
         "dg-13": {
           "available": {
-            "height": 34.0,
-            "width": 610.0,
-            "x": 28.0,
-            "y": 245.0
+            "height": 35.0,
+            "width": 763.0,
+            "x": 35.0,
+            "y": 288.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -2883,10 +3276,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 34.0,
-            "width": 610.0,
-            "x": 28.0,
-            "y": 245.0
+            "height": 35.0,
+            "width": 763.0,
+            "x": 35.0,
+            "y": 288.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -2895,10 +3288,10 @@
         },
         "dg-14": {
           "available": {
-            "height": 248.0,
-            "width": 610.0,
-            "x": 28.0,
-            "y": 286.0
+            "height": 318.0,
+            "width": 763.0,
+            "x": 35.0,
+            "y": 332.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -2909,10 +3302,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 248.0,
-            "width": 610.0,
-            "x": 28.0,
-            "y": 286.0
+            "height": 318.0,
+            "width": 763.0,
+            "x": 35.0,
+            "y": 332.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -2921,10 +3314,10 @@
         },
         "dg-15": {
           "available": {
-            "height": 289.0,
-            "width": 420.0,
-            "x": 648.0,
-            "y": 245.0
+            "height": 361.0,
+            "width": 525.0,
+            "x": 810.0,
+            "y": 288.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -2935,10 +3328,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 289.0,
-            "width": 420.0,
-            "x": 648.0,
-            "y": 245.0
+            "height": 361.0,
+            "width": 525.0,
+            "x": 810.0,
+            "y": 288.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -2947,10 +3340,10 @@
         },
         "dg-16": {
           "available": {
-            "height": 34.0,
-            "width": 420.0,
-            "x": 648.0,
-            "y": 245.0
+            "height": 35.0,
+            "width": 525.0,
+            "x": 810.0,
+            "y": 288.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -2961,10 +3354,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 34.0,
-            "width": 420.0,
-            "x": 648.0,
-            "y": 245.0
+            "height": 35.0,
+            "width": 525.0,
+            "x": 810.0,
+            "y": 288.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -2973,10 +3366,10 @@
         },
         "dg-17": {
           "available": {
-            "height": 248.0,
-            "width": 420.0,
-            "x": 648.0,
-            "y": 286.0
+            "height": 318.0,
+            "width": 525.0,
+            "x": 810.0,
+            "y": 332.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -2987,10 +3380,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 248.0,
-            "width": 420.0,
-            "x": 648.0,
-            "y": 286.0
+            "height": 318.0,
+            "width": 525.0,
+            "x": 810.0,
+            "y": 332.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -2999,24 +3392,24 @@
         },
         "dg-18": {
           "available": {
-            "height": 206.0,
-            "width": 1064.0,
-            "x": 16.0,
-            "y": 558.0
+            "height": 275.0,
+            "width": 1330.0,
+            "x": 20.0,
+            "y": 680.0
           },
           "overflow": {
-            "bottom": 632.0,
-            "height": 632.0,
+            "bottom": 772.0,
+            "height": 772.0,
             "left": 0.0,
             "right": 0.0,
             "top": 0.0,
             "width": 0.0
           },
           "resolved": {
-            "height": 838.0,
-            "width": 1064.0,
-            "x": 16.0,
-            "y": 558.0
+            "height": 1047.0,
+            "width": 1330.0,
+            "x": 20.0,
+            "y": 680.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -3025,24 +3418,24 @@
         },
         "dg-19": {
           "available": {
-            "height": 206.0,
-            "width": 526.0,
-            "x": 16.0,
-            "y": 558.0
+            "height": 275.0,
+            "width": 658.0,
+            "x": 20.0,
+            "y": 680.0
           },
           "overflow": {
-            "bottom": 112.0,
-            "height": 112.0,
+            "bottom": 122.0,
+            "height": 122.0,
             "left": 0.0,
             "right": 0.0,
             "top": 0.0,
             "width": 0.0
           },
           "resolved": {
-            "height": 318.0,
-            "width": 526.0,
-            "x": 16.0,
-            "y": 558.0
+            "height": 397.0,
+            "width": 658.0,
+            "x": 20.0,
+            "y": 680.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -3051,10 +3444,10 @@
         },
         "dg-2": {
           "available": {
-            "height": 748.0,
-            "width": 1088.0,
-            "x": 16.0,
-            "y": 16.0
+            "height": 935.0,
+            "width": 1360.0,
+            "x": 20.0,
+            "y": 20.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -3065,22 +3458,22 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 748.0,
-            "width": 1088.0,
-            "x": 16.0,
-            "y": 16.0
+            "height": 935.0,
+            "width": 1360.0,
+            "x": 20.0,
+            "y": 20.0
           },
           "scroll_range": {
             "x": 0.0,
-            "y": 712.0
+            "y": 869.5
           }
         },
         "dg-20": {
           "available": {
-            "height": 34.0,
-            "width": 502.0,
-            "x": 28.0,
-            "y": 599.0
+            "height": 35.0,
+            "width": 628.0,
+            "x": 35.0,
+            "y": 731.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -3091,10 +3484,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 34.0,
-            "width": 502.0,
-            "x": 28.0,
-            "y": 599.0
+            "height": 35.0,
+            "width": 628.0,
+            "x": 35.0,
+            "y": 731.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -3103,24 +3496,24 @@
         },
         "dg-21": {
           "available": {
-            "height": 122.0,
-            "width": 502.0,
-            "x": 28.0,
-            "y": 642.0
+            "height": 178.0,
+            "width": 628.0,
+            "x": 35.0,
+            "y": 777.0
           },
           "overflow": {
-            "bottom": 100.0,
-            "height": 100.0,
+            "bottom": 107.0,
+            "height": 107.0,
             "left": 0.0,
             "right": 0.0,
             "top": 0.0,
             "width": 0.0
           },
           "resolved": {
-            "height": 222.0,
-            "width": 502.0,
-            "x": 28.0,
-            "y": 642.0
+            "height": 285.0,
+            "width": 628.0,
+            "x": 35.0,
+            "y": 777.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -3129,24 +3522,24 @@
         },
         "dg-22": {
           "available": {
-            "height": 206.0,
-            "width": 526.0,
-            "x": 554.0,
-            "y": 558.0
+            "height": 275.0,
+            "width": 657.0,
+            "x": 693.0,
+            "y": 680.0
           },
           "overflow": {
-            "bottom": 112.0,
-            "height": 112.0,
+            "bottom": 122.0,
+            "height": 122.0,
             "left": 0.0,
             "right": 0.0,
             "top": 0.0,
             "width": 0.0
           },
           "resolved": {
-            "height": 318.0,
-            "width": 526.0,
-            "x": 554.0,
-            "y": 558.0
+            "height": 397.0,
+            "width": 657.0,
+            "x": 693.0,
+            "y": 680.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -3155,10 +3548,10 @@
         },
         "dg-23": {
           "available": {
-            "height": 34.0,
-            "width": 502.0,
-            "x": 566.0,
-            "y": 599.0
+            "height": 35.0,
+            "width": 627.0,
+            "x": 708.0,
+            "y": 731.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -3169,10 +3562,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 34.0,
-            "width": 502.0,
-            "x": 566.0,
-            "y": 599.0
+            "height": 35.0,
+            "width": 627.0,
+            "x": 708.0,
+            "y": 731.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -3181,24 +3574,24 @@
         },
         "dg-24": {
           "available": {
-            "height": 122.0,
-            "width": 502.0,
-            "x": 566.0,
-            "y": 642.0
+            "height": 178.0,
+            "width": 627.0,
+            "x": 708.0,
+            "y": 777.0
           },
           "overflow": {
-            "bottom": 100.0,
-            "height": 100.0,
+            "bottom": 107.0,
+            "height": 107.0,
             "left": 0.0,
             "right": 0.0,
             "top": 0.0,
             "width": 0.0
           },
           "resolved": {
-            "height": 222.0,
-            "width": 502.0,
-            "x": 566.0,
-            "y": 642.0
+            "height": 285.0,
+            "width": 627.0,
+            "x": 708.0,
+            "y": 777.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -3209,22 +3602,22 @@
           "available": {
             "height": 0.0,
             "width": 0.0,
-            "x": 16.0,
-            "y": 888.0
+            "x": 20.0,
+            "y": 1092.0
           },
           "overflow": {
-            "bottom": 248.0,
-            "height": 248.0,
+            "bottom": 310.0,
+            "height": 310.0,
             "left": 0.0,
-            "right": 526.0,
+            "right": 658.0,
             "top": 0.0,
-            "width": 526.0
+            "width": 658.0
           },
           "resolved": {
-            "height": 248.0,
-            "width": 526.0,
-            "x": 16.0,
-            "y": 888.0
+            "height": 310.0,
+            "width": 658.0,
+            "x": 20.0,
+            "y": 1092.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -3235,22 +3628,22 @@
           "available": {
             "height": 0.0,
             "width": 0.0,
-            "x": 28.0,
-            "y": 929.0
+            "x": 35.0,
+            "y": 1143.0
           },
           "overflow": {
-            "bottom": 34.0,
-            "height": 34.0,
+            "bottom": 35.0,
+            "height": 35.0,
             "left": 0.0,
-            "right": 502.0,
+            "right": 628.0,
             "top": 0.0,
-            "width": 502.0
+            "width": 628.0
           },
           "resolved": {
-            "height": 34.0,
-            "width": 502.0,
-            "x": 28.0,
-            "y": 929.0
+            "height": 35.0,
+            "width": 628.0,
+            "x": 35.0,
+            "y": 1143.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -3261,22 +3654,22 @@
           "available": {
             "height": 0.0,
             "width": 0.0,
-            "x": 28.0,
-            "y": 972.0
+            "x": 35.0,
+            "y": 1189.0
           },
           "overflow": {
-            "bottom": 152.0,
-            "height": 152.0,
+            "bottom": 197.0,
+            "height": 197.0,
             "left": 0.0,
-            "right": 502.0,
+            "right": 628.0,
             "top": 0.0,
-            "width": 502.0
+            "width": 628.0
           },
           "resolved": {
-            "height": 152.0,
-            "width": 502.0,
-            "x": 28.0,
-            "y": 972.0
+            "height": 197.0,
+            "width": 628.0,
+            "x": 35.0,
+            "y": 1189.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -3287,22 +3680,22 @@
           "available": {
             "height": 0.0,
             "width": 0.0,
-            "x": 554.0,
-            "y": 888.0
+            "x": 693.0,
+            "y": 1092.0
           },
           "overflow": {
-            "bottom": 248.0,
-            "height": 248.0,
+            "bottom": 310.0,
+            "height": 310.0,
             "left": 0.0,
-            "right": 526.0,
+            "right": 657.0,
             "top": 0.0,
-            "width": 526.0
+            "width": 657.0
           },
           "resolved": {
-            "height": 248.0,
-            "width": 526.0,
-            "x": 554.0,
-            "y": 888.0
+            "height": 310.0,
+            "width": 657.0,
+            "x": 693.0,
+            "y": 1092.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -3313,22 +3706,22 @@
           "available": {
             "height": 0.0,
             "width": 0.0,
-            "x": 566.0,
-            "y": 929.0
+            "x": 708.0,
+            "y": 1143.0
           },
           "overflow": {
-            "bottom": 34.0,
-            "height": 34.0,
+            "bottom": 35.0,
+            "height": 35.0,
             "left": 0.0,
-            "right": 502.0,
+            "right": 627.0,
             "top": 0.0,
-            "width": 502.0
+            "width": 627.0
           },
           "resolved": {
-            "height": 34.0,
-            "width": 502.0,
-            "x": 566.0,
-            "y": 929.0
+            "height": 35.0,
+            "width": 627.0,
+            "x": 708.0,
+            "y": 1143.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -3337,10 +3730,10 @@
         },
         "dg-3": {
           "available": {
-            "height": 40.0,
-            "width": 1064.0,
-            "x": 16.0,
-            "y": 16.0
+            "height": 43.0,
+            "width": 1330.0,
+            "x": 20.0,
+            "y": 20.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -3351,10 +3744,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 40.0,
-            "width": 1064.0,
-            "x": 16.0,
-            "y": 16.0
+            "height": 43.0,
+            "width": 1330.0,
+            "x": 20.0,
+            "y": 20.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -3365,22 +3758,22 @@
           "available": {
             "height": 0.0,
             "width": 0.0,
-            "x": 566.0,
-            "y": 972.0
+            "x": 708.0,
+            "y": 1189.0
           },
           "overflow": {
-            "bottom": 152.0,
-            "height": 152.0,
+            "bottom": 197.0,
+            "height": 197.0,
             "left": 0.0,
-            "right": 502.0,
+            "right": 627.0,
             "top": 0.0,
-            "width": 502.0
+            "width": 627.0
           },
           "resolved": {
-            "height": 152.0,
-            "width": 502.0,
-            "x": 566.0,
-            "y": 972.0
+            "height": 197.0,
+            "width": 627.0,
+            "x": 708.0,
+            "y": 1189.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -3391,22 +3784,22 @@
           "available": {
             "height": 0.0,
             "width": 0.0,
-            "x": 16.0,
-            "y": 1148.0
+            "x": 20.0,
+            "y": 1417.0
           },
           "overflow": {
-            "bottom": 248.0,
-            "height": 248.0,
+            "bottom": 310.0,
+            "height": 310.0,
             "left": 0.0,
-            "right": 526.0,
+            "right": 658.0,
             "top": 0.0,
-            "width": 526.0
+            "width": 658.0
           },
           "resolved": {
-            "height": 248.0,
-            "width": 526.0,
-            "x": 16.0,
-            "y": 1148.0
+            "height": 310.0,
+            "width": 658.0,
+            "x": 20.0,
+            "y": 1417.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -3417,22 +3810,22 @@
           "available": {
             "height": 0.0,
             "width": 0.0,
-            "x": 28.0,
-            "y": 1189.0
+            "x": 35.0,
+            "y": 1468.0
           },
           "overflow": {
-            "bottom": 34.0,
-            "height": 34.0,
+            "bottom": 35.0,
+            "height": 35.0,
             "left": 0.0,
-            "right": 502.0,
+            "right": 628.0,
             "top": 0.0,
-            "width": 502.0
+            "width": 628.0
           },
           "resolved": {
-            "height": 34.0,
-            "width": 502.0,
-            "x": 28.0,
-            "y": 1189.0
+            "height": 35.0,
+            "width": 628.0,
+            "x": 35.0,
+            "y": 1468.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -3443,22 +3836,22 @@
           "available": {
             "height": 0.0,
             "width": 0.0,
-            "x": 28.0,
-            "y": 1232.0
+            "x": 35.0,
+            "y": 1514.0
           },
           "overflow": {
-            "bottom": 152.0,
-            "height": 152.0,
+            "bottom": 197.0,
+            "height": 197.0,
             "left": 0.0,
-            "right": 502.0,
+            "right": 628.0,
             "top": 0.0,
-            "width": 502.0
+            "width": 628.0
           },
           "resolved": {
-            "height": 152.0,
-            "width": 502.0,
-            "x": 28.0,
-            "y": 1232.0
+            "height": 197.0,
+            "width": 628.0,
+            "x": 35.0,
+            "y": 1514.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -3469,22 +3862,22 @@
           "available": {
             "height": 0.0,
             "width": 0.0,
-            "x": 554.0,
-            "y": 1148.0
+            "x": 693.0,
+            "y": 1417.0
           },
           "overflow": {
-            "bottom": 190.0,
-            "height": 190.0,
+            "bottom": 238.0,
+            "height": 238.0,
             "left": 0.0,
-            "right": 526.0,
+            "right": 657.0,
             "top": 0.0,
-            "width": 526.0
+            "width": 657.0
           },
           "resolved": {
-            "height": 190.0,
-            "width": 526.0,
-            "x": 554.0,
-            "y": 1148.0
+            "height": 238.0,
+            "width": 657.0,
+            "x": 693.0,
+            "y": 1417.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -3495,22 +3888,22 @@
           "available": {
             "height": 0.0,
             "width": 0.0,
-            "x": 564.0,
-            "y": 1185.0
+            "x": 706.0,
+            "y": 1463.0
           },
           "overflow": {
-            "bottom": 34.0,
-            "height": 34.0,
+            "bottom": 35.0,
+            "height": 35.0,
             "left": 0.0,
-            "right": 506.0,
+            "right": 633.0,
             "top": 0.0,
-            "width": 506.0
+            "width": 633.0
           },
           "resolved": {
-            "height": 34.0,
-            "width": 506.0,
-            "x": 564.0,
-            "y": 1185.0
+            "height": 35.0,
+            "width": 633.0,
+            "x": 706.0,
+            "y": 1463.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -3521,22 +3914,22 @@
           "available": {
             "height": 0.0,
             "width": 0.0,
-            "x": 564.0,
-            "y": 1226.0
+            "x": 706.0,
+            "y": 1507.0
           },
           "overflow": {
-            "bottom": 102.0,
-            "height": 102.0,
+            "bottom": 135.0,
+            "height": 135.0,
             "left": 0.0,
-            "right": 506.0,
+            "right": 633.0,
             "top": 0.0,
-            "width": 506.0
+            "width": 633.0
           },
           "resolved": {
-            "height": 102.0,
-            "width": 506.0,
-            "x": 564.0,
-            "y": 1226.0
+            "height": 135.0,
+            "width": 633.0,
+            "x": 706.0,
+            "y": 1507.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -3547,22 +3940,22 @@
           "available": {
             "height": 0.0,
             "width": 0.0,
-            "x": 16.0,
-            "y": 1408.0
+            "x": 20.0,
+            "y": 1742.0
           },
           "overflow": {
-            "bottom": 34.0,
-            "height": 34.0,
+            "bottom": 40.0,
+            "height": 40.0,
             "left": 0.0,
-            "right": 1064.0,
+            "right": 1330.0,
             "top": 0.0,
-            "width": 1064.0
+            "width": 1330.0
           },
           "resolved": {
-            "height": 34.0,
-            "width": 1064.0,
-            "x": 16.0,
-            "y": 1408.0
+            "height": 40.0,
+            "width": 1330.0,
+            "x": 20.0,
+            "y": 1742.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -3571,10 +3964,10 @@
         },
         "dg-4": {
           "available": {
-            "height": 34.0,
-            "width": 1064.0,
-            "x": 16.0,
-            "y": 68.0
+            "height": 39.0,
+            "width": 1330.0,
+            "x": 20.0,
+            "y": 78.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -3585,10 +3978,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 34.0,
-            "width": 1064.0,
-            "x": 16.0,
-            "y": 68.0
+            "height": 39.0,
+            "width": 1330.0,
+            "x": 20.0,
+            "y": 78.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -3597,10 +3990,10 @@
         },
         "dg-5": {
           "available": {
-            "height": 34.0,
-            "width": 1064.0,
-            "x": 16.0,
-            "y": 114.0
+            "height": 35.0,
+            "width": 1330.0,
+            "x": 20.0,
+            "y": 132.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -3611,10 +4004,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 34.0,
-            "width": 1064.0,
-            "x": 16.0,
-            "y": 114.0
+            "height": 35.0,
+            "width": 1330.0,
+            "x": 20.0,
+            "y": 132.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -3623,10 +4016,10 @@
         },
         "dg-6": {
           "available": {
-            "height": 32.0,
-            "width": 1064.0,
-            "x": 16.0,
-            "y": 160.0
+            "height": 40.0,
+            "width": 1330.0,
+            "x": 20.0,
+            "y": 182.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -3637,10 +4030,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 32.0,
-            "width": 1064.0,
-            "x": 16.0,
-            "y": 160.0
+            "height": 40.0,
+            "width": 1330.0,
+            "x": 20.0,
+            "y": 182.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -3649,10 +4042,10 @@
         },
         "dg-7": {
           "available": {
-            "height": 32.0,
-            "width": 74.0,
-            "x": 16.0,
-            "y": 160.0
+            "height": 40.0,
+            "width": 93.0,
+            "x": 20.0,
+            "y": 182.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -3663,10 +4056,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 32.0,
-            "width": 74.0,
-            "x": 16.0,
-            "y": 160.0
+            "height": 40.0,
+            "width": 93.0,
+            "x": 20.0,
+            "y": 182.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -3675,10 +4068,10 @@
         },
         "dg-8": {
           "available": {
-            "height": 32.0,
-            "width": 74.0,
-            "x": 98.0,
-            "y": 160.0
+            "height": 40.0,
+            "width": 132.0,
+            "x": 123.0,
+            "y": 182.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -3689,10 +4082,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 32.0,
-            "width": 74.0,
-            "x": 98.0,
-            "y": 160.0
+            "height": 40.0,
+            "width": 132.0,
+            "x": 123.0,
+            "y": 182.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -3701,10 +4094,10 @@
         },
         "dg-9": {
           "available": {
-            "height": 32.0,
-            "width": 74.0,
-            "x": 180.0,
-            "y": 160.0
+            "height": 40.0,
+            "width": 93.0,
+            "x": 265.0,
+            "y": 182.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -3715,10 +4108,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 32.0,
-            "width": 74.0,
-            "x": 180.0,
-            "y": 160.0
+            "height": 40.0,
+            "width": 93.0,
+            "x": 265.0,
+            "y": 182.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -3728,233 +4121,233 @@
       },
       "rects": {
         "dg-1": {
-          "h": 780.0,
-          "w": 1120.0,
+          "h": 975.0,
+          "w": 1400.0,
           "x": 0.0,
           "y": 0.0
         },
         "dg-10": {
-          "h": 342.0,
-          "w": 1064.0,
-          "x": 16.0,
-          "y": 204.0
+          "h": 428.0,
+          "w": 1330.0,
+          "x": 20.0,
+          "y": 237.0
         },
         "dg-11": {
-          "h": 289.0,
-          "w": 1040.0,
-          "x": 28.0,
-          "y": 245.0
+          "h": 361.0,
+          "w": 1300.0,
+          "x": 35.0,
+          "y": 288.0
         },
         "dg-12": {
-          "h": 289.0,
-          "w": 610.0,
-          "x": 28.0,
-          "y": 245.0
+          "h": 361.0,
+          "w": 763.0,
+          "x": 35.0,
+          "y": 288.0
         },
         "dg-13": {
-          "h": 34.0,
-          "w": 610.0,
-          "x": 28.0,
-          "y": 245.0
+          "h": 35.0,
+          "w": 763.0,
+          "x": 35.0,
+          "y": 288.0
         },
         "dg-14": {
-          "h": 248.0,
-          "w": 610.0,
-          "x": 28.0,
-          "y": 286.0
+          "h": 318.0,
+          "w": 763.0,
+          "x": 35.0,
+          "y": 332.0
         },
         "dg-15": {
-          "h": 289.0,
-          "w": 420.0,
-          "x": 648.0,
-          "y": 245.0
+          "h": 361.0,
+          "w": 525.0,
+          "x": 810.0,
+          "y": 288.0
         },
         "dg-16": {
-          "h": 34.0,
-          "w": 420.0,
-          "x": 648.0,
-          "y": 245.0
+          "h": 35.0,
+          "w": 525.0,
+          "x": 810.0,
+          "y": 288.0
         },
         "dg-17": {
-          "h": 248.0,
-          "w": 420.0,
-          "x": 648.0,
-          "y": 286.0
+          "h": 318.0,
+          "w": 525.0,
+          "x": 810.0,
+          "y": 332.0
         },
         "dg-18": {
-          "h": 838.0,
-          "w": 1064.0,
-          "x": 16.0,
-          "y": 558.0
+          "h": 1047.0,
+          "w": 1330.0,
+          "x": 20.0,
+          "y": 680.0
         },
         "dg-19": {
-          "h": 318.0,
-          "w": 526.0,
-          "x": 16.0,
-          "y": 558.0
+          "h": 397.0,
+          "w": 658.0,
+          "x": 20.0,
+          "y": 680.0
         },
         "dg-2": {
-          "h": 748.0,
-          "w": 1088.0,
-          "x": 16.0,
-          "y": 16.0
+          "h": 935.0,
+          "w": 1360.0,
+          "x": 20.0,
+          "y": 20.0
         },
         "dg-20": {
-          "h": 34.0,
-          "w": 502.0,
-          "x": 28.0,
-          "y": 599.0
+          "h": 35.0,
+          "w": 628.0,
+          "x": 35.0,
+          "y": 731.0
         },
         "dg-21": {
-          "h": 222.0,
-          "w": 502.0,
-          "x": 28.0,
-          "y": 642.0
+          "h": 285.0,
+          "w": 628.0,
+          "x": 35.0,
+          "y": 777.0
         },
         "dg-22": {
-          "h": 318.0,
-          "w": 526.0,
-          "x": 554.0,
-          "y": 558.0
+          "h": 397.0,
+          "w": 657.0,
+          "x": 693.0,
+          "y": 680.0
         },
         "dg-23": {
-          "h": 34.0,
-          "w": 502.0,
-          "x": 566.0,
-          "y": 599.0
+          "h": 35.0,
+          "w": 627.0,
+          "x": 708.0,
+          "y": 731.0
         },
         "dg-24": {
-          "h": 222.0,
-          "w": 502.0,
-          "x": 566.0,
-          "y": 642.0
+          "h": 285.0,
+          "w": 627.0,
+          "x": 708.0,
+          "y": 777.0
         },
         "dg-25": {
-          "h": 248.0,
-          "w": 526.0,
-          "x": 16.0,
-          "y": 888.0
+          "h": 310.0,
+          "w": 658.0,
+          "x": 20.0,
+          "y": 1092.0
         },
         "dg-26": {
-          "h": 34.0,
-          "w": 502.0,
-          "x": 28.0,
-          "y": 929.0
+          "h": 35.0,
+          "w": 628.0,
+          "x": 35.0,
+          "y": 1143.0
         },
         "dg-27": {
-          "h": 152.0,
-          "w": 502.0,
-          "x": 28.0,
-          "y": 972.0
-        },
-        "dg-28": {
-          "h": 248.0,
-          "w": 526.0,
-          "x": 554.0,
-          "y": 888.0
-        },
-        "dg-29": {
-          "h": 34.0,
-          "w": 502.0,
-          "x": 566.0,
-          "y": 929.0
-        },
-        "dg-3": {
-          "h": 40.0,
-          "w": 1064.0,
-          "x": 16.0,
-          "y": 16.0
-        },
-        "dg-30": {
-          "h": 152.0,
-          "w": 502.0,
-          "x": 566.0,
-          "y": 972.0
-        },
-        "dg-31": {
-          "h": 248.0,
-          "w": 526.0,
-          "x": 16.0,
-          "y": 1148.0
-        },
-        "dg-32": {
-          "h": 34.0,
-          "w": 502.0,
-          "x": 28.0,
+          "h": 197.0,
+          "w": 628.0,
+          "x": 35.0,
           "y": 1189.0
         },
+        "dg-28": {
+          "h": 310.0,
+          "w": 657.0,
+          "x": 693.0,
+          "y": 1092.0
+        },
+        "dg-29": {
+          "h": 35.0,
+          "w": 627.0,
+          "x": 708.0,
+          "y": 1143.0
+        },
+        "dg-3": {
+          "h": 43.0,
+          "w": 1330.0,
+          "x": 20.0,
+          "y": 20.0
+        },
+        "dg-30": {
+          "h": 197.0,
+          "w": 627.0,
+          "x": 708.0,
+          "y": 1189.0
+        },
+        "dg-31": {
+          "h": 310.0,
+          "w": 658.0,
+          "x": 20.0,
+          "y": 1417.0
+        },
+        "dg-32": {
+          "h": 35.0,
+          "w": 628.0,
+          "x": 35.0,
+          "y": 1468.0
+        },
         "dg-33": {
-          "h": 152.0,
-          "w": 502.0,
-          "x": 28.0,
-          "y": 1232.0
+          "h": 197.0,
+          "w": 628.0,
+          "x": 35.0,
+          "y": 1514.0
         },
         "dg-34": {
-          "h": 190.0,
-          "w": 526.0,
-          "x": 554.0,
-          "y": 1148.0
+          "h": 238.0,
+          "w": 657.0,
+          "x": 693.0,
+          "y": 1417.0
         },
         "dg-35": {
-          "h": 34.0,
-          "w": 506.0,
-          "x": 564.0,
-          "y": 1185.0
+          "h": 35.0,
+          "w": 633.0,
+          "x": 706.0,
+          "y": 1463.0
         },
         "dg-36": {
-          "h": 102.0,
-          "w": 506.0,
-          "x": 564.0,
-          "y": 1226.0
+          "h": 135.0,
+          "w": 633.0,
+          "x": 706.0,
+          "y": 1507.0
         },
         "dg-37": {
-          "h": 34.0,
-          "w": 1064.0,
-          "x": 16.0,
-          "y": 1408.0
+          "h": 40.0,
+          "w": 1330.0,
+          "x": 20.0,
+          "y": 1742.0
         },
         "dg-4": {
-          "h": 34.0,
-          "w": 1064.0,
-          "x": 16.0,
-          "y": 68.0
+          "h": 39.0,
+          "w": 1330.0,
+          "x": 20.0,
+          "y": 78.0
         },
         "dg-5": {
-          "h": 34.0,
-          "w": 1064.0,
-          "x": 16.0,
-          "y": 114.0
+          "h": 35.0,
+          "w": 1330.0,
+          "x": 20.0,
+          "y": 132.0
         },
         "dg-6": {
-          "h": 32.0,
-          "w": 1064.0,
-          "x": 16.0,
-          "y": 160.0
+          "h": 40.0,
+          "w": 1330.0,
+          "x": 20.0,
+          "y": 182.0
         },
         "dg-7": {
-          "h": 32.0,
-          "w": 74.0,
-          "x": 16.0,
-          "y": 160.0
+          "h": 40.0,
+          "w": 93.0,
+          "x": 20.0,
+          "y": 182.0
         },
         "dg-8": {
-          "h": 32.0,
-          "w": 74.0,
-          "x": 98.0,
-          "y": 160.0
+          "h": 40.0,
+          "w": 132.0,
+          "x": 123.0,
+          "y": 182.0
         },
         "dg-9": {
-          "h": 32.0,
-          "w": 74.0,
-          "x": 180.0,
-          "y": 160.0
+          "h": 40.0,
+          "w": 93.0,
+          "x": 265.0,
+          "y": 182.0
         }
       },
       "scroll_max_x": {
         "dg-2": 0.0
       },
       "scroll_max_y": {
-        "dg-2": 712.0
+        "dg-2": 869.5
       },
       "scroll_x": {
         "dg-2": 0.0
@@ -3988,9 +4381,9 @@
         "decimation_mode": "auto",
         "enabled": true,
         "last_decimate_ms": 0.0,
-        "last_emit_ms": 0.0371,
-        "last_encode_ms": 0.0015999999999999999,
-        "last_upload_ms": 0.009300000000000001,
+        "last_emit_ms": 0.012799999999999999,
+        "last_encode_ms": 0.00039999999999999996,
+        "last_upload_ms": 0.0055,
         "max_segments_per_series": 8192,
         "point_bytes": 28800,
         "point_count": 1800,
@@ -3999,7 +4392,7 @@
         "series_count": 2,
         "source_point_count": 1800
       },
-      "present_mode": "fifo",
+      "present_mode": "immediate",
       "present_mode_env": null,
       "primitives": {
         "base_batches": 38,
@@ -4007,11 +4400,11 @@
         "complex_batches": 18,
         "complex_bytes": 4320,
         "complex_count": 18,
-        "last_base_encode_ms": 0.0096,
-        "last_emit_ms": 0.0523,
-        "last_overlay_encode_ms": 0.0003,
-        "last_split_ms": 0.0025,
-        "last_upload_ms": 0.0102,
+        "last_base_encode_ms": 0.0037,
+        "last_emit_ms": 0.0376,
+        "last_overlay_encode_ms": 0.0,
+        "last_split_ms": 0.0012,
+        "last_upload_ms": 0.0081,
         "line_batches": 1,
         "line_bytes": 96,
         "line_count": 2,
@@ -4028,10 +4421,8 @@
       "scatter_widget_id": "dg-21",
       "scatter_widget_pool": 0,
       "supported_present_modes": [
-        "fifo",
-        "fifo-relaxed",
-        "mailbox",
-        "immediate"
+        "immediate",
+        "fifo"
       ],
       "surface_format": "Bgra8UnormSrgb",
       "widget_count": 37
@@ -4044,19 +4435,19 @@
         "appends": 0,
         "id": "dg-36",
         "last_appended_points": 0,
-        "last_bounds_ms": 0.0019,
-        "last_count_ms": 0.0003,
-        "last_decode_ms": 0.0028,
+        "last_bounds_ms": 0.0028,
+        "last_count_ms": 9.999999999999999e-05,
+        "last_decode_ms": 0.0007,
         "last_operation": "set",
         "last_payload_bytes": 7200,
         "last_point_count": 900,
         "last_series": "Temp",
         "last_series_count": 1,
-        "last_total_native_ms": 0.0098,
+        "last_total_native_ms": 0.0079,
         "last_trim_ms": 9.999999999999999e-05,
         "last_trimmed_points": 0,
         "last_visible_point_count": 900,
-        "last_window_ms": 0.00039999999999999996,
+        "last_window_ms": 9.999999999999999e-05,
         "sets": 1,
         "updates": 1
       },
@@ -4064,38 +4455,38 @@
         "dg-14": {
           "appends": 0,
           "last_appended_points": 0,
-          "last_bounds_ms": 0.0019,
-          "last_count_ms": 0.0003,
-          "last_decode_ms": 0.0015,
+          "last_bounds_ms": 0.0028,
+          "last_count_ms": 0.00019999999999999998,
+          "last_decode_ms": 0.0007999999999999999,
           "last_operation": "set",
           "last_payload_bytes": 7200,
           "last_point_count": 1800,
           "last_series": "Pressure",
           "last_series_count": 2,
-          "last_total_native_ms": 0.0065,
+          "last_total_native_ms": 0.031,
           "last_trim_ms": 0.0,
           "last_trimmed_points": 0,
           "last_visible_point_count": 1800,
-          "last_window_ms": 9.999999999999999e-05,
+          "last_window_ms": 0.0,
           "sets": 2,
           "updates": 2
         },
         "dg-36": {
           "appends": 0,
           "last_appended_points": 0,
-          "last_bounds_ms": 0.0019,
-          "last_count_ms": 0.0003,
-          "last_decode_ms": 0.0028,
+          "last_bounds_ms": 0.0028,
+          "last_count_ms": 9.999999999999999e-05,
+          "last_decode_ms": 0.0007,
           "last_operation": "set",
           "last_payload_bytes": 7200,
           "last_point_count": 900,
           "last_series": "Temp",
           "last_series_count": 1,
-          "last_total_native_ms": 0.0098,
+          "last_total_native_ms": 0.0079,
           "last_trim_ms": 9.999999999999999e-05,
           "last_trimmed_points": 0,
           "last_visible_point_count": 900,
-          "last_window_ms": 0.00039999999999999996,
+          "last_window_ms": 9.999999999999999e-05,
           "sets": 1,
           "updates": 1
         }
@@ -4127,22 +4518,22 @@
         "effective_draw_point_count": 900,
         "id": "dg-21",
         "interactive_render_scale": 1.0,
-        "last_bounds_ms": 0.0037,
+        "last_bounds_ms": 0.0046,
         "last_decode_ms": 0.0,
-        "last_grid_ms": 0.019899999999999998,
-        "last_lod_ms": 0.0006,
-        "last_overlay_ms": 0.0065,
+        "last_grid_ms": 0.018199999999999997,
+        "last_lod_ms": 9.999999999999999e-05,
+        "last_overlay_ms": 0.0070999999999999995,
         "last_pack_ms": 0.0,
         "last_payload_bytes": 28800,
         "last_point_count": 900,
-        "last_primary_upload_ms": 0.009099999999999999,
-        "last_queue_latency_ms": 892.749755859375,
+        "last_primary_upload_ms": 0.0027,
+        "last_queue_latency_ms": 319.64404296875,
         "last_render_cache_hit": false,
-        "last_render_composite_ms": 0.0,
-        "last_render_encode_ms": 1.5820999999999998,
-        "last_render_redraw_ms": 0.011,
-        "last_total_native_ms": 0.0537,
-        "last_upload_ms": 0.0355,
+        "last_render_composite_ms": 0.0005,
+        "last_render_encode_ms": 0.0991,
+        "last_render_redraw_ms": 0.0088,
+        "last_total_native_ms": 0.045000000000000005,
+        "last_upload_ms": 0.027999999999999997,
         "payload_status": "Ok",
         "point_size_scale": 1.0,
         "primary_compact_colormap": "turbo",
@@ -4150,11 +4541,11 @@
         "quality_target_frame_ms": 33.33333206176758,
         "render_cache_hit_rate": 0.0,
         "render_cache_hits": 0,
-        "render_cache_revision": null,
-        "render_composite_avg_ms": 0.0,
-        "render_count": 1,
-        "render_encode_avg_ms": 1.5820999999999998,
-        "render_redraw_avg_ms": 0.011,
+        "render_cache_revision": 49,
+        "render_composite_avg_ms": 0.00025,
+        "render_count": 2,
+        "render_encode_avg_ms": 0.40435,
+        "render_redraw_avg_ms": 0.0088,
         "scalar_bar": {
           "colormap": "turbo",
           "log_scale": false,
@@ -4185,22 +4576,22 @@
           "effective_draw_point_count": 900,
           "fitted_once": true,
           "interactive_render_scale": 1.0,
-          "last_bounds_ms": 0.0037,
+          "last_bounds_ms": 0.0046,
           "last_decode_ms": 0.0,
-          "last_grid_ms": 0.019899999999999998,
-          "last_lod_ms": 0.0006,
-          "last_overlay_ms": 0.0065,
+          "last_grid_ms": 0.018199999999999997,
+          "last_lod_ms": 9.999999999999999e-05,
+          "last_overlay_ms": 0.0070999999999999995,
           "last_pack_ms": 0.0,
           "last_payload_bytes": 28800,
           "last_point_count": 900,
-          "last_primary_upload_ms": 0.009099999999999999,
-          "last_queue_latency_ms": 892.749755859375,
+          "last_primary_upload_ms": 0.0027,
+          "last_queue_latency_ms": 319.64404296875,
           "last_render_cache_hit": false,
-          "last_render_composite_ms": 0.0,
-          "last_render_encode_ms": 1.5820999999999998,
-          "last_render_redraw_ms": 0.011,
-          "last_total_native_ms": 0.0537,
-          "last_upload_ms": 0.0355,
+          "last_render_composite_ms": 0.0005,
+          "last_render_encode_ms": 0.0991,
+          "last_render_redraw_ms": 0.0088,
+          "last_total_native_ms": 0.045000000000000005,
+          "last_upload_ms": 0.027999999999999997,
           "lod": {
             "active": false,
             "enabled": false,
@@ -4215,11 +4606,11 @@
           "quality_target_frame_ms": 33.33333206176758,
           "render_cache_hit_rate": 0.0,
           "render_cache_hits": 0,
-          "render_cache_revision": null,
-          "render_composite_avg_ms": 0.0,
-          "render_count": 1,
-          "render_encode_avg_ms": 1.5820999999999998,
-          "render_redraw_avg_ms": 0.011,
+          "render_cache_revision": 49,
+          "render_composite_avg_ms": 0.00025,
+          "render_count": 2,
+          "render_encode_avg_ms": 0.40435,
+          "render_redraw_avg_ms": 0.0088,
           "scalar_bar": {
             "colormap": "turbo",
             "log_scale": false,
@@ -4249,22 +4640,22 @@
           "effective_draw_point_count": 900,
           "fitted_once": true,
           "interactive_render_scale": 1.0,
-          "last_bounds_ms": 0.0026,
+          "last_bounds_ms": 0.002,
           "last_decode_ms": 0.0,
-          "last_grid_ms": 0.031900000000000005,
+          "last_grid_ms": 0.0124,
           "last_lod_ms": 0.00019999999999999998,
-          "last_overlay_ms": 0.0052,
+          "last_overlay_ms": 0.0055,
           "last_pack_ms": 0.0,
           "last_payload_bytes": 28800,
           "last_point_count": 900,
-          "last_primary_upload_ms": 0.0043,
-          "last_queue_latency_ms": 918.724609375,
+          "last_primary_upload_ms": 0.0027,
+          "last_queue_latency_ms": 319.791015625,
           "last_render_cache_hit": false,
-          "last_render_composite_ms": 0.0,
-          "last_render_encode_ms": 2.2623,
-          "last_render_redraw_ms": 0.016399999999999998,
-          "last_total_native_ms": 0.0564,
-          "last_upload_ms": 0.041400000000000006,
+          "last_render_composite_ms": 0.00039999999999999996,
+          "last_render_encode_ms": 0.0193,
+          "last_render_redraw_ms": 0.0014,
+          "last_total_native_ms": 0.0266,
+          "last_upload_ms": 0.0206,
           "lod": {
             "active": false,
             "enabled": false,
@@ -4279,11 +4670,11 @@
           "quality_target_frame_ms": 33.33333206176758,
           "render_cache_hit_rate": 0.0,
           "render_cache_hits": 0,
-          "render_cache_revision": null,
-          "render_composite_avg_ms": 0.0,
-          "render_count": 1,
-          "render_encode_avg_ms": 2.2623,
-          "render_redraw_avg_ms": 0.016399999999999998,
+          "render_cache_revision": 42,
+          "render_composite_avg_ms": 0.00019999999999999998,
+          "render_count": 2,
+          "render_encode_avg_ms": 0.43270000000000003,
+          "render_redraw_avg_ms": 0.002,
           "scalar_bar": {
             "colormap": "turbo",
             "log_scale": false,
@@ -4372,7 +4763,7 @@
       "text_val": {}
     },
     "stylesheets": {
-      "framework_rules": 123,
+      "framework_rules": 134,
       "last_error": null,
       "theme_rules": 0,
       "user_rules": 36,
@@ -4386,27 +4777,27 @@
         1.0
       ],
       "background": [
-        0.07058823853731155,
-        0.07058823853731155,
-        0.10196078568696976,
+        0.06666667014360428,
+        0.08235294371843338,
+        0.10588235408067703,
         1.0
       ],
       "border": [
-        0.21960784494876862,
-        0.21960784494876862,
+        0.1921568661928177,
+        0.250980406999588,
         0.3137255012989044,
         1.0
       ],
       "danger": [
         1.0,
-        0.3607843220233917,
-        0.47843137383461,
+        0.37254902720451355,
+        0.4470588266849518,
         1.0
       ],
       "disabled": [
         0.4000000059604645,
-        0.4000000059604645,
-        0.47843137383461,
+        0.4431372582912445,
+        0.4901960790157318,
         1.0
       ],
       "focus": [
@@ -4417,41 +4808,41 @@
       ],
       "font_size": 14.0,
       "muted_text": [
+        0.6039215922355652,
         0.658823549747467,
-        0.658823549747467,
-        0.729411780834198,
+        0.7098039388656616,
         1.0
       ],
       "radius": 8.0,
-      "spacing": 8.0,
+      "spacing": 6.0,
       "success": [
-        0.26274511218070984,
-        0.8313725590705872,
-        0.5607843399047852,
+        0.2705882489681244,
+        0.7686274647712708,
+        0.5411764979362488,
         1.0
       ],
       "surface": [
-        0.11764705926179886,
-        0.11764705926179886,
-        0.18039216101169586,
+        0.10196078568696976,
+        0.13333334028720856,
+        0.1725490242242813,
         1.0
       ],
       "surface_alt": [
-        0.19607843458652496,
-        0.19607843458652496,
-        0.29019609093666077,
+        0.1411764770746231,
+        0.1921568661928177,
+        0.250980406999588,
         1.0
       ],
       "text": [
-        0.9411764740943909,
-        0.9411764740943909,
+        0.9333333373069763,
+        0.9529411792755127,
         0.9686274528503418,
         1.0
       ],
       "warning": [
-        1.0,
-        0.7490196228027344,
-        0.27843138575553894,
+        0.95686274766922,
+        0.7215686440467834,
+        0.29019609093666077,
         1.0
       ]
     },
@@ -6816,150 +7207,150 @@
       "type": "window"
     },
     "window": {
-      "height": 780,
-      "scale_factor": 1.0,
-      "width": 1120
+      "height": 975,
+      "scale_factor": 1.25,
+      "width": 1400
     }
   },
   "runtime": {
     "command_drain": {
       "apply": {
-        "avg_ms": 11.748466666666667,
+        "avg_ms": 0.4557333333333333,
         "count": 3,
         "last_ms": 0.0,
-        "total_ms": 35.245400000000004
+        "total_ms": 1.3672
       },
       "coalesce": {
-        "avg_ms": 0.002766666666666666,
+        "avg_ms": 0.002933333333333333,
         "count": 3,
         "last_ms": 9.999999999999999e-05,
-        "total_ms": 0.008299999999999998
+        "total_ms": 0.008799999999999999
       },
       "fetch": {
-        "avg_ms": 0.005600000000000001,
+        "avg_ms": 0.005699999999999999,
         "count": 3,
         "last_ms": 0.0,
-        "total_ms": 0.016800000000000002
+        "total_ms": 0.017099999999999997
       },
       "flush_rebuilds": {
-        "avg_ms": 0.04333333333333333,
+        "avg_ms": 0.21356666666666668,
         "count": 3,
         "last_ms": 0.0,
-        "total_ms": 0.12999999999999998
+        "total_ms": 0.6407
       },
       "last_batches": 0,
       "last_commands": 0,
       "last_pending": 0,
       "timing": {
-        "avg_ms": 11.800600000000001,
+        "avg_ms": 0.6817333333333333,
         "count": 3,
         "last_ms": 0.00019999999999999998,
-        "total_ms": 35.4018
+        "total_ms": 2.0452
       }
     },
     "command_queue_depth": 0,
     "command_timings": {
       "DebugSnapshot": {
-        "avg_ms": 0.0037,
+        "avg_ms": 0.0062,
         "count": 1,
-        "last_ms": 0.0037,
-        "total_ms": 0.0037
+        "last_ms": 0.0062,
+        "total_ms": 0.0062
       },
       "FitScatterCamera": {
-        "avg_ms": 23.333099999999998,
+        "avg_ms": 0.0079,
         "count": 1,
-        "last_ms": 23.333099999999998,
-        "total_ms": 23.333099999999998
+        "last_ms": 0.0079,
+        "total_ms": 0.0079
       },
       "ReplaceNode": {
-        "avg_ms": 5.3927000000000005,
+        "avg_ms": 0.8373,
         "count": 1,
-        "last_ms": 5.3927000000000005,
-        "total_ms": 5.3927000000000005
+        "last_ms": 0.8373,
+        "total_ms": 0.8373
       },
       "SetLinePlotDataPacked": {
-        "avg_ms": 0.7483666666666666,
+        "avg_ms": 0.08166666666666667,
         "count": 3,
-        "last_ms": 0.0704,
-        "total_ms": 2.2451
+        "last_ms": 0.039799999999999995,
+        "total_ms": 0.245
       },
       "SetScatterAutoPointSize": {
-        "avg_ms": 0.0011,
+        "avg_ms": 0.00034999999999999994,
         "count": 2,
-        "last_ms": 0.0005,
-        "total_ms": 0.0022
+        "last_ms": 9.999999999999999e-05,
+        "total_ms": 0.0006999999999999999
       },
       "SetScatterAutoQuality": {
-        "avg_ms": 0.0015999999999999999,
+        "avg_ms": 0.0015,
         "count": 2,
-        "last_ms": 0.0007999999999999999,
-        "total_ms": 0.0031999999999999997
+        "last_ms": 0.00019999999999999998,
+        "total_ms": 0.003
       },
       "SetScatterAxisVisibility": {
-        "avg_ms": 0.0084,
+        "avg_ms": 0.0076,
         "count": 1,
-        "last_ms": 0.0084,
-        "total_ms": 0.0084
+        "last_ms": 0.0076,
+        "total_ms": 0.0076
       },
       "SetScatterHoverTooltip": {
-        "avg_ms": 0.00185,
+        "avg_ms": 0.003,
         "count": 2,
-        "last_ms": 0.00039999999999999996,
-        "total_ms": 0.0037
+        "last_ms": 0.0,
+        "total_ms": 0.006
       },
       "SetScatterInteractiveRenderScale": {
-        "avg_ms": 0.0006,
+        "avg_ms": 0.00045,
         "count": 2,
-        "last_ms": 0.00039999999999999996,
-        "total_ms": 0.0012
+        "last_ms": 0.0003,
+        "total_ms": 0.0009
       },
       "SetScatterLod": {
-        "avg_ms": 0.0030499999999999998,
+        "avg_ms": 0.0039,
         "count": 2,
-        "last_ms": 0.0009,
-        "total_ms": 0.0060999999999999995
+        "last_ms": 0.00019999999999999998,
+        "total_ms": 0.0078
       },
       "SetScatterParallelProjection": {
-        "avg_ms": 1.8877,
+        "avg_ms": 0.0063,
         "count": 1,
-        "last_ms": 1.8877,
-        "total_ms": 1.8877
+        "last_ms": 0.0063,
+        "total_ms": 0.0063
       },
       "SetScatterPickingMode": {
-        "avg_ms": 0.0009,
+        "avg_ms": 0.0023000000000000004,
         "count": 2,
-        "last_ms": 0.00039999999999999996,
-        "total_ms": 0.0018
+        "last_ms": 9.999999999999999e-05,
+        "total_ms": 0.004600000000000001
       },
       "SetScatterPointsPacked": {
-        "avg_ms": 0.059399999999999994,
+        "avg_ms": 0.03655,
         "count": 2,
-        "last_ms": 0.061099999999999995,
-        "total_ms": 0.11879999999999999
+        "last_ms": 0.027100000000000003,
+        "total_ms": 0.0731
       },
       "SetScatterPrimaryHoverColumns": {
-        "avg_ms": 0.42389999999999994,
+        "avg_ms": 0.02865,
         "count": 2,
-        "last_ms": 0.039700000000000006,
-        "total_ms": 0.8477999999999999
+        "last_ms": 0.0223,
+        "total_ms": 0.0573
       },
       "SetScatterTooltipAxisLabels": {
-        "avg_ms": 0.0023499999999999997,
+        "avg_ms": 0.00245,
         "count": 2,
-        "last_ms": 0.0015,
-        "total_ms": 0.004699999999999999
+        "last_ms": 9.999999999999999e-05,
+        "total_ms": 0.0049
       },
       "SetScatterViewDirection": {
-        "avg_ms": 0.032100000000000004,
+        "avg_ms": 0.013600000000000001,
         "count": 1,
-        "last_ms": 0.032100000000000004,
-        "total_ms": 0.032100000000000004
+        "last_ms": 0.013600000000000001,
+        "total_ms": 0.013600000000000001
       },
       "SetTableDataColumns": {
-        "avg_ms": 1.3278999999999999,
+        "avg_ms": 0.07930000000000001,
         "count": 1,
-        "last_ms": 1.3278999999999999,
-        "total_ms": 1.3278999999999999
+        "last_ms": 0.07930000000000001,
+        "total_ms": 0.07930000000000001
       }
     },
     "commands": {
@@ -6970,7 +7361,7 @@
           "command": "SetLinePlotDataPacked",
           "detail": "series=Temp, payload_bytes=7200, format=XyF32V0",
           "dirty": "visual",
-          "elapsed_ms": 2.096,
+          "elapsed_ms": 0.1252,
           "frame": 0,
           "outcome": "applied",
           "requested_redraw": true,
@@ -6981,7 +7372,7 @@
           "command": "SetLinePlotDataPacked",
           "detail": "series=Pressure, payload_bytes=7200, format=XyF32V0",
           "dirty": "visual",
-          "elapsed_ms": 0.0787,
+          "elapsed_ms": 0.08,
           "frame": 0,
           "outcome": "applied",
           "requested_redraw": true,
@@ -6992,7 +7383,7 @@
           "command": "SetTableDataColumns",
           "detail": "table_bytes=348, buffer_columns=6",
           "dirty": "text",
-          "elapsed_ms": 1.3278999999999999,
+          "elapsed_ms": 0.07930000000000001,
           "frame": 0,
           "outcome": "applied",
           "requested_redraw": true,
@@ -7003,7 +7394,7 @@
           "command": "SetScatterPointsPacked",
           "detail": "payload_bytes=28800, colormap=turbo, format=point_instance_v1, fit=false",
           "dirty": "gpu_data",
-          "elapsed_ms": 0.0577,
+          "elapsed_ms": 0.046,
           "frame": 0,
           "outcome": "applied",
           "requested_redraw": true,
@@ -7014,7 +7405,7 @@
           "command": "SetScatterHoverTooltip",
           "detail": "true",
           "dirty": null,
-          "elapsed_ms": 0.0033,
+          "elapsed_ms": 0.006,
           "frame": 0,
           "outcome": "ok",
           "requested_redraw": false,
@@ -7025,7 +7416,7 @@
           "command": "SetScatterTooltipAxisLabels",
           "detail": null,
           "dirty": null,
-          "elapsed_ms": 0.0031999999999999997,
+          "elapsed_ms": 0.0048,
           "frame": 0,
           "outcome": "ok",
           "requested_redraw": false,
@@ -7036,7 +7427,7 @@
           "command": "SetScatterPrimaryHoverColumns",
           "detail": null,
           "dirty": null,
-          "elapsed_ms": 0.8080999999999999,
+          "elapsed_ms": 0.034999999999999996,
           "frame": 0,
           "outcome": "ok",
           "requested_redraw": false,
@@ -7047,7 +7438,7 @@
           "command": "SetScatterLod",
           "detail": null,
           "dirty": null,
-          "elapsed_ms": 0.0052,
+          "elapsed_ms": 0.0076,
           "frame": 0,
           "outcome": "ok",
           "requested_redraw": true,
@@ -7058,7 +7449,7 @@
           "command": "SetScatterAutoPointSize",
           "detail": null,
           "dirty": null,
-          "elapsed_ms": 0.0017000000000000001,
+          "elapsed_ms": 0.0006,
           "frame": 0,
           "outcome": "ok",
           "requested_redraw": true,
@@ -7069,7 +7460,7 @@
           "command": "SetScatterInteractiveRenderScale",
           "detail": "1.000",
           "dirty": null,
-          "elapsed_ms": 0.0007999999999999999,
+          "elapsed_ms": 0.0006,
           "frame": 0,
           "outcome": "ok",
           "requested_redraw": true,
@@ -7080,7 +7471,7 @@
           "command": "SetScatterAutoQuality",
           "detail": "enabled=true, target_fps=30.00",
           "dirty": null,
-          "elapsed_ms": 0.0024,
+          "elapsed_ms": 0.0028,
           "frame": 0,
           "outcome": "ok",
           "requested_redraw": true,
@@ -7091,7 +7482,7 @@
           "command": "SetScatterPickingMode",
           "detail": null,
           "dirty": null,
-          "elapsed_ms": 0.0014,
+          "elapsed_ms": 0.0045000000000000005,
           "frame": 0,
           "outcome": "ok",
           "requested_redraw": true,
@@ -7102,7 +7493,7 @@
           "command": "FitScatterCamera",
           "detail": null,
           "dirty": null,
-          "elapsed_ms": 23.333099999999998,
+          "elapsed_ms": 0.0079,
           "frame": 0,
           "outcome": "ok",
           "requested_redraw": true,
@@ -7113,7 +7504,7 @@
           "command": "SetScatterParallelProjection",
           "detail": "true",
           "dirty": null,
-          "elapsed_ms": 1.8877,
+          "elapsed_ms": 0.0063,
           "frame": 0,
           "outcome": "ok",
           "requested_redraw": true,
@@ -7124,7 +7515,7 @@
           "command": "SetScatterViewDirection",
           "detail": "xy",
           "dirty": null,
-          "elapsed_ms": 0.032100000000000004,
+          "elapsed_ms": 0.013600000000000001,
           "frame": 0,
           "outcome": "ok",
           "requested_redraw": true,
@@ -7135,7 +7526,7 @@
           "command": "SetScatterAxisVisibility",
           "detail": null,
           "dirty": null,
-          "elapsed_ms": 0.0084,
+          "elapsed_ms": 0.0076,
           "frame": 0,
           "outcome": "ok",
           "requested_redraw": true,
@@ -7146,7 +7537,7 @@
           "command": "SetScatterPointsPacked",
           "detail": "payload_bytes=28800, colormap=turbo, format=point_instance_v1, fit=false",
           "dirty": "gpu_data",
-          "elapsed_ms": 0.061099999999999995,
+          "elapsed_ms": 0.027100000000000003,
           "frame": 0,
           "outcome": "applied",
           "requested_redraw": true,
@@ -7157,7 +7548,7 @@
           "command": "SetScatterHoverTooltip",
           "detail": "true",
           "dirty": null,
-          "elapsed_ms": 0.00039999999999999996,
+          "elapsed_ms": 0.0,
           "frame": 0,
           "outcome": "ok",
           "requested_redraw": false,
@@ -7168,7 +7559,7 @@
           "command": "SetScatterTooltipAxisLabels",
           "detail": null,
           "dirty": null,
-          "elapsed_ms": 0.0015,
+          "elapsed_ms": 9.999999999999999e-05,
           "frame": 0,
           "outcome": "ok",
           "requested_redraw": false,
@@ -7179,7 +7570,7 @@
           "command": "SetScatterPrimaryHoverColumns",
           "detail": null,
           "dirty": null,
-          "elapsed_ms": 0.039700000000000006,
+          "elapsed_ms": 0.0223,
           "frame": 0,
           "outcome": "ok",
           "requested_redraw": false,
@@ -7190,7 +7581,7 @@
           "command": "SetScatterLod",
           "detail": null,
           "dirty": null,
-          "elapsed_ms": 0.0009,
+          "elapsed_ms": 0.00019999999999999998,
           "frame": 0,
           "outcome": "ok",
           "requested_redraw": true,
@@ -7201,7 +7592,7 @@
           "command": "SetScatterAutoPointSize",
           "detail": null,
           "dirty": null,
-          "elapsed_ms": 0.0005,
+          "elapsed_ms": 9.999999999999999e-05,
           "frame": 0,
           "outcome": "ok",
           "requested_redraw": true,
@@ -7212,7 +7603,7 @@
           "command": "SetScatterInteractiveRenderScale",
           "detail": "1.000",
           "dirty": null,
-          "elapsed_ms": 0.00039999999999999996,
+          "elapsed_ms": 0.0003,
           "frame": 0,
           "outcome": "ok",
           "requested_redraw": true,
@@ -7223,7 +7614,7 @@
           "command": "SetScatterAutoQuality",
           "detail": "enabled=true, target_fps=30.00",
           "dirty": null,
-          "elapsed_ms": 0.0007999999999999999,
+          "elapsed_ms": 0.00019999999999999998,
           "frame": 0,
           "outcome": "ok",
           "requested_redraw": true,
@@ -7234,7 +7625,7 @@
           "command": "SetScatterPickingMode",
           "detail": null,
           "dirty": null,
-          "elapsed_ms": 0.00039999999999999996,
+          "elapsed_ms": 9.999999999999999e-05,
           "frame": 0,
           "outcome": "ok",
           "requested_redraw": true,
@@ -7245,7 +7636,7 @@
           "command": "ReplaceNode",
           "detail": "node_bytes=5742",
           "dirty": "full",
-          "elapsed_ms": 5.3927000000000005,
+          "elapsed_ms": 0.8373,
           "frame": 0,
           "outcome": "applied",
           "requested_redraw": true,
@@ -7256,7 +7647,7 @@
           "command": "SetLinePlotDataPacked",
           "detail": "series=Temp, payload_bytes=7200, format=XyF32V0",
           "dirty": "visual",
-          "elapsed_ms": 0.0704,
+          "elapsed_ms": 0.039799999999999995,
           "frame": 0,
           "outcome": "applied",
           "requested_redraw": true,
@@ -7267,8 +7658,8 @@
           "command": "DebugSnapshot",
           "detail": "request_id=0",
           "dirty": null,
-          "elapsed_ms": 0.0037,
-          "frame": 1,
+          "elapsed_ms": 0.0062,
+          "frame": 2,
           "outcome": "completed",
           "requested_redraw": false,
           "seq": 28,
@@ -7276,7 +7667,7 @@
         }
       ]
     },
-    "cpu_frame_ms": 18.0228,
+    "cpu_frame_ms": 2.2868,
     "dirty": {
       "current": null,
       "note": "DragonGUI applies coarse dirty flags immediately; this history records the recent command reasons that triggered them.",
@@ -7285,7 +7676,7 @@
           "command": "SetLinePlotDataPacked",
           "detail": "series=Temp, payload_bytes=7200, format=XyF32V0",
           "dirty": "visual",
-          "elapsed_ms": 2.096,
+          "elapsed_ms": 0.1252,
           "frame": 0,
           "outcome": "applied",
           "requested_redraw": true,
@@ -7296,7 +7687,7 @@
           "command": "SetLinePlotDataPacked",
           "detail": "series=Pressure, payload_bytes=7200, format=XyF32V0",
           "dirty": "visual",
-          "elapsed_ms": 0.0787,
+          "elapsed_ms": 0.08,
           "frame": 0,
           "outcome": "applied",
           "requested_redraw": true,
@@ -7307,7 +7698,7 @@
           "command": "SetTableDataColumns",
           "detail": "table_bytes=348, buffer_columns=6",
           "dirty": "text",
-          "elapsed_ms": 1.3278999999999999,
+          "elapsed_ms": 0.07930000000000001,
           "frame": 0,
           "outcome": "applied",
           "requested_redraw": true,
@@ -7318,7 +7709,7 @@
           "command": "SetScatterPointsPacked",
           "detail": "payload_bytes=28800, colormap=turbo, format=point_instance_v1, fit=false",
           "dirty": "gpu_data",
-          "elapsed_ms": 0.0577,
+          "elapsed_ms": 0.046,
           "frame": 0,
           "outcome": "applied",
           "requested_redraw": true,
@@ -7329,7 +7720,7 @@
           "command": "SetScatterPointsPacked",
           "detail": "payload_bytes=28800, colormap=turbo, format=point_instance_v1, fit=false",
           "dirty": "gpu_data",
-          "elapsed_ms": 0.061099999999999995,
+          "elapsed_ms": 0.027100000000000003,
           "frame": 0,
           "outcome": "applied",
           "requested_redraw": true,
@@ -7340,7 +7731,7 @@
           "command": "ReplaceNode",
           "detail": "node_bytes=5742",
           "dirty": "full",
-          "elapsed_ms": 5.3927000000000005,
+          "elapsed_ms": 0.8373,
           "frame": 0,
           "outcome": "applied",
           "requested_redraw": true,
@@ -7351,7 +7742,7 @@
           "command": "SetLinePlotDataPacked",
           "detail": "series=Temp, payload_bytes=7200, format=XyF32V0",
           "dirty": "visual",
-          "elapsed_ms": 0.0704,
+          "elapsed_ms": 0.039799999999999995,
           "frame": 0,
           "outcome": "applied",
           "requested_redraw": true,
@@ -7362,32 +7753,32 @@
     },
     "drag_drop_session": null,
     "drag_number_drag": null,
-    "frame_acquire_ms": 0.0779,
-    "frame_acquire_ms_avg": 0.0779,
-    "frame_encode_ms": 3.8822,
-    "frame_encode_ms_avg": 3.8822,
-    "frame_ms": 18.0228,
-    "frame_ms_avg": 18.0228,
-    "frame_prepare_ms": 13.631300000000001,
-    "frame_prepare_ms_avg": 13.631300000000001,
-    "frame_present_ms": 0.0596,
-    "frame_present_ms_avg": 0.0596,
-    "frame_submit_ms": 0.3706,
-    "frame_submit_ms_avg": 0.3706,
-    "frame_window_count": 1,
-    "frame_work_ms": 17.8841,
-    "frame_work_ms_avg": 17.8841,
-    "frames_rendered": 1,
+    "frame_acquire_ms": 0.0098,
+    "frame_acquire_ms_avg": 0.013999999999999999,
+    "frame_encode_ms": 0.1311,
+    "frame_encode_ms_avg": 0.85405,
+    "frame_ms": 5.83625,
+    "frame_ms_avg": 5.83625,
+    "frame_prepare_ms": 0.14650000000000002,
+    "frame_prepare_ms_avg": 3.57185,
+    "frame_present_ms": 0.0109,
+    "frame_present_ms_avg": 0.1162,
+    "frame_submit_ms": 1.9881,
+    "frame_submit_ms_avg": 1.2798,
+    "frame_window_count": 2,
+    "frame_work_ms": 2.2657,
+    "frame_work_ms_avg": 5.7057,
+    "frames_rendered": 2,
     "gpu_ready": true,
-    "last_frame_ms": 18.0228,
+    "last_frame_ms": 2.2868,
     "last_mouse_pos": null,
     "loading_screen": {
       "enabled": true,
       "frames": 1,
       "min_duration_ms": 120,
-      "present_ms": 116.33,
+      "present_ms": 23.070400000000003,
       "shown": true,
-      "startup_resource_ms": 2.5277
+      "startup_resource_ms": 0.7019
     },
     "orbit_active": false,
     "pan_active": false,
@@ -7409,8 +7800,8 @@
     "splitter_drag": null,
     "table_column_resize_drag": null,
     "table_scrollbar_drag": null,
-    "upload_ms": 2.5277,
-    "wall_fps": 0.0,
+    "upload_ms": 0.7019,
+    "wall_fps": 416.4584374479427,
     "window_open": true
   },
   "schema": 1
