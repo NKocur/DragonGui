@@ -1,0 +1,272 @@
+diff --git a/native/src/runtime.rs b/native/src/runtime.rs
+index 00dfb59..10523ec 100644
+--- a/native/src/runtime.rs
++++ b/native/src/runtime.rs
+@@ -1265,7 +1265,6 @@ struct ScatterCompositeRenderer {
+     pipeline: wgpu::RenderPipeline,
+     bind_group_layout: wgpu::BindGroupLayout,
+     sampler: wgpu::Sampler,
+-    uniform_buffer: wgpu::Buffer,
+ }
+ 
+ impl ScatterCompositeRenderer {
+@@ -1358,23 +1357,17 @@ impl ScatterCompositeRenderer {
+             address_mode_v: wgpu::AddressMode::ClampToEdge,
+             ..Default::default()
+         });
+-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+-            label: Some("scatter-composite-uniforms"),
+-            size: std::mem::size_of::<ScatterCompositeUniforms>() as u64,
+-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+-            mapped_at_creation: false,
+-        });
+         Self {
+             pipeline,
+             bind_group_layout,
+             sampler,
+-            uniform_buffer,
+         }
+     }
+ 
+     fn create_bind_group(
+         &self,
+         device: &wgpu::Device,
++        uniform_buffer: &wgpu::Buffer,
+         source_view: &wgpu::TextureView,
+     ) -> wgpu::BindGroup {
+         device.create_bind_group(&wgpu::BindGroupDescriptor {
+@@ -1383,7 +1376,7 @@ impl ScatterCompositeRenderer {
+             entries: &[
+                 wgpu::BindGroupEntry {
+                     binding: 0,
+-                    resource: self.uniform_buffer.as_entire_binding(),
++                    resource: uniform_buffer.as_entire_binding(),
+                 },
+                 wgpu::BindGroupEntry {
+                     binding: 1,
+@@ -1397,21 +1390,6 @@ impl ScatterCompositeRenderer {
+         })
+     }
+ 
+-    fn update_uniforms(
+-        &self,
+-        queue: &wgpu::Queue,
+-        target_rect: [f32; 4],
+-        screen_width: u32,
+-        screen_height: u32,
+-    ) {
+-        let uniforms = ScatterCompositeUniforms {
+-            target_rect,
+-            screen_size: [screen_width as f32, screen_height as f32],
+-            _pad: [0.0; 2],
+-        };
+-        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+-    }
+-
+     fn render<'pass>(
+         &'pass self,
+         pass: &mut wgpu::RenderPass<'pass>,
+@@ -1429,6 +1407,7 @@ struct ScatterRenderTarget {
+     _depth_texture: wgpu::Texture,
+     depth_view: wgpu::TextureView,
+     bind_group: wgpu::BindGroup,
++    composite_uniform_buffer: wgpu::Buffer,
+     width: u32,
+     height: u32,
+     format: wgpu::TextureFormat,
+@@ -1473,13 +1452,21 @@ impl ScatterRenderTarget {
+             view_formats: &[],
+         });
+         let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+-        let bind_group = compositor.create_bind_group(device, &color_view);
++        let composite_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
++            label: Some("scatter-composite-uniforms"),
++            size: std::mem::size_of::<ScatterCompositeUniforms>() as u64,
++            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
++            mapped_at_creation: false,
++        });
++        let bind_group =
++            compositor.create_bind_group(device, &composite_uniform_buffer, &color_view);
+         Self {
+             _color_texture: color_texture,
+             color_view,
+             _depth_texture: depth_texture,
+             depth_view,
+             bind_group,
++            composite_uniform_buffer,
+             width,
+             height,
+             format,
+@@ -1490,6 +1477,25 @@ impl ScatterRenderTarget {
+     fn matches(&self, width: u32, height: u32, format: wgpu::TextureFormat) -> bool {
+         self.width == width && self.height == height && self.format == format
+     }
++
++    fn update_composite_uniforms(
++        &self,
++        queue: &wgpu::Queue,
++        target_rect: [f32; 4],
++        screen_width: u32,
++        screen_height: u32,
++    ) {
++        let uniforms = ScatterCompositeUniforms {
++            target_rect,
++            screen_size: [screen_width as f32, screen_height as f32],
++            _pad: [0.0; 2],
++        };
++        queue.write_buffer(
++            &self.composite_uniform_buffer,
++            0,
++            bytemuck::bytes_of(&uniforms),
++        );
++    }
+ }
+ 
+ #[derive(Debug, Clone, Copy, Default)]
+@@ -12475,7 +12481,46 @@ impl WgpuState {
+ 
+         if include_detail {
+             let cs = rt.widget.camera_state();
++            let [clip_left, clip_top, clip_right, clip_bottom] = rt.widget.viewport_clip();
+             map.insert("fitted_once".to_string(), json!(rt.fitted_once));
++            map.insert(
++                "viewport".to_string(),
++                json!({
++                    "offset": rt.widget.offset,
++                    "size": [rt.widget.width, rt.widget.height],
++                    "clip": [clip_left, clip_top, clip_right, clip_bottom],
++                }),
++            );
++            map.insert(
++                "bounds".to_string(),
++                json!({
++                    "min": [rt.data_min.x, rt.data_min.y, rt.data_min.z],
++                    "max": [rt.data_max.x, rt.data_max.y, rt.data_max.z],
++                }),
++            );
++            map.insert(
++                "actors".to_string(),
++                json!({
++                    "extra_count": rt.widget.extra_actors.len(),
++                    "mesh_count": rt.widget.mesh_actors.len(),
++                    "label_count": rt.widget.user_labels.len(),
++                }),
++            );
++            map.insert(
++                "hover".to_string(),
++                json!({
++                    "label": rt.widget.hover_label.as_ref().map(|label| label.text.as_str()),
++                    "primary_meta_count": rt.primary_hover_meta.len(),
++                    "primary_column_count": rt.primary_hover_columns.len(),
++                }),
++            );
++            map.insert(
++                "selection".to_string(),
++                json!({
++                    "rect": rt.widget.selection_rect,
++                    "polygon_points": rt.widget.selection_polygon.as_ref().map(|poly| poly.len()).unwrap_or(0),
++                }),
++            );
+             map.insert(
+                 "payload_format".to_string(),
+                 json!(rt.payload_format.as_str()),
+@@ -13744,17 +13789,19 @@ impl WgpuState {
+                         runtime.last_direct_scene_revision = scene_revision;
+                         redraw_ms = redraw_t0.elapsed().as_secs_f64() * 1000.0;
+                     }
+-                    self.scatter_compositor.update_uniforms(
+-                        &self.queue,
+-                        [
+-                            runtime.widget.offset[0],
+-                            runtime.widget.offset[1],
+-                            runtime.widget.width as f32,
+-                            runtime.widget.height as f32,
+-                        ],
+-                        self.config.width,
+-                        self.config.height,
+-                    );
++                    if let Some(target) = runtime.render_target.as_ref() {
++                        target.update_composite_uniforms(
++                            &self.queue,
++                            [
++                                runtime.widget.offset[0],
++                                runtime.widget.offset[1],
++                                runtime.widget.width as f32,
++                                runtime.widget.height as f32,
++                            ],
++                            self.config.width,
++                            self.config.height,
++                        );
++                    }
+                     {
+                         let composite_t0 = Instant::now();
+                         let target = runtime.render_target.as_ref().unwrap();
+@@ -15097,6 +15144,10 @@ impl DragonApp {
+         runtime.insert("orbit_active".to_string(), json!(self.orbit_active));
+         runtime.insert("pan_active".to_string(), json!(self.pan_active));
+         runtime.insert("pan_button".to_string(), json!(pan_button_snapshot));
++        runtime.insert(
++            "active_scatter_id".to_string(),
++            json!(self.active_scatter_id.as_deref()),
++        );
+         runtime.insert("pressed_id".to_string(), json!(self.pressed_id.as_deref()));
+         runtime.insert("last_mouse_pos".to_string(), json!(self.last_mouse_pos));
+         runtime.insert("scrollbar_drag".to_string(), json!(scrollbar_drag_snapshot));
+@@ -15187,6 +15238,32 @@ impl DragonApp {
+         true
+     }
+ 
++    fn cancel_scatter_interaction(&mut self) -> bool {
++        let had_interaction = self.orbit_active
++            || self.pan_active
++            || self.rect_select_active
++            || self.scatter_press_pos.is_some()
++            || self.active_scatter_id.is_some();
++        let active_id = self.active_scatter_id.clone();
++        self.orbit_active = false;
++        self.pan_active = false;
++        self.pan_button = None;
++        self.rect_select_active = false;
++        self.scatter_press_pos = None;
++        self.active_scatter_id = None;
++        if let Some(sid) = active_id {
++            if let Some(gpu) = &mut self.gpu {
++                if let Some(rt) = gpu.scatters.get_mut(&sid) {
++                    rt.widget.selection_rect = None;
++                    rt.widget.selection_polygon = None;
++                    rt.set_interaction_lod_active(false, &gpu.device, &gpu.queue);
++                    rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
++                }
++            }
++        }
++        had_interaction
++    }
++
+     fn has_open_popup(&self) -> bool {
+         self.gpu.as_ref().is_some_and(WgpuState::has_open_popup)
+     }
+@@ -20068,6 +20145,12 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
+                 self.request_redraw();
+             }
+ 
++            WindowEvent::Focused(false) => {
++                if self.cancel_scatter_interaction() {
++                    self.request_redraw();
++                }
++            }
++
+             WindowEvent::MouseInput { state, button, .. } => {
+                 let pressed = state == ElementState::Pressed;
+ 
+@@ -20766,6 +20849,9 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
+             }
+ 
+             WindowEvent::CursorLeft { .. } => {
++                if self.cancel_scatter_interaction() {
++                    self.request_redraw();
++                }
+                 self.last_mouse_pos = None;
+                 if let Some(gpu) = &mut self.gpu {
+                     let old_hover = gpu.current_hover_id();
+warning: LF will be replaced by CRLF in native/src/runtime.rs.
+The file will have its original line endings in your working directory

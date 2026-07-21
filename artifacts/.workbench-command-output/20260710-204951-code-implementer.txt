@@ -1,0 +1,252 @@
+# Spec: Professional All Features Demo
+
+## Goal
+
+Create a new, more complete, more professional DragonGUI all-features demo using `examples/all_features_v3_demo.py` as the old reference.
+
+The new demo should feel like a polished product-quality data operations application, not an accumulated widget stress script. It should showcase the breadth of DragonGUI in a coherent workflow, demonstrate current V4-era widgets and runtime capabilities, and remain maintainable for future feature additions.
+
+## Source Of Truth
+
+Read these before implementing:
+
+- `examples/all_features_v3_demo.py`
+- `python/dragongui/__init__.py`
+- `docs/widgets.md`
+- `docs/library-overview.md`
+- `examples/css_feature_probes/default_polish_stress_probe.py`
+- `examples/css_feature_probes/visual_audit_manifest.json`
+
+Current state observed:
+
+- `examples/all_features_v3_demo.py` is about 5,000 lines and already covers many features, including:
+  - App shell, sidebar navigation, pages, menu bar, status bar, modals, context menus, tooltips, toasts, and file dialog callbacks.
+  - Scatter3D, line plots, histograms, pie charts, ScatterPlot2D, Heatmap, BarChart, DataFrameTable, HtmlReport, Image, ThreadMonitor, command palette, toolbar, split panes, drag/drop, code/log views, date/time inputs, property grids, tree/selectable widgets, and node graph binding playground.
+  - Live updates, background stream workers, resource upload/release, debug snapshots, layout summaries, and CSS theme switching.
+- The old demo has useful data fixtures and callback examples, but it is hard to scan and mixes product showcase, stress test, benchmark harness, generated report fixtures, and node binding experiments in one large file.
+- Recent visual polish work added `examples/css_feature_probes/default_polish_stress_probe.py`; use it as a compact example of the current professional default UI direction.
+
+## Required Outcome
+
+Add a new all-features demo that is:
+
+- More complete than the old demo in public API coverage.
+- More professional in information architecture, visual hierarchy, naming, and workflow.
+- Easier to maintain than the old monolithic script.
+- Runnable directly from the repo with `python examples/<new_demo>.py`.
+- Safe to run without optional Plotly installed and safe when the native backend is not built.
+
+Recommended target file:
+
+- `examples/all_features_professional_demo.py`
+
+Keep the old file:
+
+- Do not delete or rewrite `examples/all_features_v3_demo.py`.
+- Reuse its proven fixtures and helper ideas where appropriate, but do not copy the whole script into a new 5,000-line monolith.
+
+## Product Concept
+
+Build the demo around a coherent scenario, for example:
+
+- A data operations workbench for sensor pipelines, model monitoring, and reporting.
+- A manufacturing/field analytics command center.
+- A scientific data lab dashboard.
+
+The app should use realistic but generated local data. The scenario should make the widget mix feel intentional:
+
+- Navigation moves between workflows.
+- Charts and tables represent the same system.
+- Controls update visible status or data.
+- Debug/runtime tools are framed as operator/developer diagnostics.
+- Styling and layout pages show DragonGUI capabilities without feeling like isolated test cards.
+
+Avoid marketing copy or a landing page. The first screen should be the usable workbench.
+
+## Required Feature Coverage
+
+The new demo should include these public widgets or capability groups unless a concrete blocker is found and documented in `artifacts/IMPLEMENTATION_NOTES.md`:
+
+- Shell and layout:
+  - `Window`, `AppShell`, `Sidebar`, `WorkbenchLayout`, `WorkbenchMain` if useful, `Body`, `HLayout`, `VLayout`, `GridLayout`, `FlowLayout`, `ScrollArea`, `Panel`, `Splitter`, `Pane`, `Spacer`, `Separator`, `StatusBar`.
+- Navigation and chrome:
+  - `MenuBar`, `Menu`, `MenuItem`, `Pages`, `Page`, `NavItem`, `Tabs`, `Tab`, `Breadcrumbs`, `Toolbar`, `ToolbarSeparator`, `IconButton`, `SmallButton`, `SearchBox`.
+- Basic controls:
+  - `Label`, `Badge`, `Tag`, `LED`, `Button`, `TextInput`, `TextArea`, `Checkbox`, `Dropdown`, `Slider`, `NumberInput`, `RangeSlider`, `RadioGroup` / `RadioButton`, `ToggleSwitch`, `ProgressBar`, `ColorPicker`, `DragNumber`, `DragVector`.
+- Date/time and structured inputs:
+  - `DateInput`, `TimeInput`, `DateTimeInput`.
+- Data and visual widgets:
+  - `DataFrameTable`, `Scatter3D`, `ScatterPlot2D`, `LinePlot`, `Histogram`, `Heatmap`, `BarChart`, `PieChart`, `Image`, `HtmlReport`.
+- Dense data/inspector widgets:
+  - `PropertyGrid`, `TreeView`, `TreeNode`, `SelectableList`, `Selectable`, `CodeEditor`, `LogView`, `ThreadMonitor`.
+- Overlays and interaction:
+  - `Tooltip`, `ContextMenu`, `Modal`, `alert`, `confirm`, `toast`, `CommandPalette`, file dialog helpers where practical.
+- Runtime/live capabilities:
+  - Live widget setters such as `set_value`, `set_checked`, `set_badge`, `set_level`, `set_style`, `replace_children`, `DataFrameTable.set_frame`, `Scatter3D.set_points` or live prepared-frame updates, plot fit/reset controls where available.
+  - `App.call_soon_threadsafe` or a background worker for at least one live stream.
+  - `App.debug_snapshot` and a redacted snapshot/summary action.
+  - Generic buffer resource upload/release if the existing API remains stable enough, using the old demo as reference.
+- Styling and theming:
+  - Use a coherent app stylesheet with professional defaults, restrained accents, readable density, and light/dark theme controls if practical.
+  - Demonstrate CSS classes, pseudo-state styles, parts, and inline style patches without overwhelming the main workflow.
+
+## Suggested Page Structure
+
+Use fewer, better-composed pages than the old demo. Suggested routes:
+
+- `overview`
+  - Executive summary, status cards, alerts/incidents, small charts, recent events, and route breadcrumbs.
+- `explore`
+  - Large `Scatter3D` or plot workspace with filters, point-pick status, grid/axis/colormap controls, and streaming controls.
+- `timeseries`
+  - `LinePlot`, `Histogram`, `Heatmap`, and `BarChart` examples tied to generated telemetry data.
+- `data`
+  - `DataFrameTable`, `PropertyGrid`, search/filter controls, row selection, context menu, and table replacement.
+- `workflow`
+  - Tree/selectable list, drag/drop, command palette, code/log view, forms, date/time inputs, progress, and modal actions.
+- `reports`
+  - `HtmlReport`, image preview, generated local report files, and file dialog/export actions.
+- `runtime`
+  - `ThreadMonitor`, debug snapshot, background stream controls, resource upload/release, live child replacement, and diagnostics.
+- `styling`
+  - Theme/style controls, CSS part demos, pseudo-state controls, color picker, style preview, and compact control gallery.
+- Optional `node-graph`
+  - Include the old `NodeGraphBindingPlayground` only if it can be extracted cleanly and kept understandable. If it remains too large or brittle, leave it out of the first new demo and document as future work.
+
+## Architecture Guidance
+
+Prefer a small internal structure over one giant body:
+
+- Top-level constants for dataset sizes, routes, palette, and temp output paths.
+- Small data fixture classes/functions:
+  - Demo table frame.
+  - Scatter frame generator.
+  - Time series generator.
+  - Histogram/heatmap/bar/pie data builders.
+  - Local PNG/report generator.
+- Small callback/action groups:
+  - Status/log helpers.
+  - Scatter actions.
+  - Table actions.
+  - Stream lifecycle.
+  - Report actions.
+  - Styling/theme actions.
+  - Debug/snapshot actions.
+- Page builder functions where the API permits it, for example `build_overview_page()`, `build_explore_page()`, etc.
+
+Keep module-level mutable state explicit and limited. The old demo relies on many globals because live widget handles need to be updated from callbacks; that is acceptable, but organize handles into small dictionaries or a lightweight class rather than scattering dozens of unrelated globals.
+
+Do not introduce a new public library API for this demo.
+
+## Visual And UX Requirements
+
+- The default launch size should be around `1440x900`.
+- The app should remain usable at narrower widths, especially `390x720`, even if not every page is ideal on mobile.
+- Avoid clipping and overlap in title bars, nav items, toolbar controls, status bar, tabs, table headers, and cards.
+- Use current polished default UI direction from `default_polish_stress_probe.py`: compact chrome, restrained panels, clear active states, dense data surfaces, and readable text.
+- Do not use decorative one-off gradients or oversized hero sections.
+- Avoid nested cards where a section layout would be cleaner.
+- Use real visual assets where useful:
+  - Generated local PNG is fine for `Image`.
+  - Generated local HTML reports are fine for `HtmlReport`.
+- The demo should feel like a plausible operator tool, not a widget catalog pasted into cards.
+
+## Edge Cases
+
+Handle or document:
+
+- NumPy missing: the current old demo exits because NumPy is required. For the new demo, prefer a clear `SystemExit` message if NumPy is unavailable, or provide a small pure-Python fallback for non-plot data if feasible.
+- Plotly missing: keep the old pattern of a self-contained HTML fallback for reports.
+- Native backend unavailable: catch `dg.BackendUnavailableError` and print a concise source-import/document summary rather than crashing.
+- Long labels in navigation, tabs, breadcrumbs, table columns, property names, and status messages.
+- Background streaming shutdown: stop threads/events in `finally` and avoid leaving non-daemon workers running.
+- Repeated start/stop stream clicks.
+- Large data sizes on modest hardware. Use impressive but reasonable defaults; allow constants to be reduced for quick smoke runs via environment variables if useful.
+- Optional WebView2/HtmlReport availability on Windows: reports should degrade gracefully and status should say what happened.
+- File dialog cancellation.
+- Debug snapshot failures/timeouts.
+- Resource upload/release called more than once.
+
+## Affected Files
+
+Expected primary change:
+
+- Add `examples/all_features_professional_demo.py`.
+
+Likely touched support artifacts:
+
+- `artifacts/IMPLEMENTATION_NOTES.md`
+- `artifacts/TEST_RESULTS.md`
+
+Only if needed:
+
+- `docs/library-overview.md` or `README.md` examples list, if the project maintains a current demo list there.
+- `tests/test_python_api.py` or a new smoke test if a lightweight import/build test is added.
+- `examples/all_features_v3_demo.py` only for tiny comments or compatibility fixes discovered while extracting helpers; avoid broad edits.
+
+Do not modify native rendering/layout/theme code unless the new demo reveals a real product bug that prevents the demo from working. If that happens, document the bug and keep the fix scoped.
+
+## Validation Required
+
+Use the local Python 3.12 interpreter if available:
+
+```powershell
+$py = 'C:\Users\nashk\AppData\Local\Programs\Python\Python312\python.exe'
+$env:LIB='C:\Users\nashk\AppData\Local\Programs\Python\Python312\libs;' + $env:LIB
+$env:PYO3_PYTHON=$py
+```
+
+Minimum checks:
+
+```powershell
+& $py -m py_compile examples/all_features_professional_demo.py
+& $py examples/all_features_professional_demo.py
+```
+
+If the native backend is not built, the run should still exercise the source import fallback path and print a useful summary.
+
+If native backend is available, run at least one real launch long enough to inspect:
+
+- Initial overview page.
+- At least one chart/data page.
+- Runtime/debug page.
+- Styling page.
+- Report page if `HtmlReport` can initialize.
+
+If implementation adds or updates tests:
+
+```powershell
+& $py -m pytest <focused tests>
+```
+
+If native code unexpectedly changes:
+
+```powershell
+cargo fmt --manifest-path native/Cargo.toml -- --check
+cargo check --manifest-path native/Cargo.toml
+```
+
+Record validation commands and outcomes in `artifacts/TEST_RESULTS.md`.
+
+## Out Of Scope
+
+- Replacing or deleting `examples/all_features_v3_demo.py`.
+- A new public DragonGUI API.
+- Native backend feature work beyond narrow bug fixes found while building the demo.
+- A browser/web frontend.
+- A marketing landing page.
+- Benchmark-grade performance harnesses in the new demo.
+- Full automated visual audit integration unless the implementer chooses to add a dedicated probe later.
+- Making every experimental node graph feature part of the first professional demo if that would dominate the file.
+
+## Handoff Notes For Implementer
+
+Start by creating the new demo skeleton and ensuring it runs. Then migrate coverage in layers:
+
+1. Shell, navigation, status, styling, and generated data fixtures.
+2. Overview/data pages with controls, tables, and summary charts.
+3. Plot/scatter/time-series pages and live update callbacks.
+4. Reports, debug/runtime, command palette, overlays, and resource actions.
+5. Optional node graph extraction only after the main demo is stable.
+
+Keep the final file readable. A professional demo that clearly covers the public surface in 1,500-2,500 organized lines is preferable to a second monolith that duplicates the old 5,000-line script.

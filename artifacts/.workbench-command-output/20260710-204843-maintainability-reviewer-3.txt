@@ -1,0 +1,240 @@
+   1: from __future__ import annotations
+   2: 
+   3: import math
+   4: import os
+   5: import random
+   6: import struct
+   7: import sys
+   8: import threading
+   9: import time
+  10: import zlib
+  11: from datetime import datetime, timedelta
+  12: from pathlib import Path
+  13: from typing import Any
+  14: 
+  15: if __name__ == "__main__" and __package__ is None:
+  16:     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
+  17: 
+  18: try:
+  19:     import numpy as np
+  20: except ImportError as exc:
+  21:     raise SystemExit(
+  22:         "all_features_professional_demo.py requires NumPy for DragonGUI plot payloads. "
+  23:         "Install numpy or run a non-plot example."
+  24:     ) from exc
+  25: 
+  26: import dragongui as dg
+  27: 
+  28: 
+  29: ROOT = Path(__file__).resolve().parents[1]
+  30: OUT_DIR = ROOT / "artifacts" / "generated" / "all_features_professional_demo"
+  31: OUT_DIR.mkdir(parents=True, exist_ok=True)
+  32: 
+  33: POINTS = int(os.environ.get("DG_PRO_DEMO_POINTS", "16000"))
+  34: ROWS = int(os.environ.get("DG_PRO_DEMO_ROWS", "180"))
+  35: SERIES_POINTS = int(os.environ.get("DG_PRO_DEMO_SERIES_POINTS", "720"))
+  36: RNG = np.random.default_rng(42)
+  37: 
+  38: ROUTES = [
+  39:     ("overview", "Overview", "4"),
+  40:     ("explore", "3D Explore", None),
+  41:     ("timeseries", "Time Series", "live"),
+  42:     ("data", "Data", None),
+  43:     ("workflow", "Workflow", "9"),
+  44:     ("reports", "Reports", None),
+  45:     ("runtime", "Runtime", None),
+  46:     ("styling", "Styling", None),
+  47: ]
+  48: 
+  49: 
+  50: class DemoState:
+  51:     def __init__(self) -> None:
+  52:         self.app: dg.App | None = None
+  53:         self.pages: dg.Pages | None = None
+  54:         self.tabs: dg.Tabs | None = None
+  55:         self.status: dg.Label | None = None
+  56:         self.status_badge: dg.Badge | None = None
+  57:         self.stream_led: dg.LED | None = None
+  58:         self.progress: dg.ProgressBar | None = None
+  59:         self.incident_badge: dg.Badge | None = None
+  60:         self.data_table: dg.DataFrameTable | None = None
+  61:         self.scatter: dg.Scatter3D | None = None
+  62:         self.scatter2d: dg.ScatterPlot2D | None = None
+  63:         self.line_plot: dg.LinePlot | None = None
+  64:         self.heatmap: dg.Heatmap | None = None
+  65:         self.bar_chart: dg.BarChart | None = None
+  66:         self.pie_chart: dg.PieChart | None = None
+  67:         self.report: dg.HtmlReport | None = None
+  68:         self.image: dg.Image | None = None
+  69:         self.log: dg.LogView | None = None
+  70:         self.code: dg.CodeEditor | None = None
+  71:         self.palette: dg.CommandPalette | None = None
+  72:         self.modal: dg.Modal | None = None
+  73:         self.alert_modal: dg.Modal | None = None
+  74:         self.confirm_modal: dg.Modal | None = None
+  75:         self.live_panel: dg.Panel | None = None
+  76:         self.theme_chip: dg.Tag | None = None
+  77:         self.nav_items: dict[str, dg.NavItem] = {}
+  78:         self.stream_stop = threading.Event()
+  79:         self.stream_thread: threading.Thread | None = None
+  80:         self.resource_uploaded = False
+  81:         self.resource_id = "professional-demo:telemetry-preview"
+  82:         self.stream_count = 0
+  83: 
+  84: 
+  85: state = DemoState()
+  86: 
+  87: 
+  88: def frame_from_columns(**columns: Any) -> dict[str, list[Any]]:
+  89:     return {name: list(values) for name, values in columns.items()}
+  90: 
+  91: 
+  92: def build_scatter_frame(count: int = POINTS, phase: float = 0.0) -> dict[str, list[Any]]:
+  93:     t = np.linspace(0, 9 * math.pi, count, dtype=np.float32)
+  94:     ring = 1.0 + 0.24 * np.sin(t * 0.37 + phase)
+  95:     x = ring * np.cos(t) + RNG.normal(0, 0.055, count)
+  96:     y = ring * np.sin(t) + RNG.normal(0, 0.055, count)
+  97:     z = np.linspace(-1.4, 1.4, count, dtype=np.float32) + 0.32 * np.sin(t * 0.6 + phase)
+  98:     health = np.clip(82 + 11 * np.sin(t * 0.19 + phase) + RNG.normal(0, 3, count), 0, 100)
+  99:     temp = np.clip(58 + 16 * np.cos(t * 0.11 - phase) + RNG.normal(0, 2.5, count), 15, 95)
+ 100:     return frame_from_columns(
+ 101:         x=x,
+ 102:         y=y,
+ 103:         z=z,
+ 104:         health=health,
+ 105:         temperature=temp,
+ 106:         zone=[f"zone-{i % 8}" for i in range(count)],
+ 107:         asset=[f"cell-{(i * 7) % 19:02d}" for i in range(count)],
+ 108:     )
+ 109: 
+ 110: 
+ 111: def build_table(rows: int = ROWS) -> list[dict[str, Any]]:
+ 112:     owners = ["ingest", "model", "quality", "export", "field"]
+ 113:     states = ["ready", "running", "queued", "watch", "blocked"]
+ 114:     table: list[dict[str, Any]] = []
+ 115:     now = datetime(2026, 7, 10, 9, 0)
+ 116:     for i in range(rows):
+ 117:         latency = 18 + (i % 17) * 2.6 + (i % 5) * 0.7
+ 118:         error_rate = round(max(0, math.sin(i * 0.21) * 1.8 + (i % 9) * 0.17), 2)
+ 119:         state_name = states[(i + (1 if error_rate > 1.8 else 0)) % len(states)]
+ 120:         table.append(
+ 121:             {
+ 122:                 "route": f"plant.north.line-{i % 6}.cell-{i % 14}.sensor-feed",
+ 123:                 "owner": owners[i % len(owners)],
+ 124:                 "state": state_name,
+ 125:                 "latency_ms": round(latency, 2),
+ 126:                 "error_rate": error_rate,
+ 127:                 "throughput": 950 + (i * 37) % 760,
+ 128:                 "updated": (now - timedelta(minutes=i * 3)).isoformat(timespec="minutes"),
+ 129:             }
+ 130:         )
+ 131:     return table
+ 132: 
+ 133: 
+ 134: def build_series(points: int = SERIES_POINTS) -> dict[str, list[float]]:
+ 135:     x = np.arange(points, dtype=np.float32)
+ 136:     base = np.sin(x / 31.0) * 6 + np.cos(x / 87.0) * 4
+ 137:     return frame_from_columns(
+ 138:         minute=x,
+ 139:         latency=32 + base + RNG.normal(0, 1.5, points),
+ 140:         throughput=1200 + 110 * np.sin(x / 42.0) + RNG.normal(0, 24, points),
+ 141:         error_budget=np.clip(92 - np.abs(base) * 2 + RNG.normal(0, 1.2, points), 65, 100),
+ 142:     )
+ 143: 
+ 144: 
+ 145: def build_heatmap() -> tuple[list[list[float]], list[str], list[str]]:
+ 146:     y_labels = [f"L{i + 1}" for i in range(8)]
+ 147:     x_labels = [f"{hour:02d}:00" for hour in range(0, 24, 2)]
+ 148:     matrix = []
+ 149:     for y in range(len(y_labels)):
+ 150:         row = []
+ 151:         for x in range(len(x_labels)):
+ 152:             row.append(18 + 8 * math.sin(x / 2.4) + 3.5 * math.cos(y * 0.8) + (x * y) % 4)
+ 153:         matrix.append(row)
+ 154:     return matrix, x_labels, y_labels
+ 155: 
+ 156: 
+ 157: def write_png(path: Path, width: int = 420, height: int = 220) -> None:
+ 158:     rows = []
+ 159:     for y in range(height):
+ 160:         raw = bytearray([0])
+ 161:         for x in range(width):
+ 162:             signal = int(80 + 70 * math.sin((x + y) / 33.0))
+ 163:             raw.extend((24 + x * 70 // width, 70 + signal // 3, 92 + y * 95 // height))
+ 164:         rows.append(bytes(raw))
+ 165:     payload = zlib.compress(b"".join(rows), 9)
+ 166: 
+ 167:     def chunk(kind: bytes, data: bytes) -> bytes:
+ 168:         return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+ 169: 
+ 170:     png = (
+ 171:         b"\x89PNG\r\n\x1a\n"
+ 172:         + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+ 173:         + chunk(b"IDAT", payload)
+ 174:         + chunk(b"IEND", b"")
+ 175:     )
+ 176:     path.write_bytes(png)
+ 177: 
+ 178: 
+ 179: def write_report(path: Path) -> None:
+ 180:     path.write_text(
+ 181:         """<!doctype html>
+ 182: <html><head><meta charset="utf-8"><title>DragonGUI Operations Report</title>
+ 183: <style>
+ 184: body{font-family:Segoe UI,Arial,sans-serif;margin:28px;color:#172033;background:#f7f8fb}
+ 185: .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.card{background:white;border:1px solid #d9dee8;border-radius:8px;padding:14px}
+ 186: h1{font-size:24px;margin:0 0 12px}.metric{font-size:28px;font-weight:700}.ok{color:#137b3a}.warn{color:#9b6500}.bad{color:#b42318}
+ 187: table{width:100%;border-collapse:collapse;margin-top:16px}td,th{border-bottom:1px solid #dde3ee;padding:8px;text-align:left;font-size:13px}
+ 188: </style></head><body>
+ 189: <h1>North Plant Sensor Operations</h1>
+ 190: <div class="grid">
+ 191: <div class="card"><div>Availability</div><div class="metric ok">99.2%</div></div>
+ 192: <div class="card"><div>Open Incidents</div><div class="metric warn">4</div></div>
+ 193: <div class="card"><div>Blocked Routes</div><div class="metric bad">2</div></div>
+ 194: </div>
+ 195: <table><tr><th>Route</th><th>Owner</th><th>Status</th><th>Note</th></tr>
+ 196: <tr><td>line-2 / cell-07</td><td>model</td><td>watch</td><td>drift above p95</td></tr>
+ 197: <tr><td>line-4 / cell-03</td><td>quality</td><td>ready</td><td>calibration complete</td></tr>
+ 198: <tr><td>line-1 / cell-11</td><td>export</td><td>queued</td><td>awaiting report bundle</td></tr>
+ 199: </table></body></html>
+ 200: """,
+ 201:         encoding="utf-8",
+ 202:     )
+ 203: 
+ 204: 
+ 205: SCATTER_FRAME = build_scatter_frame()
+ 206: TABLE_ROWS = build_table()
+ 207: TABLE_FRAME = frame_from_columns(
+ 208:     route=[row["route"] for row in TABLE_ROWS],
+ 209:     owner=[row["owner"] for row in TABLE_ROWS],
+ 210:     state=[row["state"] for row in TABLE_ROWS],
+ 211:     latency_ms=[row["latency_ms"] for row in TABLE_ROWS],
+ 212:     error_rate=[row["error_rate"] for row in TABLE_ROWS],
+ 213:     throughput=[row["throughput"] for row in TABLE_ROWS],
+ 214:     updated=[row["updated"] for row in TABLE_ROWS],
+ 215: )
+ 216: SERIES_FRAME = build_series()
+ 217: HEAT_MATRIX, HEAT_X, HEAT_Y = build_heatmap()
+ 218: REPORT_PATH = OUT_DIR / "operations_report.html"
+ 219: IMAGE_PATH = OUT_DIR / "sensor_preview.png"
+ 220: write_report(REPORT_PATH)
+ 221: write_png(IMAGE_PATH)
+ 222: 
+ 223: 
+ 224: def log(message: str) -> None:
+ 225:     text = f"{datetime.now().strftime('%H:%M:%S')}  {message}"
+ 226:     print(text)
+ 227:     if state.log is not None:
+ 228:         state.log.append_line(text)
+ 229:     if state.status is not None:
+ 230:         state.status.set_value(message)
+ 231: 
+ 232: 
+ 233: def set_status(message: str, level: str = "info") -> None:
+ 234:     if state.status_badge is not None:
+ 235:         state.status_badge.set_value(level)
+ 236:         state.status_badge.set_level("danger" if level == "error" else level)
+ 237:     log(message)
+ 238: 
+ 239: 
+ 240: def navigate(route: str) -> None:

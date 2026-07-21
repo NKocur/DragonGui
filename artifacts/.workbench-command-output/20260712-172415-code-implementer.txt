@@ -1,0 +1,260 @@
+        if (wh := self._live()) is not None:
+            x, y, z = position if position is not None else (None, None, None)
+            r, g, b = color if color is not None else (None, None, None)
+            wh.enqueue_update_scatter_label(handle, x, y, z, text, r, g, b, size, anchor)
+        else:
+            px = position[0] if position is not None else None
+            py = position[1] if position is not None else None
+            pz = position[2] if position is not None else None
+            r = color[0] if color is not None else None
+            g = color[1] if color is not None else None
+            b = color[2] if color is not None else None
+            self._pending_scene_ops.append(("update_label", (handle, px, py, pz, text, r, g, b, size, anchor)))
+
+    def remove_label(self, handle: int) -> None:
+        """Remove a world-space label by its handle."""
+        if (wh := self._live()) is not None:
+            wh.enqueue_remove_scatter_label(handle)
+        else:
+            self._pending_scene_ops.append(("remove_label", (handle,)))
+
+    def set_label_visibility(self, handle: int, visible: bool) -> None:
+        """Show or hide a world-space label."""
+        if (wh := self._live()) is not None:
+            wh.enqueue_set_scatter_label_visible(handle, bool(visible))
+        else:
+            self._pending_scene_ops.append(("set_label_visibility", (handle, bool(visible))))
+
+    def clear_labels(self) -> None:
+        """Remove all user-added world-space labels."""
+        if (wh := self._live()) is not None:
+            wh.enqueue_clear_scatter_labels()
+        else:
+            self._pending_scene_ops.append(("clear_labels", ()))
+
+    # â”€â”€ Line and box overlays â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    @staticmethod
+    def _coerce_line_segments(segments: Any) -> "list[list[float]]":
+        """Normalize DragonSci ``(N, 6)`` line segments.
+
+        For compatibility with earlier DragonGUI builds, ``(N, 3)`` point lists
+        are still accepted and converted into adjacent polyline segments.
+        """
+        import numpy as np
+
+        arr = np.asarray(segments, dtype=np.float32)
+        if arr.ndim != 2 or arr.shape[1] not in (3, 6):
+            raise ValueError(f"line segments must be shape (N, 6) or polyline shape (N, 3), got {arr.shape}")
+        if arr.shape[1] == 3:
+            if arr.shape[0] < 2:
+                return []
+            out = np.empty((arr.shape[0] - 1, 6), dtype=np.float32)
+            out[:, 0:3] = arr[:-1]
+            out[:, 3:6] = arr[1:]
+            arr = out
+        return [[float(v) for v in row] for row in np.ascontiguousarray(arr).reshape((-1, 6))]
+
+    def add_lines(
+        self,
+        segments: Any,
+        color: tuple[float, float, float] = (1.0, 1.0, 1.0),
+    ) -> int:
+        """Add world-space line segment overlays.
+
+        ``segments`` follows DragonSci's ``(N, 6)`` shape, where each row is
+        ``[x0, y0, z0, x1, y1, z1]``. Existing ``(N, 3)`` point lists are treated
+        as a polyline compatibility path.
+        """
+        if not hasattr(self, "_next_overlay_id"):
+            self._next_overlay_id: int = 0
+        oid = self._next_overlay_id
+        self._next_overlay_id += 1
+        r, g, b = color
+        segs = self._coerce_line_segments(segments)
+        if (wh := self._live()) is not None:
+            wh.enqueue_add_scatter_lines(oid, segs, float(r), float(g), float(b))
+        else:
+            self._pending_scene_ops.append(("add_lines", (oid, segs, float(r), float(g), float(b))))
+        return oid
+
+    def update_lines(
+        self,
+        handle: int,
+        segments: Any,
+        color: tuple[float, float, float] = (1.0, 1.0, 1.0),
+    ) -> None:
+        """Replace the geometry and color of an existing line overlay."""
+        r, g, b = color
+        segs = self._coerce_line_segments(segments)
+        payload = (handle, segs, float(r), float(g), float(b))
+        if (wh := self._live()) is not None:
+            wh.enqueue_update_scatter_lines(handle, segs, float(r), float(g), float(b))
+            return
+
+        for i, (op, args) in enumerate(self._pending_scene_ops):
+            if op in ("add_lines", "update_lines") and args[0] == handle:
+                self._pending_scene_ops[i] = (op, payload)
+                return
+        self._pending_scene_ops.append(("update_lines", payload))
+
+    def add_box(
+        self,
+        bounds: tuple[float, float, float, float, float, float],
+        color: tuple[float, float, float] = (1.0, 1.0, 1.0),
+    ) -> int:
+        """Add a world-space axis-aligned bounding box.
+
+        ``bounds`` is ``(xmin, ymin, zmin, xmax, ymax, zmax)`` (DragonSci order).
+        Returns an overlay handle.
+        """
+        if not hasattr(self, "_next_overlay_id"):
+            self._next_overlay_id = 0
+        oid = self._next_overlay_id
+        self._next_overlay_id += 1
+        r, g, b = color
+        xmin, ymin, zmin, xmax, ymax, zmax = bounds
+        # Native command order is (xmin, xmax, ymin, ymax, zmin, zmax).
+        if (wh := self._live()) is not None:
+            wh.enqueue_add_scatter_box(
+                oid,
+                float(xmin), float(xmax),
+                float(ymin), float(ymax),
+                float(zmin), float(zmax),
+                float(r), float(g), float(b),
+            )
+        else:
+            self._pending_scene_ops.append(("add_box", (oid, (float(xmin), float(xmax), float(ymin), float(ymax), float(zmin), float(zmax)), float(r), float(g), float(b))))
+        return oid
+
+    def remove_overlay(self, handle: int) -> None:
+        """Remove a line or box overlay by its handle."""
+        if (wh := self._live()) is not None:
+            wh.enqueue_remove_scatter_overlay(handle)
+        else:
+            self._pending_scene_ops.append(("remove_overlay", (handle,)))
+
+    def set_overlay_visibility(self, handle: int, visible: bool) -> None:
+        """Show or hide a line or box overlay."""
+        if (wh := self._live()) is not None:
+            wh.enqueue_set_scatter_overlay_visible(handle, bool(visible))
+        else:
+            self._pending_scene_ops.append(("set_overlay_visibility", (handle, bool(visible))))
+
+    def clear_overlays(self) -> None:
+        """Remove all user-added line and box overlays."""
+        if (wh := self._live()) is not None:
+            wh.enqueue_clear_scatter_overlays()
+        else:
+            self._pending_scene_ops.append(("clear_overlays", ()))
+
+    # â”€â”€ Multi-actor API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    def create_live_frame(
+        self,
+        frame: Any = None,
+        *,
+        capacity: int | None = None,
+        x: str | None = None,
+        y: str | None = None,
+        z: str | None = None,
+        color: Any | None = None,
+        colors: Any | None = None,
+        scalars: str | Any | None = None,
+        point_size: float | None = None,
+        point_sizes: str | Any | None = None,
+        opacity: float | None = None,
+        colormap: str | None = None,
+        clim: tuple[float, float] | None = None,
+        log_scale: bool | None = None,
+        nan_color: tuple[float, float, float] | None = None,
+        size_range: tuple[float, float] | None = None,
+        mode: str = "primary",
+        fit: bool = False,
+    ) -> ScatterLiveFrame:
+        """Create a retained full-frame replacement layer.
+
+        This is the preferred path for sensors such as LiDAR that publish one
+        complete current frame per tick. The default ``mode="primary"`` uses
+        the primary scatter upload path without rebuilding the declarative
+        widget tree. Use ``mode="actor"`` when the live frame should be an
+        independent point layer alongside existing primary data.
+        """
+        live = ScatterLiveFrame(
+            self,
+            capacity=capacity,
+            x=x,
+            y=y,
+            z=z,
+            color=color,
+            colors=colors,
+            scalars=scalars,
+            point_size=point_size,
+            point_sizes=point_sizes,
+            opacity=opacity,
+            colormap=colormap,
+            clim=clim,
+            log_scale=log_scale,
+            nan_color=nan_color,
+            size_range=size_range,
+            mode=mode,
+        )
+        if frame is not None:
+            live.replace(frame, fit=fit)
+        return live
+
+    @staticmethod
+    def _coerce_point_input(
+        frame_or_positions: Any,
+        x: "str | None",
+        y: "str | None",
+        z: "str | None",
+    ) -> "tuple[Any, str, str, str]":
+        """Normalize point input to (frame, x_col, y_col, z_col).
+
+        Accepts:
+          - (N, 3) or (N, 2) array-like (numpy array or list-of-lists) â†’ dict frame
+          - named frame with explicit x/y/z column names â†’ passed through unchanged
+        """
+        import numpy as np
+        if isinstance(frame_or_positions, np.ndarray):
+            arr = frame_or_positions
+        elif isinstance(frame_or_positions, (list, tuple)) and frame_or_positions:
+            first = frame_or_positions[0]
+            if isinstance(first, (list, tuple, np.ndarray)):
+                arr = np.asarray(frame_or_positions, dtype=np.float32)
+            else:
+                arr = None
+        else:
+            arr = None
+
+        if arr is not None:
+            if arr.ndim != 2 or arr.shape[1] not in (2, 3):
+                raise ValueError(
+                    f"Array-like point input must be shape (N, 2) or (N, 3), got {arr.shape}"
+                )
+            frame = {"x": arr[:, 0], "y": arr[:, 1], "z": arr[:, 2] if arr.shape[1] == 3 else np.zeros(len(arr), dtype=np.float32)}
+            return frame, "x", "y", "z"
+
+        if x is None or y is None or z is None:
+            raise ValueError(
+                "x, y, and z column names are required for frame inputs; "
+                "pass an (N, 2) or (N, 3) array to omit them"
+            )
+        return frame_or_positions, x, y, z
+
+    def _pack_actor_payload(
+        self,
+        frame: Any,
+        x: str,
+        y: str,
+        z: str,
+        color: Any | None = None,
+        colors: Any | None = None,
+        scalars: str | Any | None = None,
+        point_size: float = 4.0,
+        point_sizes: str | Any | None = None,
+        opacity: float = 1.0,
+        colormap: str | None = None,
+        clim: tuple[float, float] | None = None,
+        log_scale: bool = False,

@@ -1,0 +1,111 @@
+tests/test_visual_audit.py:34:            "screenshots": ["a-desktop.png"],
+tests/test_visual_audit.py:46:            "screenshots": ["a-mobile.png"],
+tests/test_visual_audit.py:59:    assert merged[0]["screenshots"] == ["a-desktop.png", "a-mobile.png"]
+tests/test_visual_audit.py:80:def test_screenshot_error_note_reads_structured_error(tmp_path: Path) -> None:
+tests/test_visual_audit.py:82:    screenshot = tmp_path / "target.png"
+tests/test_visual_audit.py:83:    visual_audit.screenshot_error_path(screenshot).write_text(
+tests/test_visual_audit.py:88:    note = visual_audit.with_screenshot_error_note("fallback used", screenshot)
+tests/test_visual_audit.py:90:    assert note == "fallback used Native screenshot error: exception: native timeout"
+tests/test_visual_audit.py:312:        "screenshots": [],
+tests/test_visual_audit.py:348:        kwargs["screenshot_path"].parent.mkdir(parents=True, exist_ok=True)
+tests/test_visual_audit.py:350:        kwargs["screenshot_path"].write_bytes(b"png")
+tests/test_visual_audit.py:354:            "notes": "Captured with native DragonGUI window screenshot API.",
+tests/test_visual_audit.py:355:            "screenshot": True,
+tests/test_visual_audit.py:383:    assert "Captured with native DragonGUI window screenshot API." in result["notes"]
+tests/test_visual_audit.py:454:    stdout.write_text("ADJACENT_SCATTER_INTERACTION_PASS\n", encoding="utf-8")
+tests/test_visual_audit.py:464:                "ADJACENT_SCATTER_INTERACTION_PASS",
+tests/test_visual_audit.py:474:        "ADJACENT_SCATTER_INTERACTION_FAIL left stable scatter signature changed\n",
+tests/test_visual_audit.py:478:        "ADJACENT_SCATTER_INTERACTION_FAIL left stable scatter signature changed"
+tools/visual_audit.py:47:    parser.add_argument("--wait-ms", type=int, default=1800, help="Delay before screenshot capture.")
+tools/visual_audit.py:97:    (out_dir / "screenshots").mkdir(exist_ok=True)
+tools/visual_audit.py:198:        for key in ("screenshots", "snapshots", "logs", "reproduction"):
+tools/visual_audit.py:291:        "screenshots": [],
+tools/visual_audit.py:309:        screenshot_path = out_dir / "screenshots" / f"{target_id}-{label}.png"
+tools/visual_audit.py:317:            screenshot_path=screenshot_path,
+tools/visual_audit.py:327:        if run_result["screenshot"]:
+tools/visual_audit.py:328:            result["screenshots"].append(relative_artifact(screenshot_path, out_dir))
+tools/visual_audit.py:375:            if target_id == "adjacent-scatter-interaction"
+tools/visual_audit.py:438:    if "ADJACENT_SCATTER_INTERACTION_FAIL" in text:
+tools/visual_audit.py:442:            if "ADJACENT_SCATTER_INTERACTION_FAIL" in line
+tools/visual_audit.py:445:    if "ADJACENT_SCATTER_INTERACTION_PASS" not in text:
+tools/visual_audit.py:792:def screenshot_capture_available() -> tuple[bool, str]:
+tools/visual_audit.py:796:        from PIL import ImageGrab  # noqa: F401
+tools/visual_audit.py:798:        return False, f"Pillow ImageGrab is unavailable: {exc!r}"
+tools/visual_audit.py:802:def screenshot_error_path(screenshot_path: Path) -> Path:
+tools/visual_audit.py:803:    return screenshot_path.with_suffix(".error.json")
+tools/visual_audit.py:806:def read_screenshot_error(screenshot_path: Path) -> str | None:
+tools/visual_audit.py:807:    error_path = screenshot_error_path(screenshot_path)
+tools/visual_audit.py:813:        return f"could not read screenshot error {error_path.name}: {exc}"
+tools/visual_audit.py:815:        return f"screenshot error file {error_path.name} is not a JSON object"
+tools/visual_audit.py:817:    kind = str(payload.get("kind") or "native_screenshot_error")
+tools/visual_audit.py:821:def with_screenshot_error_note(note: str, screenshot_path: Path) -> str:
+tools/visual_audit.py:822:    error = read_screenshot_error(screenshot_path)
+tools/visual_audit.py:825:    return f"{note} Native screenshot error: {error}"
+tools/visual_audit.py:864:    screenshot_path: Path,
+tools/visual_audit.py:869:    screenshot_error = screenshot_error_path(screenshot_path)
+tools/visual_audit.py:870:    screenshot_error.unlink(missing_ok=True)
+tools/visual_audit.py:878:    env["DRAGONGUI_AUDIT_SCREENSHOT"] = str(screenshot_path)
+tools/visual_audit.py:879:    env["DRAGONGUI_AUDIT_SCREENSHOT_ERROR"] = str(screenshot_error)
+tools/visual_audit.py:893:    screenshot_ok = False
+tools/visual_audit.py:898:            if screenshot_path.exists() and screenshot_path.stat().st_size > 0:
+tools/visual_audit.py:899:                screenshot_ok = True
+tools/visual_audit.py:907:                        "notes": f"Probe exited with code {proc.returncode}; native screenshot was still written.",
+tools/visual_audit.py:908:                        "screenshot": screenshot_ok,
+tools/visual_audit.py:913:                    "notes": "Captured with native DragonGUI window screenshot API.",
+tools/visual_audit.py:914:                    "screenshot": screenshot_ok,
+tools/visual_audit.py:924:                "notes": with_screenshot_error_note(
+tools/visual_audit.py:925:                    window_blocker(proc.returncode, stdout, stderr), screenshot_path
+tools/visual_audit.py:927:                "screenshot": False,
+tools/visual_audit.py:931:        capture_available, capture_reason = screenshot_capture_available()
+tools/visual_audit.py:939:                "notes": with_screenshot_error_note(
+tools/visual_audit.py:940:                    f"Native screenshot was not written and external capture is unavailable: {capture_reason}",
+tools/visual_audit.py:941:                    screenshot_path,
+tools/visual_audit.py:943:                "screenshot": False,
+tools/visual_audit.py:950:                screenshot_ok = capture_screen(screenshot_path)
+tools/visual_audit.py:958:                        "notes": with_screenshot_error_note(
+tools/visual_audit.py:960:                            screenshot_path,
+tools/visual_audit.py:962:                        "screenshot": screenshot_ok,
+tools/visual_audit.py:967:                    "notes": with_screenshot_error_note(
+tools/visual_audit.py:969:                        screenshot_path,
+tools/visual_audit.py:971:                    "screenshot": screenshot_ok,
+tools/visual_audit.py:978:                "notes": with_screenshot_error_note(
+tools/visual_audit.py:979:                    window_blocker(proc.returncode, stdout, stderr), screenshot_path
+tools/visual_audit.py:981:                "screenshot": False,
+tools/visual_audit.py:989:            screenshot_ok = capture_screen(screenshot_path)
+tools/visual_audit.py:996:                "notes": with_screenshot_error_note(
+tools/visual_audit.py:998:                    screenshot_path,
+tools/visual_audit.py:1000:                "screenshot": screenshot_ok,
+tools/visual_audit.py:1003:        screenshot_ok = capture_window(hwnd.rect, screenshot_path)
+tools/visual_audit.py:1014:                "screenshot": screenshot_ok,
+tools/visual_audit.py:1020:            "screenshot": screenshot_ok,
+tools/visual_audit.py:1086:def _write_screenshot_error(path, kind, error, **extra):
+tools/visual_audit.py:1090:    print(f"DragonGUI visual audit screenshot error: {{kind}}: {{error}}", file=sys.stderr)
+tools/visual_audit.py:1106:    screenshot_path = Path(os.environ["DRAGONGUI_AUDIT_SCREENSHOT"])
+tools/visual_audit.py:1107:    screenshot_error_path = Path(os.environ["DRAGONGUI_AUDIT_SCREENSHOT_ERROR"])
+tools/visual_audit.py:1127:            raw = self._window_screenshot(timeout_ms=5000)
+tools/visual_audit.py:1129:                _write_screenshot_error(
+tools/visual_audit.py:1130:                    screenshot_error_path,
+tools/visual_audit.py:1132:                    "app._window_screenshot() returned None",
+tools/visual_audit.py:1138:                    _write_screenshot_error(
+tools/visual_audit.py:1139:                        screenshot_error_path,
+tools/visual_audit.py:1141:                        f"window screenshot returned {{width}}x{{height}}",
+tools/visual_audit.py:1144:                    _write_screenshot_error(
+tools/visual_audit.py:1145:                        screenshot_error_path,
+tools/visual_audit.py:1147:                        "window screenshot returned empty RGBA bytes",
+tools/visual_audit.py:1152:                    _write_screenshot_error(
+tools/visual_audit.py:1153:                        screenshot_error_path,
+tools/visual_audit.py:1160:                    _write_rgba_png(screenshot_path, int(width), int(height), bytes(rgba))
+tools/visual_audit.py:1162:            _write_screenshot_error(
+tools/visual_audit.py:1163:                screenshot_error_path,
+tools/visual_audit.py:1213:    # A borderless full-desktop capture is not a useful per-probe screenshot.
+tools/visual_audit.py:1262:    from PIL import ImageGrab
+tools/visual_audit.py:1264:    image = ImageGrab.grab(bbox=rect, all_screens=True)
+tools/visual_audit.py:1271:    from PIL import ImageGrab
+tools/visual_audit.py:1273:    image = ImageGrab.grab(all_screens=True)
+tools/visual_audit.py:1282:        return "Native extension is not built; screenshot inspection requires a real window."
+tools/visual_audit.py:1284:        return "Probe used DragonGUI dev fallback; screenshot inspection requires native event loop."
+tools/visual_audit.py:1328:        "This is a manifest-driven visual audit. `pass` means the saved screenshot state was visually reviewed against `artifacts/SPEC.md` and no obvious defect was recorded. `needs_manual_interaction` means the static capture was reviewed, but important hover/open/drag/focus or animated states still need manual or automated interaction coverage.",
+tools/visual_audit.py:1349:                f"- Screenshots: {format_paths(result['screenshots'])}",
+examples/css_feature_probes/adjacent_scatter_interaction_probe.py:262:            print("ADJACENT_SCATTER_INTERACTION_FAIL " + "; ".join(failures), flush=True)
+examples/css_feature_probes/adjacent_scatter_interaction_probe.py:265:            print("ADJACENT_SCATTER_INTERACTION_PASS", flush=True)
+examples/css_feature_probes/adjacent_scatter_interaction_probe.py:268:        print(f"ADJACENT_SCATTER_INTERACTION_FAIL {exc!r}", flush=True)

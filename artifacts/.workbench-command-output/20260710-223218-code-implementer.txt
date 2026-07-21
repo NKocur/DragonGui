@@ -1,0 +1,122 @@
+tests\test_python_api.py:1499:    split.set_sizes((260, "2fr"))
+native\src\layout.rs:463:        WidgetKind::Splitter => {
+native\src\layout.rs:493:        WidgetKind::Pane => {
+native\src\layout.rs:497:                .and_then(|state| state.pane_size(&node.id))
+native\src\layout.rs:498:                .or(node.props.pane_size)
+native\src\layout.rs:509:                node.props.pane_flex.unwrap_or(1.0).max(0.0)
+native\src\layout.rs:643:        WidgetKind::Panel | WidgetKind::Sidebar => {
+native\src\layout.rs:1415:            | WidgetKind::Panel
+native\src\layout.rs:1473:            | WidgetKind::Panel
+native\src\layout.rs:1590:        WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal => {
+native\src\layout.rs:1617:        WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal => (theme.spacing + 2.0) * sf,
+native\src\layout.rs:1668:        WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal
+native\src\layout.rs:2167:        WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal
+native\src\layout.rs:3242:    matches!(kind, WidgetKind::Panel | WidgetKind::Modal)
+native\src\layout.rs:3342:            WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal
+native\src\layout.rs:3669:        WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal
+native\src\layout.rs:3778:        WidgetKind::Panel | WidgetKind::VLayout | WidgetKind::HLayout => {
+native\src\layout.rs:4193:                            WidgetKind::Panel,
+native\src\layout.rs:4273:                            WidgetKind::Panel,
+native\src\layout.rs:4337:                            WidgetKind::Panel,
+native\src\layout.rs:4448:                        WidgetKind::Panel,
+native\src\layout.rs:5073:                        WidgetKind::Panel,
+native\src\layout.rs:5133:                WidgetKind::Panel,
+native\src\layout.rs:5284:                WidgetKind::Panel,
+native\src\layout.rs:5516:                WidgetKind::Panel,
+native\src\layout.rs:5767:            WidgetKind::Panel,
+native\src\layout.rs:5824:            WidgetKind::Panel,
+native\src\layout.rs:5865:            WidgetKind::Panel,
+native\src\layout.rs:5904:            WidgetKind::Panel,
+native\src\layout.rs:6082:                node("panel", WidgetKind::Panel, NodeProps::default(), vec![]),
+native\src\layout.rs:6112:        let mut fixed = node("fixed", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:6114:        let flexible = node("flexible", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:6199:        let mut fixed = node("fixed", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:6204:        let mut flexible = node("flexible", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:6281:        let mut sidebar = node("sidebar", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:6313:            WidgetKind::Panel,
+native\src\layout.rs:6350:        let mut label = node("label", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:6583:            WidgetKind::Panel,
+native\src\layout.rs:6627:            WidgetKind::Panel,
+native\src\layout.rs:6660:        let mut dock = node("dock", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:6669:            WidgetKind::Panel,
+native\src\layout.rs:6709:        let mut left = node("left", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:6711:        let right = node("right", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:6732:        let mut left = node("left", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:6737:        let mut right = node("right", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:6764:        let mut left = node("left", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:6769:        let mut right = node("right", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:6793:        let mut first = node("first", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:6797:        let mut second = node("second", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:6833:        let mut centered = node("centered", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:6859:        let mut first = node("first", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:6866:        let mut second = node("second", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:6895:        let mut grid = node("grid", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:6911:        let mut sidebar = node("sidebar", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:6920:        let mut main = node("main", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:6960:                node("first", WidgetKind::Panel, NodeProps::default(), vec![]),
+native\src\layout.rs:6961:                node("second", WidgetKind::Panel, NodeProps::default(), vec![]),
+native\src\layout.rs:6989:            let mut node = node(id, WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:7059:            node(id, WidgetKind::Panel, NodeProps::default(), children)
+native\src\layout.rs:7101:            let mut node = node(id, WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:7139:            WidgetKind::Panel,
+native\src\layout.rs:7205:                node("first", WidgetKind::Panel, NodeProps::default(), vec![]),
+native\src\layout.rs:7206:                node("second", WidgetKind::Panel, NodeProps::default(), vec![]),
+native\src\layout.rs:7268:        let mut first = node("first", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:7271:        let mut second = node("second", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:7274:        let mut third = node("third", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:7364:        let mut grid = node("grid", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:7400:        let mut sidebar = node("sidebar", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:7402:        let mut main = node("main", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:7501:            WidgetKind::Panel,
+native\src\layout.rs:7548:            WidgetKind::Panel,
+native\src\layout.rs:7593:            WidgetKind::Panel,
+native\src\layout.rs:7717:            WidgetKind::Panel,
+native\src\layout.rs:7753:                WidgetKind::Panel,
+native\src\layout.rs:7777:            WidgetKind::Panel,
+native\src\layout.rs:7879:            WidgetKind::Panel,
+native\src\layout.rs:7932:        let mut child = node("child", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:7936:            WidgetKind::Panel,
+native\src\layout.rs:8106:            WidgetKind::Panel,
+native\src\layout.rs:8324:            WidgetKind::Panel,
+native\src\layout.rs:8372:        let mut first = node("first", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:8374:        let mut second = node("second", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:8376:        let mut third = node("third", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:8378:        let mut fourth = node("fourth", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:8481:            WidgetKind::Panel,
+native\src\layout.rs:8493:        let mut before = node("before", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:8496:        let mut after = node("after", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:8545:            WidgetKind::Panel,
+native\src\layout.rs:8602:        let mut left = node("left", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:8608:        let mut right = node("right", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:8625:            WidgetKind::Panel,
+native\src\layout.rs:8720:            WidgetKind::Panel,
+native\src\layout.rs:8770:            WidgetKind::Panel,
+native\src\layout.rs:8842:            WidgetKind::Panel,
+native\src\layout.rs:8910:            WidgetKind::Panel,
+native\src\layout.rs:8924:            WidgetKind::Panel,
+native\src\layout.rs:9006:        let mut panel = node("panel", WidgetKind::Panel, NodeProps::default(), children);
+native\src\layout.rs:9050:                WidgetKind::Panel,
+native\src\layout.rs:9120:        let mut top = node("top", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:9123:        let mut middle = node("middle", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:9126:        let mut bottom = node("bottom", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:9163:        let mut top = node("top", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:9166:        let mut middle = node("middle", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:9169:        let mut bottom = node("bottom", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:9206:            WidgetKind::Panel,
+native\src\layout.rs:9276:                WidgetKind::Panel,
+native\src\layout.rs:9390:            WidgetKind::Panel,
+native\src\layout.rs:9632:            WidgetKind::Panel,
+native\src\layout.rs:9686:            WidgetKind::Panel,
+native\src\layout.rs:9876:            WidgetKind::Panel,
+native\src\layout.rs:9905:                WidgetKind::Panel,
+native\src\layout.rs:10085:            let mut node = node(id, WidgetKind::Panel, NodeProps::default(), vec![]);
+python\dragongui\widgets.py:2635:def _normalize_splitter_size(value: SplitterSize) -> float | str | None:
+python\dragongui\widgets.py:2655:def _splitter_size_to_flex(value: float | str | None) -> float:
+python\dragongui\widgets.py:2661:class Splitter(Container):
+python\dragongui\widgets.py:2682:        self.sizes = tuple(_normalize_splitter_size(size) for size in (sizes or ()))
+python\dragongui\widgets.py:2714:    def set_sizes(self, sizes: Sequence[SplitterSize]) -> None:
+python\dragongui\widgets.py:2715:        self.sizes = tuple(_normalize_splitter_size(size) for size in sizes)
+python\dragongui\widgets.py:2723:                child.flex = _splitter_size_to_flex(size)
+python\dragongui\widgets.py:2736:                child._splitter_flex = _splitter_size_to_flex(size)
+python\dragongui\widgets.py:2753:class Pane(Container):
+python\dragongui\widgets.py:3439:class Panel(Container):

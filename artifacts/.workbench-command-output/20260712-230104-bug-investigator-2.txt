@@ -1,0 +1,75 @@
+examples\css_feature_probes\all_features_professional_demo_probe.py:20:    "all-features-professional-explore": "explore",
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:23:    raise SystemExit("adjacent_scatter_interaction_probe.py requires NumPy") from exc
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:26:LEFT_ID = "adjacent-left-scatter"
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:27:RIGHT_ID = "adjacent-right-scatter"
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:28:TITLE = "Adjacent Scatter Interaction Probe"
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:144:def scatter_metrics(snapshot: dict[str, object], scatter_id: str) -> dict[str, object]:
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:145:    scatters = (
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:148:        .get("scatters", {})
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:150:    if not isinstance(scatters, dict) or scatter_id not in scatters:
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:151:        raise RuntimeError(f"scatter {scatter_id!r} missing from debug snapshot")
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:152:    value = scatters[scatter_id]
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:154:        raise RuntimeError(f"scatter {scatter_id!r} snapshot is not an object")
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:158:def viewport(snapshot: dict[str, object], scatter_id: str) -> dict[str, object]:
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:159:    metrics = scatter_metrics(snapshot, scatter_id)
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:162:        raise RuntimeError(f"scatter {scatter_id!r} snapshot has no viewport detail")
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:166:def viewport_center(snapshot: dict[str, object], scatter_id: str) -> tuple[float, float]:
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:167:    view = viewport(snapshot, scatter_id)
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:171:        raise RuntimeError(f"scatter {scatter_id!r} viewport detail is malformed")
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:175:def stable_signature(snapshot: dict[str, object], scatter_id: str) -> dict[str, object]:
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:176:    metrics = scatter_metrics(snapshot, scatter_id)
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:206:            raise RuntimeError("timed out waiting for scatter viewport debug details")
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:248:            failures.append("left stable scatter signature changed")
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:250:            failures.append("right stable scatter signature changed")
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:252:        if isinstance(runtime, dict) and runtime.get("active_scatter_id") is not None:
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:253:            failures.append(f"active_scatter_id remained {runtime.get('active_scatter_id')!r}")
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:258:            "active_scatter_id": runtime.get("active_scatter_id") if isinstance(runtime, dict) else None,
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:307:    Scatter3D.left-plot {
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:312:        scatter-point-size: 5px;
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:313:        scatter-grid-visible: true;
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:314:        scatter-grid-planes: major;
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:315:        scatter-orientation-axes: true;
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:321:    Scatter3D.right-plot {
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:325:        scatter-point-size: 6px;
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:339:        dg.Label("Adjacent Scatter Interaction", class_="title")
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:341:            dg.Scatter3D(
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:355:                class_="left-plot",
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:357:            dg.ScatterPlot2D(
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:365:                class_="right-plot",
+examples\all_features_professional_demo.py:22:        "all_features_professional_demo.py requires NumPy for DragonGUI plot payloads. "
+examples\all_features_professional_demo.py:23:        "Install numpy or run a non-plot example."
+examples\all_features_professional_demo.py:38:    ("explore", "3D Explore", None),
+examples\all_features_professional_demo.py:59:        self.scatter: dg.Scatter3D | None = None
+examples\all_features_professional_demo.py:60:        self.scatter2d: dg.ScatterPlot2D | None = None
+examples\all_features_professional_demo.py:61:        self.line_plot: dg.LinePlot | None = None
+examples\all_features_professional_demo.py:90:def build_scatter_frame(
+examples\all_features_professional_demo.py:248:    SCATTER_FRAME = build_scatter_frame(points, rng=rng)
+examples\all_features_professional_demo.py:258:        "scatter_frame": SCATTER_FRAME,
+examples\all_features_professional_demo.py:274:        "scatter_frame": SCATTER_FRAME,
+examples\all_features_professional_demo.py:350:    next_frame = build_scatter_frame(max(4000, POINTS // 2), phase=phase, rng=rng)
+examples\all_features_professional_demo.py:351:    if state.scatter is not None:
+examples\all_features_professional_demo.py:352:        state.scatter.set_points(next_frame, x="x", y="y", z="z", fit=True)
+examples\all_features_professional_demo.py:353:        state.scatter.set_colormap(random.choice(["viridis", "turbo", "plasma", "cividis"]))
+examples\all_features_professional_demo.py:354:    if state.scatter2d is not None:
+examples\all_features_professional_demo.py:355:        state.scatter2d.set_points(next_frame, x="x", y="temperature", fit=True)
+examples\all_features_professional_demo.py:456:            payload_frame = build_scatter_frame(max(3000, POINTS // 4), phase=phase, rng=rng)
+examples\all_features_professional_demo.py:464:                if state.line_plot is not None:
+examples\all_features_professional_demo.py:468:                    state.line_plot.append_points(xs, ys, series="latency", max_points=900)
+examples\all_features_professional_demo.py:469:                if state.scatter is not None and state.stream_count % 2 == 0:
+examples\all_features_professional_demo.py:471:                        payload = dg.Scatter3D.prepare_points(payload_frame, x="x", y="y", z="z", colormap="turbo")
+examples\all_features_professional_demo.py:472:                        state.scatter.enqueue_prepared_points(payload, coalesce=True, fit=False)
+examples\all_features_professional_demo.py:474:                        log(f"Prepared scatter update skipped: {exc}")
+examples\all_features_professional_demo.py:569:def build_explore_page() -> None:
+examples\all_features_professional_demo.py:570:    page_header("explore", "3D Sensor Explore", "Inspect the same generated plant telemetry in GPU plot surfaces.")
+examples\all_features_professional_demo.py:579:            state.scatter = dg.Scatter3D(
+examples\all_features_professional_demo.py:596:            with dg.Panel("Explore Controls", style={"height": "100%"}):
+examples\all_features_professional_demo.py:597:                dg.Dropdown(["turbo", "viridis", "plasma", "cividis"], value="turbo", on_change=lambda v: state.scatter.set_colormap(v) if state.scatter else None)
+examples\all_features_professional_demo.py:598:                dg.Checkbox("Grid visible", checked=True, on_change=lambda v: state.scatter.show_grid(v) if state.scatter else None)
+examples\all_features_professional_demo.py:599:                dg.ToggleSwitch("Auto quality", checked=True, on_change=lambda v: state.scatter.set_auto_quality(v) if state.scatter else None)
+examples\all_features_professional_demo.py:600:                dg.Slider(0.85, min=0.25, max=1, step=0.05, on_change=lambda v: state.scatter.set_interactive_render_scale(v) if state.scatter else None)
+examples\all_features_professional_demo.py:602:                dg.DragNumber(3, min=1, max=12, step=0.5, on_change=lambda v: state.scatter.set_auto_point_size(v > 6) if state.scatter else None)
+examples\all_features_professional_demo.py:605:                state.scatter2d = dg.ScatterPlot2D(
+examples\all_features_professional_demo.py:619:            state.line_plot = dg.LinePlot(
+examples\all_features_professional_demo.py:883:                        with dg.Page("explore", title="3D Explore"):
+examples\all_features_professional_demo.py:884:                            build_explore_page()
+examples\all_features_professional_demo.py:990:        print(f"- generated rows: {len(TABLE_ROWS)}, scatter points: {len(SCATTER_FRAME['x'])}")

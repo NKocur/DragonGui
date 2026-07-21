@@ -1,0 +1,170 @@
+        }
+        map.insert("updates".to_string(), json!(rt.metrics.updates));
+        map.insert(
+            "last_point_count".to_string(),
+            json!(rt.metrics.last_point_count),
+        );
+        map.insert(
+            "last_payload_bytes".to_string(),
+            json!(rt.metrics.last_payload_bytes),
+        );
+        map.insert("last_pack_ms".to_string(), json!(rt.metrics.last_pack_ms));
+        map.insert(
+            "last_queue_latency_ms".to_string(),
+            json!(rt.metrics.last_queue_latency_ms),
+        );
+        map.insert(
+            "last_decode_ms".to_string(),
+            json!(rt.metrics.last_decode_ms),
+        );
+        map.insert(
+            "last_bounds_ms".to_string(),
+            json!(rt.metrics.last_bounds_ms),
+        );
+        map.insert(
+            "last_upload_ms".to_string(),
+            json!(rt.metrics.last_upload_ms),
+        );
+        map.insert(
+            "last_primary_upload_ms".to_string(),
+            json!(rt.metrics.last_primary_upload_ms),
+        );
+        map.insert("last_lod_ms".to_string(), json!(rt.metrics.last_lod_ms));
+        map.insert("last_grid_ms".to_string(), json!(rt.metrics.last_grid_ms));
+        map.insert(
+            "last_overlay_ms".to_string(),
+            json!(rt.metrics.last_overlay_ms),
+        );
+        map.insert(
+            "last_total_native_ms".to_string(),
+            json!(rt.metrics.last_total_native_ms),
+        );
+        map.insert(
+            "last_render_encode_ms".to_string(),
+            json!(rt.metrics.last_render_encode_ms),
+        );
+        map.insert(
+            "last_render_redraw_ms".to_string(),
+            json!(rt.metrics.last_render_redraw_ms),
+        );
+        map.insert(
+            "last_render_composite_ms".to_string(),
+            json!(rt.metrics.last_render_composite_ms),
+        );
+        map.insert(
+            "last_render_cache_hit".to_string(),
+            json!(rt.metrics.last_render_cache_hit),
+        );
+        map.insert(
+            "render_count".to_string(),
+            json!(rt.metrics.render_encode_timing.count),
+        );
+        map.insert(
+            "render_cache_hits".to_string(),
+            json!(rt.metrics.render_cache_hits),
+        );
+        map.insert(
+            "render_cache_hit_rate".to_string(),
+            json!(if rt.metrics.render_encode_timing.count == 0 {
+                0.0
+            } else {
+                rt.metrics.render_cache_hits as f64 / rt.metrics.render_encode_timing.count as f64
+            }),
+        );
+        map.insert(
+            "render_encode_avg_ms".to_string(),
+            json!(rt.metrics.render_encode_timing.avg_ms()),
+        );
+        map.insert(
+            "render_redraw_avg_ms".to_string(),
+            json!(rt.metrics.render_redraw_timing.avg_ms()),
+        );
+        map.insert(
+            "render_composite_avg_ms".to_string(),
+            json!(rt.metrics.render_composite_timing.avg_ms()),
+        );
+        map.insert(
+            "render_cache_revision".to_string(),
+            json!(rt
+                .render_target
+                .as_ref()
+                .map(|target| target.scene_revision)),
+        );
+        map.insert(
+            "scene_revision".to_string(),
+            json!(rt.widget.scene_revision()),
+        );
+        map.insert(
+            "payload_status".to_string(),
+            json!(format!("{:?}", rt.payload_status)),
+        );
+        map.insert(
+            "effective_draw_point_count".to_string(),
+            json!(rt.widget.effective_draw_point_count()),
+        );
+        map.insert(
+            "auto_point_size".to_string(),
+            json!(rt.widget.auto_point_size),
+        );
+        map.insert(
+            "point_size_scale".to_string(),
+            json!(rt.widget.point_size_scale),
+        );
+        map.insert(
+            "interactive_render_scale".to_string(),
+            json!(rt.widget.interactive_render_scale),
+        );
+        map.insert(
+            "active_render_scale".to_string(),
+            json!(rt.widget.active_render_scale()),
+        );
+        map.insert(
+            "auto_quality".to_string(),
+            json!(rt.widget.auto_quality_enabled),
+        );
+        map.insert("quality_level".to_string(), json!(rt.widget.quality_level));
+        map.insert(
+            "quality_target_frame_ms".to_string(),
+            json!(rt.widget.quality_target_frame_ms),
+        );
+        map.insert(
+            "scalar_bar".to_string(),
+            json!({
+                "visible": rt.widget.chrome.scalar_bar.visible,
+                "vmin": rt.widget.chrome.scalar_bar.vmin,
+                "vmax": rt.widget.chrome.scalar_bar.vmax,
+                "log_scale": rt.widget.chrome.scalar_bar.log_scale,
+                "colormap": rt.widget.chrome.scalar_bar.colormap.as_str(),
+                "title": rt.widget.chrome.scalar_bar.title.as_deref(),
+            }),
+        );
+        map.insert(
+            "primary_compact_colormap".to_string(),
+            json!(rt.primary_compact_colormap.as_str()),
+        );
+
+        if include_detail {
+            let cs = rt.widget.camera_state();
+            map.insert("fitted_once".to_string(), json!(rt.fitted_once));
+            map.insert(
+                "payload_format".to_string(),
+                json!(rt.payload_format.as_str()),
+            );
+            map.insert(
+                "camera".to_string(),
+                json!({
+                    "target": cs.target,
+                    "distance": cs.distance,
+                    "yaw": cs.yaw,
+                    "pitch": cs.pitch,
+                    "parallel": cs.parallel,
+                }),
+            );
+            map.insert(
+                "lod".to_string(),
+                json!({
+                    "enabled": rt.widget.lod_enabled,
+                    "active": rt.widget.lod_active,
+                    "threshold": rt.widget.lod_threshold,
+                    "factor": rt.widget.lod_factor,
+                }),

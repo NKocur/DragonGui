@@ -1,0 +1,220 @@
+
+
+SplitterSize = int | float | str | None
+
+
+def _normalize_splitter_orientation(value: str) -> str:
+    normalized = value.strip().lower()
+    if normalized in {"h", "horizontal", "row", "x"}:
+        return "horizontal"
+    if normalized in {"v", "vertical", "column", "y"}:
+        return "vertical"
+    raise ValueError("Splitter orientation must be 'horizontal' or 'vertical'")
+
+
+def _normalize_splitter_size(value: SplitterSize) -> float | str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"", "auto"}:
+            return None
+        if text.endswith("fr"):
+            number = text[:-2].strip() or "1"
+            flex = float(number)
+            if not math.isfinite(flex) or flex <= 0:
+                raise ValueError("Splitter fr sizes must be positive")
+            return f"{flex:g}fr"
+        raise ValueError("Splitter sizes must be numbers, 'auto', or '<number>fr'")
+    size = float(value)
+    if not math.isfinite(size) or size < 0:
+        raise ValueError("Splitter sizes must be non-negative finite values")
+    return size
+
+
+def _splitter_size_to_flex(value: float | str | None) -> float:
+    if isinstance(value, str) and value.endswith("fr"):
+        return float(value[:-2])
+    return 1.0
+
+
+class Splitter(Container):
+    """Resizable multi-pane layout container."""
+
+    kind = "splitter"
+
+    def __init__(
+        self,
+        *,
+        orientation: str = "horizontal",
+        sizes: Sequence[SplitterSize] | None = None,
+        min_sizes: Sequence[float | None] | None = None,
+        max_sizes: Sequence[float | None] | None = None,
+        gutter_size: int | float = 6,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.orientation = _normalize_splitter_orientation(orientation)
+        self.sizes = tuple(_normalize_splitter_size(size) for size in (sizes or ()))
+        self.min_sizes = self._normalize_optional_sizes(min_sizes, "min_sizes")
+        self.max_sizes = self._normalize_optional_sizes(max_sizes, "max_sizes")
+        gutter = float(gutter_size)
+        if not math.isfinite(gutter) or gutter < 1:
+            raise ValueError("Splitter gutter_size must be a positive finite value")
+        self.gutter_size = gutter
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    @staticmethod
+    def _normalize_optional_sizes(
+        values: Sequence[float | None] | None,
+        name: str,
+    ) -> tuple[float | None, ...]:
+        if values is None:
+            return ()
+        normalized: list[float | None] = []
+        for value in values:
+            if value is None:
+                normalized.append(None)
+                continue
+            size = float(value)
+            if not math.isfinite(size) or size < 0:
+                raise ValueError(f"Splitter {name} entries must be non-negative finite values")
+            normalized.append(size)
+        return tuple(normalized)
+
+    def add(self, child: Widget) -> Widget:
+        child = super().add(child)
+        self._apply_pane_defaults()
+        return child
+
+    def set_sizes(self, sizes: Sequence[SplitterSize]) -> None:
+        self.sizes = tuple(_normalize_splitter_size(size) for size in sizes)
+        self._apply_pane_defaults()
+        for index, child in enumerate(self.children):
+            if not isinstance(child, Pane) or index >= len(self.sizes):
+                continue
+            size = self.sizes[index]
+            if isinstance(size, str):
+                child.set_size(None)
+                child.flex = _splitter_size_to_flex(size)
+            else:
+                child.set_size(size)
+
+    def _apply_pane_defaults(self) -> None:
+        for index, child in enumerate(self.children):
+            if not isinstance(child, Pane):
+                continue
+            child._splitter_orientation = self.orientation
+            child._splitter_index = index
+            if index < len(self.sizes) and child._explicit_size is None:
+                size = self.sizes[index]
+                child._splitter_size = None if isinstance(size, str) else size
+                child._splitter_flex = _splitter_size_to_flex(size)
+            if index < len(self.min_sizes) and child._explicit_min_size is None:
+                child._splitter_min_size = self.min_sizes[index]
+            if index < len(self.max_sizes) and child._explicit_max_size is None:
+                child._splitter_max_size = self.max_sizes[index]
+
+    def props(self) -> dict[str, Any]:
+        self._apply_pane_defaults()
+        return {
+            "orientation": self.orientation,
+            "gutter_size": self.gutter_size,
+            "sizes": list(self.sizes),
+            "min_sizes": list(self.min_sizes),
+            "max_sizes": list(self.max_sizes),
+        }
+
+
+class Pane(Container):
+    """Pane child for Splitter layouts."""
+
+    kind = "pane"
+
+    def __init__(
+        self,
+        *,
+        size: float | None = None,
+        min_size: float | None | object = _UNSET,
+        max_size: float | None = None,
+        flex: float = 1,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self._explicit_size = self._normalize_optional_size(size, "size")
+        if min_size is _UNSET:
+            self._explicit_min_size = None
+            self._default_min_size: float | None = 80.0
+        else:
+            self._explicit_min_size = self._normalize_optional_size(min_size, "min_size")
+            self._default_min_size = None
+        self._explicit_max_size = self._normalize_optional_size(max_size, "max_size")
+        flex_value = float(flex)
+        if not math.isfinite(flex_value) or flex_value <= 0:
+            raise ValueError("Pane flex must be a positive finite value")
+        self.flex = flex_value
+        self._splitter_orientation = "horizontal"
+        self._splitter_index: int | None = None
+        self._splitter_size: float | None = None
+        self._splitter_min_size: float | None = None
+        self._splitter_max_size: float | None = None
+        self._splitter_flex: float | None = None
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    @staticmethod
+    def _normalize_optional_size(value: float | None, name: str) -> float | None:
+        if value is None:
+            return None
+        size = float(value)
+        if not math.isfinite(size) or size < 0:
+            raise ValueError(f"Pane {name} must be a non-negative finite value")
+        return size
+
+    def _effective_size(self) -> float | None:
+        return self._explicit_size if self._explicit_size is not None else self._splitter_size
+
+    def _effective_min_size(self) -> float | None:
+        if self._explicit_min_size is not None:
+            return self._explicit_min_size
+        if self._splitter_min_size is not None:
+            return self._splitter_min_size
+        return self._default_min_size
+
+    def _effective_max_size(self) -> float | None:
+        if self._explicit_max_size is not None:
+            return self._explicit_max_size
+        return self._splitter_max_size
+
+    def _effective_flex(self) -> float:
+        return self._splitter_flex if self._splitter_flex is not None else self.flex
+
+    def set_size(self, size: float | None) -> None:
+        self._explicit_size = self._normalize_optional_size(size, "size")
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("size", self._explicit_size)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "orientation": self._splitter_orientation,
+            "size": self._effective_size(),
+            "min_size": self._effective_min_size(),
+            "max_size": self._effective_max_size(),
+            "flex": self._effective_flex(),
+        }
+
+
+class Separator(Widget):
+    kind = "separator"
+
+    def __init__(
+        self,
+        *,
+        orientation: str = "auto",

@@ -1,0 +1,760 @@
+    try:
+        import numpy as np
+
+        arr = np.asarray(values, dtype=np.float64)
+        if arr.ndim == 1:
+            if int(arr.shape[0]) != label_count:
+                raise ValueError("BarChart values length must match labels")
+            return (tuple(float(v) for v in arr.tolist()),)
+        if arr.ndim == 2:
+            if int(arr.shape[1]) != label_count:
+                raise ValueError("BarChart grouped values must have shape (series, labels)")
+            return tuple(tuple(float(v) for v in row.tolist()) for row in arr)
+        raise ValueError("BarChart values must be a 1D or 2D numeric sequence")
+    except ImportError:
+        pass
+
+    if isinstance(values, (str, bytes, bytearray)) or not isinstance(values, Sequence):
+        raise TypeError("BarChart values must be a numeric sequence")
+    raw = list(values)
+    if not raw:
+        raise ValueError("BarChart requires at least one value")
+    first = raw[0]
+    if isinstance(first, Sequence) and not isinstance(first, (str, bytes, bytearray)):
+        series: list[tuple[float, ...]] = []
+        for row in raw:
+            if isinstance(row, (str, bytes, bytearray)) or not isinstance(row, Sequence):
+                raise ValueError("BarChart grouped values must be a 2D numeric sequence")
+            parsed = tuple(float(value) for value in row)
+            if len(parsed) != label_count:
+                raise ValueError("BarChart grouped values rows must match labels")
+            series.append(parsed)
+        return tuple(series)
+    parsed = tuple(float(value) for value in raw)
+    if len(parsed) != label_count:
+        raise ValueError("BarChart values length must match labels")
+    return (parsed,)
+
+
+def _normalize_bar_chart_data(
+    labels: Sequence[object],
+    values: Any,
+    *,
+    series: Sequence[object] | None = None,
+    colors: Sequence[object] | Mapping[str, object] | None = None,
+) -> BarChartData:
+    label_items = tuple(str(label) for label in labels)
+    if not label_items:
+        raise ValueError("BarChart requires at least one category label")
+    matrix = _bar_chart_value_matrix(values, len(label_items))
+    if not matrix:
+        raise ValueError("BarChart requires at least one series")
+    if series is None:
+        series_labels = ("value",) if len(matrix) == 1 else tuple(f"series {i + 1}" for i in range(len(matrix)))
+    else:
+        series_labels = tuple(str(label) for label in series)
+        if len(series_labels) != len(matrix):
+            raise ValueError("BarChart series labels must match the number of value series")
+    finite_count = sum(1 for row in matrix for value in row if math.isfinite(value))
+    return BarChartData(
+        labels=label_items,
+        series_labels=series_labels,
+        values=tuple(tuple(float(value) for value in row) for row in matrix),
+        colors=_bar_chart_colors(len(matrix), colors, series_labels),
+        input_count=len(label_items) * len(matrix),
+        finite_count=finite_count,
+    )
+
+
+def _aggregate_bar_values(values: Sequence[float], aggregate: str) -> float:
+    if aggregate == "count":
+        return float(len(values))
+    if not values:
+        return 0.0
+    if aggregate == "sum":
+        return float(sum(values))
+    if aggregate == "mean":
+        return float(sum(values) / len(values))
+    if aggregate == "min":
+        return float(min(values))
+    return float(max(values))
+
+
+def _bar_chart_from_frame(
+    data: Any,
+    *,
+    category: str,
+    value: str | Sequence[str] | None = None,
+    aggregate: str = "sum",
+    colors: Sequence[object] | Mapping[str, object] | None = None,
+) -> BarChartData:
+    aggregate = _bar_chart_aggregate(aggregate)
+    categories = [str(item) for item in _get_frame_col(data, category)]
+    if value is None:
+        value_columns: tuple[str | None, ...] = (None,)
+        raw_series = [[1.0] * len(categories)]
+        aggregate = "count"
+    elif isinstance(value, str):
+        value_columns = (value,)
+        raw_series = [[float(item) for item in _get_frame_col(data, value)]]
+    else:
+        value_columns = tuple(str(column) for column in value)
+        if not value_columns:
+            raise ValueError("BarChart value sequence must not be empty")
+        raw_series = [[float(item) for item in _get_frame_col(data, column)] for column in value_columns]
+    if any(len(series_values) != len(categories) for series_values in raw_series):
+        raise ValueError("BarChart category and value columns must have the same length")
+
+    ordered_labels: list[str] = []
+    buckets: dict[str, list[list[float]]] = {}
+    for category_label in categories:
+        if category_label not in buckets:
+            ordered_labels.append(category_label)
+            buckets[category_label] = [[] for _ in raw_series]
+    for row_index, category_label in enumerate(categories):
+        for series_index, series_values in enumerate(raw_series):
+            number = series_values[row_index]
+            if math.isfinite(number):
+                buckets[category_label][series_index].append(number)
+
+    matrix: list[tuple[float, ...]] = []
+    for series_index in range(len(raw_series)):
+        matrix.append(tuple(_aggregate_bar_values(buckets[label][series_index], aggregate) for label in ordered_labels))
+    series_labels = ("count",) if value_columns == (None,) else tuple(str(column) for column in value_columns)
+    finite_count = sum(len(bucket) for group in buckets.values() for bucket in group)
+    return BarChartData(
+        labels=tuple(ordered_labels),
+        series_labels=series_labels,
+        values=tuple(matrix),
+        colors=_bar_chart_colors(len(matrix), colors, series_labels),
+        input_count=len(categories) * len(raw_series),
+        finite_count=finite_count,
+    )
+
+
+class BarChart(Widget):
+    kind = "bar_chart"
+
+    def __init__(
+        self,
+        data: Any | None = None,
+        *,
+        category: str | None = None,
+        value: str | Sequence[str] | None = None,
+        labels: Sequence[object] | None = None,
+        values: Any | None = None,
+        series: Sequence[object] | None = None,
+        aggregate: str = "sum",
+        orientation: str = "vertical",
+        label: str | None = None,
+        x_label: str | None = None,
+        y_label: str | None = None,
+        colors: Sequence[object] | Mapping[str, object] | None = None,
+        show_grid: bool = True,
+        show_axes: bool = True,
+        show_ticks: bool = True,
+        show_toolbar: bool = False,
+        tick_count: int = 5,
+        auto_fit: bool = True,
+        bar_gap: float = 2.0,
+        on_hover: BarChartHoverCallback | None = None,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.data = data
+        self.category = None if category is None else str(category)
+        self.value = value
+        self.aggregate = _bar_chart_aggregate(aggregate)
+        self.orientation = _bar_chart_orientation(orientation)
+        self.label = None if label is None else str(label)
+        self.x_label = str(x_label if x_label is not None else (self.category or "category"))
+        default_value_label = "count" if value is None and category is not None else "value"
+        self.y_label = str(y_label if y_label is not None else default_value_label)
+        self.colors = colors
+        self.show_grid = bool(show_grid)
+        self.show_axes = bool(show_axes)
+        self.show_ticks = bool(show_ticks)
+        self.show_toolbar = bool(show_toolbar)
+        self.tick_count = max(2, min(9, int(tick_count)))
+        self.auto_fit = bool(auto_fit)
+        self.bar_gap = max(0.0, float(bar_gap))
+        self.on_hover = on_hover
+        self.hover_bar: BarChartBar | None = None
+        self.frame_summary = summarize_frame(data) if data is not None else summarize_frame(())
+        if data is not None and self.category is not None:
+            self._chart = _bar_chart_from_frame(
+                data,
+                category=self.category,
+                value=value,
+                aggregate=self.aggregate,
+                colors=colors,
+            )
+        else:
+            if labels is None or values is None:
+                raise ValueError("BarChart requires frame data with category=, or labels= and values=")
+            self._chart = _normalize_bar_chart_data(labels, values, series=series, colors=colors)
+        super().__init__(
+            id=id,
+            key=key,
+            class_=class_,
+            style=style,
+            tooltip=tooltip,
+            parent=parent,
+        )
+
+    def set_grid_visible(self, visible: bool) -> None:
+        self.show_grid = bool(visible)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("show_grid", self.show_grid)
+
+    def set_axes_visible(self, visible: bool) -> None:
+        self.show_axes = bool(visible)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("show_axes", self.show_axes)
+
+    def set_ticks_visible(self, visible: bool) -> None:
+        self.show_ticks = bool(visible)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("show_ticks", self.show_ticks)
+
+    def set_toolbar_visible(self, visible: bool) -> None:
+        self.show_toolbar = bool(visible)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("show_toolbar", self.show_toolbar)
+
+    def fit(self) -> None:
+        self.auto_fit = True
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("auto_fit", True)
+
+    def set_tick_count(self, count: int) -> None:
+        self.tick_count = max(2, min(9, int(count)))
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("tick_count", self.tick_count)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "frame": self.frame_summary.to_dict(),
+            "category": self.category or "",
+            "value": list(self.value) if isinstance(self.value, Sequence) and not isinstance(self.value, str) else (self.value or ""),
+            "label": self.label or "",
+            "x_label": self.x_label,
+            "y_label": self.y_label,
+            "aggregate": self.aggregate,
+            "orientation": self.orientation,
+            "show_grid": self.show_grid,
+            "show_axes": self.show_axes,
+            "show_ticks": self.show_ticks,
+            "show_toolbar": self.show_toolbar,
+            "tick_count": self.tick_count,
+            "auto_fit": self.auto_fit,
+            "bar_gap": self.bar_gap,
+            "input_count": self._chart.input_count,
+            "finite_count": self._chart.finite_count,
+            "labels": list(self._chart.labels),
+            "series": [
+                {
+                    "label": label,
+                    "values": list(values),
+                    "color": color,
+                }
+                for label, values, color in zip(
+                    self._chart.series_labels,
+                    self._chart.values,
+                    self._chart.colors,
+                    strict=True,
+                )
+            ],
+            "events": ["change"] if self.on_hover is not None else [],
+        }
+
+
+def _normalize_heatmap_labels(
+    labels: Sequence[object] | None,
+    *,
+    count: int,
+    name: str,
+) -> tuple[str, ...]:
+    if labels is None:
+        return ()
+    if isinstance(labels, (str, bytes, bytearray)) or not isinstance(labels, Sequence):
+        raise TypeError(f"Heatmap {name} must be a sequence of labels")
+    normalized = tuple(str(label) for label in labels)
+    if len(normalized) != count:
+        raise ValueError(f"Heatmap {name} length must match matrix {'columns' if name == 'x_labels' else 'rows'}")
+    return normalized
+
+
+def _normalize_heatmap_matrix(
+    matrix: Any,
+    clim: tuple[float, float] | None,
+) -> tuple[int, int, bytes, int, float, float]:
+    try:
+        import numpy as np
+
+        arr = np.asarray(matrix, dtype=np.float32)
+        if arr.ndim != 2:
+            raise ValueError("Heatmap matrix must be 2D")
+        rows, cols = int(arr.shape[0]), int(arr.shape[1])
+        if rows <= 0 or cols <= 0:
+            raise ValueError("Heatmap matrix must not be empty")
+        arr = np.ascontiguousarray(arr)
+        flat = arr.reshape(-1)
+        finite = flat[np.isfinite(flat)]
+        finite_count = int(finite.size)
+        payload = arr.tobytes(order="C")
+        if clim is None:
+            if finite_count:
+                vmin = float(np.min(finite))
+                vmax = float(np.max(finite))
+            else:
+                vmin, vmax = 0.0, 1.0
+        else:
+            vmin, vmax = float(clim[0]), float(clim[1])
+    except ImportError:
+        if isinstance(matrix, (str, bytes, bytearray)) or not isinstance(matrix, Sequence):
+            raise TypeError("Heatmap matrix must be a 2D numeric sequence")
+        raw_rows = list(matrix)
+        if not raw_rows:
+            raise ValueError("Heatmap matrix must not be empty")
+        flat_values: list[float] = []
+        cols: int | None = None
+        finite_values: list[float] = []
+        for row in raw_rows:
+            if isinstance(row, (str, bytes, bytearray)) or not isinstance(row, Sequence):
+                raise ValueError("Heatmap matrix must be 2D")
+            values = [float(value) for value in row]
+            if cols is None:
+                cols = len(values)
+                if cols <= 0:
+                    raise ValueError("Heatmap matrix must not be empty")
+            elif len(values) != cols:
+                raise ValueError("Heatmap matrix rows must all have the same length")
+            flat_values.extend(values)
+            finite_values.extend(value for value in values if math.isfinite(value))
+        rows = len(raw_rows)
+        cols = int(cols or 0)
+        finite_count = len(finite_values)
+        payload = struct.pack(f"<{len(flat_values)}f", *flat_values)
+        if clim is None:
+            if finite_values:
+                vmin, vmax = min(finite_values), max(finite_values)
+            else:
+                vmin, vmax = 0.0, 1.0
+        else:
+            vmin, vmax = float(clim[0]), float(clim[1])
+    if not math.isfinite(vmin) or not math.isfinite(vmax):
+        raise ValueError("Heatmap color range must be finite")
+    if vmax < vmin:
+        raise ValueError("Heatmap color range max must be greater than or equal to min")
+    if vmax == vmin:
+        vmin -= 0.5
+        vmax += 0.5
+    return rows, cols, payload, finite_count, vmin, vmax
+
+
+class Heatmap(Widget):
+    kind = "heatmap"
+
+    def __init__(
+        self,
+        matrix: Any,
+        *,
+        x_labels: Sequence[object] | None = None,
+        y_labels: Sequence[object] | None = None,
+        colormap: str = "viridis",
+        clim: tuple[float, float] | None = None,
+        title: str | None = None,
+        show_labels: bool = True,
+        scalar_bar: bool = True,
+        on_hover: HeatmapHoverCallback | None = None,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.colormap = _scatter_colormap(colormap)
+        self.clim = None if clim is None else (float(clim[0]), float(clim[1]))
+        self.title = None if title is None else str(title)
+        self.show_labels = bool(show_labels)
+        self.scalar_bar = bool(scalar_bar)
+        self.on_hover = on_hover
+        self.hover_cell: HeatmapCell | None = None
+        self.rows = 0
+        self.cols = 0
+        self.finite_count = 0
+        self.vmin = 0.0
+        self.vmax = 1.0
+        self._payload = b""
+        self._payload_b64: str | None = None
+        self._payload_token = 0
+        self.set_data(matrix, x_labels=x_labels, y_labels=y_labels, clim=self.clim, _initial=True)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def set_data(
+        self,
+        matrix: Any,
+        *,
+        x_labels: Sequence[object] | None = None,
+        y_labels: Sequence[object] | None = None,
+        clim: tuple[float, float] | None = None,
+        _initial: bool = False,
+    ) -> None:
+        effective_clim = self.clim if clim is None else (float(clim[0]), float(clim[1]))
+        rows, cols, payload, finite_count, vmin, vmax = _normalize_heatmap_matrix(matrix, effective_clim)
+        self.rows = rows
+        self.cols = cols
+        self.finite_count = finite_count
+        self.vmin = vmin
+        self.vmax = vmax
+        self.clim = effective_clim
+        x_source = x_labels
+        if x_source is None and hasattr(self, "x_labels") and len(self.x_labels) == cols:
+            x_source = self.x_labels
+        y_source = y_labels
+        if y_source is None and hasattr(self, "y_labels") and len(self.y_labels) == rows:
+            y_source = self.y_labels
+        self.x_labels = _normalize_heatmap_labels(x_source, count=cols, name="x_labels")
+        self.y_labels = _normalize_heatmap_labels(y_source, count=rows, name="y_labels")
+        self._payload = payload
+        self._payload_b64 = None
+        self._payload_token = zlib.crc32(payload) if payload else 0
+        if not _initial and (handle := self._live()) is not None:
+            handle.enqueue_replace_node(self.to_dict())
+
+    def set_colormap(self, colormap: str) -> None:
+        self.colormap = _scatter_colormap(colormap)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("colormap", self.colormap)
+
+    def set_scalar_bar_visible(self, visible: bool) -> None:
+        self.scalar_bar = bool(visible)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("scalar_bar", self.scalar_bar)
+
+    def set_labels_visible(self, visible: bool) -> None:
+        self.show_labels = bool(visible)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("show_labels", self.show_labels)
+
+    def _queue_startup_resources(self) -> None:
+        if (handle := self._live()) is not None:
+            handle.enqueue_replace_node(self.to_dict())
+
+    def _payload_data_b64(self) -> str:
+        if self._payload_b64 is None:
+            self._payload_b64 = base64.b64encode(self._payload).decode("ascii")
+        return self._payload_b64
+
+    def props(self) -> dict[str, Any]:
+        include_payload = _include_startup_resource_payloads()
+        payload: dict[str, Any] = {
+            "rows": self.rows,
+            "cols": self.cols,
+            "finite_count": self.finite_count,
+            "data_format": "f32_matrix_v0",
+            "_payload_token": self._payload_token,
+            "vmin": self.vmin,
+            "vmax": self.vmax,
+            "colormap": self.colormap,
+            "x_labels": list(self.x_labels),
+            "y_labels": list(self.y_labels),
+            "show_labels": self.show_labels,
+            "scalar_bar": self.scalar_bar,
+            "events": ["change"] if self.on_hover is not None else [],
+        }
+        if self.title is not None:
+            payload["title"] = self.title
+        if include_payload:
+            payload["data_b64"] = self._payload_data_b64()
+        return payload
+
+
+class LinePlot(Widget):
+    kind = "line_plot"
+
+    def __init__(
+        self,
+        frame: Any = None,
+        *,
+        x: str | None = None,
+        y: str | Sequence[str],
+        label: str | None = None,
+        labels: Sequence[str] | None = None,
+        color: str | Sequence[object] | None = None,
+        colors: Sequence[object] | None = None,
+        x_label: str | None = None,
+        y_label: str | None = None,
+        show_grid: bool = True,
+        show_axes: bool = True,
+        show_ticks: bool = True,
+        show_toolbar: bool = False,
+        show_legend: bool = False,
+        legend_position: str = "top-right",
+        interaction: str = "inspect",
+        tick_count: int = 5,
+        auto_fit: bool = True,
+        line_width: float = 2.0,
+        line_style: str | Sequence[object] = "solid",
+        line_styles: Sequence[object] | None = None,
+        window_size: float | None = None,
+        max_points: int | None = None,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.frame = frame
+        self.x = x
+        self.y_columns = _line_plot_columns(y)
+        if labels is not None and label is not None:
+            raise ValueError("LinePlot accepts either label or labels, not both")
+        if colors is not None and color is not None:
+            raise ValueError("LinePlot accepts either color or colors, not both")
+        if line_styles is not None and line_style != "solid":
+            raise ValueError("LinePlot accepts either line_style or line_styles, not both")
+        label_values = (
+            _line_plot_optional_values(labels, count=len(self.y_columns), name="labels")
+            if labels is not None
+            else _line_plot_optional_values(label, count=len(self.y_columns), name="label")
+        )
+        self.labels = tuple(None if item is None else str(item) for item in label_values)
+        self.colors = _line_plot_optional_colors(
+            colors if colors is not None else color,
+            count=len(self.y_columns),
+            name="colors",
+        )
+        self.line_styles = _line_plot_optional_line_styles(
+            line_styles if line_styles is not None else line_style,
+            count=len(self.y_columns),
+            name="line_styles",
+        )
+        self.x_label = str(x_label if x_label is not None else (x if x is not None else "sample"))
+        self.y_label = str(y_label if y_label is not None else self.y_columns[0])
+        self.show_grid = bool(show_grid)
+        self.show_axes = bool(show_axes)
+        self.show_ticks = bool(show_ticks)
+        self.show_toolbar = bool(show_toolbar)
+        self.show_legend = bool(show_legend)
+        self.legend_position = str(legend_position).strip().lower()
+        if self.legend_position not in _LINE_PLOT_LEGEND_POSITIONS:
+            raise ValueError(
+                f"LinePlot legend_position must be one of {sorted(_LINE_PLOT_LEGEND_POSITIONS)}"
+            )
+        if interaction not in {"inspect", "pan", "zoom", "box_zoom"}:
+            raise ValueError(
+                "LinePlot interaction must be 'inspect', 'pan', 'zoom', or 'box_zoom'"
+            )
+        self.interaction = interaction
+        self.tick_count = max(2, min(9, int(tick_count)))
+        self.auto_fit = bool(auto_fit)
+        self.line_width = max(0.5, float(line_width))
+        self.window_size = (
+            None
+            if window_size is None
+            else max(float(window_size), 0.000001)
+        )
+        self.max_points = None if max_points is None else max(1, int(max_points))
+        self.frame_summary = summarize_frame(frame)
+        self.data_format = "xy_f32_v0"
+        self._cached_payloads: dict[str, bytes | None] = {}
+        self._cached_payload_b64: dict[str, str | None] = {}
+        self._payload_tokens: dict[str, int] = {}
+        self._refresh_cached_payload_b64()
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    @property
+    def y(self) -> str | list[str]:
+        return self.y_columns[0] if len(self.y_columns) == 1 else list(self.y_columns)
+
+    @property
+    def label(self) -> str | None:
+        label = self.labels[0] if self.labels else None
+        return label if label else None
+
+    @property
+    def color(self) -> object | None:
+        return self.colors[0] if self.colors else None
+
+    @staticmethod
+    def _immutable_payload_bytes(payload: object) -> bytes:
+        if isinstance(payload, bytes):
+            return payload
+        return memoryview(payload).tobytes()
+
+    @staticmethod
+    def _payload_point_count(payload: bytes, payload_format: str) -> int:
+        bytes_per_point = 8 if payload_format == "xy_f32_v0" else 0
+        return len(payload) // bytes_per_point if bytes_per_point else 0
+
+    def _series_label(self, index: int) -> str:
+        label = self.labels[index] if index < len(self.labels) else None
+        return str(label) if label else self.y_columns[index]
+
+    def _series_color(self, index: int) -> object | None:
+        return self.colors[index] if index < len(self.colors) else None
+
+    def _series_line_style(self, index: int) -> str:
+        return self.line_styles[index] if index < len(self.line_styles) else "solid"
+
+    def _build_payload(self, y_column: str) -> bytes | None:
+        return _pack_xy_bytes(self.frame, self.x, y_column)
+
+    def _refresh_cached_payload_b64(self) -> None:
+        self._cached_payloads.clear()
+        self._cached_payload_b64.clear()
+        self._payload_tokens.clear()
+        for y_column in self.y_columns:
+            payload = self._build_payload(y_column)
+            if payload is None:
+                self._cached_payloads[y_column] = None
+                self._cached_payload_b64[y_column] = None
+                self._payload_tokens[y_column] = 0
+                continue
+            data = self._immutable_payload_bytes(payload)
+            self._cached_payloads[y_column] = data
+            self._cached_payload_b64[y_column] = base64.b64encode(data).decode("ascii")
+            self._payload_tokens[y_column] = zlib.crc32(data) if data else 0
+
+    @classmethod
+    def prepare_points(
+        cls,
+        frame: Any,
+        *,
+        x: str | None = None,
+        y: str,
+        x_label: str | None = None,
+        y_label: str | None = None,
+    ) -> LinePlotPayload:
+        """Pack one LinePlot series without mutating a live widget."""
+        t0 = time.perf_counter()
+        raw = _pack_xy_bytes(frame, x, y)
+        pack_ms = (time.perf_counter() - t0) * 1000.0
+        if raw is None:
+            raise RuntimeError("LinePlot.prepare_points requires NumPy and a numeric y column")
+        data = cls._immutable_payload_bytes(raw)
+        return LinePlotPayload(
+            data=data,
+            payload_format="xy_f32_v0",
+            point_count=cls._payload_point_count(data, "xy_f32_v0"),
+            pack_ms=pack_ms,
+            x_label=str(x_label if x_label is not None else (x if x is not None else "sample")),
+            y_label=str(y_label if y_label is not None else y),
+            frame_summary=summarize_frame(frame),
+        )
+
+    @classmethod
+    def prepare_series(
+        cls,
+        frame: Any,
+        *,
+        x: str | None = None,
+        y: str | Sequence[str],
+    ) -> tuple[LinePlotPayload, ...]:
+        """Pack one or more LinePlot series without mutating a live widget."""
+        return tuple(cls.prepare_points(frame, x=x, y=column) for column in _line_plot_columns(y))
+
+    def set_data(
+        self,
+        frame: Any,
+        *,
+        x: str | None = None,
+        y: str | Sequence[str] | None = None,
+        label: str | None = None,
+        labels: Sequence[str] | None = None,
+        color: str | Sequence[object] | None = None,
+        colors: Sequence[object] | None = None,
+        line_style: str | Sequence[object] | None = None,
+        line_styles: Sequence[object] | None = None,
+        fit: bool = True,
+    ) -> None:
+        self.frame = frame
+        self.x = x
+        if y is not None:
+            self.y_columns = _line_plot_columns(y)
+        if labels is not None or label is not None:
+            if labels is not None and label is not None:
+                raise ValueError("LinePlot.set_data accepts either label or labels, not both")
+            label_values = (
+                _line_plot_optional_values(labels, count=len(self.y_columns), name="labels")
+                if labels is not None
+                else _line_plot_optional_values(label, count=len(self.y_columns), name="label")
+            )
+            self.labels = tuple(None if item is None else str(item) for item in label_values)
+        if colors is not None or color is not None:
+            if colors is not None and color is not None:
+                raise ValueError("LinePlot.set_data accepts either color or colors, not both")
+            self.colors = _line_plot_optional_colors(
+                colors if colors is not None else color,
+                count=len(self.y_columns),
+                name="colors",
+            )
+        if line_styles is not None or line_style is not None:
+            if line_styles is not None and line_style is not None:
+                raise ValueError("LinePlot.set_data accepts either line_style or line_styles, not both")
+            self.line_styles = _line_plot_optional_line_styles(
+                line_styles if line_styles is not None else line_style,
+                count=len(self.y_columns),
+                name="line_styles",
+            )
+        self.x_label = str(x if x is not None else "sample")
+        self.y_label = self._series_label(0)
+        self.frame_summary = summarize_frame(frame)
+        self._refresh_cached_payload_b64()
+        if (handle := self._live()) is not None:
+            handle.enqueue_clear_line_plot_series()
+            handle.enqueue_set_prop("x_label", self.x_label)
+            handle.enqueue_set_prop("y_label", self.y_label)
+            for index, y_column in enumerate(self.y_columns):
+                payload = self._cached_payloads.get(y_column)
+                if payload is None:
+                    raise RuntimeError("live LinePlot.set_data requires numeric x/y columns")
+                handle.enqueue_set_line_plot_data_packed(
+                    self._series_label(index),
+                    payload,
+                    label=self._series_label(index),
+                    color=self._series_color(index),
+                    line_width=self.line_width,
+                    line_style=self._series_line_style(index),
+                    show_grid=self.show_grid,
+                    auto_fit=self.auto_fit,
+                    max_points=self.max_points,
+                    fit=fit,
+                )
+
+    def append_points(
+        self,
+        x_values: Any,
+        y_values: Any | None = None,
+        *,
+        series: str | None = None,
+        max_points: int | None = None,
+    ) -> None:
+        payload = _pack_xy_values(x_values, y_values)
+        if payload is None:
+            raise RuntimeError("LinePlot.append_points requires numeric x/y values")
+        target = series or self._series_label(0)
+        effective_max = max_points if max_points is not None else self.max_points
+        if (handle := self._live()) is not None:
+            handle.enqueue_append_line_plot_points_packed(
+                target,
+                payload,
+                max_points=None if effective_max is None else int(effective_max),
+            )
+
+    def clear(self, series: str | None = None) -> None:
+        if (handle := self._live()) is not None:
+            handle.enqueue_clear_line_plot_series(series)
+
+    def _queue_startup_resources(self) -> None:
+        handle = self._live()
+        if handle is None:
+            return

@@ -1,0 +1,585 @@
+19570:                         }
+19571:                         Key::Named(NamedKey::Home) => {
+19572:                             self.move_table_selection_to_col_edge(&id, false);
+19573:                             return;
+19574:                         }
+19575:                         Key::Named(NamedKey::End) => {
+19576:                             self.move_table_selection_to_col_edge(&id, true);
+19577:                             return;
+19578:                         }
+19579:                         Key::Named(NamedKey::Enter) | Key::Named(NamedKey::Space) => {
+19580:                             if self.emit_current_table_selection(&id) {
+19581:                                 self.request_redraw();
+19582:                             }
+19583:                             return;
+19584:                         }
+19585:                         _ => {}
+19586:                     }
+19587:                 }
+19588:                 _ => {}
+19589:             }
+19590:         }
+19591: 
+19592:         if self.handle_scroll_container_key(&event) {
+19593:             return;
+19594:         }
+19595: 
+19596:         let reset = matches!(
+19597:             event.physical_key,
+19598:             PhysicalKey::Code(KeyCode::KeyR) | PhysicalKey::Code(KeyCode::Home)
+19599:         );
+19600:         if reset {
+19601:             if let Some(gpu) = &mut self.gpu {
+19602:                 // Reset the active scatter's camera, or the first visible scatter.
+19603:                 let target_id = self
+19604:                     .active_scatter_id
+19605:                     .clone()
+19606:                     .or_else(|| gpu.visible_scatter_order.first().cloned());
+19607:                 if let Some(id) = target_id {
+19608:                     if let Some(runtime) = gpu.scatters.get_mut(&id) {
+19609:                         runtime.widget.reset_camera(&gpu.queue);
+19610:                         self.request_redraw();
+19611:                     }
+19612:                 }
+19613:             }
+19614:         }
+19615:     }
+19616: 
+19617:     fn adjust_number_input(&mut self, id: &str, direction: f32) {
+19618:         let changed = self
+19619:             .gpu
+19620:             .as_mut()
+19621:             .and_then(|g| g.widget_state.as_mut())
+19622:             .and_then(|ws| {
+19623:                 let old = ws.float_val.get(id).copied();
+19624:                 let value = ws.adjust_number(id, direction)?;
+19625:                 let changed = old
+19626:                     .map(|old| (old - value).abs() > SLIDER_CHANGE_EPSILON)
+19627:                     .unwrap_or(true);
+19628:                 changed.then_some(value)
+19629:             });
+19630:         if let Some(value) = changed {
+20130:                 self.request_redraw();
+20131:             }
+20132: 
+20133:             WindowEvent::ThemeChanged(theme) => {
+20134:                 if let Some(gpu) = &mut self.gpu {
+20135:                     gpu.set_platform_color_scheme(winit_theme_color_scheme(theme));
+20136:                 }
+20137:                 self.request_redraw();
+20138:             }
+20139: 
+20140:             WindowEvent::Focused(false) => {
+20141:                 if self.cancel_scatter_interaction() {
+20142:                     self.request_redraw();
+20143:                 }
+20144:             }
+20145: 
+20146:             WindowEvent::MouseInput { state, button, .. } => {
+20147:                 let pressed = state == ElementState::Pressed;
+20148: 
+20149:                 match button {
+20150:                     MouseButton::Left => {
+20151:                         if !pressed {
+20152:                             // â”€â”€ release â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+20153:                             let was_orbiting = self.orbit_active;
+20154:                             let was_rect_select = self.rect_select_active;
+20155:                             let scatter_press = self.scatter_press_pos.take();
+20156:                             let released_scatter_pan = self.finish_scatter_pan(MouseButton::Left);
+20157:                             self.orbit_active = false;
+20158:                             self.rect_select_active = false;
+20159:                             let released_scrollbar = self.scrollbar_drag.take().is_some();
+20160:                             let released_table_scrollbar =
+20161:                                 self.table_scrollbar_drag.take().is_some();
+20162:                             let released_splitter = self.splitter_drag.take().is_some();
+20163:                             let released_table_column_resize =
+20164:                                 self.table_column_resize_drag.take().is_some();
+20165:                             let released_slider =
+20166:                                 self.slider_drag.as_ref().map(|drag| drag.widget_id.clone());
+20167:                             if let Some(id) = released_slider {
+20168:                                 self.flush_slider_change(&id);
+20169:                             }
+20170:                             self.slider_drag = None;
+20171:                             let released_range_slider = self
+20172:                                 .range_slider_drag
+20173:                                 .as_ref()
+20174:                                 .map(|drag| drag.widget_id.clone());
+20175:                             if let Some(id) = released_range_slider {
+20176:                                 self.flush_range_slider_change(&id);
+20177:                             }
+20178:                             self.range_slider_drag = None;
+20179:                             let released_drag_number = self
+20180:                                 .drag_number_drag
+20181:                                 .as_ref()
+20182:                                 .map(|drag| drag.widget_id.clone());
+20183:                             if let Some(id) = released_drag_number {
+20184:                                 self.flush_slider_change(&id);
+20185:                             }
+20186:                             self.drag_number_drag = None;
+20187:                             let released_line_plot_pan = self.line_plot_pan_drag.take().is_some();
+20188:                             let released_line_plot_box_zoom = self.line_plot_box_zoom_drag.take();
+20189:                             let released_histogram_pan = self.histogram_pan_drag.take().is_some();
+20190:                             let released_histogram_box_zoom = self.histogram_box_zoom_drag.take();
+20191:                             if released_scrollbar {
+20192:                                 self.request_redraw();
+20193:                                 return;
+20194:                             }
+20195:                             if released_table_scrollbar {
+20196:                                 self.request_redraw();
+20197:                                 return;
+20198:                             }
+20199:                             if released_splitter {
+20200:                                 self.request_redraw();
+20201:                                 return;
+20202:                             }
+20203:                             if released_table_column_resize {
+20204:                                 self.request_redraw();
+20205:                                 return;
+20206:                             }
+20207:                             if released_line_plot_pan {
+20208:                                 self.request_redraw();
+20209:                                 return;
+20210:                             }
+20211:                             if let Some(drag) = released_line_plot_box_zoom {
+20212:                                 let pos = self.last_mouse_pos.unwrap_or(drag.start);
+20213:                                 if let Some(gpu) = &mut self.gpu {
+20214:                                     gpu.finish_line_plot_box_zoom(&drag.widget_id, drag.start, pos);
+20215:                                 }
+20216:                                 self.request_redraw();
+20217:                                 return;
+20218:                             }
+20219:                             if released_histogram_pan {
+20220:                                 self.request_redraw();
+20221:                                 return;
+20222:                             }
+20223:                             if let Some(drag) = released_histogram_box_zoom {
+20224:                                 let pos = self.last_mouse_pos.unwrap_or(drag.start);
+20225:                                 if let Some(gpu) = &mut self.gpu {
+20226:                                     gpu.finish_histogram_box_zoom(&drag.widget_id, drag.start, pos);
+20227:                                 }
+20228:                                 self.request_redraw();
+20229:                                 return;
+20230:                             }
+20231:                             if released_scatter_pan {
+20232:                                 self.request_redraw();
+20233:                                 return;
+20234:                             }
+20235:                             let released_drag_drop =
+20236:                                 self.finish_drag_drop(self.last_mouse_pos.unwrap_or([0.0, 0.0]));
+20237:                             if released_drag_drop {
+20238:                                 self.request_redraw();
+20239:                                 return;
+20240:                             }
+20241:                             if self.text_selection_drag.take().is_some() {
+20242:                                 self.request_redraw();
+20243:                                 return;
+20244:                             }
+20245: 
+20246:                             if was_rect_select {
+20247:                                 if let Some(scatter_id) = self.active_scatter_id.clone() {
+20248:                                     // Determine which selection mode was active.
+20249:                                     let mode = self
+20250:                                         .gpu
+20251:                                         .as_ref()
+20252:                                         .and_then(|g| g.scatters.get(&scatter_id))
+20253:                                         .map(|rt| rt.widget.picking_mode);
+20254: 
+20255:                                     if mode == Some(scatter::PickingMode::Lasso) {
+20256:                                         // Polygon selection.
+20257:                                         let poly = self
+20258:                                             .gpu
+20259:                                             .as_ref()
+20260:                                             .and_then(|g| g.scatters.get(&scatter_id))
+20261:                                             .and_then(|rt| rt.widget.selection_polygon.clone());
+20262:                                         if let Some(p) = poly {
+20263:                                             if let Some(payload) = self.gpu.as_mut().and_then(|g| {
+20264:                                                 g.scatter_polygon_select_payload(&scatter_id, &p)
+20265:                                             }) {
+20266:                                                 self.emit_change(
+20267:                                                     &scatter_id,
+20268:                                                     ChangeValue::Text(payload),
+20269:                                                 );
+20270:                                             }
+20271:                                         }
+20272:                                         if let Some(gpu) = &mut self.gpu {
+20273:                                             if let Some(rt) = gpu.scatters.get_mut(&scatter_id) {
+20274:                                                 rt.widget.selection_polygon = None;
+20275:                                                 rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+20276:                                             }
+20277:                                         }
+20278:                                     } else {
+20279:                                         // Rectangle selection.
+20280:                                         let rect = self
+20281:                                             .gpu
+20282:                                             .as_ref()
+20283:                                             .and_then(|g| g.scatters.get(&scatter_id))
+20284:                                             .and_then(|rt| rt.widget.selection_rect);
+20285:                                         if let Some(r) = rect {
+20286:                                             if let Some(payload) = self.gpu.as_mut().and_then(|g| {
+20287:                                                 g.scatter_select_payload(&scatter_id, r)
+20288:                                             }) {
+20289:                                                 self.emit_change(
+20290:                                                     &scatter_id,
+20291:                                                     ChangeValue::Text(payload),
+20292:                                                 );
+20293:                                             }
+20294:                                         }
+20295:                                         if let Some(gpu) = &mut self.gpu {
+20296:                                             if let Some(rt) = gpu.scatters.get_mut(&scatter_id) {
+20297:                                                 rt.widget.selection_rect = None;
+20298:                                                 rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+20299:                                             }
+20300:                                         }
+20301:                                     }
+20302:                                     self.request_redraw();
+20303:                                 }
+20304:                             } else if was_orbiting {
+20305:                                 let pos = self.last_mouse_pos.unwrap_or([0.0, 0.0]);
+20306:                                 if let Some(scatter_id) = self.active_scatter_id.clone() {
+20307:                                     if let Some(gpu) = &mut self.gpu {
+20308:                                         if let Some(rt) = gpu.scatters.get_mut(&scatter_id) {
+20309:                                             rt.set_interaction_lod_active(
+20310:                                                 false,
+20311:                                                 &gpu.device,
+20312:                                                 &gpu.queue,
+20313:                                             );
+20314:                                             rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+20315:                                         }
+20316:                                     }
+20317:                                     let moved2 = scatter_press
+20318:                                         .map(|start| {
+20319:                                             let dx = pos[0] - start[0];
+20320:                                             let dy = pos[1] - start[1];
+20321:                                             dx * dx + dy * dy
+20322:                                         })
+20323:                                         .unwrap_or(f32::INFINITY);
+20324:                                     if moved2 <= 16.0 {
+20325:                                         if let Some(payload) = self
+20326:                                             .gpu
+20327:                                             .as_mut()
+20328:                                             .and_then(|g| g.scatter_pick_payload(&scatter_id, pos))
+20329:                                         {
+20330:                                             self.emit_change(
+20331:                                                 &scatter_id,
+20332:                                                 ChangeValue::Text(payload),
+20333:                                             );
+20334:                                         }
+20335:                                     }
+20336:                                 }
+20337:                                 self.request_redraw();
+20338:                             }
+20339:                             if !self.orbit_active && !self.pan_active && !self.rect_select_active {
+20340:                                 self.active_scatter_id = None;
+20341:                             }
+20342: 
+20343:                             if let Some(pid) = self.pressed_id.take() {
+20344:                                 // Clear pressed visual state.
+20345:                                 if let Some(gpu) = &mut self.gpu {
+20346:                                     if let Some(ws) = &mut gpu.widget_state {
+20347:                                         ws.pressed = None;
+20348:                                     }
+20349:                                 }
+20350:                                 // Fire callback only if released over the same widget.
+20710:                                 self.request_redraw();
+20711:                                 return;
+20712:                             }
+20713: 
+20714:                             if modal_active {
+20715:                                 self.set_focus(None);
+20716:                                 return;
+20717:                             }
+20718: 
+20719:                             let scatter_id = self.gpu.as_ref().and_then(|g| g.scatter_at(pos));
+20720: 
+20721:                             if let Some(sid) = scatter_id {
+20722:                                 self.set_focus(None);
+20723:                                 self.scatter_press_pos = Some(pos);
+20724:                                 self.active_scatter_id = Some(sid.clone());
+20725:                                 let picking_mode = self
+20726:                                     .gpu
+20727:                                     .as_ref()
+20728:                                     .and_then(|g| g.scatters.get(&sid))
+20729:                                     .map(|rt| rt.widget.picking_mode)
+20730:                                     .unwrap_or(scatter::PickingMode::Point);
+20731:                                 if picking_mode == scatter::PickingMode::None {
+20732:                                     // Interaction disabled - consume the event but do nothing.
+20733:                                     self.orbit_active = false;
+20734:                                     self.rect_select_active = false;
+20735:                                     self.pan_active = false;
+20736:                                     self.pan_button = None;
+20737:                                 } else if self.modifiers.shift_key() {
+20738:                                     // Shift+left-drag matches the middle-drag pan path.
+20739:                                     self.rect_select_active = false;
+20740:                                     self.begin_scatter_pan(sid, MouseButton::Left);
+20741:                                     self.request_redraw();
+20742:                                     return;
+20743:                                 } else if picking_mode == scatter::PickingMode::Rectangle
+20744:                                     || picking_mode == scatter::PickingMode::Lasso
+20745:                                 {
+20746:                                     // Rectangle / lasso: start selection drag
+20747:                                     let local_pos = self
+20748:                                         .gpu
+20749:                                         .as_ref()
+20750:                                         .and_then(|g| g.scatters.get(&sid))
+20751:                                         .map(|rt| {
+20752:                                             [
+20753:                                                 pos[0] - rt.widget.offset[0],
+20754:                                                 pos[1] - rt.widget.offset[1],
+20755:                                             ]
+20756:                                         })
+20757:                                         .unwrap_or(pos);
+20758:                                     if let Some(gpu) = &mut self.gpu {
+20759:                                         if let Some(rt) = gpu.scatters.get_mut(&sid) {
+20760:                                             if picking_mode == scatter::PickingMode::Lasso {
+20761:                                                 rt.widget.selection_polygon = Some(vec![local_pos]);
+20762:                                                 rt.widget.selection_rect = None;
+20763:                                             } else {
+20764:                                                 rt.widget.selection_rect = Some([
+20765:                                                     local_pos[0],
+20766:                                                     local_pos[1],
+20767:                                                     local_pos[0],
+20768:                                                     local_pos[1],
+20769:                                                 ]);
+20770:                                                 rt.widget.selection_polygon = None;
+20771:                                             }
+20772:                                             rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+20773:                                         }
+20774:                                     }
+20775:                                     self.orbit_active = false;
+20776:                                     self.rect_select_active = true;
+20777:                                 } else {
+20778:                                     // PickingMode::Point â€” left drag orbits.
+20779:                                     self.orbit_active = true;
+20780:                                     self.pan_active = false;
+20781:                                     self.pan_button = None;
+20782:                                     self.rect_select_active = false;
+20783:                                     if let Some(gpu) = &mut self.gpu {
+20784:                                         if let Some(rt) = gpu.scatters.get_mut(&sid) {
+20785:                                             rt.set_interaction_lod_active(
+20786:                                                 true,
+20787:                                                 &gpu.device,
+20788:                                                 &gpu.queue,
+20789:                                             );
+20790:                                         }
+20791:                                     }
+20792:                                 }
+20793:                             } else {
+20794:                                 self.active_scatter_id = None;
+20795:                                 self.set_focus(None);
+20796:                             }
+20797:                         }
+20798:                     }
+20799: 
+20800:                     MouseButton::Middle | MouseButton::Right => {
+20801:                         if !pressed {
+20802:                             if self.finish_scatter_pan(button) {
+20803:                                 self.request_redraw();
+20804:                             }
+20805:                         } else {
+20960:                         }
+20961:                     }
+20962:                 } else if let Some(drag) = self.histogram_box_zoom_drag.clone() {
+20963:                     if self.gpu.as_mut().is_some_and(|gpu| {
+20964:                         gpu.update_histogram_selection_rect(&drag.widget_id, drag.start, new_pos)
+20965:                     }) {
+20966:                         self.request_redraw();
+20967:                     }
+20968:                 } else if self.rect_select_active {
+20969:                     if let Some(sid) = self.active_scatter_id.clone() {
+20970:                         if let Some(gpu) = &mut self.gpu {
+20971:                             if let Some(rt) = gpu.scatters.get_mut(&sid) {
+20972:                                 let local_pos = [
+20973:                                     new_pos[0] - rt.widget.offset[0],
+20974:                                     new_pos[1] - rt.widget.offset[1],
+20975:                                 ];
+20976:                                 if let Some(ref mut r) = rt.widget.selection_rect {
+20977:                                     r[2] = local_pos[0];
+20978:                                     r[3] = local_pos[1];
+20979:                                 } else if let Some(ref mut poly) = rt.widget.selection_polygon {
+20980:                                     poly.push(local_pos);
+20981:                                 }
+20982:                                 rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+20983:                             }
+20984:                         }
+20985:                         self.request_redraw();
+20986:                     }
+20987:                 } else if let Some(old) = self.last_mouse_pos {
+20988:                     let delta = glam::Vec2::new(new_pos[0] - old[0], new_pos[1] - old[1]);
+20989:                     if self.orbit_active || self.pan_active {
+20990:                         if let Some(sid) = self.active_scatter_id.clone() {
+20991:                             let mut cam_payload: Option<(String, String)> = None;
+20992:                             let mut needs_redraw = false;
+20993:                             if let Some(gpu) = &mut self.gpu {
+20994:                                 if let Some(runtime) = gpu.scatters.get_mut(&sid) {
+20995:                                     if self.pan_active {
+20996:                                         runtime.widget.camera.pan(delta);
+20997:                                     } else if self.orbit_active {
+20998:                                         if runtime.widget.interaction_mode
+20999:                                             == scatter::ScatterInteractionMode::Pan2D
+21000:                                         {
+21001:                                             runtime.widget.camera.pan(delta);
+21002:                                         } else {
+21003:                                             runtime.widget.camera.orbit(delta);
+21004:                                         }
+21005:                                     }
+21006:                                     runtime.widget.update_camera(&gpu.queue);
+21007:                                     let (bmn, bmx) = runtime.merged_bounds();
+21008:                                     runtime
+21009:                                         .widget
+21010:                                         .refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
+21011:                                     runtime.widget.refresh_overlays(&gpu.device, &gpu.queue);
+21012:                                     needs_redraw = true;
+21013:                                     // Capture camera state for Python-side linked-camera propagation.
+21014:                                     let s = runtime.widget.camera.state();
+21015:                                     let payload = json!({
+21016:                                         "event": "camera_changed",
+21017:                                         "widget_id": sid,
+21018:                                         "camera": {
+21019:                                             "target": [s.target[0], s.target[1], s.target[2]],
+21020:                                             "distance": s.distance,
+21021:                                             "yaw": s.yaw,
+21022:                                             "pitch": s.pitch,
+21023:                                             "parallel": s.parallel,
+21024:                                         },
+21025:                                     })
+21026:                                     .to_string();
+21027:                                     cam_payload = Some((sid.clone(), payload));
+21028:                                 }
+21029:                             }
+21030:                             if needs_redraw {
+21031:                                 self.request_redraw();
+21032:                             }
+21033:                             if let Some((id, payload)) = cam_payload {
+21034:                                 self.emit_change(&id, ChangeValue::Text(payload));
+21035:                             }
+21036:                         }
+21037:                     }
+21038:                 }
+21039: 
+21040:                 // Update hover state when no button is held.
+21041:                 if self.scrollbar_drag.is_none()
+21042:                     && self.table_scrollbar_drag.is_none()
+21043:                     && self.splitter_drag.is_none()
+21044:                     && self.table_column_resize_drag.is_none()
+21045:                     && self.slider_drag.is_none()
+21046:                     && self.range_slider_drag.is_none()
+21047:                     && self.drag_number_drag.is_none()
+21048:                     && self.drag_drop_session.is_none()
+21049:                     && self.text_selection_drag.is_none()
+21050:                     && self.line_plot_pan_drag.is_none()
+21051:                     && self.line_plot_box_zoom_drag.is_none()
+21052:                     && self.histogram_pan_drag.is_none()
+21053:                     && self.histogram_box_zoom_drag.is_none()
+21054:                     && !self.orbit_active
+21055:                     && !self.pan_active
+21056:                     && !self.rect_select_active
+21057:                 {
+21058:                     let new_dropdown_hover = self
+21059:                         .gpu
+21060:                         .as_ref()
+21061:                         .and_then(|g| g.dropdown_option_at(new_pos));
+21062:                     let new_hover = if new_dropdown_hover.is_some() {
+21063:                         None
+21064:                     } else {
+21065:                         self.gpu
+21066:                             .as_ref()
+21067:                             .and_then(|g| g.hit_test_hover(new_pos))
+21068:                             .map(|(id, _)| id)
+21069:                     };
+21070:                     let old_hover = self
+21071:                         .gpu
+21072:                         .as_ref()
+21073:                         .and_then(|g| g.widget_state.as_ref())
+21074:                         .and_then(|ws| ws.hovered.clone());
+21075:                     let old_dropdown_hover = self
+21076:                         .gpu
+21077:                         .as_ref()
+21078:                         .and_then(|g| g.widget_state.as_ref())
+21079:                         .and_then(|ws| ws.dropdown_hover.clone());
+21080:                     if new_hover != old_hover || new_dropdown_hover != old_dropdown_hover {
+21081:                         if let Some(gpu) = &mut self.gpu {
+21082:                             let requires_layout = gpu.hover_change_requires_layout(
+21083:                                 old_hover.as_deref(),
+21084:                                 new_hover.as_deref(),
+21085:                             );
+21086:                             gpu.update_hover_state(new_hover, new_dropdown_hover);
+21087:                             if requires_layout {
+21088:                                 // Rich tooltip content participates in overlay layout, so those
+21089:                                 // hover changes can affect rects as well as paint/text state.
+21090:                                 gpu.apply_layout();
+21091:                             } else {
+21092:                                 gpu.rebuild_visuals();
+21093:                             }
+21094:                         }
+21095:                         self.request_redraw();
+21096:                     }
+21097: 
+21098:                     // Clear stale hover labels on any scatter the cursor has left.
+21099:                     let hovered_sid = self.gpu.as_ref().and_then(|g| g.scatter_at(new_pos));
+21100:                     let mut stale_payloads: Vec<(String, String)> = Vec::new();
+21101:                     let mut stale_scatter_cleared = false;
+21102:                     if let Some(gpu) = &mut self.gpu {
+21103:                         let stale: Vec<String> = gpu
+21104:                             .scatters
+21105:                             .iter()
+21106:                             .filter(|(id, rt)| {
+21107:                                 rt.hover_tooltip_enabled
+21108:                                     && rt.widget.hover_label.is_some()
+21109:                                     && hovered_sid.as_deref() != Some(id.as_str())
+21110:                             })
+21111:                             .map(|(id, _)| id.clone())
+21112:                             .collect();
+21113:                         for id in stale {
+21114:                             if let Some(rt) = gpu.scatters.get_mut(&id) {
+21115:                                 rt.widget.hover_label = None;
+21116:                                 rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+21117:                                 stale_scatter_cleared = true;
+21118:                             }
+21119:                             let p = json!({"event":"hover_changed","widget_id":&id}).to_string();
+21120:                             stale_payloads.push((id, p));
+21121:                         }
+21122:                     }
+21123:                     if stale_scatter_cleared {
+21124:                         self.request_redraw();
+21125:                     }
+21126:                     for (id, payload) in stale_payloads {
+21127:                         self.emit_change(&id, ChangeValue::Text(payload));
+21128:                     }
+21129: 
+21130:                     if self
+21131:                         .gpu
+21132:                         .as_mut()
+21133:                         .is_some_and(|gpu| gpu.update_line_plot_hover(new_pos))
+21134:                     {
+21135:                         self.request_redraw();
+21380:                             if self
+21381:                                 .gpu
+21382:                                 .as_mut()
+21383:                                 .is_some_and(|gpu| gpu.zoom_histogram(&id, pos, scroll_y))
+21384:                             {
+21385:                                 self.request_redraw();
+21386:                             }
+21387:                             return;
+21388:                         }
+21389:                     }
+21390:                     // Scatter zoom wins over parent scroll container when pointer is over the plot.
+21391:                     if let Some(sid) = self.gpu.as_ref().and_then(|gpu| gpu.scatter_at(pos)) {
+21392:                         let mut cam_payload: Option<(String, String)> = None;
+21393:                         let mut needs_redraw = false;
+21394:                         if let Some(gpu) = &mut self.gpu {
+21395:                             if let Some(rt) = gpu.scatters.get_mut(&sid) {
+21396:                                 rt.widget.camera.zoom(scroll_y);
+21397:                                 rt.widget.update_camera(&gpu.queue);
+21398:                                 let (bmn, bmx) = rt.merged_bounds();
+21399:                                 rt.widget.refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
+21400:                                 rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+21401:                                 needs_redraw = true;
+21402:                                 let s = rt.widget.camera.state();
+21403:                                 let payload = json!({
+21404:                                     "event": "camera_changed",
+21405:                                     "widget_id": sid,
+21406:                                     "camera": {
+21407:                                         "target": [s.target[0], s.target[1], s.target[2]],
+21408:                                         "distance": s.distance,
+21409:                                         "yaw": s.yaw,
+21410:                                         "pitch": s.pitch,

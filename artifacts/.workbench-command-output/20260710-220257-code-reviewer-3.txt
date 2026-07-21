@@ -1,0 +1,170 @@
+ 2981:     }
+ 2982: }
+ 2983: 
+ 2984: fn grid_track_max_size(value: GridTrackMaxSize, sf: f32) -> MaxTrackSizingFunction {
+ 2985:     match value {
+ 2986:         GridTrackMaxSize::LogicalPx(value) => {
+ 2987:             MaxTrackSizingFunction::Fixed(LengthPercentage::Length(value * sf))
+ 2988:         }
+ 2989:         GridTrackMaxSize::Percent(value) => {
+ 2990:             MaxTrackSizingFunction::Fixed(LengthPercentage::Percent(value / 100.0))
+ 2991:         }
+ 2992:         GridTrackMaxSize::Fraction(value) => MaxTrackSizingFunction::Fraction(value),
+ 2993:         GridTrackMaxSize::Auto => MaxTrackSizingFunction::Auto,
+ 2994:     }
+ 2995: }
+ 2996: 
+ 2997: fn grid_placement(value: GridPlacementStyle) -> taffy::geometry::Line<GridPlacement> {
+ 2998:     taffy::geometry::Line {
+ 2999:         start: grid_line(value.start),
+ 3000:         end: grid_line(value.end),
+ 3001:     }
+ 3002: }
+ 3003: 
+ 3004: fn grid_line(value: GridLineStyle) -> GridPlacement {
+ 3005:     match value {
+ 3006:         GridLineStyle::Auto => GridPlacement::Auto,
+ 3007:         GridLineStyle::Line(value) => GridPlacement::from_line_index(value),
+ 3008:         GridLineStyle::Span(value) => GridPlacement::from_span(value),
+ 3009:     }
+ 3010: }
+ 3011: 
+ 3012: fn lp_value(value: LengthPercentage) -> f32 {
+ 3013:     match value {
+ 3014:         LengthPercentage::Length(v) => v,
+ 3015:         LengthPercentage::Percent(_) => 0.0,
+ 3016:     }
+ 3017: }
+ 3018: 
+ 3019: fn definite_content_size(style: &Style, parent_size: Option<(f32, f32)>) -> Option<(f32, f32)> {
+ 3020:     let width =
+ 3021:         definite_dimension_for_content(style.size.width, style, parent_size.map(|size| size.0))?;
+ 3022:     let height =
+ 3023:         definite_dimension_for_content(style.size.height, style, parent_size.map(|size| size.1))?;
+ 3024:     let padding_x = lp_value(style.padding.left) + lp_value(style.padding.right);
+ 3025:     let padding_y = lp_value(style.padding.top) + lp_value(style.padding.bottom);
+ 3026:     Some(((width - padding_x).max(0.0), (height - padding_y).max(0.0)))
+ 3027: }
+ 3028: 
+ 3029: fn definite_dimension_for_content(
+ 3030:     value: Dimension,
+ 3031:     style: &Style,
+ 3032:     parent_axis_size: Option<f32>,
+ 3033: ) -> Option<f32> {
+ 3034:     match value {
+ 3035:         Dimension::Length(value) if value <= 0.5 && flex_basis_is_zero(style) => parent_axis_size,
+ 3036:         other => definite_dimension(other).or(parent_axis_size),
+ 3037:     }
+ 3038: }
+ 3039: 
+ 3040: fn flex_basis_is_zero(style: &Style) -> bool {
+ 3041:     style.flex_grow > 0.0 && matches!(style.flex_basis, Dimension::Length(value) if value <= 0.5)
+ 3042: }
+ 3043: 
+ 3044: fn definite_dimension(value: Dimension) -> Option<f32> {
+ 3045:     match value {
+ 3046:         Dimension::Length(value) => Some(value),
+ 3047:         Dimension::Percent(_) | Dimension::Auto => None,
+ 3048:     }
+ 3049: }
+ 3050: 
+ 3051: fn layout_dimension(
+ 3052:     value: Option<LayoutLength>,
+ 3053:     legacy_px: Option<f32>,
+ 3054:     sf: f32,
+ 3055:     parent_axis_size: Option<f32>,
+ 3056: ) -> Option<Dimension> {
+ 3057:     match value {
+ 3058:         Some(LayoutLength::LogicalPx(value)) => Some(Dimension::Length(value * sf)),
+ 3059:         Some(LayoutLength::Percent(value)) => Some(Dimension::Percent(value / 100.0)),
+ 3060:         Some(LayoutLength::Calc(value)) if value.percent == 0.0 => {
+ 3061:             Some(Dimension::Length(value.px * sf))
+ 3062:         }
+ 3063:         Some(LayoutLength::Calc(value)) if value.px == 0.0 => {
+ 3064:             Some(Dimension::Percent(value.percent / 100.0))
+ 3065:         }
+ 3066:         Some(LayoutLength::Calc(value)) => parent_axis_size.map(|parent| {
+ 3067:             Dimension::Length((parent * (value.percent / 100.0) + value.px * sf).max(0.0))
+ 3068:         }),
+ 3069:         Some(LayoutLength::Auto) => Some(Dimension::Auto),
+ 3070:         None => legacy_px.map(|value| Dimension::Length(value * sf)),
+ 3071:     }
+ 3072: }
+ 3073: 
+ 3074: fn layout_length_percentage(
+ 3075:     value: Option<LayoutLength>,
+ 3076:     legacy_px: Option<f32>,
+ 3077:     sf: f32,
+ 3078:     parent_axis_size: Option<f32>,
+ 3079: ) -> Option<LengthPercentage> {
+ 3080:     match value {
+ 3081:         Some(LayoutLength::LogicalPx(value)) => Some(LengthPercentage::Length(value * sf)),
+ 3082:         Some(LayoutLength::Percent(value)) => Some(LengthPercentage::Percent(value / 100.0)),
+ 3083:         Some(LayoutLength::Calc(value)) if value.percent == 0.0 => {
+ 3084:             Some(LengthPercentage::Length(value.px * sf))
+ 3085:         }
+ 3086:         Some(LayoutLength::Calc(value)) if value.px == 0.0 => {
+ 3087:             Some(LengthPercentage::Percent(value.percent / 100.0))
+ 3088:         }
+ 3089:         Some(LayoutLength::Calc(value)) => parent_axis_size.map(|parent| {
+ 3090:             LengthPercentage::Length(parent * (value.percent / 100.0) + value.px * sf)
+ 3091:         }),
+ 3092:         Some(LayoutLength::Auto) => None,
+ 3093:         None => legacy_px.map(|value| LengthPercentage::Length(value * sf)),
+ 3094:     }
+ 3095: }
+ 3096: 
+ 3097: fn layout_length_percentage_auto(
+ 3098:     value: Option<LayoutLength>,
+ 3099:     legacy_px: Option<f32>,
+ 3100:     sf: f32,
+ 3101:     parent_axis_size: Option<f32>,
+ 3102: ) -> Option<LengthPercentageAuto> {
+ 3103:     match value {
+ 3104:         Some(LayoutLength::Auto) => Some(LengthPercentageAuto::Auto),
+ 3105:         Some(other) => layout_length_percentage(Some(other), legacy_px, sf, parent_axis_size)
+ 3106:             .map(LengthPercentageAuto::from),
+ 3107:         None => legacy_px.map(|value| LengthPercentageAuto::Length(value * sf)),
+ 3108:     }
+ 3109: }
+ 3110: 
+ 3111: #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ 3112: enum SeparatorOrientation {
+ 3113:     Horizontal,
+ 3114:     Vertical,
+ 3115: }
+ 3116: 
+ 3117: fn separator_orientation(
+ 3118:     node: &WidgetNode,
+ 3119:     parent_kind: Option<&WidgetKind>,
+ 3120: ) -> SeparatorOrientation {
+ 3121:     match node.props.orientation.as_deref() {
+ 3122:         Some("vertical") => SeparatorOrientation::Vertical,
+ 3123:         Some("horizontal") => SeparatorOrientation::Horizontal,
+ 3124:         _ if parent_kind == Some(&WidgetKind::HLayout)
+ 3125:             || parent_kind == Some(&WidgetKind::StatusBar) =>
+ 3126:         {
+ 3127:             SeparatorOrientation::Vertical
+ 3128:         }
+ 3129:         _ => SeparatorOrientation::Horizontal,
+ 3130:     }
+ 3131: }
+ 3132: 
+ 3133: // ---------------------------------------------------------------------------
+ 3134: // Layout collector â€” DFS with accumulated absolute offset
+ 3135: // ---------------------------------------------------------------------------
+ 3136: 
+ 3137: fn collect(
+ 3138:     tree: &TaffyTree<()>,
+ 3139:     node_id: NodeId,
+ 3140:     widget: &WidgetNode,
+ 3141:     parent_x: f32,
+ 3142:     parent_y: f32,
+ 3143:     result: &mut LayoutResult,
+ 3144: ) {
+ 3145:     let layout = tree.layout(node_id).expect("taffy layout missing");
+ 3146:     let abs_x = parent_x + layout.location.x;
+ 3147:     let abs_y = parent_y + layout.location.y;
+ 3148:     result.rects.insert(
+ 3149:         widget.id.clone(),
+ 3150:         Rect {

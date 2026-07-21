@@ -1,0 +1,346 @@
+        }
+    }
+}
+
+fn compute_clips(root: &WidgetNode, result: &mut LayoutResult, sf: f32, theme: &Theme) {
+    result.clips.clear();
+    result.paint_clips.clear();
+    let Some(root_rect) = result.rects.get(&root.id).copied() else {
+        return;
+    };
+    compute_node_clips(root, result, root_rect, root_rect, sf, theme);
+}
+
+fn compute_node_clips(
+    node: &WidgetNode,
+    result: &mut LayoutResult,
+    parent_clip: Rect,
+    root_clip: Rect,
+    sf: f32,
+    theme: &Theme,
+) {
+    let Some(rect) = result.rects.get(&node.id).copied() else {
+        return;
+    };
+    let parent_clip = if is_fixed_positioned_node(node) {
+        root_clip
+    } else {
+        parent_clip
+    };
+    result.paint_clips.insert(node.id.clone(), parent_clip);
+    let clip = rect.intersect(parent_clip).unwrap_or(Rect {
+        x: rect.x,
+        y: rect.y,
+        w: 0.0,
+        h: 0.0,
+    });
+    result.clips.insert(node.id.clone(), clip);
+    let child_clip = active_tab_content_clip(node, parent_clip, clip).unwrap_or_else(|| {
+        scroll_container_child_clip(node, result, clip, sf, theme)
+            .unwrap_or_else(|| child_clip_for_overflow(node, parent_clip, clip))
+    });
+    for child in &node.children {
+        compute_node_clips(child, result, child_clip, root_clip, sf, theme);
+    }
+}
+
+fn active_tab_content_clip(node: &WidgetNode, parent_clip: Rect, node_clip: Rect) -> Option<Rect> {
+    if node.kind != WidgetKind::Tab || node.children.is_empty() {
+        return None;
+    }
+    let top = node_clip.y + node_clip.h;
+    let bottom = parent_clip.y + parent_clip.h;
+    Some(Rect {
+        x: parent_clip.x,
+        y: top,
+        w: parent_clip.w,
+        h: (bottom - top).max(0.0),
+    })
+}
+
+pub(crate) fn is_scroll_container_kind(kind: &WidgetKind) -> bool {
+    matches!(kind, WidgetKind::Panel | WidgetKind::Modal)
+}
+
+pub(crate) fn is_scroll_container_node(node: &WidgetNode) -> bool {
+    scroll_container_scrolls_x(node) || scroll_container_scrolls_y(node)
+}
+
+fn scroll_container_scrolls_x(node: &WidgetNode) -> bool {
+    matches!(
+        node_overflow_x(node),
+        Some(OverflowStyle::Scroll | OverflowStyle::Auto)
+    )
+}
+
+fn scroll_container_scrolls_y(node: &WidgetNode) -> bool {
+    match node_overflow_y(node) {
+        Some(OverflowStyle::Scroll | OverflowStyle::Auto) => true,
+        Some(OverflowStyle::Visible | OverflowStyle::Hidden) => false,
+        None => is_scroll_container_kind(&node.kind),
+    }
+}
+
+pub(crate) fn scroll_container_max_x(node: &WidgetNode, result: &LayoutResult) -> f32 {
+    scroll_container_max_x_with_viewport(node, result, false, result.scale_factor, &Theme::dark())
+}
+
+fn scroll_container_max_x_with_viewport(
+    node: &WidgetNode,
+    result: &LayoutResult,
+    use_own_viewport: bool,
+    sf: f32,
+    theme: &Theme,
+) -> f32 {
+    if !scroll_container_scrolls_x(node) {
+        return 0.0;
+    }
+    let Some(rect) = result.rects.get(&node.id).copied() else {
+        return 0.0;
+    };
+    let viewport = if use_own_viewport {
+        scroll_container_body_viewport(node, rect, sf, theme)
+    } else {
+        let clip = result.clips.get(&node.id).copied().unwrap_or(rect);
+        let body = scroll_container_body_viewport(node, rect, sf, theme);
+        clip.intersect(body).unwrap_or(Rect {
+            x: body.x,
+            y: body.y,
+            w: 0.0,
+            h: 0.0,
+        })
+    };
+    let Some(content) = scroll_content_bounds(node, result) else {
+        return 0.0;
+    };
+    (content.right - (viewport.x + viewport.w)).max(0.0)
+}
+
+pub(crate) fn scroll_container_max_y(node: &WidgetNode, result: &LayoutResult) -> f32 {
+    scroll_container_max_y_with_viewport(node, result, false, result.scale_factor, &Theme::dark())
+}
+
+fn scroll_container_max_y_with_viewport(
+    node: &WidgetNode,
+    result: &LayoutResult,
+    use_own_viewport: bool,
+    sf: f32,
+    theme: &Theme,
+) -> f32 {
+    if !scroll_container_scrolls_y(node) {
+        return 0.0;
+    }
+    let Some(rect) = result.rects.get(&node.id).copied() else {
+        return 0.0;
+    };
+    let viewport = if use_own_viewport {
+        scroll_container_body_viewport(node, rect, sf, theme)
+    } else {
+        let clip = result.clips.get(&node.id).copied().unwrap_or(rect);
+        let body = scroll_container_body_viewport(node, rect, sf, theme);
+        clip.intersect(body).unwrap_or(Rect {
+            x: body.x,
+            y: body.y,
+            w: 0.0,
+            h: 0.0,
+        })
+    };
+    let Some(content) = scroll_content_bounds(node, result) else {
+        return 0.0;
+    };
+    (content.bottom - (viewport.y + viewport.h)).max(0.0)
+}
+
+fn scroll_container_body_viewport(node: &WidgetNode, rect: Rect, sf: f32, theme: &Theme) -> Rect {
+    if !node
+        .props
+        .text
+        .as_deref()
+        .is_some_and(|text| !text.is_empty())
+        || !matches!(
+            node.kind,
+            WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal
+        )
+    {
+        return rect;
+    }
+    let title_inset = titled_container_body_offset_px(node, sf, theme).min(rect.h.max(0.0));
+    Rect {
+        x: rect.x,
+        y: rect.y + title_inset,
+        w: rect.w,
+        h: (rect.h - title_inset).max(0.0),
+    }
+}
+
+fn scroll_container_child_clip(
+    node: &WidgetNode,
+    result: &LayoutResult,
+    clip: Rect,
+    sf: f32,
+    theme: &Theme,
+) -> Option<Rect> {
+    if !is_scroll_container_node(node)
+        || !node
+            .props
+            .text
+            .as_deref()
+            .is_some_and(|text| !text.is_empty())
+    {
+        return None;
+    }
+    let rect = result.rects.get(&node.id).copied()?;
+    let content = scroll_container_body_viewport(node, rect, sf, theme);
+    clip.intersect(content).or(Some(Rect {
+        x: clip.x,
+        y: content.y.max(clip.y),
+        w: 0.0,
+        h: 0.0,
+    }))
+}
+
+fn child_clip_for_overflow(node: &WidgetNode, parent_clip: Rect, node_clip: Rect) -> Rect {
+    match node_overflow_y(node).or_else(|| node_overflow_x(node)) {
+        Some(OverflowStyle::Hidden | OverflowStyle::Scroll | OverflowStyle::Auto) => node_clip,
+        Some(OverflowStyle::Visible) => parent_clip,
+        None if matches!(
+            node.kind,
+            WidgetKind::HLayout
+                | WidgetKind::VLayout
+                | WidgetKind::ScrollArea
+                | WidgetKind::GridLayout
+                | WidgetKind::FlowLayout
+        ) =>
+        {
+            parent_clip
+        }
+        None => node_clip,
+    }
+}
+
+fn node_overflow_x(node: &WidgetNode) -> Option<OverflowStyle> {
+    node.style
+        .layout
+        .overflow_x
+        .or(node.style.layout.overflow)
+        .or_else(|| (node.kind == WidgetKind::ScrollArea).then_some(OverflowStyle::Hidden))
+}
+
+fn node_overflow_y(node: &WidgetNode) -> Option<OverflowStyle> {
+    node.style
+        .layout
+        .overflow_y
+        .or(node.style.layout.overflow)
+        .or_else(|| (node.kind == WidgetKind::ScrollArea).then_some(OverflowStyle::Auto))
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ScrollContentBounds {
+    right: f32,
+    bottom: f32,
+}
+
+fn scroll_content_bounds(node: &WidgetNode, result: &LayoutResult) -> Option<ScrollContentBounds> {
+    let mut right = f32::NEG_INFINITY;
+    let mut top = f32::INFINITY;
+    let mut bottom = f32::NEG_INFINITY;
+    for child in &node.children {
+        if is_fixed_positioned_node(child) {
+            continue;
+        }
+        if let Some(rect) = result.rects.get(&child.id) {
+            right = right.max(rect.x + rect.w);
+            top = top.min(rect.y);
+            bottom = bottom.max(rect.y + rect.h);
+        }
+    }
+    if top.is_finite() {
+        let scale_factor = if result.scale_factor > 0.0 {
+            result.scale_factor
+        } else {
+            1.0
+        };
+        right += scroll_container_right_padding_lp(node) * scale_factor;
+        bottom += scroll_container_bottom_padding_lp(node) * scale_factor;
+        Some(ScrollContentBounds { right, bottom })
+    } else {
+        None
+    }
+}
+
+fn scroll_container_right_padding_lp(node: &WidgetNode) -> f32 {
+    node.style
+        .layout
+        .padding_right
+        .or(node.style.layout.padding)
+        .unwrap_or(10.0)
+        .max(0.0)
+}
+
+fn scroll_container_bottom_padding_lp(node: &WidgetNode) -> f32 {
+    node.style
+        .layout
+        .padding_bottom
+        .or(node.style.layout.padding)
+        .unwrap_or(10.0)
+        .max(0.0)
+}
+
+fn apply_scroll_offsets(
+    root: &WidgetNode,
+    result: &mut LayoutResult,
+    sf: f32,
+    theme: &Theme,
+    state: Option<&WidgetState>,
+) {
+    let Some(state) = state else {
+        return;
+    };
+    apply_node_scroll_offsets(root, result, sf, theme, state, false);
+}
+
+fn apply_node_scroll_offsets(
+    node: &WidgetNode,
+    result: &mut LayoutResult,
+    sf: f32,
+    theme: &Theme,
+    state: &WidgetState,
+    inside_scrolled_ancestor: bool,
+) {
+    if is_scroll_container_node(node) {
+        let use_own_viewport = inside_scrolled_ancestor;
+        let max_scroll_x =
+            scroll_container_max_x_with_viewport(node, result, use_own_viewport, sf, theme);
+        let max_scroll_y =
+            scroll_container_max_y_with_viewport(node, result, use_own_viewport, sf, theme);
+        let scroll_x = state.container_scroll_x(&node.id, max_scroll_x);
+        let scroll_y = state.container_scroll_y(&node.id, max_scroll_y);
+        result.scroll_max_x.insert(node.id.clone(), max_scroll_x);
+        result.scroll_max_y.insert(node.id.clone(), max_scroll_y);
+        result.scroll_x.insert(node.id.clone(), scroll_x);
+        result.scroll_y.insert(node.id.clone(), scroll_y);
+        if scroll_x > 0.0 || scroll_y > 0.0 {
+            for child in &node.children {
+                if is_fixed_positioned_node(child) {
+                    continue;
+                }
+                translate_subtree(child, result, -scroll_x, -scroll_y);
+            }
+        }
+        let inside_scrolled_ancestor =
+            inside_scrolled_ancestor || max_scroll_x > 0.0 || max_scroll_y > 0.0;
+        for child in &node.children {
+            apply_node_scroll_offsets(child, result, sf, theme, state, inside_scrolled_ancestor);
+        }
+        return;
+    }
+    for child in &node.children {
+        apply_node_scroll_offsets(child, result, sf, theme, state, inside_scrolled_ancestor);
+    }
+}
+
+fn translate_subtree(node: &WidgetNode, result: &mut LayoutResult, dx: f32, dy: f32) {
+    if let Some(rect) = result.rects.get_mut(&node.id) {
+        rect.x += dx;
+        rect.y += dy;
+    }

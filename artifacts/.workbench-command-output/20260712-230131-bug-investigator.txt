@@ -1,0 +1,430 @@
+native\src\scatter\mod.rs:290:/// Mouse and depth behavior for scatter widgets.
+native\src\scatter\mod.rs:293:    /// Left drag orbits the 3D camera and opaque points write depth.
+native\src\scatter\mod.rs:296:    /// Left drag pans a flat XY view and points render without depth writes.
+native\src\scatter\mod.rs:473:        out.clear();
+native\src\scatter\mod.rs:1261:    _depth_tex: wgpu::Texture,
+native\src\scatter\mod.rs:1262:    depth_view: wgpu::TextureView,
+native\src\scatter\mod.rs:1391:        depth_fail_op: wgpu::StencilOperation::Keep,
+native\src\scatter\mod.rs:1420:fn scatter_point_depth_stencil(depth_write_enabled: bool) -> wgpu::DepthStencilState {
+native\src\scatter\mod.rs:1423:        depth_write_enabled: Some(depth_write_enabled),
+native\src\scatter\mod.rs:1424:        depth_compare: Some(wgpu::CompareFunction::Less),
+native\src\scatter\mod.rs:1437:    depth_write_enabled: bool,
+native\src\scatter\mod.rs:1462:        depth_stencil: Some(scatter_point_depth_stencil(depth_write_enabled)),
+native\src\scatter\mod.rs:1680:                    depth_stencil: Some(wgpu::DepthStencilState {
+native\src\scatter\mod.rs:1682:                        depth_write_enabled: Some(false),
+native\src\scatter\mod.rs:1683:                        depth_compare: Some(wgpu::CompareFunction::Always),
+native\src\scatter\mod.rs:1723:                    depth_stencil: Some(wgpu::DepthStencilState {
+native\src\scatter\mod.rs:1725:                        depth_write_enabled: Some(true),
+native\src\scatter\mod.rs:1726:                        depth_compare: Some(wgpu::CompareFunction::Less),
+native\src\scatter\mod.rs:1751:        let overlay_depth_stencil = || wgpu::DepthStencilState {
+native\src\scatter\mod.rs:1753:            depth_write_enabled: Some(false),
+native\src\scatter\mod.rs:1754:            depth_compare: Some(wgpu::CompareFunction::Always),
+native\src\scatter\mod.rs:1783:                    depth_stencil: Some(overlay_depth_stencil()),
+native\src\scatter\mod.rs:1815:                    depth_stencil: Some(overlay_depth_stencil()),
+native\src\scatter\mod.rs:2366:    /// Hidden scatters can still receive data updates while their owning page
+native\src\scatter\mod.rs:2447:                    depth_or_array_layers: 1,
+native\src\scatter\mod.rs:2457:            let depth_tex = device.create_texture(&wgpu::TextureDescriptor {
+native\src\scatter\mod.rs:2458:                label: Some("scatter-screenshot-depth"),
+native\src\scatter\mod.rs:2462:                    depth_or_array_layers: 1,
+native\src\scatter\mod.rs:2471:            let depth_view = depth_tex.create_view(&wgpu::TextureViewDescriptor::default());
+native\src\scatter\mod.rs:2483:                _depth_tex: depth_tex,
+native\src\scatter\mod.rs:2484:                depth_view,
+native\src\scatter\mod.rs:2519:                    depth_slice: None,
+native\src\scatter\mod.rs:2521:                        load: wgpu::LoadOp::Clear(wgpu::Color {
+native\src\scatter\mod.rs:2530:                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+native\src\scatter\mod.rs:2531:                    view: &cache.depth_view,
+native\src\scatter\mod.rs:2532:                    depth_ops: Some(wgpu::Operations {
+native\src\scatter\mod.rs:2533:                        load: wgpu::LoadOp::Clear(1.0),
+native\src\scatter\mod.rs:2537:                        load: wgpu::LoadOp::Clear(0),
+native\src\scatter\mod.rs:2573:                depth_or_array_layers: 1,
+native\src\scatter\mod.rs:2681:            self.grid_labels.clear();
+native\src\scatter\mod.rs:2766:        overlay_labels.clear();
+native\src\scatter\mod.rs:2770:        self.pending_labels.clear();
+native\src\scatter\mod.rs:2796:        tick_label_rects.clear();
+native\src\scatter\mod.rs:2798:        title_projections.clear();
+native\src\scatter\mod.rs:2902:        occupied_rects.clear();
+native\src\scatter\mod.rs:2903:        title_projections.clear();
+native\src\scatter\mod.rs:2919:        // Drawn with bg_pipeline (TriangleList) so viewport/scissor clips it — not a pass clear.
+native\src\scatter\mod.rs:3001:        verts.clear();
+native\src\scatter\mod.rs:3138:                cached.clear();
+native\src\scatter\mod.rs:3231:        verts.clear();
+native\src\scatter\mod.rs:3380:    pub fn clear_user_labels(&mut self) {
+native\src\scatter\mod.rs:3381:        self.user_labels.clear();
+native\src\scatter\mod.rs:3473:    pub fn clear_line_overlays(&mut self) {
+native\src\scatter\mod.rs:3474:        self.line_overlays.clear();
+native\src\scatter\mod.rs:3496:        actor.pick_cache = None; // belt-and-suspenders: upload() already clears, but points just changed too
+native\src\scatter\mod.rs:3543:    pub fn clear_extra_actors(&mut self) {
+native\src\scatter\mod.rs:3545:            self.extra_actors.clear();
+native\src\scatter\mod.rs:3660:    pub fn clear_stream_actor(&mut self, id: u32, queue: &wgpu::Queue) {
+native\src\scatter\mod.rs:3730:        let mesh_depth_stencil = |depth_write_enabled: bool| wgpu::DepthStencilState {
+native\src\scatter\mod.rs:3732:            depth_write_enabled: Some(depth_write_enabled),
+native\src\scatter\mod.rs:3733:            depth_compare: Some(wgpu::CompareFunction::Less),
+native\src\scatter\mod.rs:3770:                depth_stencil: Some(mesh_depth_stencil(true)),
+native\src\scatter\mod.rs:3801:                depth_stencil: Some(mesh_depth_stencil(false)),
+native\src\scatter\mod.rs:3831:                depth_stencil: Some(mesh_depth_stencil(false)),
+native\src\scatter\mod.rs:3906:    pub fn clear_mesh_actors(&mut self) {
+native\src\scatter\mod.rs:3908:            self.mesh_actors.clear();
+native\src\scatter\mod.rs:3956:    /// Project a single point and return `(dist2, depth)` if it's within `radius_px`.
+native\src\scatter\mod.rs:4172:        pass.set_viewport(
+native\src\scatter\mod.rs:4180:        pass.set_scissor_rect(
+native\src\scatter\mod.rs:4279:        // Draw opaque actors before translucent point sets so their depth can
+native\src\scatter\mod.rs:4349:        // fills with depth writes, then translucent fills sorted back-to-front.
+native\src\scatter\mod.rs:4351:        let mesh_depth = |actor: &MeshActor| -> f32 {
+native\src\scatter\mod.rs:4370:                wire_meshes.push((actor, mesh_depth(actor)));
+native\src\scatter\mod.rs:4374:                transparent_meshes.push((actor, mesh_depth(actor)));
+native\src\scatter\mod.rs:4732:    // ── Fix 3: depth tie-breaking for same-position points ───────────────────
+native\src\scatter\mod.rs:4736:        // Two points at the same screen position (50, 50) but different depths.
+native\src\scatter\mod.rs:4737:        // Both must appear as candidates so pick_distance can select by depth.
+native\src\primitives\mod.rs:808:            depth_stencil: Some(wgpu::DepthStencilState {
+native\src\primitives\mod.rs:810:                depth_write_enabled: Some(false),
+native\src\primitives\mod.rs:811:                depth_compare: Some(wgpu::CompareFunction::Always),
+native\src\primitives\mod.rs:843:            depth_stencil: Some(wgpu::DepthStencilState {
+native\src\primitives\mod.rs:845:                depth_write_enabled: Some(false),
+native\src\primitives\mod.rs:846:                depth_compare: Some(wgpu::CompareFunction::Always),
+native\src\primitives\mod.rs:878:            depth_stencil: Some(wgpu::DepthStencilState {
+native\src\primitives\mod.rs:880:                depth_write_enabled: Some(false),
+native\src\primitives\mod.rs:881:                depth_compare: Some(wgpu::CompareFunction::Always),
+native\src\primitives\mod.rs:1003:        self.instances.clear();
+native\src\primitives\mod.rs:1079:        self.simple_instances.clear();
+native\src\primitives\mod.rs:1080:        self.line_instances.clear();
+native\src\primitives\mod.rs:1081:        self.complex_instances.clear();
+native\src\primitives\mod.rs:1082:        self.base_batches.clear();
+native\src\primitives\mod.rs:1083:        self.overlay_batches.clear();
+native\src\primitives\mod.rs:1236:        self.simple_instances.clear();
+native\src\primitives\mod.rs:1237:        self.line_instances.clear();
+native\src\primitives\mod.rs:1238:        self.complex_instances.clear();
+native\src\primitives\mod.rs:1239:        self.base_batches.clear();
+native\src\primitives\mod.rs:1240:        self.overlay_batches.clear();
+native\src\primitives\mod.rs:1432:            depth_stencil: Some(wgpu::DepthStencilState {
+native\src\primitives\mod.rs:1434:                depth_write_enabled: Some(false),
+native\src\primitives\mod.rs:1435:                depth_compare: Some(wgpu::CompareFunction::Always),
+native\src\primitives\mod.rs:1527:        self.points.clear();
+native\src\primitives\mod.rs:1528:        self.series_instances.clear();
+native\src\primitives\mod.rs:7165:        "close" | "x" | "delete" | "clear" => emit_tool_x_icon(out, rect, color, sf),
+native\src\primitives\mod.rs:13857:            out.clear();
+native\src\primitives\mod.rs:13872:            out.clear();
+native\src\primitives\mod.rs:13907:            out.clear();
+native\src\primitives\mod.rs:13922:            out.clear();
+native\src\primitives\mod.rs:13964:            points.clear();
+native\src\primitives\mod.rs:13965:            series_instances.clear();
+native\src\primitives\mod.rs:13990:            points.clear();
+native\src\primitives\mod.rs:13991:            series_instances.clear();
+native\src\primitives\mod.rs:16562:        out.clear();
+native\src\primitives\mod.rs:17234:        out.clear();
+native\src\primitives\mod.rs:17853:        out.clear();
+native\src\primitives\mod.rs:17872:        out.clear();
+native\src\runtime.rs:987:    pts.clear();
+native\src\runtime.rs:1094:    pts.clear();
+native\src\runtime.rs:1233:fn create_depth_texture(
+native\src\runtime.rs:1239:        label: Some("depth"),
+native\src\runtime.rs:1243:            depth_or_array_layers: 1,
+native\src\runtime.rs:1347:            depth_stencil: None,
+native\src\runtime.rs:1429:    _depth_texture: wgpu::Texture,
+native\src\runtime.rs:1430:    depth_view: wgpu::TextureView,
+native\src\runtime.rs:1451:                depth_or_array_layers: 1,
+native\src\runtime.rs:1461:        let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+native\src\runtime.rs:1462:            label: Some("scatter-render-scale-depth"),
+native\src\runtime.rs:1466:                depth_or_array_layers: 1,
+native\src\runtime.rs:1475:        let depth_view = depth_texture.create_view(&wgpu::TextureViewDescriptor::default());
+native\src\runtime.rs:1480:            _depth_texture: depth_texture,
+native\src\runtime.rs:1481:            depth_view,
+native\src\runtime.rs:1870:fn clear_line_plot_hover_except(node: &mut WidgetNode, keep_id: Option<&str>, changed: &mut bool) {
+native\src\runtime.rs:1879:        clear_line_plot_hover_except(child, keep_id, changed);
+native\src\runtime.rs:1883:fn clear_heatmap_hover_except(
+native\src\runtime.rs:1887:    cleared: &mut Vec<String>,
+native\src\runtime.rs:1894:        cleared.push(node.id.clone());
+native\src\runtime.rs:1898:        clear_heatmap_hover_except(child, keep_id, changed, cleared);
+native\src\runtime.rs:1902:fn clear_bar_chart_hover_except(
+native\src\runtime.rs:1906:    cleared: &mut Vec<String>,
+native\src\runtime.rs:1913:        cleared.push(node.id.clone());
+native\src\runtime.rs:1917:        clear_bar_chart_hover_except(child, keep_id, changed, cleared);
+native\src\runtime.rs:4869:    fn clear_style_transition_state_removes_runtime_progress() {
+native\src\runtime.rs:4957:        assert!(clear_style_transition_state(
+native\src\runtime.rs:4981:        assert!(!clear_style_transition_state(
+native\src\runtime.rs:5790:    _depth_texture: wgpu::Texture,
+native\src\runtime.rs:5791:    depth_view: wgpu::TextureView,
+native\src\runtime.rs:5799:    scatters: HashMap<String, ScatterRuntime>,
+native\src\runtime.rs:5805:    visible_scatter_order: Vec<String>,
+native\src\runtime.rs:6172:    /// size has changed since the last query.  Data changes (upload, stream, clear)
+native\src\runtime.rs:6230:        // (actor_id, index, point, dist2, depth)
+native\src\runtime.rs:6232:        let mut update = |actor_id: u32, idx: usize, pt: PointInstance, dist2: f32, depth: f32| {
+native\src\runtime.rs:6233:            // Mirror pick_point_all_actors: prefer closer dist2, break ties toward nearer depth.
+native\src\runtime.rs:6237:                    if dist2 < bd || ((bd - dist2).abs() <= f32::EPSILON && depth < bz) =>
+native\src\runtime.rs:6244:                best = Some((actor_id, idx, pt, dist2, depth));
+native\src\runtime.rs:6650:fn clear_style_transition_state(
+native\src\runtime.rs:6667:    hover_transitions.clear();
+native\src\runtime.rs:6668:    focus_transitions.clear();
+native\src\runtime.rs:6669:    checked_transitions.clear();
+native\src\runtime.rs:6670:    active_transitions.clear();
+native\src\runtime.rs:6671:    open_transitions.clear();
+native\src\runtime.rs:6672:    selected_transitions.clear();
+native\src\runtime.rs:6673:    expanded_transitions.clear();
+native\src\runtime.rs:6958:        depth_view: &wgpu::TextureView,
+native\src\runtime.rs:7093:                    depth_slice: None,
+native\src\runtime.rs:7095:                        load: wgpu::LoadOp::Clear(wgpu::Color {
+native\src\runtime.rs:7104:                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+native\src\runtime.rs:7105:                    view: depth_view,
+native\src\runtime.rs:7106:                    depth_ops: Some(wgpu::Operations {
+native\src\runtime.rs:7107:                        load: wgpu::LoadOp::Clear(1.0),
+native\src\runtime.rs:7111:                        load: wgpu::LoadOp::Clear(0),
+native\src\runtime.rs:7192:        let (depth_texture, depth_view) = create_depth_texture(&device, width, height);
+native\src\runtime.rs:7200:            &depth_view,
+native\src\runtime.rs:7213:                &depth_view,
+native\src\runtime.rs:7240:        let mut scatters: HashMap<String, ScatterRuntime> = HashMap::new();
+native\src\runtime.rs:7311:                    pts.clear();
+native\src\runtime.rs:7326:                scatters.insert(
+native\src\runtime.rs:7418:            _depth_texture: depth_texture,
+native\src\runtime.rs:7419:            depth_view,
+native\src\runtime.rs:7426:            scatters,
+native\src\runtime.rs:7429:            visible_scatter_order: Vec::new(),
+native\src\runtime.rs:7585:            scatters,
+native\src\runtime.rs:7586:            visible_scatter_order,
+native\src\runtime.rs:7651:        *visible_scatter_order = new_visible_order.clone();
+native\src\runtime.rs:7653:        for runtime in scatters.values_mut() {
+native\src\runtime.rs:7661:            if let Some(runtime) = scatters.get_mut(scatter_id) {
+native\src\runtime.rs:7957:            caret_positions.clear();
+native\src\runtime.rs:8782:        clear_style_transition_state(
+native\src\runtime.rs:8817:        let (dt, dv) = create_depth_texture(&self.device, width, height);
+native\src\runtime.rs:8818:        self._depth_texture = dt;
+native\src\runtime.rs:8819:        self.depth_view = dv;
+native\src\runtime.rs:8830:    fn scatter_at(&self, pos: [f32; 2]) -> Option<String> {
+native\src\runtime.rs:8831:        for id in self.visible_scatter_order.iter().rev() {
+native\src\runtime.rs:8832:            if let Some(runtime) = self.scatters.get(id) {
+native\src\runtime.rs:8842:        let runtime = self.scatters.get_mut(id)?;
+native\src\runtime.rs:8859:        let runtime = self.scatters.get_mut(id)?;
+native\src\runtime.rs:8889:        let runtime = self.scatters.get_mut(id)?;
+native\src\runtime.rs:9004:    fn clear_drag_drop_state(&mut self) -> bool {
+native\src\runtime.rs:9888:        let Some(runtime) = self.scatters.get_mut(id) else {
+native\src\runtime.rs:9926:        let Some(runtime) = self.scatters.get_mut(id) else {
+native\src\runtime.rs:9944:        let Some(runtime) = self.scatters.get_mut(id) else {
+native\src\runtime.rs:10018:        let Some(runtime) = self.scatters.get_mut(id) else {
+native\src\runtime.rs:10084:        let Some(runtime) = self.scatters.get_mut(id) else {
+native\src\runtime.rs:10173:        self.scatters.retain(|id, _| current_ids.contains(id));
+native\src\runtime.rs:10178:            if !self.scatters.contains_key(id) {
+native\src\runtime.rs:10253:                    pts.clear();
+native\src\runtime.rs:10272:                self.scatters.insert(
+native\src\runtime.rs:10302:                    (self.scatters.get_mut(id), find_widget(tree, id))
+native\src\runtime.rs:10708:    fn clear_line_plot_series(&mut self, id: &str, series: Option<String>) -> bool {
+native\src\runtime.rs:10721:                    item.points.clear();
+native\src\runtime.rs:10723:                    item.y_blocks.clear();
+native\src\runtime.rs:10731:                item.points.clear();
+native\src\runtime.rs:10733:                item.y_blocks.clear();
+native\src\runtime.rs:11181:            self.clear_histogram_selection_rect(id);
+native\src\runtime.rs:11189:            self.clear_histogram_selection_rect(id);
+native\src\runtime.rs:11209:        self.clear_histogram_selection_rect(id);
+native\src\runtime.rs:11213:    fn clear_histogram_selection_rect(&mut self, id: &str) -> bool {
+native\src\runtime.rs:11330:            self.clear_line_plot_selection_rect(id);
+native\src\runtime.rs:11338:            self.clear_line_plot_selection_rect(id);
+native\src\runtime.rs:11358:        self.clear_line_plot_selection_rect(id);
+native\src\runtime.rs:11362:    fn clear_line_plot_selection_rect(&mut self, id: &str) -> bool {
+native\src\runtime.rs:11390:        clear_line_plot_hover_except(tree, hit.as_ref().map(|(id, _)| id.as_str()), &mut changed);
+native\src\runtime.rs:11412:    fn clear_line_plot_hover_all(&mut self) -> bool {
+native\src\runtime.rs:11417:        clear_line_plot_hover_except(tree, None, &mut changed);
+native\src\runtime.rs:11430:        let mut cleared_ids = Vec::new();
+native\src\runtime.rs:11435:        clear_heatmap_hover_except(tree, keep_id.as_deref(), &mut changed, &mut cleared_ids);
+native\src\runtime.rs:11436:        for id in cleared_ids {
+native\src\runtime.rs:11463:    fn clear_heatmap_hover_all(&mut self) -> (bool, Vec<(String, String)>) {
+native\src\runtime.rs:11468:        let mut cleared_ids = Vec::new();
+native\src\runtime.rs:11469:        clear_heatmap_hover_except(tree, None, &mut changed, &mut cleared_ids);
+native\src\runtime.rs:11473:        let payloads = cleared_ids
+native\src\runtime.rs:11491:        let mut cleared_ids = Vec::new();
+native\src\runtime.rs:11496:        clear_bar_chart_hover_except(tree, keep_id.as_deref(), &mut changed, &mut cleared_ids);
+native\src\runtime.rs:11497:        for id in cleared_ids {
+native\src\runtime.rs:11524:    fn clear_bar_chart_hover_all(&mut self) -> (bool, Vec<(String, String)>) {
+native\src\runtime.rs:11529:        let mut cleared_ids = Vec::new();
+native\src\runtime.rs:11530:        clear_bar_chart_hover_except(tree, None, &mut changed, &mut cleared_ids);
+native\src\runtime.rs:11534:        let payloads = cleared_ids
+native\src\runtime.rs:11661:        let Some(runtime) = self.scatters.get_mut(id) else {
+native\src\runtime.rs:11694:                runtime.points.clear();
+native\src\runtime.rs:11695:                runtime.primary_compact_xyz.clear();
+native\src\runtime.rs:11700:                let cleared_hover_label = runtime.widget.hover_label.take().is_some();
+native\src\runtime.rs:11713:                let overlay_ms = if cleared_hover_label {
+native\src\runtime.rs:11757:                runtime.points.clear();
+native\src\runtime.rs:11758:                runtime.primary_compact_xyz.clear();
+native\src\runtime.rs:11762:                let cleared_hover_label = runtime.widget.hover_label.take().is_some();
+native\src\runtime.rs:11786:                let overlay_ms = if camera_fitted || cleared_hover_label {
+native\src\runtime.rs:11853:                    runtime.points.clear();
+native\src\runtime.rs:11859:                    let cleared_hover_label = runtime.widget.hover_label.take().is_some();
+native\src\runtime.rs:11883:                    let overlay_ms = if camera_fitted || cleared_hover_label {
+native\src\runtime.rs:11965:            decoded.clear();
+native\src\runtime.rs:11967:            runtime.primary_compact_xyz.clear();
+native\src\runtime.rs:11972:            let cleared_hover_label = runtime.widget.hover_label.take().is_some();
+native\src\runtime.rs:11986:            let overlay_ms = if cleared_hover_label {
+native\src\runtime.rs:12033:            runtime.primary_compact_xyz.clear();
+native\src\runtime.rs:12038:        let cleared_hover_label = runtime.widget.hover_label.take().is_some();
+native\src\runtime.rs:12052:        // an inactive page. Hidden scatters have a zero-sized layout rect, and
+native\src\runtime.rs:12075:        let overlay_ms = if camera_fitted || cleared_hover_label {
+native\src\runtime.rs:12127:            .visible_scatter_order
+native\src\runtime.rs:12141:            let Some(runtime) = self.scatters.get_mut(&id) else {
+native\src\runtime.rs:12225:    fn clear_stylesheets(&mut self, origin: StylesheetOrigin) {
+native\src\runtime.rs:12226:        self.stylesheets.clear(origin);
+native\src\runtime.rs:12596:        let scatter = self.visible_scatter_order.first().and_then(|id| {
+native\src\runtime.rs:12597:            self.scatters
+native\src\runtime.rs:12601:        let scatters = self
+native\src\runtime.rs:12602:            .scatters
+native\src\runtime.rs:12736:                "has_scatter": !self.scatters.is_empty(),
+native\src\runtime.rs:12737:                "scatter_widget_id": self.visible_scatter_order.first().map(|s| s.as_str()),
+native\src\runtime.rs:12738:                "scatter_count": self.scatters.len(),
+native\src\runtime.rs:12746:                "scatters": scatters,
+native\src\runtime.rs:13552:        // borrow conflicts with depth_view which is borrowed by the pass).
+native\src\runtime.rs:13556:                scatters,
+native\src\runtime.rs:13557:                visible_scatter_order,
+native\src\runtime.rs:13568:                t.clear_scatter_labels();
+native\src\runtime.rs:13573:                for id in visible_scatter_order.iter() {
+native\src\runtime.rs:13574:                    if let Some(rt) = scatters.get(id) {
+native\src\runtime.rs:13638:        // Pass 1: base primitives and images — clear color and depth.
+native\src\runtime.rs:13646:                    depth_slice: None,
+native\src\runtime.rs:13648:                        load: wgpu::LoadOp::Clear(wgpu::Color {
+native\src\runtime.rs:13657:                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+native\src\runtime.rs:13658:                    view: &self.depth_view,
+native\src\runtime.rs:13659:                    depth_ops: Some(wgpu::Operations {
+native\src\runtime.rs:13660:                        load: wgpu::LoadOp::Clear(1.0),
+native\src\runtime.rs:13664:                        load: wgpu::LoadOp::Clear(0),
+native\src\runtime.rs:13687:        // Pass 2: one render pass per visible scatter with its own depth clear
+native\src\runtime.rs:13688:        // to prevent cross-widget depth contamination.
+native\src\runtime.rs:13689:        let scatter_order = self.visible_scatter_order.clone();
+native\src\runtime.rs:13691:            if let Some(runtime) = self.scatters.get_mut(scatter_id) {
+native\src\runtime.rs:13748:                                    depth_slice: None,
+native\src\runtime.rs:13750:                                        load: wgpu::LoadOp::Clear(wgpu::Color {
+native\src\runtime.rs:13759:                                depth_stencil_attachment: Some(
+native\src\runtime.rs:13760:                                    wgpu::RenderPassDepthStencilAttachment {
+native\src\runtime.rs:13761:                                        view: &target.depth_view,
+native\src\runtime.rs:13762:                                        depth_ops: Some(wgpu::Operations {
+native\src\runtime.rs:13763:                                            load: wgpu::LoadOp::Clear(1.0),
+native\src\runtime.rs:13767:                                            load: wgpu::LoadOp::Clear(0),
+native\src\runtime.rs:13805:                                depth_slice: None,
+native\src\runtime.rs:13807:                                    load: wgpu::LoadOp::Load,
+native\src\runtime.rs:13811:                            depth_stencil_attachment: None,
+native\src\runtime.rs:13827:                            depth_slice: None,
+native\src\runtime.rs:13829:                                load: wgpu::LoadOp::Load,
+native\src\runtime.rs:13833:                        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+native\src\runtime.rs:13834:                            view: &self.depth_view,
+native\src\runtime.rs:13835:                            depth_ops: Some(wgpu::Operations {
+native\src\runtime.rs:13836:                                load: wgpu::LoadOp::Clear(1.0),
+native\src\runtime.rs:13840:                                load: wgpu::LoadOp::Clear(0),
+native\src\runtime.rs:13871:        // write depth and always pass, but wgpu still requires a depth
+native\src\runtime.rs:13872:        // attachment because those pipelines were created with a depth-stencil state.
+native\src\runtime.rs:13879:                    depth_slice: None,
+native\src\runtime.rs:13881:                        load: wgpu::LoadOp::Load,
+native\src\runtime.rs:13885:                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+native\src\runtime.rs:13886:                    view: &self.depth_view,
+native\src\runtime.rs:13887:                    depth_ops: Some(wgpu::Operations {
+native\src\runtime.rs:13888:                        load: wgpu::LoadOp::Load,
+native\src\runtime.rs:13892:                        load: wgpu::LoadOp::Load,
+native\src\runtime.rs:13900:            pass.set_viewport(
+native\src\runtime.rs:13908:            pass.set_scissor_rect(0, 0, self.config.width, self.config.height);
+native\src\runtime.rs:14015:            depth_or_array_layers: 1,
+native\src\runtime.rs:14853:            for runtime in gpu.scatters.values_mut() {
+native\src\runtime.rs:14958:        let queue_depth = self
+native\src\runtime.rs:15128:        runtime.insert("command_queue_depth".to_string(), json!(queue_depth));
+native\src\runtime.rs:15207:            if let Some(rt) = gpu.scatters.get_mut(&scatter_id) {
+native\src\runtime.rs:15221:                if let Some(rt) = gpu.scatters.get_mut(&sid) {
+native\src\runtime.rs:15248:                if let Some(rt) = gpu.scatters.get_mut(&sid) {
+native\src\runtime.rs:15305:        bridge.clear_wake_pending();
+native\src\runtime.rs:15320:            commands.clear();
+native\src\runtime.rs:15866:                    if gpu.clear_line_plot_series(&id, series) {
+native\src\runtime.rs:15884:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:15889:                        rt.primary_hover_columns.clear();
+native\src\runtime.rs:15904:                    Some(gpu) => match gpu.scatters.get_mut(&id) {
+native\src\runtime.rs:15908:                                rt.primary_hover_meta.clear();
+native\src\runtime.rs:15928:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:15945:                    if let Some(rt) = gpu.scatters.get_mut(&id) {
+native\src\runtime.rs:15970:                    if let Some(rt) = gpu.scatters.get_mut(&id) {
+native\src\runtime.rs:15995:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:16034:                    if let Some(rt) = gpu.scatters.get_mut(&id) {
+native\src\runtime.rs:16066:                    if let Some(rt) = gpu.scatters.get_mut(&id) {
+native\src\runtime.rs:16142:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:16184:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:16217:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:16249:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:16277:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:16305:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:16333:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:16369:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:16423:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:16492:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:16526:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:16567:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:16598:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:16624:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:16646:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:16649:                    rt.widget.clear_user_labels();
+native\src\runtime.rs:16675:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:16704:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:16739:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:16765:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:16791:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:16813:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:16816:                    rt.widget.clear_line_overlays();
+native\src\runtime.rs:17035:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:17064:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:17089:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:17092:                    rt.widget.clear_extra_actors();
+native\src\runtime.rs:17114:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:17118:                    rt.points.clear();
+native\src\runtime.rs:17119:                    rt.primary_compact_xyz.clear();
+native\src\runtime.rs:17124:                    rt.widget.clear_extra_actors();
+native\src\runtime.rs:17126:                    rt.widget.clear_user_labels();
+native\src\runtime.rs:17128:                    rt.widget.clear_line_overlays();
+native\src\runtime.rs:17130:                    rt.widget.clear_mesh_actors();
+native\src\runtime.rs:17133:                    rt.primary_hover_meta.clear();
+native\src\runtime.rs:17134:                    rt.primary_hover_columns.clear();
+native\src\runtime.rs:17177:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:17271:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:17274:                    rt.widget.clear_stream_actor(actor_id, &gpu.queue);
+native\src\runtime.rs:17305:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:17341:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:17362:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:17387:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:17414:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:17436:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:17484:                            let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:17563:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:17594:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:17622:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:17643:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:17646:                    rt.widget.clear_mesh_actors();
+native\src\runtime.rs:17667:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native\src\runtime.rs:17691:                    let rt = gpu.scatters.get_mut(&id)?;
+native\src\runtime.rs:17906:                    gpu.clear_stylesheets(origin);
+native\src\runtime.rs:18400:            gpu.clear_drag_drop_state();
+native\src\runtime.rs:19606:                    .or_else(|| gpu.visible_scatter_order.first().cloned());
+native\src\runtime.rs:19608:                    if let Some(runtime) = gpu.scatters.get_mut(&id) {
+native\src\runtime.rs:20252:                                        .and_then(|g| g.scatters.get(&scatter_id))
+native\src\runtime.rs:20260:                                            .and_then(|g| g.scatters.get(&scatter_id))
+native\src\runtime.rs:20273:                                            if let Some(rt) = gpu.scatters.get_mut(&scatter_id) {
+native\src\runtime.rs:20283:                                            .and_then(|g| g.scatters.get(&scatter_id))
+native\src\runtime.rs:20296:                                            if let Some(rt) = gpu.scatters.get_mut(&scatter_id) {
+native\src\runtime.rs:20308:                                        if let Some(rt) = gpu.scatters.get_mut(&scatter_id) {
+native\src\runtime.rs:20387:                                // Rebuild to clear pressed / update checkbox.
+native\src\runtime.rs:20719:                            let scatter_id = self.gpu.as_ref().and_then(|g| g.scatter_at(pos));
+native\src\runtime.rs:20728:                                    .and_then(|g| g.scatters.get(&sid))
+native\src\runtime.rs:20750:                                        .and_then(|g| g.scatters.get(&sid))
+native\src\runtime.rs:20759:                                        if let Some(rt) = gpu.scatters.get_mut(&sid) {
+native\src\runtime.rs:20784:                                        if let Some(rt) = gpu.scatters.get_mut(&sid) {
+native\src\runtime.rs:20831:                            let pan_scatter_id = self.gpu.as_ref().and_then(|g| g.scatter_at(pos));
+native\src\runtime.rs:20852:                    let cleared = gpu.update_hover_state(None, None);
+native\src\runtime.rs:20853:                    let cleared_line_plot_hover = gpu.clear_line_plot_hover_all();
+native\src\runtime.rs:20854:                    let (cleared_heatmap_hover, heatmap_payloads) = gpu.clear_heatmap_hover_all();
+native\src\runtime.rs:20855:                    let (cleared_bar_chart_hover, bar_chart_payloads) =
+native\src\runtime.rs:20856:                        gpu.clear_bar_chart_hover_all();
+native\src\runtime.rs:20857:                    if cleared
+native\src\runtime.rs:20858:                        || cleared_line_plot_hover
+native\src\runtime.rs:20859:                        || cleared_heatmap_hover
+native\src\runtime.rs:20860:                        || cleared_bar_chart_hover
+native\src\runtime.rs:20877:                let mut scatter_cleared = false;
+native\src\runtime.rs:20879:                    for (id, rt) in gpu.scatters.iter_mut() {
+native\src\runtime.rs:20883:                            scatter_cleared = true;
+native\src\runtime.rs:20889:                if scatter_cleared {
+native\src\runtime.rs:20971:                            if let Some(rt) = gpu.scatters.get_mut(&sid) {
+native\src\runtime.rs:20994:                                if let Some(runtime) = gpu.scatters.get_mut(&sid) {
+native\src\runtime.rs:21099:                    let hovered_sid = self.gpu.as_ref().and_then(|g| g.scatter_at(new_pos));
+native\src\runtime.rs:21101:                    let mut stale_scatter_cleared = false;
+native\src\runtime.rs:21104:                            .scatters
+native\src\runtime.rs:21114:                            if let Some(rt) = gpu.scatters.get_mut(&id) {
+native\src\runtime.rs:21117:                                stale_scatter_cleared = true;
+native\src\runtime.rs:21123:                    if stale_scatter_cleared {
+native\src\runtime.rs:21167:                            .and_then(|g| g.scatters.get(&sid))
+native\src\runtime.rs:21174:                                if let Some(rt) = gpu.scatters.get_mut(&sid) {
+native\src\runtime.rs:21391:                    if let Some(sid) = self.gpu.as_ref().and_then(|gpu| gpu.scatter_at(pos)) {
+native\src\runtime.rs:21395:                            if let Some(rt) = gpu.scatters.get_mut(&sid) {

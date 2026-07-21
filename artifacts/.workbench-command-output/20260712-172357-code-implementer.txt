@@ -1,0 +1,120 @@
+                            .filter(|(id, rt)| {
+                                rt.hover_tooltip_enabled
+                                    && rt.widget.hover_label.is_some()
+                                    && hovered_sid.as_deref() != Some(id.as_str())
+                            })
+                            .map(|(id, _)| id.clone())
+                            .collect();
+                        for id in stale {
+                            if let Some(rt) = gpu.scatters.get_mut(&id) {
+                                rt.widget.hover_label = None;
+                                rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                                stale_scatter_cleared = true;
+                            }
+                            let p = json!({"event":"hover_changed","widget_id":&id}).to_string();
+                            stale_payloads.push((id, p));
+                        }
+                    }
+                    if stale_scatter_cleared {
+                        self.request_redraw();
+                    }
+                    for (id, payload) in stale_payloads {
+                        self.emit_change(&id, ChangeValue::Text(payload));
+                    }
+
+                    if self
+                        .gpu
+                        .as_mut()
+                        .is_some_and(|gpu| gpu.update_line_plot_hover(new_pos))
+                    {
+                        self.request_redraw();
+                    }
+
+                    let (heatmap_hover_changed, heatmap_payloads) = self
+                        .gpu
+                        .as_mut()
+                        .map(|gpu| gpu.update_heatmap_hover(new_pos))
+                        .unwrap_or((false, Vec::new()));
+                    if heatmap_hover_changed {
+                        self.request_redraw();
+                    }
+                    for (id, payload) in heatmap_payloads {
+                        self.emit_change(&id, ChangeValue::Text(payload));
+                    }
+
+                    let (bar_chart_hover_changed, bar_chart_payloads) = self
+                        .gpu
+                        .as_mut()
+                        .map(|gpu| gpu.update_bar_chart_hover(new_pos))
+                        .unwrap_or((false, Vec::new()));
+                    if bar_chart_hover_changed {
+                        self.request_redraw();
+                    }
+                    for (id, payload) in bar_chart_payloads {
+                        self.emit_change(&id, ChangeValue::Text(payload));
+                    }
+
+                    // Scatter hover tooltip: pick nearest point and show a floating label.
+                    if let Some(sid) = hovered_sid {
+                        let tooltip_enabled = self
+                            .gpu
+                            .as_ref()
+                            .and_then(|g| g.scatters.get(&sid))
+                            .map(|rt| rt.hover_tooltip_enabled)
+                            .unwrap_or(false);
+                        if tooltip_enabled {
+                            let mut hover_payload: Option<(String, String)> = None;
+                            let mut needs_redraw = false;
+                            if let Some(gpu) = &mut self.gpu {
+                                if let Some(rt) = gpu.scatters.get_mut(&sid) {
+                                    let hit =
+                                        rt.pick_all_actors_cached(new_pos[0], new_pos[1], 12.0);
+                                    let new_label = hit.map(|(actor_id, idx, pt)| {
+                                        let screen_x = new_pos[0] + 16.0;
+                                        let screen_y = new_pos[1] - 8.0;
+                                        let default_labels = &rt.tooltip_axis_labels;
+                                        let labels = if actor_id == 0 {
+                                            default_labels
+                                        } else {
+                                            rt.widget
+                                                .extra_actors
+                                                .get(&actor_id)
+                                                .map(|a| &a.tooltip_axis_labels)
+                                                .unwrap_or(default_labels)
+                                        };
+                                        let [lx, ly, lz] = labels;
+                                        let coord_line = format!(
+                                            "{}: {}\n{}: {}\n{}: {}",
+                                            lx,
+                                            format_4g(pt.position[0]),
+                                            ly,
+                                            format_4g(pt.position[1]),
+                                            lz,
+                                            format_4g(pt.position[2]),
+                                        );
+                                        let meta_text =
+                                            if actor_id == 0 {
+                                                format_scatter_hover_columns(
+                                                    &rt.primary_hover_columns,
+                                                    idx,
+                                                )
+                                                .or_else(|| {
+                                                    rt.primary_hover_meta
+                                                        .get(idx)
+                                                        .filter(|s| !s.is_empty())
+                                                        .cloned()
+                                                })
+                                            } else {
+                                                rt.widget
+                                                    .extra_actors
+                                                    .get(&actor_id)
+                                                    .and_then(|a| a.hover_meta.get(idx))
+                                                    .filter(|s| !s.is_empty())
+                                                    .cloned()
+                                            };
+                                        let text = match meta_text {
+                                            Some(fields) => format!("{coord_line}\n{fields}"),
+                                            None => coord_line,
+                                        };
+                                        let payload = json!({
+                                            "event": "hover_changed",

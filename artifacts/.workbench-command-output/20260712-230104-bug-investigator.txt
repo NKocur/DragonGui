@@ -1,0 +1,430 @@
+artifacts\visual_audit\report.json:27:    "notes": "Captured with native DragonGUI window screenshot API. Additional run: Includes overlays and stateful controls that benefit from follow-up interaction checks. Additional run: Static capture visual review: first-viewport screenshot inspected; captured closed/default state is usable, but listed interactive states still need manual or automated checks. Additional run: Includes overlays and stateful controls that benefit from follow-up interaction checks. Additional run: Captured with native DragonGUI window screenshot API.",
+artifacts\visual_audit\report.json:458:    "id": "menu-overlays",
+artifacts\visual_audit\report.json:460:      "logs/menu-overlays-desktop-1.stdout.txt",
+artifacts\visual_audit\report.json:461:      "logs/menu-overlays-desktop-1.stderr.txt"
+artifacts\visual_audit\report.json:468:      "python tools/visual_audit.py --target menu-overlays --sizes desktop-1"
+artifacts\visual_audit\report.json:471:      "screenshots/menu-overlays-desktop-1.png"
+artifacts\visual_audit\report.json:473:    "script": "examples\\css_feature_probes\\menu_overlays_probe.py",
+artifacts\visual_audit\report.json:475:      "snapshots/menu-overlays-desktop-1.json"
+artifacts\visual_audit\report.json:494:    "id": "overlay-stack",
+artifacts\visual_audit\report.json:496:      "logs/overlay-stack-desktop-1.stdout.txt",
+artifacts\visual_audit\report.json:497:      "logs/overlay-stack-desktop-1.stderr.txt"
+artifacts\visual_audit\report.json:504:      "python tools/visual_audit.py --target overlay-stack --sizes desktop-1"
+artifacts\visual_audit\report.json:507:      "screenshots/overlay-stack-desktop-1.png"
+artifacts\visual_audit\report.json:509:    "script": "examples\\css_feature_probes\\overlay_stack_probe.py",
+artifacts\visual_audit\report.json:511:      "snapshots/overlay-stack-desktop-1.json"
+artifacts\visual_audit\report.json:918:    "notes": "Visual review after fix: desktop and 390x720 captures now keep dense controls inside their panels with visible usable inputs/actions. The previous zero-width controls and right-edge clipping in the sampled mobile rows are resolved in the saved screenshots. Additional run: No visual issue recorded by automated first pass. Additional run: Captured with native DragonGUI window screenshot API.",
+artifacts\visual_audit\report.json:1002:    "id": "all-features-professional-overview",
+artifacts\visual_audit\report.json:1004:      "logs/all-features-professional-overview-1440x900.stdout.txt",
+artifacts\visual_audit\report.json:1005:      "logs/all-features-professional-overview-1440x900.stderr.txt",
+artifacts\visual_audit\report.json:1006:      "logs/all-features-professional-overview-1180x760.stdout.txt",
+artifacts\visual_audit\report.json:1007:      "logs/all-features-professional-overview-1180x760.stderr.txt",
+artifacts\visual_audit\report.json:1008:      "logs/all-features-professional-overview-390x720.stdout.txt",
+artifacts\visual_audit\report.json:1009:      "logs/all-features-professional-overview-390x720.stderr.txt",
+artifacts\visual_audit\report.json:1010:      "logs/all-features-professional-overview-320x640.stdout.txt",
+artifacts\visual_audit\report.json:1011:      "logs/all-features-professional-overview-320x640.stderr.txt"
+artifacts\visual_audit\report.json:1015:    "notes": "Route-specific capture for the professional all-features demo overview page. Additional run: Captured with native DragonGUI window screenshot API.",
+artifacts\visual_audit\report.json:1018:      "python tools/visual_audit.py --target all-features-professional-overview --sizes 1440x900",
+artifacts\visual_audit\report.json:1019:      "python tools/visual_audit.py --target all-features-professional-overview --sizes 1180x760",
+artifacts\visual_audit\report.json:1020:      "python tools/visual_audit.py --target all-features-professional-overview --sizes 390x720",
+artifacts\visual_audit\report.json:1021:      "python tools/visual_audit.py --target all-features-professional-overview --sizes 320x640"
+artifacts\visual_audit\report.json:1024:      "screenshots/all-features-professional-overview-1440x900.png",
+artifacts\visual_audit\report.json:1025:      "screenshots/all-features-professional-overview-1180x760.png",
+artifacts\visual_audit\report.json:1026:      "screenshots/all-features-professional-overview-390x720.png",
+artifacts\visual_audit\report.json:1027:      "screenshots/all-features-professional-overview-320x640.png"
+artifacts\visual_audit\report.json:1029:    "script": "examples\\css_feature_probes\\all_features_professional_demo_probe.py",
+artifacts\visual_audit\report.json:1031:      "snapshots/all-features-professional-overview-1440x900.json",
+artifacts\visual_audit\report.json:1032:      "snapshots/all-features-professional-overview-1180x760.json",
+artifacts\visual_audit\report.json:1033:      "snapshots/all-features-professional-overview-390x720.json",
+artifacts\visual_audit\report.json:1034:      "snapshots/all-features-professional-overview-320x640.json"
+artifacts\visual_audit\report.json:1041:      "native/src/scatter/mod.rs",
+artifacts\visual_audit\report.json:1049:      "Scatter3D",
+artifacts\visual_audit\report.json:1056:    "id": "all-features-professional-explore",
+artifacts\visual_audit\report.json:1058:      "logs/all-features-professional-explore-1440x900.stdout.txt",
+artifacts\visual_audit\report.json:1059:      "logs/all-features-professional-explore-1440x900.stderr.txt",
+artifacts\visual_audit\report.json:1060:      "logs/all-features-professional-explore-1180x760.stdout.txt",
+artifacts\visual_audit\report.json:1061:      "logs/all-features-professional-explore-1180x760.stderr.txt",
+artifacts\visual_audit\report.json:1062:      "logs/all-features-professional-explore-390x720.stdout.txt",
+artifacts\visual_audit\report.json:1063:      "logs/all-features-professional-explore-390x720.stderr.txt",
+artifacts\visual_audit\report.json:1064:      "logs/all-features-professional-explore-320x640.stdout.txt",
+artifacts\visual_audit\report.json:1065:      "logs/all-features-professional-explore-320x640.stderr.txt"
+artifacts\visual_audit\report.json:1068:    "name": "All Features Professional Demo - Explore",
+artifacts\visual_audit\report.json:1069:    "notes": "Route-specific capture for the professional all-features demo 3D explore page. Additional run: Captured with native DragonGUI window screenshot API.",
+artifacts\visual_audit\report.json:1072:      "python tools/visual_audit.py --target all-features-professional-explore --sizes 1440x900",
+artifacts\visual_audit\report.json:1073:      "python tools/visual_audit.py --target all-features-professional-explore --sizes 1180x760",
+artifacts\visual_audit\report.json:1074:      "python tools/visual_audit.py --target all-features-professional-explore --sizes 390x720",
+artifacts\visual_audit\report.json:1075:      "python tools/visual_audit.py --target all-features-professional-explore --sizes 320x640"
+artifacts\visual_audit\report.json:1078:      "screenshots/all-features-professional-explore-1440x900.png",
+artifacts\visual_audit\report.json:1079:      "screenshots/all-features-professional-explore-1180x760.png",
+artifacts\visual_audit\report.json:1080:      "screenshots/all-features-professional-explore-390x720.png",
+artifacts\visual_audit\report.json:1081:      "screenshots/all-features-professional-explore-320x640.png"
+artifacts\visual_audit\report.json:1083:    "script": "examples\\css_feature_probes\\all_features_professional_demo_probe.py",
+artifacts\visual_audit\report.json:1085:      "snapshots/all-features-professional-explore-1440x900.json",
+artifacts\visual_audit\report.json:1086:      "snapshots/all-features-professional-explore-1180x760.json",
+artifacts\visual_audit\report.json:1087:      "snapshots/all-features-professional-explore-390x720.json",
+artifacts\visual_audit\report.json:1088:      "snapshots/all-features-professional-explore-320x640.json"
+artifacts\visual_audit\report.json:1095:      "native/src/scatter/mod.rs",
+artifacts\visual_audit\report.json:1102:      "Scatter3D",
+artifacts\visual_audit\report.json:1108:    "id": "adjacent-scatter-interaction",
+artifacts\visual_audit\report.json:1110:      "logs/adjacent-scatter-interaction-1120x720.stdout.txt",
+artifacts\visual_audit\report.json:1111:      "logs/adjacent-scatter-interaction-1120x720.stderr.txt"
+artifacts\visual_audit\report.json:1115:    "notes": "Automated two-plot interaction probe for adjacent scatter state isolation. Additional run: Captured with native DragonGUI window screenshot API.",
+artifacts\visual_audit\report.json:1118:      "python tools/visual_audit.py --target adjacent-scatter-interaction --sizes 1120x720"
+artifacts\visual_audit\report.json:1121:      "screenshots/adjacent-scatter-interaction-1120x720.png"
+artifacts\visual_audit\report.json:1123:    "script": "examples\\css_feature_probes\\adjacent_scatter_interaction_probe.py",
+artifacts\visual_audit\report.json:1125:      "snapshots/adjacent-scatter-interaction-1120x720.json"
+artifacts\visual_audit\report.json:1132:      "native/src/scatter/mod.rs",
+artifacts\visual_audit\report.json:1146:    "id": "all-features-professional-timeseries",
+artifacts\visual_audit\report.json:1148:      "logs/all-features-professional-timeseries-1440x900.stdout.txt",
+artifacts\visual_audit\report.json:1149:      "logs/all-features-professional-timeseries-1440x900.stderr.txt",
+artifacts\visual_audit\report.json:1150:      "logs/all-features-professional-timeseries-1180x760.stdout.txt",
+artifacts\visual_audit\report.json:1151:      "logs/all-features-professional-timeseries-1180x760.stderr.txt",
+artifacts\visual_audit\report.json:1152:      "logs/all-features-professional-timeseries-390x720.stdout.txt",
+artifacts\visual_audit\report.json:1153:      "logs/all-features-professional-timeseries-390x720.stderr.txt",
+artifacts\visual_audit\report.json:1154:      "logs/all-features-professional-timeseries-320x640.stdout.txt",
+artifacts\visual_audit\report.json:1155:      "logs/all-features-professional-timeseries-320x640.stderr.txt"
+artifacts\visual_audit\report.json:1159:    "notes": "Route-specific capture for the professional all-features demo time-series page. Additional run: Captured with native DragonGUI window screenshot API.",
+artifacts\visual_audit\report.json:1162:      "python tools/visual_audit.py --target all-features-professional-timeseries --sizes 1440x900",
+artifacts\visual_audit\report.json:1163:      "python tools/visual_audit.py --target all-features-professional-timeseries --sizes 1180x760",
+artifacts\visual_audit\report.json:1164:      "python tools/visual_audit.py --target all-features-professional-timeseries --sizes 390x720",
+artifacts\visual_audit\report.json:1165:      "python tools/visual_audit.py --target all-features-professional-timeseries --sizes 320x640"
+artifacts\visual_audit\report.json:1168:      "screenshots/all-features-professional-timeseries-1440x900.png",
+artifacts\visual_audit\report.json:1169:      "screenshots/all-features-professional-timeseries-1180x760.png",
+artifacts\visual_audit\report.json:1170:      "screenshots/all-features-professional-timeseries-390x720.png",
+artifacts\visual_audit\report.json:1171:      "screenshots/all-features-professional-timeseries-320x640.png"
+artifacts\visual_audit\report.json:1173:    "script": "examples\\css_feature_probes\\all_features_professional_demo_probe.py",
+artifacts\visual_audit\report.json:1175:      "snapshots/all-features-professional-timeseries-1440x900.json",
+artifacts\visual_audit\report.json:1176:      "snapshots/all-features-professional-timeseries-1180x760.json",
+artifacts\visual_audit\report.json:1177:      "snapshots/all-features-professional-timeseries-390x720.json",
+artifacts\visual_audit\report.json:1178:      "snapshots/all-features-professional-timeseries-320x640.json"
+artifacts\visual_audit\report.json:1185:      "native/src/scatter/mod.rs",
+artifacts\visual_audit\report.json:1199:    "id": "all-features-professional-data",
+artifacts\visual_audit\report.json:1201:      "logs/all-features-professional-data-1440x900.stdout.txt",
+artifacts\visual_audit\report.json:1202:      "logs/all-features-professional-data-1440x900.stderr.txt",
+artifacts\visual_audit\report.json:1203:      "logs/all-features-professional-data-1180x760.stdout.txt",
+artifacts\visual_audit\report.json:1204:      "logs/all-features-professional-data-1180x760.stderr.txt",
+artifacts\visual_audit\report.json:1205:      "logs/all-features-professional-data-390x720.stdout.txt",
+artifacts\visual_audit\report.json:1206:      "logs/all-features-professional-data-390x720.stderr.txt",
+artifacts\visual_audit\report.json:1207:      "logs/all-features-professional-data-320x640.stdout.txt",
+artifacts\visual_audit\report.json:1208:      "logs/all-features-professional-data-320x640.stderr.txt"
+artifacts\visual_audit\report.json:1212:    "notes": "Route-specific capture for the professional all-features demo data review page. Additional run: Captured with native DragonGUI window screenshot API.",
+artifacts\visual_audit\report.json:1215:      "python tools/visual_audit.py --target all-features-professional-data --sizes 1440x900",
+artifacts\visual_audit\report.json:1216:      "python tools/visual_audit.py --target all-features-professional-data --sizes 1180x760",
+artifacts\visual_audit\report.json:1217:      "python tools/visual_audit.py --target all-features-professional-data --sizes 390x720",
+artifacts\visual_audit\report.json:1218:      "python tools/visual_audit.py --target all-features-professional-data --sizes 320x640"
+artifacts\visual_audit\report.json:1221:      "screenshots/all-features-professional-data-1440x900.png",
+artifacts\visual_audit\report.json:1222:      "screenshots/all-features-professional-data-1180x760.png",
+artifacts\visual_audit\report.json:1223:      "screenshots/all-features-professional-data-390x720.png",
+artifacts\visual_audit\report.json:1224:      "screenshots/all-features-professional-data-320x640.png"
+artifacts\visual_audit\report.json:1226:    "script": "examples\\css_feature_probes\\all_features_professional_demo_probe.py",
+artifacts\visual_audit\report.json:1228:      "snapshots/all-features-professional-data-1440x900.json",
+artifacts\visual_audit\report.json:1229:      "snapshots/all-features-professional-data-1180x760.json",
+artifacts\visual_audit\report.json:1230:      "snapshots/all-features-professional-data-390x720.json",
+artifacts\visual_audit\report.json:1231:      "snapshots/all-features-professional-data-320x640.json"
+artifacts\visual_audit\report.json:1253:    "id": "all-features-professional-workflow",
+artifacts\visual_audit\report.json:1255:      "logs/all-features-professional-workflow-1440x900.stdout.txt",
+artifacts\visual_audit\report.json:1256:      "logs/all-features-professional-workflow-1440x900.stderr.txt",
+artifacts\visual_audit\report.json:1257:      "logs/all-features-professional-workflow-1180x760.stdout.txt",
+artifacts\visual_audit\report.json:1258:      "logs/all-features-professional-workflow-1180x760.stderr.txt",
+artifacts\visual_audit\report.json:1259:      "logs/all-features-professional-workflow-390x720.stdout.txt",
+artifacts\visual_audit\report.json:1260:      "logs/all-features-professional-workflow-390x720.stderr.txt",
+artifacts\visual_audit\report.json:1261:      "logs/all-features-professional-workflow-320x640.stdout.txt",
+artifacts\visual_audit\report.json:1262:      "logs/all-features-professional-workflow-320x640.stderr.txt"
+artifacts\visual_audit\report.json:1266:    "notes": "Route-specific capture for the professional all-features demo workflow page. Additional run: Captured with native DragonGUI window screenshot API.",
+artifacts\visual_audit\report.json:1269:      "python tools/visual_audit.py --target all-features-professional-workflow --sizes 1440x900",
+artifacts\visual_audit\report.json:1270:      "python tools/visual_audit.py --target all-features-professional-workflow --sizes 1180x760",
+artifacts\visual_audit\report.json:1271:      "python tools/visual_audit.py --target all-features-professional-workflow --sizes 390x720",
+artifacts\visual_audit\report.json:1272:      "python tools/visual_audit.py --target all-features-professional-workflow --sizes 320x640"
+artifacts\visual_audit\report.json:1275:      "screenshots/all-features-professional-workflow-1440x900.png",
+artifacts\visual_audit\report.json:1276:      "screenshots/all-features-professional-workflow-1180x760.png",
+artifacts\visual_audit\report.json:1277:      "screenshots/all-features-professional-workflow-390x720.png",
+artifacts\visual_audit\report.json:1278:      "screenshots/all-features-professional-workflow-320x640.png"
+artifacts\visual_audit\report.json:1280:    "script": "examples\\css_feature_probes\\all_features_professional_demo_probe.py",
+artifacts\visual_audit\report.json:1282:      "snapshots/all-features-professional-workflow-1440x900.json",
+artifacts\visual_audit\report.json:1283:      "snapshots/all-features-professional-workflow-1180x760.json",
+artifacts\visual_audit\report.json:1284:      "snapshots/all-features-professional-workflow-390x720.json",
+artifacts\visual_audit\report.json:1285:      "snapshots/all-features-professional-workflow-320x640.json"
+artifacts\visual_audit\report.json:1305:    "id": "all-features-professional-reports",
+artifacts\visual_audit\report.json:1307:      "logs/all-features-professional-reports-1440x900.stdout.txt",
+artifacts\visual_audit\report.json:1308:      "logs/all-features-professional-reports-1440x900.stderr.txt",
+artifacts\visual_audit\report.json:1309:      "logs/all-features-professional-reports-1180x760.stdout.txt",
+artifacts\visual_audit\report.json:1310:      "logs/all-features-professional-reports-1180x760.stderr.txt",
+artifacts\visual_audit\report.json:1311:      "logs/all-features-professional-reports-390x720.stdout.txt",
+artifacts\visual_audit\report.json:1312:      "logs/all-features-professional-reports-390x720.stderr.txt",
+artifacts\visual_audit\report.json:1313:      "logs/all-features-professional-reports-320x640.stdout.txt",
+artifacts\visual_audit\report.json:1314:      "logs/all-features-professional-reports-320x640.stderr.txt"
+artifacts\visual_audit\report.json:1318:    "notes": "Route-specific capture for the professional all-features demo reports page. Additional run: Captured with native DragonGUI window screenshot API.",
+artifacts\visual_audit\report.json:1321:      "python tools/visual_audit.py --target all-features-professional-reports --sizes 1440x900",
+artifacts\visual_audit\report.json:1322:      "python tools/visual_audit.py --target all-features-professional-reports --sizes 1180x760",
+artifacts\visual_audit\report.json:1323:      "python tools/visual_audit.py --target all-features-professional-reports --sizes 390x720",
+artifacts\visual_audit\report.json:1324:      "python tools/visual_audit.py --target all-features-professional-reports --sizes 320x640"
+artifacts\visual_audit\report.json:1327:      "screenshots/all-features-professional-reports-1440x900.png",
+artifacts\visual_audit\report.json:1328:      "screenshots/all-features-professional-reports-1180x760.png",
+artifacts\visual_audit\report.json:1329:      "screenshots/all-features-professional-reports-390x720.png",
+artifacts\visual_audit\report.json:1330:      "screenshots/all-features-professional-reports-320x640.png"
+artifacts\visual_audit\report.json:1332:    "script": "examples\\css_feature_probes\\all_features_professional_demo_probe.py",
+artifacts\visual_audit\report.json:1334:      "snapshots/all-features-professional-reports-1440x900.json",
+artifacts\visual_audit\report.json:1335:      "snapshots/all-features-professional-reports-1180x760.json",
+artifacts\visual_audit\report.json:1336:      "snapshots/all-features-professional-reports-390x720.json",
+artifacts\visual_audit\report.json:1337:      "snapshots/all-features-professional-reports-320x640.json"
+artifacts\visual_audit\report.json:1357:    "id": "all-features-professional-runtime",
+artifacts\visual_audit\report.json:1359:      "logs/all-features-professional-runtime-1440x900.stdout.txt",
+artifacts\visual_audit\report.json:1360:      "logs/all-features-professional-runtime-1440x900.stderr.txt",
+artifacts\visual_audit\report.json:1361:      "logs/all-features-professional-runtime-1180x760.stdout.txt",
+artifacts\visual_audit\report.json:1362:      "logs/all-features-professional-runtime-1180x760.stderr.txt",
+artifacts\visual_audit\report.json:1363:      "logs/all-features-professional-runtime-390x720.stdout.txt",
+artifacts\visual_audit\report.json:1364:      "logs/all-features-professional-runtime-390x720.stderr.txt",
+artifacts\visual_audit\report.json:1365:      "logs/all-features-professional-runtime-320x640.stdout.txt",
+artifacts\visual_audit\report.json:1366:      "logs/all-features-professional-runtime-320x640.stderr.txt"
+artifacts\visual_audit\report.json:1370:    "notes": "Route-specific capture for the professional all-features demo runtime diagnostics page. Additional run: Captured with native DragonGUI window screenshot API.",
+artifacts\visual_audit\report.json:1373:      "python tools/visual_audit.py --target all-features-professional-runtime --sizes 1440x900",
+artifacts\visual_audit\report.json:1374:      "python tools/visual_audit.py --target all-features-professional-runtime --sizes 1180x760",
+artifacts\visual_audit\report.json:1375:      "python tools/visual_audit.py --target all-features-professional-runtime --sizes 390x720",
+artifacts\visual_audit\report.json:1376:      "python tools/visual_audit.py --target all-features-professional-runtime --sizes 320x640"
+artifacts\visual_audit\report.json:1379:      "screenshots/all-features-professional-runtime-1440x900.png",
+artifacts\visual_audit\report.json:1380:      "screenshots/all-features-professional-runtime-1180x760.png",
+artifacts\visual_audit\report.json:1381:      "screenshots/all-features-professional-runtime-390x720.png",
+artifacts\visual_audit\report.json:1382:      "screenshots/all-features-professional-runtime-320x640.png"
+artifacts\visual_audit\report.json:1384:    "script": "examples\\css_feature_probes\\all_features_professional_demo_probe.py",
+artifacts\visual_audit\report.json:1386:      "snapshots/all-features-professional-runtime-1440x900.json",
+artifacts\visual_audit\report.json:1387:      "snapshots/all-features-professional-runtime-1180x760.json",
+artifacts\visual_audit\report.json:1388:      "snapshots/all-features-professional-runtime-390x720.json",
+artifacts\visual_audit\report.json:1389:      "snapshots/all-features-professional-runtime-320x640.json"
+artifacts\visual_audit\report.json:1409:    "id": "all-features-professional-styling",
+artifacts\visual_audit\report.json:1411:      "logs/all-features-professional-styling-1440x900.stdout.txt",
+artifacts\visual_audit\report.json:1412:      "logs/all-features-professional-styling-1440x900.stderr.txt",
+artifacts\visual_audit\report.json:1413:      "logs/all-features-professional-styling-1180x760.stdout.txt",
+artifacts\visual_audit\report.json:1414:      "logs/all-features-professional-styling-1180x760.stderr.txt",
+artifacts\visual_audit\report.json:1415:      "logs/all-features-professional-styling-390x720.stdout.txt",
+artifacts\visual_audit\report.json:1416:      "logs/all-features-professional-styling-390x720.stderr.txt",
+artifacts\visual_audit\report.json:1417:      "logs/all-features-professional-styling-320x640.stdout.txt",
+artifacts\visual_audit\report.json:1418:      "logs/all-features-professional-styling-320x640.stderr.txt"
+artifacts\visual_audit\report.json:1422:    "notes": "Route-specific capture for the professional all-features demo styling page. Additional run: Captured with native DragonGUI window screenshot API.",
+artifacts\visual_audit\report.json:1425:      "python tools/visual_audit.py --target all-features-professional-styling --sizes 1440x900",
+artifacts\visual_audit\report.json:1426:      "python tools/visual_audit.py --target all-features-professional-styling --sizes 1180x760",
+artifacts\visual_audit\report.json:1427:      "python tools/visual_audit.py --target all-features-professional-styling --sizes 390x720",
+artifacts\visual_audit\report.json:1428:      "python tools/visual_audit.py --target all-features-professional-styling --sizes 320x640"
+artifacts\visual_audit\report.json:1431:      "screenshots/all-features-professional-styling-1440x900.png",
+artifacts\visual_audit\report.json:1432:      "screenshots/all-features-professional-styling-1180x760.png",
+artifacts\visual_audit\report.json:1433:      "screenshots/all-features-professional-styling-390x720.png",
+artifacts\visual_audit\report.json:1434:      "screenshots/all-features-professional-styling-320x640.png"
+artifacts\visual_audit\report.json:1436:    "script": "examples\\css_feature_probes\\all_features_professional_demo_probe.py",
+artifacts\visual_audit\report.json:1438:      "snapshots/all-features-professional-styling-1440x900.json",
+artifacts\visual_audit\report.json:1439:      "snapshots/all-features-professional-styling-1180x760.json",
+artifacts\visual_audit\report.json:1440:      "snapshots/all-features-professional-styling-390x720.json",
+artifacts\visual_audit\report.json:1441:      "snapshots/all-features-professional-styling-320x640.json"
+artifacts\visual_audit\report.json:1538:    "id": "layout-overlay-collision",
+artifacts\visual_audit\report.json:1540:      "logs/layout-overlay-collision-desktop-1.stdout.txt",
+artifacts\visual_audit\report.json:1541:      "logs/layout-overlay-collision-desktop-1.stderr.txt"
+artifacts\visual_audit\report.json:1548:      "python tools/visual_audit.py --target layout-overlay-collision --sizes desktop-1"
+artifacts\visual_audit\report.json:1551:      "screenshots/layout-overlay-collision-desktop-1.png"
+artifacts\visual_audit\report.json:1553:    "script": "examples\\css_feature_probes\\layout_overlay_collision_probe.py",
+artifacts\visual_audit\report.json:1555:      "snapshots/layout-overlay-collision-desktop-1.json"
+artifacts\visual_audit\report.json:1647:      "native/src/scatter/mod.rs",
+artifacts\visual_audit\report.json:1836:      "Scatter3D"
+artifacts\visual_audit\report.json:1861:      "native/src/scatter/mod.rs",
+artifacts\visual_audit\report.json:1898:      "native/src/scatter/mod.rs",
+artifacts\visual_audit\report.json:1930:      "native/src/scatter/mod.rs",
+artifacts\visual_audit\report.json:1963:      "native/src/scatter/mod.rs",
+artifacts\visual_audit\report.json:1995:      "native/src/scatter/mod.rs",
+artifacts\visual_audit\report.json:2027:      "native/src/scatter/mod.rs",
+artifacts\visual_audit\report.json:2059:      "native/src/scatter/mod.rs",
+artifacts\visual_audit\report.json:2093:      "native/src/scatter/mod.rs",
+artifacts\visual_audit\report.json:2125:      "native/src/scatter/mod.rs",
+artifacts\visual_audit\report.json:2132:      "Scatter3D"
+artifacts\visual_audit\report.json:2134:    "id": "scatter3d",
+artifacts\visual_audit\report.json:2136:      "logs/scatter3d-desktop-1.stdout.txt",
+artifacts\visual_audit\report.json:2137:      "logs/scatter3d-desktop-1.stderr.txt",
+artifacts\visual_audit\report.json:2138:      "logs/scatter3d-390x720.stdout.txt",
+artifacts\visual_audit\report.json:2139:      "logs/scatter3d-390x720.stderr.txt"
+artifacts\visual_audit\report.json:2142:    "name": "Scatter3D",
+artifacts\visual_audit\report.json:2146:      "python tools/visual_audit.py --target scatter3d --sizes desktop-1",
+artifacts\visual_audit\report.json:2147:      "python tools/visual_audit.py --target scatter3d --sizes 390x720"
+artifacts\visual_audit\report.json:2150:      "screenshots/scatter3d-desktop-1.png",
+artifacts\visual_audit\report.json:2151:      "screenshots/scatter3d-390x720.png"
+artifacts\visual_audit\report.json:2153:    "script": "examples\\css_feature_probes\\scatter3d_probe.py",
+artifacts\visual_audit\report.json:2155:      "snapshots/scatter3d-desktop-1.json",
+artifacts\visual_audit\report.json:2156:      "snapshots/scatter3d-390x720.json"
+artifacts\visual_audit\report.json:2162:      "native/src/scatter/mod.rs",
+artifacts\visual_audit\report.json:2169:      "Scatter3D",
+artifacts\visual_audit\report.json:2174:    "id": "scatter3d-css-chrome",
+artifacts\visual_audit\report.json:2176:      "logs/scatter3d-css-chrome-desktop-1.stdout.txt",
+artifacts\visual_audit\report.json:2177:      "logs/scatter3d-css-chrome-desktop-1.stderr.txt"
+artifacts\visual_audit\report.json:2180:    "name": "Scatter3D CSS Chrome",
+artifacts\visual_audit\report.json:2184:      "python tools/visual_audit.py --target scatter3d-css-chrome --sizes desktop-1"
+artifacts\visual_audit\report.json:2187:      "screenshots/scatter3d-css-chrome-desktop-1.png"
+artifacts\visual_audit\report.json:2189:    "script": "examples\\css_feature_probes\\scatter3d_css_chrome_probe.py",
+artifacts\visual_audit\report.json:2191:      "snapshots/scatter3d-css-chrome-desktop-1.json"
+artifacts\visual_audit\report.json:2198:      "native/src/scatter/mod.rs",
+artifacts\visual_audit\report.json:2207:    "id": "scatter-plot-2d",
+artifacts\visual_audit\report.json:2209:      "logs/scatter-plot-2d-desktop-1.stdout.txt",
+artifacts\visual_audit\report.json:2210:      "logs/scatter-plot-2d-desktop-1.stderr.txt",
+artifacts\visual_audit\report.json:2211:      "logs/scatter-plot-2d-390x720.stdout.txt",
+artifacts\visual_audit\report.json:2212:      "logs/scatter-plot-2d-390x720.stderr.txt"
+artifacts\visual_audit\report.json:2219:      "python tools/visual_audit.py --target scatter-plot-2d --sizes desktop-1",
+artifacts\visual_audit\report.json:2220:      "python tools/visual_audit.py --target scatter-plot-2d --sizes 390x720"
+artifacts\visual_audit\report.json:2223:      "screenshots/scatter-plot-2d-desktop-1.png",
+artifacts\visual_audit\report.json:2224:      "screenshots/scatter-plot-2d-390x720.png"
+artifacts\visual_audit\report.json:2226:    "script": "examples\\css_feature_probes\\scatter_plot_2d_probe.py",
+artifacts\visual_audit\report.json:2228:      "snapshots/scatter-plot-2d-desktop-1.json",
+artifacts\visual_audit\report.json:2229:      "snapshots/scatter-plot-2d-390x720.json"
+artifacts\visual_audit\report.json:2235:      "native/src/scatter/mod.rs",
+artifacts\visual_audit\report.json:2242:      "Scatter3D",
+artifacts\visual_audit\report.json:2246:    "id": "scatter3d-dense",
+artifacts\visual_audit\report.json:2248:      "logs/scatter3d-dense-desktop-1.stdout.txt",
+artifacts\visual_audit\report.json:2249:      "logs/scatter3d-dense-desktop-1.stderr.txt"
+artifacts\visual_audit\report.json:2252:    "name": "Scatter3D Dense",
+artifacts\visual_audit\report.json:2256:      "python tools/visual_audit.py --target scatter3d-dense --sizes desktop-1"
+artifacts\visual_audit\report.json:2259:      "screenshots/scatter3d-dense-desktop-1.png"
+artifacts\visual_audit\report.json:2261:    "script": "examples\\css_feature_probes\\scatter3d_dense_probe.py",
+artifacts\visual_audit\report.json:2263:      "snapshots/scatter3d-dense-desktop-1.json"
+artifacts\visual_audit\report.json:2269:      "native/src/scatter/mod.rs",
+artifacts\visual_audit\report.json:2276:      "Scatter3D",
+artifacts\visual_audit\report.json:2280:    "id": "scatter3d-frame-benchmark",
+artifacts\visual_audit\report.json:2282:      "logs/scatter3d-frame-benchmark-desktop-1.stdout.txt",
+artifacts\visual_audit\report.json:2283:      "logs/scatter3d-frame-benchmark-desktop-1.stderr.txt"
+artifacts\visual_audit\report.json:2286:    "name": "Scatter3D Frame Benchmark",
+artifacts\visual_audit\report.json:2290:      "python tools/visual_audit.py --target scatter3d-frame-benchmark --sizes desktop-1"
+artifacts\visual_audit\report.json:2293:      "screenshots/scatter3d-frame-benchmark-desktop-1.png"
+artifacts\visual_audit\report.json:2295:    "script": "examples\\css_feature_probes\\scatter3d_frame_benchmark_probe.py",
+artifacts\visual_audit\report.json:2297:      "snapshots/scatter3d-frame-benchmark-desktop-1.json"
+artifacts\visual_audit\report.json:2303:      "native/src/scatter/mod.rs",
+artifacts\visual_audit\REPORT.md:25:- Notes: Captured with native DragonGUI window screenshot API. Additional run: Includes overlays and stateful controls that benefit from follow-up interaction checks. Additional run: Static capture visual review: first-viewport screenshot inspected; captured closed/default state is usable, but listed interactive states still need manual or automated checks. Additional run: Includes overlays and stateful controls that benefit from follow-up interaction checks. Additional run: Captured with native DragonGUI window screenshot API.
+artifacts\visual_audit\REPORT.md:172:### Menu Overlays (`menu-overlays`)
+artifacts\visual_audit\REPORT.md:176:- Probe: `examples\css_feature_probes\menu_overlays_probe.py`
+artifacts\visual_audit\REPORT.md:178:- Screenshots: `screenshots/menu-overlays-desktop-1.png`
+artifacts\visual_audit\REPORT.md:179:- Debug snapshots: `snapshots/menu-overlays-desktop-1.json`
+artifacts\visual_audit\REPORT.md:180:- Logs: `logs/menu-overlays-desktop-1.stdout.txt`, `logs/menu-overlays-desktop-1.stderr.txt`
+artifacts\visual_audit\REPORT.md:183:- Reproduction: `python tools/visual_audit.py --target menu-overlays --sizes desktop-1`
+artifacts\visual_audit\REPORT.md:185:### Overlay Stack (`overlay-stack`)
+artifacts\visual_audit\REPORT.md:189:- Probe: `examples\css_feature_probes\overlay_stack_probe.py`
+artifacts\visual_audit\REPORT.md:191:- Screenshots: `screenshots/overlay-stack-desktop-1.png`
+artifacts\visual_audit\REPORT.md:192:- Debug snapshots: `snapshots/overlay-stack-desktop-1.json`
+artifacts\visual_audit\REPORT.md:193:- Logs: `logs/overlay-stack-desktop-1.stdout.txt`, `logs/overlay-stack-desktop-1.stderr.txt`
+artifacts\visual_audit\REPORT.md:196:- Reproduction: `python tools/visual_audit.py --target overlay-stack --sizes desktop-1`
+artifacts\visual_audit\REPORT.md:350:- Notes: Visual review after fix: desktop and 390x720 captures now keep dense controls inside their panels with visible usable inputs/actions. The previous zero-width controls and right-edge clipping in the sampled mobile rows are resolved in the saved screenshots. Additional run: No visual issue recorded by automated first pass. Additional run: Captured with native DragonGUI window screenshot API.
+artifacts\visual_audit\REPORT.md:367:### All Features Professional Demo - Overview (`all-features-professional-overview`)
+artifacts\visual_audit\REPORT.md:371:- Probe: `examples\css_feature_probes\all_features_professional_demo_probe.py`
+artifacts\visual_audit\REPORT.md:373:- Screenshots: `screenshots/all-features-professional-overview-1440x900.png`, `screenshots/all-features-professional-overview-1180x760.png`, `screenshots/all-features-professional-overview-390x720.png`, `screenshots/all-features-professional-overview-320x640.png`
+artifacts\visual_audit\REPORT.md:374:- Debug snapshots: `snapshots/all-features-professional-overview-1440x900.json`, `snapshots/all-features-professional-overview-1180x760.json`, `snapshots/all-features-professional-overview-390x720.json`, `snapshots/all-features-professional-overview-320x640.json`
+artifacts\visual_audit\REPORT.md:375:- Logs: `logs/all-features-professional-overview-1440x900.stdout.txt`, `logs/all-features-professional-overview-1440x900.stderr.txt`, `logs/all-features-professional-overview-1180x760.stdout.txt`, `logs/all-features-professional-overview-1180x760.stderr.txt`, `logs/all-features-professional-overview-390x720.stdout.txt`, `logs/all-features-professional-overview-390x720.stderr.txt`, `logs/all-features-professional-overview-320x640.stdout.txt`, `logs/all-features-professional-overview-320x640.stderr.txt`
+artifacts\visual_audit\REPORT.md:376:- Notes: Route-specific capture for the professional all-features demo overview page. Additional run: Captured with native DragonGUI window screenshot API.
+artifacts\visual_audit\REPORT.md:377:- Suspected modules: `native/src/layout.rs`, `native/src/primitives/mod.rs`, `native/src/runtime.rs`, `native/src/scatter/mod.rs`, `native/src/table.rs`
+artifacts\visual_audit\REPORT.md:378:- Reproduction: `python tools/visual_audit.py --target all-features-professional-overview --sizes 1440x900`; `python tools/visual_audit.py --target all-features-professional-overview --sizes 1180x760`; `python tools/visual_audit.py --target all-features-professional-overview --sizes 390x720`; `python tools/visual_audit.py --target all-features-professional-overview --sizes 320x640`
+artifacts\visual_audit\REPORT.md:380:### All Features Professional Demo - Explore (`all-features-professional-explore`)
+artifacts\visual_audit\REPORT.md:384:- Probe: `examples\css_feature_probes\all_features_professional_demo_probe.py`
+artifacts\visual_audit\REPORT.md:385:- Features: `Professional demo`, `Scatter3D`, `ScatterPlot2D`, `Splitter`, `Pane`, `Toolbar`, `SearchBox`
+artifacts\visual_audit\REPORT.md:386:- Screenshots: `screenshots/all-features-professional-explore-1440x900.png`, `screenshots/all-features-professional-explore-1180x760.png`, `screenshots/all-features-professional-explore-390x720.png`, `screenshots/all-features-professional-explore-320x640.png`
+artifacts\visual_audit\REPORT.md:387:- Debug snapshots: `snapshots/all-features-professional-explore-1440x900.json`, `snapshots/all-features-professional-explore-1180x760.json`, `snapshots/all-features-professional-explore-390x720.json`, `snapshots/all-features-professional-explore-320x640.json`
+artifacts\visual_audit\REPORT.md:388:- Logs: `logs/all-features-professional-explore-1440x900.stdout.txt`, `logs/all-features-professional-explore-1440x900.stderr.txt`, `logs/all-features-professional-explore-1180x760.stdout.txt`, `logs/all-features-professional-explore-1180x760.stderr.txt`, `logs/all-features-professional-explore-390x720.stdout.txt`, `logs/all-features-professional-explore-390x720.stderr.txt`, `logs/all-features-professional-explore-320x640.stdout.txt`, `logs/all-features-professional-explore-320x640.stderr.txt`
+artifacts\visual_audit\REPORT.md:389:- Notes: Route-specific capture for the professional all-features demo 3D explore page. Additional run: Captured with native DragonGUI window screenshot API.
+artifacts\visual_audit\REPORT.md:390:- Suspected modules: `native/src/layout.rs`, `native/src/primitives/mod.rs`, `native/src/runtime.rs`, `native/src/scatter/mod.rs`, `native/src/table.rs`
+artifacts\visual_audit\REPORT.md:391:- Reproduction: `python tools/visual_audit.py --target all-features-professional-explore --sizes 1440x900`; `python tools/visual_audit.py --target all-features-professional-explore --sizes 1180x760`; `python tools/visual_audit.py --target all-features-professional-explore --sizes 390x720`; `python tools/visual_audit.py --target all-features-professional-explore --sizes 320x640`
+artifacts\visual_audit\REPORT.md:393:### Adjacent Scatter Interaction Isolation (`adjacent-scatter-interaction`)
+artifacts\visual_audit\REPORT.md:397:- Probe: `examples\css_feature_probes\adjacent_scatter_interaction_probe.py`
+artifacts\visual_audit\REPORT.md:398:- Features: `Scatter3D`, `ScatterPlot2D`, `hit testing`, `mouse interaction`, `debug_snapshot`
+artifacts\visual_audit\REPORT.md:399:- Screenshots: `screenshots/adjacent-scatter-interaction-1120x720.png`
+artifacts\visual_audit\REPORT.md:400:- Debug snapshots: `snapshots/adjacent-scatter-interaction-1120x720.json`
+artifacts\visual_audit\REPORT.md:401:- Logs: `logs/adjacent-scatter-interaction-1120x720.stdout.txt`, `logs/adjacent-scatter-interaction-1120x720.stderr.txt`
+artifacts\visual_audit\REPORT.md:402:- Notes: Automated two-plot interaction probe for adjacent scatter state isolation. Additional run: Captured with native DragonGUI window screenshot API.
+artifacts\visual_audit\REPORT.md:403:- Suspected modules: `native/src/layout.rs`, `native/src/primitives/mod.rs`, `native/src/runtime.rs`, `native/src/scatter/mod.rs`, `native/src/table.rs`
+artifacts\visual_audit\REPORT.md:404:- Reproduction: `python tools/visual_audit.py --target adjacent-scatter-interaction --sizes 1120x720`
+artifacts\visual_audit\REPORT.md:406:### All Features Professional Demo - Timeseries (`all-features-professional-timeseries`)
+artifacts\visual_audit\REPORT.md:410:- Probe: `examples\css_feature_probes\all_features_professional_demo_probe.py`
+artifacts\visual_audit\REPORT.md:412:- Screenshots: `screenshots/all-features-professional-timeseries-1440x900.png`, `screenshots/all-features-professional-timeseries-1180x760.png`, `screenshots/all-features-professional-timeseries-390x720.png`, `screenshots/all-features-professional-timeseries-320x640.png`
+artifacts\visual_audit\REPORT.md:413:- Debug snapshots: `snapshots/all-features-professional-timeseries-1440x900.json`, `snapshots/all-features-professional-timeseries-1180x760.json`, `snapshots/all-features-professional-timeseries-390x720.json`, `snapshots/all-features-professional-timeseries-320x640.json`
+artifacts\visual_audit\REPORT.md:414:- Logs: `logs/all-features-professional-timeseries-1440x900.stdout.txt`, `logs/all-features-professional-timeseries-1440x900.stderr.txt`, `logs/all-features-professional-timeseries-1180x760.stdout.txt`, `logs/all-features-professional-timeseries-1180x760.stderr.txt`, `logs/all-features-professional-timeseries-390x720.stdout.txt`, `logs/all-features-professional-timeseries-390x720.stderr.txt`, `logs/all-features-professional-timeseries-320x640.stdout.txt`, `logs/all-features-professional-timeseries-320x640.stderr.txt`
+artifacts\visual_audit\REPORT.md:415:- Notes: Route-specific capture for the professional all-features demo time-series page. Additional run: Captured with native DragonGUI window screenshot API.
+artifacts\visual_audit\REPORT.md:416:- Suspected modules: `native/src/layout.rs`, `native/src/primitives/mod.rs`, `native/src/runtime.rs`, `native/src/scatter/mod.rs`, `native/src/table.rs`
+artifacts\visual_audit\REPORT.md:417:- Reproduction: `python tools/visual_audit.py --target all-features-professional-timeseries --sizes 1440x900`; `python tools/visual_audit.py --target all-features-professional-timeseries --sizes 1180x760`; `python tools/visual_audit.py --target all-features-professional-timeseries --sizes 390x720`; `python tools/visual_audit.py --target all-features-professional-timeseries --sizes 320x640`
+artifacts\visual_audit\REPORT.md:419:### All Features Professional Demo - Data (`all-features-professional-data`)
+artifacts\visual_audit\REPORT.md:423:- Probe: `examples\css_feature_probes\all_features_professional_demo_probe.py`
+artifacts\visual_audit\REPORT.md:425:- Screenshots: `screenshots/all-features-professional-data-1440x900.png`, `screenshots/all-features-professional-data-1180x760.png`, `screenshots/all-features-professional-data-390x720.png`, `screenshots/all-features-professional-data-320x640.png`
+artifacts\visual_audit\REPORT.md:426:- Debug snapshots: `snapshots/all-features-professional-data-1440x900.json`, `snapshots/all-features-professional-data-1180x760.json`, `snapshots/all-features-professional-data-390x720.json`, `snapshots/all-features-professional-data-320x640.json`
+artifacts\visual_audit\REPORT.md:427:- Logs: `logs/all-features-professional-data-1440x900.stdout.txt`, `logs/all-features-professional-data-1440x900.stderr.txt`, `logs/all-features-professional-data-1180x760.stdout.txt`, `logs/all-features-professional-data-1180x760.stderr.txt`, `logs/all-features-professional-data-390x720.stdout.txt`, `logs/all-features-professional-data-390x720.stderr.txt`, `logs/all-features-professional-data-320x640.stdout.txt`, `logs/all-features-professional-data-320x640.stderr.txt`
+artifacts\visual_audit\REPORT.md:428:- Notes: Route-specific capture for the professional all-features demo data review page. Additional run: Captured with native DragonGUI window screenshot API.
+artifacts\visual_audit\REPORT.md:430:- Reproduction: `python tools/visual_audit.py --target all-features-professional-data --sizes 1440x900`; `python tools/visual_audit.py --target all-features-professional-data --sizes 1180x760`; `python tools/visual_audit.py --target all-features-professional-data --sizes 390x720`; `python tools/visual_audit.py --target all-features-professional-data --sizes 320x640`
+artifacts\visual_audit\REPORT.md:432:### All Features Professional Demo - Workflow (`all-features-professional-workflow`)
+artifacts\visual_audit\REPORT.md:436:- Probe: `examples\css_feature_probes\all_features_professional_demo_probe.py`
+artifacts\visual_audit\REPORT.md:438:- Screenshots: `screenshots/all-features-professional-workflow-1440x900.png`, `screenshots/all-features-professional-workflow-1180x760.png`, `screenshots/all-features-professional-workflow-390x720.png`, `screenshots/all-features-professional-workflow-320x640.png`
+artifacts\visual_audit\REPORT.md:439:- Debug snapshots: `snapshots/all-features-professional-workflow-1440x900.json`, `snapshots/all-features-professional-workflow-1180x760.json`, `snapshots/all-features-professional-workflow-390x720.json`, `snapshots/all-features-professional-workflow-320x640.json`
+artifacts\visual_audit\REPORT.md:440:- Logs: `logs/all-features-professional-workflow-1440x900.stdout.txt`, `logs/all-features-professional-workflow-1440x900.stderr.txt`, `logs/all-features-professional-workflow-1180x760.stdout.txt`, `logs/all-features-professional-workflow-1180x760.stderr.txt`, `logs/all-features-professional-workflow-390x720.stdout.txt`, `logs/all-features-professional-workflow-390x720.stderr.txt`, `logs/all-features-professional-workflow-320x640.stdout.txt`, `logs/all-features-professional-workflow-320x640.stderr.txt`
+artifacts\visual_audit\REPORT.md:441:- Notes: Route-specific capture for the professional all-features demo workflow page. Additional run: Captured with native DragonGUI window screenshot API.
+artifacts\visual_audit\REPORT.md:443:- Reproduction: `python tools/visual_audit.py --target all-features-professional-workflow --sizes 1440x900`; `python tools/visual_audit.py --target all-features-professional-workflow --sizes 1180x760`; `python tools/visual_audit.py --target all-features-professional-workflow --sizes 390x720`; `python tools/visual_audit.py --target all-features-professional-workflow --sizes 320x640`
+artifacts\visual_audit\REPORT.md:445:### All Features Professional Demo - Reports (`all-features-professional-reports`)
+artifacts\visual_audit\REPORT.md:449:- Probe: `examples\css_feature_probes\all_features_professional_demo_probe.py`
+artifacts\visual_audit\REPORT.md:451:- Screenshots: `screenshots/all-features-professional-reports-1440x900.png`, `screenshots/all-features-professional-reports-1180x760.png`, `screenshots/all-features-professional-reports-390x720.png`, `screenshots/all-features-professional-reports-320x640.png`
+artifacts\visual_audit\REPORT.md:452:- Debug snapshots: `snapshots/all-features-professional-reports-1440x900.json`, `snapshots/all-features-professional-reports-1180x760.json`, `snapshots/all-features-professional-reports-390x720.json`, `snapshots/all-features-professional-reports-320x640.json`
+artifacts\visual_audit\REPORT.md:453:- Logs: `logs/all-features-professional-reports-1440x900.stdout.txt`, `logs/all-features-professional-reports-1440x900.stderr.txt`, `logs/all-features-professional-reports-1180x760.stdout.txt`, `logs/all-features-professional-reports-1180x760.stderr.txt`, `logs/all-features-professional-reports-390x720.stdout.txt`, `logs/all-features-professional-reports-390x720.stderr.txt`, `logs/all-features-professional-reports-320x640.stdout.txt`, `logs/all-features-professional-reports-320x640.stderr.txt`
+artifacts\visual_audit\REPORT.md:454:- Notes: Route-specific capture for the professional all-features demo reports page. Additional run: Captured with native DragonGUI window screenshot API.
+artifacts\visual_audit\REPORT.md:456:- Reproduction: `python tools/visual_audit.py --target all-features-professional-reports --sizes 1440x900`; `python tools/visual_audit.py --target all-features-professional-reports --sizes 1180x760`; `python tools/visual_audit.py --target all-features-professional-reports --sizes 390x720`; `python tools/visual_audit.py --target all-features-professional-reports --sizes 320x640`
+artifacts\visual_audit\REPORT.md:458:### All Features Professional Demo - Runtime (`all-features-professional-runtime`)
+artifacts\visual_audit\REPORT.md:462:- Probe: `examples\css_feature_probes\all_features_professional_demo_probe.py`
+artifacts\visual_audit\REPORT.md:464:- Screenshots: `screenshots/all-features-professional-runtime-1440x900.png`, `screenshots/all-features-professional-runtime-1180x760.png`, `screenshots/all-features-professional-runtime-390x720.png`, `screenshots/all-features-professional-runtime-320x640.png`
+artifacts\visual_audit\REPORT.md:465:- Debug snapshots: `snapshots/all-features-professional-runtime-1440x900.json`, `snapshots/all-features-professional-runtime-1180x760.json`, `snapshots/all-features-professional-runtime-390x720.json`, `snapshots/all-features-professional-runtime-320x640.json`
+artifacts\visual_audit\REPORT.md:466:- Logs: `logs/all-features-professional-runtime-1440x900.stdout.txt`, `logs/all-features-professional-runtime-1440x900.stderr.txt`, `logs/all-features-professional-runtime-1180x760.stdout.txt`, `logs/all-features-professional-runtime-1180x760.stderr.txt`, `logs/all-features-professional-runtime-390x720.stdout.txt`, `logs/all-features-professional-runtime-390x720.stderr.txt`, `logs/all-features-professional-runtime-320x640.stdout.txt`, `logs/all-features-professional-runtime-320x640.stderr.txt`
+artifacts\visual_audit\REPORT.md:467:- Notes: Route-specific capture for the professional all-features demo runtime diagnostics page. Additional run: Captured with native DragonGUI window screenshot API.
+artifacts\visual_audit\REPORT.md:469:- Reproduction: `python tools/visual_audit.py --target all-features-professional-runtime --sizes 1440x900`; `python tools/visual_audit.py --target all-features-professional-runtime --sizes 1180x760`; `python tools/visual_audit.py --target all-features-professional-runtime --sizes 390x720`; `python tools/visual_audit.py --target all-features-professional-runtime --sizes 320x640`
+artifacts\visual_audit\REPORT.md:471:### All Features Professional Demo - Styling (`all-features-professional-styling`)
+artifacts\visual_audit\REPORT.md:475:- Probe: `examples\css_feature_probes\all_features_professional_demo_probe.py`
+artifacts\visual_audit\REPORT.md:477:- Screenshots: `screenshots/all-features-professional-styling-1440x900.png`, `screenshots/all-features-professional-styling-1180x760.png`, `screenshots/all-features-professional-styling-390x720.png`, `screenshots/all-features-professional-styling-320x640.png`
+artifacts\visual_audit\REPORT.md:478:- Debug snapshots: `snapshots/all-features-professional-styling-1440x900.json`, `snapshots/all-features-professional-styling-1180x760.json`, `snapshots/all-features-professional-styling-390x720.json`, `snapshots/all-features-professional-styling-320x640.json`
+artifacts\visual_audit\REPORT.md:479:- Logs: `logs/all-features-professional-styling-1440x900.stdout.txt`, `logs/all-features-professional-styling-1440x900.stderr.txt`, `logs/all-features-professional-styling-1180x760.stdout.txt`, `logs/all-features-professional-styling-1180x760.stderr.txt`, `logs/all-features-professional-styling-390x720.stdout.txt`, `logs/all-features-professional-styling-390x720.stderr.txt`, `logs/all-features-professional-styling-320x640.stdout.txt`, `logs/all-features-professional-styling-320x640.stderr.txt`
+artifacts\visual_audit\REPORT.md:480:- Notes: Route-specific capture for the professional all-features demo styling page. Additional run: Captured with native DragonGUI window screenshot API.
+artifacts\visual_audit\REPORT.md:482:- Reproduction: `python tools/visual_audit.py --target all-features-professional-styling --sizes 1440x900`; `python tools/visual_audit.py --target all-features-professional-styling --sizes 1180x760`; `python tools/visual_audit.py --target all-features-professional-styling --sizes 390x720`; `python tools/visual_audit.py --target all-features-professional-styling --sizes 320x640`
+artifacts\visual_audit\REPORT.md:510:### Layout Overlay Collision (`layout-overlay-collision`)
+artifacts\visual_audit\REPORT.md:514:- Probe: `examples\css_feature_probes\layout_overlay_collision_probe.py`
+artifacts\visual_audit\REPORT.md:516:- Screenshots: `screenshots/layout-overlay-collision-desktop-1.png`
+artifacts\visual_audit\REPORT.md:517:- Debug snapshots: `snapshots/layout-overlay-collision-desktop-1.json`
+artifacts\visual_audit\REPORT.md:518:- Logs: `logs/layout-overlay-collision-desktop-1.stdout.txt`, `logs/layout-overlay-collision-desktop-1.stderr.txt`
+artifacts\visual_audit\REPORT.md:521:- Reproduction: `python tools/visual_audit.py --target layout-overlay-collision --sizes desktop-1`
+artifacts\visual_audit\REPORT.md:546:- Suspected modules: `native/src/layout.rs`, `native/src/primitives/mod.rs`, `native/src/runtime.rs`, `native/src/scatter/mod.rs`, `native/src/table.rs`
+artifacts\visual_audit\REPORT.md:619:- Features: `DataFrameTable`, `Scatter3D`
+artifacts\visual_audit\REPORT.md:624:- Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`, `native/src/scatter/mod.rs`, `native/src/table.rs`
+artifacts\visual_audit\REPORT.md:637:- Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`, `native/src/scatter/mod.rs`, `native/src/table.rs`
+artifacts\visual_audit\REPORT.md:650:- Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`, `native/src/scatter/mod.rs`, `native/src/table.rs`
+artifacts\visual_audit\REPORT.md:663:- Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`, `native/src/scatter/mod.rs`, `native/src/table.rs`
+artifacts\visual_audit\REPORT.md:676:- Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`, `native/src/scatter/mod.rs`, `native/src/table.rs`
+artifacts\visual_audit\REPORT.md:689:- Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`, `native/src/scatter/mod.rs`, `native/src/table.rs`
+artifacts\visual_audit\REPORT.md:702:- Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`, `native/src/scatter/mod.rs`, `native/src/table.rs`
+artifacts\visual_audit\REPORT.md:715:- Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`, `native/src/scatter/mod.rs`, `native/src/table.rs`
+artifacts\visual_audit\REPORT.md:728:- Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`, `native/src/scatter/mod.rs`, `native/src/table.rs`
+artifacts\visual_audit\REPORT.md:731:### Scatter3D (`scatter3d`)
+artifacts\visual_audit\REPORT.md:735:- Probe: `examples\css_feature_probes\scatter3d_probe.py`
+artifacts\visual_audit\REPORT.md:736:- Features: `Scatter3D`
+artifacts\visual_audit\REPORT.md:737:- Screenshots: `screenshots/scatter3d-desktop-1.png`, `screenshots/scatter3d-390x720.png`
+artifacts\visual_audit\REPORT.md:738:- Debug snapshots: `snapshots/scatter3d-desktop-1.json`, `snapshots/scatter3d-390x720.json`
+artifacts\visual_audit\REPORT.md:739:- Logs: `logs/scatter3d-desktop-1.stdout.txt`, `logs/scatter3d-desktop-1.stderr.txt`, `logs/scatter3d-390x720.stdout.txt`, `logs/scatter3d-390x720.stderr.txt`
+artifacts\visual_audit\REPORT.md:741:- Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`, `native/src/scatter/mod.rs`, `native/src/table.rs`
+artifacts\visual_audit\REPORT.md:742:- Reproduction: `python tools/visual_audit.py --target scatter3d --sizes desktop-1`; `python tools/visual_audit.py --target scatter3d --sizes 390x720`
+artifacts\visual_audit\REPORT.md:744:### Scatter3D CSS Chrome (`scatter3d-css-chrome`)
+artifacts\visual_audit\REPORT.md:748:- Probe: `examples\css_feature_probes\scatter3d_css_chrome_probe.py`
+artifacts\visual_audit\REPORT.md:749:- Features: `Scatter3D`, `Legend`, `Axes`, `Grid planes`
+artifacts\visual_audit\REPORT.md:750:- Screenshots: `screenshots/scatter3d-css-chrome-desktop-1.png`
+artifacts\visual_audit\REPORT.md:751:- Debug snapshots: `snapshots/scatter3d-css-chrome-desktop-1.json`
+artifacts\visual_audit\REPORT.md:752:- Logs: `logs/scatter3d-css-chrome-desktop-1.stdout.txt`, `logs/scatter3d-css-chrome-desktop-1.stderr.txt`
+artifacts\visual_audit\REPORT.md:754:- Suspected modules: `native/src/layout.rs`, `native/src/primitives/mod.rs`, `native/src/runtime.rs`, `native/src/scatter/mod.rs`, `native/src/table.rs`
+artifacts\visual_audit\REPORT.md:755:- Reproduction: `python tools/visual_audit.py --target scatter3d-css-chrome --sizes desktop-1`
+artifacts\visual_audit\REPORT.md:757:### Scatter Plot 2D (`scatter-plot-2d`)
+artifacts\visual_audit\REPORT.md:761:- Probe: `examples\css_feature_probes\scatter_plot_2d_probe.py`
+artifacts\visual_audit\REPORT.md:763:- Screenshots: `screenshots/scatter-plot-2d-desktop-1.png`, `screenshots/scatter-plot-2d-390x720.png`
+artifacts\visual_audit\REPORT.md:764:- Debug snapshots: `snapshots/scatter-plot-2d-desktop-1.json`, `snapshots/scatter-plot-2d-390x720.json`
+artifacts\visual_audit\REPORT.md:765:- Logs: `logs/scatter-plot-2d-desktop-1.stdout.txt`, `logs/scatter-plot-2d-desktop-1.stderr.txt`, `logs/scatter-plot-2d-390x720.stdout.txt`, `logs/scatter-plot-2d-390x720.stderr.txt`
+artifacts\visual_audit\REPORT.md:767:- Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`, `native/src/scatter/mod.rs`, `native/src/table.rs`
+artifacts\visual_audit\REPORT.md:768:- Reproduction: `python tools/visual_audit.py --target scatter-plot-2d --sizes desktop-1`; `python tools/visual_audit.py --target scatter-plot-2d --sizes 390x720`
+artifacts\visual_audit\REPORT.md:770:### Scatter3D Dense (`scatter3d-dense`)
+artifacts\visual_audit\REPORT.md:774:- Probe: `examples\css_feature_probes\scatter3d_dense_probe.py`
+artifacts\visual_audit\REPORT.md:775:- Features: `Scatter3D`, `Dense volume`, `Depth behavior`
+artifacts\visual_audit\REPORT.md:776:- Screenshots: `screenshots/scatter3d-dense-desktop-1.png`
+artifacts\visual_audit\REPORT.md:777:- Debug snapshots: `snapshots/scatter3d-dense-desktop-1.json`
+artifacts\visual_audit\REPORT.md:778:- Logs: `logs/scatter3d-dense-desktop-1.stdout.txt`, `logs/scatter3d-dense-desktop-1.stderr.txt`
+artifacts\visual_audit\REPORT.md:780:- Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`, `native/src/scatter/mod.rs`, `native/src/table.rs`
+artifacts\visual_audit\REPORT.md:781:- Reproduction: `python tools/visual_audit.py --target scatter3d-dense --sizes desktop-1`
+artifacts\visual_audit\REPORT.md:783:### Scatter3D Frame Benchmark (`scatter3d-frame-benchmark`)
+artifacts\visual_audit\REPORT.md:787:- Probe: `examples\css_feature_probes\scatter3d_frame_benchmark_probe.py`
+artifacts\visual_audit\REPORT.md:788:- Features: `Scatter3D`, `Frame replacement`, `Diagnostics`
+artifacts\visual_audit\REPORT.md:789:- Screenshots: `screenshots/scatter3d-frame-benchmark-desktop-1.png`
+artifacts\visual_audit\REPORT.md:790:- Debug snapshots: `snapshots/scatter3d-frame-benchmark-desktop-1.json`
+artifacts\visual_audit\REPORT.md:791:- Logs: `logs/scatter3d-frame-benchmark-desktop-1.stdout.txt`, `logs/scatter3d-frame-benchmark-desktop-1.stderr.txt`
+artifacts\visual_audit\REPORT.md:793:- Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`, `native/src/scatter/mod.rs`, `native/src/table.rs`
+artifacts\visual_audit\REPORT.md:794:- Reproduction: `python tools/visual_audit.py --target scatter3d-frame-benchmark --sizes desktop-1`

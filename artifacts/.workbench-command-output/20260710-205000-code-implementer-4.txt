@@ -1,0 +1,260 @@
+from __future__ import annotations
+
+import math
+import os
+import random
+import struct
+import sys
+import threading
+import time
+import zlib
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+if __name__ == "__main__" and __package__ is None:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
+
+try:
+    import numpy as np
+except ImportError as exc:
+    raise SystemExit(
+        "all_features_professional_demo.py requires NumPy for DragonGUI plot payloads. "
+        "Install numpy or run a non-plot example."
+    ) from exc
+
+import dragongui as dg
+
+
+ROOT = Path(__file__).resolve().parents[1]
+OUT_DIR = ROOT / "artifacts" / "generated" / "all_features_professional_demo"
+OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+POINTS = int(os.environ.get("DG_PRO_DEMO_POINTS", "16000"))
+ROWS = int(os.environ.get("DG_PRO_DEMO_ROWS", "180"))
+SERIES_POINTS = int(os.environ.get("DG_PRO_DEMO_SERIES_POINTS", "720"))
+RNG = np.random.default_rng(42)
+
+ROUTES = [
+    ("overview", "Overview", "4"),
+    ("explore", "3D Explore", None),
+    ("timeseries", "Time Series", "live"),
+    ("data", "Data", None),
+    ("workflow", "Workflow", "9"),
+    ("reports", "Reports", None),
+    ("runtime", "Runtime", None),
+    ("styling", "Styling", None),
+]
+
+
+class DemoState:
+    def __init__(self) -> None:
+        self.app: dg.App | None = None
+        self.pages: dg.Pages | None = None
+        self.tabs: dg.Tabs | None = None
+        self.status: dg.Label | None = None
+        self.status_badge: dg.Badge | None = None
+        self.stream_led: dg.LED | None = None
+        self.progress: dg.ProgressBar | None = None
+        self.incident_badge: dg.Badge | None = None
+        self.data_table: dg.DataFrameTable | None = None
+        self.scatter: dg.Scatter3D | None = None
+        self.scatter2d: dg.ScatterPlot2D | None = None
+        self.line_plot: dg.LinePlot | None = None
+        self.heatmap: dg.Heatmap | None = None
+        self.bar_chart: dg.BarChart | None = None
+        self.pie_chart: dg.PieChart | None = None
+        self.report: dg.HtmlReport | None = None
+        self.image: dg.Image | None = None
+        self.log: dg.LogView | None = None
+        self.code: dg.CodeEditor | None = None
+        self.palette: dg.CommandPalette | None = None
+        self.modal: dg.Modal | None = None
+        self.alert_modal: dg.Modal | None = None
+        self.confirm_modal: dg.Modal | None = None
+        self.live_panel: dg.Panel | None = None
+        self.theme_chip: dg.Tag | None = None
+        self.nav_items: dict[str, dg.NavItem] = {}
+        self.stream_stop = threading.Event()
+        self.stream_thread: threading.Thread | None = None
+        self.resource_uploaded = False
+        self.resource_id = "professional-demo:telemetry-preview"
+        self.stream_count = 0
+
+
+state = DemoState()
+
+
+def frame_from_columns(**columns: Any) -> dict[str, list[Any]]:
+    return {name: list(values) for name, values in columns.items()}
+
+
+def build_scatter_frame(count: int = POINTS, phase: float = 0.0) -> dict[str, list[Any]]:
+    t = np.linspace(0, 9 * math.pi, count, dtype=np.float32)
+    ring = 1.0 + 0.24 * np.sin(t * 0.37 + phase)
+    x = ring * np.cos(t) + RNG.normal(0, 0.055, count)
+    y = ring * np.sin(t) + RNG.normal(0, 0.055, count)
+    z = np.linspace(-1.4, 1.4, count, dtype=np.float32) + 0.32 * np.sin(t * 0.6 + phase)
+    health = np.clip(82 + 11 * np.sin(t * 0.19 + phase) + RNG.normal(0, 3, count), 0, 100)
+    temp = np.clip(58 + 16 * np.cos(t * 0.11 - phase) + RNG.normal(0, 2.5, count), 15, 95)
+    return frame_from_columns(
+        x=x,
+        y=y,
+        z=z,
+        health=health,
+        temperature=temp,
+        zone=[f"zone-{i % 8}" for i in range(count)],
+        asset=[f"cell-{(i * 7) % 19:02d}" for i in range(count)],
+    )
+
+
+def build_table(rows: int = ROWS) -> list[dict[str, Any]]:
+    owners = ["ingest", "model", "quality", "export", "field"]
+    states = ["ready", "running", "queued", "watch", "blocked"]
+    table: list[dict[str, Any]] = []
+    now = datetime(2026, 7, 10, 9, 0)
+    for i in range(rows):
+        latency = 18 + (i % 17) * 2.6 + (i % 5) * 0.7
+        error_rate = round(max(0, math.sin(i * 0.21) * 1.8 + (i % 9) * 0.17), 2)
+        state_name = states[(i + (1 if error_rate > 1.8 else 0)) % len(states)]
+        table.append(
+            {
+                "route": f"plant.north.line-{i % 6}.cell-{i % 14}.sensor-feed",
+                "owner": owners[i % len(owners)],
+                "state": state_name,
+                "latency_ms": round(latency, 2),
+                "error_rate": error_rate,
+                "throughput": 950 + (i * 37) % 760,
+                "updated": (now - timedelta(minutes=i * 3)).isoformat(timespec="minutes"),
+            }
+        )
+    return table
+
+
+def build_series(points: int = SERIES_POINTS) -> dict[str, list[float]]:
+    x = np.arange(points, dtype=np.float32)
+    base = np.sin(x / 31.0) * 6 + np.cos(x / 87.0) * 4
+    return frame_from_columns(
+        minute=x,
+        latency=32 + base + RNG.normal(0, 1.5, points),
+        throughput=1200 + 110 * np.sin(x / 42.0) + RNG.normal(0, 24, points),
+        error_budget=np.clip(92 - np.abs(base) * 2 + RNG.normal(0, 1.2, points), 65, 100),
+    )
+
+
+def build_heatmap() -> tuple[list[list[float]], list[str], list[str]]:
+    y_labels = [f"L{i + 1}" for i in range(8)]
+    x_labels = [f"{hour:02d}:00" for hour in range(0, 24, 2)]
+    matrix = []
+    for y in range(len(y_labels)):
+        row = []
+        for x in range(len(x_labels)):
+            row.append(18 + 8 * math.sin(x / 2.4) + 3.5 * math.cos(y * 0.8) + (x * y) % 4)
+        matrix.append(row)
+    return matrix, x_labels, y_labels
+
+
+def write_png(path: Path, width: int = 420, height: int = 220) -> None:
+    rows = []
+    for y in range(height):
+        raw = bytearray([0])
+        for x in range(width):
+            signal = int(80 + 70 * math.sin((x + y) / 33.0))
+            raw.extend((24 + x * 70 // width, 70 + signal // 3, 92 + y * 95 // height))
+        rows.append(bytes(raw))
+    payload = zlib.compress(b"".join(rows), 9)
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", payload)
+        + chunk(b"IEND", b"")
+    )
+    path.write_bytes(png)
+
+
+def write_report(path: Path) -> None:
+    path.write_text(
+        """<!doctype html>
+<html><head><meta charset="utf-8"><title>DragonGUI Operations Report</title>
+<style>
+body{font-family:Segoe UI,Arial,sans-serif;margin:28px;color:#172033;background:#f7f8fb}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.card{background:white;border:1px solid #d9dee8;border-radius:8px;padding:14px}
+h1{font-size:24px;margin:0 0 12px}.metric{font-size:28px;font-weight:700}.ok{color:#137b3a}.warn{color:#9b6500}.bad{color:#b42318}
+table{width:100%;border-collapse:collapse;margin-top:16px}td,th{border-bottom:1px solid #dde3ee;padding:8px;text-align:left;font-size:13px}
+</style></head><body>
+<h1>North Plant Sensor Operations</h1>
+<div class="grid">
+<div class="card"><div>Availability</div><div class="metric ok">99.2%</div></div>
+<div class="card"><div>Open Incidents</div><div class="metric warn">4</div></div>
+<div class="card"><div>Blocked Routes</div><div class="metric bad">2</div></div>
+</div>
+<table><tr><th>Route</th><th>Owner</th><th>Status</th><th>Note</th></tr>
+<tr><td>line-2 / cell-07</td><td>model</td><td>watch</td><td>drift above p95</td></tr>
+<tr><td>line-4 / cell-03</td><td>quality</td><td>ready</td><td>calibration complete</td></tr>
+<tr><td>line-1 / cell-11</td><td>export</td><td>queued</td><td>awaiting report bundle</td></tr>
+</table></body></html>
+""",
+        encoding="utf-8",
+    )
+
+
+SCATTER_FRAME = build_scatter_frame()
+TABLE_ROWS = build_table()
+TABLE_FRAME = frame_from_columns(
+    route=[row["route"] for row in TABLE_ROWS],
+    owner=[row["owner"] for row in TABLE_ROWS],
+    state=[row["state"] for row in TABLE_ROWS],
+    latency_ms=[row["latency_ms"] for row in TABLE_ROWS],
+    error_rate=[row["error_rate"] for row in TABLE_ROWS],
+    throughput=[row["throughput"] for row in TABLE_ROWS],
+    updated=[row["updated"] for row in TABLE_ROWS],
+)
+SERIES_FRAME = build_series()
+HEAT_MATRIX, HEAT_X, HEAT_Y = build_heatmap()
+REPORT_PATH = OUT_DIR / "operations_report.html"
+IMAGE_PATH = OUT_DIR / "sensor_preview.png"
+write_report(REPORT_PATH)
+write_png(IMAGE_PATH)
+
+
+def log(message: str) -> None:
+    text = f"{datetime.now().strftime('%H:%M:%S')}  {message}"
+    print(text)
+    if state.log is not None:
+        state.log.append_line(text)
+    if state.status is not None:
+        state.status.set_value(message)
+
+
+def set_status(message: str, level: str = "info") -> None:
+    if state.status_badge is not None:
+        state.status_badge.set_value(level)
+        state.status_badge.set_level("danger" if level == "error" else level)
+    log(message)
+
+
+def navigate(route: str) -> None:
+    if state.pages is not None:
+        state.pages.set_value(route)
+    if state.tabs is not None:
+        state.tabs.set_value(route)
+    set_status(f"Route changed to {route}")
+
+
+def show_palette() -> None:
+    if state.palette is not None:
+        state.palette.show()
+
+
+def show_review_modal() -> None:
+    if state.modal is not None:
+        state.modal.show()
+
+
+def show_confirm_modal() -> None:
+    if state.confirm_modal is not None:
+        state.confirm_modal.show()

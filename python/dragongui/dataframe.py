@@ -171,6 +171,18 @@ def _pack_utf8_column(arr: Any) -> bytes:
 
 
 def _columns(frame: Any) -> tuple[str, ...]:
+    if isinstance(frame, list) and frame and all(isinstance(row, dict) for row in frame):
+        columns: list[str] = []
+        seen: set[str] = set()
+        for row in frame:
+            for column in row:
+                text = str(column)
+                if text in seen:
+                    continue
+                seen.add(text)
+                columns.append(text)
+        return tuple(columns)
+
     columns = getattr(frame, "columns", None)
     if columns is not None:
         return tuple(str(column) for column in columns)
@@ -184,6 +196,18 @@ def _columns(frame: Any) -> tuple[str, ...]:
 
 
 def _dtypes(frame: Any, columns: tuple[str, ...]) -> tuple[str, ...]:
+    if isinstance(frame, list) and frame and all(isinstance(row, dict) for row in frame):
+        values: list[str] = []
+        for column in columns:
+            dtype = ""
+            for row in frame:
+                value = row.get(column)
+                if value is not None:
+                    dtype = type(value).__name__
+                    break
+            values.append(dtype)
+        return tuple(values)
+
     dtypes = getattr(frame, "dtypes", None)
     if dtypes is not None:
         try:
@@ -223,6 +247,9 @@ def _row_count(frame: Any) -> int | None:
 
 
 def _column_data(frame: Any, column: str) -> Any:
+    if isinstance(frame, list) and all(isinstance(row, dict) for row in frame):
+        return [row.get(column, _MISSING) for row in frame]
+
     try:
         return frame[column]
     except (AttributeError, KeyError, TypeError, IndexError):

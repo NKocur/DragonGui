@@ -1,83 +1,176 @@
-# Implementation Notes: Dramatic Default GUI Polish Pass
+# Implementation Notes: Reopened Adjacent Scatter Interaction Fix
 
-## Initial Defects Documented
+## Changed In This Pass
 
-- `artifacts/visual_audit/screenshots/app-shell-workbench-390x720.png`
-  - Heading was clipped (`AppShell + Body + ...`).
-  - Summary cards preserved desktop row assumptions and clipped/wasted label/body text in the narrow viewport.
-- `artifacts/visual_audit/screenshots/responsive-layout-390x720.png`
-  - Narrow capture showed cramped nested scrolling and fixed grid/panel sizing that hid content behind narrow regions.
-- `artifacts/visual_audit/screenshots/layout-flex-stress-390x720.png`
-  - Dense rows with long labels and mixed fixed/flexible controls were too squeezed on mobile.
-- The first pass made defaults more compact, but the visual change was subtle. The screenshots still read as broad filled cards with similar surfaces and weak hierarchy.
+- Fixed stale scatter interaction state in `native/src/runtime.rs`.
+  - Added `cancel_scatter_interaction()` to clear `active_scatter_id`, orbit/pan/selection drag state, press position, temporary selection overlays, and interaction LOD.
+  - Called it on `WindowEvent::CursorLeft` and `WindowEvent::Focused(false)` so a pointer-down in one plot followed by leaving the window cannot keep routing later movement to that stale scatter.
+- Expanded native debug snapshots for scatter isolation checks.
+  - Runtime snapshots now include `active_scatter_id`.
+  - Per-scatter snapshots now include viewport clip/offset/size, data bounds, actor counts, hover state, and selection state.
+- Added `examples/css_feature_probes/adjacent_scatter_interaction_probe.py`.
+  - Builds adjacent explicit-id plots: `adjacent-left-scatter` (`Scatter3D`, 720 points, turbo, scalar bar) and `adjacent-right-scatter` (`ScatterPlot2D`, 360 points, viridis).
+  - Uses Windows mouse input to exercise hover transitions, left/right clicks, gutter click, left drag, drag-outside/release, right drag, and wheel over both plots.
+  - Prints import paths and emits `ADJACENT_SCATTER_INTERACTION_PASS` only after stable per-scatter signatures remain distinct and `active_scatter_id` is cleared.
+- Registered the probe as `adjacent-scatter-interaction` in `examples/css_feature_probes/visual_audit_manifest.json`.
+- Added `tools/visual_audit.py` validation for the adjacent interaction target.
+  - The target now fails if stdout has a fail marker, lacks a pass marker, or omits import path diagnostics.
+  - Added unit coverage in `tests/test_visual_audit.py`.
+- Kept the prior startup-framing fix intact.
+  - Base `Scatter3D` startup uploads still request `fit=true`.
+  - `ScatterPlot2D` still uses its explicit 2D `FitScatterCamera` path.
+- Rebuilt and copied the native release extension to `python/dragongui/_dragongui.pyd`.
+- Reinstalled the package into global Python 3.13 with `pip install --upgrade --force-reinstall .`.
 
-## Changed
+## Reproduction And Verification
 
-- Made default dark/light theme changes more visible in `python/dragongui/theme.py` and `native/src/theme.rs`.
-  - Dark defaults now use a deeper app background, clearer panel/surface separation, brighter foreground text, cyan accent/focus tokens, `13px` default text, `5px` spacing, and `3px` radius.
-  - Light defaults keep parity on density/radius while using crisper border/accent tokens.
-  - Native `Theme::control_height()` now resolves to `25px` for the default theme.
-- Reworked default framework styling in `native/src/framework.dg.css`.
-  - App chrome, sidebars, workbench areas, status bars, toolbars, tabs, nav rows, tables, property rows, inputs, and buttons now use tighter metrics and stronger hierarchy.
-  - Controls are flatter and denser, with smaller icon buttons, clearer active/focus states, compact nav/tab rows, and data-table defaults closer to a professional tool surface.
-  - Added default class styling for common app-shell/workbench/property-grid arrangements so apps get a cleaner baseline without custom visual CSS.
-- Tightened native metrics in `native/src/style.rs`, `native/src/layout.rs`, and `native/src/table.rs`.
-  - Checkbox, toggle, slider, stepper, tab, table header/row, index-column, and data-column defaults are smaller and more data-dense.
-  - Table defaults now use a `25px` header, `21px` rows, `48px` index column, and `116px` data columns.
-- Fixed probe layouts where local CSS was creating screenshot-visible defects while preserving the stress content.
-  - `examples/css_feature_probes/app_shell_workbench_probe.py`: mobile title gets adequate height, summary cards stack, card text wraps/ellipsizes inside bounds, and narrow workbench spacing is reduced.
-  - `examples/css_feature_probes/responsive_layout_probe.py`: mobile panels use auto height, single-column named-grid areas, reduced padding/gaps, and scroll-owned overflow.
-  - `examples/css_feature_probes/layout_flex_stress_probe.py`: mobile stress rows stack instead of forcing side-by-side cards and use tighter label/control metrics.
-- Fixed the blocking toolbar review finding.
-  - `python/dragongui/widgets.py`: `SearchBox` now reserves a default `164px` minimum width so its composed icon/input/clear children do not paint over following siblings when the wrapper is squeezed.
-  - `examples/css_feature_probes/toolbar_probe.py`: the overfull single toolbar row is now split into icon-command and search/action toolbar rows, preserving Toolbar coverage without clipping controls on mobile.
-- Added `examples/css_feature_probes/default_polish_stress_probe.py`.
-  - Uses defaults as much as possible, with only minimal responsive layout CSS.
-  - Covers AppShell/sidebar, toolbar/status density, nav badges, long labels, summary cards, table, property grid, and nested scroll text.
-  - Stacks the shell at `390px` and `320px` so long nav labels are visible instead of clipped.
-- Added `default-polish-stress` to `examples/css_feature_probes/visual_audit_manifest.json`.
-- Regenerated focused visual-audit screenshots, snapshots, logs, `artifacts/visual_audit/REPORT.md`, and `artifacts/visual_audit/report.json`.
-
-## Visual Review After Fix
-
-- `app-shell-workbench-390x720.png`: heading and summary card copy are now visible; summary cards stack and remaining rows are scroll-owned.
-- `responsive-layout-390x720.png`: first viewport no longer shows text hidden by nested fixed regions; lower content is reachable through the main scroll.
-- `layout-flex-stress-390x720.png`: dense controls stay inside panels; below-fold action rows are scroll-owned rather than overlapping.
-- `default-polish-stress-390x720.png` and `default-polish-stress-320x640.png`: long sidebar labels, toolbar controls, status badges, summary cards, and table/property panels render without static overlap or clipped labels in the first viewport.
-- `toolbar-desktop-1.png` and `toolbar-390x720.png`: SearchBox has nonzero width and no longer overlaps or clips the `Deploy`/disabled controls.
-- Current visual-audit report summary: `68` entries, `47 pass`, `21 needs_manual_interaction`, `0 fail`, `0 blocked`.
-
-## Validation
-
-- Used Python 3.12 because the spec's previously referenced Python 3.13 path is not present in this workspace:
-  - `C:\Users\nashk\AppData\Local\Programs\Python\Python312\python.exe`
-- Passed:
-  - `python -m py_compile examples/css_feature_probes/default_polish_stress_probe.py examples/css_feature_probes/app_shell_workbench_probe.py examples/css_feature_probes/responsive_layout_probe.py examples/css_feature_probes/layout_flex_stress_probe.py`
-  - `cargo fmt --manifest-path native/Cargo.toml -- --check`
-  - `cargo check --manifest-path native/Cargo.toml`
-  - `cargo test --manifest-path native/Cargo.toml dark_theme_defaults_are_compact_and_neutral -- --nocapture`
-  - `cargo test --manifest-path native/Cargo.toml default_metrics_are_compact_for_dense_data -- --nocapture`
-  - `cargo test --manifest-path native/Cargo.toml framework_defaults_install_and_remain_lower_precedence_than_user_css -- --nocapture`
-  - `python tools/visual_audit.py --target default-polish-stress --sizes desktop,390x720,320x640 --append --wait-ms 1200 --timeout-ms 12000`
-  - `python -m py_compile python/dragongui/widgets.py examples/css_feature_probes/toolbar_probe.py`
-  - `python tools/visual_audit.py --target toolbar --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000`
-- Earlier in this pass, the focused required visual targets were rerun and recorded in the report:
-  - `app-shell-workbench`: `pass`
-  - `responsive-layout`: `pass`
-  - `layout-flex-stress`: `pass`
-  - `layout-panel-bounds`: `pass`
-  - `layout-grid-masonry`: `pass`
-  - `layout-scrollable-composites`: `pass`
-  - `form-controls`: `pass`
-  - `property-grid`: `pass`
-  - `toolbar`: `pass`
-  - `data-table-upgrades`: `pass`
-  - `core-widgets`, `navigation-widgets`, `tree-view`: `needs_manual_interaction`
+- New interaction audit:
+  - `adjacent-scatter-interaction`: `pass`
+  - stdout records workspace imports:
+    - `J:\Projects\DragonFrame\python\dragongui\__init__.py`
+    - `J:\Projects\DragonFrame\python\dragongui\_dragongui.pyd`
+  - after interaction playback:
+    - `active_scatter_id`: `None`
+    - left: `720` points, `turbo`, original bounds, no selection
+    - right: `360` points, `viridis`, original bounds, no selection
+- Existing visual audits after rebuild:
+  - `all-features-professional-explore`: `pass` for `1440x900`, `1180x760`, `390x720`, `320x640`
+  - `layout-plot-embedding`: `pass`
+  - `scatter3d`: `needs_manual_interaction`
+  - `scatter-plot-2d`: `needs_manual_interaction`
+- Import proof after reinstall:
+  - bare global Python imports `C:\Users\nashk\AppData\Local\Programs\Python\Python313\Lib\site-packages\dragongui\_dragongui.pyd`
+  - workspace-prepended Python imports `J:\Projects\DragonFrame\python\dragongui\_dragongui.pyd`
+  - both report native backend available.
 
 ## Remaining
 
-- Full native `cargo test --manifest-path native/Cargo.toml` was not run.
-- Python 3.13 validation was not run because that interpreter path is absent here.
-- Python pytest was not rerun in this second pass; Python 3.12 does not have `pytest` installed, and a previous Python 3.11 run had four unrelated failures outside this theme/layout polish work.
-- The `21 needs_manual_interaction` visual-audit targets still need hover/open/focus/overlay interaction coverage.
-- Some long content intentionally continues below the first mobile viewport; that is expected where the owning scroll area is visible and content does not overlap or paint outside bounds.
+- The required combined Python suite still has three unrelated failures in `tests/test_python_api.py`:
+  - app shell/body default style expectations
+  - workbench layout/main default style expectations
+  - node graph selected terminal runtime bridge replacement
+- `scatter3d` and `scatter-plot-2d` visual-audit targets still retain their expected `needs_manual_interaction` status for broader manual states outside this adjacent-plot regression.
+
+---
+
+# Prior Implementation Notes: Scatter Startup Fit And Audit Guard
+
+## Changed In This Pass
+
+- Fixed base `Scatter3D` startup framing in `python/dragongui/widgets.py`.
+  - `Scatter3D._queue_startup_resources()` now sends the initial primary point upload with `fit=True`.
+  - `ScatterPlot2D` opts out of that base upload fit and keeps its existing 2D-specific `FitScatterCamera` + parallel XY sync sequence, avoiding a duplicate fit.
+- Added regression coverage in `tests/test_python_api.py`.
+  - `test_scatter3d_startup_upload_requests_initial_fit` verifies startup `Scatter3D` point uploads carry the fit flag.
+  - `test_scatterplot2d_startup_keeps_single_2d_fit` verifies the 2D plot still uses its explicit camera fit path.
+- Added a professional Explore visual-audit guard in `tools/visual_audit.py`.
+  - `all-features-professional-explore` now fails if a nonempty `SetScatterPointsPacked` startup command has neither `fit=true` nor a same-target `FitScatterCamera`.
+  - This catches the prior false-pass state where `dg-126` uploaded points with `fit=false` while only right-side `dg-146` received `FitScatterCamera`.
+- Added visual-audit unit coverage in `tests/test_visual_audit.py` for the old bad command history and the fixed command history.
+
+## Verification From This Pass
+
+- Regenerated Explore audit for `1440x900` and `1180x760`: `all-features-professional-explore` reports `pass`.
+- Regenerated plot probes:
+  - `layout-plot-embedding`: `pass`
+  - `scatter3d`: `needs_manual_interaction`
+  - `scatter-plot-2d`: `needs_manual_interaction`
+- The refreshed `all-features-professional-explore-1180x760` log now records:
+  - left primary scatter `dg-126`: `SetScatterPointsPacked ... fit=true`
+  - right preview scatter `dg-146`: `SetScatterPointsPacked ... fit=false` followed by `FitScatterCamera`
+
+## Remaining
+
+- I did not find evidence of Python payload/cache reuse across adjacent plot widget ids. Cached payloads are per widget object and native command history records distinct target ids.
+- Native hit testing already checks scatter viewport and scissor bounds in `ScatterWidget::contains_point`; no native code change was made in this pass.
+- Static visual audit still does not simulate click/drag/wheel interactions between adjacent plots. The new guard covers startup framing command isolation, but fully automated adjacent-pointer interaction playback remains future work.
+- The worktree contains prior splitter/table changes and visual audit artifact churn from the earlier pass; this pass did not revert or normalize those unrelated changes.
+
+---
+
+# Prior Implementation Notes: Splitter Pane Sizing Pass
+
+## Changed
+
+- Fixed fractional pane sizing in `python/dragongui/widgets.py`.
+  - `Splitter(sizes=(0.7, 0.3))` now serializes as `["0.7fr", "0.3fr"]` instead of fixed pixel sizes.
+  - `Pane(size=0.62)` now behaves as a flex/proportional pane (`size=None`, `flex=0.62`) instead of a fixed `0.62px` pane.
+  - `Splitter.set_sizes(...)` now enqueues live `flex` changes when switching panes to `fr` sizes.
+- Hardened native pane layout in `native/src/layout.rs`.
+  - Legacy documents with `pane_size` in the fractional range `0 < n < 1` are treated as flex weights instead of fixed pixels.
+  - Added `fractional_pane_sizes_distribute_splitter_space`.
+- Updated `examples/all_features_professional_demo.py`.
+  - Replaced ambiguous fractional `Pane(size=...)` calls with explicit `Pane(flex=...)` values.
+- Fixed `DataFrameTable` support for `list[dict]` row data in `python/dragongui/dataframe.py`.
+  - The professional demo table now reports real columns/cells instead of `columns=0`.
+  - Added `test_dataframe_table_accepts_row_mapping_sequences`.
+- Added visual-audit splitter utilization validation in `tools/visual_audit.py`.
+  - Professional-demo targets now fail if a horizontal splitter leaves a large unexplained unused span.
+  - Added unit tests for underused and filled splitter snapshots.
+
+## Root Cause
+
+The desktop/tablet panel failures were mostly caused by ambiguous pane sizing:
+
+- The demo used values like `Pane(size=0.7)` and `Pane(size=0.3)` intending proportions.
+- The Python API serialized numeric pane sizes as fixed pixels.
+- Native layout treated those as tiny fixed sizes, disabled flex growth, then clamped panes to `min_size`.
+- Splitters therefore used only the pane minimum widths and left hundreds of pixels blank.
+
+There was a second visible issue on the data page:
+
+- The demo passed `list[dict]` rows to `DataFrameTable`.
+- The dataframe adapter did not infer columns for that shape, so the table rendered row indices with no real data columns.
+
+## Before / After Geometry
+
+From the spec/current evidence before this pass:
+
+```text
+data-1440x900:    splitter w=1190, pane widths 360 + 280, ~545px unused
+explore-1180x760: splitter w=930,  pane widths 360 + 260, ~307px unused
+overview-1180x760: splitter w=930, pane widths 320 + 260, large unused right side
+```
+
+After the fix:
+
+```text
+data-1440x900:    splitter w=1190, pane widths 743 + 444, unused 0
+explore-1180x760: splitter w=930,  pane widths 479 + 448, unused 0
+overview-1180x760: splitter w=930, pane widths 535 + 392, unused 0
+reports-1180x760: splitter w=930, pane widths 538 + 389, unused 0
+```
+
+The data page table now reports `7` columns and displays route/owner/state/latency/error/throughput values in `all-features-professional-data-1440x900.png`.
+
+## Python 3.13 Import Finding
+
+Global Python 3.13 without path setup imports an installed package:
+
+```text
+C:\Users\nashk\AppData\Local\Programs\Python\Python313\Lib\site-packages\dragongui\__init__.py
+C:\Users\nashk\AppData\Local\Programs\Python\Python313\Lib\site-packages\dragongui\_dragongui.pyd
+```
+
+With `sys.path.insert(0, "python")`, it imports the workspace package:
+
+```text
+J:\Projects\DragonFrame\python\dragongui\__init__.py
+J:\Projects\DragonFrame\python\dragongui\_dragongui.pyd
+```
+
+`examples/all_features_professional_demo.py` already inserts the workspace `python` folder when run directly as a script, so `python examples/all_features_professional_demo.py` should use the local code. A bare `python -c "import dragongui"` will not.
+
+## Visual Audit Output
+
+- Regenerated all professional-demo screenshots/snapshots/logs.
+- Regenerated `artifacts/visual_audit/contact_sheets/all-features-professional-contact-sheet.png`.
+- Updated `artifacts/visual_audit/report.json` and `artifacts/visual_audit/REPORT.md`.
+- Current report summary: `76` entries, `55 pass`, `21 needs_manual_interaction`, `0 fail`, `0 blocked`.
+- Professional-demo validator sweep: `0` scroll violations, `0` splitter violations.
+
+## Remaining
+
+- `all-features-professional-explore-1180x760.png` still shows chart/rendering composition issues inside the now-correctly-sized scatter pane. That is separate from splitter sizing.
+- Mobile views remain dense by design; prior scroll reachability remains intact.
+- Full `tests/test_python_api.py` still has three unrelated failures in app-shell/workbench defaults and node-graph runtime bridge behavior.

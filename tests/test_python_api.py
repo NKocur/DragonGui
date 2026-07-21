@@ -1503,6 +1503,23 @@ def test_splitter_and_pane_serialize_size_defaults() -> None:
     assert updated["children"][1]["props"]["size"] is None
     assert updated["children"][1]["props"]["flex"] == 2.0
 
+    ratio_split = dg.Splitter(sizes=(0.7, 0.3), parent=None)
+    with ratio_split:
+        dg.Pane(min_size=160)
+        dg.Pane(min_size=120)
+    ratio_doc = ratio_split.to_dict()
+
+    assert ratio_doc["props"]["sizes"] == ["0.7fr", "0.3fr"]
+    assert ratio_doc["children"][0]["props"]["size"] is None
+    assert ratio_doc["children"][0]["props"]["flex"] == 0.7
+    assert ratio_doc["children"][1]["props"]["size"] is None
+    assert ratio_doc["children"][1]["props"]["flex"] == 0.3
+
+    direct_ratio = dg.Pane(size=0.62, parent=None).to_dict()
+
+    assert direct_ratio["props"]["size"] is None
+    assert direct_ratio["props"]["flex"] == 0.62
+
     with pytest.raises(ValueError, match="orientation"):
         dg.Splitter(orientation="diagonal", parent=None)
     with pytest.raises(ValueError, match="fr"):
@@ -4969,6 +4986,27 @@ def test_menu_widgets_serialize_and_register_callbacks() -> None:
     assert calls == ["open", "inspect"]
 
 
+def test_dataframe_table_accepts_row_mapping_sequences() -> None:
+    table = dg.DataFrameTable(
+        [
+            {"route": "plant.a", "owner": "ingest", "latency_ms": 18.5},
+            {"route": "plant.b", "owner": "model", "latency_ms": 21.0},
+        ],
+        page_size=10,
+        sample_rows=2,
+        parent=None,
+    ).to_dict()
+
+    frame = table["props"]["frame"]
+
+    assert frame["columns"] == ["route", "owner", "latency_ms"]
+    assert frame["rows"] == 2
+    assert table["props"]["cells"] == [
+        ["plant.a", "ingest", "18.5"],
+        ["plant.b", "model", "21"],
+    ]
+
+
 def test_menu_validation() -> None:
     dg.Window("Menu validation")
 
@@ -7319,8 +7357,25 @@ def _make_full_startup_sender():
         def __init__(self) -> None:
             self.lod_calls: list[tuple] = []
             self.picking_calls: list[str] = []
+            self.points_calls: list[tuple[tuple, dict]] = []
+            self.fit_calls: list[tuple] = []
 
         def enqueue_set_scatter_hover_tooltip(self, *a) -> None:
+            pass
+
+        def enqueue_set_scatter_points_packed(self, *a, **kw) -> None:
+            self.points_calls.append((a, kw))
+
+        def enqueue_fit_scatter_camera(self, *a) -> None:
+            self.fit_calls.append(a)
+
+        def enqueue_set_scatter_parallel_projection(self, *a) -> None:
+            pass
+
+        def enqueue_set_scatter_view_direction(self, *a) -> None:
+            pass
+
+        def enqueue_set_scatter_axis_visibility(self, *a) -> None:
             pass
 
         def enqueue_set_scatter_tooltip_axis_labels(self, *a) -> None:
@@ -7341,6 +7396,37 @@ def _make_full_startup_sender():
             pass
 
     return FullStartupSender()
+
+
+def test_scatter3d_startup_upload_requests_initial_fit(monkeypatch) -> None:
+    sender = _make_full_startup_sender()
+    handle = AppHandle()
+    handle._bind_native_sender(sender)
+    monkeypatch.setattr(widgets_module.Scatter3D, "_build_payload", lambda self: b"\x00" * 48)
+
+    scatter = dg.Scatter3D(DemoFrame(), x="x", y="y", z="z", id="fit3d", parent=None)
+    scatter._bind_live(handle.widget_handle(scatter.id))
+    scatter._queue_startup_resources()
+
+    assert sender.points_calls
+    assert sender.points_calls[0][0][0] == "fit3d"
+    assert sender.points_calls[0][0][7] is True
+
+
+def test_scatterplot2d_startup_keeps_single_2d_fit(monkeypatch) -> None:
+    sender = _make_full_startup_sender()
+    handle = AppHandle()
+    handle._bind_native_sender(sender)
+    monkeypatch.setattr(widgets_module.Scatter3D, "_build_payload", lambda self: b"\x00" * 48)
+
+    plot = dg.ScatterPlot2D(DemoFrame(), x="x", y="y", id="fit2d", parent=None)
+    plot._bind_live(handle.widget_handle(plot.id))
+    plot._queue_startup_resources()
+
+    assert sender.points_calls
+    assert sender.points_calls[0][0][0] == "fit2d"
+    assert sender.points_calls[0][0][7] is False
+    assert sender.fit_calls == [("fit2d", None)]
 
 
 def test_scatter_startup_replays_lod() -> None:

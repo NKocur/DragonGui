@@ -1,284 +1,229 @@
-# Spec: Dramatic Default GUI Polish And Layout Defect Pass
+# Spec: Fix Scatter Composite Render-Target Overlay In 3D Explore
 
 ## Goal
 
-The previous default visual-polish pass was too subtle. Do a stronger second pass that makes DragonGUI's default UI visibly cleaner, more professional, and more data-dense, while also fixing remaining screenshot-visible text clipping and overlap problems.
+The professional demo's `3D Sensor Explore` tab still has a user-visible plot bug. There are two plots: a large `Scatter3D` on the left and a smaller `ScatterPlot2D` preview on the right. The user reports:
 
-This pass should produce an obvious visual difference in the saved screenshots without requiring application authors to add custom CSS. The goal is not merely a token tweak; it is a coordinated default visual system and layout robustness pass.
+- clicking the left plot puts the data in the right place;
+- clicking anywhere else causes the whole left plot area to be overlaid with the right plot.
+
+The prior approved pass fixed stale scatter interaction state and added an adjacent interaction probe, but that probe only checked per-widget debug state signatures. It did not catch this visual compositing failure. The next change must focus on scatter render-target/composite isolation, not just data/pointer state.
 
 ## Source Of Truth
 
 Read these before editing:
 
 - `artifacts/IMPLEMENTATION_NOTES.md`
+- `artifacts/TEST_RESULTS.md`
 - `artifacts/CODE_REVIEW.md`
 - `artifacts/visual_audit/REPORT.md`
 - `artifacts/visual_audit/report.json`
-- `artifacts/visual_audit/contact_sheets/contact-sheet-01.png`
-- `artifacts/visual_audit/contact_sheets/contact-sheet-02.png`
-- `artifacts/visual_audit/contact_sheets/contact-sheet-03.png`
-- `artifacts/visual_audit/contact_sheets/contact-sheet-04.png`
-- `artifacts/visual_audit/contact_sheets/contact-sheet-05.png`
-- `artifacts/visual_audit/contact_sheets/contact-sheet-06.png`
-- representative screenshots and snapshots in `artifacts/visual_audit/screenshots/` and `artifacts/visual_audit/snapshots/`
+- `artifacts/visual_audit/screenshots/all-features-professional-explore-1180x760.png`
+- `artifacts/visual_audit/screenshots/all-features-professional-explore-1440x900.png`
+- `artifacts/visual_audit/snapshots/all-features-professional-explore-1180x760.json`
+- `artifacts/visual_audit/logs/all-features-professional-explore-1180x760.stdout.txt`
+- `artifacts/visual_audit/screenshots/adjacent-scatter-interaction-1120x720.png`
+- `artifacts/visual_audit/logs/adjacent-scatter-interaction-1120x720.stdout.txt`
+- `examples/all_features_professional_demo.py`
+- `examples/css_feature_probes/adjacent_scatter_interaction_probe.py`
+- `examples/css_feature_probes/visual_audit_manifest.json`
+- `native/src/runtime.rs`
+- `native/src/scatter/mod.rs`
+- `native/src/scatter/composite.wgsl`
+- `tools/visual_audit.py`
+- `tests/test_visual_audit.py`
+- `tests/test_python_api.py`
 
-Important current state:
+## Current Evidence
 
-- The first pass changed dark/light tokens, radius, spacing, framework CSS, table metrics, and some native constants.
-- User feedback: the changes are not noticeable enough. The next pass should be more dramatic.
-- The audit report still shows `46 pass`, `21 needs_manual_interaction`, `0 fail`, `0 blocked`, but screenshots/contact sheets still show visible layout problems. Do not trust the status summary alone.
-- `artifacts/visual_audit/screenshots/app-shell-workbench-390x720.png` visibly clips the title and summary-card text (`AppShell + Body + ...`, `Owner`, and wrapped body copy).
-- `artifacts/visual_audit/screenshots/responsive-layout-390x720.png` shows cramped/nested scroll behavior and content cut off behind narrow regions.
-- Contact sheets still show some captures labeled `[fail]` from prior visual state (`app-shell-workbench`, `layout-flex-stress`, `responsive-layout`) even when the current report now marks some targets pass. Inspect the actual current screenshots and snapshots, not only generated status.
-- Several probes use local CSS with large gutters/cards. Product defaults still need to look better, but probe-local CSS can also be adjusted where it is part of the visual-audit presentation and masks or creates default-layout problems.
+The latest artifacts show these fixes are already present and should be preserved:
+
+- `Scatter3D` startup uploads now request `fit=true`.
+- `cancel_scatter_interaction()` clears stale active scatter state on cursor leave and focus loss.
+- `adjacent-scatter-interaction` probe passes by checking point counts, bounds, colormaps, actor counts, and `active_scatter_id`.
+- The native extension was rebuilt/reinstalled and hashes match across:
+  - `native\target\release\_dragongui.dll`
+  - `python\dragongui\_dragongui.pyd`
+  - global Python 3.13 `site-packages\dragongui\_dragongui.pyd`
+
+The remaining symptom is visual: the right plot image appears over the larger left plot after most clicks. That points to render composition/cache isolation.
+
+Strong suspect in `native/src/runtime.rs`:
+
+- Scatter widgets may render into per-widget `ScatterRenderTarget`s and then composite those textures to the swapchain.
+- `ScatterCompositeRenderer` owns a single uniform buffer/bind group for `target_rect`.
+- During frame encoding, `self.scatter_compositor.update_uniforms(...)` is called once per scatter, then `render(...)` is called for that scatter.
+- Because command buffers reference the same uniform buffer, later `queue.write_buffer` calls can make all composite draws observe the last written `target_rect` instead of the per-draw rectangle.
+- This can cause one scatter texture, often the right-side plot, to be drawn over another plot's rectangle after cached/offscreen rendering is activated by interaction/redraw.
+
+Other possible but lower-priority causes to check:
+
+- offscreen render target reuse with the wrong texture bind group;
+- render target cache validity not including viewport offset/clip when it should;
+- composite pass missing scissor/clip state;
+- direct render vs cached render switching after clicks or interaction render scale changes;
+- visual audit probe not comparing pixels after each click, so state checks pass while the visible surface is wrong.
 
 ## Required Outcomes
 
-1. A visibly different default look:
-   - More refined hierarchy between app background, shell chrome, panels, controls, tables, and plot/data surfaces.
-   - Less "same filled rounded rectangle everywhere."
-   - Less bulky card/panel framing in dense workbench layouts.
-   - Stronger selected/focus/active states that still feel professional.
-   - Denser controls and rows where text remains readable.
+1. Fix scatter composite rectangle isolation.
+   - Each scatter composite draw must use that scatter's own target rectangle.
+   - Do not share a mutable uniform buffer in a way that lets later scatter draws overwrite earlier draw parameters.
+   - Acceptable fixes include per-draw/per-target uniform buffers, dynamic uniform offsets, push constants if supported, or baking target rect into per-scatter composite bind state.
+   - The fix must work when two or more scatters are visible and when cached/offscreen render targets are used.
 
-2. Screenshot-visible layout fixes:
-   - No clipped headings, card labels, button labels, nav labels, tab labels, or status-bar text in required audit screenshots.
-   - No overlapping panel/card/control content in desktop or `390x720` captures.
-   - Long text should wrap, ellipsize, or yield layout space predictably instead of painting outside its box or vanishing.
-   - Narrow AppShell/workbench layouts must adapt instead of preserving desktop card rows that become unreadable.
+2. Preserve per-widget render target isolation.
+   - A scatter must composite its own color texture and never a neighbor's texture.
+   - Render target cache keys/validity must include dimensions and any state needed for correct composition.
+   - Viewport offset/clip changes must not cause a stale cached texture to draw into the wrong screen rect.
 
-3. Better visual audit coverage:
-   - Add or update a default-only polish probe that does not hide defaults behind heavy custom CSS.
-   - Add targeted stress cases for long text, narrow cards, nested scroll areas, nav/sidebar compression, summary cards, tables, and toolbar/status bar density.
-   - Mark real static clipping/overlap as `fail` in the report notes until fixed; do not leave screenshot-obvious defects as `pass` or only `needs_manual_interaction`.
+3. Add visual/pixel regression coverage.
+   - Extend `adjacent_scatter_interaction_probe.py` or add a new probe that captures screenshots after:
+     - startup;
+     - click left plot;
+     - click right plot;
+     - click gutter/non-plot area;
+     - click controls/outside the plot area on the professional Explore page if feasible.
+   - Pixel-check that the left plot region does not become dominated by the right plot's color/shape after non-left clicks.
+   - Pixel-check that the right plot stays within its own viewport and does not appear across the left plot rectangle.
+   - State-only assertions are not enough.
 
-## Concrete Visual Direction
+4. Validate in the professional demo, not only the synthetic probe.
+   - Reproduce the user's sequence on `all-features-professional-explore`: left plot click is okay; then click elsewhere and ensure no right-plot overlay appears on the left plot.
+   - Capture screenshots before and after each click.
+   - Record import paths and native binary hash in `artifacts/TEST_RESULTS.md`.
 
-Make the change noticeable. Acceptable examples:
-
-- Move from uniformly filled card blocks to a cleaner workbench style: darker app background, quieter sidebar/status chrome, flatter panels, restrained borders, stronger section headers, and denser rows.
-- Reduce reliance on bordered cards. Use border only for real containers or interactive controls; use contrast, spacing, or subtle header treatment for hierarchy.
-- Make primary controls feel crisper: lower vertical padding, consistent heights, clearer hover/active/selected fills, and tighter icon button metrics.
-- Make data widgets look more like professional tools: compact rows, subdued grid lines, clear headers, stable column widths, and less large empty padding.
-- Make navigation look like navigation: compact nav rows, clear active indication, less card-like sidebar buttons, tabs that fit labels/badges without chunky blocks.
-- Make mobile/narrow layouts intentionally different: stack summary cards vertically or allow wrapping, reduce sidebar/content competition, and prevent text from being clipped inside fixed-height cards.
-
-Avoid:
-
-- Merely changing one or two colors.
-- Increasing decorative gradients, large shadows, or playful rounding.
-- Making all components smaller without solving text fit.
-- Hiding defects by cropping screenshots, shortening test text, or removing stress cases.
-
-## Required Targets To Inspect And Fix
-
-High priority screenshots/probes:
-
-- `app-shell-workbench`
-  - Fix mobile title clipping and summary-card text clipping.
-  - Ensure desktop does not waste most of the workbench area as empty body space unless content is genuinely scrollable and useful.
-  - Reconsider default AppShell/sidebar/status metrics and probe layout behavior at narrow widths.
-- `responsive-layout`
-  - Fix narrow capture nested scrolling/cutoff and ensure percent/calc/grid examples keep readable labels.
-  - If the probe's local CSS is causing bad visual presentation, update the probe while preserving real stress coverage.
-- `layout-flex-stress`
-  - Recheck mobile and desktop for overlap/cutoff with long labels and mixed fixed/flexible children.
-- `layout-panel-bounds`
-  - Recheck nested panel contents and scroll ownership.
-- `layout-grid-masonry`
-  - Recheck grid dense placement, panel labels, and narrow layout.
-- `layout-scrollable-composites`
-  - Recheck tables, code/log/text areas, and nested scrollbars for density without content clipping.
-- `navigation-widgets`
-  - Recheck mobile sidebar/tabs/nav labels, menu rows, badge alignment, and active states.
-- `core-widgets`, `form-controls`, `property-grid`, `tree-view`, `toolbar`, `data-table-upgrades`
-  - Recheck default controls for polish, clipping, and density.
-
-Add a new explicit default stress target if needed:
-
-- Suggested file: `examples/css_feature_probes/default_polish_stress_probe.py`
-- Suggested manifest id: `default-polish-stress`
-- Sizes: `[[1180, 760], [900, 640], [390, 720], [320, 640]]`
-- Should use default theme/framework styles as much as possible.
-- Include:
-  - app shell with sidebar, top/body/status chrome
-  - summary cards with long labels and values
-  - toolbar with icon buttons, text buttons, separators, search/input
-  - tabs with long labels and badges
-  - nav list with long labels and badges
-  - property grid and table together
-  - nested panel/scroll area with long wrapped text
-  - mobile/narrow stress cases with the same content
+5. Keep prior fixes intact.
+   - Startup `Scatter3D` framing remains correct.
+   - `ScatterPlot2D` keeps its 2D fit/parallel projection behavior.
+   - `cancel_scatter_interaction()` cleanup remains in place.
+   - Adjacent plot point counts, bounds, colormaps, and actor state remain isolated.
 
 ## Affected Files And Modules
 
-Primary visual/default styling:
+Primary:
 
-- `native/src/framework.dg.css`
-  - This should be a larger second pass, not a minor adjustment.
-  - Rework default component hierarchy, state styles, table/nav/tab/sidebar/status/toolbar parts, panel/control contrast, scrollbar defaults, and density.
-- `python/dragongui/theme.py`
-  - Update default dark and light tokens if needed for a more visible and professional palette.
-- `native/src/theme.rs`
-  - Keep native defaults in parity with Python defaults.
-
-Primary layout/text robustness:
-
-- `native/src/layout.rs`
-  - Fix narrow AppShell/workbench/card/flex/grid behavior that preserves desktop assumptions too aggressively.
-  - Ensure intrinsic sizes and shrink rules do not create clipped headings, controls, badges, or summary card text.
-- `native/src/text/mod.rs`
-  - Text bounds, wrapping, ellipsis, clipping, line height, baseline alignment, and narrow available-width behavior.
-  - Long labels should not paint outside parent rects or disappear when width is small.
-- `native/src/primitives/mod.rs`
-  - Paint defaults, state fills, focus/selection, scrollbars, table/control chrome, and clipping consistency.
-- `native/src/table.rs`
-  - DataFrameTable density, header/row metrics, grid line visibility, selected row contrast, and column width defaults.
-- `native/src/style.rs` and `native/src/css_style.rs`
-  - Only if CSS/default-part support is needed for the stronger visual system or layout fixes.
-
-Probe/audit files:
-
-- `examples/css_feature_probes/app_shell_workbench_probe.py`
-- `examples/css_feature_probes/responsive_layout_probe.py`
-- `examples/css_feature_probes/layout_flex_stress_probe.py`
-- `examples/css_feature_probes/layout_panel_bounds_probe.py`
-- `examples/css_feature_probes/layout_grid_masonry_probe.py`
-- `examples/css_feature_probes/layout_scrollable_composites_probe.py`
-- `examples/css_feature_probes/navigation_widgets_probe.py`
-- `examples/css_feature_probes/core_widgets_probe.py`
-- `examples/css_feature_probes/form_controls_probe.py`
-- `examples/css_feature_probes/property_grid_probe.py`
-- `examples/css_feature_probes/tree_view_probe.py`
-- `examples/css_feature_probes/toolbar_probe.py`
-- `examples/css_feature_probes/data_table_upgrades_probe.py`
-- `examples/css_feature_probes/visual_audit_manifest.json`
-- `tools/visual_audit.py` if report status handling needs to flag static visual defects more accurately.
-
-Test/artifact files:
-
+- `native/src/runtime.rs`
+  - `ScatterCompositeRenderer`
+  - `ScatterRenderTarget`
+  - per-scatter render/composite loop around `visible_scatter_order`
+  - debug snapshot render metrics.
+- `native/src/scatter/composite.wgsl`
+  - composite shader inputs if target rect handling changes.
+- `native/src/scatter/mod.rs`
+  - offscreen render target sizing/scissor behavior and viewport clip reporting.
+- `examples/css_feature_probes/adjacent_scatter_interaction_probe.py`
+  - add pixel/screenshot checks after each interaction.
+- `tools/visual_audit.py`
+  - validate the new visual pass/fail markers and/or pixel-diff outputs.
 - `tests/test_visual_audit.py`
-- Native layout/text/table tests where practical.
-- `artifacts/IMPLEMENTATION_NOTES.md`
-- `artifacts/TEST_RESULTS.md`
-- `artifacts/visual_audit/REPORT.md`
-- `artifacts/visual_audit/report.json`
+  - unit coverage for the new validator behavior.
+
+Secondary:
+
+- `examples/all_features_professional_demo.py` and `examples/css_feature_probes/all_features_professional_demo_probe.py`, only for instrumentation or deterministic interaction hooks.
+- `tests/test_python_api.py`, only if public Python behavior needs additional assertions.
+- `artifacts/visual_audit/*`, regenerated screenshots/snapshots/logs for the relevant targets.
 
 ## Implementation Guidance
 
-Start with visual diagnosis:
+Start by confirming the render-path transition. In `native/src/runtime.rs`, inspect whether the failing click changes either scatter from direct render to cached render-target composite. The current loop computes `render_to_target`, may create/update `runtime.render_target`, calls `self.scatter_compositor.update_uniforms(...)`, then renders the composite using a shared compositor bind group.
 
-1. Open current screenshots for all high-priority targets above at desktop and `390x720`.
-2. Compare snapshots against visible clipping/overlap. Identify whether each issue is caused by:
-   - product layout/text behavior,
-   - product default CSS/theme,
-   - probe-local CSS/layout,
-   - visual-audit status classification.
-3. Write a short defect list in `artifacts/IMPLEMENTATION_NOTES.md` before or during implementation. Include screenshot names.
+If the shared uniform buffer is confirmed:
 
-Then implement in this order:
+- make composite uniform data stable per draw;
+- do not call `queue.write_buffer` repeatedly to the same uniform buffer for multiple draws in one command buffer unless the draw uses distinct dynamic offsets or distinct buffers;
+- consider storing the composite uniform buffer/bind group on `ScatterRenderTarget`, since the target rect is per scatter/per frame;
+- if target rect can change while the texture stays cached, update that scatter's own composite uniforms without affecting others.
 
-1. Fix true clipping/overlap bugs first.
-2. Add or update the default-only stress probe so product defaults are visible.
-3. Make the stronger visual-system changes.
-4. Re-run visual audits and inspect screenshots manually.
-5. Iterate until the required screenshots show a clear improvement and no obvious static text clipping/overlap.
+Also consider adding scissor to the composite pass for the target rect. Even with correct uniforms, scissoring the composite draw to the scatter viewport gives a second guard against texture bleed.
 
-Specific requirements:
-
-- Do not shorten labels or remove long-text stress cases as the fix.
-- Use wrapping or ellipsis intentionally. If a widget has a fixed height, either reserve enough height for expected wrapped text or make the layout choose ellipsis.
-- For summary cards and horizontal rows on mobile, prefer responsive stacking/wrapping over clipped columns.
-- If local probe CSS is intentionally demo-like but makes the product look bad in audit artifacts, tune the probe presentation while keeping the same semantic stress.
-- Add tests for any layout/text fix that can be asserted without visual inspection.
-- If a visual issue is only detectable by screenshot, document before/after screenshots in `artifacts/IMPLEMENTATION_NOTES.md`.
+Do not solve this by disabling caching globally unless used temporarily to prove the root cause. If caching is disabled as a workaround, document the performance tradeoff and add a follow-up note.
 
 ## Expected Behavior
 
-After this pass:
+After the fix:
 
-- The default theme should look obviously cleaner and more modern than the current screenshots.
-- Default workbench screens should fit more content in the same viewport without feeling like every element is a separate card.
-- Mobile `app-shell-workbench-390x720.png` should not clip the heading, summary card labels, summary card body text, or status bar content.
-- Mobile `responsive-layout-390x720.png` should not show text hidden behind nested scrollbars or cut-off content in the first viewport.
-- `layout-flex-stress`, `layout-panel-bounds`, `layout-grid-masonry`, and `layout-scrollable-composites` should not show obvious text overlap or child painting outside parent bounds.
-- Nav/sidebar/tab/toolbars should read as compact app chrome and not as chunky demo cards.
-- Tables and property grids should show meaningful density and remain readable.
-- Visual audit statuses should match reality: static screenshot defects should be recorded as `fail` until fixed.
+- On `3D Sensor Explore`, clicking the left plot, right plot, controls, gutter, toolbar, or blank page area never draws the right plot over the left plot.
+- The left `Scatter3D` remains in its own large viewport.
+- The right `ScatterPlot2D` remains in its smaller preview viewport.
+- Both direct render and cached/offscreen composite paths are visually correct.
+- Adjacent interaction debug state remains isolated.
+- The rebuilt/reinstalled global Python 3.13 package imports the fixed native extension.
 
 ## Validation Required
 
-Use the available local Python interpreter. Previous notes found Python 3.13 absent and Python 3.12 available at:
+Minimum commands:
 
 ```powershell
-$py = 'C:\Users\nashk\AppData\Local\Programs\Python\Python312\python.exe'
-$env:LIB='C:\Users\nashk\AppData\Local\Programs\Python\Python312\libs;' + $env:LIB
-$env:PYO3_PYTHON=$py
+$py = 'C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe'
+$env:PYO3_PYTHON = $py
+cargo fmt --manifest-path native\Cargo.toml -- --check
+cargo test --manifest-path native\Cargo.toml scatter -- --nocapture
+cargo test --manifest-path native\Cargo.toml command_batch_coalesces_scatter_updates -- --nocapture
+cargo check --manifest-path native\Cargo.toml
+& $py -m py_compile tools\visual_audit.py examples\all_features_professional_demo.py examples\css_feature_probes\adjacent_scatter_interaction_probe.py
+& $py -m pytest tests\test_visual_audit.py tests\test_vdom.py -q
 ```
 
-Minimum checks:
+If native code changes, rebuild, copy, and reinstall:
 
 ```powershell
-cargo fmt --manifest-path native/Cargo.toml -- --check
-cargo check --manifest-path native/Cargo.toml
-& $py -m py_compile tools/visual_audit.py python/dragongui/*.py
+cargo build --manifest-path native\Cargo.toml --release --features pyo3/extension-module
+Copy-Item -LiteralPath native\target\release\_dragongui.dll -Destination python\dragongui\_dragongui.pyd -Force
+& $py -m pip install --upgrade --force-reinstall .
+Copy-Item -LiteralPath native\target\release\_dragongui.dll -Destination python\dragongui\_dragongui.pyd -Force
 ```
 
-Run focused native/Python tests added for this pass. Also rerun any existing tests touched by layout/theme/table/style changes.
-
-If native code changes affect the Python extension used by the visual harness, rebuild and copy:
+Record binary hashes and imports:
 
 ```powershell
-cargo build --manifest-path native/Cargo.toml --release
-Copy-Item native/target/release/_dragongui.dll python/dragongui/_dragongui.pyd -Force
+Get-FileHash native\target\release\_dragongui.dll, python\dragongui\_dragongui.pyd
+& $py -c "import dragongui as dg, dragongui._dragongui as native; print(dg.__file__); print(native.__file__); print(dg.native_backend_available(), dg.backend_info())"
+& $py -c "import sys; sys.path.insert(0, 'python'); import dragongui as dg, dragongui._dragongui as native; print(dg.__file__); print(native.__file__); print(dg.native_backend_available(), dg.backend_info())"
 ```
 
-Required visual audit rerun:
+Required visual/probe reruns:
 
 ```powershell
-& $py tools/visual_audit.py --target app-shell-workbench --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
-& $py tools/visual_audit.py --target responsive-layout --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
-& $py tools/visual_audit.py --target layout-flex-stress --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
-& $py tools/visual_audit.py --target layout-panel-bounds --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
-& $py tools/visual_audit.py --target layout-grid-masonry --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
-& $py tools/visual_audit.py --target layout-scrollable-composites --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
-& $py tools/visual_audit.py --target navigation-widgets --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
-& $py tools/visual_audit.py --target core-widgets --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
-& $py tools/visual_audit.py --target form-controls --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
-& $py tools/visual_audit.py --target property-grid --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
-& $py tools/visual_audit.py --target tree-view --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
-& $py tools/visual_audit.py --target toolbar --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
-& $py tools/visual_audit.py --target data-table-upgrades --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
+& $py tools\visual_audit.py --target adjacent-scatter-interaction --sizes 1120x720 --append --wait-ms 2500 --timeout-ms 16000
+& $py tools\visual_audit.py --target all-features-professional-explore --sizes 1440x900,1180x760 --append --wait-ms 1400 --timeout-ms 16000
+& $py tools\visual_audit.py --target layout-plot-embedding --target scatter3d --target scatter-plot-2d --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 14000
 ```
 
-If `default-polish-stress` is added:
+Manual or automated professional demo check:
 
-```powershell
-& $py tools/visual_audit.py --target default-polish-stress --sizes desktop,mobile,320x640 --append --wait-ms 1200 --timeout-ms 12000
-```
+- launch the exact command the user uses, or record why that command is unavailable;
+- print `dragongui.__file__` and `dragongui._dragongui.__file__` from inside that run;
+- go to `3D Sensor Explore`;
+- click left plot, then right plot, then controls/gutter/blank area;
+- save screenshots after each click;
+- verify no right-plot overlay appears in the left plot.
 
-Manual screenshot review is required after the commands. Record the reviewed screenshot names and remaining defects in `artifacts/IMPLEMENTATION_NOTES.md` and update `artifacts/TEST_RESULTS.md`.
+Document results in `artifacts/IMPLEMENTATION_NOTES.md` and `artifacts/TEST_RESULTS.md`.
 
 ## Edge Cases
 
-- Long headings in narrow AppShell bodies.
-- Summary cards with short labels but long descriptions.
-- Three or more cards in a row at `390x720`.
-- Sidebar plus content plus status bar on mobile/narrow widths.
-- Long nav item labels, tab labels, badges, menu labels, table headers, property names, and toolbar button labels.
-- Nested scroll areas inside panels.
-- Mixed fixed/flexible children in `HLayout`, `VLayout`, `FlowLayout`, and grid layouts.
-- Text wrapped to multiple lines inside fixed-height widgets.
-- High DPI rounding on 1px borders, baselines, and scrollbars.
-- Disabled/selected/focused/open/hover states after visual-system changes.
-- Light theme parity for token changes.
+- Two scatters using cached render targets in the same frame.
+- One scatter direct-rendered and one scatter composited from cache.
+- Interaction render scale below `1.0`.
+- Auto-quality toggling render scale during drag.
+- Full-scale cache hit after a direct render.
+- Viewport offset changes while cached texture remains valid.
+- Different plot sizes and aspect ratios.
+- Adjacent plots with and without a gutter.
+- Nested right plot inside a controls panel.
+- More than two visible scatter widgets.
+- Scroll/clipped scatter widgets.
+- High-DPI scale factors.
+- Empty or one-point scatter data.
+- Reinstall/build path mismatch after native changes.
 
 ## Out Of Scope
 
-- A new public widget API.
-- Replacing the entire layout engine.
-- Rewriting plot rendering algorithms.
-- Making a custom one-off demo theme unrelated to product defaults.
-- Removing local CSS support or breaking user stylesheet precedence.
-- Hiding problems by deleting stress content, shortening labels, or reducing audit coverage.
-- Treating manual interaction-only states as complete without either manual review notes or automated interaction coverage.
+- Removing the right preview plot.
+- Disabling all scatter caching as the final solution without justification.
+- Rewriting the professional demo layout.
+- Replacing the scatter renderer wholesale.
+- Broad redesign of chart widgets outside scatter compositing.
+- Closing the loop based only on debug state signatures while the screenshot can still be wrong.

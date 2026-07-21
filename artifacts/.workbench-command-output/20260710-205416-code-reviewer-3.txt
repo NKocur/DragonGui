@@ -1,0 +1,300 @@
+        self.set_value("", notify=notify)
+
+
+@dataclass
+class Command:
+    """CommandPalette action metadata."""
+
+    id: str
+    title: str
+    on_run: Callback | None = None
+    subtitle: str | None = None
+    keywords: Iterable[str] = ()
+    disabled: bool = False
+
+    def __post_init__(self) -> None:
+        command_id = str(self.id).strip()
+        title = str(self.title).strip()
+        if not command_id:
+            raise ValueError("Command id must be a non-empty string")
+        if not title:
+            raise ValueError("Command title must be a non-empty string")
+        self.id = command_id
+        self.title = title
+        self.subtitle = None if self.subtitle is None else str(self.subtitle)
+        if self.keywords is None:
+            keywords: Iterable[object] = ()
+        elif isinstance(self.keywords, str):
+            keywords = (self.keywords,)
+        else:
+            keywords = self.keywords
+        self.keywords = tuple(str(keyword) for keyword in keywords)
+        self.disabled = bool(self.disabled)
+
+    def matches(self, query: str) -> bool:
+        needle = query.strip().lower()
+        if not needle:
+            return True
+        haystack = " ".join(
+            (
+                self.id,
+                self.title,
+                self.subtitle or "",
+                *self.keywords,
+            )
+        ).lower()
+        return needle in haystack
+
+
+class CommandPalette(Modal):
+    """Searchable command launcher built from SearchBox and Selectable rows."""
+
+    def __init__(
+        self,
+        commands: Iterable[Command | Mapping[str, object]],
+        *,
+        open: bool = False,
+        title: str = "Command Palette",
+        value: str = "",
+        placeholder: str = "Search commands...",
+        width: int | float = 520,
+        height: int | float = 360,
+        max_results: int | None = None,
+        close_on_run: bool = True,
+        on_run: Callable[[Command], None] | None = None,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.commands = [self._normalize_command(command) for command in commands]
+        command_ids = [command.id for command in self.commands]
+        if len(set(command_ids)) != len(command_ids):
+            raise ValueError("CommandPalette command ids must be unique")
+        self.query = str(value)
+        self.placeholder = str(placeholder)
+        self.max_results = None if max_results is None else int(max_results)
+        if self.max_results is not None and self.max_results <= 0:
+            raise ValueError("CommandPalette max_results must be greater than zero")
+        self.close_on_run = bool(close_on_run)
+        self.on_run = on_run
+        self.selected: str | None = None
+        self.search_box: SearchBox | None = None
+        self.results: VLayout | None = None
+        merged_style = {
+            "gap": 10,
+            **(style or {}),
+        }
+        super().__init__(
+            title,
+            open=open,
+            width=width,
+            height=height,
+            close_button=True,
+            id=id,
+            key=key,
+            class_=_merge_widget_class("command-palette", class_),
+            style=merged_style,
+            tooltip=tooltip,
+            parent=parent,
+        )
+        self.search_box = SearchBox(
+            self.query,
+            placeholder=self.placeholder,
+            on_change=self._handle_query_change,
+            class_="command-palette-search",
+            style={"width": "100%", "height": 38},
+            parent=self,
+        )
+        self.results = VLayout(
+            class_="command-palette-results",
+            style={"gap": 3, "width": "100%", "flex": 1, "min_height": 0, "overflow_y": "auto"},
+            parent=self,
+        )
+        self._sync_results(live=False)
+
+    @staticmethod
+    def _normalize_command(command: Command | Mapping[str, object]) -> Command:
+        if isinstance(command, Command):
+            return command
+        if not isinstance(command, Mapping):
+            raise TypeError("CommandPalette commands must be Command objects or mappings")
+        if "id" not in command or "title" not in command:
+            raise ValueError("Command mappings require id and title")
+        on_run = command.get("on_run")
+        if on_run is not None and not callable(on_run):
+            raise TypeError("Command on_run must be callable")
+        return Command(
+            str(command["id"]),
+            str(command["title"]),
+            on_run=on_run,  # type: ignore[arg-type]
+            subtitle=None if command.get("subtitle") is None else str(command.get("subtitle")),
+            keywords=command.get("keywords", ()),  # type: ignore[arg-type]
+            disabled=bool(command.get("disabled", False)),
+        )
+
+    def filtered_commands(self) -> tuple[Command, ...]:
+        matches = [command for command in self.commands if command.matches(self.query)]
+        if self.max_results is not None:
+            matches = matches[: self.max_results]
+        return tuple(matches)
+
+    def _ensure_selected(self, commands: Sequence[Command]) -> None:
+        enabled_ids = [command.id for command in commands if not command.disabled]
+        if self.selected not in enabled_ids:
+            self.selected = enabled_ids[0] if enabled_ids else None
+
+    def _row_text(self, command: Command) -> str:
+        if command.subtitle:
+            return f"{command.title} - {command.subtitle}"
+        return command.title
+
+    def _make_result_rows(self) -> list[Widget]:
+        commands = list(self.filtered_commands())
+        self._ensure_selected(commands)
+        if not commands:
+            return [
+                Label(
+                    "No commands",
+                    class_="command-palette-empty",
+                    style={"height": 34, "color": "muted", "align_self": "center"},
+                    parent=None,
+                )
+            ]
+        rows: list[Widget] = []
+        for command in commands:
+            def on_select(selected: bool, command_id: str = command.id) -> None:
+                if selected:
+                    self.run(command_id)
+
+            rows.append(
+                Selectable(
+                    self._row_text(command),
+                    value=command.id,
+                    selected=command.id == self.selected,
+                    toggle=False,
+                    on_select=on_select,
+                    disabled=command.disabled,
+                    class_="command-palette-row",
+                    parent=None,
+                )
+            )
+        return rows
+
+    def _sync_results(self, *, live: bool) -> None:
+        if self.results is None:
+            return
+        rows = self._make_result_rows()
+        if live:
+            self.results.replace_children(rows)
+            return
+        self.results.children = []
+        for row in rows:
+            self.results.add(row)
+
+    def _handle_query_change(self, query: str) -> None:
+        self.query = str(query)
+        self._sync_results(live=self.results is not None and self.results.is_live)
+
+    def set_query(self, query: str) -> None:
+        self.query = str(query)
+        if self.search_box is not None:
+            self.search_box.set_value(self.query)
+        self._sync_results(live=self.results is not None and self.results.is_live)
+
+    def set_commands(self, commands: Iterable[Command | Mapping[str, object]]) -> None:
+        self.commands = [self._normalize_command(command) for command in commands]
+        command_ids = [command.id for command in self.commands]
+        if len(set(command_ids)) != len(command_ids):
+            raise ValueError("CommandPalette command ids must be unique")
+        self._sync_results(live=self.results is not None and self.results.is_live)
+
+    def run_selected(self) -> None:
+        if self.selected is not None:
+            self.run(self.selected)
+
+    def run(self, command_id: str) -> None:
+        selected = str(command_id)
+        command = next((command for command in self.commands if command.id == selected), None)
+        if command is None:
+            raise ValueError("CommandPalette command_id must match a command")
+        if command.disabled:
+            return
+        self.selected = command.id
+        if command.on_run is not None:
+            command.on_run()
+        if self.on_run is not None:
+            self.on_run(command)
+        if self.close_on_run:
+            self.close()
+
+
+class RadioGroup(VLayout):
+    """Mutually exclusive choice group built from RadioButton rows."""
+
+    _ORIENTATIONS = {"vertical", "horizontal"}
+
+    def __init__(
+        self,
+        items: Iterable[object],
+        *,
+        value: str | None = None,
+        orientation: str = "vertical",
+        on_change: StringCallback | None = None,
+        disabled: bool = False,
+        gap: int | float | None = None,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        orientation_value = orientation.strip().lower()
+        if orientation_value not in self._ORIENTATIONS:
+            raise ValueError("RadioGroup orientation must be 'vertical' or 'horizontal'")
+        self.items = [self._normalize_item(item) for item in items]
+        if not self.items:
+            raise ValueError("RadioGroup items cannot be empty")
+        values = [item[1] for item in self.items]
+        if len(set(values)) != len(values):
+            raise ValueError("RadioGroup item values must be unique")
+
+        selected = values[0] if value is None else str(value)
+        self._validate_value(selected)
+        self.value = selected
+        self.orientation = orientation_value
+        self.on_change = on_change
+        self.disabled = bool(disabled)
+        self._button_widgets: list[RadioButton] = []
+
+        merged_style = dict(style or {})
+        if orientation_value == "horizontal":
+            merged_style.setdefault("display", "flex")
+            merged_style.setdefault("flex_direction", "row")
+            merged_style.setdefault("align_items", "center")
+            merged_style.setdefault("height", "auto")
+        if gap is not None:
+            gap_value = float(gap)
+            if not math.isfinite(gap_value) or gap_value < 0:
+                raise ValueError("RadioGroup gap must be a non-negative finite number")
+            merged_style.setdefault("gap", gap_value)
+
+        super().__init__(
+            id=id,
+            key=key,
+            class_=_merge_widget_class(
+                f"radio-group radio-group-{orientation_value}",
+                class_,
+            ),
+            style=merged_style or None,
+            tooltip=tooltip,
+            parent=parent,
+        )
+        self._sync_children(live=False)
+
+    @staticmethod
+    def _normalize_item(item: object) -> tuple[str, str, bool]:
+        if isinstance(item, Mapping):

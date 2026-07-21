@@ -1,0 +1,160 @@
+    /// Active slider drag session (pointer-down on a Slider widget).
+    slider_drag: Option<SliderDrag>,
+    /// Active range-slider drag session (pointer-down on a RangeSlider widget).
+    range_slider_drag: Option<RangeSliderDrag>,
+    /// Active drag-number session (relative horizontal drag).
+    drag_number_drag: Option<DragNumberDrag>,
+    /// Active line plot pan drag session.
+    line_plot_pan_drag: Option<String>,
+    /// Active line plot box-zoom drag session.
+    line_plot_box_zoom_drag: Option<LinePlotBoxZoomDrag>,
+    /// Active histogram pan drag session.
+    histogram_pan_drag: Option<String>,
+    /// Active histogram box-zoom drag session.
+    histogram_box_zoom_drag: Option<LinePlotBoxZoomDrag>,
+    /// Active panel scrollbar drag session.
+    scrollbar_drag: Option<ScrollbarDrag>,
+    /// Active DataFrameTable scrollbar drag session.
+    table_scrollbar_drag: Option<ScrollbarDrag>,
+    /// Active splitter gutter drag session.
+    splitter_drag: Option<SplitterDrag>,
+    /// Active DataFrameTable column resize drag session.
+    table_column_resize_drag: Option<TableColumnResizeDrag>,
+    /// Pending or active app-local drag/drop session.
+    drag_drop_session: Option<DragDropSession>,
+    /// Active mouse-drag text selection session.
+    text_selection_drag: Option<TextSelectionDrag>,
+    scatter_press_pos: Option<[f32; 2]>,
+    /// Scatter id that received the current pointer-down (for orbit/pan/pick).
+    active_scatter_id: Option<String>,
+    /// Last slider value sent to Python during drag throttling.
+    last_slider_emit: Option<SliderChangeDispatch>,
+    /// Most recent slider value waiting for a throttled callback slot.
+    pending_slider_emit: Option<(String, f32)>,
+    /// Last range-slider value sent to Python during drag throttling.
+    last_range_slider_emit: Option<RangeSliderChangeDispatch>,
+    /// Most recent range-slider value waiting for a throttled callback slot.
+    pending_range_slider_emit: Option<(String, (f32, f32))>,
+    /// Id of the UI widget that received the current pointer-down.
+    pressed_id: Option<String>,
+    /// Currently active keyboard modifiers.
+    modifiers: ModifiersState,
+    /// Whether a background Python task drain was held while a transient popup was open.
+    deferred_python_task_drain: bool,
+    /// A coalesced Scatter3D frame upload was applied and should be presented before another one.
+    scatter_upload_redraw_pending: bool,
+    command_seq: u64,
+    command_history: VecDeque<RuntimeCommandRecord>,
+    command_timings: HashMap<String, StageTimingStats>,
+    active_command_start: Option<Instant>,
+    command_drain_timing: StageTimingStats,
+    command_drain_fetch_timing: StageTimingStats,
+    command_drain_coalesce_timing: StageTimingStats,
+    command_drain_apply_timing: StageTimingStats,
+    command_drain_flush_timing: StageTimingStats,
+    last_command_drain_batches: u64,
+    last_command_drain_commands: u64,
+    last_command_drain_pending: u64,
+    startup_real_redraw_deadline: Option<Instant>,
+    pending_window_screenshot_requests: Vec<u64>,
+}
+
+impl DragonApp {
+    fn new(
+        mut spec: AppSpec,
+        smoke_frames: Option<u32>,
+        wake_proxy: EventLoopProxy<RuntimeEvent>,
+    ) -> Self {
+        let command_bridge = spec.command_bridge.take();
+        let python_runtime = spec.python_runtime.take();
+        Self {
+            spec: Some(spec),
+            command_bridge,
+            python_runtime,
+            wake_proxy,
+            window: None,
+            gpu: None,
+            error: None,
+            smoke_frames,
+            frames_rendered: 0,
+            upload_ms: 0.0,
+            frame_ms_total: 0.0,
+            frame_work_ms_total: 0.0,
+            frame_prepare_ms_total: 0.0,
+            frame_acquire_ms_total: 0.0,
+            frame_encode_ms_total: 0.0,
+            frame_submit_ms_total: 0.0,
+            frame_present_ms_total: 0.0,
+            last_frame_ms: 0.0,
+            last_frame_work_ms: 0.0,
+            last_frame_prepare_ms: 0.0,
+            last_frame_acquire_ms: 0.0,
+            last_frame_encode_ms: 0.0,
+            last_frame_submit_ms: 0.0,
+            last_frame_present_ms: 0.0,
+            frame_timestamps: VecDeque::with_capacity(120),
+            last_mouse_pos: None,
+            orbit_active: false,
+            pan_active: false,
+            pan_button: None,
+            rect_select_active: false,
+            click_cbs: HashMap::new(),
+            change_cbs: HashMap::new(),
+            slider_drag: None,
+            range_slider_drag: None,
+            drag_number_drag: None,
+            line_plot_pan_drag: None,
+            line_plot_box_zoom_drag: None,
+            histogram_pan_drag: None,
+            histogram_box_zoom_drag: None,
+            scrollbar_drag: None,
+            table_scrollbar_drag: None,
+            splitter_drag: None,
+            table_column_resize_drag: None,
+            drag_drop_session: None,
+            text_selection_drag: None,
+            scatter_press_pos: None,
+            active_scatter_id: None,
+            last_slider_emit: None,
+            pending_slider_emit: None,
+            last_range_slider_emit: None,
+            pending_range_slider_emit: None,
+            pressed_id: None,
+            modifiers: ModifiersState::empty(),
+            deferred_python_task_drain: false,
+            scatter_upload_redraw_pending: false,
+            command_seq: 0,
+            command_history: VecDeque::with_capacity(COMMAND_HISTORY_LIMIT),
+            command_timings: HashMap::new(),
+            active_command_start: None,
+            command_drain_timing: StageTimingStats::default(),
+            command_drain_fetch_timing: StageTimingStats::default(),
+            command_drain_coalesce_timing: StageTimingStats::default(),
+            command_drain_apply_timing: StageTimingStats::default(),
+            command_drain_flush_timing: StageTimingStats::default(),
+            last_command_drain_batches: 0,
+            last_command_drain_commands: 0,
+            last_command_drain_pending: 0,
+            startup_real_redraw_deadline: None,
+            pending_window_screenshot_requests: Vec::new(),
+        }
+    }
+
+    fn take_error(&mut self) -> Option<DragonError> {
+        self.error.take()
+    }
+
+    fn run_result(&self) -> RunResult {
+        let frame_ms = if self.frames_rendered > 0 {
+            self.frame_ms_total / self.frames_rendered as f64
+        } else {
+            0.0
+        };
+        RunResult {
+            upload_ms: self.upload_ms,
+            frame_ms,
+            debug_snapshot: self.debug_snapshot_json(),
+        }
+    }
+
+    fn record_frame_telemetry(&mut self, timings: FrameRenderTimings) {

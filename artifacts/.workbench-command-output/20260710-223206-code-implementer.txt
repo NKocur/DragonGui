@@ -1,0 +1,322 @@
+# Spec: Splitter Pane Sizing And Panel Composition Fixes
+
+## Goal
+
+The prior passes fixed tab blank space and body scroll reachability, but the user still sees obvious layout problems when running the professional demo with global Python 3.13. The named audit screenshots confirm that large desktop/tablet layouts still look broken: split panes do not use available space, data tables and property panels are squeezed, plot panels are poorly framed, and panel contents are clipped or badly organized.
+
+Continue fixing the library, using the professional demo as evidence. Do not treat the current `pass` visual-audit status as sufficient.
+
+## Source Of Truth
+
+Read these before editing:
+
+- `examples/all_features_professional_demo.py`
+- `examples/css_feature_probes/all_features_professional_demo_probe.py`
+- `examples/css_feature_probes/visual_audit_manifest.json`
+- `artifacts/IMPLEMENTATION_NOTES.md`
+- `artifacts/TEST_RESULTS.md`
+- `artifacts/CODE_REVIEW.md`
+- `artifacts/visual_audit/REPORT.md`
+- `artifacts/visual_audit/report.json`
+- `artifacts/visual_audit/contact_sheets/all-features-professional-contact-sheet.png`
+- Specific screenshots the user called out:
+  - `artifacts/visual_audit/screenshots/all-features-professional-explore-1180x760.png`
+  - `artifacts/visual_audit/screenshots/all-features-professional-overview-1180x760.png`
+  - `artifacts/visual_audit/screenshots/all-features-professional-data-1440x900.png`
+- Matching snapshots:
+  - `artifacts/visual_audit/snapshots/all-features-professional-explore-1180x760.json`
+  - `artifacts/visual_audit/snapshots/all-features-professional-overview-1180x760.json`
+  - `artifacts/visual_audit/snapshots/all-features-professional-data-1440x900.json`
+- `python/dragongui/widgets.py`
+- `native/src/layout.rs`
+- `native/src/table.rs`
+- `native/src/primitives/mod.rs`
+- `tools/visual_audit.py`
+- `tests/test_visual_audit.py`
+
+## Current Evidence
+
+The current artifacts still mark the professional demo route targets as `pass`, but several screenshots visibly fail professional layout expectations.
+
+Concrete snapshot geometry:
+
+```text
+all-features-professional-data-1440x900
+Body scroll area: x=222 y=123 w=1210 h=735
+Active Data page: x=222 y=123 w=1190 h=735
+Splitter: x=222 y=255 w=1190 h=620
+Pane 1: x=222 y=255 w=360 h=620
+DataFrameTable: x=222 y=255 w=360 h=620
+Pane 2: x=585 y=255 w=280 h=620
+Selected Route Inspector panel: x=585 y=255 w=280 h=620
+```
+
+This leaves roughly `545px` of the splitter unused. The table is squeezed to `360px`, so the screenshot shows mostly row indices rather than the actual route/owner/state data. The inspector controls are clipped in a `280px` pane even though the window has plenty of unused horizontal space.
+
+```text
+all-features-professional-explore-1180x760
+Body scroll area: x=222 y=123 w=950 h=595
+Active Explore page: x=222 y=123 w=930 h=595
+Splitter: x=222 y=255 w=930 h=610
+Pane 1: x=222 y=255 w=360 h=610
+Pane 2: x=585 y=255 w=260 h=610
+```
+
+This leaves about `307px` unused in the splitter. The `Scatter3D` plot area is constrained to the first pane minimum, while visual plot content appears cramped/clipped and the controls panel consumes an awkward narrow column.
+
+```text
+all-features-professional-overview-1180x760
+Splitter: x=222 y=329 w=930 h=360
+Pane 1/Fleet Pulse: x=222 y=329 w=320 h=360
+Pane 2/Incident Mix: x=545 y=329 w=260 h=360
+Recent Events panel: x=222 y=689 w=930 h=297
+```
+
+The overview chart/pie section uses only about `583px` of a `930px` splitter, leaving a large blank region to the right. The result looks unfinished and poorly organized.
+
+Likely immediate root cause:
+
+- `examples/all_features_professional_demo.py` uses `dg.Pane(size=0.62)`, `dg.Pane(size=0.38)`, `dg.Pane(size=0.72)`, `dg.Pane(size=0.28)`, `dg.Pane(size=0.7)`, and `dg.Pane(size=0.3)`.
+- In the current Python API, numeric `Pane(size=...)` serializes as a fixed pixel size. A value like `0.7` means `0.7px`, not `70%`.
+- In native layout, the tiny fixed size plus `min_size` makes panes clamp to their minimum widths and disables flex growth, so extra splitter space remains unused.
+- This is an API/design footgun and a library/demo integration bug. The library should not silently produce professional-demo layouts where panes stick to minimum sizes and waste half of the available splitter.
+
+## Required Outcomes
+
+1. Fix splitter/pane sizing so splitters use available space.
+   - Horizontal splitters with proportion-style pane intent must distribute available width after gutters.
+   - Extra splitter space must not be left unused when panes have no max-size preventing growth.
+   - The professional demo's overview/explore/data/reports splitters should fill their available width at `1180x760` and `1440x900`.
+
+2. Make the Pane/Splitter API safer.
+   - Decide and implement a clear behavior for fractional-looking `Pane(size=0 < n < 1)` and `Splitter(sizes=(0 < n < 1, ...))`.
+   - Preferred options:
+     - Treat `0 < size < 1` as a fraction/proportion of available splitter space, or
+     - reject/warn on fractional numeric sizes and update the demo to use supported `fr` sizes or `flex`.
+   - Do not continue silently treating `0.7` as a fixed `0.7px` pane in realistic app layouts.
+   - Preserve support for explicit fixed pixel sizes such as `size=240`.
+   - Preserve existing `'<number>fr'` sizes.
+
+3. Fix the professional demo layout where needed.
+   - Convert proportional pane usage to the corrected API.
+   - Ensure `DataFrameTable` gets enough width to show meaningful columns on desktop.
+   - Ensure `PropertyGrid`/inspector controls are not clipped in desktop/tablet captures.
+   - Ensure plot panels use enough area to look professional and are not cramped into minimum-size panes.
+
+4. Improve visual audit so these failures cannot pass.
+   - Add snapshot validation for splitter utilization in `tools/visual_audit.py`, at least for `all-features-professional-*` targets.
+   - A horizontal splitter should fail when child panes consume much less than the splitter width while there is no explicit max-size or intentional spacer explaining the unused area.
+   - The validator should catch cases like `splitter.w=1190` with pane widths `360 + 280` plus gutter.
+
+5. Verify the user's Python 3.13 path.
+   - The user is running global Python 3.13. Confirm the same interpreter imports the local `python/dragongui/_dragongui.pyd` built from the current native code.
+   - If the global Python is importing an installed/stale `dragongui` instead of the workspace package, document the exact import path and fix the run instructions/artifacts.
+
+## Affected Files And Modules
+
+Primary:
+
+- `python/dragongui/widgets.py`
+  - `Splitter`
+  - `Pane`
+  - `_normalize_splitter_size(...)`
+  - `_splitter_size_to_flex(...)`
+  - serialization of pane `size`, `flex`, `min_size`, and splitter `sizes`.
+- `native/src/layout.rs`
+  - `WidgetKind::Splitter`
+  - `WidgetKind::Pane`
+  - native pane flex/fixed/min/max handling.
+- `examples/all_features_professional_demo.py`
+  - Replace ambiguous fractional `Pane(size=...)` usage with the corrected/explicit proportional sizing API.
+- `tools/visual_audit.py`
+  - Add splitter utilization validator.
+- `tests/test_visual_audit.py`
+  - Add validator fixtures.
+- `tests/test_python_api.py`
+  - Add/adjust Splitter/Pane serialization tests.
+- Native layout tests in `native/src/layout.rs`.
+
+Secondary, only if problems remain after splitters are fixed:
+
+- `native/src/table.rs`
+  - If DataFrameTable still shows only indices despite adequate width.
+- `native/src/primitives/mod.rs`
+  - If plot/chart/table/control paint is clipped despite correct layout rects.
+- `native/src/text/mod.rs`
+  - If text controls remain clipped because intrinsic text measurement is wrong.
+- `python/dragongui/theme.py` or `native/src/framework.dg.css`
+  - Only if default density/padding contributes after geometry is fixed.
+
+Artifacts to update:
+
+- `artifacts/IMPLEMENTATION_NOTES.md`
+- `artifacts/TEST_RESULTS.md`
+- `artifacts/visual_audit/REPORT.md`
+- `artifacts/visual_audit/report.json`
+- `artifacts/visual_audit/screenshots/all-features-professional-*.png`
+- `artifacts/visual_audit/snapshots/all-features-professional-*.json`
+- `artifacts/visual_audit/contact_sheets/all-features-professional-contact-sheet.png`
+
+## Implementation Guidance
+
+Start with the splitter failure. Do not chase chart/table rendering until the panes fill their container.
+
+Suggested sequence:
+
+1. Add regression tests for Splitter/Pane behavior.
+   - Python serialization test:
+     - `Pane(size=240)` remains fixed pixel size.
+     - `Pane(size=0.7)` either serializes as a proportion/flex value or raises/warns according to the chosen API.
+     - `Splitter(sizes=("7fr", "3fr"))` serializes expected flex values.
+   - Native layout test:
+     - Horizontal splitter width `1000`, gutter `6`, two panes with proportions `0.7/0.3` or `7fr/3fr`, min sizes `360/280`.
+     - Assert panes plus gutter consume nearly the full splitter width.
+     - Assert first pane is wider than its min size when space is available.
+     - Assert max sizes still cap panes when supplied.
+
+2. Fix the API/library behavior.
+   - If choosing fractional support:
+     - Interpret numeric `0 < size < 1` as proportional/flex, not fixed px.
+     - Make native props unambiguous if needed, e.g. separate fixed `size` from flex/proportion.
+   - If choosing rejection/warning:
+     - Reject or warn for `0 < size < 1` as likely misuse.
+     - Update the demo to use `Splitter(sizes=("7fr", "3fr"))`, `Splitter(sizes=("62fr", "38fr"))`, or `Pane(flex=...)`.
+   - Ensure live `set_sizes(...)` follows the same semantics.
+
+3. Update the professional demo.
+   - Overview: Fleet Pulse and Incident Mix should fill the 930px splitter at `1180x760`.
+   - Explore: Scatter pane and controls pane should fill the 930px splitter at `1180x760`.
+   - Data: table and inspector should fill the 1190px splitter at `1440x900`.
+   - Reports: HtmlReport and preview should fill available width.
+
+4. Add visual audit validation.
+   - For professional demo targets, parse snapshots and find nonzero horizontal splitters.
+   - Sum direct child pane widths plus splitter gutter gaps.
+   - If consumed width is much less than splitter width, fail with a note:
+     - `Splitter underutilized: splitter width 1190, pane span 643`.
+   - Avoid false positives for intentionally fixed splitters with explicit max sizes; if max-size detection is unavailable from snapshots, limit the validator to the known professional demo route splitters or use a conservative threshold.
+
+5. Re-run visual audit and inspect screenshots manually.
+   - The named screenshots should look materially different after the fix.
+   - Do not approve if `data-1440x900` still shows only row indices or if `explore-1180x760` still leaves a large blank right side in the splitter.
+
+## Expected Behavior
+
+After the fix:
+
+- `all-features-professional-data-1440x900.png`
+  - The table pane uses most of the left side of the splitter and shows meaningful data columns, not just row indices.
+  - The inspector pane has enough width for property labels and editors without obvious clipping.
+  - The splitter does not leave a large blank region to the right.
+
+- `all-features-professional-explore-1180x760.png`
+  - The `Scatter3D` plot area is substantially wider than 360px.
+  - The controls pane remains visible but does not force the scatter pane into a cramped minimum.
+  - The splitter fills the content width.
+
+- `all-features-professional-overview-1180x760.png`
+  - Fleet Pulse and Incident Mix use the available splitter width rather than occupying only their min widths.
+  - Recent Events should align under a full-width, intentionally organized chart row.
+
+- `all-features-professional-reports-*`
+  - HtmlReport and image preview panes use available width and do not look like narrow cards in a large blank region.
+
+- Mobile/narrow captures should remain reachable after the prior scroll fix.
+
+## Python 3.13 Verification
+
+Use the same global Python 3.13 path the user is likely using. Prior artifacts used:
+
+```powershell
+$py = 'C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe'
+$env:PYO3_PYTHON = $py
+```
+
+Before visual audit, run:
+
+```powershell
+& $py -c "import sys; sys.path.insert(0, 'python'); import dragongui as dg; import dragongui._dragongui as native; print(dg.__file__); print(native.__file__); print(dg.native_backend_available(), dg.backend_info())"
+```
+
+Record the output in `artifacts/TEST_RESULTS.md`. If it does not point to the workspace `python\dragongui`, fix the environment/path before judging screenshots.
+
+## Validation Required
+
+Minimum tests:
+
+```powershell
+cargo fmt --manifest-path native\Cargo.toml -- --check
+cargo test --manifest-path native\Cargo.toml <new_splitter_layout_test_name> -- --nocapture
+cargo test --manifest-path native\Cargo.toml empty_tabs_strip_does_not_consume_workbench_body_space -- --nocapture
+cargo test --manifest-path native\Cargo.toml scroll_area_counts_active_page_descendant_overflow -- --nocapture
+cargo check --manifest-path native\Cargo.toml
+& $py -m py_compile tools\visual_audit.py examples\all_features_professional_demo.py examples\css_feature_probes\all_features_professional_demo_probe.py
+& $py -m pytest tests\test_visual_audit.py tests\test_all_features_professional_demo.py tests\test_python_api.py -q
+```
+
+If native code changes, rebuild and copy before audit:
+
+```powershell
+cargo build --manifest-path native\Cargo.toml --release --features pyo3/extension-module
+Copy-Item -LiteralPath native\target\release\_dragongui.dll -Destination python\dragongui\_dragongui.pyd -Force
+```
+
+Required visual audit rerun:
+
+```powershell
+$targets=@(
+  'all-features-professional-overview',
+  'all-features-professional-explore',
+  'all-features-professional-timeseries',
+  'all-features-professional-data',
+  'all-features-professional-workflow',
+  'all-features-professional-reports',
+  'all-features-professional-runtime',
+  'all-features-professional-styling'
+)
+foreach ($target in $targets) {
+  & $py tools\visual_audit.py --target $target --sizes 1440x900,1180x760,390x720,320x640 --append --wait-ms 1400 --timeout-ms 16000
+}
+```
+
+Also rerun splitter-focused existing probe:
+
+```powershell
+& $py tools\visual_audit.py --target splitter --target layout-plot-embedding --target data-table-upgrades --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 14000
+```
+
+Manual review is required. Specifically open:
+
+- `all-features-professional-explore-1180x760.png`
+- `all-features-professional-overview-1180x760.png`
+- `all-features-professional-data-1440x900.png`
+- `all-features-professional-reports-1180x760.png`
+- regenerated contact sheet.
+
+Record before/after geometry and screenshots in `artifacts/IMPLEMENTATION_NOTES.md`.
+
+## Edge Cases
+
+- Numeric pane sizes below `1`.
+- Fixed pixel pane sizes such as `240`.
+- Existing `fr` splitter sizes.
+- Live `Splitter.set_sizes(...)`.
+- Pane `min_size` larger than proportional allocation.
+- Pane `max_size` smaller than proportional allocation.
+- Horizontal and vertical splitters.
+- Nested splitters.
+- Splitters inside scrollable pages.
+- Splitters inside panels.
+- DataFrameTable inside a resized pane.
+- PropertyGrid editors inside a resized pane.
+- Plot widgets inside resized panes.
+- Global Python 3.13 importing stale installed package or stale native extension.
+
+## Out Of Scope
+
+- Rewriting the professional demo from scratch.
+- Removing widgets or pages to avoid layout pressure.
+- Dropping visual audit sizes.
+- Replacing the entire layout engine.
+- Broad table/chart renderer redesign before splitter geometry is fixed.
+- Full interactive playback for menus/modals/drag/drop.

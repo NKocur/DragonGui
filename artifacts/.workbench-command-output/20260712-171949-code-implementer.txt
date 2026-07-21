@@ -1,0 +1,260 @@
+
+            WindowEvent::Resized(size) => {
+                if let Some(gpu) = &mut self.gpu {
+                    gpu.resize(size.width, size.height);
+                }
+                self.request_redraw();
+            }
+
+            WindowEvent::ScaleFactorChanged {
+                scale_factor,
+                inner_size_writer: _,
+            } => {
+                let new_size = self
+                    .window
+                    .as_ref()
+                    .map(|w| w.inner_size())
+                    .unwrap_or_default();
+                if let Some(gpu) = &mut self.gpu {
+                    gpu.set_scale_factor(scale_factor, new_size);
+                }
+                self.request_redraw();
+            }
+
+            WindowEvent::ThemeChanged(theme) => {
+                if let Some(gpu) = &mut self.gpu {
+                    gpu.set_platform_color_scheme(winit_theme_color_scheme(theme));
+                }
+                self.request_redraw();
+            }
+
+            WindowEvent::MouseInput { state, button, .. } => {
+                let pressed = state == ElementState::Pressed;
+
+                match button {
+                    MouseButton::Left => {
+                        if !pressed {
+                            // â”€â”€ release â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+                            let was_orbiting = self.orbit_active;
+                            let was_rect_select = self.rect_select_active;
+                            let scatter_press = self.scatter_press_pos.take();
+                            let released_scatter_pan = self.finish_scatter_pan(MouseButton::Left);
+                            self.orbit_active = false;
+                            self.rect_select_active = false;
+                            let released_scrollbar = self.scrollbar_drag.take().is_some();
+                            let released_table_scrollbar =
+                                self.table_scrollbar_drag.take().is_some();
+                            let released_splitter = self.splitter_drag.take().is_some();
+                            let released_table_column_resize =
+                                self.table_column_resize_drag.take().is_some();
+                            let released_slider =
+                                self.slider_drag.as_ref().map(|drag| drag.widget_id.clone());
+                            if let Some(id) = released_slider {
+                                self.flush_slider_change(&id);
+                            }
+                            self.slider_drag = None;
+                            let released_range_slider = self
+                                .range_slider_drag
+                                .as_ref()
+                                .map(|drag| drag.widget_id.clone());
+                            if let Some(id) = released_range_slider {
+                                self.flush_range_slider_change(&id);
+                            }
+                            self.range_slider_drag = None;
+                            let released_drag_number = self
+                                .drag_number_drag
+                                .as_ref()
+                                .map(|drag| drag.widget_id.clone());
+                            if let Some(id) = released_drag_number {
+                                self.flush_slider_change(&id);
+                            }
+                            self.drag_number_drag = None;
+                            let released_line_plot_pan = self.line_plot_pan_drag.take().is_some();
+                            let released_line_plot_box_zoom = self.line_plot_box_zoom_drag.take();
+                            let released_histogram_pan = self.histogram_pan_drag.take().is_some();
+                            let released_histogram_box_zoom = self.histogram_box_zoom_drag.take();
+                            if released_scrollbar {
+                                self.request_redraw();
+                                return;
+                            }
+                            if released_table_scrollbar {
+                                self.request_redraw();
+                                return;
+                            }
+                            if released_splitter {
+                                self.request_redraw();
+                                return;
+                            }
+                            if released_table_column_resize {
+                                self.request_redraw();
+                                return;
+                            }
+                            if released_line_plot_pan {
+                                self.request_redraw();
+                                return;
+                            }
+                            if let Some(drag) = released_line_plot_box_zoom {
+                                let pos = self.last_mouse_pos.unwrap_or(drag.start);
+                                if let Some(gpu) = &mut self.gpu {
+                                    gpu.finish_line_plot_box_zoom(&drag.widget_id, drag.start, pos);
+                                }
+                                self.request_redraw();
+                                return;
+                            }
+                            if released_histogram_pan {
+                                self.request_redraw();
+                                return;
+                            }
+                            if let Some(drag) = released_histogram_box_zoom {
+                                let pos = self.last_mouse_pos.unwrap_or(drag.start);
+                                if let Some(gpu) = &mut self.gpu {
+                                    gpu.finish_histogram_box_zoom(&drag.widget_id, drag.start, pos);
+                                }
+                                self.request_redraw();
+                                return;
+                            }
+                            if released_scatter_pan {
+                                self.request_redraw();
+                                return;
+                            }
+                            let released_drag_drop =
+                                self.finish_drag_drop(self.last_mouse_pos.unwrap_or([0.0, 0.0]));
+                            if released_drag_drop {
+                                self.request_redraw();
+                                return;
+                            }
+                            if self.text_selection_drag.take().is_some() {
+                                self.request_redraw();
+                                return;
+                            }
+
+                            if was_rect_select {
+                                if let Some(scatter_id) = self.active_scatter_id.clone() {
+                                    // Determine which selection mode was active.
+                                    let mode = self
+                                        .gpu
+                                        .as_ref()
+                                        .and_then(|g| g.scatters.get(&scatter_id))
+                                        .map(|rt| rt.widget.picking_mode);
+
+                                    if mode == Some(scatter::PickingMode::Lasso) {
+                                        // Polygon selection.
+                                        let poly = self
+                                            .gpu
+                                            .as_ref()
+                                            .and_then(|g| g.scatters.get(&scatter_id))
+                                            .and_then(|rt| rt.widget.selection_polygon.clone());
+                                        if let Some(p) = poly {
+                                            if let Some(payload) = self.gpu.as_mut().and_then(|g| {
+                                                g.scatter_polygon_select_payload(&scatter_id, &p)
+                                            }) {
+                                                self.emit_change(
+                                                    &scatter_id,
+                                                    ChangeValue::Text(payload),
+                                                );
+                                            }
+                                        }
+                                        if let Some(gpu) = &mut self.gpu {
+                                            if let Some(rt) = gpu.scatters.get_mut(&scatter_id) {
+                                                rt.widget.selection_polygon = None;
+                                                rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                                            }
+                                        }
+                                    } else {
+                                        // Rectangle selection.
+                                        let rect = self
+                                            .gpu
+                                            .as_ref()
+                                            .and_then(|g| g.scatters.get(&scatter_id))
+                                            .and_then(|rt| rt.widget.selection_rect);
+                                        if let Some(r) = rect {
+                                            if let Some(payload) = self.gpu.as_mut().and_then(|g| {
+                                                g.scatter_select_payload(&scatter_id, r)
+                                            }) {
+                                                self.emit_change(
+                                                    &scatter_id,
+                                                    ChangeValue::Text(payload),
+                                                );
+                                            }
+                                        }
+                                        if let Some(gpu) = &mut self.gpu {
+                                            if let Some(rt) = gpu.scatters.get_mut(&scatter_id) {
+                                                rt.widget.selection_rect = None;
+                                                rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                                            }
+                                        }
+                                    }
+                                    self.request_redraw();
+                                }
+                            } else if was_orbiting {
+                                let pos = self.last_mouse_pos.unwrap_or([0.0, 0.0]);
+                                if let Some(scatter_id) = self.active_scatter_id.clone() {
+                                    if let Some(gpu) = &mut self.gpu {
+                                        if let Some(rt) = gpu.scatters.get_mut(&scatter_id) {
+                                            rt.set_interaction_lod_active(
+                                                false,
+                                                &gpu.device,
+                                                &gpu.queue,
+                                            );
+                                            rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                                        }
+                                    }
+                                    let moved2 = scatter_press
+                                        .map(|start| {
+                                            let dx = pos[0] - start[0];
+                                            let dy = pos[1] - start[1];
+                                            dx * dx + dy * dy
+                                        })
+                                        .unwrap_or(f32::INFINITY);
+                                    if moved2 <= 16.0 {
+                                        if let Some(payload) = self
+                                            .gpu
+                                            .as_mut()
+                                            .and_then(|g| g.scatter_pick_payload(&scatter_id, pos))
+                                        {
+                                            self.emit_change(
+                                                &scatter_id,
+                                                ChangeValue::Text(payload),
+                                            );
+                                        }
+                                    }
+                                }
+                                self.request_redraw();
+                            }
+                            if !self.orbit_active && !self.pan_active && !self.rect_select_active {
+                                self.active_scatter_id = None;
+                            }
+
+                            if let Some(pid) = self.pressed_id.take() {
+                                // Clear pressed visual state.
+                                if let Some(gpu) = &mut self.gpu {
+                                    if let Some(ws) = &mut gpu.widget_state {
+                                        ws.pressed = None;
+                                    }
+                                }
+                                // Fire callback only if released over the same widget.
+                                let pos = self.last_mouse_pos.unwrap_or([0.0, 0.0]);
+                                let over = self
+                                    .gpu
+                                    .as_ref()
+                                    .and_then(|g| g.hit_test_ui(pos))
+                                    .map(|(id, _)| id);
+                                if over.as_deref() == Some(pid.as_str()) {
+                                    if let Some(kind) =
+                                        self.gpu.as_ref().and_then(|g| g.widget_kind(&pid))
+                                    {
+                                        if kind == WidgetKind::Extension {
+                                            let payload = self.gpu.as_ref().and_then(|gpu| {
+                                                gpu.extension_event_payload(
+                                                    &pid,
+                                                    "pointer_up",
+                                                    pos,
+                                                    0.0,
+                                                    0.0,
+                                                    Some(mouse_button_name(button)),
+                                                )
+                                            });
+                                            if let Some(payload) = payload {
+                                                self.emit_change(&pid, ChangeValue::Text(payload));
+                                            }
+                                        }

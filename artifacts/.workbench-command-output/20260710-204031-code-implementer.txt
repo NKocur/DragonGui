@@ -1,0 +1,100 @@
+examples/all_features_v3_demo.py:2518:            snapshot = app.debug_snapshot(timeout_ms=500)
+examples/all_features_v3_demo.py:2519:            app.call_soon_threadsafe(lambda s=snapshot: update_scatter_stats(s))
+examples/all_features_v3_demo.py:2589:            snapshot = app.debug_snapshot(timeout_ms=500)
+examples/all_features_v3_demo.py:2598:            app.call_soon_threadsafe(lambda text=detail: set_html_report_status(text))
+examples/all_features_v3_demo.py:2617:            snapshot = app.debug_snapshot(timeout_ms=500)
+examples/all_features_v3_demo.py:2637:            app.call_soon_threadsafe(
+examples/all_features_v3_demo.py:2845:        app.call_soon_threadsafe(lambda m=mode: set_status(f"Prebuilding {m} stream frames"))
+examples/all_features_v3_demo.py:2972:            app.call_soon_threadsafe(launch)
+examples/all_features_v3_demo.py:3154:                app.call_soon_threadsafe(append_line_batch)
+examples/all_features_v3_demo.py:3213:    app.set_buffer_resource("demo:f32-buffer", payload, kind="f32")
+examples/all_features_v3_demo.py:3218:    app.release_resource("demo:f32-buffer")
+examples/all_features_v3_demo.py:3223:    dg.open_file_dialog(
+examples/all_features_v3_demo.py:3252:            snapshot = app.debug_snapshot()
+examples/all_features_v3_demo.py:3261:            app.call_soon_threadsafe(lambda: set_status(f"Snapshot: {summary['widgets']} widgets"))
+examples/all_features_v3_demo.py:4926:    gpu = result.get("debug_snapshot", {}).get("gpu", {})
+python/dragongui\diagnostics.py:516:    """Called by the runtime when a call_soon_threadsafe task raises an exception."""
+python/dragongui\app.py:313:        handle.call_soon_threadsafe(build_and_replace)
+python/dragongui\app.py:324:                snapshot = result.get("debug_snapshot")
+python/dragongui\app.py:328:                        runtime["python"] = handle._python_debug_snapshot()
+python/dragongui\app.py:339:    def call_soon_threadsafe(self, fn: Any) -> None:
+python/dragongui\app.py:343:        self._handle.call_soon_threadsafe(fn)
+python/dragongui\app.py:369:    def debug_snapshot(self, timeout_ms: int = 1000) -> dict[str, Any]:
+python/dragongui\app.py:373:        return self._handle.debug_snapshot(timeout_ms)
+python/dragongui\app.py:393:    def set_buffer_resource(
+python/dragongui\app.py:404:        ``release_resource(resource_id)``. Pass ``owner=widget`` or
+python/dragongui\app.py:411:        self._handle.enqueue_set_buffer_resource(resource_id, data, kind=kind, owner=owner)
+python/dragongui\app.py:413:    def release_resource(self, resource_id: str) -> None:
+python/dragongui\app.py:417:        self._handle.release_resource(resource_id)
+python/dragongui\dialogs.py:19:    and the callback is scheduled through ``app.call_soon_threadsafe`` when an
+python/dragongui\dialogs.py:35:            lambda: _backend.open_file_dialog(title=title, filters=filters),
+python/dragongui\dialogs.py:63:            lambda: _backend.save_file_dialog(title=title, filters=filters),
+python/dragongui\dialogs.py:82:def open_file_dialog(
+python/dragongui\dialogs.py:117:def save_file_dialog(
+python/dragongui\dialogs.py:153:        if app is not None and hasattr(app, "call_soon_threadsafe"):
+python/dragongui\dialogs.py:154:            app.call_soon_threadsafe(lambda: callback(result))  # type: ignore[attr-defined]
+python/dragongui\manual.py:354:    "open_file_dialog",
+python/dragongui\manual.py:357:    "save_file_dialog",
+python/dragongui\manual.py:1405:- Scatter plots: `set_points`, `set_prepared_points`, `enqueue_prepared_points`, `create_live_frame`, `fit`, and camera methods.
+python/dragongui\manual.py:1410:with `app.call_soon_threadsafe(...)` and coalesce high-rate updates before they
+python/dragongui\manual.py:1582:  `app.call_soon_threadsafe(...)` for UI changes.
+python/dragongui\manual.py:1617:- Keep long-running work out of callbacks; use a thread and `app.call_soon_threadsafe`.
+python/dragongui\manual.py:1641:- `debug_snapshot(timeout_ms=1000)` returns runtime/layout/style diagnostics.
+python/dragongui\manual.py:1644:- `call_soon_threadsafe(fn)` schedules a callable from producer/background threads.
+python/dragongui\manual.py:1699:    app.call_soon_threadsafe(lambda: progress.set_value(result.progress))
+python/dragongui\manual.py:1712:Use `app.debug_snapshot()` to inspect:
+python/dragongui\manual.py:2202:- `enqueue_prepared_points(...)`
+python/dragongui\manual.py:2203:- `create_live_frame(mode="primary")`
+python/dragongui\manual.py:2254:as `prepare_points`, `set_prepared_points`, `create_live_frame`, or
+python/dragongui\manual.py:2446:work, start a worker thread and schedule UI updates through `app.call_soon_threadsafe`.
+python/dragongui\manual.py:2482:  `Scatter3D.enqueue_prepared_points(...)`, `Scatter3D.create_live_frame(...)`
+python/dragongui\manual.py:2501:        app.call_soon_threadsafe(lambda: plot.append_points("loss", xs, ys))
+python/dragongui\manual.py:2650:- Call UI mutation APIs from the GUI thread, or use `app.call_soon_threadsafe`
+python/dragongui\manual.py:2696:- Use worker threads for slow work and `app.call_soon_threadsafe(...)` to
+python/dragongui\manual.py:2733:- `Scatter3D`: use `create_live_frame(...)`, `enqueue_prepared_points(...)`,
+python/dragongui\manual.py:2780:  `enqueue_prepared_points`, `create_live_frame`, LOD, and auto quality.
+python/dragongui\manual.py:2884:  `enqueue_prepared_points`, `create_live_frame`, LOD, and auto quality.
+python/dragongui\manual.py:2888:- Use `app.debug_snapshot()` and benchmark probes to inspect frame timings.
+python/dragongui\manual.py:3062:For worker threads, enqueue prepared payloads with `app.call_soon_threadsafe`
+python/dragongui\manual.py:3163:`app.call_soon_threadsafe(...)`, `LinePlot.append_points(...)`,
+python/dragongui\manual.py:3550:- `app.debug_snapshot()` returns runtime, layout, style, command, and widget data.
+python/dragongui\runtime.py:597:    def release_resource(self, resource_id: str) -> None:
+python/dragongui\runtime.py:599:        self.app.release_resource(resource_id)
+python/dragongui\runtime.py:642:    def call_soon_threadsafe(
+python/dragongui\runtime.py:649:            raise TypeError("call_soon_threadsafe expects a callable")
+python/dragongui\runtime.py:1225:    def enqueue_set_buffer_resource(
+python/dragongui\runtime.py:1234:            "enqueue_set_buffer_resource",
+python/dragongui\runtime.py:1241:    def release_resource(self, resource_id: str) -> None:
+python/dragongui\runtime.py:1242:        self._send_or_queue_native("enqueue_release_resource", _resource_id(resource_id))
+python/dragongui\runtime.py:1317:    def _python_debug_snapshot(
+python/dragongui\runtime.py:1346:    def debug_snapshot(self, timeout_ms: int = 1000) -> dict[str, Any]:
+python/dragongui\runtime.py:1354:        python_snapshot = self._python_debug_snapshot(queued_tasks, pending_native)
+python/dragongui\runtime.py:1366:        snapshot_json = sender.debug_snapshot(timeout_ms)
+python/dragongui\thread_monitor.py:99:                    app.call_soon_threadsafe(
+python/dragongui\thread_monitor.py:742:        Show recent ``call_soon_threadsafe`` task failures.
+python/dragongui\__init__.py:16:    open_file_dialog,
+python/dragongui\__init__.py:19:    save_file_dialog,
+python/dragongui\__init__.py:334:    "open_file_dialog",
+python/dragongui\__init__.py:337:    "save_file_dialog",
+python/dragongui\widgets.py:977:                        handle.app.call_soon_threadsafe(
+python/dragongui\widgets.py:991:                    self.scatter.enqueue_prepared_points(
+python/dragongui\widgets.py:1005:                            handle.app.call_soon_threadsafe(
+python/dragongui\widgets.py:1033:            self.scatter.enqueue_prepared_points(
+python/dragongui\widgets.py:1213:    def replace_prepared(
+python/dragongui\widgets.py:1237:            "ScatterLiveFrame.replace_prepared() is currently supported only for mode='primary'"
+python/dragongui\widgets.py:1240:    def enqueue_prepared(
+python/dragongui\widgets.py:1257:                "ScatterLiveFrame.enqueue_prepared() is currently supported only for mode='primary'"
+python/dragongui\widgets.py:1259:        self.scatter.enqueue_prepared_points(
+python/dragongui\widgets.py:9504:        ``enqueue_prepared_points`` without repacking the frame.
+python/dragongui\widgets.py:9570:        self.enqueue_prepared_points(payload, coalesce=coalesce, fit=fit)
+python/dragongui\widgets.py:9572:    def enqueue_prepared_points(
+python/dragongui\widgets.py:10254:    def create_live_frame(
+python/dragongui\widgets.py:11326:                snapshot = handle.app.debug_snapshot()
+python/dragongui\widgets.py:11388:                snap = handle.app.debug_snapshot()
+python/dragongui\_backend.py:41:def open_file_dialog(
+python/dragongui\_backend.py:47:    if _native is not None and hasattr(_native, "open_file_dialog"):
+python/dragongui\_backend.py:48:        return _native.open_file_dialog(title, normalized)
+python/dragongui\_backend.py:64:def save_file_dialog(
+python/dragongui\_backend.py:70:    if _native is not None and hasattr(_native, "save_file_dialog"):
+python/dragongui\_backend.py:71:        return _native.save_file_dialog(title, normalized)
+python/dragongui\_backend.py:98:            "debug_snapshot": {

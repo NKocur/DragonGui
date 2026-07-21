@@ -1,0 +1,1743 @@
+examples\all_features_professional_demo.py:73:        self.live_panel: dg.Panel | None = None
+examples\all_features_professional_demo.py:427:    if state.live_panel is None:
+examples\all_features_professional_demo.py:438:    state.live_panel.replace_children(rows)
+examples\all_features_professional_demo.py:539:    with dg.Splitter(orientation="horizontal", style={"height": 360, "min_height": 260}):
+examples\all_features_professional_demo.py:540:        with dg.Pane(size=0.62, min_size=320):
+examples\all_features_professional_demo.py:552:        with dg.Pane(size=0.38, min_size=260):
+examples\all_features_professional_demo.py:566:        dg.DataFrameTable(TABLE_ROWS[:28], page_size=28, sample_rows=28, style={"height": 260, "width": "100%"})
+examples\all_features_professional_demo.py:577:    with dg.Splitter(orientation="horizontal", style={"height": 610, "min_height": 360}):
+examples\all_features_professional_demo.py:578:        with dg.Pane(size=0.72, min_size=360):
+examples\all_features_professional_demo.py:589:                point_size=3,
+examples\all_features_professional_demo.py:595:        with dg.Pane(size=0.28, min_size=260):
+examples\all_features_professional_demo.py:654:    with dg.Splitter(orientation="horizontal", style={"height": 620, "min_height": 380}):
+examples\all_features_professional_demo.py:655:        with dg.Pane(size=0.7, min_size=360):
+examples\all_features_professional_demo.py:658:                page_size=80,
+examples\all_features_professional_demo.py:674:        with dg.Pane(size=0.3, min_size=280):
+examples\all_features_professional_demo.py:761:    with dg.Splitter(orientation="horizontal", style={"height": 630, "min_height": 380}):
+examples\all_features_professional_demo.py:762:        with dg.Pane(size=0.62, min_size=360):
+examples\all_features_professional_demo.py:764:        with dg.Pane(size=0.38, min_size=280):
+examples\all_features_professional_demo.py:786:                state.progress = dg.ProgressBar(0, show_value=True, style={"flex": 1, "min_width": 120})
+examples\all_features_professional_demo.py:787:            state.live_panel = dg.Panel("Replaceable Diagnostics", style={"height": 180, "width": "100%"})
+examples\all_features_professional_demo.py:788:            with state.live_panel:
+examples\all_features_professional_demo.py:789:                dg.Label("Click Replace Children to swap this panel content through Container.replace_children().")
+examples\all_features_professional_demo.py:878:                with dg.Body(scroll="y", gap=10, style={"height": 0, "flex": 1, "min_width": 0}):
+examples\all_features_professional_demo.py:899:                    state.status = dg.Label("Ready", wrap=False, style={"flex": 1, "min_width": 0})
+examples\all_features_professional_demo.py:909:        with dg.HLayout(style={"justify_content": "flex_end", "gap": 8}):
+examples\all_features_professional_demo.py:955:        .top-toolbar { flex-shrink: 0; }
+examples\all_features_professional_demo.py:965:            .pro-shell { flex-direction: column; }
+examples\all_features_professional_demo.py:966:            Sidebar.pro-sidebar { width: 100%; height: 210px; flex-shrink: 0; }
+examples\all_features_professional_demo.py:969:            .top-toolbar { flex-wrap: wrap; height: auto; }
+native\src\commands.rs:2333:                id: "panel".to_string(),
+native\src\commands.rs:2407:                    id: "panel".to_string(),
+tests\test_components.py:108:    panel = thread_monitor_module._build_panel(
+tests\test_components.py:117:    data = panel.to_dict()
+tests\test_components.py:127:    assert header["style"]["flex_grow"] == 0
+tests\test_components.py:131:    assert header["children"][1]["style"]["flex_grow"] == 1
+tests\test_components.py:142:    assert body["style"]["flex_grow"] == 0
+tests\test_components.py:143:    assert body["children"][0]["style"]["flex_grow"] == 0
+tests\test_components.py:147:    panel = thread_monitor_module._build_panel(
+tests\test_components.py:157:    header = panel.to_dict()["children"][0]
+tests\test_components.py:180:    panel = thread_monitor_module._build_panel(
+tests\test_components.py:189:    body = panel.to_dict()["children"][2]["children"][0]
+tests\test_components.py:212:    assert name["style"]["flex_grow"] == 1
+tests\test_components.py:228:    panel = thread_monitor_module._build_panel(
+tests\test_components.py:237:    body = panel.to_dict()["children"][2]["children"][0]
+tests\test_components.py:255:    assert copy["style"]["flex_grow"] == 1
+tests\test_components.py:256:    assert copy["style"]["flex_shrink"] == 1
+tests\test_components.py:258:    assert age["style"]["flex_shrink"] == 0
+tests\test_components.py:286:    old_widget = thread_monitor_module._build_panel(
+tests\test_components.py:290:    new_widget = thread_monitor_module._build_panel(
+tests\test_components.py:530:        with dg.Panel("Controls", key="panel", parent=win):
+tests\test_components.py:542:        panel = document["window"]["children"][0]
+tests\test_components.py:543:        ids["label"] = panel["children"][0]["id"]
+tests\test_components.py:544:        ids["button"] = panel["children"][1]["id"]
+tests\test_components.py:580:        with dg.Panel("Controls", key="panel", parent=win):
+tests\test_components.py:597:        panel = document["window"]["children"][0]
+tests\test_components.py:598:        ids["field"] = panel["children"][0]["id"]
+tests\test_components.py:599:        ids["rerender"] = panel["children"][1]["id"]
+tests\test_components.py:600:        ids["set_field"] = panel["children"][2]["id"]
+tests\test_components.py:653:        with dg.Panel("Data", key="panel", parent=win):
+tests\test_components.py:660:        panel = document["window"]["children"][0]
+tests\test_components.py:661:        ids["table"] = panel["children"][0]["id"]
+tests\test_components.py:662:        ids["refresh"] = panel["children"][1]["id"]
+tests\test_components.py:724:        with dg.Panel("Data", key="panel", parent=win):
+tests\test_components.py:732:        panel = document["window"]["children"][0]
+tests\test_components.py:733:        ids["label"] = panel["children"][0]["id"]
+tests\test_components.py:734:        ids["refresh"] = panel["children"][2]["id"]
+tests\test_components.py:817:        panel = dg.Panel(title, id="child-panel", key="child-panel", parent=None)
+tests\test_components.py:822:            parent=panel,
+tests\test_components.py:829:            parent=panel,
+tests\test_components.py:831:        return panel
+tests\test_components.py:838:            with dg.Panel("Parent", id="parent-panel", key="parent-panel"):
+native\src\image_widget.rs:879:        let mut panel = node("panel", WidgetKind::Panel);
+native\src\image_widget.rs:880:        panel.style.visual.transform = Some(TransformStyle {
+native\src\image_widget.rs:890:        panel.children.push(image);
+native\src\image_widget.rs:894:            "panel".to_string(),
+native\src\image_widget.rs:913:        collect_image_specs(&panel, &layout, &Theme::dark(), 1.0, None, &mut specs);
+tests\test_vdom.py:317:                path=("panel:key=content",),
+tests\test_vdom.py:330:                path=("panel:key=content",),
+native\src\document.rs:1149:/// contribute a flex-grow leaf to the layout.
+native\src\document.rs:1228:            "splitter" => WidgetKind::Splitter,
+native\src\document.rs:1229:            "pane" => WidgetKind::Pane,
+native\src\document.rs:1230:            "panel" => WidgetKind::Panel,
+native\src\document.rs:1297:    pub fixed_width: Option<f32>,
+native\src\document.rs:1324:    /// Pane size along its splitter axis in logical pixels.
+native\src\document.rs:1325:    pub pane_size: Option<f32>,
+native\src\document.rs:1326:    /// Pane minimum size along its splitter axis in logical pixels.
+native\src\document.rs:1327:    pub pane_min_size: Option<f32>,
+native\src\document.rs:1328:    /// Pane maximum size along its splitter axis in logical pixels.
+native\src\document.rs:1329:    pub pane_max_size: Option<f32>,
+native\src\document.rs:1330:    /// Pane flex grow factor when no explicit size is active.
+native\src\document.rs:1331:    pub pane_flex: Option<f32>,
+native\src\document.rs:1547:    let fixed_width = props
+native\src\document.rs:1622:    let pane_size = finite_nonnegative("size");
+native\src\document.rs:1623:    let pane_min_size = finite_nonnegative("min_size");
+native\src\document.rs:1624:    let pane_max_size = finite_nonnegative("max_size");
+native\src\document.rs:1625:    let pane_flex = props
+native\src\document.rs:1626:        .get("flex")
+native\src\document.rs:2252:        fixed_width,
+native\src\document.rs:2266:        pane_size,
+native\src\document.rs:2267:        pane_min_size,
+native\src\document.rs:2268:        pane_max_size,
+native\src\document.rs:2269:        pane_flex,
+native\src\document.rs:2530:        assert_eq!(image.props.fixed_width, Some(160.0));
+tests\test_visual_audit.py:117:                                                    {"id": "top", "type": "panel", "children": []},
+tests\test_visual_audit.py:118:                                                    {"id": "deep", "type": "panel", "children": []},
+tests\test_visual_audit.py:167:                                    {"id": "deep", "type": "panel", "children": []},
+tests\test_visual_audit.py:172:                                            {"id": "overlay-child", "type": "panel", "children": []}
+native\src\css_style.rs:2843:    /// Layout: display, flex-direction, flex, flex-grow, flex-shrink, flex-basis, width,
+native\src\css_style.rs:2873:            "flex-direction" => Ok(Self::Layout(DgLayoutPropertyName::FlexDirection)),
+native\src\css_style.rs:2874:            "flex" => Ok(Self::Layout(DgLayoutPropertyName::Flex)),
+native\src\css_style.rs:2875:            "flex-grow" => Ok(Self::Layout(DgLayoutPropertyName::FlexGrow)),
+native\src\css_style.rs:2876:            "flex-shrink" => Ok(Self::Layout(DgLayoutPropertyName::FlexShrink)),
+native\src\css_style.rs:2877:            "flex-basis" => Ok(Self::Layout(DgLayoutPropertyName::FlexBasis)),
+native\src\css_style.rs:3337:    push_attr_number_opt(&mut attributes, "width", props.fixed_width);
+native\src\css_style.rs:4399:        WidgetKind::Pane => matches!(part, "pane"),
+native\src\css_style.rs:4494:    base.flex_direction = overlay.flex_direction.or(base.flex_direction);
+native\src\css_style.rs:4544:    base.flex_grow = overlay.flex_grow.or(base.flex_grow);
+native\src\css_style.rs:4545:    base.flex_shrink = overlay.flex_shrink.or(base.flex_shrink);
+native\src\css_style.rs:4546:    base.flex_basis = overlay.flex_basis.or(base.flex_basis);
+native\src\css_style.rs:4547:    base.flex_basis_value = overlay.flex_basis_value.or(base.flex_basis_value);
+native\src\css_style.rs:4809:            style.flex_direction = flex_direction_from_keyword(value);
+native\src\css_style.rs:4812:            style.flex_grow = Some(value.0.max(0.0));
+native\src\css_style.rs:4813:            style.flex_shrink = Some(1.0);
+native\src\css_style.rs:4814:            style.flex_basis = Some(0.0);
+native\src\css_style.rs:4815:            style.flex_basis_value = Some(LayoutLength::LogicalPx(0.0));
+native\src\css_style.rs:4817:        DgLayoutDeclaration::FlexGrow(value) => style.flex_grow = Some(value.0.max(0.0)),
+native\src\css_style.rs:4818:        DgLayoutDeclaration::FlexShrink(value) => style.flex_shrink = Some(value.0.max(0.0)),
+native\src\css_style.rs:4820:            style.flex_basis = length_px(value);
+native\src\css_style.rs:4821:            style.flex_basis_value = layout_length(value);
+native\src\css_style.rs:5270:        "flex" => Some(DisplayStyle::Flex),
+native\src\css_style.rs:5381:fn flex_direction_from_keyword(value: &DgCssKeyword) -> Option<FlexDirectionStyle> {
+native\src\css_style.rs:5391:fn parse_flex_direction_value(
+native\src\css_style.rs:5397:    flex_direction_from_keyword(&keyword)
+native\src\css_style.rs:5399:        .ok_or_else(|| parse_warning(name, value, "flex direction value"))
+native\src\css_style.rs:7755:            DgLayoutDeclaration::FlexDirection(parse_flex_direction_value(name, value, variables)?)
+native\src\css_style.rs:11594:        let mut panel = css_bench_node("panel", WidgetKind::Panel, Some("content".to_string()));
+native\src\css_style.rs:11595:        panel.children.reserve(count);
+native\src\css_style.rs:11614:            panel
+native\src\css_style.rs:11618:        root.children.push(panel);
+native\src\css_style.rs:11880:                "flex-direction",
+native\src\css_style.rs:11884:                "flex-basis",
+native\src\css_style.rs:12388:            id: "controls-panel",
+native\src\css_style.rs:12430:        let panel_classes = ["controls"];
+native\src\css_style.rs:12441:                id: "controls-panel",
+native\src\css_style.rs:12444:                classes: &panel_classes,
+native\src\css_style.rs:12745:            id: "panel",
+native\src\css_style.rs:12953:            id: "panel",
+native\src\css_style.rs:12989:                "id": "panel",
+native\src\css_style.rs:12990:                "type": "panel",
+native\src\css_style.rs:13426:                "id": "panel",
+native\src\css_style.rs:13427:                "type": "panel",
+native\src\css_style.rs:13435:                "id": "single-panel",
+native\src\css_style.rs:13436:                "type": "panel",
+native\src\css_style.rs:13442:                "type": "panel",
+native\src\css_style.rs:13444:                    "id": "empty-panel",
+native\src\css_style.rs:13445:                    "type": "panel",
+native\src\css_style.rs:13448:                    "id": "non-empty-panel",
+native\src\css_style.rs:13449:                    "type": "panel",
+native\src\css_style.rs:13485:        let panel = &tree.children[0];
+native\src\css_style.rs:13486:        let single_panel = &tree.children[1];
+native\src\css_style.rs:13488:        let first = &panel.children[0];
+native\src\css_style.rs:13489:        let caption = &panel.children[1];
+native\src\css_style.rs:13490:        let second = &panel.children[2];
+native\src\css_style.rs:13491:        let third = &panel.children[3];
+native\src\css_style.rs:13492:        let only_label = &single_panel.children[0];
+native\src\css_style.rs:13493:        let empty_panel = &empty_container.children[0];
+native\src\css_style.rs:13494:        let non_empty_panel = &empty_container.children[1];
+native\src\css_style.rs:13543:            single_panel.style.visual.border_color,
+native\src\css_style.rs:13552:            empty_panel.style.visual.background,
+native\src\css_style.rs:13556:            non_empty_panel.style.visual.background,
+native\src\css_style.rs:13567:                "id": "panel",
+native\src\css_style.rs:13568:                "type": "panel",
+native\src\css_style.rs:13593:        let panel = &tree.children[0];
+native\src\css_style.rs:13594:        let run = &panel.children[0];
+native\src\css_style.rs:13595:        let ghost = &panel.children[1];
+native\src\css_style.rs:13596:        let note = &panel.children[2];
+native\src\css_style.rs:13636:                    "type": "panel",
+native\src\css_style.rs:13643:                    "type": "panel",
+native\src\css_style.rs:13650:                    "type": "panel",
+native\src\css_style.rs:13657:                    "type": "panel",
+native\src\css_style.rs:13753:                "id": "panel",
+native\src\css_style.rs:13754:                "type": "panel",
+native\src\css_style.rs:13779:        let panel = &tree.children[0];
+native\src\css_style.rs:13780:        let checked = &panel.children[0];
+native\src\css_style.rs:13781:        let collapsed = &panel.children[1];
+native\src\css_style.rs:13782:        let unchecked = &panel.children[2];
+native\src\css_style.rs:13784:        assert_eq!(panel.style.visual.border_width, Some(4.0));
+native\src\css_style.rs:13786:            panel.style.visual.border_color,
+native\src\css_style.rs:13807:                {"id": "before-button", "type": "panel"},
+native\src\css_style.rs:13809:                {"id": "before-row", "type": "panel"},
+native\src\css_style.rs:13817:                {"id": "before-later", "type": "panel"},
+native\src\css_style.rs:13820:                {"id": "after-success", "type": "panel"}
+native\src\css_style.rs:13876:                    "type": "panel",
+native\src\css_style.rs:13879:                        "type": "panel",
+native\src\css_style.rs:13888:                    "type": "panel",
+native\src\css_style.rs:13891:                        "type": "panel",
+native\src\css_style.rs:13897:                {"id": "before-status", "type": "panel"},
+native\src\css_style.rs:13900:                    "type": "panel",
+native\src\css_style.rs:13903:                        "type": "panel",
+native\src\css_style.rs:14694:    fn flex_shorthand_sets_shrink_and_zero_basis() {
+native\src\css_style.rs:14696:            "HLayout > TextInput { flex: 1; flex-basis: 25%; }",
+native\src\css_style.rs:14722:            .set_stylesheet(StylesheetOrigin::User, "TextInput { flex: 1; }")
+native\src\css_style.rs:14727:        assert_eq!(input.style.layout.flex_grow, Some(1.0));
+native\src\css_style.rs:14728:        assert_eq!(input.style.layout.flex_shrink, Some(1.0));
+native\src\css_style.rs:14730:            input.style.layout.flex_basis_value,
+native\src\css_style.rs:15247:    fn grid_minmax_rejects_flexible_min_track() {
+native\src\css_style.rs:15425:                "type": "panel",
+native\src\css_style.rs:16859:                    "type": "panel",
+native\src\css_style.rs:17197:                "type": "panel",
+native\src\css_style.rs:17262:                "type": "panel",
+native\src\css_style.rs:17347:                "type": "panel",
+native\src\css_style.rs:17634:                "type": "panel",
+native\src\css_style.rs:17836:                "type": "panel",
+native\src\css_style.rs:17897:                "type": "panel",
+native\src\css_style.rs:17960:                "type": "panel",
+native\src\css_style.rs:18023:                "type": "panel",
+native\src\css_style.rs:18084:                "type": "panel",
+native\src\css_style.rs:18143:                "type": "panel",
+native\src\css_style.rs:18377:                "id": "panel",
+native\src\css_style.rs:18378:                "type": "panel",
+native\src\css_style.rs:19101:    fn stylesheet_cascade_applies_panel_accent_part_styles() {
+native\src\css_style.rs:19107:                "type": "panel",
+native\src\css_style.rs:19147:                "id": "panel",
+native\src\css_style.rs:19148:                "type": "panel"
+native\src\css_style.rs:19234:        let panel = &tree.children[0];
+native\src\css_style.rs:19235:        let track = panel.style.parts.parts.get("scrollbar-track").unwrap();
+native\src\css_style.rs:19236:        let thumb = panel.style.parts.parts.get("scrollbar-thumb").unwrap();
+native\src\css_style.rs:19526:                "id": "panel",
+native\src\css_style.rs:19527:                "type": "panel",
+native\src\css_style.rs:19549:        let panel = &tree.children[0];
+native\src\css_style.rs:19550:        let label = &panel.children[0];
+native\src\css_style.rs:19551:        let button = &panel.children[1];
+native\src\overlays.rs:56:    let mut width = menu_popup_width(items, node.props.fixed_width, theme, sf);
+native\src\overlays.rs:85:    fixed_width: Option<f32>,
+native\src\overlays.rs:89:    if let Some(width) = fixed_width {
+tests\test_python_api.py:114:    assert "dg.help.layout.panels()" in index
+tests\test_python_api.py:116:    panels = dg.help.panels()
+tests\test_python_api.py:117:    assert "Panel(title=None" in panels
+tests\test_python_api.py:118:    assert dg.help.layout.panels is dg.help.panels
+tests\test_python_api.py:130:    assert data["children"]["layout"]["children"]["panels"]["title"] == "Panels"
+tests\test_python_api.py:136:    assert "squares that panel's top corners" in dg.help.widgets.navigation.tabs_pages()
+tests\test_python_api.py:451:            ctx.text(6, 4, "spark", fill="text", font_size=11, font_weight=700)
+tests\test_python_api.py:508:        with dg.Panel(label, key="tile-root", parent=None) as panel:
+tests\test_python_api.py:515:        return panel
+tests\test_python_api.py:675:            lambda style: dg.Splitter(style=style, parent=None),
+tests\test_python_api.py:679:            lambda style: dg.Pane(style=style, parent=None),
+tests\test_python_api.py:680:            ("pane",),
+tests\test_python_api.py:988:    assert serialized["type"] == "panel"
+tests\test_python_api.py:992:    assert serialized["style"]["flex_shrink"] == 1
+tests\test_python_api.py:1219:        size=24,
+tests\test_python_api.py:1254:        dg.LoadingSpinner(size=0, parent=None)
+tests\test_python_api.py:1464:def test_splitter_and_pane_serialize_size_defaults() -> None:
+tests\test_python_api.py:1466:    with dg.Splitter(
+tests\test_python_api.py:1470:        gutter_size=8,
+tests\test_python_api.py:1473:        with dg.Pane():
+tests\test_python_api.py:1475:        with dg.Pane():
+tests\test_python_api.py:1480:    assert serialized["type"] == "splitter"
+tests\test_python_api.py:1483:    assert [child["type"] for child in serialized["children"]] == ["pane", "pane"]
+tests\test_python_api.py:1489:        "flex": 1.0,
+tests\test_python_api.py:1496:        "flex": 1.0,
+tests\test_python_api.py:1504:    assert updated["children"][1]["props"]["flex"] == 2.0
+tests\test_python_api.py:1507:        dg.Splitter(orientation="diagonal", parent=None)
+tests\test_python_api.py:1509:        dg.Splitter(sizes=("0fr",), parent=None)
+tests\test_python_api.py:1510:    with pytest.raises(ValueError, match="flex"):
+tests\test_python_api.py:1511:        dg.Pane(flex=0, parent=None)
+tests\test_python_api.py:1596:    panel = dg.Panel("Content", id="panel", parent=None)
+tests\test_python_api.py:1597:    old = dg.Label("Old", id="old", parent=panel)
+tests\test_python_api.py:1599:    panel.replace_children([dg.Label("New", id="new", parent=None)])
+tests\test_python_api.py:1602:    assert [child.id for child in panel.children] == ["new"]
+tests\test_python_api.py:1603:    assert panel.to_dict()["children"][0]["props"]["text"] == "New"
+tests\test_python_api.py:1608:    panel._bind_live(handle.widget_handle(panel.id))
+tests\test_python_api.py:1609:    for child in panel.children:
+tests\test_python_api.py:1612:    panel.replace_children(
+tests\test_python_api.py:1620:    assert [child.id for child in panel.children] == ["first", "gap", "second"]
+tests\test_python_api.py:1621:    assert panel.children[0].is_live is True
+tests\test_python_api.py:1627:        panel.replace_children([object()])  # type: ignore[list-item]
+tests\test_python_api.py:1641:    panel = dg.Panel("Content", id="panel", parent=None)
+tests\test_python_api.py:1645:    panel._bind_live(handle.widget_handle(panel.id))
+tests\test_python_api.py:1647:    panel.replace_children(
+tests\test_python_api.py:1687:    panel = dg.Panel("Content", id="panel", parent=None)
+tests\test_python_api.py:1691:    panel._bind_live(handle.widget_handle(panel.id))
+tests\test_python_api.py:1694:    panel.replace_children([table])
+tests\test_python_api.py:1697:    assert sender.events[0][1] == "panel"
+tests\test_python_api.py:2512:    table = dg.DataFrameTable(Frame(), id="table", page_size=10, sample_rows=2, parent=None)
+tests\test_python_api.py:3880:    app = dg.App(theme=dg.Theme.light(accent="#0055ff", spacing=10.0, font_size=14.0))
+tests\test_python_api.py:3955:        dg.LED(size=0, parent=None)
+tests\test_python_api.py:3965:        size=28,
+tests\test_python_api.py:4007:        dg.IconButton("play", size=0, parent=None)
+tests\test_python_api.py:4098:    assert tuning_rows[0]["children"][1]["style"]["flex"] == 1
+tests\test_python_api.py:4105:    assert tuning_rows[3]["children"][1]["children"][0]["children"][1]["style"]["flex"] == 1
+tests\test_python_api.py:4137:    assert editor["style"]["flex"] == 1
+tests\test_python_api.py:4283:    assert serialized["style"]["flex_direction"] == "row"
+tests\test_python_api.py:4310:    assert serialized["style"]["flex_direction"] == "column"
+tests\test_python_api.py:4338:    assert serialized["style"]["flex_grow"] == 0
+tests\test_python_api.py:4339:    assert serialized["style"]["flex_shrink"] == 0
+tests\test_python_api.py:4445:    assert group.to_dict()["style"]["flex_direction"] == "row"
+tests\test_python_api.py:5077:    table = dg.DataFrameTable(TypedFrame(), page_size=64, sample_rows=3, parent=None)
+tests\test_python_api.py:5101:    table = dg.DataFrameTable(MetadataOnlyFrame(), page_size=64, parent=None)
+tests\test_python_api.py:5110:        dg.DataFrameTable(DemoFrame(), page_size=0, parent=None)
+tests\test_python_api.py:5983:    h0 = s.add_label((1.0, 2.0, 3.0), "A", color=(1.0, 0.0, 0.0), size=16.0)
+tests\test_python_api.py:9196:    assert node["style"]["flex_grow"] == 1
+tests\test_python_api.py:9197:    assert node["style"]["flex_shrink"] == 1
+tests\test_python_api.py:9235:    assert body["style"]["flex"] == 1
+tests\test_python_api.py:9271:    assert main["style"]["flex"] == 1
+tests\test_python_api.py:9294:    assert conversation_node["style"]["flex_grow"] == 1
+native\src\events.rs:113:    /// Splitter pane sizes along their active axis, in logical pixels.
+native\src\events.rs:114:    pub pane_sizes: HashMap<String, Option<f32>>,
+native\src\events.rs:418:    pub fn pane_size(&self, id: &str) -> Option<f32> {
+native\src\events.rs:419:        self.pane_sizes.get(id).and_then(|size| *size)
+native\src\events.rs:422:    pub fn set_pane_size(&mut self, id: &str, size: Option<f32>) -> Option<Option<f32>> {
+native\src\events.rs:423:        if !self.pane_sizes.contains_key(id) {
+native\src\events.rs:427:        self.pane_sizes.insert(id.to_string(), size);
+native\src\events.rs:1117:        for (id, size) in &previous.pane_sizes {
+native\src\events.rs:1118:            if self.pane_sizes.contains_key(id) {
+native\src\events.rs:1119:                self.pane_sizes.insert(id.clone(), *size);
+native\src\events.rs:1531:            s.pane_sizes.insert(node.id.clone(), node.props.pane_size);
+native\src\events.rs:2310:        let mut panel = node("card", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\events.rs:2311:        panel.style.hover.background = Some(crate::style::ColorRef::Rgba([0.1, 0.2, 0.3, 1.0]));
+native\src\events.rs:2316:            vec![panel],
+native\src\events.rs:2518:        assert!(state.scroll_container("panel", 25.0, 40.0, 20.0, 30.0));
+native\src\events.rs:2519:        assert_eq!(state.container_scroll_x("panel", 20.0), 20.0);
+native\src\events.rs:2520:        assert_eq!(state.container_scroll_y("panel", 30.0), 30.0);
+native\src\events.rs:2522:        assert!(state.scroll_container("panel", -999.0, -999.0, 20.0, 30.0));
+native\src\events.rs:2523:        assert_eq!(state.container_scroll_x("panel", 20.0), 0.0);
+native\src\events.rs:2524:        assert_eq!(state.container_scroll_y("panel", 30.0), 0.0);
+native\src\events.rs:2733:                "scroll-panel",
+native\src\events.rs:2748:            state.container_scroll_x.get("scroll-panel").copied(),
+native\src\events.rs:2752:            state.container_scroll_y.get("scroll-panel").copied(),
+native\src\style.rs:463:    pub flex_direction: Option<FlexDirectionStyle>,
+native\src\style.rs:513:    pub flex_grow: Option<f32>,
+native\src\style.rs:514:    pub flex_shrink: Option<f32>,
+native\src\style.rs:515:    pub flex_basis: Option<f32>,
+native\src\style.rs:516:    pub flex_basis_value: Option<LayoutLength>,
+native\src\style.rs:1237:    out.flex_direction = map
+native\src\style.rs:1238:        .get("flex_direction")
+native\src\style.rs:1240:        .and_then(parse_flex_direction);
+native\src\style.rs:1307:    if let Some(flex) = number(map.get("flex")) {
+native\src\style.rs:1308:        out.flex_grow = Some(flex.max(0.0));
+native\src\style.rs:1309:        out.flex_shrink = Some(1.0);
+native\src\style.rs:1310:        out.flex_basis = Some(0.0);
+native\src\style.rs:1311:        out.flex_basis_value = Some(LayoutLength::LogicalPx(0.0));
+native\src\style.rs:1313:    out.flex_grow = number(value_for_keys(map, "flex_grow", "flex-grow")).or(out.flex_grow);
+native\src\style.rs:1314:    out.flex_shrink = number(value_for_keys(map, "flex_shrink", "flex-shrink")).or(out.flex_shrink);
+native\src\style.rs:1315:    out.flex_basis = number(value_for_keys(map, "flex_basis", "flex-basis")).or(out.flex_basis);
+native\src\style.rs:1316:    if out.flex_basis.is_some() {
+native\src\style.rs:1317:        out.flex_basis_value = out.flex_basis.map(LayoutLength::LogicalPx);
+native\src\style.rs:1645:        "start" | "flex-start" => Some(AlignItemsStyle::Start),
+native\src\style.rs:1647:        "end" | "flex-end" => Some(AlignItemsStyle::End),
+native\src\style.rs:2173:        "flex" => Some(DisplayStyle::Flex),
+native\src\style.rs:2181:fn parse_flex_direction(value: &str) -> Option<FlexDirectionStyle> {
+native\src\style.rs:2592:            "display": "flex",
+native\src\style.rs:2593:            "flex_direction": "row",
+native\src\style.rs:2594:            "flex": 1,
+native\src\style.rs:2634:        assert_eq!(style.layout.flex_direction, Some(FlexDirectionStyle::Row));
+native\src\style.rs:2635:        assert_eq!(style.layout.flex_grow, Some(1.0));
+native\src\style.rs:2636:        assert_eq!(style.layout.flex_shrink, Some(1.0));
+native\src\style.rs:2638:            style.layout.flex_basis_value,
+native\src\runtime.rs:65:    panel_scrollbar_geometry, pie_chart_text_labels, table_scrollbar_geometry, LinePlotBounds,
+native\src\runtime.rs:2228:        WidgetKind::Splitter => "splitter",
+native\src\runtime.rs:2229:        WidgetKind::Pane => "pane",
+native\src\runtime.rs:2230:        WidgetKind::Panel => "panel",
+native\src\runtime.rs:2333:        DisplayStyle::Flex => "flex",
+native\src\runtime.rs:2340:fn flex_direction_name(direction: FlexDirectionStyle) -> &'static str {
+native\src\runtime.rs:2586:    if let Some(value) = style.flex_direction {
+native\src\runtime.rs:2588:            "flex_direction".to_string(),
+native\src\runtime.rs:2589:            json!(flex_direction_name(value)),
+native\src\runtime.rs:2701:    insert_number(&mut map, "flex_grow", style.flex_grow);
+native\src\runtime.rs:2702:    insert_number(&mut map, "flex_shrink", style.flex_shrink);
+native\src\runtime.rs:2705:        "flex_basis",
+native\src\runtime.rs:2706:        style.flex_basis_value,
+native\src\runtime.rs:2707:        style.flex_basis,
+native\src\runtime.rs:3312:        "fixed_width": props.fixed_width,
+native\src\runtime.rs:3362:        map.insert("pane_size".to_string(), json!(props.pane_size));
+native\src\runtime.rs:3363:        map.insert("pane_min_size".to_string(), json!(props.pane_min_size));
+native\src\runtime.rs:3364:        map.insert("pane_max_size".to_string(), json!(props.pane_max_size));
+native\src\runtime.rs:3365:        map.insert("pane_flex".to_string(), json!(props.pane_flex));
+native\src\runtime.rs:3591:        "pane_sizes": &state.pane_sizes,
+native\src\runtime.rs:3925:fn set_widget_pane_size_prop(node: &mut WidgetNode, id: &str, size: Option<f32>) -> bool {
+native\src\runtime.rs:3932:    target.props.pane_size = size.filter(|value| value.is_finite() && *value >= 0.0);
+native\src\runtime.rs:4065:            | "flex_direction"
+native\src\runtime.rs:4070:            | "flex"
+native\src\runtime.rs:4071:            | "flex_grow"
+native\src\runtime.rs:4072:            | "flex_shrink"
+native\src\runtime.rs:4464:            "kind": "panel",
+native\src\runtime.rs:4996:            widget_id: "panel".to_string(),
+native\src\runtime.rs:5024:            widget_id: "panel".to_string(),
+native\src\runtime.rs:5059:            widget_id: "panel".to_string(),
+native\src\runtime.rs:5085:            id: "panel".to_string(),
+native\src\runtime.rs:5143:    fn wheel_target_prefers_nested_scroll_panel_over_root_scroller() {
+native\src\runtime.rs:5184:                        "id": "scroll-panel",
+native\src\runtime.rs:5185:                        "type": "panel",
+native\src\runtime.rs:5186:                        "props": {"title": "Scrollable titled panel"},
+native\src\runtime.rs:5220:            let panel = layout.rects.get("scroll-panel").unwrap();
+native\src\runtime.rs:5221:            let panel_clip = layout.clips.get("scroll-panel").unwrap();
+native\src\runtime.rs:5223:                panel_clip.x + 40.0,
+native\src\runtime.rs:5224:                (panel_clip.y + 100.0).min(panel_clip.y + panel_clip.h - 4.0),
+native\src\runtime.rs:5231:                    .get("scroll-panel")
+native\src\runtime.rs:5238:                Some("scroll-panel".to_string()),
+native\src\runtime.rs:5239:                "root_scroll={root_scroll} panel={panel:?} clip={panel_clip:?} pos={pos:?}"
+native\src\runtime.rs:5476:                "id": "panel",
+native\src\runtime.rs:5477:                "type": "panel",
+native\src\runtime.rs:5487:        assert!(replace_widget_children(&mut root, "panel", children));
+native\src\runtime.rs:5489:        let panel = find_widget_mut(&mut root, "panel").unwrap();
+native\src\runtime.rs:5490:        assert_eq!(panel.children.len(), 1);
+native\src\runtime.rs:5491:        assert_eq!(panel.children[0].id, "new");
+native\src\runtime.rs:5492:        assert_eq!(panel.children[0].props.text.as_deref(), Some("new"));
+native\src\runtime.rs:5527:                "id": "panel",
+native\src\runtime.rs:5528:                "type": "panel",
+native\src\runtime.rs:6886:                        text.push_overlay_panel_rect(readout, 5.0 * sf, border, label_clip);
+native\src\runtime.rs:6889:                            text.push_overlay_panel_rect(
+native\src\runtime.rs:9771:            state.set_pane_size(id, size)?;
+native\src\runtime.rs:9773:                set_widget_pane_size_prop(tree, id, size);
+native\src\runtime.rs:12899:            node.props.fixed_width,
+native\src\runtime.rs:12998:        if let Some(hit) = panel_scrollbar_axis_hit(
+native\src\runtime.rs:13007:        panel_scrollbar_axis_hit(
+native\src\runtime.rs:13051:    fn panel_scrollbar_at(&self, pos: [f32; 2]) -> Option<PanelScrollbarHit> {
+native\src\runtime.rs:13057:        self.panel_scrollbar_at_node(root, layout, state, pos, slop)
+native\src\runtime.rs:13060:    fn splitter_gutter_at(&self, pos: [f32; 2]) -> Option<SplitterGutterHit> {
+native\src\runtime.rs:13068:        splitter_gutter_hit_at_node(root, layout, pos, self.scale_factor)
+native\src\runtime.rs:13071:    fn panel_scrollbar_at_node(
+native\src\runtime.rs:13084:                if let Some(geometry) = panel_scrollbar_geometry(
+native\src\runtime.rs:13099:                    if let Some(hit) = panel_scrollbar_axis_hit(
+native\src\runtime.rs:13108:                    if let Some(hit) = panel_scrollbar_axis_hit(
+native\src\runtime.rs:13121:            if let Some(hit) = self.panel_scrollbar_at_node(child, layout, state, pos, slop) {
+native\src\runtime.rs:14146:fn panel_scrollbar_axis_hit(
+native\src\runtime.rs:14167:fn splitter_orientation(node: &WidgetNode) -> SplitterOrientation {
+native\src\runtime.rs:14175:fn splitter_gutter_preferred_size_px(
+native\src\runtime.rs:14190:fn splitter_gutter_hit_at_node(
+native\src\runtime.rs:14197:        if let Some(hit) = splitter_gutter_hit_at_node(child, layout, pos, scale_factor) {
+native\src\runtime.rs:14204:    let splitter_rect = layout.visible_rect(&node.id)?;
+native\src\runtime.rs:14205:    if !rect_contains_pos(&splitter_rect, pos) {
+native\src\runtime.rs:14208:    let orientation = splitter_orientation(node);
+native\src\runtime.rs:14209:    let preferred = splitter_gutter_preferred_size_px(node, orientation, scale_factor);
+native\src\runtime.rs:14210:    let panes: Vec<&WidgetNode> = node
+native\src\runtime.rs:14215:    for pair in panes.windows(2) {
+native\src\runtime.rs:14232:                    y: splitter_rect.y,
+native\src\runtime.rs:14234:                    h: splitter_rect.h,
+native\src\runtime.rs:14243:                    x: splitter_rect.x,
+native\src\runtime.rs:14249:                    w: splitter_rect.w,
+native\src\runtime.rs:14256:                splitter_id: node.id.clone(),
+native\src\runtime.rs:14270:                before_min: before.props.pane_min_size.unwrap_or(0.0).max(0.0),
+native\src\runtime.rs:14271:                after_min: after.props.pane_min_size.unwrap_or(0.0).max(0.0),
+native\src\runtime.rs:14272:                before_max: before.props.pane_max_size.filter(|value| *value >= 0.0),
+native\src\runtime.rs:14273:                after_max: after.props.pane_max_size.filter(|value| *value >= 0.0),
+native\src\runtime.rs:14408:    splitter_id: String,
+native\src\runtime.rs:14636:    /// Active panel scrollbar drag session.
+native\src\runtime.rs:14640:    /// Active splitter gutter drag session.
+native\src\runtime.rs:14641:    splitter_drag: Option<SplitterDrag>,
+native\src\runtime.rs:14733:            splitter_drag: None,
+native\src\runtime.rs:14929:        let splitter_drag_snapshot = self.splitter_drag.as_ref().map(|drag| {
+native\src\runtime.rs:14935:                "splitter": drag.hit.splitter_id.as_str(),
+native\src\runtime.rs:15115:        runtime.insert("splitter_drag".to_string(), json!(splitter_drag_snapshot));
+native\src\runtime.rs:18349:    fn begin_splitter_drag(&mut self, hit: SplitterGutterHit, pos: [f32; 2]) {
+native\src\runtime.rs:18350:        self.splitter_drag = Some(SplitterDrag::new(hit, pos));
+native\src\runtime.rs:18351:        self.update_splitter_drag(pos);
+native\src\runtime.rs:18354:    fn update_splitter_drag(&mut self, pos: [f32; 2]) {
+native\src\runtime.rs:18355:        let Some(drag) = self.splitter_drag.as_ref().cloned() else {
+native\src\runtime.rs:18363:                let old_before = state.pane_size(&drag.hit.before_id);
+native\src\runtime.rs:18364:                let old_after = state.pane_size(&drag.hit.after_id);
+native\src\runtime.rs:18366:                    .set_pane_size(&drag.hit.before_id, Some(before))
+native\src\runtime.rs:18369:                    .set_pane_size(&drag.hit.after_id, Some(after))
+native\src\runtime.rs:18382:                    set_widget_pane_size_prop(tree, &drag.hit.before_id, Some(before));
+native\src\runtime.rs:18383:                    set_widget_pane_size_prop(tree, &drag.hit.after_id, Some(after));
+native\src\runtime.rs:20087:                            let released_splitter = self.splitter_drag.take().is_some();
+native\src\runtime.rs:20124:                            if released_splitter {
+native\src\runtime.rs:20412:                                self.gpu.as_ref().and_then(|g| g.panel_scrollbar_at(pos))
+native\src\runtime.rs:20424:                                .then(|| self.gpu.as_ref().and_then(|g| g.splitter_gutter_at(pos)))
+native\src\runtime.rs:20431:                                self.begin_splitter_drag(hit, pos);
+native\src\runtime.rs:20827:                } else if self.splitter_drag.is_some() {
+native\src\runtime.rs:20828:                    self.update_splitter_drag(new_pos);
+native\src\runtime.rs:20965:                    && self.splitter_drag.is_none()
+native\src\layout.rs:103:/// Compute a flexbox layout for `root` given a `window_w × window_h` physical
+native\src\layout.rs:333:        style.flex_direction,
+native\src\layout.rs:356:    let panel_pad = (theme.spacing + 2.0) * sf;
+native\src\layout.rs:361:            flex_direction: FlexDirection::Column,
+native\src\layout.rs:376:            flex_direction: FlexDirection::Row,
+native\src\layout.rs:378:            flex_grow: 1.0,
+native\src\layout.rs:379:            flex_shrink: if window_shell_body_child { 1.0 } else { 0.0 },
+native\src\layout.rs:393:            flex_direction: FlexDirection::Column,
+native\src\layout.rs:395:            flex_grow: 1.0,
+native\src\layout.rs:396:            flex_shrink: 0.0,
+native\src\layout.rs:410:            flex_direction: FlexDirection::Column,
+native\src\layout.rs:412:            flex_grow: 1.0,
+native\src\layout.rs:413:            flex_shrink: 1.0,
+native\src\layout.rs:431:            flex_grow: 1.0,
+native\src\layout.rs:432:            flex_shrink: 0.0,
+native\src\layout.rs:446:            flex_direction: FlexDirection::Row,
+native\src\layout.rs:447:            flex_wrap: FlexWrap::Wrap,
+native\src\layout.rs:450:            flex_grow: 0.0,
+native\src\layout.rs:451:            flex_shrink: 1.0,
+native\src\layout.rs:469:                flex_direction: if horizontal {
+native\src\layout.rs:475:                flex_grow: 1.0,
+native\src\layout.rs:476:                flex_shrink: 1.0,
+native\src\layout.rs:497:                .and_then(|state| state.pane_size(&node.id))
+native\src\layout.rs:498:                .or(node.props.pane_size)
+native\src\layout.rs:500:            let min_size = node.props.pane_min_size.unwrap_or(0.0).max(0.0) * sf;
+native\src\layout.rs:503:                .pane_max_size
+native\src\layout.rs:506:            let flex_grow = if active_size.is_some() {
+native\src\layout.rs:509:                node.props.pane_flex.unwrap_or(1.0).max(0.0)
+native\src\layout.rs:511:            let mut pane_style = Style {
+native\src\layout.rs:513:                flex_direction: FlexDirection::Column,
+native\src\layout.rs:515:                flex_grow,
+native\src\layout.rs:516:                flex_shrink: 1.0,
+native\src\layout.rs:533:                    pane_style.size.width = Dimension::Length(size);
+native\src\layout.rs:534:                    pane_style.flex_shrink = 0.0;
+native\src\layout.rs:536:                pane_style.min_size.width = Dimension::Length(min_size);
+native\src\layout.rs:538:                    pane_style.max_size.width = Dimension::Length(size);
+native\src\layout.rs:542:                    pane_style.size.height = Dimension::Length(size);
+native\src\layout.rs:543:                    pane_style.flex_shrink = 0.0;
+native\src\layout.rs:545:                pane_style.min_size.height = Dimension::Length(min_size);
+native\src\layout.rs:547:                    pane_style.max_size.height = Dimension::Length(size);
+native\src\layout.rs:550:            pane_style
+native\src\layout.rs:555:            flex_direction: FlexDirection::Column,
+native\src\layout.rs:557:            flex_grow: 0.0,
+native\src\layout.rs:558:            flex_shrink: 1.0,
+native\src\layout.rs:576:            flex_direction: FlexDirection::Column,
+native\src\layout.rs:578:            flex_grow: 0.0,
+native\src\layout.rs:579:            flex_shrink: 1.0,
+native\src\layout.rs:593:            flex_direction: FlexDirection::Row,
+native\src\layout.rs:595:            flex_grow: 0.0,
+native\src\layout.rs:596:            flex_shrink: 0.0,
+native\src\layout.rs:602:                left: LengthPercentage::Length(panel_pad),
+native\src\layout.rs:603:                right: LengthPercentage::Length(panel_pad),
+native\src\layout.rs:616:            flex_direction: FlexDirection::Row,
+native\src\layout.rs:618:            flex_grow: 0.0,
+native\src\layout.rs:619:            flex_shrink: 0.0,
+native\src\layout.rs:644:            let width = match node.props.fixed_width {
+native\src\layout.rs:648:            let flex_grow = if node.props.fixed_width.is_some() {
+native\src\layout.rs:655:                flex_direction: FlexDirection::Column,
+native\src\layout.rs:656:                flex_grow,
+native\src\layout.rs:657:                flex_shrink: if node.props.fixed_width.is_some() {
+native\src\layout.rs:667:                    left: LengthPercentage::Length(panel_pad),
+native\src\layout.rs:668:                    right: LengthPercentage::Length(panel_pad),
+native\src\layout.rs:669:                    top: LengthPercentage::Length(panel_pad),
+native\src\layout.rs:670:                    bottom: LengthPercentage::Length(panel_pad),
+native\src\layout.rs:683:            let body_pad = if expanded { panel_pad } else { 0.0 };
+native\src\layout.rs:686:                flex_direction: FlexDirection::Column,
+native\src\layout.rs:688:                flex_grow: 0.0,
+native\src\layout.rs:689:                flex_shrink: 0.0,
+native\src\layout.rs:713:            flex_grow: 0.0,
+native\src\layout.rs:714:            flex_shrink: 0.0,
+native\src\layout.rs:723:            flex_grow: 0.0,
+native\src\layout.rs:724:            flex_shrink: 0.0,
+native\src\layout.rs:734:            flex_direction: FlexDirection::Column,
+native\src\layout.rs:736:            flex_grow: 0.0,
+native\src\layout.rs:737:            flex_shrink: 0.0,
+native\src\layout.rs:743:                left: LengthPercentage::Length(panel_pad),
+native\src\layout.rs:744:                right: LengthPercentage::Length(panel_pad),
+native\src\layout.rs:745:                top: LengthPercentage::Length(panel_pad),
+native\src\layout.rs:746:                bottom: LengthPercentage::Length(panel_pad),
+native\src\layout.rs:762:                    flex_direction: FlexDirection::Column,
+native\src\layout.rs:764:                    flex_grow: 0.0,
+native\src\layout.rs:765:                    flex_shrink: 0.0,
+native\src\layout.rs:792:                    flex_shrink: 0.0,
+native\src\layout.rs:803:            flex_shrink: 0.0,
+native\src\layout.rs:822:            flex_shrink: 0.0,
+native\src\layout.rs:831:            flex_shrink: 0.0,
+native\src\layout.rs:842:                flex_shrink: 0.0,
+native\src\layout.rs:852:            flex_shrink: 0.0,
+native\src\layout.rs:861:            flex_shrink: 0.0,
+native\src\layout.rs:872:                flex_shrink: 0.0,
+native\src\layout.rs:885:            flex_shrink: 0.0,
+native\src\layout.rs:894:            flex_shrink: 0.0,
+native\src\layout.rs:906:                    flex_shrink: 0.0,
+native\src\layout.rs:915:                    flex_shrink: 0.0,
+native\src\layout.rs:922:            let width = node.props.fixed_width.map(|w| Dimension::Length(w * sf));
+native\src\layout.rs:926:                flex_grow: if fixed { 0.0 } else { 1.0 },
+native\src\layout.rs:927:                flex_shrink: if fixed { 0.0 } else { 1.0 },
+native\src\layout.rs:941:            let width = node.props.fixed_width.map(|w| Dimension::Length(w * sf));
+native\src\layout.rs:945:                flex_grow: if fixed { 0.0 } else { 1.0 },
+native\src\layout.rs:946:                flex_shrink: 1.0,
+native\src\layout.rs:962:                .fixed_width
+native\src\layout.rs:971:                flex_grow: 0.0,
+native\src\layout.rs:972:                flex_shrink: 1.0,
+native\src\layout.rs:986:            flex_grow: 0.0,
+native\src\layout.rs:987:            flex_shrink: 0.0,
+native\src\layout.rs:996:            let width = node.props.fixed_width.map(|w| Dimension::Length(w * sf));
+native\src\layout.rs:1004:                flex_grow: grow,
+native\src\layout.rs:1005:                flex_shrink: if grow > 0.0 { 1.0 } else { 0.0 },
+native\src\layout.rs:1022:            flex_grow: 1.0,
+native\src\layout.rs:1023:            flex_shrink: 0.0,
+native\src\layout.rs:1037:                flex_grow: if has_tab_content { 1.0 } else { 0.0 },
+native\src\layout.rs:1038:                flex_shrink: if has_tab_content { 1.0 } else { 0.0 },
+native\src\layout.rs:1056:            flex_grow: 1.0,
+native\src\layout.rs:1057:            flex_shrink: if window_shell_body_child { 1.0 } else { 0.0 },
+native\src\layout.rs:1078:            flex_direction: FlexDirection::Column,
+native\src\layout.rs:1080:            flex_grow: 1.0,
+native\src\layout.rs:1089:            flex_grow: 1.0,
+native\src\layout.rs:1115:        reserve_panel_title_space(&mut style, node, sf, theme);
+native\src\layout.rs:1122:        style.flex_shrink = 0.0;
+native\src\layout.rs:1406:        node.style.layout.flex_direction,
+native\src\layout.rs:1496:        node.style.layout.flex_direction,
+native\src\layout.rs:1507:        && node.style.layout.flex_grow.is_none()
+native\src\layout.rs:1678:    let top_margin = (panel_title_line_height_lp(node, theme)
+native\src\layout.rs:1679:        + panel_title_body_gap_lp(node, theme)
+native\src\layout.rs:1712:        flex_direction: FlexDirection::Column,
+native\src\layout.rs:1714:        flex_grow: 1.0,
+native\src\layout.rs:1715:        flex_shrink: 1.0,
+native\src\layout.rs:2018:    .or_else(|| child.props.fixed_width.map(|width| width * sf))
+native\src\layout.rs:2164:fn reserve_panel_title_space(style: &mut Style, node: &WidgetNode, sf: f32, theme: &Theme) {
+native\src\layout.rs:2172:    let title_inset = (panel_title_line_height_lp(node, theme)
+native\src\layout.rs:2173:        + panel_title_body_gap_lp(node, theme)
+native\src\layout.rs:2182:pub(crate) fn panel_title_line_height_lp(node: &WidgetNode, theme: &Theme) -> f32 {
+native\src\layout.rs:2191:pub(crate) fn panel_title_gap_lp(node: &WidgetNode, theme: &Theme) -> f32 {
+native\src\layout.rs:2199:pub(crate) fn panel_title_body_gap_lp(node: &WidgetNode, theme: &Theme) -> f32 {
+native\src\layout.rs:2200:    let gap = panel_title_gap_lp(node, theme);
+native\src\layout.rs:2208:pub(crate) fn panel_title_top_padding_lp(node: &WidgetNode, theme: &Theme) -> f32 {
+native\src\layout.rs:2228:    if node.props.fixed_width.is_some()
+native\src\layout.rs:2250:        || node.props.fixed_width.is_some()
+native\src\layout.rs:2271:    // `min-width: 0` is the CSS-compatible opt-out that lets dense flex/grid
+native\src\layout.rs:2528:    if let Some(direction) = layout.flex_direction {
+native\src\layout.rs:2529:        style.flex_direction = match direction {
+native\src\layout.rs:2568:    let size_locks_flex = layout_size_locks_flex(layout);
+native\src\layout.rs:2569:    if size_locks_flex && layout.flex_grow.is_none() {
+native\src\layout.rs:2570:        style.flex_grow = 0.0;
+native\src\layout.rs:2572:    if size_locks_flex
+native\src\layout.rs:2573:        && layout.flex_shrink.is_none()
+native\src\layout.rs:2576:        style.flex_shrink = 0.0;
+native\src\layout.rs:2610:    if let Some(grow) = layout.flex_grow {
+native\src\layout.rs:2611:        style.flex_grow = grow.max(0.0);
+native\src\layout.rs:2613:    if let Some(shrink) = layout.flex_shrink {
+native\src\layout.rs:2614:        style.flex_shrink = shrink.max(0.0);
+native\src\layout.rs:2617:        layout.flex_basis_value,
+native\src\layout.rs:2618:        layout.flex_basis,
+native\src\layout.rs:2622:        style.flex_basis = basis;
+native\src\layout.rs:2810:fn layout_size_locks_flex(layout: &crate::style::LayoutStyle) -> bool {
+native\src\layout.rs:2813:        || layout_length_locks_flex(layout.width_value)
+native\src\layout.rs:2814:        || layout_length_locks_flex(layout.height_value)
+native\src\layout.rs:2817:fn layout_length_locks_flex(value: Option<LayoutLength>) -> bool {
+native\src\layout.rs:2850:    explicitly_scrolls_y(node) || (implicit_panel_may_need_vertical_scrollbar_gutter(node))
+native\src\layout.rs:2853:fn implicit_panel_may_need_vertical_scrollbar_gutter(node: &WidgetNode) -> bool {
+native\src\layout.rs:3035:        Dimension::Length(value) if value <= 0.5 && flex_basis_is_zero(style) => parent_axis_size,
+native\src\layout.rs:3040:fn flex_basis_is_zero(style: &Style) -> bool {
+native\src\layout.rs:3041:    style.flex_grow > 0.0 && matches!(style.flex_basis, Dimension::Length(value) if value <= 0.5)
+native\src\layout.rs:3678:    (panel_title_top_padding_lp(node, theme)
+native\src\layout.rs:3679:        + panel_title_line_height_lp(node, theme)
+native\src\layout.rs:3680:        + panel_title_body_gap_lp(node, theme))
+native\src\layout.rs:3740:    let width = tooltip.props.fixed_width.unwrap_or(280.0).max(80.0) * sf;
+native\src\layout.rs:3847:        .fixed_width
+native\src\layout.rs:4192:                            "objects-panel",
+native\src\layout.rs:4212:        assert!(layout.rects.contains_key("objects-panel"));
+native\src\layout.rs:4214:        let panel_clip = layout.clips.get("objects-panel").copied().unwrap();
+native\src\layout.rs:4217:            panel_clip.h > 0.0,
+native\src\layout.rs:4218:            "active tab body panel should not be clipped by the tab header"
+native\src\layout.rs:4272:                            "body-panel",
+native\src\layout.rs:4336:                            "objects-panel",
+native\src\layout.rs:4356:        assert!(layout.rects.contains_key("objects-panel"));
+native\src\layout.rs:4375:                fixed_width: Some(180.0),
+native\src\layout.rs:4447:                        "panel",
+native\src\layout.rs:4450:                            fixed_width: Some(280.0),
+native\src\layout.rs:4467:        let panel = layout.rects.get("panel").unwrap();
+native\src\layout.rs:4471:        assert_eq!(panel.h, 800.0);
+native\src\layout.rs:4584:        group.style.layout.flex_direction = Some(FlexDirectionStyle::Row);
+native\src\layout.rs:4648:                fixed_width: Some(260.0),
+native\src\layout.rs:4797:                        fixed_width: Some(260.0),
+native\src\layout.rs:5047:    fn window_body_flexes_between_menu_and_status_bars() {
+native\src\layout.rs:5123:                fixed_width: Some(220.0),
+native\src\layout.rs:5233:    fn app_shell_workbench_body_uses_flex_basis_without_collapsing_content() {
+native\src\layout.rs:5238:                fixed_width: Some(190.0),
+native\src\layout.rs:5268:                    "Bounded dashboard shell with a fixed sidebar, flexible scroll-owning body, \
+native\src\layout.rs:5298:        main.style.layout.flex_grow = Some(0.0);
+native\src\layout.rs:5299:        main.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:5308:        body.style.layout.flex_grow = Some(1.0);
+native\src\layout.rs:5309:        body.style.layout.flex_shrink = Some(1.0);
+native\src\layout.rs:5310:        body.style.layout.flex_basis_value = Some(LayoutLength::LogicalPx(0.0));
+native\src\layout.rs:5342:        workbench.style.layout.flex_grow = Some(1.0);
+native\src\layout.rs:5343:        workbench.style.layout.flex_shrink = Some(1.0);
+native\src\layout.rs:5344:        workbench.style.layout.flex_basis_value = Some(LayoutLength::LogicalPx(0.0));
+native\src\layout.rs:5509:    fn label_wraps_and_reserves_multiline_height_in_narrow_panel() {
+native\src\layout.rs:5515:                "panel",
+native\src\layout.rs:5518:                    fixed_width: Some(180.0),
+native\src\layout.rs:5526:                            "This label should wrap onto several lines inside a narrow panel"
+native\src\layout.rs:5722:            label.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:5740:            editor.style.layout.flex_grow = Some(1.0);
+native\src\layout.rs:5764:    fn titled_panel_style_padding_still_reserves_title_space() {
+native\src\layout.rs:5765:        let mut panel = node(
+native\src\layout.rs:5766:            "panel",
+native\src\layout.rs:5782:        panel.style.layout.padding = Some(14.0);
+native\src\layout.rs:5783:        panel.style.layout.gap = Some(10.0);
+native\src\layout.rs:5788:            vec![panel],
+native\src\layout.rs:5792:        let panel = layout.rects.get("panel").unwrap();
+native\src\layout.rs:5796:            button.y - panel.y >= 39.0,
+native\src\layout.rs:5797:            "custom padding let titled panel child overlap title: panel={panel:?} button={button:?}"
+native\src\layout.rs:5802:    fn titled_panel_offsets_first_child_from_content_clip_for_control_antialiasing() {
+native\src\layout.rs:5822:        let mut panel = node(
+native\src\layout.rs:5823:            "panel",
+native\src\layout.rs:5831:        panel.style.layout.padding = Some(14.0);
+native\src\layout.rs:5832:        panel.style.layout.gap = Some(10.0);
+native\src\layout.rs:5833:        panel.style.layout.width = Some(260.0);
+native\src\layout.rs:5839:            vec![panel],
+native\src\layout.rs:5845:        let panel_node = root.children.first().unwrap();
+native\src\layout.rs:5846:        let content_clip_top = layout.rects.get("panel").unwrap().y
+native\src\layout.rs:5847:            + panel_title_top_padding_lp(panel_node, &theme)
+native\src\layout.rs:5848:            + panel_title_line_height_lp(panel_node, &theme)
+native\src\layout.rs:5849:            + panel_title_body_gap_lp(panel_node, &theme);
+native\src\layout.rs:5862:    fn titled_panel_reservation_uses_title_font_size_and_gap() {
+native\src\layout.rs:5863:        let mut panel = node(
+native\src\layout.rs:5864:            "panel",
+native\src\layout.rs:5880:        panel.style.layout.padding = Some(14.0);
+native\src\layout.rs:5881:        panel.style.layout.gap = Some(12.0);
+native\src\layout.rs:5882:        panel.style.text.font_size = Some(22.0);
+native\src\layout.rs:5887:            vec![panel],
+native\src\layout.rs:5891:        let panel = layout.rects.get("panel").unwrap();
+native\src\layout.rs:5895:            button.y - panel.y >= 53.0,
+native\src\layout.rs:5896:            "large titled panel did not reserve font+gap space: panel={panel:?} button={button:?}"
+native\src\layout.rs:5901:    fn titled_panel_reservation_uses_custom_title_line_height() {
+native\src\layout.rs:5902:        let mut panel = node(
+native\src\layout.rs:5903:            "panel",
+native\src\layout.rs:5919:        panel.style.layout.padding = Some(0.0);
+native\src\layout.rs:5920:        panel.style.layout.gap = Some(0.0);
+native\src\layout.rs:5921:        panel.style.layout.height = Some(100.0);
+native\src\layout.rs:5922:        panel.style.text.line_height = Some(LineHeight::LogicalPx(44.0));
+native\src\layout.rs:5927:            vec![panel],
+native\src\layout.rs:5931:        let panel = layout.rects.get("panel").unwrap();
+native\src\layout.rs:5934:        assert_eq!(layout.scroll_max_y.get("panel").copied(), None);
+native\src\layout.rs:5936:            button.y >= panel.y + 44.0,
+native\src\layout.rs:5937:            "custom title line-height was not reserved: panel={panel:?} button={button:?}"
+native\src\layout.rs:6082:                node("panel", WidgetKind::Panel, NodeProps::default(), vec![]),
+native\src\layout.rs:6093:        row.children[0].style.layout.flex_grow = Some(0.0);
+native\src\layout.rs:6094:        row.children[0].style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:6103:        let panel = layout.rects.get("panel").unwrap();
+native\src\layout.rs:6106:        assert_eq!(panel.w, 300.0);
+native\src\layout.rs:6111:    fn explicit_style_width_does_not_grow_without_explicit_flex_grow() {
+native\src\layout.rs:6114:        let flexible = node("flexible", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:6123:                vec![fixed, flexible],
+native\src\layout.rs:6129:        let flexible = layout.rects.get("flexible").unwrap();
+native\src\layout.rs:6132:        assert_eq!(flexible.x, 320.0);
+native\src\layout.rs:6133:        assert_eq!(flexible.w, 580.0);
+native\src\layout.rs:6137:    fn percentage_width_flex_child_can_shrink_after_fixed_sibling() {
+native\src\layout.rs:6140:        label.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:6193:            "percentage width flex child should shrink into remaining row space: row={row:?} flow={flow:?}"
+native\src\layout.rs:6198:    fn explicit_auto_width_can_still_flex_grow_when_requested() {
+native\src\layout.rs:6202:        fixed.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:6204:        let mut flexible = node("flexible", WidgetKind::Panel, NodeProps::default(), vec![]);
+native\src\layout.rs:6205:        flexible.style.layout.width_value = Some(LayoutLength::Auto);
+native\src\layout.rs:6206:        flexible.style.layout.height = Some(120.0);
+native\src\layout.rs:6207:        flexible.style.layout.flex_grow = Some(1.0);
+native\src\layout.rs:6208:        flexible.style.layout.flex_shrink = Some(1.0);
+native\src\layout.rs:6214:            vec![fixed, flexible],
+native\src\layout.rs:6227:        let flexible = layout.rects.get("flexible").unwrap();
+native\src\layout.rs:6231:            flexible.w > 340.0,
+native\src\layout.rs:6232:            "explicit width:auto with flex-grow should fill the remaining row: {flexible:?}"
+native\src\layout.rs:6237:    fn flex_drop_targets_split_available_row_width_without_clipping() {
+native\src\layout.rs:6239:        left.style.layout.flex_grow = Some(1.0);
+native\src\layout.rs:6240:        left.style.layout.flex_shrink = Some(1.0);
+native\src\layout.rs:6241:        left.style.layout.flex_basis = Some(0.0);
+native\src\layout.rs:6249:        right.style.layout.flex_grow = Some(1.0);
+native\src\layout.rs:6250:        right.style.layout.flex_shrink = Some(1.0);
+native\src\layout.rs:6251:        right.style.layout.flex_basis = Some(0.0);
+native\src\layout.rs:6280:    fn explicit_calc_width_children_can_shrink_inside_flex_sized_parent() {
+native\src\layout.rs:6283:        sidebar.style.layout.flex_grow = Some(0.0);
+native\src\layout.rs:6284:        sidebar.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:6311:        let mut target_panel = node(
+native\src\layout.rs:6312:            "target-panel",
+native\src\layout.rs:6317:        target_panel.style.layout.flex_grow = Some(1.0);
+native\src\layout.rs:6318:        target_panel.style.layout.flex_shrink = Some(1.0);
+native\src\layout.rs:6319:        target_panel.style.layout.min_width = Some(0.0);
+native\src\layout.rs:6320:        target_panel.style.layout.padding = Some(0.0);
+native\src\layout.rs:6326:            vec![sidebar, target_panel],
+native\src\layout.rs:6349:    fn zero_flex_basis_fill_slot_uses_remaining_row_width() {
+native\src\layout.rs:6352:        label.style.layout.flex_grow = Some(0.0);
+native\src\layout.rs:6353:        label.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:6365:        editor.style.layout.flex_grow = Some(1.0);
+native\src\layout.rs:6366:        editor.style.layout.flex_shrink = Some(1.0);
+native\src\layout.rs:6367:        editor.style.layout.flex_basis_value = Some(LayoutLength::LogicalPx(0.0));
+native\src\layout.rs:6398:            "flex:1-style slot should not overflow row: row={row:?} input={input:?}"
+native\src\layout.rs:6403:    fn flex_badges_respect_explicit_min_width_zero_in_row() {
+native\src\layout.rs:6413:        left.style.layout.flex_grow = Some(1.0);
+native\src\layout.rs:6414:        left.style.layout.flex_shrink = Some(1.0);
+native\src\layout.rs:6415:        left.style.layout.flex_basis_value = Some(LayoutLength::LogicalPx(0.0));
+native\src\layout.rs:6427:        right.style.layout.flex_grow = Some(1.0);
+native\src\layout.rs:6428:        right.style.layout.flex_shrink = Some(1.0);
+native\src\layout.rs:6429:        right.style.layout.flex_basis_value = Some(LayoutLength::LogicalPx(0.0));
+native\src\layout.rs:6440:        row.style.layout.flex_grow = Some(0.0);
+native\src\layout.rs:6459:            "flex badges should stay inside row: row={row:?} left={left:?} right={right:?}"
+native\src\layout.rs:6581:        let mut panel = node(
+native\src\layout.rs:6582:            "panel",
+native\src\layout.rs:6587:        panel.style.layout.width = Some(320.0);
+native\src\layout.rs:6588:        panel.style.layout.height = Some(180.0);
+native\src\layout.rs:6589:        panel.style.layout.flex_grow = Some(0.0);
+native\src\layout.rs:6590:        panel.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:6595:            vec![panel],
+native\src\layout.rs:6599:        let panel = layout.rects.get("panel").unwrap();
+native\src\layout.rs:6603:        assert_eq!(panel.w, 320.0);
+native\src\layout.rs:6604:        assert_eq!(panel.h, 180.0);
+native\src\layout.rs:6607:        assert_eq!(pin.x, panel.x + panel.w - 18.0 - pin.w);
+native\src\layout.rs:6608:        assert_eq!(pin.y, panel.y + 14.0);
+native\src\layout.rs:6616:    fn absolute_child_in_titled_panel_uses_panel_body_top() {
+native\src\layout.rs:6625:        let mut panel = node(
+native\src\layout.rs:6626:            "panel",
+native\src\layout.rs:6629:                text: Some("Titled panel".to_string()),
+native\src\layout.rs:6634:        panel.style.layout.width = Some(320.0);
+native\src\layout.rs:6635:        panel.style.layout.height = Some(180.0);
+native\src\layout.rs:6636:        panel.style.layout.flex_grow = Some(0.0);
+native\src\layout.rs:6637:        panel.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:6642:            vec![panel.clone()],
+native\src\layout.rs:6647:        let panel_rect = layout.rects.get("panel").unwrap();
+native\src\layout.rs:6649:        let expected_body_top = panel_rect.y
+native\src\layout.rs:6650:            + titled_container_body_offset_px(&panel, 1.0, &theme)
+native\src\layout.rs:6653:        assert_eq!(pin.x, panel_rect.x + theme.spacing + 2.0 + 16.0);
+native\src\layout.rs:6667:        let mut panel = node(
+native\src\layout.rs:6668:            "panel",
+native\src\layout.rs:6673:        panel.style.layout.width = Some(240.0);
+native\src\layout.rs:6674:        panel.style.layout.height = Some(120.0);
+native\src\layout.rs:6675:        panel.style.layout.flex_grow = Some(0.0);
+native\src\layout.rs:6676:        panel.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:6677:        panel.style.layout.overflow = Some(OverflowStyle::Hidden);
+native\src\layout.rs:6682:            vec![panel],
+native\src\layout.rs:6686:        let panel = layout.rects.get("panel").unwrap();
+native\src\layout.rs:6691:        assert_eq!(panel.w, 240.0);
+native\src\layout.rs:6692:        assert_eq!(panel.h, 120.0);
+native\src\layout.rs:6698:            flow.y < panel.y + panel.h,
+native\src\layout.rs:6795:        first.style.layout.flex_grow = Some(0.0);
+native\src\layout.rs:6796:        first.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:6799:        second.style.layout.flex_grow = Some(0.0);
+native\src\layout.rs:6800:        second.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:6837:        centered.style.layout.flex_grow = Some(0.0);
+native\src\layout.rs:6838:        centered.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:6863:        first.style.layout.flex_grow = Some(0.0);
+native\src\layout.rs:6864:        first.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:6870:        second.style.layout.flex_grow = Some(0.0);
+native\src\layout.rs:6871:        second.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:6979:            "second panel should be in the next column"
+native\src\layout.rs:7055:                    label.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:7099:    fn masonry_grid_shrink_updates_auto_height_parent_panel() {
+native\src\layout.rs:7116:        caption.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:7159:        footer.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:7185:            "auto-height parent panel should hug packed masonry content: section={section:?} grid={grid:?}"
+native\src\layout.rs:7225:            "second panel should wrap below the first"
+native\src\layout.rs:7267:    fn flow_layout_wraps_fixed_width_children_and_keeps_row_gap() {
+native\src\layout.rs:7499:        let mut panel = node(
+native\src\layout.rs:7500:            "panel",
+native\src\layout.rs:7524:        panel.style.layout.height = Some(40.0);
+native\src\layout.rs:7525:        panel.style.layout.padding = Some(0.0);
+native\src\layout.rs:7526:        panel.style.layout.gap = Some(0.0);
+native\src\layout.rs:7531:            vec![panel],
+native\src\layout.rs:7535:        let panel = layout.rects.get("panel").unwrap();
+native\src\layout.rs:7539:            second.y + second.h <= panel.y + panel.h,
+native\src\layout.rs:7540:            "child visible clip escaped parent: panel={panel:?} second_clip={second:?}"
+native\src\layout.rs:7545:    fn panel_scroll_offset_moves_children_and_preserves_clip() {
+native\src\layout.rs:7546:        let mut panel = node(
+native\src\layout.rs:7547:            "panel",
+native\src\layout.rs:7557:        panel.style.layout.padding = Some(0.0);
+native\src\layout.rs:7558:        panel.style.layout.gap = Some(0.0);
+native\src\layout.rs:7559:        panel.style.layout.height = Some(100.0);
+native\src\layout.rs:7564:            vec![panel],
+native\src\layout.rs:7568:        state.container_scroll_y.insert("panel".to_string(), 40.0);
+native\src\layout.rs:7574:        let panel = scrolled.rects.get("panel").unwrap();
+native\src\layout.rs:7577:        let applied_scroll = scrolled.scroll_y.get("panel").copied().unwrap_or(0.0);
+native\src\layout.rs:7579:        assert_eq!(panel.y, 0.0);
+native\src\layout.rs:7581:            assert!(first_clip.y >= panel.y);
+native\src\layout.rs:7582:            assert!(first_clip.y + first_clip.h <= panel.y + panel.h);
+native\src\layout.rs:7585:        assert_eq!(scrolled.scroll_y.get("panel").copied(), Some(36.0));
+native\src\layout.rs:7586:        assert_eq!(scrolled.scroll_max_y.get("panel").copied(), Some(36.0));
+native\src\layout.rs:7591:        let mut panel = node(
+native\src\layout.rs:7592:            "panel",
+native\src\layout.rs:7600:        panel.style.layout.height = Some(44.0);
+native\src\layout.rs:7601:        panel.style.layout.padding = Some(0.0);
+native\src\layout.rs:7602:        panel.style.layout.gap = Some(0.0);
+native\src\layout.rs:7607:            vec![panel],
+native\src\layout.rs:7612:        let panel_clip = layout.clips.get("panel").copied().unwrap();
+native\src\layout.rs:7628:            (panel_clip.x, panel_clip.y, panel_clip.w, panel_clip.h)
+native\src\layout.rs:7643:                        fixed_width: Some(100.0),
+native\src\layout.rs:7652:                        fixed_width: Some(100.0),
+native\src\layout.rs:7661:                        fixed_width: Some(100.0),
+native\src\layout.rs:7672:        scroller.style.layout.flex_grow = Some(0.0);
+native\src\layout.rs:7673:        scroller.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:7714:    fn panel_scroll_range_preserves_bottom_padding() {
+native\src\layout.rs:7715:        let mut panel = node(
+native\src\layout.rs:7716:            "panel",
+native\src\layout.rs:7726:        panel.style.layout.padding = Some(14.0);
+native\src\layout.rs:7727:        panel.style.layout.gap = Some(0.0);
+native\src\layout.rs:7728:        panel.style.layout.height = Some(100.0);
+native\src\layout.rs:7733:            vec![panel],
+native\src\layout.rs:7736:        state.container_scroll_y.insert("panel".to_string(), 999.0);
+native\src\layout.rs:7739:        let panel = layout.rects.get("panel").unwrap();
+native\src\layout.rs:7742:        assert_eq!(layout.scroll_max_y.get("panel").copied(), Some(64.0));
+native\src\layout.rs:7743:        assert_eq!(layout.scroll_y.get("panel").copied(), Some(64.0));
+native\src\layout.rs:7744:        assert_eq!(panel.y + panel.h - (fourth.y + fourth.h), 14.0);
+native\src\layout.rs:7751:            let mut panel = node(
+native\src\layout.rs:7752:                &format!("active-panel-{index}"),
+native\src\layout.rs:7760:            panel.style.layout.height = Some(96.0);
+native\src\layout.rs:7761:            panel.style.layout.width_value = Some(LayoutLength::Percent(100.0));
+native\src\layout.rs:7762:            panel.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:7763:            active_children.push(panel);
+native\src\layout.rs:7775:        let mut inactive_panel = node(
+native\src\layout.rs:7776:            "inactive-panel",
+native\src\layout.rs:7781:        inactive_panel.style.layout.height = Some(900.0);
+native\src\layout.rs:7789:            vec![inactive_panel],
+native\src\layout.rs:7819:        let last = layout.rects.get("active-panel-4").copied().unwrap();
+native\src\layout.rs:7835:            !layout.rects.contains_key("inactive-panel"),
+native\src\layout.rs:7843:        let last_clip = scrolled.clips.get("active-panel-4").copied().unwrap();
+native\src\layout.rs:7851:    fn titled_panel_scroll_range_counts_body_descendant_overflow() {
+native\src\layout.rs:7864:            row.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:7877:        let mut panel = node(
+native\src\layout.rs:7878:            "panel",
+native\src\layout.rs:7881:                text: Some("Scrollable panel".to_string()),
+native\src\layout.rs:7886:        panel.style.layout.height = Some(150.0);
+native\src\layout.rs:7887:        panel.style.layout.padding = Some(8.0);
+native\src\layout.rs:7888:        panel.style.layout.gap = Some(0.0);
+native\src\layout.rs:7894:            vec![panel],
+native\src\layout.rs:7898:        let panel_rect = layout.rects.get("panel").copied().unwrap();
+native\src\layout.rs:7901:        let max_scroll = layout.scroll_max_y.get("panel").copied().unwrap_or(0.0);
+native\src\layout.rs:7909:            "titled panel should expose body scroll range for overflowing descendants"
+native\src\layout.rs:7914:            .insert("panel".to_string(), max_scroll + 100.0);
+native\src\layout.rs:7916:        let scrolled_panel = scrolled.rects.get("panel").copied().unwrap();
+native\src\layout.rs:7919:        assert_eq!(scrolled_panel.y, panel_rect.y);
+native\src\layout.rs:7922:            "last panel body descendant should be reachable at max scroll: clip={last_clip:?}"
+native\src\layout.rs:7925:            last_clip.y >= scrolled_panel.y,
+native\src\layout.rs:7926:            "panel body descendant should remain clipped inside titled panel: panel={scrolled_panel:?} clip={last_clip:?}"
+native\src\layout.rs:7934:        let mut panel = node(
+native\src\layout.rs:7935:            "panel",
+native\src\layout.rs:7940:        panel.style.layout.height_value = Some(LayoutLength::LogicalPx(40.0));
+native\src\layout.rs:7941:        panel.style.layout.padding = Some(0.0);
+native\src\layout.rs:7942:        panel.style.layout.overflow = Some(OverflowStyle::Visible);
+native\src\layout.rs:7947:            vec![panel],
+native\src\layout.rs:7951:        let panel = layout.rects.get("panel").unwrap();
+native\src\layout.rs:7954:        assert!(child_clip.y + child_clip.h > panel.y + panel.h);
+native\src\layout.rs:7969:        row.style.layout.flex_grow = Some(0.0);
+native\src\layout.rs:7970:        row.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:8001:        row.style.layout.flex_grow = Some(0.0);
+native\src\layout.rs:8002:        row.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:8027:    fn overflow_auto_opts_non_panel_container_into_scroll() {
+native\src\layout.rs:8059:    fn nested_vlayout_scroll_body_inside_titled_panel_gets_scroll_range() {
+native\src\layout.rs:8077:            button.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:8108:                text: Some("Scrollable titled panel".to_string()),
+native\src\layout.rs:8161:            "style": {"flex_shrink": 0}
+native\src\layout.rs:8169:                "style": {"height": 30, "flex_shrink": 0}
+native\src\layout.rs:8177:            "style": {"flex_shrink": 0}
+native\src\layout.rs:8197:            "type": "panel",
+native\src\layout.rs:8199:            "props": {"text": "Scrollable titled panel"},
+native\src\layout.rs:8240:                        flex-shrink: 0;
+native\src\layout.rs:8286:            row.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:8300:        refresh.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:8320:        auto_stats.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:8393:        grid.style.layout.flex_grow = Some(0.0);
+native\src\layout.rs:8394:        grid.style.layout.flex_shrink = Some(1.0);
+native\src\layout.rs:8416:        let first_rect = layout.rects.get("first").expect("first panel rect");
+native\src\layout.rs:8417:        let third_rect = layout.rects.get("third").expect("third panel rect");
+native\src\layout.rs:8441:        body_children[0].style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:8450:            button.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:8462:        pass.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:8483:                text: Some("Scrollable titled panel".to_string()),
+native\src\layout.rs:8495:        before.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:8498:        after.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:8542:    fn scrollable_panel_reserves_padding_for_styled_vertical_scrollbar() {
+native\src\layout.rs:8543:        let mut panel = node(
+native\src\layout.rs:8544:            "panel",
+native\src\layout.rs:8554:        panel.style.layout.width = Some(180.0);
+native\src\layout.rs:8555:        panel.style.layout.height = Some(80.0);
+native\src\layout.rs:8556:        panel.style.layout.padding = Some(4.0);
+native\src\layout.rs:8557:        panel.style.layout.gap = Some(4.0);
+native\src\layout.rs:8558:        panel.style.layout.overflow_y = Some(OverflowStyle::Auto);
+native\src\layout.rs:8559:        panel.style.parts.parts.insert(
+native\src\layout.rs:8570:        panel.style.parts.parts.insert(
+native\src\layout.rs:8584:            vec![panel],
+native\src\layout.rs:8587:        state.container_scroll_y.insert("panel".to_string(), 10.0);
+native\src\layout.rs:8590:        let panel_rect = layout.rects.get("panel").unwrap();
+native\src\layout.rs:8593:        assert!(layout.scroll_max_y.get("panel").copied().unwrap_or(0.0) > 0.0);
+native\src\layout.rs:8595:            first_rect.x + first_rect.w <= panel_rect.x + panel_rect.w - 24.0 + 0.5,
+native\src\layout.rs:8596:            "stretched child should leave room for styled scrollbar gutter: panel={panel_rect:?} first={first_rect:?}"
+native\src\layout.rs:8601:    fn implicit_scrollable_panel_reserves_padding_for_styled_vertical_scrollbar() {
+native\src\layout.rs:8605:        left.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:8607:        spacer.style.layout.flex_grow = Some(1.0);
+native\src\layout.rs:8611:        right.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:8623:        let mut panel = node(
+native\src\layout.rs:8624:            "panel",
+native\src\layout.rs:8632:        panel.style.layout.width = Some(420.0);
+native\src\layout.rs:8633:        panel.style.layout.height = Some(180.0);
+native\src\layout.rs:8634:        panel.style.layout.padding = Some(14.0);
+native\src\layout.rs:8635:        panel.style.layout.gap = Some(10.0);
+native\src\layout.rs:8636:        panel.style.parts.parts.insert(
+native\src\layout.rs:8647:        panel.style.parts.parts.insert(
+native\src\layout.rs:8662:            vec![panel],
+native\src\layout.rs:8673:        let panel_rect = layout.rects.get("panel").unwrap();
+native\src\layout.rs:8675:        let reserve = scrollbar_gutter_reserve_px(root.children.first().expect("panel"), 1.0);
+native\src\layout.rs:8678:            right_rect.x + right_rect.w <= panel_rect.x + panel_rect.w - reserve + 0.5,
+native\src\layout.rs:8679:            "right tile should leave implicit scrollbar gutter: panel={panel_rect:?} right={right_rect:?} reserve={reserve}"
+native\src\layout.rs:8688:    fn titled_scroll_panel_with_clipped_buttons_gets_scroll_range() {
+native\src\layout.rs:8718:        let mut panel = node(
+native\src\layout.rs:8719:            "panel",
+native\src\layout.rs:8722:                text: Some("Scrollable titled panel".to_string()),
+native\src\layout.rs:8727:        panel.style.layout.width_value = Some(LayoutLength::Percent(100.0));
+native\src\layout.rs:8728:        panel.style.layout.height = Some(250.0);
+native\src\layout.rs:8729:        panel.style.layout.overflow_y = Some(OverflowStyle::Auto);
+native\src\layout.rs:8730:        panel.style.layout.overflow_x = Some(OverflowStyle::Hidden);
+native\src\layout.rs:8731:        panel.style.layout.padding = Some(14.0);
+native\src\layout.rs:8732:        panel.style.layout.padding_right = Some(26.0);
+native\src\layout.rs:8733:        panel.style.layout.padding_bottom = Some(22.0);
+native\src\layout.rs:8734:        panel.style.layout.gap = Some(10.0);
+native\src\layout.rs:8740:            vec![panel],
+native\src\layout.rs:8745:        let max_scroll = layout.scroll_max_y.get("panel").copied().unwrap_or(0.0);
+native\src\layout.rs:8748:            "titled panel has clipped children and should be scrollable"
+native\src\layout.rs:8757:        state.container_scroll_y.insert("panel".to_string(), 999.0);
+native\src\layout.rs:8762:            "final label should become visible after scrolling the titled panel"
+native\src\layout.rs:8767:    fn titled_scroll_panel_clips_children_below_title() {
+native\src\layout.rs:8768:        let mut panel = node(
+native\src\layout.rs:8769:            "panel",
+native\src\layout.rs:8782:        panel.style.layout.padding = Some(0.0);
+native\src\layout.rs:8783:        panel.style.layout.gap = Some(0.0);
+native\src\layout.rs:8784:        panel.style.layout.height = Some(100.0);
+native\src\layout.rs:8789:            vec![panel],
+native\src\layout.rs:8792:        state.container_scroll_y.insert("panel".to_string(), 40.0);
+native\src\layout.rs:8797:        let panel = layout.rects.get("panel").unwrap();
+native\src\layout.rs:8798:        let title_bottom = panel.y
+native\src\layout.rs:8799:            + panel_title_top_padding_lp(root.children.first().unwrap(), &theme)
+native\src\layout.rs:8800:            + panel_title_line_height_lp(root.children.first().unwrap(), &theme)
+native\src\layout.rs:8801:            + panel_title_gap_lp(root.children.first().unwrap(), &theme);
+native\src\layout.rs:8812:                assert!(clip.y >= panel.y);
+native\src\layout.rs:8819:    fn titled_scroll_panel_max_scroll_reveals_last_child() {
+native\src\layout.rs:8824:                text: Some("Wheel inside this panel.".to_string()),
+native\src\layout.rs:8840:        let mut panel = node(
+native\src\layout.rs:8841:            "panel",
+native\src\layout.rs:8849:        panel.style.layout.height = Some(205.0);
+native\src\layout.rs:8850:        panel.style.layout.padding = Some(14.0);
+native\src\layout.rs:8851:        panel.style.layout.gap = Some(8.0);
+native\src\layout.rs:8852:        panel.style.layout.overflow_y = Some(OverflowStyle::Auto);
+native\src\layout.rs:8853:        panel.style.layout.overflow_x = Some(OverflowStyle::Hidden);
+native\src\layout.rs:8858:            vec![panel],
+native\src\layout.rs:8861:        state.container_scroll_y.insert("panel".to_string(), 999.0);
+native\src\layout.rs:8870:            layout.scroll_y.get("panel"),
+native\src\layout.rs:8871:            layout.scroll_max_y.get("panel")
+native\src\layout.rs:8876:    fn overflow_probe_vertical_panel_reveals_last_child_at_startup_size() {
+native\src\layout.rs:8891:                    text: Some("Wheel inside this panel.".to_string()),
+native\src\layout.rs:8909:            "vertical-panel",
+native\src\layout.rs:8923:            "hidden-panel",
+native\src\layout.rs:8972:            .insert("vertical-panel".to_string(), 999.0);
+native\src\layout.rs:8975:        let panel_rect = layout.rects.get("vertical-panel").unwrap();
+native\src\layout.rs:8976:        let panel_clip = layout.clips.get("vertical-panel").unwrap();
+native\src\layout.rs:8981:            panel_clip.h >= panel_rect.h - 0.5,
+native\src\layout.rs:8982:            "vertical panel itself should be visible at startup size: rect={panel_rect:?} clip={panel_clip:?}"
+native\src\layout.rs:8987:            layout.scroll_y.get("vertical-panel"),
+native\src\layout.rs:8988:            layout.scroll_max_y.get("vertical-panel")
+native\src\layout.rs:8993:    fn partially_clipped_scroll_panel_uses_visible_viewport_for_max_scroll() {
+native\src\layout.rs:9006:        let mut panel = node("panel", WidgetKind::Panel, NodeProps::default(), children);
+native\src\layout.rs:9007:        panel.style.layout.height = Some(220.0);
+native\src\layout.rs:9008:        panel.style.layout.padding = Some(14.0);
+native\src\layout.rs:9009:        panel.style.layout.gap = Some(8.0);
+native\src\layout.rs:9010:        panel.style.layout.overflow_y = Some(OverflowStyle::Auto);
+native\src\layout.rs:9014:        spacer.style.layout.flex_grow = Some(0.0);
+native\src\layout.rs:9015:        spacer.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:9021:            vec![spacer, panel],
+native\src\layout.rs:9024:        state.container_scroll_y.insert("panel".to_string(), 999.0);
+native\src\layout.rs:9027:        let panel_rect = layout.rects.get("panel").unwrap();
+native\src\layout.rs:9028:        let panel_clip = layout.clips.get("panel").unwrap();
+native\src\layout.rs:9033:            panel_clip.h < panel_rect.h,
+native\src\layout.rs:9034:            "test requires panel to be clipped by the window: rect={panel_rect:?} clip={panel_clip:?}"
+native\src\layout.rs:9039:            layout.scroll_y.get("panel"),
+native\src\layout.rs:9040:            layout.scroll_max_y.get("panel")
+native\src\layout.rs:9048:            let mut panel = node(
+native\src\layout.rs:9049:                &format!("panel-{row_index}"),
+native\src\layout.rs:9076:            panel.style.layout.min_height = Some(150.0);
+native\src\layout.rs:9077:            panel.style.layout.padding = Some(12.0);
+native\src\layout.rs:9078:            panel.style.layout.gap = Some(8.0);
+native\src\layout.rs:9083:                vec![panel],
+native\src\layout.rs:9102:            let panel = layout.rects.get(&format!("panel-{row_index}")).unwrap();
+native\src\layout.rs:9104:                row.h >= panel.h - 0.5,
+native\src\layout.rs:9105:                "row should not clip its panel content height: row={row:?} panel={panel:?}"
+native\src\layout.rs:9108:                panel.h >= 150.0,
+native\src\layout.rs:9109:                "panel min-height should survive inside scroll row: {panel:?}"
+native\src\layout.rs:9122:        top.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:9125:        middle.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:9128:        bottom.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:9137:        stack.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:9157:            "overflowing bottom panel should be clipped by the window viewport before scrolling"
+native\src\layout.rs:9165:        top.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:9168:        middle.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:9171:        bottom.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:9180:        stack.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:9198:            "scrolling the window should reveal the bottom panel: rect={bottom_rect:?} clip={bottom_clip:?}"
+native\src\layout.rs:9203:    fn parent_scroll_clipping_does_not_create_child_panel_scroll_range() {
+native\src\layout.rs:9204:        let mut panel = node(
+native\src\layout.rs:9205:            "panel",
+native\src\layout.rs:9208:                text: Some("Table panel".to_string()),
+native\src\layout.rs:9216:        panel.style.layout.height = Some(140.0);
+native\src\layout.rs:9217:        panel.style.layout.padding = Some(10.0);
+native\src\layout.rs:9218:        panel.style.layout.gap = Some(8.0);
+native\src\layout.rs:9229:            vec![before, panel, after],
+native\src\layout.rs:9248:            let panel_rect = layout.rects.get("panel").expect("panel rect");
+native\src\layout.rs:9249:            let panel_clip = layout.clips.get("panel").expect("panel clip");
+native\src\layout.rs:9252:                panel_clip.h < panel_rect.h,
+native\src\layout.rs:9253:                "test should leave panel partially clipped by parent scroll: scroll_y={scroll_y} panel={panel_rect:?} clip={panel_clip:?}"
+native\src\layout.rs:9256:                layout.scroll_max_y.get("panel").copied(),
+native\src\layout.rs:9258:                "parent clipping should not make a fitting panel grow an internal scroll range at scroll_y={scroll_y}"
+native\src\layout.rs:9264:    fn parent_scroll_does_not_flash_implicit_panel_scrollbars_across_offsets() {
+native\src\layout.rs:9265:        fn make_metric_panel(id: &str, table_h: f32) -> WidgetNode {
+native\src\layout.rs:9274:            let mut panel = node(
+native\src\layout.rs:9296:                            text: Some("PASS: panel should not get its own scrollbar".to_string()),
+native\src\layout.rs:9303:            panel.style.layout.min_width = Some(390.0);
+native\src\layout.rs:9304:            panel.style.layout.padding = Some(14.0);
+native\src\layout.rs:9305:            panel.style.layout.gap = Some(10.0);
+native\src\layout.rs:9306:            panel
+native\src\layout.rs:9314:                make_metric_panel("text-rows", 180.0),
+native\src\layout.rs:9315:                make_metric_panel("text-type", 210.0),
+native\src\layout.rs:9325:                make_metric_panel("compact-table", 214.0),
+native\src\layout.rs:9326:                make_metric_panel("roomy-table", 274.0),
+native\src\layout.rs:9376:            for panel_id in ["text-rows", "text-type", "compact-table", "roomy-table"] {
+native\src\layout.rs:9378:                    layout.scroll_max_y.get(panel_id).copied(),
+native\src\layout.rs:9380:                    "implicit panel {panel_id} should not gain an internal vertical scrollbar at root scroll_y={scroll_y}"
+native\src\layout.rs:9387:    fn page_panel_scroll_offset_is_applied_once() {
+native\src\layout.rs:9388:        let mut panel = node(
+native\src\layout.rs:9393:                fixed_width: Some(330.0),
+native\src\layout.rs:9450:        panel.style.layout.padding = Some(14.0);
+native\src\layout.rs:9451:        panel.style.layout.gap = Some(10.0);
+native\src\layout.rs:9463:                vec![panel],
+native\src\layout.rs:9494:            + panel_title_top_padding_lp(
+native\src\layout.rs:9501:            + panel_title_line_height_lp(
+native\src\layout.rs:9508:            + panel_title_gap_lp(
+native\src\layout.rs:9586:    fn titled_panel_bounds_nested_scroll_area_to_body() {
+native\src\layout.rs:9627:        scroller.style.layout.flex_grow = Some(1.0);
+native\src\layout.rs:9628:        scroller.style.layout.flex_shrink = Some(1.0);
+native\src\layout.rs:9630:        let mut panel = node(
+native\src\layout.rs:9639:        panel.style.layout.width = Some(360.0);
+native\src\layout.rs:9640:        panel.style.layout.height = Some(190.0);
+native\src\layout.rs:9641:        panel.style.layout.padding = Some(10.0);
+native\src\layout.rs:9642:        panel.style.layout.gap = Some(8.0);
+native\src\layout.rs:9643:        panel.style.layout.overflow_y = Some(OverflowStyle::Hidden);
+native\src\layout.rs:9649:            vec![panel],
+native\src\layout.rs:9654:        let panel_rect = layout.rects.get("line-controls").expect("panel rect");
+native\src\layout.rs:9657:        let title_bottom = panel_rect.y
+native\src\layout.rs:9658:            + panel_title_top_padding_lp(root.children.first().unwrap(), &theme)
+native\src\layout.rs:9659:            + panel_title_line_height_lp(root.children.first().unwrap(), &theme)
+native\src\layout.rs:9660:            + panel_title_body_gap_lp(root.children.first().unwrap(), &theme);
+native\src\layout.rs:9664:            "nested scroll area should begin in panel body: panel={panel_rect:?} scroller={scroller_rect:?} title_bottom={title_bottom}"
+native\src\layout.rs:9683:    fn titled_panel_body_preserves_child_gap() {
+native\src\layout.rs:9684:        let mut panel = node(
+native\src\layout.rs:9685:            "panel",
+native\src\layout.rs:9712:        panel.style.layout.width = Some(260.0);
+native\src\layout.rs:9713:        panel.style.layout.height = Some(180.0);
+native\src\layout.rs:9714:        panel.style.layout.padding = Some(10.0);
+native\src\layout.rs:9715:        panel.style.layout.gap = Some(14.0);
+native\src\layout.rs:9721:            vec![panel],
+native\src\layout.rs:9729:            "titled panel body did not preserve child gap: first={first:?} second={second:?} actual_gap={actual_gap}"
+native\src\layout.rs:9869:        scroll.style.layout.flex_grow = Some(1.0);
+native\src\layout.rs:9870:        scroll.style.layout.flex_shrink = Some(1.0);
+native\src\layout.rs:9874:        let mut panel = node(
+native\src\layout.rs:9883:        panel.style.layout.width = Some(280.0);
+native\src\layout.rs:9884:        panel.style.layout.height_value = Some(LayoutLength::Calc(crate::style::CalcLength {
+native\src\layout.rs:9888:        panel.style.layout.max_height_value = Some(LayoutLength::Calc(crate::style::CalcLength {
+native\src\layout.rs:9892:        panel.style.layout.padding = Some(10.0);
+native\src\layout.rs:9893:        panel.style.layout.gap = Some(8.0);
+native\src\layout.rs:9894:        panel.style.layout.flex_grow = Some(0.0);
+native\src\layout.rs:9895:        panel.style.layout.flex_shrink = Some(0.0);
+native\src\layout.rs:9896:        panel.style.layout.min_height = Some(0.0);
+native\src\layout.rs:9897:        panel.style.layout.overflow_y = Some(OverflowStyle::Hidden);
+native\src\layout.rs:9904:                "plot-panel",
+native\src\layout.rs:9918:        stack.style.layout.flex_grow = Some(1.0);
+native\src\layout.rs:9919:        stack.style.layout.flex_shrink = Some(1.0);
+native\src\layout.rs:9927:            vec![panel, stack],
+native\src\layout.rs:9931:        line_layout.style.layout.flex_grow = Some(1.0);
+native\src\layout.rs:9932:        line_layout.style.layout.flex_shrink = Some(1.0);
+native\src\layout.rs:9970:        let panel_rect = layout
+native\src\layout.rs:9973:            .expect("controls panel rect");
+native\src\layout.rs:9989:            panel_rect.w >= 279.0,
+native\src\layout.rs:9990:            "controls panel collapsed: {panel_rect:?}"
+native\src\layout.rs:9994:            "controls scroll body should fill the titled panel body: panel={panel_rect:?} scroll={scroll_rect:?}"
+native\src\layout.rs:10041:                        fixed_width: Some(400.0),
+native\src\layout.rs:10095:                fixed_width: Some(360.0),
+native\src\layout.rs:10180:                    fixed_width: Some(320.0),
+python\dragongui\node_graph.py:3382:    canvas {{ width: 100%; height: 100%; min-height: 0; display: block; background: #0d1117; cursor: default; flex: 1 1 auto; }}
+python\dragongui\node_graph.py:3383:    .editor-shell {{ width: 100%; height: 100%; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: #0d1117; }}
+python\dragongui\node_graph.py:3384:    .editor-topbar {{ height: 42px; flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 5px 7px; background: #111821; border-bottom: 1px solid rgba(255, 255, 255, 0.09); box-sizing: border-box; }}
+python\dragongui\node_graph.py:3385:    .editor-title {{ flex: 0 0 auto; color: #ffffff; font-size: 15px; font-weight: 850; padding: 0 4px; }}
+python\dragongui\node_graph.py:3386:    .editor-state {{ flex: 1 1 auto; min-width: 0; color: rgba(226, 255, 248, 0.88); font-size: 12px; font-weight: 750; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }}
+python\dragongui\node_graph.py:3387:    .editor-tools {{ flex: 0 0 auto; display: flex; align-items: center; gap: 5px; }}
+python\dragongui\node_graph.py:3393:    .editor-statusbar {{ height: 29px; flex: 0 0 auto; display: flex; align-items: center; gap: 2px; padding: 2px 6px; box-sizing: border-box; background: #101721; border-top: 1px solid rgba(255, 255, 255, 0.08); }}
+python\dragongui\node_graph.py:3394:    .status-item {{ flex: 1 1 0; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: rgba(226, 235, 246, 0.74); font-size: 12px; font-weight: 650; padding: 3px 6px; }}
+python\dragongui\node_graph.py:5869:      const panelW = Math.min(420, Math.max(300, width - 32));
+python\dragongui\node_graph.py:5870:      const panelH = 154;
+python\dragongui\node_graph.py:5871:      const x = Math.max(16, (width - panelW) / 2);
+python\dragongui\node_graph.py:5872:      const y = Math.max(16, (height - panelH) / 2);
+python\dragongui\node_graph.py:5873:      renameEditor.rect = {{ x, y, w: panelW, h: panelH }};
+python\dragongui\node_graph.py:5875:        {{ action: 'cancel', x: x + panelW - 164, y: y + panelH - 44, w: 68, h: 30 }},
+python\dragongui\node_graph.py:5876:        {{ action: 'commit', x: x + panelW - 86, y: y + panelH - 44, w: 70, h: 30 }}
+python\dragongui\node_graph.py:5881:      roundedRect(x, y, panelW, panelH, 8);
+python\dragongui\node_graph.py:5897:      const inputW = panelW - 32;
+python\dragongui\node_graph.py:5930:      const panelW = Math.min(520, Math.max(340, width - 32));
+python\dragongui\node_graph.py:5933:      const panelH = Math.min(height - 32, idealH);
+python\dragongui\node_graph.py:5934:      const x = Math.max(16, (width - panelW) / 2);
+python\dragongui\node_graph.py:5935:      const y = Math.max(16, (height - panelH) / 2);
+python\dragongui\node_graph.py:5936:      propertyEditor.rect = {{ x, y, w: panelW, h: panelH }};
+python\dragongui\node_graph.py:5938:        {{ action: 'cancel', x: x + panelW - 164, y: y + panelH - 44, w: 68, h: 30 }},
+python\dragongui\node_graph.py:5939:        {{ action: 'commit', x: x + panelW - 86, y: y + panelH - 44, w: 70, h: 30 }}
+python\dragongui\node_graph.py:5943:      const listW = panelW - 32;
+python\dragongui\node_graph.py:5944:      const listH = Math.max(40, panelH - 122);
+python\dragongui\node_graph.py:5956:      roundedRect(x, y, panelW, panelH, 8);
+python\dragongui\node_graph.py:5975:      const inputW = panelW - 140 - (needsScrollbar ? 14 : 0);
+python\dragongui\node_graph.py:6078:        const trackX = x + panelW - 14;
+python\dragongui\node_graph.py:6105:          const popupY = Math.min(y + panelH - 52 - popupH, field.rect.y + field.rect.h + 4);
+python\dragongui\node_graph.py:8703:            bufsize=1,
+python\dragongui\manual.py:464:    "AppShell": "Bounded top-level layout for sidebar plus flexible body apps.",
+python\dragongui\manual.py:467:    "WorkbenchMain": "Flexible scroll-owning main region for conversation/detail workbench panes.",
+python\dragongui\manual.py:469:    "HLayout": "Horizontal flex container for rows, split regions, toolbars, and compact control groups.",
+python\dragongui\manual.py:470:    "VLayout": "Vertical flex container for stacked forms, panels, and page content.",
+python\dragongui\manual.py:657:their parent panel.
+python\dragongui\manual.py:683:        "Pair it with `Body` for the flexible scroll-owning main pane.",
+python\dragongui\manual.py:687:        "It defaults to `min_width=0`, `min_height=0`, and flexible fill behavior.",
+python\dragongui\manual.py:688:        "Use it as the main content pane inside `AppShell` instead of a raw `HLayout` or `Panel`.",
+python\dragongui\manual.py:697:        "It flexes to consume remaining height and owns scrolling for the main workbench surface.",
+python\dragongui\manual.py:701:        "`title` creates the panel header.",
+python\dragongui\manual.py:702:        "`width`/`height` constrain the panel; prefer `flex_grow` for responsive fill.",
+python\dragongui\manual.py:704:        "When a `Panel` is the first visible body inside an active `Tab`, its top corners are squared so the tab and panel connect cleanly.",
+python\dragongui\manual.py:718:        "`gap`, `padding`, `align_items`, and `flex_grow` are the important layout controls.",
+python\dragongui\manual.py:721:        "Use for stacked panels/forms.",
+python\dragongui\manual.py:722:        "`gap`, `padding`, `align_items`, and `flex_grow` are the important layout controls.",
+python\dragongui\manual.py:735:        "`height` or flex constraints usually need to bound the scroll area.",
+python\dragongui\manual.py:738:        "`orientation` controls horizontal vs vertical panes.",
+python\dragongui\manual.py:739:        "Use `Pane(size=..., min_size=..., flex=...)` for each resizable region.",
+python\dragongui\manual.py:742:        "`size` is the current pane size along the splitter axis.",
+python\dragongui\manual.py:743:        "`min_size`, `max_size`, and `flex` constrain resizing.",
+python\dragongui\manual.py:858:            "examples/css_feature_probes/layout_panel_bounds_probe.py",
+python\dragongui\manual.py:859:            "examples/css_feature_probes/layout_flex_stress_probe.py",
+python\dragongui\manual.py:868:    "FlowLayout": {"probes": ("examples/css_feature_probes/layout_flex_stress_probe.py",)},
+python\dragongui\manual.py:877:            "examples/css_feature_probes/splitter_probe.py",
+python\dragongui\manual.py:1358:- Layout: `width`, `height`, `min_width`, `min_height`, `max_width`, `max_height`, `flex_grow`, `flex_shrink`, `gap`, `padding`, `margin`, `align_items`, `justify_content`.
+python\dragongui\manual.py:1579:- Prefer `gap`, `padding`, `flex_grow`, `width`, `height`, and CSS classes over
+python\dragongui\manual.py:1743:    panels = _section(
+python\dragongui\manual.py:1744:        "panels",
+python\dragongui\manual.py:1758:- Use `width` or CSS width for side panels; let main content flex.
+python\dragongui\manual.py:1759:- Use `gap` and `padding` on the panel, not spacer widgets between every row.
+python\dragongui\manual.py:1764:    splitters = _section(
+python\dragongui\manual.py:1765:        "splitters",
+python\dragongui\manual.py:1767:        "Resizable pane containers.",
+python\dragongui\manual.py:1769:Use `Splitter(orientation="horizontal", sizes=None, min_sizes=None,
+python\dragongui\manual.py:1770:max_sizes=None, gutter_size=6)` when the user should resize panes.
+python\dragongui\manual.py:1772:Each child of a splitter is normally a `Pane`:
+python\dragongui\manual.py:1774:with dg.Splitter(orientation="horizontal", sizes=(280, "1fr")):
+python\dragongui\manual.py:1775:    with dg.Pane(min_size=220):
+python\dragongui\manual.py:1777:    with dg.Pane(flex=1):
+python\dragongui\manual.py:1781:Use fixed numeric sizes for exact starts and `"fr"` strings for flexible panes.
+python\dragongui\manual.py:1782:`Pane(size=...)` fixes the initial preferred size; `flex` controls remaining
+python\dragongui\manual.py:1786:    flex = _section(
+python\dragongui\manual.py:1787:        "flex",
+python\dragongui\manual.py:1792:`height`, `flex_grow`, `flex_shrink`, padding, and overflow styles.
+python\dragongui\manual.py:1798:    with dg.VLayout(style={"flex_grow": 1, "gap": 12}): ...
+python\dragongui\manual.py:1802:Use `Spacer(width=...)` or `Spacer(style={"flex_grow": 1})` only when the
+python\dragongui\manual.py:1810:    dg.Spacer(style={"flex_grow": 1})
+python\dragongui\manual.py:1824:instead of clipping when the panel narrows.
+python\dragongui\manual.py:1879:    with dg.ScrollArea(axis="y", style={"flex_grow": 1}):
+python\dragongui\manual.py:1905:Start with one main `HLayout` or `VLayout`, then add panels and content areas.
+python\dragongui\manual.py:1911:- Give scroll owners a bound (`height`, `flex_grow`, or window body space).
+python\dragongui\manual.py:1914:        [panels, flex, flow, grids, splitters, scroll, overlays],
+python\dragongui\manual.py:1999:        "Structured edit panels and schema-driven controls.",
+python\dragongui\manual.py:2022:dictionary/schema should generate a panel.
+python\dragongui\manual.py:2060:DragonGUI squares that panel's top corners so its outline connects cleanly with
+python\dragongui\manual.py:2142:Use `DataFrameTable(frame, page_size=100, on_select=None)` for dataframe-like
+python\dragongui\manual.py:2166:line_width=2.0, line_style="solid", window_size=None, max_points=None)`
+python\dragongui\manual.py:2191:Use `Scatter3D(frame, x, y, z, color=None, scalars=None, point_size=4.0)` for
+python\dragongui\manual.py:2366:`flex-grow`, `flex-shrink`, `overflow`, `overflow-x`, `overflow-y`,
+python\dragongui\manual.py:2781:- Avoid rebuilding surrounding panels when only point data changes.
+python\dragongui\manual.py:2822:- Bound tables, logs, code editors, plots, and nested panels with height or
+python\dragongui\manual.py:2823:  flex constraints.
+python\dragongui\manual.py:2832:                "examples/css_feature_probes/layout_flex_stress_probe.py",
+python\dragongui\manual.py:2848:- Avoid unbounded nested panels around large plots/tables/logs.
+python\dragongui\manual.py:2914:        "A stable multi-panel dashboard layout.",
+python\dragongui\manual.py:2922:        with dg.VLayout(style={"flex_grow": 1, "gap": 12}):
+python\dragongui\manual.py:2939:        "Building clean controls and inspector panels.",
+python\dragongui\manual.py:2950:For custom rows, keep labels fixed-width and editors flexible:
+python\dragongui\manual.py:2954:    dg.NumberInput(64, min=1, step=1, style={"flex_grow": 1})
+python\dragongui\manual.py:2975:replace the entire panel each frame.
+python\dragongui\manual.py:2993:    with dg.HLayout(style={"flex_grow": 1, "gap": 10, "min_height": 0}):
+python\dragongui\manual.py:2995:        with dg.ScrollArea(style={"flex_grow": 1, "min_height": 0}): ...
+python\dragongui\manual.py:3000:Keep one primary scroll owner in the body. Give the body `flex_grow` and
+python\dragongui\manual.py:3006:    settings_panel_recipe = _section(
+python\dragongui\manual.py:3007:        "settings_panel",
+python\dragongui\manual.py:3011:Use `PropertyGrid` for schema-driven panels and `Property` rows for manual
+python\dragongui\manual.py:3012:layouts. Editors should usually get `flex_grow: 1` and a sane `min_width`.
+python\dragongui\manual.py:3022:For custom rows, align to center and avoid fixed widths that exceed the panel.
+python\dragongui\manual.py:3083:bounded panel or scroll owner so the rest of the page remains stable.
+python\dragongui\manual.py:3101:Keep drag rows in `FlowLayout` or flexible `HLayout` containers so badges do
+python\dragongui\manual.py:3102:not run into panel edges.
+python\dragongui\manual.py:3179:            settings_panel_recipe,
+python\dragongui\manual.py:3292:Keep forms in responsive rows with `flex_grow` rather than hard-coded widths.
+python\dragongui\manual.py:3321:        "Diagnose widgets cut off at panel edges or running outside parents.",
+python\dragongui\manual.py:3325:- badges touch panel edges,
+python\dragongui\manual.py:3327:- content draws into a neighboring panel.
+python\dragongui\manual.py:3331:- Does the row need `flex_wrap`/`FlowLayout` instead of a single `HLayout`?
+python\dragongui\manual.py:3332:- Does the child need `flex_grow: 1`, `min_width: 0`, or a smaller fixed width?
+python\dragongui\manual.py:3338:- Give text-heavy fields room with `flex_grow`.
+python\dragongui\manual.py:3341:Relevant probes: `layout_flex_stress_probe.py`,
+python\dragongui\manual.py:3342:`layout_panel_bounds_probe.py`, `layout_plot_embedding_probe.py`.
+python\dragongui\manual.py:3346:                "examples/css_feature_probes/layout_flex_stress_probe.py",
+python\dragongui\manual.py:3347:                "examples/css_feature_probes/layout_panel_bounds_probe.py",
+python\dragongui\manual.py:3360:- wheel input scrolls the wrong panel,
+python\dragongui\manual.py:3361:- text from a scroll body appears over the next panel.
+python\dragongui\manual.py:3365:- Bound scroll owners with `height`, `flex_grow`, or a containing pane.
+python\dragongui\manual.py:3372:`layout_scrollable_composites_probe.py`, `layout_panel_bounds_probe.py`.
+python\dragongui\manual.py:3378:                "examples/css_feature_probes/layout_panel_bounds_probe.py",
+python\dragongui\manual.py:3382:    troubleshooting_flex = _section(
+python\dragongui\manual.py:3383:        "flex_sizing",
+python\dragongui\manual.py:3385:        "Diagnose rows that waste space, refuse to shrink, or align unrelated panels.",
+python\dragongui\manual.py:3394:- Use `flex_grow` only for widgets that should consume remaining space.
+python\dragongui\manual.py:3396:- Use `FlowLayout` for flexible badges/chips.
+python\dragongui\manual.py:3397:- Prefer explicit compact widths for small controls and flexible width for text
+python\dragongui\manual.py:3400:Relevant probes: `layout_flex_stress_probe.py`,
+python\dragongui\manual.py:3405:                "examples/css_feature_probes/layout_flex_stress_probe.py",
+python\dragongui\manual.py:3417:- modal/menu/palette pushes panels down,
+python\dragongui\manual.py:3536:            troubleshooting_flex,
+python\dragongui\manual.py:3555:When layout looks wrong, inspect the scroll owner, fixed sizes, `flex_grow`,
+python\dragongui\manual.py:3568:- `dg.help.layout.panels()` returns a nested section.
+python\dragongui\manual.py:3596:            "panels": panels,
+python\dragongui\manual.py:3597:            "flex": flex,
+python\dragongui\manual.py:3601:            "splitters": splitters,
+python\dragongui\manual.py:3602:            "splitter": splitters,
+python\dragongui\thread_monitor.py:1:"""ThreadMonitor widget — embeddable diagnostics panel for DragonGUI apps."""
+python\dragongui\thread_monitor.py:215:    "flex_grow": 0,
+python\dragongui\thread_monitor.py:216:    "flex_shrink": 0,
+python\dragongui\thread_monitor.py:226:    "flex": 1,
+python\dragongui\thread_monitor.py:227:    "flex_grow": 1,
+python\dragongui\thread_monitor.py:228:    "flex_shrink": 1,
+python\dragongui\thread_monitor.py:248:    "flex_grow": 0,
+python\dragongui\thread_monitor.py:249:    "flex_shrink": 0,
+python\dragongui\thread_monitor.py:257:    "flex_grow": 0,
+python\dragongui\thread_monitor.py:258:    "flex_shrink": 0,
+python\dragongui\thread_monitor.py:299:    "flex_grow": 1,
+python\dragongui\thread_monitor.py:300:    "flex_shrink": 1,
+python\dragongui\thread_monitor.py:313:    "flex": 1,
+python\dragongui\thread_monitor.py:314:    "flex_grow": 1,
+python\dragongui\thread_monitor.py:315:    "flex_shrink": 1,
+python\dragongui\thread_monitor.py:320:    "flex_grow": 0,
+python\dragongui\thread_monitor.py:321:    "flex_shrink": 0,
+python\dragongui\thread_monitor.py:327:    "flex_grow": 0,
+python\dragongui\thread_monitor.py:328:    "flex_shrink": 0,
+python\dragongui\thread_monitor.py:330:_S_CELL_LED = {"width": 10, "height": 18, "flex_grow": 0, "flex_shrink": 0}
+python\dragongui\thread_monitor.py:331:_S_CELL_STATE = {"width": 44, "flex_grow": 0, "flex_shrink": 0}
+python\dragongui\thread_monitor.py:332:_S_CELL_DAEMON = {"width": 16, "flex_grow": 0, "flex_shrink": 0}
+python\dragongui\thread_monitor.py:333:_S_CELL_TASKS = {"width": 84, "text_align": "right", "flex_grow": 0, "flex_shrink": 0}
+python\dragongui\thread_monitor.py:340:    "flex_grow": 0,
+python\dragongui\thread_monitor.py:341:    "flex_shrink": 0,
+python\dragongui\thread_monitor.py:347:    "flex_grow": 0,
+python\dragongui\thread_monitor.py:348:    "flex_shrink": 0,
+python\dragongui\thread_monitor.py:356:    "flex_grow": 0,
+python\dragongui\thread_monitor.py:357:    "flex_shrink": 0,
+python\dragongui\thread_monitor.py:367:    "flex_grow": 0,
+python\dragongui\thread_monitor.py:368:    "flex_shrink": 0,
+python\dragongui\thread_monitor.py:372:    "flex_grow": 0,
+python\dragongui\thread_monitor.py:373:    "flex_shrink": 0,
+python\dragongui\thread_monitor.py:377:    "flex_grow": 0,
+python\dragongui\thread_monitor.py:378:    "flex_shrink": 0,
+python\dragongui\thread_monitor.py:382:    "flex_grow": 0,
+python\dragongui\thread_monitor.py:383:    "flex_shrink": 0,
+python\dragongui\thread_monitor.py:432:            size=9,
+python\dragongui\thread_monitor.py:475:        style={"width": "100%", "min_width": 0, "flex_grow": 0, "flex_shrink": 0},
+python\dragongui\thread_monitor.py:538:                    size=8,
+python\dragongui\thread_monitor.py:571:                    size=8,
+python\dragongui\thread_monitor.py:599:def _build_panel(
+python\dragongui\thread_monitor.py:611:    panel_style: dict[str, Any] = {**_S_PANEL, **(style or {})}
+python\dragongui\thread_monitor.py:612:    with Panel("", id=id, key=root_key, class_=class_, style=panel_style) as panel:
+python\dragongui\thread_monitor.py:618:                "flex_grow": 1,
+python\dragongui\thread_monitor.py:619:                "flex_shrink": 1,
+python\dragongui\thread_monitor.py:704:    return panel
+python\dragongui\thread_monitor.py:728:    """Embeddable diagnostics panel showing live thread and task queue health.
+python\dragongui\thread_monitor.py:794:    return _build_panel(
+python\dragongui\widgets.py:508:    "splitter": {"gutter"},
+python\dragongui\widgets.py:509:    "pane": {"pane"},
+python\dragongui\widgets.py:510:    "panel": {"accent", "scrollbar-track", "scrollbar-thumb"},
+python\dragongui\widgets.py:1171:                point_size=point_size_value,
+python\dragongui\widgets.py:1982:        self._paint_fixed_width = _non_negative_finite_value(width, "width")
+python\dragongui\widgets.py:1985:            max_width=self._paint_fixed_width,
+python\dragongui\widgets.py:1995:            width=self._paint_fixed_width,
+python\dragongui\widgets.py:2037:        if self._paint_fixed_width is not None:
+python\dragongui\widgets.py:2038:            props["width"] = self._paint_fixed_width
+python\dragongui\widgets.py:2114:            "flex": 1,
+python\dragongui\widgets.py:2115:            "flex_grow": 1,
+python\dragongui\widgets.py:2116:            "flex_shrink": 1,
+python\dragongui\widgets.py:2139:    hides accidental outer overflow. Pair it with ``Body`` for the flexible
+python\dragongui\widgets.py:2140:    scroll-owning pane instead of hand-writing the same flex/min-size styles in
+python\dragongui\widgets.py:2184:    bounded rectangle, such as a page, panel body, or grid cell.
+python\dragongui\widgets.py:2215:            "display": "flex",
+python\dragongui\widgets.py:2216:            "flex_direction": "column",
+python\dragongui\widgets.py:2217:            "flex_grow": 1,
+python\dragongui\widgets.py:2218:            "flex_shrink": 1,
+python\dragongui\widgets.py:2271:            "flex": 1,
+python\dragongui\widgets.py:2272:            "flex_grow": 1,
+python\dragongui\widgets.py:2273:            "flex_shrink": 1,
+python\dragongui\widgets.py:2294:    """Flexible scroll-owning main region for conversation/detail workbench panes."""
+python\dragongui\widgets.py:2311:            "flex_grow": 1,
+python\dragongui\widgets.py:2312:            "flex_shrink": 1,
+python\dragongui\widgets.py:2570:    """Wrapping flex-row container.
+python\dragongui\widgets.py:2626:def _normalize_splitter_orientation(value: str) -> str:
+python\dragongui\widgets.py:2635:def _normalize_splitter_size(value: SplitterSize) -> float | str | None:
+python\dragongui\widgets.py:2644:            flex = float(number)
+python\dragongui\widgets.py:2645:            if not math.isfinite(flex) or flex <= 0:
+python\dragongui\widgets.py:2647:            return f"{flex:g}fr"
+python\dragongui\widgets.py:2655:def _splitter_size_to_flex(value: float | str | None) -> float:
+python\dragongui\widgets.py:2661:class Splitter(Container):
+python\dragongui\widgets.py:2662:    """Resizable multi-pane layout container."""
+python\dragongui\widgets.py:2664:    kind = "splitter"
+python\dragongui\widgets.py:2681:        self.orientation = _normalize_splitter_orientation(orientation)
+python\dragongui\widgets.py:2682:        self.sizes = tuple(_normalize_splitter_size(size) for size in (sizes or ()))
+python\dragongui\widgets.py:2711:        self._apply_pane_defaults()
+python\dragongui\widgets.py:2715:        self.sizes = tuple(_normalize_splitter_size(size) for size in sizes)
+python\dragongui\widgets.py:2716:        self._apply_pane_defaults()
+python\dragongui\widgets.py:2723:                child.flex = _splitter_size_to_flex(size)
+python\dragongui\widgets.py:2727:    def _apply_pane_defaults(self) -> None:
+python\dragongui\widgets.py:2731:            child._splitter_orientation = self.orientation
+python\dragongui\widgets.py:2732:            child._splitter_index = index
+python\dragongui\widgets.py:2735:                child._splitter_size = None if isinstance(size, str) else size
+python\dragongui\widgets.py:2736:                child._splitter_flex = _splitter_size_to_flex(size)
+python\dragongui\widgets.py:2738:                child._splitter_min_size = self.min_sizes[index]
+python\dragongui\widgets.py:2740:                child._splitter_max_size = self.max_sizes[index]
+python\dragongui\widgets.py:2743:        self._apply_pane_defaults()
+python\dragongui\widgets.py:2753:class Pane(Container):
+python\dragongui\widgets.py:2756:    kind = "pane"
+python\dragongui\widgets.py:2764:        flex: float = 1,
+python\dragongui\widgets.py:2780:        flex_value = float(flex)
+python\dragongui\widgets.py:2781:        if not math.isfinite(flex_value) or flex_value <= 0:
+python\dragongui\widgets.py:2782:            raise ValueError("Pane flex must be a positive finite value")
+python\dragongui\widgets.py:2783:        self.flex = flex_value
+python\dragongui\widgets.py:2784:        self._splitter_orientation = "horizontal"
+python\dragongui\widgets.py:2785:        self._splitter_index: int | None = None
+python\dragongui\widgets.py:2786:        self._splitter_size: float | None = None
+python\dragongui\widgets.py:2787:        self._splitter_min_size: float | None = None
+python\dragongui\widgets.py:2788:        self._splitter_max_size: float | None = None
+python\dragongui\widgets.py:2789:        self._splitter_flex: float | None = None
+python\dragongui\widgets.py:2802:        return self._explicit_size if self._explicit_size is not None else self._splitter_size
+python\dragongui\widgets.py:2807:        if self._splitter_min_size is not None:
+python\dragongui\widgets.py:2808:            return self._splitter_min_size
+python\dragongui\widgets.py:2814:        return self._splitter_max_size
+python\dragongui\widgets.py:2816:    def _effective_flex(self) -> float:
+python\dragongui\widgets.py:2817:        return self._splitter_flex if self._splitter_flex is not None else self.flex
+python\dragongui\widgets.py:2826:            "orientation": self._splitter_orientation,
+python\dragongui\widgets.py:2830:            "flex": self._effective_flex(),
+python\dragongui\widgets.py:2888:            "display": "flex",
+python\dragongui\widgets.py:2889:            "flex_direction": direction,
+python\dragongui\widgets.py:3440:    kind = "panel"
+python\dragongui\widgets.py:4326:        "style": {"width": "100%", "min_height": 0, "flex_grow": 1, "line_height": "1.45", "padding_bottom": 12},
+python\dragongui\widgets.py:5340:                    "flex_grow": 0,
+python\dragongui\widgets.py:5341:                    "flex_shrink": 0,
+python\dragongui\widgets.py:5399:    return {"width": 0, "flex": 1, "min_width": 0, **(extra or {})}
+python\dragongui\widgets.py:5446:            style={"width": width_f, "flex_shrink": 0, "text_overflow": "ellipsis"},
+python\dragongui\widgets.py:5454:                "flex": 1,
+python\dragongui\widgets.py:5702:        swatch = LED(True, states={"on": value}, size=16, parent=row)
+python\dragongui\widgets.py:5712:            style={"width": 0, "flex": 1, "min_width": 0},
+python\dragongui\widgets.py:6348:            "flex_grow": 0,
+python\dragongui\widgets.py:6349:            "flex_shrink": 0,
+python\dragongui\widgets.py:6364:            size=28,
+python\dragongui\widgets.py:6374:            style={"flex": 1, "min_width": 0},
+python\dragongui\widgets.py:6382:                size=28,
+python\dragongui\widgets.py:6513:            style={"gap": 3, "width": "100%", "flex": 1, "min_height": 0, "overflow_y": "auto"},
+python\dragongui\widgets.py:6675:            merged_style.setdefault("display", "flex")
+python\dragongui\widgets.py:6676:            merged_style.setdefault("flex_direction", "row")
+python\dragongui\widgets.py:7018:    narrow parent panels instead of overflowing them.
+python\dragongui\widgets.py:7046:            "flex_grow": 0,
+python\dragongui\widgets.py:7047:            "flex_shrink": 1,
+python\dragongui\widgets.py:7102:                style={"flex": 1},
+python\dragongui\widgets.py:9317:                point_size=self.point_size,
+python\dragongui\widgets.py:9522:                point_size=point_size,
+python\dragongui\widgets.py:10293:            point_size=point_size,
+python\dragongui\widgets.py:10373:                point_size=point_size,
+python\dragongui\widgets.py:11794:            point_size=point_size,
+python\dragongui\widgets.py:11796:            auto_point_size=auto_point_size,
+python\dragongui\widgets.py:11891:            point_size=point_size,
+native\src\primitives\mod.rs:16:    is_scroll_container_node, panel_title_body_gap_lp, panel_title_line_height_lp,
+native\src\primitives\mod.rs:17:    panel_title_top_padding_lp, scroll_container_max_x, scroll_container_max_y,
+native\src\primitives\mod.rs:336:        ((panel_title_top_padding_lp(node, theme) + panel_title_line_height_lp(node, theme)) * sf)
+native\src\primitives\mod.rs:8257:pub(crate) fn panel_scrollbar_geometry(
+native\src\primitives\mod.rs:8304:    let panel_radius_lp = visual.border_radius.unwrap_or(theme.radius * 0.5).max(0.0);
+native\src\primitives\mod.rs:8305:    let panel_radii = visual_radii(&visual, panel_radius_lp, sf);
+native\src\primitives\mod.rs:8306:    let title_inset = panel_scrollbar_title_inset(node, theme, sf).min(rect.h.max(0.0));
+native\src\primitives\mod.rs:8326:        let right_radius = panel_radii[1].max(panel_radii[2]);
+native\src\primitives\mod.rs:8371:        let bottom_radius = panel_radii[2].max(panel_radii[3]);
+native\src\primitives\mod.rs:8548:fn emit_panel_scrollbar(
+native\src\primitives\mod.rs:8559:        panel_scrollbar_geometry(node, layout, state, theme, sf, Rect { x, y, w, h })
+native\src\primitives\mod.rs:8674:fn panel_scrollbar_title_inset(node: &WidgetNode, theme: &Theme, sf: f32) -> f32 {
+native\src\primitives\mod.rs:8686:    (panel_title_top_padding_lp(node, theme)
+native\src\primitives\mod.rs:8687:        + panel_title_line_height_lp(node, theme)
+native\src\primitives\mod.rs:8688:        + panel_title_body_gap_lp(node, theme))
+native\src\primitives\mod.rs:9572:        let tab_attached_panel = context.tab_body_start && node.kind == WidgetKind::Panel;
+native\src\primitives\mod.rs:9589:            let shadow_radii = if tab_attached_panel {
+native\src\primitives\mod.rs:9590:                let panel_radius_lp = visual.border_radius.unwrap_or(theme.radius * 0.5).max(0.0);
+native\src\primitives\mod.rs:9591:                let mut panel_radii = visual_radii(&visual, panel_radius_lp, sf);
+native\src\primitives\mod.rs:9592:                panel_radii[0] = 0.0;
+native\src\primitives\mod.rs:9593:                panel_radii[1] = 0.0;
+native\src\primitives\mod.rs:9594:                panel_radii
+native\src\primitives\mod.rs:9610:                let panel_radius_lp = visual.border_radius.unwrap_or(theme.radius * 0.5).max(0.0);
+native\src\primitives\mod.rs:9611:                let mut panel_radii = visual_radii(&visual, panel_radius_lp, sf);
+native\src\primitives\mod.rs:9612:                if tab_attached_panel {
+native\src\primitives\mod.rs:9613:                    panel_radii[0] = 0.0;
+native\src\primitives\mod.rs:9614:                    panel_radii[1] = 0.0;
+native\src\primitives\mod.rs:9616:                let panel_fill = resolve_background_paint(&visual, theme, theme.surface);
+native\src\primitives\mod.rs:9621:                    panel_fill,
+native\src\primitives\mod.rs:9622:                    panel_radii,
+native\src\primitives\mod.rs:9645:                        let inner_radii = inset_radii(panel_radii, border_w);
+native\src\primitives\mod.rs:9852:                    let title_band_h = ((panel_title_top_padding_lp(node, theme)
+native\src\primitives\mod.rs:9853:                        + panel_title_line_height_lp(node, theme))
+native\src\primitives\mod.rs:9947:                    let splitter_border_w = visual
+native\src\primitives\mod.rs:9960:                    if splitter_border_w > 0.0 || styled_border.is_some() {
+native\src\primitives\mod.rs:9967:                            splitter_border_w.max(if styled_border.is_some() {
+native\src\primitives\mod.rs:9977:                emit_splitter_gutters(node, layout, theme, sf, state, [x, y, w, h], out);
+native\src\primitives\mod.rs:9981:                let pane_visual = visual
+native\src\primitives\mod.rs:9984:                    .merged(&part_visual_for(node, state, "pane"));
+native\src\primitives\mod.rs:9985:                let pane_bg = resolve_color(&pane_visual.background, theme)
+native\src\primitives\mod.rs:9986:                    .map(|color| apply_opacity(color, pane_visual.opacity.or(visual.opacity)))
+native\src\primitives\mod.rs:9988:                let pane_border = resolve_color(&pane_visual.border_color, theme)
+native\src\primitives\mod.rs:9989:                    .map(|color| apply_opacity(color, pane_visual.opacity.or(visual.opacity)))
+native\src\primitives\mod.rs:9991:                let pane_border_w = pane_visual
+native\src\primitives\mod.rs:9995:                let has_pane_style = pane_bg.is_some()
+native\src\primitives\mod.rs:9996:                    || pane_border.is_some()
+native\src\primitives\mod.rs:9997:                    || pane_visual.background_paint.is_some()
+native\src\primitives\mod.rs:9998:                    || pane_border_w > 0.0;
+native\src\primitives\mod.rs:9999:                if has_pane_style {
+native\src\primitives\mod.rs:10000:                    let fill = if pane_visual.background_paint.is_some() {
+native\src\primitives\mod.rs:10002:                            &pane_visual,
+native\src\primitives\mod.rs:10004:                            pane_bg.unwrap_or([0.0, 0.0, 0.0, 0.0]),
+native\src\primitives\mod.rs:10007:                        FillPaint::Solid(pane_bg.unwrap_or([0.0, 0.0, 0.0, 0.0]))
+native\src\primitives\mod.rs:10009:                    let pane_radii = visual_radii_with_fallback(&pane_visual, radii, sf);
+native\src\primitives\mod.rs:10010:                    if pane_border_w > 0.0 || pane_border.is_some() {
+native\src\primitives\mod.rs:10014:                            pane_border.unwrap_or(theme.border),
+native\src\primitives\mod.rs:10016:                            pane_radii,
+native\src\primitives\mod.rs:10017:                            pane_border_w.max(if pane_border.is_some() { border_w } else { 0.0 }),
+native\src\primitives\mod.rs:10020:                        emit_paint_rect_radii(out, [x, y, w, h], fill, pane_radii);
+native\src\primitives\mod.rs:12514:            emit_panel_scrollbar(node, layout, state, theme, sf, [r.x, r.y, r.w, r.h], out);
+native\src\primitives\mod.rs:12528:fn splitter_is_horizontal(node: &WidgetNode) -> bool {
+native\src\primitives\mod.rs:12532:fn splitter_gutter_size_px(node: &WidgetNode, horizontal: bool, sf: f32) -> f32 {
+native\src\primitives\mod.rs:12547:fn emit_splitter_gutters(
+native\src\primitives\mod.rs:12553:    splitter_rect: [f32; 4],
+native\src\primitives\mod.rs:12556:    let horizontal = splitter_is_horizontal(node);
+native\src\primitives\mod.rs:12558:    let preferred_size = splitter_gutter_size_px(node, horizontal, sf);
+native\src\primitives\mod.rs:12586:    let panes: Vec<&WidgetNode> = node
+native\src\primitives\mod.rs:12592:    for pair in panes.windows(2) {
+native\src\primitives\mod.rs:12610:                splitter_rect[1],
+native\src\primitives\mod.rs:12612:                splitter_rect[3],
+native\src\primitives\mod.rs:12620:                splitter_rect[0],
+native\src\primitives\mod.rs:12626:                splitter_rect[2],
+native\src\primitives\mod.rs:14526:    fn clipped_panel_keeps_full_paint_rect_and_uses_local_clip() {
+native\src\primitives\mod.rs:14527:        let mut panel = node("panel", WidgetKind::Panel);
+native\src\primitives\mod.rs:14528:        panel.style.visual.background = Some(ColorRef::Rgba([0.4, 0.5, 0.6, 1.0]));
+native\src\primitives\mod.rs:14529:        panel.style.visual.border_color = Some(ColorRef::Rgba([0.1, 0.2, 0.3, 1.0]));
+native\src\primitives\mod.rs:14530:        panel.style.visual.border_width = Some(2.0);
+native\src\primitives\mod.rs:14531:        panel.style.visual.border_radius = Some(8.0);
+native\src\primitives\mod.rs:14535:            "panel".to_string(),
+native\src\primitives\mod.rs:14544:            "panel".to_string(),
+native\src\primitives\mod.rs:14553:            "panel".to_string(),
+native\src\primitives\mod.rs:14564:            &panel,
+native\src\primitives\mod.rs:14576:            .expect("panel fill should be emitted");
+native\src\primitives\mod.rs:14583:            .expect("panel border should be emitted");
+native\src\primitives\mod.rs:14589:    fn fully_visible_panel_keeps_antialias_clip_pad() {
+native\src\primitives\mod.rs:14590:        let mut panel = node("panel", WidgetKind::Panel);
+native\src\primitives\mod.rs:14591:        panel.style.visual.background = Some(ColorRef::Rgba([0.4, 0.5, 0.6, 1.0]));
+native\src\primitives\mod.rs:14592:        panel.style.visual.border_color = Some(ColorRef::Rgba([0.1, 0.2, 0.3, 1.0]));
+native\src\primitives\mod.rs:14593:        panel.style.visual.border_width = Some(2.0);
+native\src\primitives\mod.rs:14594:        panel.style.visual.border_radius = Some(8.0);
+native\src\primitives\mod.rs:14598:            "panel".to_string(),
+native\src\primitives\mod.rs:14607:            "panel".to_string(),
+native\src\primitives\mod.rs:14616:            "panel".to_string(),
+native\src\primitives\mod.rs:14627:            &panel,
+native\src\primitives\mod.rs:14639:            .expect("panel border should be emitted");
+native\src\primitives\mod.rs:14964:        let mut panel = node("panel", WidgetKind::Panel);
+native\src\primitives\mod.rs:14965:        panel.style.visual.background_paint =
+native\src\primitives\mod.rs:14983:            "panel".to_string(),
+native\src\primitives\mod.rs:14994:            &panel,
+native\src\primitives\mod.rs:15076:        let mut panel = node("panel", WidgetKind::Panel);
+native\src\primitives\mod.rs:15077:        panel.style.visual.background_paint =
+native\src\primitives\mod.rs:15099:            "panel".to_string(),
+native\src\primitives\mod.rs:15110:            &panel,
+native\src\primitives\mod.rs:15133:        let mut panel = node("panel", WidgetKind::Panel);
+native\src\primitives\mod.rs:15134:        panel.style.visual.background_paint =
+native\src\primitives\mod.rs:15168:            "panel".to_string(),
+native\src\primitives\mod.rs:15179:            &panel,
+native\src\primitives\mod.rs:15202:        let mut panel = node("panel", WidgetKind::Panel);
+native\src\primitives\mod.rs:15203:        panel.style.visual.gradient_interpolation = Some(GradientInterpolation::Oklab);
+native\src\primitives\mod.rs:15204:        panel.style.visual.background_paint =
+native\src\primitives\mod.rs:15222:            "panel".to_string(),
+native\src\primitives\mod.rs:15233:            &panel,
+native\src\primitives\mod.rs:15251:        let mut panel = node("panel", WidgetKind::Panel);
+native\src\primitives\mod.rs:15252:        panel.style.visual.gradient_interpolation = Some(GradientInterpolation::Oklab);
+native\src\primitives\mod.rs:15253:        panel.style.visual.background_paint = Some(BackgroundPaint::BlobGradient(BlobGradient {
+native\src\primitives\mod.rs:15270:            "panel".to_string(),
+native\src\primitives\mod.rs:15281:            &panel,
+native\src\primitives\mod.rs:15303:        let mut panel = node("panel", WidgetKind::Panel);
+native\src\primitives\mod.rs:15304:        panel.style.visual.gradient_interpolation = Some(GradientInterpolation::Oklab);
+native\src\primitives\mod.rs:15305:        panel.style.visual.background_paint = Some(BackgroundPaint::MeshGradient(MeshGradient {
+native\src\primitives\mod.rs:15314:            "panel".to_string(),
+native\src\primitives\mod.rs:15325:            &panel,
+native\src\primitives\mod.rs:15359:        let mut panel = node("panel", WidgetKind::Panel);
+native\src\primitives\mod.rs:15360:        panel.style.visual.background_paint =
+native\src\primitives\mod.rs:15386:            "panel".to_string(),
+native\src\primitives\mod.rs:15397:            &panel,
+native\src\primitives\mod.rs:15416:        let mut panel = node("panel", WidgetKind::Panel);
+native\src\primitives\mod.rs:15417:        panel.style.visual.background_paint = Some(BackgroundPaint::Layers(vec![
+native\src\primitives\mod.rs:15450:            "panel".to_string(),
+native\src\primitives\mod.rs:15461:            &panel,
+native\src\primitives\mod.rs:15479:        let mut panel = node("panel", WidgetKind::Panel);
+native\src\primitives\mod.rs:15480:        panel.style.visual.background_paint =
+native\src\primitives\mod.rs:15495:        panel.style.visual.background_noise = Some(0.035);
+native\src\primitives\mod.rs:15499:            "panel".to_string(),
+native\src\primitives\mod.rs:15510:            &panel,
+native\src\primitives\mod.rs:15527:    fn panel_scrollbar_stays_inside_rounded_panel_surface() {
+native\src\primitives\mod.rs:15528:        let mut panel = node("panel", WidgetKind::Panel);
+native\src\primitives\mod.rs:15529:        panel.props.text = Some("Controls".to_string());
+native\src\primitives\mod.rs:15530:        panel.style.visual.border_radius = Some(20.0);
+native\src\primitives\mod.rs:15531:        panel.style.visual.border_width = Some(1.0);
+native\src\primitives\mod.rs:15532:        panel.style.layout.padding = Some(18.0);
+native\src\primitives\mod.rs:15536:            "panel".to_string(),
+native\src\primitives\mod.rs:15544:        layout.scroll_max_y.insert("panel".to_string(), 120.0);
+native\src\primitives\mod.rs:15545:        layout.scroll_y.insert("panel".to_string(), 0.0);
+native\src\primitives\mod.rs:15551:            &panel,
+native\src\primitives\mod.rs:15574:        let title_inset = panel_scrollbar_title_inset(&panel, &theme, 1.0);
+native\src\primitives\mod.rs:15577:            "titled panel scrollbar should start in the body area: {:?}",
+native\src\primitives\mod.rs:15590:    fn titled_panel_scrollbar_track_stays_inside_body_with_styled_padding() {
+native\src\primitives\mod.rs:15591:        let mut panel = node("panel", WidgetKind::Panel);
+native\src\primitives\mod.rs:15592:        panel.props.text = Some("Spacer behavior".to_string());
+native\src\primitives\mod.rs:15593:        panel.style.visual.border_radius = Some(14.0);
+native\src\primitives\mod.rs:15594:        panel.style.visual.border_width = Some(1.0);
+native\src\primitives\mod.rs:15595:        panel.style.layout.padding = Some(14.0);
+native\src\primitives\mod.rs:15596:        panel.style.parts.parts.insert(
+native\src\primitives\mod.rs:15607:        panel.style.parts.parts.insert(
+native\src\primitives\mod.rs:15620:            "panel".to_string(),
+native\src\primitives\mod.rs:15628:        layout.scroll_max_y.insert("panel".to_string(), 80.0);
+native\src\primitives\mod.rs:15629:        layout.scroll_y.insert("panel".to_string(), 0.0);
+native\src\primitives\mod.rs:15631:        let geometry = panel_scrollbar_geometry(
+native\src\primitives\mod.rs:15632:            &panel,
+native\src\primitives\mod.rs:15646:        let title_inset = panel_scrollbar_title_inset(&panel, &Theme::dark(), 1.0);
+native\src\primitives\mod.rs:15655:            "track should not overhang panel bottom: {:?}",
+native\src\primitives\mod.rs:15719:        let geometry = panel_scrollbar_geometry(
+native\src\primitives\mod.rs:15734:        let title_inset = panel_scrollbar_title_inset(&modal, &Theme::dark(), 1.0);
+native\src\primitives\mod.rs:15744:    fn panel_scrollbar_geometry_stays_anchored_when_parent_clips_panel() {
+native\src\primitives\mod.rs:15745:        let mut panel = node("panel", WidgetKind::Panel);
+native\src\primitives\mod.rs:15746:        panel.props.text = Some("Controls".to_string());
+native\src\primitives\mod.rs:15747:        panel.style.visual.border_radius = Some(20.0);
+native\src\primitives\mod.rs:15748:        panel.style.visual.border_width = Some(1.0);
+native\src\primitives\mod.rs:15749:        panel.style.layout.padding = Some(18.0);
+native\src\primitives\mod.rs:15753:            "panel".to_string(),
+native\src\primitives\mod.rs:15762:            "panel".to_string(),
+native\src\primitives\mod.rs:15771:            "panel".to_string(),
+native\src\primitives\mod.rs:15779:        full_layout.scroll_max_y.insert("panel".to_string(), 120.0);
+native\src\primitives\mod.rs:15780:        full_layout.scroll_y.insert("panel".to_string(), 0.0);
+native\src\primitives\mod.rs:15784:            "panel".to_string(),
+native\src\primitives\mod.rs:15793:            "panel".to_string(),
+native\src\primitives\mod.rs:15803:            .insert("panel".to_string(), 120.0);
+native\src\primitives\mod.rs:15804:        clipped_layout.scroll_y.insert("panel".to_string(), 0.0);
+native\src\primitives\mod.rs:15806:            "panel".to_string(),
+native\src\primitives\mod.rs:15820:            &panel,
+native\src\primitives\mod.rs:15829:            &panel,
+native\src\primitives\mod.rs:15855:    fn panel_scrollbar_suppresses_tiny_rounding_overflow() {
+native\src\primitives\mod.rs:15856:        let panel = node("panel", WidgetKind::Panel);
+native\src\primitives\mod.rs:15859:            "panel".to_string(),
+native\src\primitives\mod.rs:15867:        layout.scroll_max_y.insert("panel".to_string(), 1.5);
+native\src\primitives\mod.rs:15869:        let geometry = panel_scrollbar_geometry(
+native\src\primitives\mod.rs:15870:            &panel,
+native\src\primitives\mod.rs:15890:    fn panel_scrollbar_suppresses_unusable_small_tracks() {
+native\src\primitives\mod.rs:15891:        let mut panel = node("panel", WidgetKind::Panel);
+native\src\primitives\mod.rs:15892:        panel.style.parts.parts.insert(
+native\src\primitives\mod.rs:15903:        panel.style.parts.parts.insert(
+native\src\primitives\mod.rs:15915:            "panel".to_string(),
+native\src\primitives\mod.rs:15923:        layout.scroll_max_y.insert("panel".to_string(), 32.0);
+native\src\primitives\mod.rs:15925:        let geometry = panel_scrollbar_geometry(
+native\src\primitives\mod.rs:15926:            &panel,
+native\src\primitives\mod.rs:15941:            "small panels should not draw oversized scrollbar tracks"
+native\src\primitives\mod.rs:15946:    fn panel_horizontal_scrollbar_stays_inside_rounded_panel_surface() {
+native\src\primitives\mod.rs:15947:        let mut panel = node("panel", WidgetKind::Panel);
+native\src\primitives\mod.rs:15948:        panel.style.visual.border_radius = Some(20.0);
+native\src\primitives\mod.rs:15949:        panel.style.visual.border_width = Some(1.0);
+native\src\primitives\mod.rs:15950:        panel.style.layout.padding = Some(18.0);
+native\src\primitives\mod.rs:15954:            "panel".to_string(),
+native\src\primitives\mod.rs:15962:        layout.scroll_max_x.insert("panel".to_string(), 180.0);
+native\src\primitives\mod.rs:15963:        layout.scroll_x.insert("panel".to_string(), 45.0);
+native\src\primitives\mod.rs:15969:            &panel,
+native\src\primitives\mod.rs:16003:            "horizontal scrollbar track should be centered on the panel surface: left_gap={left_gap} right_gap={right_gap}"
+native\src\primitives\mod.rs:16010:    fn panel_scrollbars_avoid_bottom_right_corner_overlap() {
+native\src\primitives\mod.rs:16011:        let mut panel = node("panel", WidgetKind::Panel);
+native\src\primitives\mod.rs:16012:        panel.style.visual.border_radius = Some(20.0);
+native\src\primitives\mod.rs:16013:        panel.style.visual.border_width = Some(1.0);
+native\src\primitives\mod.rs:16017:            "panel".to_string(),
+native\src\primitives\mod.rs:16025:        layout.scroll_max_x.insert("panel".to_string(), 120.0);
+native\src\primitives\mod.rs:16026:        layout.scroll_x.insert("panel".to_string(), 0.0);
+native\src\primitives\mod.rs:16027:        layout.scroll_max_y.insert("panel".to_string(), 120.0);
+native\src\primitives\mod.rs:16028:        layout.scroll_y.insert("panel".to_string(), 0.0);
+native\src\primitives\mod.rs:16032:            &panel,
+native\src\primitives\mod.rs:16066:    fn panel_scrollbar_uses_scrollbar_part_styles() {
+native\src\primitives\mod.rs:16067:        let mut panel = node("panel", WidgetKind::Panel);
+native\src\primitives\mod.rs:16068:        panel.style.visual.border_radius = Some(20.0);
+native\src\primitives\mod.rs:16069:        panel.style.parts.parts.insert(
+native\src\primitives\mod.rs:16085:        panel.style.parts.parts.insert(
+native\src\primitives\mod.rs:16103:            "panel".to_string(),
+native\src\primitives\mod.rs:16111:        layout.scroll_max_y.insert("panel".to_string(), 120.0);
+native\src\primitives\mod.rs:16112:        layout.scroll_y.insert("panel".to_string(), 0.0);
+native\src\primitives\mod.rs:16116:            &panel,
+native\src\primitives\mod.rs:16248:            panel_title_top_padding_lp(&modal, &theme) + panel_title_line_height_lp(&modal, &theme);
+native\src\primitives\mod.rs:16310:        let mut panel = node("panel", WidgetKind::Panel);
+native\src\primitives\mod.rs:16311:        panel.style.visual.background = Some(ColorRef::Rgba([0.8, 0.0, 0.0, 1.0]));
+native\src\primitives\mod.rs:16313:        root.children = vec![modal, panel];
+native\src\primitives\mod.rs:16335:            "panel".to_string(),
+native\src\primitives\mod.rs:16361:        let panel_index = out
+native\src\primitives\mod.rs:16364:            .expect("panel surface");
+native\src\primitives\mod.rs:16371:            modal_index > panel_index,
+native\src\primitives\mod.rs:16372:            "open modal should paint after normal content: panel={panel_index} modal={modal_index}"
+native\src\primitives\mod.rs:16451:        let mut panel = node("panel", WidgetKind::Panel);
+native\src\primitives\mod.rs:16452:        panel.style.visual.background_paint =
+native\src\primitives\mod.rs:16470:            "panel".to_string(),
+native\src\primitives\mod.rs:16481:            &panel,
+native\src\primitives\mod.rs:16948:        let mut panel = node("panel", WidgetKind::Panel);
+native\src\primitives\mod.rs:16949:        panel.style.visual.transform = Some(TransformStyle {
+native\src\primitives\mod.rs:16956:        panel.children.push(node("run", WidgetKind::Button));
+native\src\primitives\mod.rs:16960:            "panel".to_string(),
+native\src\primitives\mod.rs:16980:            &panel,
+native\src\primitives\mod.rs:17592:    fn panel_at_active_tab_body_start_connects_with_square_top_corners() {
+native\src\primitives\mod.rs:17593:        let mut panel = node("panel", WidgetKind::Panel);
+native\src\primitives\mod.rs:17594:        panel.style.visual.background = Some(rgba(0.18, 0.28, 0.38));
+native\src\primitives\mod.rs:17595:        panel.style.visual.border_radius = Some(10.0);
+native\src\primitives\mod.rs:17597:        tab.children = vec![panel];
+native\src\primitives\mod.rs:17610:            "panel".to_string(),
+native\src\primitives\mod.rs:17640:        let panel_surface = out
+native\src\primitives\mod.rs:17643:            .expect("active tab content panel surface should be emitted");
+native\src\primitives\mod.rs:17644:        assert_eq!(panel_surface.radii[0], 0.0);
+native\src\primitives\mod.rs:17645:        assert_eq!(panel_surface.radii[1], 0.0);
+native\src\primitives\mod.rs:17646:        assert!(panel_surface.radii[2] > 0.0);
+native\src\primitives\mod.rs:17647:        assert!(panel_surface.radii[3] > 0.0);
+native\src\text\mod.rs:704:    pub fn push_overlay_panel_rect(
+native\src\text\mod.rs:717:        let panel_bounds = TextBounds {
+native\src\text\mod.rs:723:        let clip = intersect_text_bounds(clip, panel_bounds);
+native\src\text\mod.rs:727:        let Some(glyph_id) = self.register_panel_rect_glyph(width, height, radius) else {
+native\src\text\mod.rs:770:    fn register_panel_rect_glyph(
+native\src\text\mod.rs:777:            text: format!("__dg_panel_rect_{width}_{height}_{radius}"),
+native\src\text\mod.rs:784:        self.register_axis_label_glyph(key, panel_rect_glyph_image(width, height, radius))
+native\src\text\mod.rs:1112:fn panel_rect_glyph_image(width: u16, height: u16, radius: u16) -> AxisLabelGlyphImage {
+native\src\text\mod.rs:1763:                        let title_pad = panel_title_padding(node, theme, sf);
+native\src\text\mod.rs:2728:        let title_pad = panel_title_padding(node, theme, sf);
+native\src\text\mod.rs:2811:        WidgetKind::Splitter => "splitter",
+native\src\text\mod.rs:2812:        WidgetKind::Pane => "pane",
+native\src\text\mod.rs:2813:        WidgetKind::Panel => "panel",
+native\src\text\mod.rs:2964:fn panel_title_padding(node: &WidgetNode, theme: &Theme, sf: f32) -> PanelTitlePadding {
+native\src\text\mod.rs:5876:    fn panel_title_padding_uses_custom_style_padding() {
+native\src\text\mod.rs:5877:        let mut panel = node("panel", WidgetKind::Panel);
+native\src\text\mod.rs:5878:        panel.style.layout.padding = Some(16.0);
+native\src\text\mod.rs:5879:        panel.style.layout.padding_right = Some(20.0);
+native\src\text\mod.rs:5881:        let padding = panel_title_padding(&panel, &Theme::dark(), 1.0);
+native\src\text\mod.rs:6571:        let mut panel = node("panel", WidgetKind::Panel);
+native\src\text\mod.rs:6572:        panel.style.visual.transform = Some(TransformStyle {
+native\src\text\mod.rs:6581:        panel.children.push(label);
+native\src\text\mod.rs:6585:            "panel".to_string(),
+native\src\text\mod.rs:6611:            &panel,
+native\src\text\mod.rs:7203:        let title_band_h = panel_title_padding(&modal, &theme, 1.0).top + line_height;
+native\src\text\mod.rs:7563:    fn panel_generated_after_anchors_to_title_band() {
+native\src\text\mod.rs:7564:        let mut panel = node("panel", WidgetKind::Panel);
+native\src\text\mod.rs:7565:        panel.style.layout.padding = Some(12.0);
+native\src\text\mod.rs:7566:        panel.style.parts.parts.insert(
+native\src\text\mod.rs:7580:            "panel".to_string(),
+native\src\text\mod.rs:7597:            &panel,
+native\src\text\mod.rs:7619:            .expect("generated panel after text");
+native\src\text\mod.rs:7623:            "panel generated text should anchor near the title band, got top={}",
+native\src\text\mod.rs:7628:            "panel generated text clip should stay in the title band, got bottom={}",

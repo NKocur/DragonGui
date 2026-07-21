@@ -1,0 +1,201 @@
+
+
+def _categorical_to_rgb(arr: Any) -> Any:
+    """Assign palette colors by stable category order; returns (N, 3) float32 RGB."""
+    import numpy as np
+    a = np.asarray(arr)
+    unique_vals = list(dict.fromkeys(a.tolist()))  # stable insertion order
+    cat_map = {v: i for i, v in enumerate(unique_vals)}
+    n_colors = len(_CATEGORICAL_PALETTE)
+    indices = np.array([cat_map[v] % n_colors for v in a.tolist()], dtype=np.intp)
+    palette = np.array(_CATEGORICAL_PALETTE, dtype=np.float32)
+    return palette[indices]
+
+
+def _categorical_legend_entries(arr: Any) -> "list[tuple[str, float, float, float]]":
+    """Return (label, r, g, b) legend entries for each unique category value, in insertion order."""
+    a: Any
+    try:
+        import numpy as _np
+        a = _np.asarray(arr)
+    except Exception:
+        return []
+    unique_vals = list(dict.fromkeys(a.tolist()))
+    n_colors = len(_CATEGORICAL_PALETTE)
+    return [(str(v), float(_CATEGORICAL_PALETTE[i % n_colors][0]),
+             float(_CATEGORICAL_PALETTE[i % n_colors][1]),
+             float(_CATEGORICAL_PALETTE[i % n_colors][2])) for i, v in enumerate(unique_vals)]
+
+
+def _resolve_nan_color(nan_color: Any) -> Any:
+    """Normalise nan_color to a (3,) float32 RGB array in [0, 1], or None."""
+    if nan_color is None:
+        return None
+    import numpy as np
+    arr = np.asarray(nan_color, dtype=np.float32).ravel()[:3]
+    if len(arr) < 3:
+        return None
+    return arr / 255.0 if arr.max() > 1.0 else arr
+
+
+def _scalars_to_rgb(
+    scalars: Any,
+    colormap: str,
+    clim: tuple[float, float] | None,
+    log_scale: bool,
+    nan_color: Any = None,
+) -> Any:
+    """Map a 1-D numeric array through a colormap; returns (N, 3) float32 RGB."""
+    import numpy as np
+    from .colormap import sample_colormap_numpy
+
+    raw = np.asarray(scalars, dtype=np.float32)
+    # NaN mask is based on the original raw values (matching DragonSci): only non-finite
+    # values get nan_color; finite non-positive values are clamped, not treated as NaN.
+    nan_mask = ~np.isfinite(raw)
+
+    tiny = np.finfo(np.float32).tiny
+
+    # Range is always computed from raw values (matching DragonSci public API).
+    if clim is not None:
+        raw_lo, raw_hi = float(clim[0]), float(clim[1])
+    else:
+        finite_raw = raw[~nan_mask]
+        raw_lo = float(finite_raw.min()) if len(finite_raw) > 0 else 0.0
+        raw_hi = float(finite_raw.max()) if len(finite_raw) > 0 else 1.0
+
+    if log_scale:
+        # Normalize in log-space; clip non-positive finite values to tiny (not NaN).
+        lv = np.log10(np.maximum(raw, tiny))
+        lv[nan_mask] = np.nan
+        lo = float(np.log10(max(raw_lo, tiny)))
+        hi = float(np.log10(max(raw_hi, tiny)))
+        lspan = hi - lo
+        if abs(lspan) < 1e-7:
+            t = np.full(len(raw), 0.5, dtype=np.float32)
+        else:
+            t = np.clip((lv - lo) / lspan, 0.0, 1.0).astype(np.float32)
+    else:
+        span = raw_hi - raw_lo
+        if span == 0.0:
+            t = np.zeros(len(raw), dtype=np.float32)  # DragonSci parity: collapsed linear â†’ t=0
+        else:
+            t = np.clip((raw - raw_lo) / span, 0.0, 1.0).astype(np.float32)
+    t[nan_mask] = 0.0
+
+    rgb = sample_colormap_numpy(colormap, t)
+
+    nc = _resolve_nan_color(nan_color)
+    if nc is not None and nan_mask.any():
+        rgb[nan_mask] = nc
+
+    return rgb
+
+
+def _normalize_sizes(arr: Any, size_range: tuple[float, float]) -> Any:
+    """Linearly map arr values into [size_range[0], size_range[1]]."""
+    import numpy as np
+    a = np.asarray(arr, dtype=np.float32)
+    finite = a[np.isfinite(a)]
+    lo_val = float(finite.min()) if len(finite) > 0 else 0.0
+    hi_val = float(finite.max()) if len(finite) > 0 else 1.0
+    lo_px, hi_px = float(size_range[0]), float(size_range[1])
+    span = hi_val - lo_val
+    if span == 0.0:
+        return np.full(len(a), (lo_px + hi_px) * 0.5, dtype=np.float32)
+    t = np.clip((a - lo_val) / span, 0.0, 1.0)
+    return (lo_px + t * (hi_px - lo_px)).astype(np.float32)
+
+
+def _pack_point_instances(
+    frame: Any,
+    x_col: str,
+    y_col: str,
+    z_col: str,
+    *,
+    color: str | Any | None = None,
+    colors: Any | None = None,
+    scalars: str | Any | None = None,
+    point_size: float = 4.0,
+    point_sizes: str | Any | None = None,
+    size_range: tuple[float, float] | None = None,
+    opacity: float = 1.0,
+    colormap: str = "viridis",
+    clim: tuple[float, float] | None = None,
+    log_scale: bool = False,
+    nan_color: Any = None,
+) -> bytes | None:
+    """Build a point_instance_v1 packet: N Ã— [x, y, z, size, r, g, b, alpha] as little-endian f32.
+
+    Color priority: explicit colors/color array > categorical/scalar color column > z-derived colormap.
+    Returns None when NumPy is unavailable or columns are inaccessible.
+    """
+    try:
+        import numpy as np
+
+        xs = np.asarray(_get_frame_col(frame, x_col), dtype=np.float32)
+        ys = np.asarray(_get_frame_col(frame, y_col), dtype=np.float32)
+        zs = np.asarray(_get_frame_col(frame, z_col), dtype=np.float32)
+        n = len(xs)
+
+        # --- colors ---
+        rgb: Any = None
+        if colors is not None:
+            arr = np.asarray(colors, dtype=np.float32)
+            if arr.ndim == 2 and arr.shape == (n, 3):
+                rgb = arr if arr.max() <= 1.0 else arr / 255.0
+            elif arr.ndim == 2 and arr.shape == (n, 4):
+                arr = arr if arr.max() <= 1.0 else arr / 255.0
+                rgb = arr[:, :3]
+        elif color is not None:
+            if isinstance(color, str):
+                col_data = _get_frame_col(frame, color)
+                if _is_categorical(col_data):
+                    rgb = _categorical_to_rgb(col_data)
+                else:
+                    rgb = _scalars_to_rgb(col_data, colormap, clim, log_scale, nan_color)
+            else:
+                arr = np.asarray(color, dtype=np.float32)
+                if arr.ndim == 2 and arr.shape[0] == n and arr.shape[1] in (3, 4):
+                    arr = arr if arr.max() <= 1.0 else arr / 255.0
+                    rgb = arr[:, :3]
+        elif scalars is not None:
+            col_data = _get_frame_col(frame, scalars) if isinstance(scalars, str) else scalars
+            rgb = _scalars_to_rgb(col_data, colormap, clim, log_scale, nan_color)
+
+        if rgb is None or len(rgb) != n:
+            rgb = _scalars_to_rgb(zs, colormap, clim, log_scale, nan_color)
+
+        # --- sizes: normalize through size_range if given, then clamp ---
+        if point_sizes is not None:
+            raw_sizes = _get_frame_col(frame, point_sizes) if isinstance(point_sizes, str) else point_sizes
+            raw = np.asarray(raw_sizes, dtype=np.float32)
+            if len(raw) != n:
+                raise ValueError(f"point_sizes length {len(raw)} != point count {n}")
+            if size_range is not None:
+                sizes = _normalize_sizes(raw, size_range)
+            else:
+                sizes = np.where(np.isfinite(raw), np.clip(raw, 0.0, None), float(point_size))
+        else:
+            sizes = np.full(n, float(point_size), dtype=np.float32)
+
+        alpha_val = float(max(0.0, min(1.0, opacity)))
+
+        out = np.empty((n, 8), dtype="<f4")
+        out[:, 0] = xs
+        out[:, 1] = ys
+        out[:, 2] = zs
+        out[:, 3] = sizes
+        out[:, 4:7] = rgb
+        out[:, 7] = alpha_val
+        return out.tobytes()
+    except (ImportError, AttributeError, TypeError, ValueError, KeyError):
+        return None
+
+
+def _xyz_bounds(
+    frame: Any,
+    x_col: str,
+    y_col: str,
+    z_col: str,
+) -> tuple[tuple[float, float, float], tuple[float, float, float]] | None:

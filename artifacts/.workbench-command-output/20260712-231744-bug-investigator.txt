@@ -1,0 +1,132 @@
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:252:        if isinstance(runtime, dict) and runtime.get("active_scatter_id") is not None:
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:253:            failures.append(f"active_scatter_id remained {runtime.get('active_scatter_id')!r}")
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:258:            "active_scatter_id": runtime.get("active_scatter_id") if isinstance(runtime, dict) else None,
+examples\css_feature_probes\adjacent_scatter_interaction_probe.py:357:            dg.ScatterPlot2D(
+examples\all_features_professional_demo.py:60:        self.scatter2d: dg.ScatterPlot2D | None = None
+examples\all_features_professional_demo.py:600:                dg.Slider(0.85, min=0.25, max=1, step=0.05, on_change=lambda v: state.scatter.set_interactive_render_scale(v) if state.scatter else None)
+examples\all_features_professional_demo.py:605:                state.scatter2d = dg.ScatterPlot2D(
+examples\all_features_v3_demo.py:2499:                f"{metric_ms(scatter_metrics, 'last_overlay_ms')}",
+examples\all_features_v3_demo.py:4670:                            dg.ScatterPlot2D(
+python\dragongui\__init__.py:119:    ScatterPlot2D,
+python\dragongui\__init__.py:285:    "ScatterPlot2D",
+python\dragongui\widgets.py:9212:        interactive_render_scale: float = 1.0,
+python\dragongui\widgets.py:9282:        self._interactive_render_scale: float = max(0.25, min(1.0, float(interactive_render_scale)))
+python\dragongui\widgets.py:10684:    def set_interactive_render_scale(self, scale: float) -> None:
+python\dragongui\widgets.py:10691:        self._interactive_render_scale = max(0.25, min(1.0, float(scale)))
+python\dragongui\widgets.py:10693:            wh.enqueue_set_scatter_interactive_render_scale(self._interactive_render_scale)
+python\dragongui\widgets.py:11549:        handle.enqueue_set_scatter_interactive_render_scale(self._interactive_render_scale)
+python\dragongui\widgets.py:11752:class ScatterPlot2D(Scatter3D):
+python\dragongui\widgets.py:11794:        interactive_render_scale: float = 1.0,
+python\dragongui\widgets.py:11850:            interactive_render_scale=interactive_render_scale,
+python\dragongui\widgets.py:11947:        raise ValueError("ScatterPlot2D.fit bounds must be None, a 4-tuple, or a 6-tuple")
+examples\older\v4_showcase.py:775:                                dg.ScatterPlot2D(
+examples\css_feature_probes\layout_plot_embedding_probe.py:289:scatter2d: dg.ScatterPlot2D | None = None
+examples\css_feature_probes\layout_plot_embedding_probe.py:406:                scatter2d = dg.ScatterPlot2D(
+python\dragongui\runtime.py:500:    def enqueue_set_scatter_interactive_render_scale(self, scale: float) -> None:
+python\dragongui\runtime.py:502:        self.app.enqueue_set_scatter_interactive_render_scale(self.id, scale)
+python\dragongui\runtime.py:1097:    def enqueue_set_scatter_interactive_render_scale(self, widget_id: str, scale: float) -> None:
+python\dragongui\runtime.py:1098:        if not self._native_method_available("enqueue_set_scatter_interactive_render_scale"):
+python\dragongui\runtime.py:1101:            "enqueue_set_scatter_interactive_render_scale", widget_id, float(scale)
+python\dragongui\manual.py:283:    "ScatterPlot2D",
+python\dragongui\manual.py:423:    "ScatterPlot2D": "scatter_plot_2d",
+python\dragongui\manual.py:484:    "ScatterPlot2D": "2D point cloud widget for dense scalar/color plots.",
+python\dragongui\manual.py:806:    "ScatterPlot2D": (
+python\dragongui\manual.py:939:    "ScatterPlot2D": {"probes": ("examples/css_feature_probes/scatter_plot_2d_probe.py",)},
+python\dragongui\manual.py:2188:        "Scatter3D And ScatterPlot2D",
+python\dragongui\manual.py:2192:true 3D data. Use `ScatterPlot2D(frame, x, y, ...)` for fixed 2D scatter.
+python\dragongui\manual.py:2207:- `set_interactive_render_scale(0.75)`
+python\dragongui\manual.py:2250:- `ScatterPlot2D(frame, x, y, ...)` uses the scatter backend in fixed 2D mode.
+python\dragongui\manual.py:2564:- `ScatterPlot2D` needs x/y columns and valid 2D or compatible fit bounds.
+python\dragongui\manual.py:2732:- `Scatter3D`/`ScatterPlot2D`: use packed/prepared payloads for dense data.
+python\dragongui\manual.py:2967:- `ScatterPlot2D` for dense 2D point clouds.
+python\dragongui\manual.py:3265:- `ScatterPlot2D` for dense flat point clouds.
+examples\older\scatter_perf_lab.py:151:    "interactive_render_scale": 1.0,
+examples\older\scatter_perf_lab.py:182:render_scale_slider: dg.Slider
+examples\older\scatter_perf_lab.py:280:    render_scale: float,
+examples\older\scatter_perf_lab.py:290:        state["interactive_render_scale"] = render_scale
+examples\older\scatter_perf_lab.py:296:    scatter.set_interactive_render_scale(render_scale)
+examples\older\scatter_perf_lab.py:301:    render_scale_slider.set_value(render_scale)
+examples\older\scatter_perf_lab.py:343:def set_render_scale(value: float) -> None:
+examples\older\scatter_perf_lab.py:346:        state["interactive_render_scale"] = value
+examples\older\scatter_perf_lab.py:347:    scatter.set_interactive_render_scale(value)
+examples\older\scatter_perf_lab.py:451:    render_scale = float(metrics.get("active_render_scale") or 1.0)
+examples\older\scatter_perf_lab.py:452:    interactive_render_scale = float(metrics.get("interactive_render_scale") or state["interactive_render_scale"])
+examples\older\scatter_perf_lab.py:470:            f"Render scale: {render_scale:.2f} active / {interactive_render_scale:.2f} interaction",
+examples\older\scatter_perf_lab.py:601:                        render_scale=1.0,
+examples\older\scatter_perf_lab.py:615:                        render_scale=0.65,
+examples\older\scatter_perf_lab.py:630:                        render_scale=1.0,
+examples\older\scatter_perf_lab.py:644:                        render_scale=1.0,
+examples\older\scatter_perf_lab.py:677:            render_scale_slider = dg.Slider(1.0, min=0.25, max=1.0, step=0.05, on_change=set_render_scale)
+examples\older\scatter_perf_lab.py:700:                interactive_render_scale=1.0,
+native/src\commands.rs:1777:    fn enqueue_set_scatter_interactive_render_scale(&self, id: String, scale: f32) -> PyResult<()> {
+examples\css_feature_probes\README.md:73:42. `scatter_plot_2d_probe.py` - ScatterPlot2D scalar and categorical packed point rendering with flat camera controls.
+native/src\scatter\composite.wgsl:2:    target_rect: vec4<f32>,
+native/src\scatter\composite.wgsl:26:    let px = uniforms.target_rect.xy + p * uniforms.target_rect.zw;
+examples\css_feature_probes\scatter3d_frame_benchmark_probe.py:352:        state["native_overlay_ms"] = float(scatter_metrics.get("last_overlay_ms") or 0.0)
+native/src\scatter\mod.rs:1087:fn clamp_interactive_render_scale(scale: f32) -> f32 {
+native/src\scatter\mod.rs:1165:    pub interactive_render_scale: f32,
+native/src\scatter\mod.rs:1557:            interactive_render_scale: 1.0,
+native/src\scatter\mod.rs:2221:    pub fn set_interactive_render_scale(&mut self, scale: f32) {
+native/src\scatter\mod.rs:2222:        self.interactive_render_scale = clamp_interactive_render_scale(scale);
+native/src\scatter\mod.rs:2239:    pub fn active_render_scale(&self) -> f32 {
+native/src\scatter\mod.rs:2248:                self.interactive_render_scale.min(budget_scale)
+native/src\scatter\mod.rs:2250:                self.interactive_render_scale
+native/src\scatter\mod.rs:4101:        let scale = clamp_interactive_render_scale(scale);
+examples\css_feature_probes\scatter3d_probe.py:812:                def hide_last_overlay() -> None:
+examples\css_feature_probes\scatter3d_probe.py:828:                    dg.Button("Hide last", on_click=hide_last_overlay)
+examples\css_feature_probes\scatter_plot_2d_probe.py:64:app, win = probe_app("ScatterPlot2D Probe", width=980, height=720)
+examples\css_feature_probes\scatter_plot_2d_probe.py:186:            "ScatterPlot2D",
+examples\css_feature_probes\scatter_plot_2d_probe.py:190:            "ScatterPlot2D uses the packed point path with a flat XY camera.",
+examples\css_feature_probes\scatter_plot_2d_probe.py:195:                dense_plot = dg.ScatterPlot2D(
+examples\css_feature_probes\scatter_plot_2d_probe.py:210:                cluster_plot = dg.ScatterPlot2D(
+native/src\runtime.rs:1259:    target_rect: [f32; 4],
+native/src\runtime.rs:1264:struct ScatterCompositeRenderer {
+native/src\runtime.rs:1400:    fn update_uniforms(
+native/src\runtime.rs:1403:        target_rect: [f32; 4],
+native/src\runtime.rs:1408:            target_rect,
+native/src\runtime.rs:1426:struct ScatterRenderTarget {
+native/src\runtime.rs:5933:    last_overlay_ms: f64,
+native/src\runtime.rs:9997:            last_overlay_ms: overlay_ms,
+native/src\runtime.rs:10067:            last_overlay_ms: overlay_ms,
+native/src\runtime.rs:11739:                    last_overlay_ms: overlay_ms,
+native/src\runtime.rs:11817:                    last_overlay_ms: overlay_ms,
+native/src\runtime.rs:11914:                        last_overlay_ms: overlay_ms,
+native/src\runtime.rs:12012:                last_overlay_ms: overlay_ms,
+native/src\runtime.rs:12106:            last_overlay_ms: overlay_ms,
+native/src\runtime.rs:12365:            "last_overlay_ms".to_string(),
+native/src\runtime.rs:12366:            json!(rt.metrics.last_overlay_ms),
+native/src\runtime.rs:12444:            "interactive_render_scale".to_string(),
+native/src\runtime.rs:12445:            json!(rt.widget.interactive_render_scale),
+native/src\runtime.rs:12448:            "active_render_scale".to_string(),
+native/src\runtime.rs:12449:            json!(rt.widget.active_render_scale()),
+native/src\runtime.rs:12704:                        "last_overlay_encode_ms": self.last_primitive_overlay_encode_ms,
+native/src\runtime.rs:13694:                let render_scale = runtime.widget.active_render_scale();
+native/src\runtime.rs:13695:                let cache_static_full_scale = render_scale >= 0.999 && !runtime.widget.lod_active;
+native/src\runtime.rs:13698:                let render_to_target = if can_render_to_target && render_scale < 0.999 {
+native/src\runtime.rs:13702:                        runtime.widget.scaled_render_target_size(render_scale);
+native/src\runtime.rs:13716:                        runtime.widget.scaled_render_target_size(render_scale);
+native/src\runtime.rs:13786:                    self.scatter_compositor.update_uniforms(
+native/src\runtime.rs:14689:    active_scatter_id: Option<String>,
+native/src\runtime.rs:14777:            active_scatter_id: None,
+native/src\runtime.rs:15140:            "active_scatter_id".to_string(),
+native/src\runtime.rs:15141:            json!(self.active_scatter_id.as_deref()),
+native/src\runtime.rs:15201:        self.active_scatter_id = Some(scatter_id.clone());
+native/src\runtime.rs:15219:        if let Some(sid) = self.active_scatter_id.clone() {
+native/src\runtime.rs:15228:            self.active_scatter_id = None;
+native/src\runtime.rs:15238:            || self.active_scatter_id.is_some();
+native/src\runtime.rs:15239:        let active_id = self.active_scatter_id.clone();
+native/src\runtime.rs:15245:        self.active_scatter_id = None;
+native/src\runtime.rs:17365:                    rt.widget.set_interactive_render_scale(scale);
+native/src\runtime.rs:19604:                    .active_scatter_id
+native/src\runtime.rs:20247:                                if let Some(scatter_id) = self.active_scatter_id.clone() {
+native/src\runtime.rs:20306:                                if let Some(scatter_id) = self.active_scatter_id.clone() {
+native/src\runtime.rs:20340:                                self.active_scatter_id = None;
+native/src\runtime.rs:20724:                                self.active_scatter_id = Some(sid.clone());
+native/src\runtime.rs:20794:                                self.active_scatter_id = None;
+native/src\runtime.rs:20969:                    if let Some(sid) = self.active_scatter_id.clone() {
+native/src\runtime.rs:20990:                        if let Some(sid) = self.active_scatter_id.clone() {
+examples\css_feature_probes\visual_audit_manifest.json:263:    "features": ["Professional demo", "Scatter3D", "ScatterPlot2D", "Splitter", "Pane", "Toolbar", "SearchBox"],
+examples\css_feature_probes\visual_audit_manifest.json:273:    "features": ["Scatter3D", "ScatterPlot2D", "hit testing", "mouse interaction", "debug_snapshot"],
+examples\css_feature_probes\visual_audit_manifest.json:379:    "features": ["LinePlot", "ScatterPlot2D", "Heatmap", "Histogram", "BarChart", "DataFrameTable", "Splitter"],
+examples\css_feature_probes\visual_audit_manifest.json:532:    "features": ["ScatterPlot2D"],
+examples\css_feature_probes\v4_scroll_benchmark_probe.py:303:                    dg.ScatterPlot2D(

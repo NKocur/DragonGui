@@ -246,6 +246,96 @@
     "notes": "Default-only visual stress target with minimal layout styling and no custom visual theme."
   },
   {
+    "id": "all-features-professional-overview",
+    "name": "All Features Professional Demo - Overview",
+    "script": "examples/css_feature_probes/all_features_professional_demo_probe.py",
+    "category": "layout",
+    "features": ["Professional demo", "AppShell", "Sidebar", "Toolbar", "Tabs", "Body", "StatusBar", "LinePlot", "PieChart", "DataFrameTable"],
+    "sizes": [[1440, 900], [1180, 760], [900, 640], [390, 720], [320, 640]],
+    "manual": false,
+    "notes": "Route-specific capture for the professional all-features demo overview page."
+  },
+  {
+    "id": "all-features-professional-explore",
+    "name": "All Features Professional Demo - Explore",
+    "script": "examples/css_feature_probes/all_features_professional_demo_probe.py",
+    "category": "layout",
+    "features": ["Professional demo", "Scatter3D", "ScatterPlot2D", "Splitter", "Pane", "Toolbar", "SearchBox"],
+    "sizes": [[1440, 900], [1180, 760], [900, 640], [390, 720], [320, 640]],
+    "manual": false,
+    "notes": "Route-specific capture for the professional all-features demo 3D explore page."
+  },
+  {
+    "id": "adjacent-scatter-interaction",
+    "name": "Adjacent Scatter Interaction Isolation",
+    "script": "examples/css_feature_probes/adjacent_scatter_interaction_probe.py",
+    "category": "layout",
+    "features": ["Scatter3D", "ScatterPlot2D", "hit testing", "mouse interaction", "debug_snapshot"],
+    "sizes": [[1120, 720]],
+    "manual": false,
+    "notes": "Automated two-plot interaction probe for adjacent scatter state isolation."
+  },
+  {
+    "id": "all-features-professional-timeseries",
+    "name": "All Features Professional Demo - Timeseries",
+    "script": "examples/css_feature_probes/all_features_professional_demo_probe.py",
+    "category": "layout",
+    "features": ["Professional demo", "GridLayout", "LinePlot", "Histogram", "Heatmap", "BarChart"],
+    "sizes": [[1440, 900], [1180, 760], [900, 640], [390, 720], [320, 640]],
+    "manual": false,
+    "notes": "Route-specific capture for the professional all-features demo time-series page."
+  },
+  {
+    "id": "all-features-professional-data",
+    "name": "All Features Professional Demo - Data",
+    "script": "examples/css_feature_probes/all_features_professional_demo_probe.py",
+    "category": "layout",
+    "features": ["Professional demo", "DataFrameTable", "PropertyGrid", "Splitter", "ContextMenu", "SearchBox"],
+    "sizes": [[1440, 900], [1180, 760], [900, 640], [390, 720], [320, 640]],
+    "manual": false,
+    "notes": "Route-specific capture for the professional all-features demo data review page."
+  },
+  {
+    "id": "all-features-professional-workflow",
+    "name": "All Features Professional Demo - Workflow",
+    "script": "examples/css_feature_probes/all_features_professional_demo_probe.py",
+    "category": "layout",
+    "features": ["Professional demo", "TreeView", "SelectableList", "DragSource", "DropZone", "CodeEditor", "LogView", "DateTimeInput"],
+    "sizes": [[1440, 900], [1180, 760], [900, 640], [390, 720], [320, 640]],
+    "manual": false,
+    "notes": "Route-specific capture for the professional all-features demo workflow page."
+  },
+  {
+    "id": "all-features-professional-reports",
+    "name": "All Features Professional Demo - Reports",
+    "script": "examples/css_feature_probes/all_features_professional_demo_probe.py",
+    "category": "layout",
+    "features": ["Professional demo", "HtmlReport", "Image", "Splitter", "Toolbar", "File dialogs"],
+    "sizes": [[1440, 900], [1180, 760], [900, 640], [390, 720], [320, 640]],
+    "manual": false,
+    "notes": "Route-specific capture for the professional all-features demo reports page."
+  },
+  {
+    "id": "all-features-professional-runtime",
+    "name": "All Features Professional Demo - Runtime",
+    "script": "examples/css_feature_probes/all_features_professional_demo_probe.py",
+    "category": "layout",
+    "features": ["Professional demo", "ThreadMonitor", "ProgressBar", "LogView", "replace_children", "debug_snapshot"],
+    "sizes": [[1440, 900], [1180, 760], [900, 640], [390, 720], [320, 640]],
+    "manual": false,
+    "notes": "Route-specific capture for the professional all-features demo runtime diagnostics page."
+  },
+  {
+    "id": "all-features-professional-styling",
+    "name": "All Features Professional Demo - Styling",
+    "script": "examples/css_feature_probes/all_features_professional_demo_probe.py",
+    "category": "layout",
+    "features": ["Professional demo", "ColorPicker", "CSS parts", "Pseudo states", "Compact controls", "GridLayout"],
+    "sizes": [[1440, 900], [1180, 760], [900, 640], [390, 720], [320, 640]],
+    "manual": false,
+    "notes": "Route-specific capture for the professional all-features demo styling page."
+  },
+  {
     "id": "layout-panel-bounds",
     "name": "Layout Panel Bounds",
     "script": "examples/css_feature_probes/layout_panel_bounds_probe.py",

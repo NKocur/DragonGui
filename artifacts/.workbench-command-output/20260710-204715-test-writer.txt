@@ -1,0 +1,186 @@
+53:        self.pages: dg.Pages | None = None
+54:        self.tabs: dg.Tabs | None = None
+60:        self.data_table: dg.DataFrameTable | None = None
+61:        self.scatter: dg.Scatter3D | None = None
+62:        self.scatter2d: dg.ScatterPlot2D | None = None
+63:        self.line_plot: dg.LinePlot | None = None
+64:        self.heatmap: dg.Heatmap | None = None
+65:        self.bar_chart: dg.BarChart | None = None
+66:        self.pie_chart: dg.PieChart | None = None
+67:        self.report: dg.HtmlReport | None = None
+69:        self.log: dg.LogView | None = None
+70:        self.code: dg.CodeEditor | None = None
+71:        self.palette: dg.CommandPalette | None = None
+75:        self.live_panel: dg.Panel | None = None
+77:        self.nav_items: dict[str, dg.NavItem] = {}
+80:        self.resource_uploaded = False
+278:    set_status(f"Table loaded {len(rows)} rows for owner={owner}", "success")
+327:        snapshot = state.app.debug_snapshot(timeout_ms=700)
+328:        debug = snapshot.get("debug_snapshot", snapshot)
+336:def upload_resource() -> None:
+342:        state.resource_uploaded = True
+345:        set_status(f"Resource upload failed: {exc}", "error")
+348:def release_resource() -> None:
+352:        state.app.release_resource(state.resource_id)
+353:        state.resource_uploaded = False
+356:        set_status(f"Resource release failed: {exc}", "error")
+371:    state.live_panel.replace_children(rows)
+403:                        payload = dg.Scatter3D.prepare_points(payload_frame, x="x", y="y", z="z", colormap="turbo")
+412:                state.app.call_soon_threadsafe(apply)
+423:            state.app.call_soon_threadsafe(stopped)
+438:    with dg.Panel(class_="metric-card"):
+439:        with dg.HLayout(style={"align_items": "center", "gap": 8}):
+447:    with dg.VLayout(class_="page-header"):
+448:        dg.Breadcrumbs(
+456:        with dg.HLayout(style={"align_items": "center", "gap": 10, "min_width": 0}):
+464:    with dg.GridLayout(columns=4, min_column_width=180, gap=10):
+469:    with dg.Splitter(orientation="horizontal", style={"height": 360, "min_height": 260}):
+470:        with dg.Pane(size=0.62, min_size=320):
+471:            with dg.Panel("Fleet Pulse", style={"height": "100%"}):
+472:                dg.LinePlot(
+482:        with dg.Pane(size=0.38, min_size=260):
+483:            with dg.Panel("Incident Mix", style={"height": "100%"}):
+485:                dg.PieChart(
+495:    with dg.Panel("Recent Events"):
+496:        dg.DataFrameTable(TABLE_ROWS[:28], page_size=28, sample_rows=28, style={"height": 260, "width": "100%"})
+501:    with dg.Toolbar():
+502:        dg.IconButton("refresh", tooltip="Refresh points", on_click=randomize_visuals)
+503:        dg.IconButton("search", tooltip="Command palette", on_click=show_palette)
+504:        dg.ToolbarSeparator()
+505:        dg.SmallButton("Fit/Reset", on_click=randomize_visuals)
+506:        dg.SearchBox("asset:cell", placeholder="filter asset or zone", style={"width": 220})
+507:    with dg.Splitter(orientation="horizontal", style={"height": 610, "min_height": 360}):
+508:        with dg.Pane(size=0.72, min_size=360):
+509:            state.scatter = dg.Scatter3D(
+525:        with dg.Pane(size=0.28, min_size=260):
+526:            with dg.Panel("Explore Controls", style={"height": "100%"}):
+534:                dg.Separator()
+535:                state.scatter2d = dg.ScatterPlot2D(
+547:    with dg.GridLayout(columns=2, min_column_width=360, gap=10):
+548:        with dg.Panel("Live Latency"):
+549:            state.line_plot = dg.LinePlot(
+559:        with dg.Panel("Latency Distribution"):
+560:            dg.Histogram(SERIES_FRAME["latency"], bins=36, mode="count", style={"height": 270})
+561:        with dg.Panel("Route Heatmap"):
+562:            state.heatmap = dg.Heatmap(HEAT_MATRIX, x_labels=HEAT_X, y_labels=HEAT_Y, title="p95 latency by line and hour", colormap="magma", style={"height": 300})
+563:        with dg.Panel("Throughput By Owner"):
+564:            state.bar_chart = dg.BarChart(
+578:    with dg.Toolbar():
+579:        dg.SearchBox("", placeholder="search routes", on_change=lambda q: set_status(f"Search changed: {q}"), style={"width": 260})
+580:        dg.ToolbarSeparator()
+581:        dg.SmallButton("All", on_click=lambda: update_table_filter("all"))
+583:            dg.SmallButton(owner.title(), on_click=lambda owner=owner: update_table_filter(owner))
+584:    with dg.Splitter(orientation="horizontal", style={"height": 620, "min_height": 380}):
+585:        with dg.Pane(size=0.7, min_size=360):
+586:            state.data_table = dg.DataFrameTable(
+601:                dg.MenuItem("Open route details", on_click=lambda: set_status("Context action: open route details"))
+602:                dg.MenuItem("Suppress for one hour", on_click=show_confirm_modal)
+603:                dg.MenuItem("Export selected row", on_click=lambda: run_file_dialog("save"))
+604:        with dg.Pane(size=0.3, min_size=280):
+605:            with dg.Panel("Selected Route Inspector", style={"height": "100%"}):
+606:                dg.PropertyGrid(
+612:                        "Latency Window": (18, 84),
+619:                        "Latency Window": {"type": "range", "min": 0, "max": 120, "step": 1},
+630:    with dg.GridLayout(columns=2, min_column_width=360, gap=10):
+631:        with dg.Panel("Pipeline Tree", style={"height": 360}):
+632:            with dg.ScrollArea(axis="y", height=150, gap=4):
+633:                with dg.TreeView(selected="line-2.cell-07", on_select=lambda node: set_status(f"Tree selected {node}")):
+634:                    with dg.TreeNode("North Plant", node_id="north", expanded=True):
+635:                        with dg.TreeNode("Line 2", node_id="line-2", expanded=True):
+636:                            dg.TreeNode("Cell 07 sensor-feed", node_id="line-2.cell-07", leaf=True)
+637:                            dg.TreeNode("Cell 08 calibration", node_id="line-2.cell-08", leaf=True)
+638:                        with dg.TreeNode("Line 4", node_id="line-4", expanded=True):
+639:                            dg.TreeNode("Cell 03 export queue", node_id="line-4.cell-03", leaf=True)
+640:            dg.Separator()
+641:            dg.SelectableList(
+651:        with dg.Panel("Action Form", style={"height": 360}):
+655:            with dg.HLayout(style={"gap": 8, "align_items": "center"}):
+661:        with dg.Panel("Drag Metrics", style={"height": 320}):
+662:            with dg.FlowLayout(gap=8, row_gap=8):
+671:        with dg.Panel("Automation Script", style={"height": 320}):
+672:            state.code = dg.CodeEditor(
+679:            state.log = dg.LogView(["Demo activity log initialized."], rows=5, follow=True, wrap=True, variant="activity")
+684:    with dg.Toolbar():
+685:        dg.SmallButton("Inline HTML", on_click=update_report_inline)
+686:        dg.SmallButton("Open External", on_click=open_report_external)
+687:        dg.ToolbarSeparator()
+688:        dg.IconButton("folder-open", tooltip="Open data file", on_click=lambda: run_file_dialog("open"))
+689:        dg.IconButton("save", tooltip="Save report", on_click=lambda: run_file_dialog("save"))
+690:        dg.IconButton("folder", tooltip="Pick folder", on_click=lambda: run_file_dialog("folder"))
+691:    with dg.Splitter(orientation="horizontal", style={"height": 630, "min_height": 380}):
+692:        with dg.Pane(size=0.62, min_size=360):
+693:            state.report = dg.HtmlReport(REPORT_PATH, height=None, style={"height": "100%"})
+694:        with dg.Pane(size=0.38, min_size=280):
+695:            with dg.Panel("Sensor Preview", style={"height": "100%"}):
+703:    with dg.Toolbar():
+704:        dg.SmallButton("Start Stream", on_click=start_stream)
+705:        dg.SmallButton("Stop Stream", on_click=stop_stream)
+706:        dg.ToolbarSeparator()
+707:        dg.SmallButton("Snapshot", on_click=snapshot_summary)
+708:        dg.SmallButton("Upload Buffer", on_click=upload_resource)
+709:        dg.SmallButton("Release Buffer", on_click=release_resource)
+710:        dg.SmallButton("Replace Children", on_click=replace_live_children)
+711:    with dg.GridLayout(columns=2, min_column_width=360, gap=10):
+712:        dg.ThreadMonitor(show_threads=True, show_queue=True, show_failures=True, history_seconds=30, style={"height": 420})
+713:        with dg.Panel("Live Runtime Surface", style={"height": 420}):
+714:            with dg.HLayout(style={"gap": 8, "align_items": "center"}):
+717:            state.live_panel = dg.Panel("Replaceable Diagnostics", style={"height": 180, "width": "100%"})
+719:                dg.Label("Click Replace Children to swap this panel content through Container.replace_children().")
+720:            dg.LogView(["Runtime page ready.", "Use Start Stream to schedule UI work from a worker thread."], rows=8, wrap=True, variant="debug")
+725:    with dg.GridLayout(columns=3, min_column_width=300, gap=10):
+726:        with dg.Panel("Theme And State"):
+740:        with dg.Panel("Parts And Inline Styles"):
+753:            dg.Separator()
+754:            with dg.FlowLayout(gap=6, row_gap=6):
+758:        with dg.Panel("Compact Controls"):
+767:def build_shell() -> dg.Window:
+768:    with dg.Window(title="DragonGUI Professional All Features Demo", width=1440, height=900) as win:
+769:        with dg.AppShell(class_="pro-shell", style={"width": "100%", "height": "100%", "overflow": "hidden"}):
+770:            with dg.Sidebar(title="DragonOps", width=214, class_="pro-sidebar"):
+773:                    state.nav_items[route] = dg.NavItem(label, page=route, badge=badge)
+774:                dg.Separator()
+775:                with dg.FlowLayout(gap=6, row_gap=6):
+778:            with dg.WorkbenchLayout(gap=6, padding=8, style={"min_width": 0}):
+779:                with dg.MenuBar():
+781:                        dg.MenuItem("Open data file", on_click=lambda: run_file_dialog("open"))
+782:                        dg.MenuItem("Save report bundle", on_click=lambda: run_file_dialog("save"))
+783:                        dg.MenuItem("Pick export folder", on_click=lambda: run_file_dialog("folder"))
+785:                        dg.MenuItem("Overview", on_click=lambda: navigate("overview"))
+786:                        dg.MenuItem("Runtime diagnostics", on_click=lambda: navigate("runtime"))
+787:                        dg.MenuItem("Command palette", on_click=show_palette)
+789:                        dg.MenuItem("Start stream", on_click=start_stream)
+790:                        dg.MenuItem("Stop stream", on_click=stop_stream)
+791:                        dg.MenuItem("Debug snapshot", on_click=snapshot_summary)
+792:                        dg.MenuItem("Show alert", on_click=show_alert_modal)
+793:                        dg.MenuItem("Show toast", on_click=show_toast)
+794:                with dg.Toolbar(class_="top-toolbar"):
+795:                    dg.IconButton("play", tooltip="Start background stream", on_click=start_stream)
+796:                    dg.IconButton("pause", tooltip="Stop background stream", on_click=stop_stream)
+797:                    dg.IconButton("terminal", tooltip="Command palette", on_click=show_palette)
+798:                    dg.ToolbarSeparator()
+799:                    dg.SearchBox("", placeholder="search routes, commands, owners", on_change=lambda q: set_status(f"Global search: {q}"), style={"width": 280})
+800:                    dg.Spacer()
+801:                    dg.SmallButton("Snapshot", on_click=snapshot_summary)
+802:                    dg.SmallButton("Toast", on_click=show_toast)
+803:                state.tabs = dg.Tabs(value="overview", on_change=navigate)
+806:                        with dg.Tab(label, value=route, badge=badge):
+808:                with dg.Body(scroll="y", gap=10, style={"height": 0, "flex": 1, "min_width": 0}):
+809:                    state.pages = dg.Pages(value="overview", on_change=lambda route: state.tabs.set_value(route) if state.tabs else None)
+811:                        with dg.Page("overview", title="Overview"):
+813:                        with dg.Page("explore", title="3D Explore"):
+815:                        with dg.Page("timeseries", title="Time Series"):
+817:                        with dg.Page("data", title="Data"):
+819:                        with dg.Page("workflow", title="Workflow"):
+821:                        with dg.Page("reports", title="Reports"):
+823:                        with dg.Page("runtime", title="Runtime"):
+825:                        with dg.Page("styling", title="Styling"):
+827:                with dg.StatusBar(height=28):
+834:def build_overlays(win: dg.Window) -> None:
+839:        with dg.HLayout(style={"justify_content": "flex_end", "gap": 8}):
+857:    state.palette = dg.CommandPalette(
+876:def build_app() -> tuple[dg.App, dg.Window]:
+882:        Sidebar.pro-sidebar { width: 214px; }
+889:        Panel.metric-card { min-height: 112px; }
+891:        Panel { min-width: 0; }
+892:        DataFrameTable { min-height: 120px; }
+895:            Sidebar.pro-sidebar { width: 100%; height: 210px; flex-shrink: 0; }

@@ -1,0 +1,2097 @@
+{
+  "gpu": {
+    "computed_styles": {
+      "adjacent-left-scatter": {
+        "matched_rules": [
+          "framework: Scatter3D",
+          "user: Scatter3D.left-plot"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "flex_grow": 1.0,
+            "height": {
+              "percent": 100.0
+            },
+            "min_width": 0.0,
+            "width": {
+              "percent": 72.0
+            }
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.9607843160629272,
+                0.9725490212440491,
+                1.0,
+                0.9411764740943909
+              ]
+            },
+            "font_size": 14.0
+          },
+          "visual": {
+            "background": {
+              "rgba": [
+                0.0313725508749485,
+                0.06666667014360428,
+                0.10980392247438431,
+                1.0
+              ]
+            },
+            "background_paint": {
+              "color": {
+                "rgba": [
+                  0.0313725508749485,
+                  0.06666667014360428,
+                  0.10980392247438431,
+                  1.0
+                ]
+              },
+              "type": "color"
+            },
+            "border_color": {
+              "rgba": [
+                0.4313725531101227,
+                0.6274510025978088,
+                0.9019607901573181,
+                0.47843137383461
+              ]
+            },
+            "border_radius": 6.0,
+            "border_width": 1.0
+          },
+          "widget": {
+            "scatter_grid_planes": "major",
+            "scatter_grid_visible": true,
+            "scatter_orientation_axes": true,
+            "scatter_point_size": 5.0
+          }
+        }
+      },
+      "adjacent-right-scatter": {
+        "matched_rules": [
+          "framework: Scatter3D",
+          "user: Scatter3D.right-plot"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "height": {
+              "percent": 100.0
+            },
+            "min_width": 260.0,
+            "width": {
+              "percent": 28.0
+            }
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.9607843160629272,
+                0.9725490212440491,
+                1.0,
+                0.9411764740943909
+              ]
+            },
+            "font_size": 14.0
+          },
+          "visual": {
+            "background": {
+              "rgba": [
+                0.06666667014360428,
+                0.0941176488995552,
+                0.15294118225574493,
+                1.0
+              ]
+            },
+            "background_paint": {
+              "color": {
+                "rgba": [
+                  0.06666667014360428,
+                  0.0941176488995552,
+                  0.15294118225574493,
+                  1.0
+                ]
+              },
+              "type": "color"
+            },
+            "border_color": {
+              "rgba": [
+                0.47058823704719543,
+                0.843137264251709,
+                0.6274510025978088,
+                0.4588235318660736
+              ]
+            },
+            "border_radius": 6.0,
+            "border_width": 1.0
+          },
+          "widget": {
+            "scatter_point_size": 6.0
+          }
+        }
+      },
+      "dg-1": {
+        "matched_rules": [
+          "framework: Window",
+          "user: Window"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "gap": 10.0,
+            "padding": 14.0,
+            "padding_bottom": 14.0,
+            "padding_left": 14.0,
+            "padding_right": 14.0,
+            "padding_top": 14.0
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.9607843160629272,
+                0.9725490212440491,
+                1.0,
+                0.9411764740943909
+              ]
+            },
+            "font_size": 14.0
+          },
+          "visual": {
+            "background": {
+              "rgba": [
+                0.07058823853731155,
+                0.09019608050584793,
+                0.13333334028720856,
+                1.0
+              ]
+            },
+            "background_paint": {
+              "color": {
+                "rgba": [
+                  0.07058823853731155,
+                  0.09019608050584793,
+                  0.13333334028720856,
+                  1.0
+                ]
+              },
+              "type": "color"
+            }
+          },
+          "widget": {}
+        }
+      },
+      "dg-2": {
+        "matched_rules": [
+          "user: VLayout.root"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "gap": 10.0,
+            "height": {
+              "percent": 100.0
+            },
+            "width": {
+              "percent": 100.0
+            }
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.9607843160629272,
+                0.9725490212440491,
+                1.0,
+                0.9411764740943909
+              ]
+            },
+            "font_size": 14.0
+          },
+          "visual": {},
+          "widget": {}
+        }
+      },
+      "dg-3": {
+        "matched_rules": [
+          "user: Label.title"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {},
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                1.0,
+                1.0,
+                1.0,
+                1.0
+              ]
+            },
+            "font_size": 18.0,
+            "font_weight": 850
+          },
+          "visual": {},
+          "widget": {}
+        }
+      },
+      "dg-4": {
+        "matched_rules": [
+          "user: HLayout.stage"
+        ],
+        "style": {
+          "active": {},
+          "checked": {},
+          "collapsed": {},
+          "disabled": {},
+          "expanded": {},
+          "focus": {},
+          "hover": {},
+          "layout": {
+            "gap": 8.0,
+            "height": {
+              "percent": 100.0
+            },
+            "min_height": 0.0,
+            "width": {
+              "percent": 100.0
+            }
+          },
+          "open": {},
+          "selected": {},
+          "text": {
+            "color": {
+              "rgba": [
+                0.9607843160629272,
+                0.9725490212440491,
+                1.0,
+                0.9411764740943909
+              ]
+            },
+            "font_size": 14.0
+          },
+          "visual": {},
+          "widget": {}
+        }
+      }
+    },
+    "framework": {
+      "apply_layout": {
+        "avg_ms": 0.7881666666666667,
+        "count": 3,
+        "last_ms": 0.1974,
+        "total_ms": 2.3645
+      },
+      "container_style": {
+        "avg_ms": 0.0002333333333333333,
+        "count": 3,
+        "last_ms": 9.999999999999999e-05,
+        "total_ms": 0.0006999999999999999
+      },
+      "image_rebuild": {
+        "avg_ms": 0.013033333333333333,
+        "count": 3,
+        "last_ms": 0.008199999999999999,
+        "total_ms": 0.039099999999999996
+      },
+      "layout_compute": {
+        "avg_ms": 0.06923333333333333,
+        "count": 3,
+        "last_ms": 0.0466,
+        "total_ms": 0.2077
+      },
+      "line_plot_rebuild": {
+        "avg_ms": 0.025966666666666666,
+        "count": 9,
+        "last_ms": 0.0331,
+        "total_ms": 0.2337
+      },
+      "prewarm_scatter_widgets": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "primitive_rebuild": {
+        "avg_ms": 0.0902111111111111,
+        "count": 9,
+        "last_ms": 0.1119,
+        "total_ms": 0.8119
+      },
+      "rebuild_primitives": {
+        "avg_ms": 0.14406666666666668,
+        "count": 6,
+        "last_ms": 0.1459,
+        "total_ms": 0.8644000000000001
+      },
+      "rebuild_text": {
+        "avg_ms": 0.10653333333333333,
+        "count": 6,
+        "last_ms": 0.16449999999999998,
+        "total_ms": 0.6392
+      },
+      "rebuild_visuals": {
+        "avg_ms": 0.25921666666666665,
+        "count": 6,
+        "last_ms": 0.3236,
+        "total_ms": 1.5553
+      },
+      "replace_children_maps": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "replace_children_parse": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "replace_children_swap": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "replace_node_maps": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "replace_node_parse": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "replace_node_swap": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_line_plot_sync": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_maps": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_resources": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_scatter_chrome": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_scatter_collect": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_scatter_decode": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_scatter_new_widget": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_scatter_retain": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_scatter_sync": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_scatter_upload": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_state_preserve": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_widget_kinds": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "retained_widget_state": {
+        "avg_ms": 0.0,
+        "count": 0,
+        "last_ms": 0.0,
+        "total_ms": 0.0
+      },
+      "scatter_layout": {
+        "avg_ms": 0.08553333333333334,
+        "count": 3,
+        "last_ms": 0.07150000000000001,
+        "total_ms": 0.2566
+      },
+      "style_reapply": {
+        "avg_ms": 0.024266666666666662,
+        "count": 3,
+        "last_ms": 0.0029000000000000002,
+        "total_ms": 0.07279999999999999
+      },
+      "text_rebuild": {
+        "avg_ms": 0.2427777777777778,
+        "count": 9,
+        "last_ms": 0.16449999999999998,
+        "total_ms": 2.185
+      },
+      "transition_sync": {
+        "avg_ms": 0.010966666666666666,
+        "count": 3,
+        "last_ms": 0.0095,
+        "total_ms": 0.0329
+      }
+    },
+    "layout": {
+      "clips": {
+        "adjacent-left-scatter": {
+          "h": 666.0,
+          "w": 786.0,
+          "x": 14.0,
+          "y": 54.0
+        },
+        "adjacent-right-scatter": {
+          "h": 666.0,
+          "w": 306.0,
+          "x": 808.0,
+          "y": 54.0
+        },
+        "dg-1": {
+          "h": 720.0,
+          "w": 1120.0,
+          "x": 0.0,
+          "y": 0.0
+        },
+        "dg-2": {
+          "h": 692.0,
+          "w": 1092.0,
+          "x": 14.0,
+          "y": 14.0
+        },
+        "dg-3": {
+          "h": 30.0,
+          "w": 1092.0,
+          "x": 14.0,
+          "y": 14.0
+        },
+        "dg-4": {
+          "h": 666.0,
+          "w": 1092.0,
+          "x": 14.0,
+          "y": 54.0
+        }
+      },
+      "diagnostics": {
+        "adjacent-left-scatter": {
+          "available": {
+            "height": 666.0,
+            "width": 786.0,
+            "x": 14.0,
+            "y": 54.0
+          },
+          "overflow": {
+            "bottom": 26.0,
+            "height": 26.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 692.0,
+            "width": 786.0,
+            "x": 14.0,
+            "y": 54.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "adjacent-right-scatter": {
+          "available": {
+            "height": 666.0,
+            "width": 306.0,
+            "x": 808.0,
+            "y": 54.0
+          },
+          "overflow": {
+            "bottom": 26.0,
+            "height": 26.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 692.0,
+            "width": 306.0,
+            "x": 808.0,
+            "y": 54.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-1": {
+          "available": {
+            "height": 720.0,
+            "width": 1120.0,
+            "x": 0.0,
+            "y": 0.0
+          },
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 720.0,
+            "width": 1120.0,
+            "x": 0.0,
+            "y": 0.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-2": {
+          "available": {
+            "height": 692.0,
+            "width": 1092.0,
+            "x": 14.0,
+            "y": 14.0
+          },
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 692.0,
+            "width": 1092.0,
+            "x": 14.0,
+            "y": 14.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-3": {
+          "available": {
+            "height": 30.0,
+            "width": 1092.0,
+            "x": 14.0,
+            "y": 14.0
+          },
+          "overflow": {
+            "bottom": 0.0,
+            "height": 0.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 30.0,
+            "width": 1092.0,
+            "x": 14.0,
+            "y": 14.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        },
+        "dg-4": {
+          "available": {
+            "height": 666.0,
+            "width": 1092.0,
+            "x": 14.0,
+            "y": 54.0
+          },
+          "overflow": {
+            "bottom": 26.0,
+            "height": 26.0,
+            "left": 0.0,
+            "right": 0.0,
+            "top": 0.0,
+            "width": 0.0
+          },
+          "resolved": {
+            "height": 692.0,
+            "width": 1092.0,
+            "x": 14.0,
+            "y": 54.0
+          },
+          "scroll_range": {
+            "x": 0.0,
+            "y": 0.0
+          }
+        }
+      },
+      "rects": {
+        "adjacent-left-scatter": {
+          "h": 692.0,
+          "w": 786.0,
+          "x": 14.0,
+          "y": 54.0
+        },
+        "adjacent-right-scatter": {
+          "h": 692.0,
+          "w": 306.0,
+          "x": 808.0,
+          "y": 54.0
+        },
+        "dg-1": {
+          "h": 720.0,
+          "w": 1120.0,
+          "x": 0.0,
+          "y": 0.0
+        },
+        "dg-2": {
+          "h": 692.0,
+          "w": 1092.0,
+          "x": 14.0,
+          "y": 14.0
+        },
+        "dg-3": {
+          "h": 30.0,
+          "w": 1092.0,
+          "x": 14.0,
+          "y": 14.0
+        },
+        "dg-4": {
+          "h": 692.0,
+          "w": 1092.0,
+          "x": 14.0,
+          "y": 54.0
+        }
+      },
+      "scroll_max_x": {},
+      "scroll_max_y": {},
+      "scroll_x": {},
+      "scroll_y": {}
+    },
+    "renderer": {
+      "caret_positions": {},
+      "desired_maximum_frame_latency": 2,
+      "font_warnings": [],
+      "has_primitives": true,
+      "has_scatter": true,
+      "has_text": true,
+      "html_reports": {
+        "enabled": true,
+        "environment_ready": false,
+        "instances": {},
+        "last_error": null,
+        "platform": "windows",
+        "profile_generation": 0,
+        "profile_recovered": false,
+        "reason": null,
+        "user_data_dir": null
+      },
+      "line_plot_renderer": {
+        "aa_width": 1.0,
+        "buffer_bytes": 0,
+        "decimated_series_count": 0,
+        "decimation_mode": "auto",
+        "enabled": true,
+        "last_decimate_ms": 0.0,
+        "last_emit_ms": 0.0026,
+        "last_encode_ms": 0.0003,
+        "last_upload_ms": 0.0006,
+        "max_segments_per_series": 8192,
+        "point_bytes": 0,
+        "point_count": 0,
+        "segment_count": 0,
+        "series_bytes": 0,
+        "series_count": 0,
+        "source_point_count": 0
+      },
+      "present_mode": "fifo",
+      "present_mode_env": null,
+      "primitives": {
+        "base_batches": 4,
+        "buffer_bytes": 608,
+        "complex_batches": 2,
+        "complex_bytes": 480,
+        "complex_count": 2,
+        "last_base_encode_ms": 0.0056,
+        "last_emit_ms": 0.022699999999999998,
+        "last_overlay_encode_ms": 9.999999999999999e-05,
+        "last_split_ms": 0.0014,
+        "last_upload_ms": 0.08600000000000001,
+        "line_batches": 0,
+        "line_bytes": 0,
+        "line_count": 0,
+        "overlay_batches": 0,
+        "rect_count": 4,
+        "simple_batches": 2,
+        "simple_bytes": 128,
+        "simple_count": 2,
+        "source_bytes": 960,
+        "split_collapsed": false,
+        "split_enabled": true
+      },
+      "scatter_count": 2,
+      "scatter_widget_id": "adjacent-left-scatter",
+      "scatter_widget_pool": 0,
+      "supported_present_modes": [
+        "fifo",
+        "fifo-relaxed",
+        "mailbox",
+        "immediate"
+      ],
+      "surface_format": "Bgra8UnormSrgb",
+      "widget_count": 6
+    },
+    "resources": {
+      "buffers": {
+        "resources": 0
+      },
+      "line_plot": null,
+      "line_plots": {},
+      "registry": {
+        "buffers": {
+          "count": 0,
+          "items": {}
+        },
+        "tables": {
+          "count": 0,
+          "items": {}
+        }
+      },
+      "scatter": {
+        "active_render_scale": 1.0,
+        "auto_point_size": true,
+        "auto_quality": false,
+        "effective_draw_point_count": 720,
+        "id": "adjacent-left-scatter",
+        "interactive_render_scale": 1.0,
+        "last_bounds_ms": 0.0067,
+        "last_decode_ms": 0.0,
+        "last_grid_ms": 0.0323,
+        "last_lod_ms": 0.0,
+        "last_overlay_ms": 0.0096,
+        "last_pack_ms": 0.0,
+        "last_payload_bytes": 23040,
+        "last_point_count": 720,
+        "last_primary_upload_ms": 0.0051,
+        "last_queue_latency_ms": 1012.347412109375,
+        "last_render_cache_hit": true,
+        "last_render_composite_ms": 0.0014,
+        "last_render_encode_ms": 0.0078,
+        "last_render_redraw_ms": 0.0,
+        "last_total_native_ms": 0.079,
+        "last_upload_ms": 0.047,
+        "payload_status": "Ok",
+        "point_size_scale": 1.0,
+        "primary_compact_colormap": "turbo",
+        "quality_level": 0,
+        "quality_target_frame_ms": 100.0,
+        "render_cache_hit_rate": 0.3333333333333333,
+        "render_cache_hits": 5,
+        "render_cache_revision": 36,
+        "render_composite_avg_ms": 0.0009866666666666667,
+        "render_count": 15,
+        "render_encode_avg_ms": 0.16841333333333336,
+        "render_redraw_avg_ms": 0.005693333333333333,
+        "scalar_bar": {
+          "colormap": "turbo",
+          "log_scale": false,
+          "title": "left-temperature",
+          "visible": true,
+          "vmax": 63.0,
+          "vmin": 45.0
+        },
+        "scene_revision": 36,
+        "updates": 1
+      },
+      "scatters": {
+        "adjacent-left-scatter": {
+          "active_render_scale": 1.0,
+          "actors": {
+            "extra_count": 0,
+            "label_count": 0,
+            "mesh_count": 0
+          },
+          "auto_point_size": true,
+          "auto_quality": false,
+          "bounds": {
+            "max": [
+              -5.407506942749023,
+              3.7789206504821777,
+              2.5
+            ],
+            "min": [
+              -10.965579986572266,
+              -2.1499998569488525,
+              -2.5
+            ]
+          },
+          "camera": {
+            "distance": 11.920990943908691,
+            "parallel": false,
+            "pitch": 0.23999999463558197,
+            "target": [
+              -8.186543464660645,
+              0.8144603967666626,
+              0.0
+            ],
+            "yaw": 0.6880000233650208
+          },
+          "effective_draw_point_count": 720,
+          "fitted_once": true,
+          "hover": {
+            "label": null,
+            "primary_column_count": 1,
+            "primary_meta_count": 0
+          },
+          "interactive_render_scale": 1.0,
+          "last_bounds_ms": 0.0067,
+          "last_decode_ms": 0.0,
+          "last_grid_ms": 0.0323,
+          "last_lod_ms": 0.0,
+          "last_overlay_ms": 0.0096,
+          "last_pack_ms": 0.0,
+          "last_payload_bytes": 23040,
+          "last_point_count": 720,
+          "last_primary_upload_ms": 0.0051,
+          "last_queue_latency_ms": 1012.347412109375,
+          "last_render_cache_hit": true,
+          "last_render_composite_ms": 0.0014,
+          "last_render_encode_ms": 0.0078,
+          "last_render_redraw_ms": 0.0,
+          "last_total_native_ms": 0.079,
+          "last_upload_ms": 0.047,
+          "lod": {
+            "active": false,
+            "enabled": false,
+            "factor": 8,
+            "threshold": 200000
+          },
+          "payload_format": "point_instance_v1",
+          "payload_status": "Ok",
+          "point_size_scale": 1.0,
+          "primary_compact_colormap": "turbo",
+          "quality_level": 0,
+          "quality_target_frame_ms": 100.0,
+          "render_cache_hit_rate": 0.3333333333333333,
+          "render_cache_hits": 5,
+          "render_cache_revision": 36,
+          "render_composite_avg_ms": 0.0009866666666666667,
+          "render_count": 15,
+          "render_encode_avg_ms": 0.16841333333333336,
+          "render_redraw_avg_ms": 0.005693333333333333,
+          "scalar_bar": {
+            "colormap": "turbo",
+            "log_scale": false,
+            "title": "left-temperature",
+            "visible": true,
+            "vmax": 63.0,
+            "vmin": 45.0
+          },
+          "scene_revision": 36,
+          "selection": {
+            "polygon_points": 0,
+            "rect": null
+          },
+          "updates": 1,
+          "viewport": {
+            "clip": [
+              15.0,
+              55.0,
+              799.0,
+              745.0
+            ],
+            "offset": [
+              15.0,
+              55.0
+            ],
+            "size": [
+              784,
+              690
+            ]
+          }
+        },
+        "adjacent-right-scatter": {
+          "active_render_scale": 1.0,
+          "actors": {
+            "extra_count": 0,
+            "label_count": 0,
+            "mesh_count": 0
+          },
+          "auto_point_size": true,
+          "auto_quality": false,
+          "bounds": {
+            "max": [
+              145.0,
+              227.9998321533203,
+              0.0
+            ],
+            "min": [
+              120.0,
+              192.00155639648438,
+              0.0
+            ]
+          },
+          "camera": {
+            "distance": 109.368896484375,
+            "parallel": true,
+            "pitch": 0.0,
+            "target": [
+              135.4827880859375,
+              211.49209594726562,
+              0.0
+            ],
+            "yaw": 0.0
+          },
+          "effective_draw_point_count": 360,
+          "fitted_once": true,
+          "hover": {
+            "label": null,
+            "primary_column_count": 1,
+            "primary_meta_count": 0
+          },
+          "interactive_render_scale": 1.0,
+          "last_bounds_ms": 0.0037,
+          "last_decode_ms": 0.0,
+          "last_grid_ms": 0.0185,
+          "last_lod_ms": 0.0,
+          "last_overlay_ms": 0.0005,
+          "last_pack_ms": 0.0,
+          "last_payload_bytes": 11520,
+          "last_point_count": 360,
+          "last_primary_upload_ms": 0.0047,
+          "last_queue_latency_ms": 1012.36181640625,
+          "last_render_cache_hit": false,
+          "last_render_composite_ms": 0.0,
+          "last_render_encode_ms": 0.006,
+          "last_render_redraw_ms": 0.0053,
+          "last_total_native_ms": 0.0369,
+          "last_upload_ms": 0.0237,
+          "lod": {
+            "active": false,
+            "enabled": false,
+            "factor": 8,
+            "threshold": 200000
+          },
+          "payload_format": "point_instance_v1",
+          "payload_status": "Ok",
+          "point_size_scale": 1.0,
+          "primary_compact_colormap": "viridis",
+          "quality_level": 0,
+          "quality_target_frame_ms": 100.0,
+          "render_cache_hit_rate": 0.5333333333333333,
+          "render_cache_hits": 8,
+          "render_cache_revision": 31,
+          "render_composite_avg_ms": 0.0009866666666666663,
+          "render_count": 15,
+          "render_encode_avg_ms": 0.07803333333333333,
+          "render_redraw_avg_ms": 0.002573333333333333,
+          "scalar_bar": {
+            "colormap": "viridis",
+            "log_scale": false,
+            "title": "zone",
+            "visible": false,
+            "vmax": 1.0,
+            "vmin": 0.0
+          },
+          "scene_revision": 32,
+          "selection": {
+            "polygon_points": 0,
+            "rect": null
+          },
+          "updates": 1,
+          "viewport": {
+            "clip": [
+              809.0,
+              55.0,
+              1113.0,
+              745.0
+            ],
+            "offset": [
+              809.0,
+              55.0
+            ],
+            "size": [
+              304,
+              690
+            ]
+          }
+        }
+      },
+      "tables": {
+        "resources": 0,
+        "widgets": 0
+      }
+    },
+    "state": {
+      "active_pages": {},
+      "active_t": {},
+      "active_tabs": {},
+      "checked": {},
+      "checked_t": {},
+      "container_scroll_x": {},
+      "container_scroll_y": {},
+      "context_menu_pos": null,
+      "context_targets": {},
+      "disabled": [],
+      "drag_hover_target": null,
+      "drag_kind": null,
+      "drag_pos": null,
+      "drag_source": null,
+      "dropdown_hover": null,
+      "dropdown_index": {},
+      "dropdown_items_count": {},
+      "expanded": {},
+      "expanded_t": {},
+      "float_range": {},
+      "float_val": {},
+      "focus_order": [],
+      "focus_t": {},
+      "focused": null,
+      "hover_t": {},
+      "hovered": null,
+      "menu_items_count": {},
+      "open_context_menu": null,
+      "open_dropdown": null,
+      "open_menu": null,
+      "open_t": {},
+      "pane_sizes": {},
+      "pressed": null,
+      "range_val": {},
+      "selectable_selected": {},
+      "selected_t": {},
+      "tables": {},
+      "text_cursor": {},
+      "text_scroll_x": {},
+      "text_scroll_y": {},
+      "text_val": {}
+    },
+    "stylesheets": {
+      "framework_rules": 145,
+      "last_error": null,
+      "theme_rules": 0,
+      "user_rules": 6,
+      "warning_count": 0
+    },
+    "theme": {
+      "accent": [
+        0.3529411852359772,
+        0.6627451181411743,
+        1.0,
+        1.0
+      ],
+      "background": [
+        0.03921568766236305,
+        0.05882352963089943,
+        0.0784313753247261,
+        1.0
+      ],
+      "border": [
+        0.14901961386203766,
+        0.2078431397676468,
+        0.26274511218070984,
+        1.0
+      ],
+      "danger": [
+        1.0,
+        0.37254902720451355,
+        0.4470588266849518,
+        1.0
+      ],
+      "disabled": [
+        0.364705890417099,
+        0.4156862795352936,
+        0.4588235318660736,
+        1.0
+      ],
+      "focus": [
+        1.0,
+        0.8274509906768799,
+        0.4156862795352936,
+        1.0
+      ],
+      "font_size": 13.0,
+      "muted_text": [
+        0.5686274766921997,
+        0.6274510025978088,
+        0.6784313917160034,
+        1.0
+      ],
+      "radius": 8.0,
+      "spacing": 5.0,
+      "success": [
+        0.2705882489681244,
+        0.7686274647712708,
+        0.5411764979362488,
+        1.0
+      ],
+      "surface": [
+        0.07058823853731155,
+        0.09803921729326248,
+        0.13333334028720856,
+        1.0
+      ],
+      "surface_alt": [
+        0.11372549086809158,
+        0.1568627506494522,
+        0.20000000298023224,
+        1.0
+      ],
+      "text": [
+        0.9490196108818054,
+        0.9647058844566345,
+        0.9725490212440491,
+        1.0
+      ],
+      "warning": [
+        0.95686274766922,
+        0.7215686440467834,
+        0.29019609093666077,
+        1.0
+      ]
+    },
+    "toasts": {
+      "count": 0,
+      "items": []
+    },
+    "tree": {
+      "children": [
+        {
+          "children": [
+            {
+              "children": [],
+              "class": "title",
+              "id": "dg-3",
+              "key": null,
+              "props": {
+                "badge": null,
+                "checked": null,
+                "disabled": false,
+                "expanded": null,
+                "extension_type": null,
+                "fixed_height": null,
+                "fixed_width": null,
+                "flow_align": null,
+                "flow_cross_align": null,
+                "grid_columns": null,
+                "grid_masonry": false,
+                "grid_min_column_width": null,
+                "grid_template_columns": null,
+                "grid_template_rows": null,
+                "gutter_size": null,
+                "image_fit": null,
+                "image_path": null,
+                "intrinsic_height": null,
+                "intrinsic_width": null,
+                "items_count": 0,
+                "led_size": null,
+                "led_state": null,
+                "level": null,
+                "max": null,
+                "min": null,
+                "open": null,
+                "orientation": null,
+                "page": null,
+                "pane_flex": null,
+                "pane_max_size": null,
+                "pane_min_size": null,
+                "pane_size": null,
+                "placeholder": null,
+                "route_value": null,
+                "rows": null,
+                "step": null,
+                "table": {
+                  "columns": 0,
+                  "page_size": null,
+                  "resizable_columns": true,
+                  "resource_id": null,
+                  "rows": null,
+                  "sample_rows": null,
+                  "sortable": true
+                },
+                "target": null,
+                "text": "Adjacent Scatter Interaction",
+                "toggle": null,
+                "tooltip": null,
+                "value": null,
+                "wrap": true
+              },
+              "style": {},
+              "type": "label"
+            },
+            {
+              "children": [
+                {
+                  "children": [],
+                  "class": "left-plot",
+                  "id": "adjacent-left-scatter",
+                  "key": null,
+                  "props": {
+                    "badge": null,
+                    "checked": null,
+                    "disabled": false,
+                    "expanded": null,
+                    "extension_type": null,
+                    "fixed_height": null,
+                    "fixed_width": null,
+                    "flow_align": null,
+                    "flow_cross_align": null,
+                    "grid_columns": null,
+                    "grid_masonry": false,
+                    "grid_min_column_width": null,
+                    "grid_template_columns": null,
+                    "grid_template_rows": null,
+                    "gutter_size": null,
+                    "image_fit": null,
+                    "image_path": null,
+                    "intrinsic_height": null,
+                    "intrinsic_width": null,
+                    "items_count": 0,
+                    "led_size": null,
+                    "led_state": null,
+                    "level": null,
+                    "max": null,
+                    "min": null,
+                    "open": null,
+                    "orientation": null,
+                    "page": null,
+                    "pane_flex": null,
+                    "pane_max_size": null,
+                    "pane_min_size": null,
+                    "pane_size": null,
+                    "placeholder": null,
+                    "route_value": null,
+                    "rows": null,
+                    "step": null,
+                    "table": {
+                      "columns": 5,
+                      "page_size": null,
+                      "resizable_columns": true,
+                      "resource_id": null,
+                      "rows": 720,
+                      "sample_rows": null,
+                      "sortable": true
+                    },
+                    "target": null,
+                    "text": null,
+                    "toggle": null,
+                    "tooltip": null,
+                    "value": null,
+                    "wrap": null
+                  },
+                  "style": {},
+                  "type": "scatter_3d"
+                },
+                {
+                  "children": [],
+                  "class": "scatter-plot-2d right-plot",
+                  "id": "adjacent-right-scatter",
+                  "key": null,
+                  "props": {
+                    "badge": null,
+                    "checked": null,
+                    "disabled": false,
+                    "expanded": null,
+                    "extension_type": null,
+                    "fixed_height": null,
+                    "fixed_width": null,
+                    "flow_align": null,
+                    "flow_cross_align": null,
+                    "grid_columns": null,
+                    "grid_masonry": false,
+                    "grid_min_column_width": null,
+                    "grid_template_columns": null,
+                    "grid_template_rows": null,
+                    "gutter_size": null,
+                    "image_fit": null,
+                    "image_path": null,
+                    "intrinsic_height": null,
+                    "intrinsic_width": null,
+                    "items_count": 0,
+                    "led_size": null,
+                    "led_state": null,
+                    "level": null,
+                    "max": null,
+                    "min": null,
+                    "open": null,
+                    "orientation": null,
+                    "page": null,
+                    "pane_flex": null,
+                    "pane_max_size": null,
+                    "pane_min_size": null,
+                    "pane_size": null,
+                    "placeholder": null,
+                    "route_value": null,
+                    "rows": null,
+                    "step": null,
+                    "table": {
+                      "columns": 5,
+                      "page_size": null,
+                      "resizable_columns": true,
+                      "resource_id": null,
+                      "rows": 360,
+                      "sample_rows": null,
+                      "sortable": true
+                    },
+                    "target": null,
+                    "text": null,
+                    "toggle": null,
+                    "tooltip": null,
+                    "value": null,
+                    "wrap": null
+                  },
+                  "style": {},
+                  "type": "scatter_3d"
+                }
+              ],
+              "class": "stage",
+              "id": "dg-4",
+              "key": null,
+              "props": {
+                "badge": null,
+                "checked": null,
+                "disabled": false,
+                "expanded": null,
+                "extension_type": null,
+                "fixed_height": null,
+                "fixed_width": null,
+                "flow_align": null,
+                "flow_cross_align": null,
+                "grid_columns": null,
+                "grid_masonry": false,
+                "grid_min_column_width": null,
+                "grid_template_columns": null,
+                "grid_template_rows": null,
+                "gutter_size": null,
+                "image_fit": null,
+                "image_path": null,
+                "intrinsic_height": null,
+                "intrinsic_width": null,
+                "items_count": 0,
+                "led_size": null,
+                "led_state": null,
+                "level": null,
+                "max": null,
+                "min": null,
+                "open": null,
+                "orientation": null,
+                "page": null,
+                "pane_flex": null,
+                "pane_max_size": null,
+                "pane_min_size": null,
+                "pane_size": null,
+                "placeholder": null,
+                "route_value": null,
+                "rows": null,
+                "step": null,
+                "table": {
+                  "columns": 0,
+                  "page_size": null,
+                  "resizable_columns": true,
+                  "resource_id": null,
+                  "rows": null,
+                  "sample_rows": null,
+                  "sortable": true
+                },
+                "target": null,
+                "text": null,
+                "toggle": null,
+                "tooltip": null,
+                "value": null,
+                "wrap": null
+              },
+              "style": {},
+              "type": "h_layout"
+            }
+          ],
+          "class": "root",
+          "id": "dg-2",
+          "key": null,
+          "props": {
+            "badge": null,
+            "checked": null,
+            "disabled": false,
+            "expanded": null,
+            "extension_type": null,
+            "fixed_height": null,
+            "fixed_width": null,
+            "flow_align": null,
+            "flow_cross_align": null,
+            "grid_columns": null,
+            "grid_masonry": false,
+            "grid_min_column_width": null,
+            "grid_template_columns": null,
+            "grid_template_rows": null,
+            "gutter_size": null,
+            "image_fit": null,
+            "image_path": null,
+            "intrinsic_height": null,
+            "intrinsic_width": null,
+            "items_count": 0,
+            "led_size": null,
+            "led_state": null,
+            "level": null,
+            "max": null,
+            "min": null,
+            "open": null,
+            "orientation": null,
+            "page": null,
+            "pane_flex": null,
+            "pane_max_size": null,
+            "pane_min_size": null,
+            "pane_size": null,
+            "placeholder": null,
+            "route_value": null,
+            "rows": null,
+            "step": null,
+            "table": {
+              "columns": 0,
+              "page_size": null,
+              "resizable_columns": true,
+              "resource_id": null,
+              "rows": null,
+              "sample_rows": null,
+              "sortable": true
+            },
+            "target": null,
+            "text": null,
+            "toggle": null,
+            "tooltip": null,
+            "value": null,
+            "wrap": null
+          },
+          "style": {},
+          "type": "v_layout"
+        }
+      ],
+      "class": null,
+      "id": "dg-1",
+      "key": null,
+      "props": {
+        "badge": null,
+        "checked": null,
+        "disabled": false,
+        "expanded": null,
+        "extension_type": null,
+        "fixed_height": 720.0,
+        "fixed_width": 1120.0,
+        "flow_align": null,
+        "flow_cross_align": null,
+        "grid_columns": null,
+        "grid_masonry": false,
+        "grid_min_column_width": null,
+        "grid_template_columns": null,
+        "grid_template_rows": null,
+        "gutter_size": null,
+        "image_fit": null,
+        "image_path": null,
+        "intrinsic_height": null,
+        "intrinsic_width": null,
+        "items_count": 0,
+        "led_size": null,
+        "led_state": null,
+        "level": null,
+        "max": null,
+        "min": null,
+        "open": null,
+        "orientation": null,
+        "page": null,
+        "pane_flex": null,
+        "pane_max_size": null,
+        "pane_min_size": null,
+        "pane_size": null,
+        "placeholder": null,
+        "route_value": null,
+        "rows": null,
+        "step": null,
+        "table": {
+          "columns": 0,
+          "page_size": null,
+          "resizable_columns": true,
+          "resource_id": null,
+          "rows": null,
+          "sample_rows": null,
+          "sortable": true
+        },
+        "target": null,
+        "text": null,
+        "toggle": null,
+        "tooltip": null,
+        "value": null,
+        "wrap": null
+      },
+      "style": {},
+      "type": "window"
+    },
+    "window": {
+      "height": 720,
+      "scale_factor": 1.0,
+      "width": 1120
+    }
+  },
+  "runtime": {
+    "active_scatter_id": null,
+    "command_drain": {
+      "apply": {
+        "avg_ms": 0.6601333333333333,
+        "count": 3,
+        "last_ms": 0.0,
+        "total_ms": 1.9804000000000002
+      },
+      "coalesce": {
+        "avg_ms": 0.002466666666666667,
+        "count": 3,
+        "last_ms": 0.0,
+        "total_ms": 0.0074
+      },
+      "fetch": {
+        "avg_ms": 0.002033333333333333,
+        "count": 3,
+        "last_ms": 0.0,
+        "total_ms": 0.0060999999999999995
+      },
+      "flush_rebuilds": {
+        "avg_ms": 6.666666666666666e-05,
+        "count": 3,
+        "last_ms": 0.0,
+        "total_ms": 0.00019999999999999998
+      },
+      "last_batches": 0,
+      "last_commands": 0,
+      "last_pending": 0,
+      "timing": {
+        "avg_ms": 0.6650666666666666,
+        "count": 3,
+        "last_ms": 0.00019999999999999998,
+        "total_ms": 1.9951999999999999
+      }
+    },
+    "command_queue_depth": 0,
+    "command_timings": {
+      "DebugSnapshot": {
+        "avg_ms": 0.0063999999999999994,
+        "count": 2,
+        "last_ms": 0.0042,
+        "total_ms": 0.012799999999999999
+      },
+      "FitScatterCamera": {
+        "avg_ms": 0.01,
+        "count": 1,
+        "last_ms": 0.01,
+        "total_ms": 0.01
+      },
+      "SetScatterAutoPointSize": {
+        "avg_ms": 0.0021,
+        "count": 2,
+        "last_ms": 0.0014,
+        "total_ms": 0.0042
+      },
+      "SetScatterAutoQuality": {
+        "avg_ms": 0.00075,
+        "count": 2,
+        "last_ms": 0.0007,
+        "total_ms": 0.0015
+      },
+      "SetScatterAxisVisibility": {
+        "avg_ms": 0.011,
+        "count": 1,
+        "last_ms": 0.011,
+        "total_ms": 0.011
+      },
+      "SetScatterHoverTooltip": {
+        "avg_ms": 0.00295,
+        "count": 2,
+        "last_ms": 0.00039999999999999996,
+        "total_ms": 0.0059
+      },
+      "SetScatterInteractiveRenderScale": {
+        "avg_ms": 0.00175,
+        "count": 2,
+        "last_ms": 0.0005,
+        "total_ms": 0.0035
+      },
+      "SetScatterLod": {
+        "avg_ms": 0.00335,
+        "count": 2,
+        "last_ms": 0.00039999999999999996,
+        "total_ms": 0.0067
+      },
+      "SetScatterParallelProjection": {
+        "avg_ms": 0.012,
+        "count": 1,
+        "last_ms": 0.012,
+        "total_ms": 0.012
+      },
+      "SetScatterPickingMode": {
+        "avg_ms": 0.0014,
+        "count": 2,
+        "last_ms": 9.999999999999999e-05,
+        "total_ms": 0.0028
+      },
+      "SetScatterPointsPacked": {
+        "avg_ms": 0.0695,
+        "count": 2,
+        "last_ms": 0.0388,
+        "total_ms": 0.139
+      },
+      "SetScatterPrimaryHoverColumns": {
+        "avg_ms": 0.05235,
+        "count": 2,
+        "last_ms": 0.0262,
+        "total_ms": 0.1047
+      },
+      "SetScatterTooltipAxisLabels": {
+        "avg_ms": 0.0028,
+        "count": 2,
+        "last_ms": 0.00039999999999999996,
+        "total_ms": 0.0056
+      },
+      "SetScatterViewDirection": {
+        "avg_ms": 0.0294,
+        "count": 1,
+        "last_ms": 0.0294,
+        "total_ms": 0.0294
+      }
+    },
+    "commands": {
+      "count": 24,
+      "limit": 64,
+      "recent": [
+        {
+          "command": "SetScatterPointsPacked",
+          "detail": "payload_bytes=23040, colormap=turbo, format=point_instance_v1, fit=true",
+          "dirty": "gpu_data",
+          "elapsed_ms": 0.1002,
+          "frame": 0,
+          "outcome": "applied",
+          "requested_redraw": true,
+          "seq": 1,
+          "target": "adjacent-left-scatter"
+        },
+        {
+          "command": "SetScatterHoverTooltip",
+          "detail": "true",
+          "dirty": null,
+          "elapsed_ms": 0.0055,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": false,
+          "seq": 2,
+          "target": "adjacent-left-scatter"
+        },
+        {
+          "command": "SetScatterTooltipAxisLabels",
+          "detail": null,
+          "dirty": null,
+          "elapsed_ms": 0.0052,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": false,
+          "seq": 3,
+          "target": "adjacent-left-scatter"
+        },
+        {
+          "command": "SetScatterPrimaryHoverColumns",
+          "detail": null,
+          "dirty": null,
+          "elapsed_ms": 0.0785,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": false,
+          "seq": 4,
+          "target": "adjacent-left-scatter"
+        },
+        {
+          "command": "SetScatterLod",
+          "detail": null,
+          "dirty": null,
+          "elapsed_ms": 0.0063,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 5,
+          "target": "adjacent-left-scatter"
+        },
+        {
+          "command": "SetScatterAutoPointSize",
+          "detail": null,
+          "dirty": null,
+          "elapsed_ms": 0.0028,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 6,
+          "target": "adjacent-left-scatter"
+        },
+        {
+          "command": "SetScatterInteractiveRenderScale",
+          "detail": "1.000",
+          "dirty": null,
+          "elapsed_ms": 0.003,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 7,
+          "target": "adjacent-left-scatter"
+        },
+        {
+          "command": "SetScatterAutoQuality",
+          "detail": "enabled=false, target_fps=10.00",
+          "dirty": null,
+          "elapsed_ms": 0.0007999999999999999,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 8,
+          "target": "adjacent-left-scatter"
+        },
+        {
+          "command": "SetScatterPickingMode",
+          "detail": null,
+          "dirty": null,
+          "elapsed_ms": 0.0027,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 9,
+          "target": "adjacent-left-scatter"
+        },
+        {
+          "command": "SetScatterPointsPacked",
+          "detail": "payload_bytes=11520, colormap=viridis, format=point_instance_v1, fit=false",
+          "dirty": "gpu_data",
+          "elapsed_ms": 0.0388,
+          "frame": 0,
+          "outcome": "applied",
+          "requested_redraw": true,
+          "seq": 10,
+          "target": "adjacent-right-scatter"
+        },
+        {
+          "command": "SetScatterHoverTooltip",
+          "detail": "true",
+          "dirty": null,
+          "elapsed_ms": 0.00039999999999999996,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": false,
+          "seq": 11,
+          "target": "adjacent-right-scatter"
+        },
+        {
+          "command": "SetScatterTooltipAxisLabels",
+          "detail": null,
+          "dirty": null,
+          "elapsed_ms": 0.00039999999999999996,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": false,
+          "seq": 12,
+          "target": "adjacent-right-scatter"
+        },
+        {
+          "command": "SetScatterPrimaryHoverColumns",
+          "detail": null,
+          "dirty": null,
+          "elapsed_ms": 0.0262,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": false,
+          "seq": 13,
+          "target": "adjacent-right-scatter"
+        },
+        {
+          "command": "SetScatterLod",
+          "detail": null,
+          "dirty": null,
+          "elapsed_ms": 0.00039999999999999996,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 14,
+          "target": "adjacent-right-scatter"
+        },
+        {
+          "command": "SetScatterAutoPointSize",
+          "detail": null,
+          "dirty": null,
+          "elapsed_ms": 0.0014,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 15,
+          "target": "adjacent-right-scatter"
+        },
+        {
+          "command": "SetScatterInteractiveRenderScale",
+          "detail": "1.000",
+          "dirty": null,
+          "elapsed_ms": 0.0005,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 16,
+          "target": "adjacent-right-scatter"
+        },
+        {
+          "command": "SetScatterAutoQuality",
+          "detail": "enabled=false, target_fps=10.00",
+          "dirty": null,
+          "elapsed_ms": 0.0007,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 17,
+          "target": "adjacent-right-scatter"
+        },
+        {
+          "command": "SetScatterPickingMode",
+          "detail": null,
+          "dirty": null,
+          "elapsed_ms": 9.999999999999999e-05,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 18,
+          "target": "adjacent-right-scatter"
+        },
+        {
+          "command": "FitScatterCamera",
+          "detail": null,
+          "dirty": null,
+          "elapsed_ms": 0.01,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 19,
+          "target": "adjacent-right-scatter"
+        },
+        {
+          "command": "SetScatterParallelProjection",
+          "detail": "true",
+          "dirty": null,
+          "elapsed_ms": 0.012,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 20,
+          "target": "adjacent-right-scatter"
+        },
+        {
+          "command": "SetScatterViewDirection",
+          "detail": "xy",
+          "dirty": null,
+          "elapsed_ms": 0.0294,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 21,
+          "target": "adjacent-right-scatter"
+        },
+        {
+          "command": "SetScatterAxisVisibility",
+          "detail": null,
+          "dirty": null,
+          "elapsed_ms": 0.011,
+          "frame": 0,
+          "outcome": "ok",
+          "requested_redraw": true,
+          "seq": 22,
+          "target": "adjacent-right-scatter"
+        },
+        {
+          "command": "DebugSnapshot",
+          "detail": "request_id=0",
+          "dirty": null,
+          "elapsed_ms": 0.0086,
+          "frame": 0,
+          "outcome": "completed",
+          "requested_redraw": false,
+          "seq": 23,
+          "target": null
+        },
+        {
+          "command": "DebugSnapshot",
+          "detail": "request_id=1",
+          "dirty": null,
+          "elapsed_ms": 0.0042,
+          "frame": 15,
+          "outcome": "completed",
+          "requested_redraw": false,
+          "seq": 24,
+          "target": null
+        }
+      ]
+    },
+    "cpu_frame_ms": 1.0128,
+    "dirty": {
+      "current": null,
+      "note": "DragonGUI applies coarse dirty flags immediately; this history records the recent command reasons that triggered them.",
+      "recent": [
+        {
+          "command": "SetScatterPointsPacked",
+          "detail": "payload_bytes=23040, colormap=turbo, format=point_instance_v1, fit=true",
+          "dirty": "gpu_data",
+          "elapsed_ms": 0.1002,
+          "frame": 0,
+          "outcome": "applied",
+          "requested_redraw": true,
+          "seq": 1,
+          "target": "adjacent-left-scatter"
+        },
+        {
+          "command": "SetScatterPointsPacked",
+          "detail": "payload_bytes=11520, colormap=viridis, format=point_instance_v1, fit=false",
+          "dirty": "gpu_data",
+          "elapsed_ms": 0.0388,
+          "frame": 0,
+          "outcome": "applied",
+          "requested_redraw": true,
+          "seq": 10,
+          "target": "adjacent-right-scatter"
+        }
+      ]
+    },
+    "drag_drop_session": null,
+    "drag_number_drag": null,
+    "frame_acquire_ms": 0.054799999999999995,
+    "frame_acquire_ms_avg": 0.06164,
+    "frame_encode_ms": 0.04,
+    "frame_encode_ms_avg": 0.2847533333333333,
+    "frame_ms": 1.3278333333333334,
+    "frame_ms_avg": 1.3278333333333334,
+    "frame_prepare_ms": 0.5025000000000001,
+    "frame_prepare_ms_avg": 0.4924866666666667,
+    "frame_present_ms": 0.0769,
+    "frame_present_ms_avg": 0.07180666666666666,
+    "frame_submit_ms": 0.3377,
+    "frame_submit_ms_avg": 0.41610666666666674,
+    "frame_window_count": 10,
+    "frame_work_ms": 0.8802000000000001,
+    "frame_work_ms_avg": 1.1933466666666666,
+    "frames_rendered": 15,
+    "gpu_ready": true,
+    "last_frame_ms": 1.0128,
+    "last_mouse_pos": [
+      407.0,
+      400.0
+    ],
+    "loading_screen": {
+      "enabled": true,
+      "frames": 1,
+      "min_duration_ms": 120,
+      "present_ms": 115.7216,
+      "shown": true,
+      "startup_resource_ms": 0.2932
+    },
+    "orbit_active": false,
+    "pan_active": false,
+    "pan_button": null,
+    "pending_slider_emit": null,
+    "pressed_id": null,
+    "python": {
+      "drain_requested": false,
+      "last_task": null,
+      "last_task_drain": null,
+      "pending_native_commands": 0,
+      "queued_tasks": 0,
+      "startup": {},
+      "task_drain_timing": {},
+      "task_timings": {}
+    },
+    "scrollbar_drag": null,
+    "smoke_frames": null,
+    "splitter_drag": null,
+    "table_column_resize_drag": null,
+    "table_scrollbar_drag": null,
+    "upload_ms": 0.2932,
+    "wall_fps": 9.64645113493713,
+    "window_open": true
+  },
+  "schema": 1
+}

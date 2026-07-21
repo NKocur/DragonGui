@@ -1,0 +1,235 @@
+33:POINT_ROWS = 125_000
+34:TABLE_ROWS = 50_000
+43:REPORT_BACKEND_LABEL = "Real Plotly" if go is not None else "Self-contained fallback"
+234:def make_demo_image() -> str:
+266:def make_plotly_style_report(title: str, accent: str, label: str, offset: float) -> str:
+476:def make_real_plotly_report(title: str, accent: str, label: str, offset: float) -> str:
+693:def make_report_html(title: str, accent: str, label: str, offset: float) -> str:
+694:    if go is not None:
+699:def write_demo_reports() -> tuple[str, str, str]:
+716:def inline_report_html() -> str:
+720:class DemoFrame:
+724:    def __init__(self, phase: float = 0.0, mode: str = "lidar", rows: int = POINT_ROWS) -> None:
+771:class LineFrame:
+804:class HistogramFrame:
+826:def redacted_document(doc: object) -> object:
+873:StatusBar {
+1349:BarChart,
+1350:Heatmap,
+1351:PieChart {
+1360:BarChart::label,
+1361:BarChart::value-label,
+1362:Heatmap::label,
+1363:PieChart::label {
+1369:PieChart.dashboard {
+1377:DataFrameTable {
+1382:DataFrameTable::header {
+1387:DataFrameTable::row {
+1391:DataFrameTable::row-selected {
+1395:DataFrameTable::grid-line,
+1396:DataFrameTable::scrollbar-track {
+1400:DataFrameTable::scrollbar-thumb {
+1404:DataFrameTable,
+1405:Histogram,
+1406:LinePlot,
+1407:Scatter3D,
+1408:HtmlReport,
+1414:LinePlot {
+1424:LinePlot.stream-plot {
+1428:Histogram {
+1438:Histogram.latency {
+1442:Histogram.density {
+1446:Histogram.percent {
+1450:Histogram.cumulative {
+1454:Scatter3D {
+1463:HtmlReport {
+1473:HtmlReport.report-viewer {
+1501:Scatter3D.main-scatter {
+1600:StatusBar {
+1774:DataFrameTable,
+1775:Histogram,
+1776:LinePlot,
+1777:Scatter3D,
+1778:HtmlReport,
+1783:LinePlot {
+1788:Histogram {
+1793:HtmlReport {
+1827:StatusBar {
+1975:LinePlot {
+1980:Histogram {
+1985:HtmlReport {
+2020:StatusBar {
+2240:DataFrameTable,
+2241:Histogram,
+2242:LinePlot,
+2243:Scatter3D,
+2244:HtmlReport,
+2253:Histogram.latency,
+2254:LinePlot {
+2258:Histogram.density {
+2262:Histogram.percent {
+2266:Histogram.cumulative {
+2349:histogram_frame = HistogramFrame()
+2374:line_plot_top: dg.LinePlot | None = None
+2375:line_plot_mid: dg.LinePlot | None = None
+2376:line_plot_bottom: dg.LinePlot | None = None
+2377:html_report_view: dg.HtmlReport | None = None
+2379:histogram_latency: dg.Histogram | None = None
+2380:histogram_score: dg.Histogram | None = None
+2381:histogram_revenue: dg.Histogram | None = None
+2382:histogram_residual: dg.Histogram | None = None
+2387:binding_playground: NodeGraphBindingPlayground | None = None
+2390:def set_status(message: str) -> None:
+2394:def fmt_ms(value: object) -> str:
+2402:def fmt_count(value: object) -> str:
+2409:def fmt_payload(value: object) -> str:
+2421:def metric_ms(metrics: dict[str, object], key: str) -> str:
+2425:def update_scatter_stats(snapshot: dict[str, object], observed_fps: float | None = None) -> None:
+2515:def refresh_scatter_stats() -> None:
+2526:def toggle_scatter_stats(enabled: bool) -> None:
+2534:def set_page(value: str) -> None:
+2540:def debug_page_active() -> bool:
+2545:def set_html_report_status(message: str) -> None:
+2551:def show_report_overview() -> None:
+2557:def show_report_detail() -> None:
+2563:def show_report_inline() -> None:
+2565:        if go is not None:
+2573:def reload_html_report() -> None:
+2579:def open_html_report_external() -> None:
+2586:def refresh_html_report_snapshot() -> None:
+2597:            detail = f"HtmlReport: enabled={enabled}, instances={count}, recovered={recovered}"
+2605:def scatter_stats_worker() -> None:
+2645:def apply_theme(name: str) -> None:
+2651:def next_frame(mode: str | None = None) -> DemoFrame:
+2658:def push_scatter(mode: str | None = None) -> None:
+2675:def set_colormap(name: str) -> None:
+2686:def set_stream_interval(value: float) -> None:
+2693:def set_point_size(value: float) -> None:
+2698:def toggle_grid(enabled: bool) -> None:
+2704:def toggle_planes(enabled: bool) -> None:
+2710:def apply_grid_options() -> None:
+2717:def toggle_grid_sticky(enabled: bool) -> None:
+2723:def toggle_grid_all_edges(enabled: bool) -> None:
+2729:def toggle_orientation(enabled: bool) -> None:
+2735:def update_axis_label(axis: str, value: str) -> None:
+2744:def set_tick_count(axis: str, value: float) -> None:
+2770:def reset_tick_counts() -> None:
+2781:def toggle_axis_visibility(axis: str, enabled: bool) -> None:
+2796:def set_scatter_point_style(value: str) -> None:
+2801:def set_scatter_view(value: str) -> None:
+2814:def pick_scatter_point(point: dg.ScatterPick) -> None:
+2818:def stream_payloads_for_mode(mode: str, colormap: str) -> list[tuple[float, dg.ScatterPayload]]:
+2852:            dg.Scatter3D.prepare_points(
+2867:def record_stream_frame(
+2885:def current_stream_interval_ms() -> float:
+2890:def normalize_stream_handoff(value: str) -> str:
+2897:def stream_handoff_label(value: str) -> str:
+2901:def set_stream_handoff(value: str) -> None:
+2916:def start_stream() -> None:
+2984:def stop_stream() -> None:
+2999:def update_all_line_plots(callback) -> None:
+3005:def update_all_histograms(callback) -> None:
+3011:def set_line_width(value: float) -> None:
+3020:def set_line_tick_count(value: float) -> None:
+3029:def set_line_window(seconds: float | None) -> None:
+3039:def set_line_grid(enabled: bool) -> None:
+3044:def set_line_axes(enabled: bool) -> None:
+3049:def set_line_ticks(enabled: bool) -> None:
+3054:def set_line_toolbar(enabled: bool) -> None:
+3059:def set_line_legend(enabled: bool) -> None:
+3064:def fit_line_plots() -> None:
+3072:def reset_line_plots() -> None:
+3107:def generated_line_batch(samples: int = 28) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+3132:def append_line_batch() -> None:
+3144:def start_line_stream() -> None:
+3163:def stop_line_stream() -> None:
+3168:def set_histogram_tick_count(value: float) -> None:
+3174:    set_status(f"Histogram ticks: {count}")
+3177:def set_histogram_grid(enabled: bool) -> None:
+3179:    set_status(f"Histogram grid: {enabled}")
+3182:def set_histogram_axes(enabled: bool) -> None:
+3184:    set_status(f"Histogram axes: {enabled}")
+3187:def set_histogram_ticks(enabled: bool) -> None:
+3189:    set_status(f"Histogram tick labels: {enabled}")
+3192:def set_histogram_toolbar(enabled: bool) -> None:
+3194:    set_status(f"Histogram toolbar: {enabled}")
+3197:def fit_histograms() -> None:
+3199:    set_status("Histograms fit to data")
+3202:def update_table(mode: str) -> None:
+3203:    table.set_frame(DemoFrame(phase=demo_state["phase"] + 0.6, mode=mode, rows=TABLE_ROWS))
+3207:def select_table_cell(selection: dg.TableSelection) -> None:
+3211:def upload_buffer() -> None:
+3217:def release_buffer() -> None:
+3222:def choose_csv() -> None:
+3231:def color_hex(color: tuple[int, ...]) -> str:
+3236:def apply_demo_color(color: tuple[int, ...]) -> None:
+3244:def show_demo_toast() -> None:
+3249:def print_snapshot() -> None:
+3268:def make_summary_children() -> list[object]:
+3272:        dg.Label(f"Scatter rows: {POINT_ROWS:,}", parent=None),
+3278:def make_pipeline_children() -> list[object]:
+3288:def swap_children() -> None:
+3310:def cycle_style() -> None:
+3320:class NodeGraphBindingPlayground:
+3778:                            ["No HtmlReport/WebView was created in this run."],
+3883:def AllFeaturesV3(_ctx: dg.ComponentCtx) -> dg.Window:
+3895:    v4_palette: dg.CommandPalette | None = None
+3916:    def on_v4_heatmap(cell: dg.HeatmapCell | None) -> None:
+3918:            v4_mark(f"Heatmap {cell.y_label or cell.row}/{cell.x_label or cell.col}: {cell.value:.3f}")
+3920:    def on_v4_bar(bar: dg.BarChartBar | None) -> None:
+3936:        with dg.Menu("LinePlot"):
+3941:        with dg.Menu("Histogram"):
+3942:            dg.MenuItem("Fit Histograms", on_click=fit_histograms)
+3955:                dg.Tag("Scatter3D", level="info")
+3956:                dg.Tag("LinePlot", level="info")
+3957:                dg.Tag("Histogram", level="warning")
+3959:                dg.Tag("HtmlReport", level="success")
+3964:            dg.NavItem("Histograms", page="histograms")
+3977:        with dg.Pages(value=str(demo_state["page"]), on_change=set_page, key="main-pages"):
+3978:            with dg.Page("overview", title="Overview"):
+3981:                        dg.Label(f"{POINT_ROWS:,}", class_="stat-value")
+3984:                        dg.Label(f"{TABLE_ROWS:,}", class_="stat-value")
+3986:                    with dg.Panel("Histograms", class_="highlight", style=CARD_STYLE):
+4008:            with dg.Page("scatter", title="Scatter3D"):
+4091:                    scatter = dg.Scatter3D(
+4118:            with dg.Page("lineplots", title="Line plots"):
+4173:                            line_plot_top = dg.LinePlot(
+4200:                            line_plot_mid = dg.LinePlot(
+4227:                            line_plot_bottom = dg.LinePlot(
+4245:            with dg.Page("histograms", title="Histograms"):
+4248:                        "Histogram controls",
+4301:                                histogram_latency = dg.Histogram(
+4318:                                histogram_score = dg.Histogram(
+4335:                                histogram_revenue = dg.Histogram(
+4352:                                histogram_residual = dg.Histogram(
+4369:            with dg.Page("piecharts", title="Pie charts"):
+4373:                        dg.PieChart(
+4388:                        dg.PieChart(
+4403:                        dg.PieChart(
+4422:                        dg.PieChart(
+4440:            with dg.Page("v4widgets", title="V4 widgets"):
+4631:                            dg.DataFrameTable(
+4670:                            dg.ScatterPlot2D(
+4683:                            dg.Heatmap(
+4694:                            dg.BarChart(
+4706:                            dg.BarChart(
+4718:                    v4_palette = dg.CommandPalette(
+4731:            with dg.Page("controls", title="Controls"):
+4772:            with dg.Page("data", title="Data"):
+4784:                        dg.Label("DataFrameTable virtualizes rows and columns.", class_="subtle")
+4785:                    table = dg.DataFrameTable(
+4786:                        DemoFrame(rows=TABLE_ROWS),
+4792:            with dg.Page("runtime", title="Runtime"):
+4806:            with dg.Page("debug", title="Debug"):
+4814:                    dg.ThreadMonitor(
+4848:                        html_report_view = dg.HtmlReport(
+4863:                        dg.Label("ThreadMonitor shows Python task queue, producer threads, and task failures.", class_="subtle")
+4866:            with dg.Page("styling", title="Styling"):
+4888:            with dg.Page("layout", title="Node Binding"):
+4889:                binding_playground = NodeGraphBindingPlayground(win)
+4892:    with dg.StatusBar(height=40):
+4895:        dg.Label(f"{POINT_ROWS:,} points")
+4896:        dg.Label(f"{TABLE_ROWS:,} table rows")
+4925:def layout_summary_for_page(result: dict, route: str) -> dict:
+5017:    result = app.run_with_loading(
+5023:except dg.BackendUnavailableError:

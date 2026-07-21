@@ -1,0 +1,220 @@
+ 451:                 ("North Plant Command Center", "overview"),
+ 452:                 (title, route),
+ 453:             ],
+ 454:             on_select=lambda item: navigate(item.value),
+ 455:         )
+ 456:         with dg.HLayout(style={"align_items": "center", "gap": 10, "min_width": 0}):
+ 457:             dg.Label(title, class_="page-title", wrap=False)
+ 458:             dg.Tag("generated data", level="neutral")
+ 459:         dg.Label(detail, class_="muted")
+ 460: 
+ 461: 
+ 462: def build_overview_page() -> None:
+ 463:     page_header("overview", "Operations Overview", "Live sensor pipeline health, incidents, and throughput.")
+ 464:     with dg.GridLayout(columns=4, min_column_width=180, gap=10):
+ 465:         build_metric_card("Availability", "99.2%", "rolling 24h across 84 feeds", "success")
+ 466:         build_metric_card("Open incidents", "4", "two require model-owner review", "warning")
+ 467:         build_metric_card("Median latency", "34 ms", "p95 remains under 71 ms", "info")
+ 468:         build_metric_card("Export backlog", "18", "report queue is draining", "neutral")
+ 469:     with dg.Splitter(orientation="horizontal", style={"height": 360, "min_height": 260}):
+ 470:         with dg.Pane(size=0.62, min_size=320):
+ 471:             with dg.Panel("Fleet Pulse", style={"height": "100%"}):
+ 472:                 dg.LinePlot(
+ 473:                     SERIES_FRAME,
+ 474:                     x="minute",
+ 475:                     y=["latency", "error_budget"],
+ 476:                     labels=["latency", "error budget"],
+ 477:                     colors=["#36a3ff", "#2fb344"],
+ 478:                     show_toolbar=True,
+ 479:                     show_legend=True,
+ 480:                     style={"height": "100%", "min_height": 220},
+ 481:                 )
+ 482:         with dg.Pane(size=0.38, min_size=260):
+ 483:             with dg.Panel("Incident Mix", style={"height": "100%"}):
+ 484:                 state.incident_badge = dg.Badge("4", level="warning")
+ 485:                 dg.PieChart(
+ 486:                     labels=["watch", "queued", "blocked", "ready"],
+ 487:                     values=[8, 14, 4, 62],
+ 488:                     donut=True,
+ 489:                     center_value="88",
+ 490:                     center_label="routes",
+ 491:                     show_legend=True,
+ 492:                     legend_position="right",
+ 493:                     style={"height": 245},
+ 494:                 )
+ 495:     with dg.Panel("Recent Events"):
+ 496:         dg.DataFrameTable(TABLE_ROWS[:28], page_size=28, sample_rows=28, style={"height": 260, "width": "100%"})
+ 497: 
+ 498: 
+ 499: def build_explore_page() -> None:
+ 500:     page_header("explore", "3D Sensor Explore", "Inspect the same generated plant telemetry in GPU plot surfaces.")
+ 501:     with dg.Toolbar():
+ 502:         dg.IconButton("refresh", tooltip="Refresh points", on_click=randomize_visuals)
+ 503:         dg.IconButton("search", tooltip="Command palette", on_click=show_palette)
+ 504:         dg.ToolbarSeparator()
+ 505:         dg.SmallButton("Fit/Reset", on_click=randomize_visuals)
+ 506:         dg.SearchBox("asset:cell", placeholder="filter asset or zone", style={"width": 220})
+ 507:     with dg.Splitter(orientation="horizontal", style={"height": 610, "min_height": 360}):
+ 508:         with dg.Pane(size=0.72, min_size=360):
+ 509:             state.scatter = dg.Scatter3D(
+ 510:                 SCATTER_FRAME,
+ 511:                 x="x",
+ 512:                 y="y",
+ 513:                 z="z",
+ 514:                 color="temperature",
+ 515:                 colormap="turbo",
+ 516:                 grid=True,
+ 517:                 scalar_bar=True,
+ 518:                 hover=["asset", "zone", "temperature"],
+ 519:                 point_size=3,
+ 520:                 auto_quality=True,
+ 521:                 lod=True,
+ 522:                 style={"height": "100%", "min_height": 340},
+ 523:                 on_pick=lambda pick: set_status(f"Picked point {pick.index}: z={pick.z:.3f}", "info"),
+ 524:             )
+ 525:         with dg.Pane(size=0.28, min_size=260):
+ 526:             with dg.Panel("Explore Controls", style={"height": "100%"}):
+ 527:                 dg.Dropdown(["turbo", "viridis", "plasma", "cividis"], value="turbo", on_change=lambda v: state.scatter.set_colormap(v) if state.scatter else None)
+ 528:                 dg.Checkbox("Grid visible", checked=True, on_change=lambda v: state.scatter.show_grid(v) if state.scatter else None)
+ 529:                 dg.ToggleSwitch("Auto quality", checked=True, on_change=lambda v: state.scatter.set_auto_quality(v) if state.scatter else None)
+ 530:                 dg.Slider(0.85, min=0.25, max=1, step=0.05, on_change=lambda v: state.scatter.set_interactive_render_scale(v) if state.scatter else None)
+ 531:                 dg.RangeSlider((20, 84), min=0, max=100, step=1, on_change=lambda r: set_status(f"Health band {r[0]:.0f}-{r[1]:.0f}"))
+ 532:                 dg.DragNumber(3, min=1, max=12, step=0.5, on_change=lambda v: state.scatter.set_auto_point_size(v > 6) if state.scatter else None)
+ 533:                 dg.DragVector((1, 0, 0), labels=("dx", "dy", "dz"), min=-1, max=1, step=0.1, on_change=lambda v: set_status(f"Vector control {v}"))
+ 534:                 dg.Separator()
+ 535:                 state.scatter2d = dg.ScatterPlot2D(
+ 536:                     SCATTER_FRAME,
+ 537:                     x="temperature",
+ 538:                     y="health",
+ 539:                     color="zone",
+ 540:                     legend=True,
+ 541:                     style={"height": 210},
+ 542:                 )
+ 543: 
+ 544: 
+ 545: def build_timeseries_page() -> None:
+ 546:     page_header("timeseries", "Time Series", "Telemetry, distribution, heatmap, and categorical charts share generated fixtures.")
+ 547:     with dg.GridLayout(columns=2, min_column_width=360, gap=10):
+ 548:         with dg.Panel("Live Latency"):
+ 549:             state.line_plot = dg.LinePlot(
+ 550:                 SERIES_FRAME,
+ 551:                 x="minute",
+ 552:                 y="latency",
+ 553:                 label="latency",
+ 554:                 color="#36a3ff",
+ 555:                 show_toolbar=True,
+ 556:                 max_points=900,
+ 557:                 style={"height": 270},
+ 558:             )
+ 559:         with dg.Panel("Latency Distribution"):
+ 560:             dg.Histogram(SERIES_FRAME["latency"], bins=36, mode="count", style={"height": 270})
+ 561:         with dg.Panel("Route Heatmap"):
+ 562:             state.heatmap = dg.Heatmap(HEAT_MATRIX, x_labels=HEAT_X, y_labels=HEAT_Y, title="p95 latency by line and hour", colormap="magma", style={"height": 300})
+ 563:         with dg.Panel("Throughput By Owner"):
+ 564:             state.bar_chart = dg.BarChart(
+ 565:                 TABLE_FRAME,
+ 566:                 category="owner",
+ 567:                 value=["throughput", "latency_ms"],
+ 568:                 aggregate="mean",
+ 569:                 series=["throughput", "latency"],
+ 570:                 show_toolbar=True,
+ 571:                 style={"height": 300},
+ 572:                 on_hover=lambda bar: set_status(f"Bar hover: {bar.label if bar else 'none'}"),
+ 573:             )
+ 574: 
+ 575: 
+ 576: def build_data_page() -> None:
+ 577:     page_header("data", "Data Review", "Virtualized table, property inspector, search, selection, and context menus.")
+ 578:     with dg.Toolbar():
+ 579:         dg.SearchBox("", placeholder="search routes", on_change=lambda q: set_status(f"Search changed: {q}"), style={"width": 260})
+ 580:         dg.ToolbarSeparator()
+ 581:         dg.SmallButton("All", on_click=lambda: update_table_filter("all"))
+ 582:         for owner in ["ingest", "model", "quality", "export"]:
+ 583:             dg.SmallButton(owner.title(), on_click=lambda owner=owner: update_table_filter(owner))
+ 584:     with dg.Splitter(orientation="horizontal", style={"height": 620, "min_height": 380}):
+ 585:         with dg.Pane(size=0.7, min_size=360):
+ 586:             state.data_table = dg.DataFrameTable(
+ 587:                 TABLE_ROWS,
+ 588:                 page_size=80,
+ 589:                 sample_rows=120,
+ 590:                 on_select=lambda s: set_status(f"Selected row {s.row_index}, {s.column}={s.value}"),
+ 591:                 style={
+ 592:                     "height": "100%",
+ 593:                     "width": "100%",
+ 594:                     "parts": {
+ 595:                         "header": {"background": "surface_alt"},
+ 596:                         "row-selected": {"background": "accent_mix_20"},
+ 597:                     },
+ 598:                 },
+ 599:             )
+ 600:             with dg.ContextMenu(target=state.data_table, width=230):
+ 601:                 dg.MenuItem("Open route details", on_click=lambda: set_status("Context action: open route details"))
+ 602:                 dg.MenuItem("Suppress for one hour", on_click=show_confirm_modal)
+ 603:                 dg.MenuItem("Export selected row", on_click=lambda: run_file_dialog("save"))
+ 604:         with dg.Pane(size=0.3, min_size=280):
+ 605:             with dg.Panel("Selected Route Inspector", style={"height": "100%"}):
+ 606:                 dg.PropertyGrid(
+ 607:                     {
+ 608:                         "Route": "plant.north.line-2.cell-07.sensor-feed",
+ 609:                         "Enabled": True,
+ 610:                         "Owner": "model",
+ 611:                         "Priority": 2,
+ 612:                         "Latency Window": (18, 84),
+ 613:                         "Accent": "#36a3ff",
+ 614:                         "Notes": "Escalate when p95 drift is above threshold for 10 minutes.",
+ 615:                     },
+ 616:                     schema={
+ 617:                         "Owner": {"type": "choice", "options": ["ingest", "model", "quality", "export"]},
+ 618:                         "Priority": {"type": "number", "min": 1, "max": 5, "step": 1},
+ 619:                         "Latency Window": {"type": "range", "min": 0, "max": 120, "step": 1},
+ 620:                         "Accent": {"type": "color"},
+ 621:                         "Notes": {"type": "multiline", "rows": 4},
+ 622:                     },
+ 623:                     on_change=lambda change: set_status(f"Property {change.key} -> {change.value}"),
+ 624:                     label_width=110,
+ 625:                 )
+ 626: 
+ 627: 
+ 628: def build_workflow_page() -> None:
+ 629:     page_header("workflow", "Operator Workflow", "Forms, tree navigation, drag/drop, command palette, code editor, and logs.")
+ 630:     with dg.GridLayout(columns=2, min_column_width=360, gap=10):
+ 631:         with dg.Panel("Pipeline Tree", style={"height": 360}):
+ 632:             with dg.ScrollArea(axis="y", height=150, gap=4):
+ 633:                 with dg.TreeView(selected="line-2.cell-07", on_select=lambda node: set_status(f"Tree selected {node}")):
+ 634:                     with dg.TreeNode("North Plant", node_id="north", expanded=True):
+ 635:                         with dg.TreeNode("Line 2", node_id="line-2", expanded=True):
+ 636:                             dg.TreeNode("Cell 07 sensor-feed", node_id="line-2.cell-07", leaf=True)
+ 637:                             dg.TreeNode("Cell 08 calibration", node_id="line-2.cell-08", leaf=True)
+ 638:                         with dg.TreeNode("Line 4", node_id="line-4", expanded=True):
+ 639:                             dg.TreeNode("Cell 03 export queue", node_id="line-4.cell-03", leaf=True)
+ 640:             dg.Separator()
+ 641:             dg.SelectableList(
+ 642:                 [
+ 643:                     {"label": "Run validation plan", "value": "validate"},
+ 644:                     {"label": "Queue model review", "value": "review"},
+ 645:                     {"label": "Publish report bundle", "value": "publish"},
+ 646:                 ],
+ 647:                 selected=["validate", "review"],
+ 648:                 selection_mode="multiple",
+ 649:                 on_change=lambda values: set_status(f"Workflow selection: {values}"),
+ 650:             )
+ 651:         with dg.Panel("Action Form", style={"height": 360}):
+ 652:             dg.TextInput("plant.north.line-2.cell-07", placeholder="route")
+ 653:             dg.TextArea("Review p95 drift and attach report bundle.", rows=4)
+ 654:             dg.RadioGroup(["Monitor", "Escalate", "Suppress"], value="Monitor", orientation="horizontal", on_change=lambda value: set_status(f"Disposition {value}"))
+ 655:             with dg.HLayout(style={"gap": 8, "align_items": "center"}):
+ 656:                 dg.DateInput("2026-07-10", on_change=lambda value: set_status(f"Date {value}"))
+ 657:                 dg.TimeInput("09:30", on_change=lambda value: set_status(f"Time {value}"))
+ 658:             dg.DateTimeInput("2026-07-10T09:30:00", on_change=lambda value: set_status(f"DateTime {value}"))
+ 659:             dg.NumberInput(15, min=1, max=120, step=1, on_change=lambda value: set_status(f"Snooze {value} minutes"))
+ 660:             dg.Button("Open Review Modal", on_click=show_review_modal, badge="2")
+ 661:         with dg.Panel("Drag Metrics", style={"height": 320}):
+ 662:             with dg.FlowLayout(gap=8, row_gap=8):
+ 663:                 for payload in [
+ 664:                     {"metric": "latency", "window": "p95"},
+ 665:                     {"metric": "error_budget", "window": "24h"},
+ 666:                     {"metric": "throughput", "window": "hour"},
+ 667:                 ]:
+ 668:                     with dg.DragSource(payload, drag_kind="metric", style={"padding": 8, "border_color": "border", "border_width": 1}):
+ 669:                         dg.Tag(f"{payload['metric']} / {payload['window']}", level="info")
+ 670:             dg.DropZone("Drop metric here", accept="metric", on_drop=lambda payload: set_status(f"Dropped metric payload: {payload}"), style={"height": 120})

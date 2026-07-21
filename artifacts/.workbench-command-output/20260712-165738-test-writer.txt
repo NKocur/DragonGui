@@ -1,0 +1,421 @@
+ M .codex-workbench-sessions/saved_sessions.json
+ M .test-cache/dragongui-wheel.zip
+ M .test-cache/v/cache/lastfailed
+ M .test-cache/v/cache/nodeids
+ M artifacts/CODE_REVIEW.md
+ M artifacts/IMPLEMENTATION_NOTES.md
+ M artifacts/MAINTAINABILITY_REVIEW.md
+ M artifacts/SPEC.md
+ M artifacts/TEST_RESULTS.md
+ M artifacts/visual_audit/REPORT.md
+ M artifacts/visual_audit/logs/data-table-upgrades-390x720.stdout.txt
+ M artifacts/visual_audit/logs/data-table-upgrades-desktop-1.stdout.txt
+ M artifacts/visual_audit/logs/default-polish-stress-390x720.stdout.txt
+ M artifacts/visual_audit/logs/default-polish-stress-desktop-1.stdout.txt
+ M artifacts/visual_audit/logs/layout-flex-stress-390x720.stdout.txt
+ M artifacts/visual_audit/logs/layout-flex-stress-desktop-1.stdout.txt
+ M artifacts/visual_audit/logs/layout-grid-masonry-390x720.stdout.txt
+ M artifacts/visual_audit/logs/layout-grid-masonry-desktop-1.stdout.txt
+ M artifacts/visual_audit/logs/layout-panel-bounds-390x720.stdout.txt
+ M artifacts/visual_audit/logs/layout-panel-bounds-desktop-1.stdout.txt
+ M artifacts/visual_audit/logs/layout-plot-embedding-390x720.stdout.txt
+ M artifacts/visual_audit/logs/layout-plot-embedding-desktop-1.stdout.txt
+ M artifacts/visual_audit/logs/layout-scrollable-composites-390x720.stdout.txt
+ M artifacts/visual_audit/logs/layout-scrollable-composites-desktop-1.stdout.txt
+ M artifacts/visual_audit/logs/responsive-layout-390x720.stdout.txt
+ M artifacts/visual_audit/logs/responsive-layout-desktop-1.stdout.txt
+ M artifacts/visual_audit/logs/scatter-plot-2d-desktop-1.stdout.txt
+ M artifacts/visual_audit/logs/scatter3d-desktop-1.stdout.txt
+ M artifacts/visual_audit/logs/splitter-desktop-1.stdout.txt
+ M artifacts/visual_audit/logs/toolbar-390x720.stdout.txt
+ M artifacts/visual_audit/logs/toolbar-desktop-1.stdout.txt
+ M artifacts/visual_audit/report.json
+ M artifacts/visual_audit/screenshots/app-shell-workbench-390x720.png
+ M artifacts/visual_audit/screenshots/app-shell-workbench-desktop-1.png
+ M artifacts/visual_audit/screenshots/data-table-upgrades-390x720.png
+ M artifacts/visual_audit/screenshots/data-table-upgrades-desktop-1.png
+ M artifacts/visual_audit/screenshots/default-polish-stress-390x720.png
+ M artifacts/visual_audit/screenshots/default-polish-stress-desktop-1.png
+ M artifacts/visual_audit/screenshots/layout-flex-stress-390x720.png
+ M artifacts/visual_audit/screenshots/layout-flex-stress-desktop-1.png
+ M artifacts/visual_audit/screenshots/layout-grid-masonry-390x720.png
+ M artifacts/visual_audit/screenshots/layout-grid-masonry-desktop-1.png
+ M artifacts/visual_audit/screenshots/layout-panel-bounds-390x720.png
+ M artifacts/visual_audit/screenshots/layout-panel-bounds-desktop-1.png
+ M artifacts/visual_audit/screenshots/layout-plot-embedding-390x720.png
+ M artifacts/visual_audit/screenshots/layout-plot-embedding-desktop-1.png
+ M artifacts/visual_audit/screenshots/layout-scrollable-composites-390x720.png
+ M artifacts/visual_audit/screenshots/layout-scrollable-composites-desktop-1.png
+ M artifacts/visual_audit/screenshots/responsive-layout-390x720.png
+ M artifacts/visual_audit/screenshots/responsive-layout-desktop-1.png
+ M artifacts/visual_audit/screenshots/scatter-plot-2d-desktop-1.png
+ M artifacts/visual_audit/screenshots/scatter3d-desktop-1.png
+ M artifacts/visual_audit/screenshots/splitter-desktop-1.png
+ M artifacts/visual_audit/screenshots/toolbar-390x720.png
+ M artifacts/visual_audit/screenshots/toolbar-desktop-1.png
+ M artifacts/visual_audit/snapshots/app-shell-workbench-390x720.json
+ M artifacts/visual_audit/snapshots/app-shell-workbench-desktop-1.json
+ M artifacts/visual_audit/snapshots/data-table-upgrades-390x720.json
+ M artifacts/visual_audit/snapshots/data-table-upgrades-desktop-1.json
+ M artifacts/visual_audit/snapshots/default-polish-stress-390x720.json
+ M artifacts/visual_audit/snapshots/default-polish-stress-desktop-1.json
+ M artifacts/visual_audit/snapshots/layout-flex-stress-390x720.json
+ M artifacts/visual_audit/snapshots/layout-flex-stress-desktop-1.json
+ M artifacts/visual_audit/snapshots/layout-grid-masonry-390x720.json
+ M artifacts/visual_audit/snapshots/layout-grid-masonry-desktop-1.json
+ M artifacts/visual_audit/snapshots/layout-panel-bounds-390x720.json
+ M artifacts/visual_audit/snapshots/layout-panel-bounds-desktop-1.json
+ M artifacts/visual_audit/snapshots/layout-plot-embedding-390x720.json
+ M artifacts/visual_audit/snapshots/layout-plot-embedding-desktop-1.json
+ M artifacts/visual_audit/snapshots/layout-scrollable-composites-390x720.json
+ M artifacts/visual_audit/snapshots/layout-scrollable-composites-desktop-1.json
+ M artifacts/visual_audit/snapshots/responsive-layout-390x720.json
+ M artifacts/visual_audit/snapshots/responsive-layout-desktop-1.json
+ M artifacts/visual_audit/snapshots/scatter-plot-2d-desktop-1.json
+ M artifacts/visual_audit/snapshots/scatter3d-desktop-1.json
+ M artifacts/visual_audit/snapshots/splitter-desktop-1.json
+ M artifacts/visual_audit/snapshots/toolbar-390x720.json
+ M artifacts/visual_audit/snapshots/toolbar-desktop-1.json
+ M examples/css_feature_probes/visual_audit_manifest.json
+ M native/src/layout.rs
+ M python/dragongui/dataframe.py
+ M python/dragongui/widgets.py
+ M tests/test_python_api.py
+ M tests/test_visual_audit.py
+ M tools/visual_audit.py
+?? .codex-workbench-sessions/20260710-203816-make-a-new-all-features-demo-the-old-one-is-this.codex-workbench.json
+?? .codex-workbench-sessions/20260712-164757-look-at-the-analysis-we-did-here-j-projects-drag.codex-workbench.json
+?? artifacts/.workbench-command-output/20260710-203829-spec-writer-2.txt
+?? artifacts/.workbench-command-output/20260710-203829-spec-writer-3.txt
+?? artifacts/.workbench-command-output/20260710-203829-spec-writer.txt
+?? artifacts/.workbench-command-output/20260710-203839-spec-writer-2.txt
+?? artifacts/.workbench-command-output/20260710-203839-spec-writer.txt
+?? artifacts/.workbench-command-output/20260710-203847-spec-writer-2.txt
+?? artifacts/.workbench-command-output/20260710-203847-spec-writer-3.txt
+?? artifacts/.workbench-command-output/20260710-203847-spec-writer.txt
+?? artifacts/.workbench-command-output/20260710-203954-spec-writer-2.txt
+?? artifacts/.workbench-command-output/20260710-203954-spec-writer.txt
+?? artifacts/.workbench-command-output/20260710-204013-code-implementer-2.txt
+?? artifacts/.workbench-command-output/20260710-204013-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-204022-code-implementer-2.txt
+?? artifacts/.workbench-command-output/20260710-204022-code-implementer-3.txt
+?? artifacts/.workbench-command-output/20260710-204022-code-implementer-4.txt
+?? artifacts/.workbench-command-output/20260710-204022-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-204031-code-implementer-2.txt
+?? artifacts/.workbench-command-output/20260710-204031-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-204043-code-implementer-2.txt
+?? artifacts/.workbench-command-output/20260710-204043-code-implementer-3.txt
+?? artifacts/.workbench-command-output/20260710-204043-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-204044-code-implementer-2.txt
+?? artifacts/.workbench-command-output/20260710-204044-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-204054-code-implementer-2.txt
+?? artifacts/.workbench-command-output/20260710-204054-code-implementer-3.txt
+?? artifacts/.workbench-command-output/20260710-204054-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-204533-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-204706-test-writer.txt
+?? artifacts/.workbench-command-output/20260710-204715-test-writer-2.txt
+?? artifacts/.workbench-command-output/20260710-204715-test-writer-3.txt
+?? artifacts/.workbench-command-output/20260710-204715-test-writer.txt
+?? artifacts/.workbench-command-output/20260710-204803-test-writer.txt
+?? artifacts/.workbench-command-output/20260710-204822-maintainability-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-204831-maintainability-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-204843-maintainability-reviewer-2.txt
+?? artifacts/.workbench-command-output/20260710-204843-maintainability-reviewer-3.txt
+?? artifacts/.workbench-command-output/20260710-204843-maintainability-reviewer-4.txt
+?? artifacts/.workbench-command-output/20260710-204843-maintainability-reviewer-5.txt
+?? artifacts/.workbench-command-output/20260710-204843-maintainability-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-204933-maintainability-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-204951-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-205000-code-implementer-2.txt
+?? artifacts/.workbench-command-output/20260710-205000-code-implementer-3.txt
+?? artifacts/.workbench-command-output/20260710-205000-code-implementer-4.txt
+?? artifacts/.workbench-command-output/20260710-205000-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-205213-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-205249-maintainability-reviewer-2.txt
+?? artifacts/.workbench-command-output/20260710-205249-maintainability-reviewer-3.txt
+?? artifacts/.workbench-command-output/20260710-205249-maintainability-reviewer-4.txt
+?? artifacts/.workbench-command-output/20260710-205249-maintainability-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-205335-maintainability-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-205349-code-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-205357-code-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-205409-code-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-205416-code-reviewer-2.txt
+?? artifacts/.workbench-command-output/20260710-205416-code-reviewer-3.txt
+?? artifacts/.workbench-command-output/20260710-205416-code-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-205426-code-reviewer-2.txt
+?? artifacts/.workbench-command-output/20260710-205426-code-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-205434-code-reviewer-2.txt
+?? artifacts/.workbench-command-output/20260710-205434-code-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-205441-code-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-205919-spec-writer.txt
+?? artifacts/.workbench-command-output/20260710-205929-spec-writer-2.txt
+?? artifacts/.workbench-command-output/20260710-205929-spec-writer-3.txt
+?? artifacts/.workbench-command-output/20260710-205929-spec-writer-4.txt
+?? artifacts/.workbench-command-output/20260710-205929-spec-writer.txt
+?? artifacts/.workbench-command-output/20260710-205939-spec-writer-2.txt
+?? artifacts/.workbench-command-output/20260710-205939-spec-writer.txt
+?? artifacts/.workbench-command-output/20260710-210110-spec-writer.txt
+?? artifacts/.workbench-command-output/20260710-210111-spec-writer.txt
+?? artifacts/.workbench-command-output/20260710-210133-code-implementer-2.txt
+?? artifacts/.workbench-command-output/20260710-210133-code-implementer-3.txt
+?? artifacts/.workbench-command-output/20260710-210133-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-210141-code-implementer-2.txt
+?? artifacts/.workbench-command-output/20260710-210141-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-210149-code-implementer-2.txt
+?? artifacts/.workbench-command-output/20260710-210149-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-210325-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-210636-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-210649-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-211031-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-211041-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-211618-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-211659-code-implementer-2.txt
+?? artifacts/.workbench-command-output/20260710-211659-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-211812-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-211845-code-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-211846-code-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-211854-code-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-211917-code-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-211918-code-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-211934-code-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-214704-spec-writer.txt
+?? artifacts/.workbench-command-output/20260710-214716-spec-writer-2.txt
+?? artifacts/.workbench-command-output/20260710-214716-spec-writer.txt
+?? artifacts/.workbench-command-output/20260710-214750-spec-writer.txt
+?? artifacts/.workbench-command-output/20260710-214812-spec-writer.txt
+?? artifacts/.workbench-command-output/20260710-214819-spec-writer.txt
+?? artifacts/.workbench-command-output/20260710-214939-spec-writer-2.txt
+?? artifacts/.workbench-command-output/20260710-214939-spec-writer.txt
+?? artifacts/.workbench-command-output/20260710-214959-code-implementer-2.txt
+?? artifacts/.workbench-command-output/20260710-214959-code-implementer-3.txt
+?? artifacts/.workbench-command-output/20260710-214959-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-215008-code-implementer-2.txt
+?? artifacts/.workbench-command-output/20260710-215008-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-215009-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-215017-code-implementer-2.txt
+?? artifacts/.workbench-command-output/20260710-215017-code-implementer-3.txt
+?? artifacts/.workbench-command-output/20260710-215017-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-215026-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-215027-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-220040-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-220237-code-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-220238-code-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-220246-code-reviewer-2.txt
+?? artifacts/.workbench-command-output/20260710-220246-code-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-220257-code-reviewer-2.txt
+?? artifacts/.workbench-command-output/20260710-220257-code-reviewer-3.txt
+?? artifacts/.workbench-command-output/20260710-220257-code-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-222758-spec-writer.txt
+?? artifacts/.workbench-command-output/20260710-222842-spec-writer.txt
+?? artifacts/.workbench-command-output/20260710-222904-spec-writer.txt
+?? artifacts/.workbench-command-output/20260710-222906-spec-writer.txt
+?? artifacts/.workbench-command-output/20260710-223042-spec-writer.txt
+?? artifacts/.workbench-command-output/20260710-223043-spec-writer.txt
+?? artifacts/.workbench-command-output/20260710-223206-code-implementer-2.txt
+?? artifacts/.workbench-command-output/20260710-223206-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-223218-code-implementer-2.txt
+?? artifacts/.workbench-command-output/20260710-223218-code-implementer-3.txt
+?? artifacts/.workbench-command-output/20260710-223218-code-implementer-4.txt
+?? artifacts/.workbench-command-output/20260710-223218-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-223226-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-223537-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-224418-code-implementer.txt
+?? artifacts/.workbench-command-output/20260710-225125-code-reviewer-2.txt
+?? artifacts/.workbench-command-output/20260710-225125-code-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-225126-code-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-225146-code-reviewer-2.txt
+?? artifacts/.workbench-command-output/20260710-225146-code-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-225159-code-reviewer-2.txt
+?? artifacts/.workbench-command-output/20260710-225159-code-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-225223-code-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-225224-code-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-225251-code-reviewer-2.txt
+?? artifacts/.workbench-command-output/20260710-225251-code-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-225356-code-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-225405-code-reviewer-2.txt
+?? artifacts/.workbench-command-output/20260710-225405-code-reviewer.txt
+?? artifacts/.workbench-command-output/20260710-225407-code-reviewer.txt
+?? artifacts/.workbench-command-output/20260712-164809-spec-writer-2.txt
+?? artifacts/.workbench-command-output/20260712-164809-spec-writer.txt
+?? artifacts/.workbench-command-output/20260712-164819-spec-writer.txt
+?? artifacts/.workbench-command-output/20260712-164820-spec-writer.txt
+?? artifacts/.workbench-command-output/20260712-164831-spec-writer.txt
+?? artifacts/.workbench-command-output/20260712-164832-spec-writer-2.txt
+?? artifacts/.workbench-command-output/20260712-164832-spec-writer-3.txt
+?? artifacts/.workbench-command-output/20260712-164832-spec-writer.txt
+?? artifacts/.workbench-command-output/20260712-164838-spec-writer-2.txt
+?? artifacts/.workbench-command-output/20260712-164838-spec-writer.txt
+?? artifacts/.workbench-command-output/20260712-164847-spec-writer.txt
+?? artifacts/.workbench-command-output/20260712-165013-code-implementer.txt
+?? artifacts/.workbench-command-output/20260712-165020-code-implementer-2.txt
+?? artifacts/.workbench-command-output/20260712-165020-code-implementer.txt
+?? artifacts/.workbench-command-output/20260712-165021-code-implementer.txt
+?? artifacts/.workbench-command-output/20260712-165028-code-implementer-2.txt
+?? artifacts/.workbench-command-output/20260712-165028-code-implementer-3.txt
+?? artifacts/.workbench-command-output/20260712-165028-code-implementer.txt
+?? artifacts/.workbench-command-output/20260712-165035-code-implementer-2.txt
+?? artifacts/.workbench-command-output/20260712-165035-code-implementer-3.txt
+?? artifacts/.workbench-command-output/20260712-165035-code-implementer.txt
+?? artifacts/.workbench-command-output/20260712-165043-code-implementer-2.txt
+?? artifacts/.workbench-command-output/20260712-165043-code-implementer-3.txt
+?? artifacts/.workbench-command-output/20260712-165043-code-implementer-4.txt
+?? artifacts/.workbench-command-output/20260712-165043-code-implementer.txt
+?? artifacts/.workbench-command-output/20260712-165051-code-implementer.txt
+?? artifacts/.workbench-command-output/20260712-165101-code-implementer.txt
+?? artifacts/.workbench-command-output/20260712-165109-code-implementer.txt
+?? artifacts/.workbench-command-output/20260712-165111-code-implementer.txt
+?? artifacts/.workbench-command-output/20260712-165124-code-implementer-2.txt
+?? artifacts/.workbench-command-output/20260712-165124-code-implementer.txt
+?? artifacts/.workbench-command-output/20260712-165333-code-implementer-2.txt
+?? artifacts/.workbench-command-output/20260712-165333-code-implementer.txt
+?? artifacts/.workbench-command-output/20260712-165429-code-implementer.txt
+?? artifacts/.workbench-command-output/20260712-165437-code-implementer.txt
+?? artifacts/.workbench-command-output/20260712-165606-code-implementer.txt
+?? artifacts/.workbench-command-output/20260712-165732-test-writer-2.txt
+?? artifacts/.workbench-command-output/20260712-165732-test-writer-3.txt
+?? artifacts/.workbench-command-output/20260712-165732-test-writer.txt
+?? artifacts/generated/
+?? artifacts/visual_audit/contact_sheets/all-features-professional-contact-sheet.png
+?? artifacts/visual_audit/logs/all-features-professional-data-1180x760.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-data-1180x760.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-data-1440x900.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-data-1440x900.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-data-320x640.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-data-320x640.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-data-390x720.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-data-390x720.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-explore-1180x760.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-explore-1180x760.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-explore-1440x900.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-explore-1440x900.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-explore-320x640.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-explore-320x640.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-explore-390x720.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-explore-390x720.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-overview-1180x760.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-overview-1180x760.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-overview-1440x900.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-overview-1440x900.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-overview-320x640.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-overview-320x640.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-overview-390x720.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-overview-390x720.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-reports-1180x760.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-reports-1180x760.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-reports-1440x900.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-reports-1440x900.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-reports-320x640.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-reports-320x640.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-reports-390x720.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-reports-390x720.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-runtime-1180x760.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-runtime-1180x760.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-runtime-1440x900.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-runtime-1440x900.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-runtime-320x640.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-runtime-320x640.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-runtime-390x720.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-runtime-390x720.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-styling-1180x760.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-styling-1180x760.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-styling-1440x900.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-styling-1440x900.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-styling-320x640.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-styling-320x640.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-styling-390x720.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-styling-390x720.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-timeseries-1180x760.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-timeseries-1180x760.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-timeseries-1440x900.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-timeseries-1440x900.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-timeseries-320x640.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-timeseries-320x640.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-timeseries-390x720.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-timeseries-390x720.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-workflow-1180x760.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-workflow-1180x760.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-workflow-1440x900.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-workflow-1440x900.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-workflow-320x640.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-workflow-320x640.stdout.txt
+?? artifacts/visual_audit/logs/all-features-professional-workflow-390x720.stderr.txt
+?? artifacts/visual_audit/logs/all-features-professional-workflow-390x720.stdout.txt
+?? artifacts/visual_audit/logs/scatter-plot-2d-390x720.stderr.txt
+?? artifacts/visual_audit/logs/scatter-plot-2d-390x720.stdout.txt
+?? artifacts/visual_audit/logs/scatter3d-390x720.stderr.txt
+?? artifacts/visual_audit/logs/scatter3d-390x720.stdout.txt
+?? artifacts/visual_audit/logs/splitter-390x720.stderr.txt
+?? artifacts/visual_audit/logs/splitter-390x720.stdout.txt
+?? artifacts/visual_audit/screenshots/all-features-professional-data-1180x760.png
+?? artifacts/visual_audit/screenshots/all-features-professional-data-1440x900.png
+?? artifacts/visual_audit/screenshots/all-features-professional-data-320x640.png
+?? artifacts/visual_audit/screenshots/all-features-professional-data-390x720.png
+?? artifacts/visual_audit/screenshots/all-features-professional-explore-1180x760.png
+?? artifacts/visual_audit/screenshots/all-features-professional-explore-1440x900.png
+?? artifacts/visual_audit/screenshots/all-features-professional-explore-320x640.png
+?? artifacts/visual_audit/screenshots/all-features-professional-explore-390x720.png
+?? artifacts/visual_audit/screenshots/all-features-professional-overview-1180x760.png
+?? artifacts/visual_audit/screenshots/all-features-professional-overview-1440x900.png
+?? artifacts/visual_audit/screenshots/all-features-professional-overview-320x640.png
+?? artifacts/visual_audit/screenshots/all-features-professional-overview-390x720.png
+?? artifacts/visual_audit/screenshots/all-features-professional-reports-1180x760.png
+?? artifacts/visual_audit/screenshots/all-features-professional-reports-1440x900.png
+?? artifacts/visual_audit/screenshots/all-features-professional-reports-320x640.png
+?? artifacts/visual_audit/screenshots/all-features-professional-reports-390x720.png
+?? artifacts/visual_audit/screenshots/all-features-professional-runtime-1180x760.png
+?? artifacts/visual_audit/screenshots/all-features-professional-runtime-1440x900.png
+?? artifacts/visual_audit/screenshots/all-features-professional-runtime-320x640.png
+?? artifacts/visual_audit/screenshots/all-features-professional-runtime-390x720.png
+?? artifacts/visual_audit/screenshots/all-features-professional-styling-1180x760.png
+?? artifacts/visual_audit/screenshots/all-features-professional-styling-1440x900.png
+?? artifacts/visual_audit/screenshots/all-features-professional-styling-320x640.png
+?? artifacts/visual_audit/screenshots/all-features-professional-styling-390x720.png
+?? artifacts/visual_audit/screenshots/all-features-professional-timeseries-1180x760.png
+?? artifacts/visual_audit/screenshots/all-features-professional-timeseries-1440x900.png
+?? artifacts/visual_audit/screenshots/all-features-professional-timeseries-320x640.png
+?? artifacts/visual_audit/screenshots/all-features-professional-timeseries-390x720.png
+?? artifacts/visual_audit/screenshots/all-features-professional-workflow-1180x760.png
+?? artifacts/visual_audit/screenshots/all-features-professional-workflow-1440x900.png
+?? artifacts/visual_audit/screenshots/all-features-professional-workflow-320x640.png
+?? artifacts/visual_audit/screenshots/all-features-professional-workflow-390x720.png
+?? artifacts/visual_audit/screenshots/scatter-plot-2d-390x720.png
+?? artifacts/visual_audit/screenshots/scatter3d-390x720.png
+?? artifacts/visual_audit/screenshots/splitter-390x720.png
+?? artifacts/visual_audit/snapshots/all-features-professional-data-1180x760.json
+?? artifacts/visual_audit/snapshots/all-features-professional-data-1440x900.json
+?? artifacts/visual_audit/snapshots/all-features-professional-data-320x640.json
+?? artifacts/visual_audit/snapshots/all-features-professional-data-390x720.json
+?? artifacts/visual_audit/snapshots/all-features-professional-explore-1180x760.json
+?? artifacts/visual_audit/snapshots/all-features-professional-explore-1440x900.json
+?? artifacts/visual_audit/snapshots/all-features-professional-explore-320x640.json
+?? artifacts/visual_audit/snapshots/all-features-professional-explore-390x720.json
+?? artifacts/visual_audit/snapshots/all-features-professional-overview-1180x760.json
+?? artifacts/visual_audit/snapshots/all-features-professional-overview-1440x900.json
+?? artifacts/visual_audit/snapshots/all-features-professional-overview-320x640.json
+?? artifacts/visual_audit/snapshots/all-features-professional-overview-390x720.json
+?? artifacts/visual_audit/snapshots/all-features-professional-reports-1180x760.json
+?? artifacts/visual_audit/snapshots/all-features-professional-reports-1440x900.json
+?? artifacts/visual_audit/snapshots/all-features-professional-reports-320x640.json
+?? artifacts/visual_audit/snapshots/all-features-professional-reports-390x720.json
+?? artifacts/visual_audit/snapshots/all-features-professional-runtime-1180x760.json
+?? artifacts/visual_audit/snapshots/all-features-professional-runtime-1440x900.json
+?? artifacts/visual_audit/snapshots/all-features-professional-runtime-320x640.json
+?? artifacts/visual_audit/snapshots/all-features-professional-runtime-390x720.json
+?? artifacts/visual_audit/snapshots/all-features-professional-styling-1180x760.json
+?? artifacts/visual_audit/snapshots/all-features-professional-styling-1440x900.json
+?? artifacts/visual_audit/snapshots/all-features-professional-styling-320x640.json
+?? artifacts/visual_audit/snapshots/all-features-professional-styling-390x720.json
+?? artifacts/visual_audit/snapshots/all-features-professional-timeseries-1180x760.json
+?? artifacts/visual_audit/snapshots/all-features-professional-timeseries-1440x900.json
+?? artifacts/visual_audit/snapshots/all-features-professional-timeseries-320x640.json
+?? artifacts/visual_audit/snapshots/all-features-professional-timeseries-390x720.json
+?? artifacts/visual_audit/snapshots/all-features-professional-workflow-1180x760.json
+?? artifacts/visual_audit/snapshots/all-features-professional-workflow-1440x900.json
+?? artifacts/visual_audit/snapshots/all-features-professional-workflow-320x640.json
+?? artifacts/visual_audit/snapshots/all-features-professional-workflow-390x720.json
+?? artifacts/visual_audit/snapshots/scatter-plot-2d-390x720.json
+?? artifacts/visual_audit/snapshots/scatter3d-390x720.json
+?? artifacts/visual_audit/snapshots/splitter-390x720.json
+?? examples/all_features_professional_demo.py
+?? examples/css_feature_probes/all_features_professional_demo_probe.py
+?? tests/test_all_features_professional_demo.py

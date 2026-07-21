@@ -1,0 +1,124 @@
+8825:        self.resize(new_inner_size.width, new_inner_size.height);
+8826:    }
+8827:
+8828:    /// Return the topmost visible scatter id that contains `pos`, or None.
+8829:    /// Checks in reverse visible order so the visually topmost scatter wins.
+8830:    fn scatter_at(&self, pos: [f32; 2]) -> Option<String> {
+8831:        for id in self.visible_scatter_order.iter().rev() {
+8832:            if let Some(runtime) = self.scatters.get(id) {
+8833:                if runtime.widget.contains_point(pos[0], pos[1]) {
+8834:                    return Some(id.clone());
+8835:                }
+8836:            }
+8837:        }
+8838:        None
+8839:    }
+8840:
+8841:    fn scatter_pick_payload(&mut self, id: &str, pos: [f32; 2]) -> Option<String> {
+20639:                            if modal_active {
+20640:                                self.set_focus(None);
+20641:                                return;
+20642:                            }
+20643:
+20644:                            let scatter_id = self.gpu.as_ref().and_then(|g| g.scatter_at(pos));
+20645:
+20646:                            if let Some(sid) = scatter_id {
+20647:                                self.set_focus(None);
+20648:                                self.scatter_press_pos = Some(pos);
+20649:                                self.active_scatter_id = Some(sid.clone());
+20650:                                let picking_mode = self
+20651:                                    .gpu
+20652:                                    .as_ref()
+20653:                                    .and_then(|g| g.scatters.get(&sid))
+20654:                                    .map(|rt| rt.widget.picking_mode)
+20655:                                    .unwrap_or(scatter::PickingMode::Point);
+20656:                                if picking_mode == scatter::PickingMode::None {
+20657:                                    // Interaction disabled - consume the event but do nothing.
+20658:                                    self.orbit_active = false;
+20659:                                    self.rect_select_active = false;
+20660:                                    self.pan_active = false;
+20661:                                    self.pan_button = None;
+20662:                                } else if self.modifiers.shift_key() {
+20663:                                    // Shift+left-drag matches the middle-drag pan path.
+20664:                                    self.rect_select_active = false;
+20665:                                    self.begin_scatter_pan(sid, MouseButton::Left);
+20666:                                    self.request_redraw();
+20667:                                    return;
+20668:                                } else if picking_mode == scatter::PickingMode::Rectangle
+20669:                                    || picking_mode == scatter::PickingMode::Lasso
+20670:                                {
+20671:                                    // Rectangle / lasso: start selection drag
+20672:                                    let local_pos = self
+20673:                                        .gpu
+20674:                                        .as_ref()
+20675:                                        .and_then(|g| g.scatters.get(&sid))
+20676:                                        .map(|rt| {
+20677:                                            [
+20678:                                                pos[0] - rt.widget.offset[0],
+20679:                                                pos[1] - rt.widget.offset[1],
+20680:                                            ]
+20681:                                        })
+20682:                                        .unwrap_or(pos);
+20683:                                    if let Some(gpu) = &mut self.gpu {
+20684:                                        if let Some(rt) = gpu.scatters.get_mut(&sid) {
+20685:                                            if picking_mode == scatter::PickingMode::Lasso {
+20686:                                                rt.widget.selection_polygon = Some(vec![local_pos]);
+20687:                                                rt.widget.selection_rect = None;
+20688:                                            } else {
+20689:                                                rt.widget.selection_rect = Some([
+20690:                                                    local_pos[0],
+20691:                                                    local_pos[1],
+20692:                                                    local_pos[0],
+20693:                                                    local_pos[1],
+20694:                                                ]);
+20695:                                                rt.widget.selection_polygon = None;
+20696:                                            }
+20697:                                            rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+20698:                                        }
+20699:                                    }
+20700:                                    self.orbit_active = false;
+20701:                                    self.rect_select_active = true;
+20702:                                } else {
+20703:                                    // PickingMode::Point â€” left drag orbits.
+20704:                                    self.orbit_active = true;
+20705:                                    self.pan_active = false;
+20706:                                    self.pan_button = None;
+20707:                                    self.rect_select_active = false;
+20708:                                    if let Some(gpu) = &mut self.gpu {
+20709:                                        if let Some(rt) = gpu.scatters.get_mut(&sid) {
+20710:                                            rt.set_interaction_lod_active(
+20711:                                                true,
+20712:                                                &gpu.device,
+20713:                                                &gpu.queue,
+20714:                                            );
+20715:                                        }
+20716:                                    }
+20717:                                }
+20718:                            } else {
+20719:                                self.active_scatter_id = None;
+20720:                                self.set_focus(None);
+20721:                            }
+20722:                        }
+20723:                    }
+20724:
+21016:                        }
+21017:                        self.request_redraw();
+21018:                    }
+21019:
+21020:                    // Clear stale hover labels on any scatter the cursor has left.
+21021:                    let hovered_sid = self.gpu.as_ref().and_then(|g| g.scatter_at(new_pos));
+21022:                    let mut stale_payloads: Vec<(String, String)> = Vec::new();
+21023:                    let mut stale_scatter_cleared = false;
+21024:                    if let Some(gpu) = &mut self.gpu {
+21025:                        let stale: Vec<String> = gpu
+21026:                            .scatters
+21027:                            .iter()
+21028:                            .filter(|(id, rt)| {
+21029:                                rt.hover_tooltip_enabled
+21030:                                    && rt.widget.hover_label.is_some()
+21031:                                    && hovered_sid.as_deref() != Some(id.as_str())
+21032:                            })
+21033:                            .map(|(id, _)| id.clone())
+21034:                            .collect();
+21035:                        for id in stale {
+21036:                            if let Some(rt) = gpu.scatters.get_mut(&id) {

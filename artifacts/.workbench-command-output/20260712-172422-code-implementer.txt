@@ -1,0 +1,259 @@
+    kind = "scatter_3d"
+
+    def __init__(
+        self,
+        frame: Any = None,
+        *,
+        x: str,
+        y: str,
+        z: str,
+        colormap: str = "viridis",
+        color: str | Any | None = None,
+        colors: Any | None = None,
+        scalars: str | Any | None = None,
+        point_size: float = 4.0,
+        point_sizes: str | Any | None = None,
+        auto_point_size: bool = True,
+        opacity: float = 1.0,
+        clim: tuple[float, float] | None = None,
+        log_scale: bool = False,
+        nan_color: tuple[float, float, float] | None = None,
+        size_range: tuple[float, float] | None = None,
+        on_pick: ScatterPickCallback | None = None,
+        grid: bool = False,
+        major_planes: bool = False,
+        minor_planes: bool = False,
+        grid_sticky: bool = True,
+        grid_all_edges: bool = False,
+        axis_x: str = "X",
+        axis_y: str = "Y",
+        axis_z: str = "Z",
+        background: tuple[float, float, float] | None = None,
+        legend: bool = False,
+        legend_position: str = "top-right",
+        legend_entries: list[tuple[str, float, float, float]] | None = None,
+        scalar_bar: bool = False,
+        scalar_bar_vmin: "float | None" = None,
+        scalar_bar_vmax: "float | None" = None,
+        scalar_bar_log_scale: bool = False,
+        scalar_bar_colormap: str = "viridis",
+        scalar_bar_title: str | None = None,
+        orientation_axes: bool = False,
+        hover: "str | list[str] | None" = None,
+        on_hover: "ScatterPickCallback | None" = None,
+        lod: bool = False,
+        lod_threshold: int = 200_000,
+        lod_factor: int = 8,
+        interactive_render_scale: float = 1.0,
+        auto_quality: bool = False,
+        quality_target_fps: float = 10.0,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.frame = frame
+        self.x = x
+        self.y = y
+        self.z = z
+        self.colormap = _scatter_colormap(colormap)
+        self.color = color
+        self.colors = colors
+        self.scalars = scalars
+        self.point_size = float(point_size)
+        self.point_sizes = point_sizes
+        self.auto_point_size = bool(auto_point_size)
+        self.opacity = float(max(0.0, min(1.0, opacity)))
+        self.clim = clim
+        self.log_scale = bool(log_scale)
+        self.nan_color = nan_color
+        self.size_range = size_range
+        self.frame_summary = summarize_frame(frame)
+        self.on_pick = on_pick
+        self.on_hover = on_hover
+        self.pick: ScatterPick | None = None
+        self.picked_point: tuple[float, float, float] | None = None
+        self.picked_index: int | None = None
+        self.picked_actor: int | None = None
+        self.hover_point: tuple[float, float, float] | None = None
+        self.hover_index: int | None = None
+        self.hover_actor: int | None = None
+        self.hover_text: str | None = None
+        # selected: flat ordered ScatterHit list across all actors.
+        # selected_indices: flat ordered positional indices across all actors.
+        # selected_index_values: flat list of dataframe index labels when any actor has non-trivial
+        # index; otherwise None. Matches DragonSci's contract.
+        self.selected: list[ScatterHit] = []
+        self.selected_indices: list[int] = []
+        self.selected_index_values: list | None = None
+        self._cached_payload: bytes | None = None
+        self._cached_payload_b64: str | None = None
+        self._parallel_projection: bool = False
+        self._grid_visible: bool = bool(grid)
+        self._major_planes: bool = bool(major_planes)
+        self._minor_planes: bool = bool(minor_planes)
+        self._grid_sticky: bool = bool(grid_sticky)
+        self._grid_all_edges: bool = bool(grid_all_edges)
+        self._tick_override: tuple[int | None, int | None, int | None] = (None, None, None)
+        self._axis_labels: tuple[str, str, str] = (str(axis_x), str(axis_y), str(axis_z))
+        self._axis_visible: tuple[bool, bool, bool] = (True, True, True)
+        self._background: tuple[float, float, float] | None = background
+        self._legend_visible: bool = bool(legend)
+        self._legend_position: str = str(legend_position)
+        self._legend_entries: list[tuple[str, float, float, float]] = list(legend_entries or [])
+        self._scalar_bar_visible: bool = bool(scalar_bar)
+        self._scalar_bar_vmin: float = float(scalar_bar_vmin) if scalar_bar_vmin is not None else 0.0
+        self._scalar_bar_vmax: float = float(scalar_bar_vmax) if scalar_bar_vmax is not None else 1.0
+        self._scalar_bar_log_scale: bool = bool(scalar_bar_log_scale)
+        self._scalar_bar_colormap: str = str(scalar_bar_colormap)
+        self._scalar_bar_title: str | None = scalar_bar_title
+        self._orientation_axes_visible: bool = bool(orientation_axes)
+        # Phase 5 â€” LOD and picking mode (not startup props; always set live)
+        self._lod_enabled: bool = bool(lod)
+        self._lod_threshold: int = max(0, int(lod_threshold))
+        self._lod_factor: int = max(1, int(lod_factor))
+        self._interactive_render_scale: float = max(0.25, min(1.0, float(interactive_render_scale)))
+        self._auto_quality: bool = bool(auto_quality)
+        self._quality_target_fps: float = max(1.0, float(quality_target_fps))
+        self._picking_mode: str = "point"
+        self._on_select: Any | None = None
+        self._camera_links: set["Scatter3D"] = set()
+        self._propagating: bool = False
+        self._hover_tooltip: bool = True
+        self._hover: str | list[str] | None = hover
+        self._primary_row_labels: list | None = self._extract_row_labels(frame)
+        self._actor_row_labels: dict[int, list | None] = {}
+        # Stores per-handle ellipsoid params for partial updates (center, covariance).
+        self._ellipsoid_params: dict[int, dict] = {}
+        # Pre-live pending scene operations replayed in _queue_startup_resources.
+        self._pending_scene_ops: list[tuple[str, tuple]] = []
+        self._primary_cleared: bool = False
+        # Auto-derived color metadata recomputed in _refresh_cached_payload_b64.
+        self._auto_legend_entries: "list[tuple[str, float, float, float]] | None" = None
+        self._auto_legend_title: "str | None" = None
+        self._auto_scalar_vmin: float | None = None
+        self._auto_scalar_vmax: float | None = None
+        self._auto_scalar_colormap: "str | None" = None
+        self._auto_scalar_log_scale: "bool | None" = None
+        # Per-field explicit-override flags; each set only when user passes that arg.
+        self._scalar_range_explicit: bool = False
+        self._scalar_log_explicit: bool = False
+        self._scalar_colormap_explicit: bool = False
+        self._scalar_title_explicit: bool = False
+        # Determine format upfront so props() and live setters are consistent.
+        self.data_format = (
+            "point_instance_v1"
+            if _scatter_needs_v1(color, colors, scalars, point_sizes, opacity, nan_color, clim, log_scale)
+            else "xyz_f32_v0"
+        )
+        self._refresh_cached_payload()
+        if scalar_bar_vmin is not None or scalar_bar_vmax is not None:
+            self._scalar_range_explicit = True
+        if scalar_bar_log_scale:
+            self._scalar_log_explicit = True
+        if scalar_bar_colormap != "viridis":
+            self._scalar_colormap_explicit = True
+        if scalar_bar_title is not None:
+            self._scalar_title_explicit = True
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def _build_payload(self) -> bytes | None:
+        if self._primary_cleared:
+            return b""
+        if self.data_format == "point_instance_v1":
+            return _pack_point_instances(
+                self.frame, self.x, self.y, self.z,
+                color=self.color,
+                colors=self.colors,
+                scalars=self.scalars,
+                point_size=self.point_size,
+                point_sizes=self.point_sizes,
+                size_range=self.size_range,
+                opacity=self.opacity,
+                colormap=self.colormap,
+                clim=self.clim,
+                log_scale=self.log_scale,
+                nan_color=self.nan_color,
+            )
+        return _pack_xyz_bytes(self.frame, self.x, self.y, self.z)
+
+    def _refresh_cached_payload(self) -> None:
+        buf = self._build_payload()
+        self._cached_payload = buf
+        self._cached_payload_b64 = None
+        self._payload_token = (
+            zlib.crc32(buf) if buf is not None and len(buf) > 0 else 0
+        )
+        self._compute_auto_color_meta()
+
+    def _refresh_cached_payload_b64(self) -> None:
+        buf = self._cached_payload
+        if buf is None:
+            self._refresh_cached_payload()
+            buf = self._cached_payload
+        self._cached_payload_b64 = base64.b64encode(buf).decode("ascii") if buf is not None else None
+
+    def _compute_auto_color_meta(self) -> None:
+        """Derive legend entries and scalar range from the current color/scalars settings."""
+        self._auto_legend_entries = None
+        self._auto_legend_title = None
+        self._auto_scalar_vmin = None
+        self._auto_scalar_vmax = None
+        self._auto_scalar_colormap = None
+        self._auto_scalar_log_scale = None
+        try:
+            import numpy as np
+
+            def _scalar_range(arr: Any) -> "tuple[float, float] | None":
+                # Scalar bar vmin/vmax are raw domain (matching DragonSci public API).
+                # Log-space conversion happens only inside _scalars_to_rgb for color normalization.
+                if self.clim is not None:
+                    return float(self.clim[0]), float(self.clim[1])
+                a = np.asarray(arr, dtype=np.float32)
+                finite = a[np.isfinite(a)]
+                if len(finite) == 0:
+                    return None
+                return float(finite.min()), float(finite.max())
+
+            if isinstance(self.color, str):
+                col_data = _get_frame_col(self.frame, self.color)
+                if col_data is not None:
+                    if _is_categorical(col_data):
+                        self._auto_legend_entries = _categorical_legend_entries(col_data)
+                        self._auto_legend_title = self.color
+                    else:
+                        rng = _scalar_range(col_data)
+                        if rng is not None:
+                            self._auto_scalar_vmin, self._auto_scalar_vmax = rng
+                            self._auto_scalar_colormap = self.colormap
+                            self._auto_scalar_log_scale = self.log_scale
+                            self._auto_legend_title = self.color
+            elif self.scalars is not None:
+                col_data = (
+                    _get_frame_col(self.frame, self.scalars)
+                    if isinstance(self.scalars, str)
+                    else self.scalars
+                )
+                rng = _scalar_range(col_data)
+                if rng is not None:
+                    self._auto_scalar_vmin, self._auto_scalar_vmax = rng
+                    self._auto_scalar_colormap = self.colormap
+                    self._auto_scalar_log_scale = self.log_scale
+                    if isinstance(self.scalars, str):
+                        self._auto_legend_title = self.scalars
+            elif self.colors is None:
+                # Default z-colormap path. When clim or log_scale is set, v1 packing is
+                # forced and _scalars_to_rgb applies them; use _scalar_range to match.
+                # When neither is set, native xyz_f32_v0 colors linearly from finite z range.
+                z_data = _get_frame_col(self.frame, self.z) if isinstance(self.z, str) else self.z
+                if z_data is not None:
+                    rng = _scalar_range(z_data)
+                    if rng is not None:
+                        self._auto_scalar_vmin, self._auto_scalar_vmax = rng
+                        self._auto_scalar_colormap = self.colormap
+                        self._auto_scalar_log_scale = self.log_scale
+                        self._auto_legend_title = self.z if isinstance(self.z, str) else None
+        except Exception:
+            pass

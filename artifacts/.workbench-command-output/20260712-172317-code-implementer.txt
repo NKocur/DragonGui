@@ -1,0 +1,125 @@
+tests\test_visual_audit.py:34:            "screenshots": ["a-desktop.png"],
+tests\test_visual_audit.py:46:            "screenshots": ["a-mobile.png"],
+tests\test_visual_audit.py:59:    assert merged[0]["screenshots"] == ["a-desktop.png", "a-mobile.png"]
+tests\test_visual_audit.py:80:def test_screenshot_error_note_reads_structured_error(tmp_path: Path) -> None:
+tests\test_visual_audit.py:82:    screenshot = tmp_path / "target.png"
+tests\test_visual_audit.py:83:    visual_audit.screenshot_error_path(screenshot).write_text(
+tests\test_visual_audit.py:88:    note = visual_audit.with_screenshot_error_note("fallback used", screenshot)
+tests\test_visual_audit.py:90:    assert note == "fallback used Native screenshot error: exception: native timeout"
+tests\test_visual_audit.py:312:        "screenshots": [],
+tests\test_visual_audit.py:348:        kwargs["screenshot_path"].parent.mkdir(parents=True, exist_ok=True)
+tests\test_visual_audit.py:350:        kwargs["screenshot_path"].write_bytes(b"png")
+tests\test_visual_audit.py:354:            "notes": "Captured with native DragonGUI window screenshot API.",
+tests\test_visual_audit.py:355:            "screenshot": True,
+tests\test_visual_audit.py:383:    assert "Captured with native DragonGUI window screenshot API." in result["notes"]
+tests\test_python_api.py:878:    modal.show()
+tests\test_python_api.py:1869:        def enqueue_request_exit(self) -> None:
+tests\test_python_api.py:1880:    handle.request_exit()
+tests\test_python_api.py:1898:    snapshot = handle.debug_snapshot()
+tests\test_python_api.py:1907:        def debug_snapshot(self, timeout_ms: int) -> str:
+tests\test_python_api.py:1918:    snapshot = handle.debug_snapshot(timeout_ms=250)
+tests\test_python_api.py:1925:def test_app_handle_window_screenshot_uses_native_sender() -> None:
+tests\test_python_api.py:1930:        def window_screenshot(self, timeout_ms: int) -> tuple[int, int, bytes]:
+tests\test_python_api.py:1941:    screenshot = handle.window_screenshot(timeout_ms=350)
+tests\test_python_api.py:1944:    assert screenshot == (2, 1, b"\x00\x01\x02\x03\x04\x05\x06\x07")
+tests\test_python_api.py:1947:def test_app_handle_window_screenshot_returns_none_without_native_sender() -> None:
+tests\test_python_api.py:1948:    assert AppHandle().window_screenshot() is None
+tests\test_python_api.py:1951:def test_app_handle_window_screenshot_returns_none_for_older_native_sender() -> None:
+tests\test_python_api.py:1959:    assert handle.window_screenshot() is None
+tests\test_python_api.py:1964:        dg.App().debug_snapshot()
+tests\test_python_api.py:1967:def test_app_window_screenshot_requires_running_app() -> None:
+tests\test_python_api.py:1969:        dg.App()._window_screenshot()
+tests\test_python_api.py:4417:    palette.show()
+tests\test_python_api.py:6831:def test_scatter_screenshot_returns_none_when_not_live() -> None:
+tests\test_python_api.py:6833:    result = s.screenshot()
+tests\test_python_api.py:6837:def test_scatter_save_png_raises_when_screenshot_is_none(tmp_path) -> None:
+tests\test_python_api.py:6839:    with pytest.raises(RuntimeError, match="screenshot"):
+python\dragongui\widgets.py:3672:    def show(self) -> None:
+python\dragongui\widgets.py:11345:                snapshot = handle.app.debug_snapshot()
+python\dragongui\widgets.py:11407:                snap = handle.app.debug_snapshot()
+python\dragongui\widgets.py:11629:    def screenshot(self) -> "Any":
+python\dragongui\widgets.py:11632:            raw = handle.app.scatter_screenshot(self.id)
+python\dragongui\widgets.py:11641:        img_arr = self.screenshot()
+python\dragongui\widgets.py:11643:            raise RuntimeError("screenshot() returned None — widget may not be live")
+python\dragongui\widgets.py:11667:        arr = self.screenshot()
+python\dragongui\widgets.py:11669:            raise RuntimeError("screenshot() returned None — widget may not be live")
+python\dragongui\widgets.py:11702:        Rotates the camera yaw by 2π across `n_frames` screenshots and saves as
+examples\older\all_features_demo.py:257:            snapshot = app.debug_snapshot()
+examples\older\all_features_demo.py:339:        dg.MenuItem("About DragonGUI", on_click=lambda: about_modal.show())
+examples\older\all_features_demo.py:498:                    dg.Button("Confirm Reset", on_click=lambda: confirm_modal.show(), tooltip="Open a modal confirmation overlay.")
+python\dragongui\manual.py:475:    "Modal": "Overlay dialog container; use `show()` and `close()` at runtime.",
+python\dragongui\manual.py:1406:- Overlays: `Modal.show()`, `Modal.close()`, command palette show/close flows.
+python\dragongui\manual.py:1641:- `debug_snapshot(timeout_ms=1000)` returns runtime/layout/style diagnostics.
+python\dragongui\manual.py:1643:- `request_exit()` closes the app.
+python\dragongui\manual.py:1712:Use `app.debug_snapshot()` to inspect:
+python\dragongui\manual.py:1893:- `Modal(..., open=False)` floats over content; call `show()` and `close()`.
+python\dragongui\manual.py:2120:Call `palette.show()` and `palette.close()` at runtime.
+python\dragongui\manual.py:2470:- `Modal.show()`, `Modal.close()`
+python\dragongui\manual.py:2525:modal.show()
+python\dragongui\manual.py:2888:- Use `app.debug_snapshot()` and benchmark probes to inspect frame timings.
+python\dragongui\manual.py:3550:- `app.debug_snapshot()` returns runtime, layout, style, command, and widget data.
+python\dragongui\runtime.py:1180:    def scatter_screenshot(
+python\dragongui\runtime.py:1187:        return sender.scatter_screenshot(widget_id, timeout_ms)
+python\dragongui\runtime.py:1189:    def window_screenshot(self, timeout_ms: int = 10000) -> "tuple[int, int, bytes] | None":
+python\dragongui\runtime.py:1194:        if not hasattr(sender, "window_screenshot"):
+python\dragongui\runtime.py:1196:        return sender.window_screenshot(timeout_ms)
+python\dragongui\runtime.py:1309:    def request_exit(self) -> None:
+python\dragongui\runtime.py:1311:        self._send_or_queue_native("enqueue_request_exit")
+python\dragongui\runtime.py:1317:    def _python_debug_snapshot(
+python\dragongui\runtime.py:1346:    def debug_snapshot(self, timeout_ms: int = 1000) -> dict[str, Any]:
+python\dragongui\runtime.py:1354:        python_snapshot = self._python_debug_snapshot(queued_tasks, pending_native)
+python\dragongui\runtime.py:1366:        snapshot_json = sender.debug_snapshot(timeout_ms)
+examples\older\all_features_css_demo.py:603:            snapshot = app.debug_snapshot()
+examples\older\all_features_css_demo.py:685:        dg.MenuItem("About DragonGUI", on_click=lambda: about_modal.show())
+examples\older\all_features_css_demo.py:845:                    dg.Button("Confirm Reset", on_click=lambda: confirm_modal.show(), tooltip="Open a modal confirmation overlay.")
+examples\all_features_professional_demo.py:316:        state.palette.show()
+examples\all_features_professional_demo.py:321:        state.modal.show()
+examples\all_features_professional_demo.py:326:        state.confirm_modal.show()
+examples\all_features_professional_demo.py:331:        state.alert_modal.show()
+examples\all_features_professional_demo.py:394:        snapshot = state.app.debug_snapshot(timeout_ms=700)
+examples\older\css_design_system_demo.py:1675:    snapshot = app.debug_snapshot()
+examples\all_features_v3_demo.py:2518:            snapshot = app.debug_snapshot(timeout_ms=500)
+examples\all_features_v3_demo.py:2589:            snapshot = app.debug_snapshot(timeout_ms=500)
+examples\all_features_v3_demo.py:2617:            snapshot = app.debug_snapshot(timeout_ms=500)
+examples\all_features_v3_demo.py:3252:            snapshot = app.debug_snapshot()
+examples\all_features_v3_demo.py:3905:            v4_palette.show()
+examples\all_features_v3_demo.py:3944:            dg.MenuItem("About", on_click=lambda: about_modal.show())
+examples\all_features_v3_demo.py:4782:                        dg.Button("Confirm Reset", on_click=lambda: confirm_modal.show())
+examples\older\css_web_capabilities_demo.py:1014:            dg.Button("View CSS", class_="ghost", on_click=lambda: css_modal.show())
+examples\older\css_theme_gallery.py:433:    snapshot = app.debug_snapshot()
+examples\older\debug_snapshot_tool.py:50:        snapshot = app.debug_snapshot(timeout_ms=1000)
+examples\older\meridian.py:325:    confirm_modal.show()
+examples\older\meridian.py:372:            snap = app.debug_snapshot()
+examples\older\streaming_scatter_tool.py:93:    snapshot = app.debug_snapshot()
+examples\older\scatter_perf_lab.py:486:            snapshot = app.debug_snapshot(timeout_ms=500)
+python\dragongui\app.py:328:                        runtime["python"] = handle._python_debug_snapshot()
+python\dragongui\app.py:369:    def debug_snapshot(self, timeout_ms: int = 1000) -> dict[str, Any]:
+python\dragongui\app.py:373:        return self._handle.debug_snapshot(timeout_ms)
+python\dragongui\app.py:375:    def _window_screenshot(self, timeout_ms: int = 10000) -> tuple[int, int, bytes] | None:
+python\dragongui\app.py:376:        """Return a private live whole-window RGBA screenshot tuple."""
+python\dragongui\app.py:379:        return self._handle.window_screenshot(timeout_ms)
+python\dragongui\app.py:387:    def request_exit(self) -> None:
+python\dragongui\app.py:391:        self._handle.request_exit()
+examples\older\v4_showcase.py:418:        palette.show()
+examples\older\v4_showcase.py:423:        confirm_modal.show()
+examples\older\v4_showcase.py:428:        about_modal.show()
+examples\css_feature_probes\command_palette_probe.py:193:        palette.show()
+examples\css_feature_probes\layout_containers_probe.py:208:            snapshot = app.debug_snapshot(timeout_ms=3000)
+examples\css_feature_probes\layout_overlay_collision_probe.py:370:        dg.MenuItem("Open command palette", on_click=lambda: palette.show())
+examples\css_feature_probes\layout_overlay_collision_probe.py:374:        dg.MenuItem("Open modal", on_click=lambda: modal.show())
+examples\css_feature_probes\line_plot_stream_benchmark_probe.py:361:            snapshot = app.debug_snapshot(timeout_ms=5000)
+examples\css_feature_probes\scatter_dynamic_camera_benchmark_probe.py:204:            app.debug_snapshot(timeout_ms=5000)
+examples\css_feature_probes\scatter_dynamic_camera_benchmark_probe.py:208:            app.request_exit()
+examples\css_feature_probes\scatter3d_frame_benchmark_probe.py:318:def debug_snapshot(timeout_ms: int = 1000) -> dict[str, object]:
+examples\css_feature_probes\scatter3d_frame_benchmark_probe.py:319:    return app.debug_snapshot(timeout_ms=timeout_ms)
+examples\css_feature_probes\scatter3d_frame_benchmark_probe.py:412:            snapshot = debug_snapshot(
+examples\css_feature_probes\scatter3d_frame_benchmark_probe.py:450:                apply_snapshot_metrics(debug_snapshot(timeout_ms=1000))
+examples\css_feature_probes\scatter3d_frame_benchmark_probe.py:461:        apply_snapshot_metrics(debug_snapshot(timeout_ms=1000))
+examples\css_feature_probes\scatter3d_probe.py:1119:            def _do_screenshot() -> None:
+examples\css_feature_probes\scatter3d_probe.py:1122:                    arr = sc7a.screenshot()
+examples\css_feature_probes\scatter3d_probe.py:1124:                        _export_status.set_value("screenshot: None (not live?)")
+examples\css_feature_probes\scatter3d_probe.py:1126:                    out_path = pathlib.Path.home() / "dragongui_screenshot.png"
+examples\css_feature_probes\scatter3d_probe.py:1136:            dg.Button("Screenshot", class_="primary", on_click=_do_screenshot)
+examples\css_feature_probes\v4_scroll_benchmark_probe.py:202:        initial = app.debug_snapshot(timeout_ms=5000)
+examples\css_feature_probes\v4_scroll_benchmark_probe.py:230:        app.debug_snapshot(timeout_ms=5000)
+examples\css_feature_probes\v4_scroll_benchmark_probe.py:235:            app.request_exit()

@@ -1,0 +1,98 @@
+native/src/runtime.rs:1258:struct ScatterCompositeUniforms {
+native/src/runtime.rs:1264:struct ScatterCompositeRenderer {
+native/src/runtime.rs:1268:    uniform_buffer: wgpu::Buffer,
+native/src/runtime.rs:1274:            label: Some("scatter-composite"),
+native/src/runtime.rs:1275:            source: wgpu::ShaderSource::Wgsl(include_str!("scatter/composite.wgsl").into()),
+native/src/runtime.rs:1278:            label: Some("scatter-composite-bgl"),
+native/src/runtime.rs:1309:            label: Some("scatter-composite-pl"),
+native/src/runtime.rs:1314:            label: Some("scatter-composite"),
+native/src/runtime.rs:1353:            label: Some("scatter-composite-sampler"),
+native/src/runtime.rs:1362:            label: Some("scatter-composite-uniforms"),
+native/src/runtime.rs:1381:            label: Some("scatter-composite-bg"),
+native/src/runtime.rs:1431:    bind_group: wgpu::BindGroup,
+native/src/runtime.rs:5937:    last_render_composite_ms: f64,
+native/src/runtime.rs:5941:    render_composite_timing: StageTimingStats,
+native/src/runtime.rs:6004:    render_target: Option<ScatterRenderTarget>,
+native/src/runtime.rs:7330:                        render_target: None,
+native/src/runtime.rs:10001:            last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+native/src/runtime.rs:10071:            last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+native/src/runtime.rs:10276:                        render_target: None,
+native/src/runtime.rs:11743:                    last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+native/src/runtime.rs:11821:                    last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+native/src/runtime.rs:11918:                        last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+native/src/runtime.rs:12016:                last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+native/src/runtime.rs:12110:            last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+native/src/runtime.rs:12381:            "last_render_composite_ms".to_string(),
+native/src/runtime.rs:12382:            json!(rt.metrics.last_render_composite_ms),
+native/src/runtime.rs:12413:            "render_composite_avg_ms".to_string(),
+native/src/runtime.rs:12414:            json!(rt.metrics.render_composite_timing.avg_ms()),
+native/src/runtime.rs:12419:                .render_target
+native/src/runtime.rs:13702:                        runtime.widget.scaled_render_target_size(render_scale);
+native/src/runtime.rs:13703:                    let cached_matches = runtime.render_target.as_ref().is_some_and(|target| {
+native/src/runtime.rs:13712:                let mut composite_ms = 0.0;
+native/src/runtime.rs:13716:                        runtime.widget.scaled_render_target_size(render_scale);
+native/src/runtime.rs:13718:                        .render_target
+native/src/runtime.rs:13725:                        runtime.render_target = Some(ScatterRenderTarget::new(
+native/src/runtime.rs:13734:                        .render_target
+native/src/runtime.rs:13741:                        let target = runtime.render_target.as_ref().unwrap();
+native/src/runtime.rs:13780:                        if let Some(target) = runtime.render_target.as_mut() {
+native/src/runtime.rs:13798:                        let composite_t0 = Instant::now();
+native/src/runtime.rs:13799:                        let target = runtime.render_target.as_ref().unwrap();
+native/src/runtime.rs:13801:                            label: Some("dragongui-scatter-composite"),
+native/src/runtime.rs:13818:                        composite_ms = composite_t0.elapsed().as_secs_f64() * 1000.0;
+native/src/runtime.rs:13855:                runtime.metrics.last_render_composite_ms = composite_ms;
+native/src/runtime.rs:13862:                runtime.metrics.render_composite_timing.record(composite_ms);
+native/src\image_widget.rs:69:    bind_group: wgpu::BindGroup,
+native/src\image_widget.rs:98:    uniform_buffer: wgpu::Buffer,
+native/src\image_widget.rs:99:    uniform_bind_group: wgpu::BindGroup,
+native/src\runtime.rs:1258:struct ScatterCompositeUniforms {
+native/src\runtime.rs:1264:struct ScatterCompositeRenderer {
+native/src\runtime.rs:1268:    uniform_buffer: wgpu::Buffer,
+native/src\runtime.rs:1274:            label: Some("scatter-composite"),
+native/src\runtime.rs:1275:            source: wgpu::ShaderSource::Wgsl(include_str!("scatter/composite.wgsl").into()),
+native/src\runtime.rs:1278:            label: Some("scatter-composite-bgl"),
+native/src\runtime.rs:1309:            label: Some("scatter-composite-pl"),
+native/src\runtime.rs:1314:            label: Some("scatter-composite"),
+native/src\runtime.rs:1353:            label: Some("scatter-composite-sampler"),
+native/src\runtime.rs:1362:            label: Some("scatter-composite-uniforms"),
+native/src\runtime.rs:1381:            label: Some("scatter-composite-bg"),
+native/src\runtime.rs:1431:    bind_group: wgpu::BindGroup,
+native/src\runtime.rs:5937:    last_render_composite_ms: f64,
+native/src\runtime.rs:5941:    render_composite_timing: StageTimingStats,
+native/src\runtime.rs:6004:    render_target: Option<ScatterRenderTarget>,
+native/src\runtime.rs:7330:                        render_target: None,
+native/src\runtime.rs:10001:            last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+native/src\runtime.rs:10071:            last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+native/src\runtime.rs:10276:                        render_target: None,
+native/src\runtime.rs:11743:                    last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+native/src\runtime.rs:11821:                    last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+native/src\runtime.rs:11918:                        last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+native/src\runtime.rs:12016:                last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+native/src\runtime.rs:12110:            last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+native/src\runtime.rs:12381:            "last_render_composite_ms".to_string(),
+native/src\runtime.rs:12382:            json!(rt.metrics.last_render_composite_ms),
+native/src\runtime.rs:12413:            "render_composite_avg_ms".to_string(),
+native/src\runtime.rs:12414:            json!(rt.metrics.render_composite_timing.avg_ms()),
+native/src\runtime.rs:12419:                .render_target
+native/src\runtime.rs:13702:                        runtime.widget.scaled_render_target_size(render_scale);
+native/src\runtime.rs:13703:                    let cached_matches = runtime.render_target.as_ref().is_some_and(|target| {
+native/src\runtime.rs:13712:                let mut composite_ms = 0.0;
+native/src\runtime.rs:13716:                        runtime.widget.scaled_render_target_size(render_scale);
+native/src\runtime.rs:13718:                        .render_target
+native/src\runtime.rs:13725:                        runtime.render_target = Some(ScatterRenderTarget::new(
+native/src\runtime.rs:13734:                        .render_target
+native/src\runtime.rs:13741:                        let target = runtime.render_target.as_ref().unwrap();
+native/src\runtime.rs:13780:                        if let Some(target) = runtime.render_target.as_mut() {
+native/src\runtime.rs:13798:                        let composite_t0 = Instant::now();
+native/src\runtime.rs:13799:                        let target = runtime.render_target.as_ref().unwrap();
+native/src\runtime.rs:13801:                            label: Some("dragongui-scatter-composite"),
+native/src\runtime.rs:13818:                        composite_ms = composite_t0.elapsed().as_secs_f64() * 1000.0;
+native/src\runtime.rs:13855:                runtime.metrics.last_render_composite_ms = composite_ms;
+native/src\runtime.rs:13862:                runtime.metrics.render_composite_timing.record(composite_ms);
+native/src\primitives\mod.rs:730:    uniform_buffer: wgpu::Buffer,
+native/src\primitives\mod.rs:731:    bind_group: wgpu::BindGroup,
+native/src\primitives\mod.rs:1352:    bind_group: wgpu::BindGroup,
+native/src\primitives\mod.rs:1353:    uniform_buffer: wgpu::Buffer,
+native/src\scatter\mod.rs:1146:    uniform_buffer: wgpu::Buffer,
+native/src\scatter\mod.rs:1148:    bind_group: wgpu::BindGroup,
+native/src\scatter\mod.rs:4100:    pub fn scaled_render_target_size(&self, scale: f32) -> (u32, u32) {

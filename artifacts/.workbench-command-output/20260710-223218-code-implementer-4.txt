@@ -1,0 +1,241 @@
+        layout.column_gap_value,
+        layout.column_gap,
+        sf,
+        parent_size.map(|size| size.0),
+    ) {
+        style.gap.width = column_gap;
+    }
+    if let Some(row_gap) = layout_length_percentage(
+        layout.row_gap_value,
+        layout.row_gap,
+        sf,
+        parent_size.map(|size| size.1),
+    ) {
+        style.gap.height = row_gap;
+    }
+    if let Some(tracks) = &layout.grid_template_columns {
+        style.grid_template_columns = tracks
+            .iter()
+            .cloned()
+            .map(|track| grid_track_size(track, sf))
+            .collect();
+    }
+    if let Some(tracks) = &layout.grid_template_rows {
+        style.grid_template_rows = tracks
+            .iter()
+            .cloned()
+            .map(|track| grid_track_size(track, sf))
+            .collect();
+    }
+    if let Some(flow) = layout.grid_auto_flow {
+        style.grid_auto_flow = grid_auto_flow(flow);
+    }
+    if let Some(placement) = layout.grid_column {
+        style.grid_column = grid_placement(placement);
+    }
+    if let Some(placement) = layout.grid_row {
+        style.grid_row = grid_placement(placement);
+    }
+    if matches!(
+        layout.position,
+        Some(PositionStyle::Absolute | PositionStyle::Fixed)
+    ) {
+        style.position = taffy::style::Position::Absolute;
+        if let Some(left) = layout.left {
+            style.inset.left = LengthPercentageAuto::Length(left * sf);
+        }
+        if let Some(right) = layout.right {
+            style.inset.right = LengthPercentageAuto::Length(right * sf);
+        }
+        if let Some(top) = layout.top {
+            style.inset.top = LengthPercentageAuto::Length(top * sf);
+        }
+        if let Some(bottom) = layout.bottom {
+            style.inset.bottom = LengthPercentageAuto::Length(bottom * sf);
+        }
+    }
+    let overflow_x = layout.overflow_x.or(layout.overflow);
+    let overflow_y = layout.overflow_y.or(layout.overflow);
+    if overflow_x.is_some() || overflow_y.is_some() {
+        style.overflow = taffy::geometry::Point {
+            x: taffy_overflow(overflow_x.unwrap_or(OverflowStyle::Hidden)),
+            y: taffy_overflow(overflow_y.unwrap_or(OverflowStyle::Hidden)),
+        };
+    }
+    let margin_all_value = layout
+        .margin_value
+        .or_else(|| layout.margin.map(LayoutLength::LogicalPx));
+    if margin_all_value.is_some()
+        || layout.margin.is_some()
+        || layout.margin_left.is_some()
+        || layout.margin_right.is_some()
+        || layout.margin_top.is_some()
+        || layout.margin_bottom.is_some()
+        || layout.margin_left_value.is_some()
+        || layout.margin_right_value.is_some()
+        || layout.margin_top_value.is_some()
+        || layout.margin_bottom_value.is_some()
+    {
+        let current = style.margin;
+        let parent_width = parent_size.map(|size| size.0);
+        style.margin = taffy::geometry::Rect {
+            left: layout_length_percentage_auto(
+                layout.margin_left_value.or(margin_all_value),
+                layout.margin_left.or(layout.margin),
+                sf,
+                parent_width,
+            )
+            .unwrap_or(current.left),
+            right: layout_length_percentage_auto(
+                layout.margin_right_value.or(margin_all_value),
+                layout.margin_right.or(layout.margin),
+                sf,
+                parent_width,
+            )
+            .unwrap_or(current.right),
+            top: layout_length_percentage_auto(
+                layout.margin_top_value.or(margin_all_value),
+                layout.margin_top.or(layout.margin),
+                sf,
+                parent_width,
+            )
+            .unwrap_or(current.top),
+            bottom: layout_length_percentage_auto(
+                layout.margin_bottom_value.or(margin_all_value),
+                layout.margin_bottom.or(layout.margin),
+                sf,
+                parent_width,
+            )
+            .unwrap_or(current.bottom),
+        };
+    }
+    let pad_all_value = layout
+        .padding_value
+        .or_else(|| layout.padding.map(LayoutLength::LogicalPx));
+    if pad_all_value.is_some()
+        || layout.padding.is_some()
+        || layout.padding_left.is_some()
+        || layout.padding_right.is_some()
+        || layout.padding_top.is_some()
+        || layout.padding_bottom.is_some()
+        || layout.padding_left_value.is_some()
+        || layout.padding_right_value.is_some()
+        || layout.padding_top_value.is_some()
+        || layout.padding_bottom_value.is_some()
+    {
+        let current = style.padding;
+        let parent_width = parent_size.map(|size| size.0);
+        style.padding = taffy::geometry::Rect {
+            left: layout_length_percentage(
+                layout.padding_left_value.or(pad_all_value),
+                layout.padding_left.or(layout.padding),
+                sf,
+                parent_width,
+            )
+            .unwrap_or(current.left),
+            right: layout_length_percentage(
+                layout.padding_right_value.or(pad_all_value),
+                layout.padding_right.or(layout.padding),
+                sf,
+                parent_width,
+            )
+            .unwrap_or(current.right),
+            top: layout_length_percentage(
+                layout.padding_top_value.or(pad_all_value),
+                layout.padding_top.or(layout.padding),
+                sf,
+                parent_width,
+            )
+            .unwrap_or(current.top),
+            bottom: layout_length_percentage(
+                layout.padding_bottom_value.or(pad_all_value),
+                layout.padding_bottom.or(layout.padding),
+                sf,
+                parent_width,
+            )
+            .unwrap_or(current.bottom),
+        };
+    }
+    reserve_scrollbar_gutter_padding(style, node, sf);
+}
+
+fn taffy_overflow(value: OverflowStyle) -> Overflow {
+    match value {
+        OverflowStyle::Visible => Overflow::Visible,
+        OverflowStyle::Hidden => Overflow::Hidden,
+        OverflowStyle::Scroll | OverflowStyle::Auto => Overflow::Scroll,
+    }
+}
+
+fn layout_size_locks_flex(layout: &crate::style::LayoutStyle) -> bool {
+    layout.width.is_some()
+        || layout.height.is_some()
+        || layout_length_locks_flex(layout.width_value)
+        || layout_length_locks_flex(layout.height_value)
+}
+
+fn layout_length_locks_flex(value: Option<LayoutLength>) -> bool {
+    matches!(
+        value,
+        Some(LayoutLength::LogicalPx(_) | LayoutLength::Percent(_) | LayoutLength::Calc(_))
+    )
+}
+
+fn reserve_scrollbar_gutter_padding(style: &mut Style, node: &WidgetNode, sf: f32) {
+    if reserves_vertical_scrollbar_gutter(node) {
+        let reserve = scrollbar_gutter_reserve_px(node, sf);
+        style.padding.right = max_length_padding(style.padding.right, reserve);
+    }
+    if explicitly_scrolls_x(node) {
+        let reserve = scrollbar_gutter_reserve_px(node, sf);
+        style.padding.bottom = max_length_padding(style.padding.bottom, reserve);
+    }
+}
+
+fn explicitly_scrolls_x(node: &WidgetNode) -> bool {
+    matches!(
+        node_overflow_x(node),
+        Some(OverflowStyle::Scroll | OverflowStyle::Auto)
+    )
+}
+
+fn explicitly_scrolls_y(node: &WidgetNode) -> bool {
+    matches!(
+        node_overflow_y(node),
+        Some(OverflowStyle::Scroll | OverflowStyle::Auto)
+    )
+}
+
+fn reserves_vertical_scrollbar_gutter(node: &WidgetNode) -> bool {
+    explicitly_scrolls_y(node) || (implicit_panel_may_need_vertical_scrollbar_gutter(node))
+}
+
+fn implicit_panel_may_need_vertical_scrollbar_gutter(node: &WidgetNode) -> bool {
+    is_scroll_container_kind(&node.kind)
+        && node.style.layout.display != Some(DisplayStyle::Grid)
+        && node_overflow_x(node).is_none()
+        && node_overflow_y(node).is_none()
+        && (node.style.layout.height.is_some()
+            || node.style.layout.height_value.is_some()
+            || node.props.fixed_height.is_some())
+}
+
+fn max_length_padding(value: LengthPercentage, min_px: f32) -> LengthPercentage {
+    match value {
+        LengthPercentage::Length(current) => LengthPercentage::Length(current.max(min_px)),
+        LengthPercentage::Percent(_) => value,
+    }
+}
+
+fn scrollbar_gutter_reserve_px(node: &WidgetNode, sf: f32) -> f32 {
+    let track = scrollbar_part_width_lp(node, "scrollbar-track", 4.0);
+    let thumb = scrollbar_part_width_lp(node, "scrollbar-thumb", track);
+    let track_padding = node
+        .style
+        .parts
+        .parts
+        .get("scrollbar-track")
+        .and_then(|part| part.layout.padding)
+        .unwrap_or(0.0)
+        .max(0.0);
+    let edge_pad = track_padding.max(8.0);

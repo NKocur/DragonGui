@@ -1,0 +1,2688 @@
+
+
+    Directory: J:\Projects\DragonFrame\artifacts
+
+
+Mode                 LastWriteTime         Length Name                                                                 
+----                 -------------         ------ ----                                                                 
+d-----         7/12/2026  11:03 PM                .workbench-command-output                                            
+d-----         7/10/2026   8:44 PM                generated                                                            
+d-----         7/10/2026   7:30 PM                visual_audit                                                         
+-a----         7/12/2026   5:40 PM           4280 CODE_REVIEW.md                                                       
+-a----         7/12/2026  11:03 PM           6303 DIAGNOSIS.md                                                         
+-a----         7/12/2026   5:32 PM          10599 IMPLEMENTATION_NOTES.md                                              
+-a----         7/10/2026   8:53 PM           3438 MAINTAINABILITY_REVIEW.md                                            
+-a----          7/3/2026  11:41 AM           9370 PLAN.md                                                              
+-a----          7/3/2026  11:47 AM           4344 REVIEW.md                                                            
+-a----         7/12/2026  10:51 PM          12690 SPEC.md                                                              
+-a----          7/3/2026  11:50 AM           3872 SUMMARY.md                                                           
+-a----         7/12/2026   5:38 PM          15105 TEST_RESULTS.md                                                      
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\contact_sheets
+Length        : 
+LastWriteTime : 7/10/2026 9:06:08 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs
+Length        : 
+LastWriteTime : 7/12/2026 5:29:45 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots
+Length        : 
+LastWriteTime : 7/12/2026 5:29:43 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots
+Length        : 
+LastWriteTime : 7/12/2026 5:29:43 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\report.json
+Length        : 1428
+LastWriteTime : 7/12/2026 11:02:36 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Length        : 1670
+LastWriteTime : 7/12/2026 11:02:36 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\contact_sheets\all-features-professional-contact-sheet.p
+                ng
+Length        : 1529299
+LastWriteTime : 7/10/2026 10:48:00 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\contact_sheets\contact-sheet-01.png
+Length        : 227753
+LastWriteTime : 7/9/2026 6:10:02 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\contact_sheets\contact-sheet-02.png
+Length        : 222628
+LastWriteTime : 7/9/2026 6:10:02 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\contact_sheets\contact-sheet-03.png
+Length        : 246211
+LastWriteTime : 7/9/2026 6:10:02 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\contact_sheets\contact-sheet-04.png
+Length        : 304099
+LastWriteTime : 7/9/2026 6:10:03 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\contact_sheets\contact-sheet-05.png
+Length        : 265533
+LastWriteTime : 7/9/2026 6:10:03 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\contact_sheets\contact-sheet-06.png
+Length        : 243494
+LastWriteTime : 7/9/2026 6:10:03 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\adjacent-scatter-interaction-1120x720.stderr.txt
+Length        : 695
+LastWriteTime : 7/12/2026 11:02:36 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\adjacent-scatter-interaction-1120x720.stdout.txt
+Length        : 0
+LastWriteTime : 7/12/2026 11:02:36 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-data-1180x760.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 10:46:23 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-data-1180x760.stdout.txt
+Length        : 813049
+LastWriteTime : 7/10/2026 10:46:23 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-data-1440x900.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 10:46:19 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-data-1440x900.stdout.txt
+Length        : 813538
+LastWriteTime : 7/10/2026 10:46:19 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-data-320x640.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 10:46:32 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-data-320x640.stdout.txt
+Length        : 813517
+LastWriteTime : 7/10/2026 10:46:32 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-data-390x720.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 10:46:28 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-data-390x720.stdout.txt
+Length        : 813333
+LastWriteTime : 7/10/2026 10:46:28 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-explore-1180x760.stderr.t
+                xt
+Length        : 0
+LastWriteTime : 7/12/2026 5:37:17 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-explore-1180x760.stdout.t
+                xt
+Length        : 808768
+LastWriteTime : 7/12/2026 5:37:17 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-explore-1440x900.stderr.t
+                xt
+Length        : 0
+LastWriteTime : 7/12/2026 5:37:13 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-explore-1440x900.stdout.t
+                xt
+Length        : 809043
+LastWriteTime : 7/12/2026 5:37:13 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-explore-320x640.stderr.tx
+                t
+Length        : 0
+LastWriteTime : 7/12/2026 5:37:24 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-explore-320x640.stdout.tx
+                t
+Length        : 809105
+LastWriteTime : 7/12/2026 5:37:24 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-explore-390x720.stderr.tx
+                t
+Length        : 0
+LastWriteTime : 7/12/2026 5:37:20 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-explore-390x720.stdout.tx
+                t
+Length        : 808997
+LastWriteTime : 7/12/2026 5:37:20 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-overview-1180x760.stderr.
+                txt
+Length        : 0
+LastWriteTime : 7/10/2026 10:45:29 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-overview-1180x760.stdout.
+                txt
+Length        : 807827
+LastWriteTime : 7/10/2026 10:45:29 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-overview-1440x900.stderr.
+                txt
+Length        : 0
+LastWriteTime : 7/10/2026 10:45:25 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-overview-1440x900.stdout.
+                txt
+Length        : 807953
+LastWriteTime : 7/10/2026 10:45:25 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-overview-320x640.stderr.t
+                xt
+Length        : 0
+LastWriteTime : 7/10/2026 10:45:38 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-overview-320x640.stdout.t
+                xt
+Length        : 807769
+LastWriteTime : 7/10/2026 10:45:38 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-overview-390x720.stderr.t
+                xt
+Length        : 0
+LastWriteTime : 7/10/2026 10:45:34 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-overview-390x720.stdout.t
+                xt
+Length        : 807809
+LastWriteTime : 7/10/2026 10:45:34 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-reports-1180x760.stderr.t
+                xt
+Length        : 0
+LastWriteTime : 7/10/2026 10:47:00 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-reports-1180x760.stdout.t
+                xt
+Length        : 799547
+LastWriteTime : 7/10/2026 10:47:00 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-reports-1440x900.stderr.t
+                xt
+Length        : 0
+LastWriteTime : 7/10/2026 10:46:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-reports-1440x900.stdout.t
+                xt
+Length        : 799797
+LastWriteTime : 7/10/2026 10:46:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-reports-320x640.stderr.tx
+                t
+Length        : 0
+LastWriteTime : 7/10/2026 10:47:09 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-reports-320x640.stdout.tx
+                t
+Length        : 799795
+LastWriteTime : 7/10/2026 10:47:09 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-reports-390x720.stderr.tx
+                t
+Length        : 0
+LastWriteTime : 7/10/2026 10:47:04 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-reports-390x720.stdout.tx
+                t
+Length        : 799740
+LastWriteTime : 7/10/2026 10:47:04 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-runtime-1180x760.stderr.t
+                xt
+Length        : 0
+LastWriteTime : 7/10/2026 10:47:18 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-runtime-1180x760.stdout.t
+                xt
+Length        : 800192
+LastWriteTime : 7/10/2026 10:47:18 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-runtime-1440x900.stderr.t
+                xt
+Length        : 0
+LastWriteTime : 7/10/2026 10:47:13 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-runtime-1440x900.stdout.t
+                xt
+Length        : 800031
+LastWriteTime : 7/10/2026 10:47:13 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-runtime-320x640.stderr.tx
+                t
+Length        : 0
+LastWriteTime : 7/10/2026 10:47:27 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-runtime-320x640.stdout.tx
+                t
+Length        : 800248
+LastWriteTime : 7/10/2026 10:47:27 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-runtime-390x720.stderr.tx
+                t
+Length        : 0
+LastWriteTime : 7/10/2026 10:47:22 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-runtime-390x720.stdout.tx
+                t
+Length        : 800626
+LastWriteTime : 7/10/2026 10:47:22 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-styling-1180x760.stderr.t
+                xt
+Length        : 0
+LastWriteTime : 7/10/2026 10:47:36 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-styling-1180x760.stdout.t
+                xt
+Length        : 815761
+LastWriteTime : 7/10/2026 10:47:36 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-styling-1440x900.stderr.t
+                xt
+Length        : 0
+LastWriteTime : 7/10/2026 10:47:31 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-styling-1440x900.stdout.t
+                xt
+Length        : 816285
+LastWriteTime : 7/10/2026 10:47:31 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-styling-320x640.stderr.tx
+                t
+Length        : 0
+LastWriteTime : 7/10/2026 10:47:44 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-styling-320x640.stdout.tx
+                t
+Length        : 816072
+LastWriteTime : 7/10/2026 10:47:44 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-styling-390x720.stderr.tx
+                t
+Length        : 0
+LastWriteTime : 7/10/2026 10:47:40 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-styling-390x720.stdout.tx
+                t
+Length        : 816127
+LastWriteTime : 7/10/2026 10:47:40 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-timeseries-1180x760.stder
+                r.txt
+Length        : 0
+LastWriteTime : 7/10/2026 10:46:05 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-timeseries-1180x760.stdou
+                t.txt
+Length        : 797301
+LastWriteTime : 7/10/2026 10:46:05 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-timeseries-1440x900.stder
+                r.txt
+Length        : 0
+LastWriteTime : 7/10/2026 10:46:01 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-timeseries-1440x900.stdou
+                t.txt
+Length        : 797667
+LastWriteTime : 7/10/2026 10:46:01 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-timeseries-320x640.stderr
+                .txt
+Length        : 0
+LastWriteTime : 7/10/2026 10:46:14 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-timeseries-320x640.stdout
+                .txt
+Length        : 797444
+LastWriteTime : 7/10/2026 10:46:14 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-timeseries-390x720.stderr
+                .txt
+Length        : 0
+LastWriteTime : 7/10/2026 10:46:10 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-timeseries-390x720.stdout
+                .txt
+Length        : 797583
+LastWriteTime : 7/10/2026 10:46:10 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-workflow-1180x760.stderr.
+                txt
+Length        : 0
+LastWriteTime : 7/10/2026 10:46:41 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-workflow-1180x760.stdout.
+                txt
+Length        : 810727
+LastWriteTime : 7/10/2026 10:46:41 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-workflow-1440x900.stderr.
+                txt
+Length        : 0
+LastWriteTime : 7/10/2026 10:46:37 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-workflow-1440x900.stdout.
+                txt
+Length        : 810755
+LastWriteTime : 7/10/2026 10:46:37 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-workflow-320x640.stderr.t
+                xt
+Length        : 0
+LastWriteTime : 7/10/2026 10:46:50 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-workflow-320x640.stdout.t
+                xt
+Length        : 810509
+LastWriteTime : 7/10/2026 10:46:50 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-workflow-390x720.stderr.t
+                xt
+Length        : 0
+LastWriteTime : 7/10/2026 10:46:46 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\all-features-professional-workflow-390x720.stdout.t
+                xt
+Length        : 810415
+LastWriteTime : 7/10/2026 10:46:46 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\animations-desktop-1.stderr.txt
+Length        : 134
+LastWriteTime : 7/9/2026 5:35:13 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\animations-desktop-1.stdout.txt
+Length        : 111144
+LastWriteTime : 7/9/2026 5:35:13 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\app-shell-workbench-390x720.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 9:58:52 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\app-shell-workbench-390x720.stdout.txt
+Length        : 0
+LastWriteTime : 7/10/2026 9:58:52 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\app-shell-workbench-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 9:58:49 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\app-shell-workbench-desktop-1.stdout.txt
+Length        : 0
+LastWriteTime : 7/10/2026 9:58:49 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\backdrop-filter-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:35:16 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\backdrop-filter-desktop-1.stdout.txt
+Length        : 111903
+LastWriteTime : 7/9/2026 5:35:16 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\badge-layout-320x640.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 12:07:32 AM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\badge-layout-320x640.stdout.txt
+Length        : 209797
+LastWriteTime : 7/10/2026 12:07:32 AM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\badge-layout-390x720.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 12:07:29 AM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\badge-layout-390x720.stdout.txt
+Length        : 209770
+LastWriteTime : 7/10/2026 12:07:29 AM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\badge-layout-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 12:07:26 AM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\badge-layout-desktop-1.stdout.txt
+Length        : 209751
+LastWriteTime : 7/10/2026 12:07:26 AM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\bar-chart-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:36:22 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\bar-chart-desktop-1.stdout.txt
+Length        : 61378
+LastWriteTime : 7/9/2026 5:36:22 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\border-outline-shadow-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:35:05 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\border-outline-shadow-desktop-1.stdout.txt
+Length        : 153321
+LastWriteTime : 7/9/2026 5:35:05 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\breadcrumbs-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:33:34 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\breadcrumbs-desktop-1.stdout.txt
+Length        : 85567
+LastWriteTime : 7/9/2026 5:33:34 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\code-editor-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:33:47 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\code-editor-desktop-1.stdout.txt
+Length        : 45277
+LastWriteTime : 7/9/2026 5:33:47 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\color-syntax-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:34:59 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\color-syntax-desktop-1.stdout.txt
+Length        : 142026
+LastWriteTime : 7/9/2026 5:34:59 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\command-palette-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:33:36 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\command-palette-desktop-1.stdout.txt
+Length        : 105796
+LastWriteTime : 7/9/2026 5:33:36 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\container-queries-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:34:32 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\container-queries-desktop-1.stdout.txt
+Length        : 43531
+LastWriteTime : 7/9/2026 5:34:32 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\core-widgets-390x720.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 11:52:41 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\core-widgets-390x720.stdout.txt
+Length        : 161179
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\core-widgets-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 11:52:38 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\core-widgets-desktop-1.stdout.txt
+Length        : 161191
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\custom-composite-widget-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:33:59 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\custom-composite-widget-desktop-1.stdout.txt
+Length        : 62488
+LastWriteTime : 7/9/2026 5:33:59 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\custom-properties-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:34:54 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\custom-properties-desktop-1.stdout.txt
+Length        : 62735
+LastWriteTime : 7/9/2026 5:34:54 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\data-table-upgrades-390x720.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 10:49:11 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\data-table-upgrades-390x720.stdout.txt
+Length        : 44665
+LastWriteTime : 7/10/2026 10:49:11 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\data-table-upgrades-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 10:49:07 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\data-table-upgrades-desktop-1.stdout.txt
+Length        : 44663
+LastWriteTime : 7/10/2026 10:49:07 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\data-widgets-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:30:39 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\data-widgets-desktop-1.stdout.txt
+Length        : 59256
+LastWriteTime : 7/9/2026 5:30:39 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\date-time-inputs-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:33:12 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\date-time-inputs-desktop-1.stdout.txt
+Length        : 58156
+LastWriteTime : 7/9/2026 5:33:12 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\default-polish-stress-320x640.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\default-polish-stress-320x640.stdout.txt
+Length        : 200449
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\default-polish-stress-390x720.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 9:58:58 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\default-polish-stress-390x720.stdout.txt
+Length        : 199932
+LastWriteTime : 7/10/2026 9:58:58 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\default-polish-stress-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 9:58:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\default-polish-stress-desktop-1.stdout.txt
+Length        : 200300
+LastWriteTime : 7/10/2026 9:58:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\drag-drop-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:33:45 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\drag-drop-desktop-1.stdout.txt
+Length        : 93178
+LastWriteTime : 7/9/2026 5:33:45 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\drag-number-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:33:26 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\drag-number-desktop-1.stdout.txt
+Length        : 70032
+LastWriteTime : 7/9/2026 5:33:26 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\font-face-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:34:48 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\font-face-desktop-1.stdout.txt
+Length        : 45205
+LastWriteTime : 7/9/2026 5:34:48 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\form-controls-390x720.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 6:42:10 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\form-controls-390x720.stdout.txt
+Length        : 158265
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\form-controls-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 6:42:08 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\form-controls-desktop-1.stdout.txt
+Length        : 157953
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\generated-content-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:35:07 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\generated-content-desktop-1.stdout.txt
+Length        : 99739
+LastWriteTime : 7/9/2026 5:35:07 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\gradients-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:35:02 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\gradients-desktop-1.stdout.txt
+Length        : 115574
+LastWriteTime : 7/9/2026 5:35:02 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\grid-tracks-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:37:40 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\grid-tracks-desktop-1.stdout.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:37:40 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\heatmap-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:36:25 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\heatmap-desktop-1.stdout.txt
+Length        : 44253
+LastWriteTime : 7/9/2026 5:36:25 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\histogram-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:36:16 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\histogram-desktop-1.stdout.txt
+Length        : 58812
+LastWriteTime : 7/9/2026 5:36:16 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\histogram-live-update-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:36:19 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\histogram-live-update-desktop-1.stdout.txt
+Length        : 30101
+LastWriteTime : 7/9/2026 5:36:19 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\html-report-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:33:53 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\html-report-desktop-1.stdout.txt
+Length        : 42316
+LastWriteTime : 7/9/2026 5:33:53 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\layout-containers-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:30:24 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\layout-containers-desktop-1.stdout.txt
+Length        : 176076
+LastWriteTime : 7/9/2026 5:30:24 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\layout-flex-stress-390x720.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 9:59:04 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\layout-flex-stress-390x720.stdout.txt
+Length        : 171188
+LastWriteTime : 7/10/2026 9:59:04 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\layout-flex-stress-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 9:59:01 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\layout-flex-stress-desktop-1.stdout.txt
+Length        : 169996
+LastWriteTime : 7/10/2026 9:59:01 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\layout-grid-masonry-390x720.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 9:59:16 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\layout-grid-masonry-390x720.stdout.txt
+Length        : 381087
+LastWriteTime : 7/10/2026 9:59:16 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\layout-grid-masonry-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 9:59:13 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\layout-grid-masonry-desktop-1.stdout.txt
+Length        : 381336
+LastWriteTime : 7/10/2026 9:59:13 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\layout-overlay-collision-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:34:21 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\layout-overlay-collision-desktop-1.stdout.txt
+Length        : 247340
+LastWriteTime : 7/9/2026 5:34:21 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\layout-panel-bounds-390x720.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 9:59:10 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\layout-panel-bounds-390x720.stdout.txt
+Length        : 262760
+LastWriteTime : 7/10/2026 9:59:10 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\layout-panel-bounds-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 9:59:07 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\layout-panel-bounds-desktop-1.stdout.txt
+Length        : 262692
+LastWriteTime : 7/10/2026 9:59:07 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\layout-plot-embedding-390x720.stderr.txt
+Length        : 0
+LastWriteTime : 7/12/2026 5:37:47 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\layout-plot-embedding-390x720.stdout.txt
+Length        : 117012
+LastWriteTime : 7/12/2026 5:37:47 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\layout-plot-embedding-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/12/2026 5:37:44 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\layout-plot-embedding-desktop-1.stdout.txt
+Length        : 117152
+LastWriteTime : 7/12/2026 5:37:44 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\layout-scrollable-composites-390x720.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 9:59:22 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\layout-scrollable-composites-390x720.stdout.txt
+Length        : 853572
+LastWriteTime : 7/10/2026 9:59:22 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\layout-scrollable-composites-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 9:59:19 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\layout-scrollable-composites-desktop-1.stdout.txt
+Length        : 854075
+LastWriteTime : 7/10/2026 9:59:19 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\line-plot-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:36:28 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\line-plot-desktop-1.stdout.txt
+Length        : 127421
+LastWriteTime : 7/9/2026 5:36:28 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\line-plot-stream-benchmark-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:36:31 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\line-plot-stream-benchmark-desktop-1.stdout.txt
+Length        : 29925
+LastWriteTime : 7/9/2026 5:36:31 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\loading-spinner-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:33:56 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\loading-spinner-desktop-1.stdout.txt
+Length        : 53797
+LastWriteTime : 7/9/2026 5:33:56 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\log-view-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:33:50 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\log-view-desktop-1.stdout.txt
+Length        : 48006
+LastWriteTime : 7/9/2026 5:33:50 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\media-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:34:46 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\media-desktop-1.stdout.txt
+Length        : 99073
+LastWriteTime : 7/9/2026 5:34:46 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\menu-overlays-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:30:36 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\menu-overlays-desktop-1.stdout.txt
+Length        : 119629
+LastWriteTime : 7/9/2026 5:30:36 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\navigation-widgets-390x720.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 11:52:47 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\navigation-widgets-390x720.stdout.txt
+Length        : 202996
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\navigation-widgets-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 11:52:44 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\navigation-widgets-desktop-1.stdout.txt
+Length        : 202543
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\overflow-scrollbar-390x720.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:39:01 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\overflow-scrollbar-390x720.stdout.txt
+Length        : 354883
+LastWriteTime : 7/9/2026 5:39:01 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\overflow-scrollbar-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:38:58 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\overflow-scrollbar-desktop-1.stdout.txt
+Length        : 354954
+LastWriteTime : 7/9/2026 5:38:58 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\overlay-stack-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:33:31 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\overlay-stack-desktop-1.stdout.txt
+Length        : 234690
+LastWriteTime : 7/9/2026 5:33:31 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\paint-widget-events-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:34:04 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\paint-widget-events-desktop-1.stdout.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:34:04 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\paint-widget-sparkline-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:34:01 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\paint-widget-sparkline-desktop-1.stdout.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:34:01 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\pie-chart-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:35:29 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\pie-chart-desktop-1.stdout.txt
+Length        : 45634
+LastWriteTime : 7/9/2026 5:35:29 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\positioning-zindex-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:34:30 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\positioning-zindex-desktop-1.stdout.txt
+Length        : 127405
+LastWriteTime : 7/9/2026 5:34:30 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\property-grid-390x720.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\property-grid-390x720.stdout.txt
+Length        : 142664
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\property-grid-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:33:23 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\property-grid-desktop-1.stdout.txt
+Length        : 142620
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\radio-group-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:33:18 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\radio-group-desktop-1.stdout.txt
+Length        : 84238
+LastWriteTime : 7/9/2026 5:33:18 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\range-slider-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:33:15 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\range-slider-desktop-1.stdout.txt
+Length        : 42066
+LastWriteTime : 7/9/2026 5:33:15 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\responsive-layout-390x720.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 9:59:35 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\responsive-layout-390x720.stdout.txt
+Length        : 167642
+LastWriteTime : 7/10/2026 9:59:35 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\responsive-layout-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 9:59:32 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\responsive-layout-desktop-1.stdout.txt
+Length        : 167748
+LastWriteTime : 7/10/2026 9:59:32 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\scatter-plot-2d-390x720.stderr.txt
+Length        : 0
+LastWriteTime : 7/12/2026 5:38:00 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\scatter-plot-2d-390x720.stdout.txt
+Length        : 54763
+LastWriteTime : 7/12/2026 5:38:00 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\scatter-plot-2d-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/12/2026 5:37:57 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\scatter-plot-2d-desktop-1.stdout.txt
+Length        : 54871
+LastWriteTime : 7/12/2026 5:37:57 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\scatter3d-390x720.stderr.txt
+Length        : 0
+LastWriteTime : 7/12/2026 5:37:54 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\scatter3d-390x720.stdout.txt
+Length        : 539344
+LastWriteTime : 7/12/2026 5:37:54 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\scatter3d-css-chrome-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:36:38 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\scatter3d-css-chrome-desktop-1.stdout.txt
+Length        : 42112
+LastWriteTime : 7/9/2026 5:36:38 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\scatter3d-dense-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:36:44 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\scatter3d-dense-desktop-1.stdout.txt
+Length        : 45487
+LastWriteTime : 7/9/2026 5:36:44 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\scatter3d-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/12/2026 5:37:50 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\scatter3d-desktop-1.stdout.txt
+Length        : 539654
+LastWriteTime : 7/12/2026 5:37:50 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\scatter3d-frame-benchmark-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:36:47 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\scatter3d-frame-benchmark-desktop-1.stdout.txt
+Length        : 62125
+LastWriteTime : 7/9/2026 5:36:47 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\selectable-list-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:33:20 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\selectable-list-desktop-1.stdout.txt
+Length        : 74101
+LastWriteTime : 7/9/2026 5:33:20 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\selectors-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:34:51 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\selectors-desktop-1.stdout.txt
+Length        : 160597
+LastWriteTime : 7/9/2026 5:34:51 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\splitter-390x720.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 10:48:56 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\splitter-390x720.stdout.txt
+Length        : 99071
+LastWriteTime : 7/10/2026 10:48:56 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\splitter-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 10:48:53 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\splitter-desktop-1.stdout.txt
+Length        : 98959
+LastWriteTime : 7/10/2026 10:48:53 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\supports-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:34:56 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\supports-desktop-1.stdout.txt
+Length        : 94461
+LastWriteTime : 7/9/2026 5:34:56 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\toggle-switch-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:33:09 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\toggle-switch-desktop-1.stdout.txt
+Length        : 59067
+LastWriteTime : 7/9/2026 5:33:09 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\tool-buttons-390x720.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\tool-buttons-390x720.stdout.txt
+Length        : 192704
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\tool-buttons-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:33:07 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\tool-buttons-desktop-1.stdout.txt
+Length        : 192764
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\toolbar-390x720.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 9:59:41 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\toolbar-390x720.stdout.txt
+Length        : 91316
+LastWriteTime : 7/10/2026 9:59:41 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\toolbar-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 9:59:38 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\toolbar-desktop-1.stdout.txt
+Length        : 91600
+LastWriteTime : 7/10/2026 9:59:38 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\transitions-transforms-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:35:10 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\transitions-transforms-desktop-1.stdout.txt
+Length        : 104776
+LastWriteTime : 7/9/2026 5:35:10 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\tree-view-390x720.stderr.txt
+Length        : 0
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\tree-view-390x720.stdout.txt
+Length        : 108192
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\tree-view-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 5:33:42 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\tree-view-desktop-1.stdout.txt
+Length        : 108223
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\typography-390x720.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 11:52:53 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\typography-390x720.stdout.txt
+Length        : 86998
+LastWriteTime : 7/9/2026 11:52:53 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\typography-desktop-1.stderr.txt
+Length        : 0
+LastWriteTime : 7/9/2026 11:52:50 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\logs\typography-desktop-1.stdout.txt
+Length        : 86846
+LastWriteTime : 7/9/2026 11:52:50 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\adjacent-scatter-interaction-1120x720.png
+Length        : 58958
+LastWriteTime : 7/12/2026 5:37:13 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-data-1180x760.png
+Length        : 113646
+LastWriteTime : 7/10/2026 10:46:22 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-data-1440x900.png
+Length        : 146701
+LastWriteTime : 7/10/2026 10:46:17 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-data-320x640.png
+Length        : 36584
+LastWriteTime : 7/10/2026 10:46:31 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-data-390x720.png
+Length        : 49134
+LastWriteTime : 7/10/2026 10:46:26 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-explore-1180x760.p
+                ng
+Length        : 109159
+LastWriteTime : 7/12/2026 5:37:15 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-explore-1440x900.p
+                ng
+Length        : 119394
+LastWriteTime : 7/12/2026 5:37:12 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-explore-320x640.pn
+                g
+Length        : 29090
+LastWriteTime : 7/12/2026 5:37:22 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-explore-390x720.pn
+                g
+Length        : 37340
+LastWriteTime : 7/12/2026 5:37:19 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-overview-1180x760.
+                png
+Length        : 100255
+LastWriteTime : 7/10/2026 10:45:28 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-overview-1440x900.
+                png
+Length        : 129763
+LastWriteTime : 7/10/2026 10:45:23 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-overview-320x640.p
+                ng
+Length        : 32088
+LastWriteTime : 7/10/2026 10:45:37 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-overview-390x720.p
+                ng
+Length        : 37384
+LastWriteTime : 7/10/2026 10:45:32 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-reports-1180x760.p
+                ng
+Length        : 121950
+LastWriteTime : 7/10/2026 10:46:58 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-reports-1440x900.p
+                ng
+Length        : 144137
+LastWriteTime : 7/10/2026 10:46:53 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-reports-320x640.pn
+                g
+Length        : 28333
+LastWriteTime : 7/10/2026 10:47:07 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-reports-390x720.pn
+                g
+Length        : 31396
+LastWriteTime : 7/10/2026 10:47:03 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-runtime-1180x760.p
+                ng
+Length        : 64031
+LastWriteTime : 7/10/2026 10:47:16 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-runtime-1440x900.p
+                ng
+Length        : 68317
+LastWriteTime : 7/10/2026 10:47:12 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-runtime-320x640.pn
+                g
+Length        : 33569
+LastWriteTime : 7/10/2026 10:47:25 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-runtime-390x720.pn
+                g
+Length        : 41354
+LastWriteTime : 7/10/2026 10:47:21 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-styling-1180x760.p
+                ng
+Length        : 77143
+LastWriteTime : 7/10/2026 10:47:34 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-styling-1440x900.p
+                ng
+Length        : 82786
+LastWriteTime : 7/10/2026 10:47:30 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-styling-320x640.pn
+                g
+Length        : 30119
+LastWriteTime : 7/10/2026 10:47:43 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-styling-390x720.pn
+                g
+Length        : 35160
+LastWriteTime : 7/10/2026 10:47:38 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-timeseries-1180x76
+                0.png
+Length        : 94966
+LastWriteTime : 7/10/2026 10:46:04 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-timeseries-1440x90
+                0.png
+Length        : 115393
+LastWriteTime : 7/10/2026 10:45:59 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-timeseries-320x640
+                .png
+Length        : 33447
+LastWriteTime : 7/10/2026 10:46:13 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-timeseries-390x720
+                .png
+Length        : 45712
+LastWriteTime : 7/10/2026 10:46:08 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-workflow-1180x760.
+                png
+Length        : 86093
+LastWriteTime : 7/10/2026 10:46:40 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-workflow-1440x900.
+                png
+Length        : 94007
+LastWriteTime : 7/10/2026 10:46:36 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-workflow-320x640.p
+                ng
+Length        : 32032
+LastWriteTime : 7/10/2026 10:46:49 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\all-features-professional-workflow-390x720.p
+                ng
+Length        : 37229
+LastWriteTime : 7/10/2026 10:46:44 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\animations-desktop-1.png
+Length        : 66121
+LastWriteTime : 7/9/2026 5:35:11 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\app-shell-workbench-390x720.png
+Length        : 44034
+LastWriteTime : 7/10/2026 9:58:50 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\app-shell-workbench-desktop-1.png
+Length        : 52411
+LastWriteTime : 7/10/2026 9:58:47 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\backdrop-filter-desktop-1.png
+Length        : 68039
+LastWriteTime : 7/9/2026 5:35:15 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\badge-layout-320x640.png
+Length        : 33124
+LastWriteTime : 7/10/2026 12:07:31 AM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\badge-layout-390x720.png
+Length        : 44328
+LastWriteTime : 7/10/2026 12:07:28 AM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\badge-layout-desktop-1.png
+Length        : 59047
+LastWriteTime : 7/10/2026 12:07:25 AM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\bar-chart-desktop-1.png
+Length        : 104889
+LastWriteTime : 7/9/2026 5:36:21 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\border-outline-shadow-desktop-1.png
+Length        : 57771
+LastWriteTime : 7/9/2026 5:35:03 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\breadcrumbs-desktop-1.png
+Length        : 28689
+LastWriteTime : 7/9/2026 5:33:32 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\code-editor-desktop-1.png
+Length        : 54902
+LastWriteTime : 7/9/2026 5:33:46 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\color-syntax-desktop-1.png
+Length        : 58899
+LastWriteTime : 7/9/2026 5:34:58 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\command-palette-desktop-1.png
+Length        : 34821
+LastWriteTime : 7/9/2026 5:33:35 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\container-queries-desktop-1.png
+Length        : 24759
+LastWriteTime : 7/9/2026 5:34:31 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\core-widgets-390x720.png
+Length        : 66356
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\core-widgets-desktop-1.png
+Length        : 147442
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\custom-composite-widget-desktop-1.png
+Length        : 44321
+LastWriteTime : 7/9/2026 5:33:57 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\custom-properties-desktop-1.png
+Length        : 85651
+LastWriteTime : 7/9/2026 5:34:52 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\data-table-upgrades-390x720.png
+Length        : 29646
+LastWriteTime : 7/10/2026 10:49:09 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\data-table-upgrades-desktop-1.png
+Length        : 43303
+LastWriteTime : 7/10/2026 10:49:06 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\data-widgets-desktop-1.png
+Length        : 86240
+LastWriteTime : 7/9/2026 5:30:38 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\date-time-inputs-desktop-1.png
+Length        : 31864
+LastWriteTime : 7/9/2026 5:33:11 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\default-polish-stress-320x640.png
+Length        : 35989
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\default-polish-stress-390x720.png
+Length        : 33348
+LastWriteTime : 7/10/2026 9:58:56 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\default-polish-stress-desktop-1.png
+Length        : 62561
+LastWriteTime : 7/10/2026 9:58:53 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\drag-drop-desktop-1.png
+Length        : 42170
+LastWriteTime : 7/9/2026 5:33:43 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\drag-number-desktop-1.png
+Length        : 24742
+LastWriteTime : 7/9/2026 5:33:24 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\font-face-desktop-1.png
+Length        : 50694
+LastWriteTime : 7/9/2026 5:34:47 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\form-controls-390x720.png
+Length        : 85298
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\form-controls-desktop-1.png
+Length        : 148573
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\generated-content-desktop-1.png
+Length        : 65287
+LastWriteTime : 7/9/2026 5:35:06 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\gradients-desktop-1.png
+Length        : 338157
+LastWriteTime : 7/9/2026 5:35:01 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\grid-tracks-desktop-1.png
+Length        : 32478
+LastWriteTime : 7/9/2026 5:37:39 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\heatmap-desktop-1.png
+Length        : 97289
+LastWriteTime : 7/9/2026 5:36:24 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\histogram-desktop-1.png
+Length        : 102059
+LastWriteTime : 7/9/2026 5:36:15 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\histogram-live-update-desktop-1.png
+Length        : 44142
+LastWriteTime : 7/9/2026 5:36:18 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\html-report-desktop-1.png
+Length        : 32129
+LastWriteTime : 7/9/2026 5:33:52 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\layout-containers-desktop-1.png
+Length        : 55244
+LastWriteTime : 7/9/2026 5:30:23 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\layout-flex-stress-390x720.png
+Length        : 44851
+LastWriteTime : 7/10/2026 9:59:02 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\layout-flex-stress-desktop-1.png
+Length        : 53046
+LastWriteTime : 7/10/2026 9:58:59 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\layout-grid-masonry-390x720.png
+Length        : 38512
+LastWriteTime : 7/10/2026 9:59:14 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\layout-grid-masonry-desktop-1.png
+Length        : 88306
+LastWriteTime : 7/10/2026 9:59:11 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\layout-overlay-collision-desktop-1.png
+Length        : 65907
+LastWriteTime : 7/9/2026 5:34:19 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\layout-panel-bounds-390x720.png
+Length        : 44497
+LastWriteTime : 7/10/2026 9:59:08 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\layout-panel-bounds-desktop-1.png
+Length        : 93752
+LastWriteTime : 7/10/2026 9:59:05 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\layout-plot-embedding-390x720.png
+Length        : 45368
+LastWriteTime : 7/12/2026 5:37:46 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\layout-plot-embedding-desktop-1.png
+Length        : 116868
+LastWriteTime : 7/12/2026 5:37:43 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\layout-scrollable-composites-390x720.png
+Length        : 49422
+LastWriteTime : 7/10/2026 9:59:21 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\layout-scrollable-composites-desktop-1.png
+Length        : 103033
+LastWriteTime : 7/10/2026 9:59:18 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\line-plot-desktop-1.png
+Length        : 103738
+LastWriteTime : 7/9/2026 5:36:27 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\line-plot-stream-benchmark-desktop-1.png
+Length        : 78255
+LastWriteTime : 7/9/2026 5:36:30 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\loading-spinner-desktop-1.png
+Length        : 22558
+LastWriteTime : 7/9/2026 5:33:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\log-view-desktop-1.png
+Length        : 48991
+LastWriteTime : 7/9/2026 5:33:49 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\media-desktop-1.png
+Length        : 48664
+LastWriteTime : 7/9/2026 5:34:44 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\menu-overlays-desktop-1.png
+Length        : 44055
+LastWriteTime : 7/9/2026 5:30:34 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\navigation-widgets-390x720.png
+Length        : 104326
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\navigation-widgets-desktop-1.png
+Length        : 143492
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\overflow-scrollbar-390x720.png
+Length        : 40837
+LastWriteTime : 7/9/2026 5:39:00 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\overflow-scrollbar-desktop-1.png
+Length        : 65800
+LastWriteTime : 7/9/2026 5:38:57 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\overlay-stack-desktop-1.png
+Length        : 92439
+LastWriteTime : 7/9/2026 5:33:30 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\paint-widget-events-desktop-1.png
+Length        : 20066
+LastWriteTime : 7/9/2026 5:34:03 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\paint-widget-sparkline-desktop-1.png
+Length        : 34043
+LastWriteTime : 7/9/2026 5:34:00 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\pie-chart-desktop-1.png
+Length        : 126579
+LastWriteTime : 7/9/2026 5:35:28 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\positioning-zindex-desktop-1.png
+Length        : 72932
+LastWriteTime : 7/9/2026 5:34:28 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\property-grid-390x720.png
+Length        : 43884
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\property-grid-desktop-1.png
+Length        : 51033
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\radio-group-desktop-1.png
+Length        : 31583
+LastWriteTime : 7/9/2026 5:33:16 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\range-slider-desktop-1.png
+Length        : 23364
+LastWriteTime : 7/9/2026 5:33:14 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\responsive-layout-390x720.png
+Length        : 64469
+LastWriteTime : 7/10/2026 9:59:33 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\responsive-layout-desktop-1.png
+Length        : 68522
+LastWriteTime : 7/10/2026 9:59:30 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\scatter-plot-2d-390x720.png
+Length        : 40927
+LastWriteTime : 7/12/2026 5:37:58 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\scatter-plot-2d-desktop-1.png
+Length        : 72117
+LastWriteTime : 7/12/2026 5:37:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\scatter3d-390x720.png
+Length        : 31093
+LastWriteTime : 7/12/2026 5:37:52 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\scatter3d-css-chrome-desktop-1.png
+Length        : 53207
+LastWriteTime : 7/9/2026 5:36:36 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\scatter3d-dense-desktop-1.png
+Length        : 241218
+LastWriteTime : 7/9/2026 5:36:42 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\scatter3d-desktop-1.png
+Length        : 79799
+LastWriteTime : 7/12/2026 5:37:49 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\scatter3d-frame-benchmark-desktop-1.png
+Length        : 155761
+LastWriteTime : 7/9/2026 5:36:45 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\selectable-list-desktop-1.png
+Length        : 33660
+LastWriteTime : 7/9/2026 5:33:19 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\selectors-desktop-1.png
+Length        : 75628
+LastWriteTime : 7/9/2026 5:34:50 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\splitter-390x720.png
+Length        : 23841
+LastWriteTime : 7/10/2026 10:48:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\splitter-desktop-1.png
+Length        : 34799
+LastWriteTime : 7/10/2026 10:48:52 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\supports-desktop-1.png
+Length        : 53134
+LastWriteTime : 7/9/2026 5:34:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\toggle-switch-desktop-1.png
+Length        : 28830
+LastWriteTime : 7/9/2026 5:33:08 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\tool-buttons-390x720.png
+Length        : 53356
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\tool-buttons-desktop-1.png
+Length        : 54978
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\toolbar-390x720.png
+Length        : 26461
+LastWriteTime : 7/10/2026 9:59:39 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\toolbar-desktop-1.png
+Length        : 28077
+LastWriteTime : 7/10/2026 9:59:36 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\transitions-transforms-desktop-1.png
+Length        : 67386
+LastWriteTime : 7/9/2026 5:35:09 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\tree-view-390x720.png
+Length        : 32386
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\tree-view-desktop-1.png
+Length        : 47056
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\typography-390x720.png
+Length        : 35768
+LastWriteTime : 7/9/2026 11:52:51 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\screenshots\typography-desktop-1.png
+Length        : 64108
+LastWriteTime : 7/9/2026 11:52:49 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\adjacent-scatter-interaction-1120x720.json
+Length        : 58363
+LastWriteTime : 7/12/2026 5:37:13 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-data-1180x760.json
+Length        : 2194336
+LastWriteTime : 7/10/2026 10:46:22 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-data-1440x900.json
+Length        : 2194984
+LastWriteTime : 7/10/2026 10:46:17 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-data-320x640.json
+Length        : 2194510
+LastWriteTime : 7/10/2026 10:46:31 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-data-390x720.json
+Length        : 2194697
+LastWriteTime : 7/10/2026 10:46:26 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-explore-1180x760.jso
+                n
+Length        : 2184399
+LastWriteTime : 7/12/2026 5:37:15 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-explore-1440x900.jso
+                n
+Length        : 2184636
+LastWriteTime : 7/12/2026 5:37:12 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-explore-320x640.json
+Length        : 2184720
+LastWriteTime : 7/12/2026 5:37:22 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-explore-390x720.json
+Length        : 2184817
+LastWriteTime : 7/12/2026 5:37:19 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-overview-1180x760.js
+                on
+Length        : 2183109
+LastWriteTime : 7/10/2026 10:45:28 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-overview-1440x900.js
+                on
+Length        : 2183269
+LastWriteTime : 7/10/2026 10:45:23 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-overview-320x640.jso
+                n
+Length        : 2183296
+LastWriteTime : 7/10/2026 10:45:37 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-overview-390x720.jso
+                n
+Length        : 2183361
+LastWriteTime : 7/10/2026 10:45:32 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-reports-1180x760.jso
+                n
+Length        : 2165818
+LastWriteTime : 7/10/2026 10:46:58 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-reports-1440x900.jso
+                n
+Length        : 2166158
+LastWriteTime : 7/10/2026 10:46:53 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-reports-320x640.json
+Length        : 2166277
+LastWriteTime : 7/10/2026 10:47:07 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-reports-390x720.json
+Length        : 2166173
+LastWriteTime : 7/10/2026 10:47:03 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-runtime-1180x760.jso
+                n
+Length        : 2166940
+LastWriteTime : 7/10/2026 10:47:16 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-runtime-1440x900.jso
+                n
+Length        : 2166757
+LastWriteTime : 7/10/2026 10:47:12 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-runtime-320x640.json
+Length        : 2167270
+LastWriteTime : 7/10/2026 10:47:25 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-runtime-390x720.json
+Length        : 2167558
+LastWriteTime : 7/10/2026 10:47:21 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-styling-1180x760.jso
+                n
+Length        : 2200159
+LastWriteTime : 7/10/2026 10:47:34 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-styling-1440x900.jso
+                n
+Length        : 2200458
+LastWriteTime : 7/10/2026 10:47:30 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-styling-320x640.json
+Length        : 2200610
+LastWriteTime : 7/10/2026 10:47:43 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-styling-390x720.json
+Length        : 2200652
+LastWriteTime : 7/10/2026 10:47:38 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-timeseries-1180x760.
+                json
+Length        : 2160858
+LastWriteTime : 7/10/2026 10:46:04 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-timeseries-1440x900.
+                json
+Length        : 2161076
+LastWriteTime : 7/10/2026 10:45:59 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-timeseries-320x640.j
+                son
+Length        : 2161164
+LastWriteTime : 7/10/2026 10:46:13 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-timeseries-390x720.j
+                son
+Length        : 2161271
+LastWriteTime : 7/10/2026 10:46:08 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-workflow-1180x760.js
+                on
+Length        : 2189106
+LastWriteTime : 7/10/2026 10:46:40 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-workflow-1440x900.js
+                on
+Length        : 2189062
+LastWriteTime : 7/10/2026 10:46:35 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-workflow-320x640.jso
+                n
+Length        : 2188764
+LastWriteTime : 7/10/2026 10:46:49 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\all-features-professional-workflow-390x720.jso
+                n
+Length        : 2188718
+LastWriteTime : 7/10/2026 10:46:44 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\animations-desktop-1.json
+Length        : 237871
+LastWriteTime : 7/9/2026 5:35:11 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\app-shell-workbench-390x720.json
+Length        : 257129
+LastWriteTime : 7/10/2026 9:58:50 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\app-shell-workbench-desktop-1.json
+Length        : 255739
+LastWriteTime : 7/10/2026 9:58:47 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\backdrop-filter-desktop-1.json
+Length        : 243551
+LastWriteTime : 7/9/2026 5:35:15 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\badge-layout-320x640.json
+Length        : 474020
+LastWriteTime : 7/10/2026 12:07:31 AM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\badge-layout-390x720.json
+Length        : 473904
+LastWriteTime : 7/10/2026 12:07:28 AM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\badge-layout-desktop-1.json
+Length        : 473987
+LastWriteTime : 7/10/2026 12:07:25 AM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\bar-chart-desktop-1.json
+Length        : 124791
+LastWriteTime : 7/9/2026 5:36:21 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\border-outline-shadow-desktop-1.json
+Length        : 341374
+LastWriteTime : 7/9/2026 5:35:03 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\breadcrumbs-desktop-1.json
+Length        : 179412
+LastWriteTime : 7/9/2026 5:33:32 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\code-editor-desktop-1.json
+Length        : 87996
+LastWriteTime : 7/9/2026 5:33:46 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\color-syntax-desktop-1.json
+Length        : 323239
+LastWriteTime : 7/9/2026 5:34:58 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\command-palette-desktop-1.json
+Length        : 231038
+LastWriteTime : 7/9/2026 5:33:35 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\container-queries-desktop-1.json
+Length        : 83678
+LastWriteTime : 7/9/2026 5:34:31 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\core-widgets-390x720.json
+Length        : 373009
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\core-widgets-desktop-1.json
+Length        : 373391
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\custom-composite-widget-desktop-1.json
+Length        : 130808
+LastWriteTime : 7/9/2026 5:33:57 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\custom-properties-desktop-1.json
+Length        : 129549
+LastWriteTime : 7/9/2026 5:34:52 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\data-table-upgrades-390x720.json
+Length        : 87803
+LastWriteTime : 7/10/2026 10:49:09 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\data-table-upgrades-desktop-1.json
+Length        : 87806
+LastWriteTime : 7/10/2026 10:49:06 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\data-widgets-desktop-1.json
+Length        : 117668
+LastWriteTime : 7/9/2026 5:30:38 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\date-time-inputs-desktop-1.json
+Length        : 119974
+LastWriteTime : 7/9/2026 5:33:11 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\default-polish-stress-320x640.json
+Length        : 479965
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\default-polish-stress-390x720.json
+Length        : 479487
+LastWriteTime : 7/10/2026 9:58:56 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\default-polish-stress-desktop-1.json
+Length        : 479873
+LastWriteTime : 7/10/2026 9:58:53 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\drag-drop-desktop-1.json
+Length        : 208656
+LastWriteTime : 7/9/2026 5:33:43 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\drag-number-desktop-1.json
+Length        : 150064
+LastWriteTime : 7/9/2026 5:33:24 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\font-face-desktop-1.json
+Length        : 86266
+LastWriteTime : 7/9/2026 5:34:47 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\form-controls-390x720.json
+Length        : 355448
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\form-controls-desktop-1.json
+Length        : 354956
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\generated-content-desktop-1.json
+Length        : 211416
+LastWriteTime : 7/9/2026 5:35:06 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\gradients-desktop-1.json
+Length        : 253914
+LastWriteTime : 7/9/2026 5:35:00 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\grid-tracks-desktop-1.json
+Length        : 251212
+LastWriteTime : 7/9/2026 5:37:39 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\heatmap-desktop-1.json
+Length        : 84706
+LastWriteTime : 7/9/2026 5:36:24 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\histogram-desktop-1.json
+Length        : 120070
+LastWriteTime : 7/9/2026 5:36:15 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\histogram-live-update-desktop-1.json
+Length        : 50228
+LastWriteTime : 7/9/2026 5:36:18 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\html-report-desktop-1.json
+Length        : 80364
+LastWriteTime : 7/9/2026 5:33:52 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\layout-containers-desktop-1.json
+Length        : 386022
+LastWriteTime : 7/9/2026 5:30:23 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\layout-flex-stress-390x720.json
+Length        : 382854
+LastWriteTime : 7/10/2026 9:59:02 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\layout-flex-stress-desktop-1.json
+Length        : 380702
+LastWriteTime : 7/10/2026 9:58:59 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\layout-grid-masonry-390x720.json
+Length        : 921309
+LastWriteTime : 7/10/2026 9:59:14 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\layout-grid-masonry-desktop-1.json
+Length        : 921673
+LastWriteTime : 7/10/2026 9:59:11 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\layout-overlay-collision-desktop-1.json
+Length        : 545250
+LastWriteTime : 7/9/2026 5:34:19 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\layout-panel-bounds-390x720.json
+Length        : 606414
+LastWriteTime : 7/10/2026 9:59:08 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\layout-panel-bounds-desktop-1.json
+Length        : 606383
+LastWriteTime : 7/10/2026 9:59:05 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\layout-plot-embedding-390x720.json
+Length        : 238456
+LastWriteTime : 7/12/2026 5:37:46 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\layout-plot-embedding-desktop-1.json
+Length        : 238589
+LastWriteTime : 7/12/2026 5:37:43 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\layout-scrollable-composites-390x720.json
+Length        : 2153513
+LastWriteTime : 7/10/2026 9:59:21 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\layout-scrollable-composites-desktop-1.json
+Length        : 2154066
+LastWriteTime : 7/10/2026 9:59:18 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\line-plot-desktop-1.json
+Length        : 279451
+LastWriteTime : 7/9/2026 5:36:27 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\line-plot-stream-benchmark-desktop-1.json
+Length        : 54108
+LastWriteTime : 7/9/2026 5:36:30 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\loading-spinner-desktop-1.json
+Length        : 110835
+LastWriteTime : 7/9/2026 5:33:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\log-view-desktop-1.json
+Length        : 94979
+LastWriteTime : 7/9/2026 5:33:49 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\media-desktop-1.json
+Length        : 207664
+LastWriteTime : 7/9/2026 5:34:44 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\menu-overlays-desktop-1.json
+Length        : 245268
+LastWriteTime : 7/9/2026 5:30:34 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\navigation-widgets-390x720.json
+Length        : 480196
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\navigation-widgets-desktop-1.json
+Length        : 479836
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\overflow-scrollbar-390x720.json
+Length        : 819347
+LastWriteTime : 7/9/2026 5:39:00 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\overflow-scrollbar-desktop-1.json
+Length        : 819413
+LastWriteTime : 7/9/2026 5:38:57 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\overlay-stack-desktop-1.json
+Length        : 520327
+LastWriteTime : 7/9/2026 5:33:30 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\paint-widget-events-desktop-1.json
+Length        : 87414
+LastWriteTime : 7/9/2026 5:34:03 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\paint-widget-sparkline-desktop-1.json
+Length        : 119449
+LastWriteTime : 7/9/2026 5:34:00 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\pie-chart-desktop-1.json
+Length        : 93345
+LastWriteTime : 7/9/2026 5:35:28 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\positioning-zindex-desktop-1.json
+Length        : 274647
+LastWriteTime : 7/9/2026 5:34:28 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\property-grid-390x720.json
+Length        : 351418
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\property-grid-desktop-1.json
+Length        : 351371
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\radio-group-desktop-1.json
+Length        : 183635
+LastWriteTime : 7/9/2026 5:33:16 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\range-slider-desktop-1.json
+Length        : 84913
+LastWriteTime : 7/9/2026 5:33:14 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\responsive-layout-390x720.json
+Length        : 364282
+LastWriteTime : 7/10/2026 9:59:33 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\responsive-layout-desktop-1.json
+Length        : 366245
+LastWriteTime : 7/10/2026 9:59:30 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\scatter-plot-2d-390x720.json
+Length        : 101650
+LastWriteTime : 7/12/2026 5:37:58 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\scatter-plot-2d-desktop-1.json
+Length        : 101803
+LastWriteTime : 7/12/2026 5:37:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\scatter3d-390x720.json
+Length        : 1210368
+LastWriteTime : 7/12/2026 5:37:52 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\scatter3d-css-chrome-desktop-1.json
+Length        : 76025
+LastWriteTime : 7/9/2026 5:36:36 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\scatter3d-dense-desktop-1.json
+Length        : 84049
+LastWriteTime : 7/9/2026 5:36:42 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\scatter3d-desktop-1.json
+Length        : 1210646
+LastWriteTime : 7/12/2026 5:37:49 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\scatter3d-frame-benchmark-desktop-1.json
+Length        : 126760
+LastWriteTime : 7/9/2026 5:36:45 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\selectable-list-desktop-1.json
+Length        : 159211
+LastWriteTime : 7/9/2026 5:33:19 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\selectors-desktop-1.json
+Length        : 354108
+LastWriteTime : 7/9/2026 5:34:50 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\splitter-390x720.json
+Length        : 227738
+LastWriteTime : 7/10/2026 10:48:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\splitter-desktop-1.json
+Length        : 227604
+LastWriteTime : 7/10/2026 10:48:52 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\supports-desktop-1.json
+Length        : 196439
+LastWriteTime : 7/9/2026 5:34:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\toggle-switch-desktop-1.json
+Length        : 126801
+LastWriteTime : 7/9/2026 5:33:08 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\tool-buttons-390x720.json
+Length        : 411911
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\tool-buttons-desktop-1.json
+Length        : 411940
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\toolbar-390x720.json
+Length        : 193715
+LastWriteTime : 7/10/2026 9:59:39 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\toolbar-desktop-1.json
+Length        : 193874
+LastWriteTime : 7/10/2026 9:59:36 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\transitions-transforms-desktop-1.json
+Length        : 224476
+LastWriteTime : 7/9/2026 5:35:09 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\tree-view-390x720.json
+Length        : 249837
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\tree-view-desktop-1.json
+Length        : 249876
+LastWriteTime : 7/10/2026 7:30:55 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\typography-390x720.json
+Length        : 182703
+LastWriteTime : 7/9/2026 11:52:51 PM
+
+
+FullName      : J:\Projects\DragonFrame\artifacts\visual_audit\snapshots\typography-desktop-1.json
+Length        : 182673
+LastWriteTime : 7/9/2026 11:52:49 PM

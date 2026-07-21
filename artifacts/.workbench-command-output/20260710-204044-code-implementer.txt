@@ -1,0 +1,650 @@
+
+class Property(HLayout):
+    """Single label/editor row for PropertyGrid."""
+
+    def __init__(
+        self,
+        label: str,
+        editor: Widget | None = None,
+        *,
+        label_width: int | float | None = None,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.label = str(label)
+        if not self.label:
+            raise ValueError("Property label cannot be empty")
+        actual_parent = _BuildContext.parent() if parent is _AUTO_PARENT else parent
+        grid = actual_parent if isinstance(actual_parent, PropertyGrid) else None
+        width = grid.label_width if label_width is None and grid is not None else label_width
+        if width is None:
+            width = 140.0
+        width_f = float(width)
+        if not math.isfinite(width_f) or width_f <= 0:
+            raise ValueError("Property label_width must be a positive finite number")
+        row_style = {
+            "gap": 10,
+            "align_items": "center",
+            "width": "100%",
+            **(style or {}),
+        }
+        super().__init__(
+            id=id,
+            key=key,
+            class_=_merge_widget_class("property-row", class_),
+            style=row_style,
+            tooltip=tooltip,
+            parent=actual_parent,
+        )
+        Label(
+            self.label,
+            class_="property-label",
+            style={"width": width_f, "flex_shrink": 0, "text_overflow": "ellipsis"},
+            parent=self,
+        )
+        self._editor_slot = HLayout(
+            class_="property-editor",
+            style={
+                "gap": 8,
+                "align_items": "center",
+                "flex": 1,
+                "min_width": 0,
+            },
+            parent=self,
+        )
+        if editor is not None:
+            self.set_editor(editor)
+
+    def set_editor(self, editor: Widget) -> None:
+        if not isinstance(editor, Widget):
+            raise TypeError("Property editor must be a DragonGUI widget")
+        self._editor_slot.add(editor)
+
+    def __enter__(self) -> Self:
+        _BuildContext.push(self._editor_slot)
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        _BuildContext.pop(self._editor_slot)
+
+
+class PropertyGrid(VLayout):
+    """Structured property inspector built from existing controls."""
+
+    def __init__(
+        self,
+        values: Mapping[str, object] | None = None,
+        *,
+        schema: Mapping[str, Mapping[str, object]] | None = None,
+        sections: Mapping[str, Iterable[str] | Mapping[str, object]] | None = None,
+        on_change: Callable[[PropertyChange], None] | None = None,
+        label_width: int | float = 140,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        label_width_f = float(label_width)
+        if not math.isfinite(label_width_f) or label_width_f <= 0:
+            raise ValueError("PropertyGrid label_width must be a positive finite number")
+        self.values: dict[str, object] = {str(k): v for k, v in (values or {}).items()}
+        self.schema: dict[str, dict[str, object]] = {
+            str(k): dict(v) for k, v in (schema or {}).items()
+        }
+        self.sections = sections
+        self.on_change = on_change
+        self.label_width = label_width_f
+        self.disabled = bool(disabled)
+        self._editors: dict[str, Widget] = {}
+        merged_style = {"gap": 6, "width": "100%", **(style or {})}
+        super().__init__(
+            id=id,
+            key=key,
+            class_=_merge_widget_class("property-grid", class_),
+            style=merged_style,
+            tooltip=tooltip,
+            parent=parent,
+        )
+        if values is not None:
+            self._sync_children(live=False)
+
+    def editor(self, key: str) -> Widget | None:
+        return self._editors.get(str(key))
+
+    def set_value(self, key: str, value: object, *, notify: bool = False) -> None:
+        key_s = str(key)
+        if key_s not in self.values:
+            raise KeyError(key_s)
+        schema = self.schema.get(key_s, {})
+        old_value = self.values.get(key_s)
+        next_value = self._coerce_value(key_s, value, schema)
+        self.values[key_s] = next_value
+        self._set_editor_value(key_s, next_value)
+        if notify and self.on_change is not None and not self.disabled:
+            self.on_change(PropertyChange(key_s, next_value, old_value))
+
+    def set_values(self, values: Mapping[str, object], *, notify: bool = False) -> None:
+        for key, value in values.items():
+            self.set_value(str(key), value, notify=notify)
+
+    def _sync_children(self, *, live: bool) -> None:
+        self._editors = {}
+        children = self._make_children()
+        if live:
+            self.replace_children(children)
+            return
+        self.children = []
+        for child in children:
+            self.add(child)
+
+    def _make_children(self) -> list[Widget]:
+        if self.sections:
+            return self._make_sectioned_children()
+        grouped: dict[str | None, list[str]] = {}
+        for key in self.values:
+            section = self.schema.get(key, {}).get("section")
+            section_key = None if section is None else str(section)
+            grouped.setdefault(section_key, []).append(key)
+        children: list[Widget] = []
+        for section, keys in grouped.items():
+            rows = [self._make_property_row(key) for key in keys]
+            if section is None:
+                children.extend(rows)
+            else:
+                children.append(self._make_section(section, rows))
+        return children
+
+    def _make_sectioned_children(self) -> list[Widget]:
+        children: list[Widget] = []
+        seen: set[str] = set()
+        assert self.sections is not None
+        for section, spec in self.sections.items():
+            if isinstance(spec, Mapping):
+                keys = []
+                for raw_key, value in spec.items():
+                    key = str(raw_key)
+                    keys.append(key)
+                    self.values.setdefault(key, value)
+            else:
+                keys = [str(key) for key in spec]
+            seen.update(keys)
+            children.append(self._make_section(str(section), [self._make_property_row(key) for key in keys]))
+        remaining = [key for key in self.values if key not in seen]
+        children.extend(self._make_property_row(key) for key in remaining)
+        return children
+
+    def _make_section(self, title: str, rows: list[Widget]) -> Collapsible:
+        section = Collapsible(title, expanded=True, class_="property-section", parent=None)
+        for row in rows:
+            section.add(row)
+        return section
+
+    def _make_property_row(self, key: str) -> Property:
+        if key not in self.values:
+            raise KeyError(key)
+        editor = self._make_editor(key, self.values[key], self.schema.get(key, {}))
+        row = Property(
+            self.schema.get(key, {}).get("label", key),
+            editor,
+            label_width=self.label_width,
+            parent=None,
+        )
+        return row
+
+    def _make_editor(self, key: str, value: object, schema: Mapping[str, object]) -> Widget:
+        disabled = self.disabled or bool(schema.get("disabled", False))
+        editor_kind = self._editor_kind(value, schema)
+
+        def changed(next_value: object) -> None:
+            self._handle_editor_change(key, next_value)
+
+        if editor_kind == "bool":
+            editor = Checkbox("", checked=bool(value), on_change=changed, disabled=disabled, parent=None)
+        elif editor_kind == "select":
+            options = self._schema_options(schema)
+            selected = str(value) if value is not None else options[0]
+            editor = Dropdown(
+                options,
+                value=selected,
+                on_change=changed,
+                disabled=disabled,
+                style=_property_fill_style(),
+                parent=None,
+            )
+        elif editor_kind == "range":
+            low, high = self._range_pair(value)
+            editor = RangeSlider(
+                (low, high),
+                min=float(schema.get("min", min(low, high, 0.0))),
+                max=float(schema.get("max", max(low, high, 1.0))),
+                step=float(schema.get("step", 0.01)),
+                on_change=changed,
+                disabled=disabled,
+                style=_property_fill_style(),
+                parent=None,
+            )
+        elif editor_kind == "slider":
+            editor = Slider(
+                float(value),
+                min=float(schema.get("min", 0.0)),
+                max=float(schema.get("max", 1.0)),
+                step=float(schema.get("step", 0.01)),
+                on_change=changed,
+                disabled=disabled,
+                style=_property_fill_style(),
+                parent=None,
+            )
+        elif editor_kind == "number":
+            editor = NumberInput(
+                float(value),
+                min=self._optional_float(schema.get("min")),
+                max=self._optional_float(schema.get("max")),
+                step=float(schema.get("step", 1.0)),
+                on_change=changed,
+                disabled=disabled,
+                style=_property_fill_style(),
+                parent=None,
+            )
+        elif editor_kind == "float" or editor_kind == "int":
+            editor = DragNumber(
+                float(value),
+                min=self._optional_float(schema.get("min")),
+                max=self._optional_float(schema.get("max")),
+                step=float(schema.get("step", 1.0 if editor_kind == "int" else 0.01)),
+                speed=self._optional_float(schema.get("speed")),
+                on_change=changed,
+                disabled=disabled,
+                style=_property_fill_style(),
+                parent=None,
+            )
+        elif editor_kind == "color":
+            editor = self._make_color_editor(str(value), changed, disabled)
+        elif editor_kind == "multiline":
+            editor = TextArea(
+                str(value),
+                rows=int(schema.get("rows", 4)),
+                on_change=changed,
+                disabled=disabled,
+                style=_property_fill_style(),
+                parent=None,
+            )
+        elif editor_kind == "readonly":
+            editor = Label(str(value), class_="property-value", style=_property_fill_style(), parent=None)
+        else:
+            editor = TextInput(
+                str(value),
+                on_change=changed,
+                disabled=disabled,
+                style=_property_fill_style(),
+                parent=None,
+            )
+        self._editors[key] = editor
+        return editor
+
+    def _make_color_editor(
+        self,
+        value: str,
+        changed: Callable[[object], None],
+        disabled: bool,
+    ) -> HLayout:
+        row = HLayout(
+            class_="property-color-editor",
+            style={"gap": 8, "align_items": "center", "width": "100%", "min_width": 0},
+            parent=None,
+        )
+        swatch = LED(True, states={"on": value}, size=16, parent=row)
+
+        def color_changed(next_value: str) -> None:
+            swatch.set_color(next_value)
+            changed(next_value)
+
+        text = TextInput(
+            value,
+            on_change=color_changed,
+            disabled=disabled,
+            style={"width": 0, "flex": 1, "min_width": 0},
+            parent=row,
+        )
+        return row
+
+    @staticmethod
+    def _optional_float(value: object) -> float | None:
+        if value is None:
+            return None
+        return float(value)
+
+    @staticmethod
+    def _schema_options(schema: Mapping[str, object]) -> list[str]:
+        raw = schema.get("options", schema.get("items"))
+        if raw is None:
+            raise ValueError("PropertyGrid select properties require options")
+        options = [str(item[1] if isinstance(item, tuple) and len(item) == 2 else item) for item in raw]  # type: ignore[union-attr]
+        if not options:
+            raise ValueError("PropertyGrid select options cannot be empty")
+        return options
+
+    @staticmethod
+    def _range_pair(value: object) -> tuple[float, float]:
+        if isinstance(value, (str, bytes, bytearray)) or not isinstance(value, Sequence):
+            raise TypeError("PropertyGrid range values must be a two-item sequence")
+        if len(value) != 2:
+            raise ValueError("PropertyGrid range values must contain exactly two values")
+        return float(value[0]), float(value[1])
+
+    @staticmethod
+    def _editor_kind(value: object, schema: Mapping[str, object]) -> str:
+        explicit = schema.get("editor", schema.get("type"))
+        if explicit is not None:
+            kind = str(explicit).strip().lower().replace("_", "-")
+            aliases = {
+                "boolean": "bool",
+                "dropdown": "select",
+                "choice": "select",
+                "drag": "float",
+                "drag-number": "float",
+                "text": "string",
+                "str": "string",
+                "read-only": "readonly",
+            }
+            return aliases.get(kind, kind)
+        if "options" in schema or "items" in schema:
+            return "select"
+        if isinstance(value, bool):
+            return "bool"
+        if isinstance(value, int) and not isinstance(value, bool):
+            return "int"
+        if isinstance(value, float):
+            return "float"
+        if (
+            isinstance(value, Sequence)
+            and not isinstance(value, (str, bytes, bytearray))
+            and len(value) == 2
+            and all(isinstance(item, numbers.Real) for item in value)
+        ):
+            return "range"
+        return "string"
+
+    def _coerce_value(self, key: str, value: object, schema: Mapping[str, object]) -> object:
+        kind = self._editor_kind(self.values.get(key), schema)
+        if kind == "bool":
+            return bool(value)
+        if kind == "int":
+            return int(round(float(value)))
+        if kind in {"float", "slider", "number"}:
+            return float(value)
+        if kind == "range":
+            return self._range_pair(value)
+        if kind == "select":
+            return str(value)
+        if kind in {"color", "string", "multiline"}:
+            return str(value)
+        return value
+
+    def _handle_editor_change(self, key: str, value: object) -> None:
+        if self.disabled:
+            return
+        old_value = self.values.get(key)
+        next_value = self._coerce_value(key, value, self.schema.get(key, {}))
+        self.values[key] = next_value
+        if self.on_change is not None:
+            self.on_change(PropertyChange(key, next_value, old_value))
+
+    def _set_editor_value(self, key: str, value: object) -> None:
+        editor = self._editors.get(key)
+        if editor is None:
+            return
+        if isinstance(editor, Checkbox):
+            editor.set_checked(bool(value))
+        elif isinstance(editor, (TextInput, TextArea)):
+            editor.set_value(str(value))
+        elif isinstance(editor, Dropdown):
+            editor.set_value(str(value))
+        elif isinstance(editor, (Slider, NumberInput, DragNumber)):
+            editor.set_value(float(value))
+        elif isinstance(editor, RangeSlider):
+            editor.set_value(self._range_pair(value))
+        elif isinstance(editor, HLayout):
+            for child in editor.children:
+                if isinstance(child, LED):
+                    child.set_color(str(value))
+                elif isinstance(child, TextInput):
+                    child.set_value(str(value))
+
+
+class Dropdown(Widget):
+    kind = "dropdown"
+
+    def __init__(
+        self,
+        items: Iterable[str],
+        *,
+        value: str | None = None,
+        on_change: StringCallback | None = None,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.items = [str(item) for item in items]
+        if not self.items:
+            raise ValueError("Dropdown items cannot be empty")
+        selected = self.items[0] if value is None else str(value)
+        if selected not in self.items:
+            raise ValueError("Dropdown value must be one of its items")
+        self.value = selected
+        self.on_change = on_change
+        self.disabled = disabled
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def set_value(self, value: str) -> None:
+        selected = str(value)
+        if selected not in self.items:
+            raise ValueError("Dropdown value must be one of its items")
+        self.value = selected
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("value", self.value)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "items": self.items,
+            "value": self.value,
+            "disabled": self.disabled,
+        }
+
+
+class Checkbox(Widget):
+    kind = "checkbox"
+
+    def __init__(
+        self,
+        label: str,
+        *,
+        checked: bool = False,
+        on_change: "BoolCallback | None" = None,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.label = label
+        self.checked = checked
+        self.on_change = on_change
+        self.disabled = disabled
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def set_checked(self, checked: bool) -> None:
+        self.checked = bool(checked)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("checked", self.checked)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "label": self.label,
+            "checked": self.checked,
+            "disabled": self.disabled,
+        }
+
+
+class ToggleSwitch(Widget):
+    kind = "toggle_switch"
+
+    _LABEL_POSITIONS = {"left", "right"}
+
+    def __init__(
+        self,
+        label: str,
+        *,
+        checked: bool = False,
+        on_change: "BoolCallback | None" = None,
+        disabled: bool = False,
+        label_position: str = "right",
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        position = str(label_position).strip().lower()
+        if position not in self._LABEL_POSITIONS:
+            raise ValueError("ToggleSwitch label_position must be 'left' or 'right'")
+        self.label = label
+        self.checked = bool(checked)
+        self.on_change = on_change
+        self.disabled = bool(disabled)
+        self.label_position = position
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def set_checked(self, checked: bool) -> None:
+        self.checked = bool(checked)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("checked", self.checked)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "label": self.label,
+            "checked": self.checked,
+            "disabled": self.disabled,
+            "label_position": self.label_position,
+            "events": ["change"] if self.on_change and not self.disabled else [],
+        }
+
+
+class SelectableList(VLayout):
+    """Dense single- or multi-selection list built from Selectable rows."""
+
+    _MODES = {"single", "multiple"}
+
+    def __init__(
+        self,
+        items: Iterable[object],
+        *,
+        value: str | None = None,
+        selected: Iterable[str] | None = None,
+        selection_mode: str = "single",
+        on_change: Callable[[object], None] | None = None,
+        disabled: bool = False,
+        max_height: int | float | None = None,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        mode = selection_mode.strip().lower()
+        if mode not in self._MODES:
+            raise ValueError("SelectableList selection_mode must be 'single' or 'multiple'")
+        self.items = [self._normalize_item(item) for item in items]
+        if not self.items:
+            raise ValueError("SelectableList items cannot be empty")
+        values = [item[1] for item in self.items]
+        if len(set(values)) != len(values):
+            raise ValueError("SelectableList item values must be unique")
+
+        self.selection_mode = mode
+        self.on_change = on_change
+        self.disabled = bool(disabled)
+        self._option_widgets: list[Selectable] = []
+
+        if mode == "single":
+            self.value: str | None = values[0] if value is None else str(value)
+            self._selected_values: set[str] = set()
+            if self.value is not None:
+                self._validate_value(self.value)
+                self._selected_values.add(self.value)
+        else:
+            if value is not None:
+                raise ValueError("SelectableList value is only valid in single selection mode")
+            selected_values = {str(item) for item in (selected or ())}
+            self._validate_values(selected_values)
+            self.value = None
+            self._selected_values = selected_values
+
+        merged_style = dict(style or {})
+        if max_height is not None:
+            height = float(max_height)
+            if not math.isfinite(height) or height <= 0:
+                raise ValueError("SelectableList max_height must be a positive finite number")
+            merged_style.setdefault("max_height", height)
+            merged_style.setdefault("overflow_y", "auto")
+            merged_style.setdefault("min_height", 0)
+
+        super().__init__(
+            id=id,
+            key=key,
+            class_=_merge_widget_class(f"selectable-list selectable-list-{mode}", class_),
+            style=merged_style or None,
+            tooltip=tooltip,
+            parent=parent,
+        )
+        self._sync_children(live=False)
+
+    @property
+    def selected(self) -> set[str]:
+        return set(self._selected_values)
+
+    @staticmethod
+    def _normalize_item(item: object) -> tuple[str, str, bool]:
+        if isinstance(item, Mapping):
+            raw_label = item.get("label", item.get("text", item.get("value")))
+            if raw_label is None:
+                raise ValueError("SelectableList item mappings require label, text, or value")
+            label = str(raw_label)
+            value = str(item.get("value", label))
+            disabled = bool(item.get("disabled", False))
+            return label, value, disabled
+        if isinstance(item, tuple) and len(item) == 2:
+            label, value = item
+            return str(label), str(value), False
+        label = str(item)
+        return label, label, False
+
+    def _validate_value(self, value: str) -> None:
+        if value not in {item[1] for item in self.items}:
+            raise ValueError("SelectableList value must be one of its item values")
+
+    def _validate_values(self, values: set[str]) -> None:
+        valid = {item[1] for item in self.items}
+        missing = values - valid
+        if missing:
+            raise ValueError("SelectableList selected values must be item values")
+
+    def _ordered_selected(self) -> tuple[str, ...]:
+        return tuple(value for _, value, _ in self.items if value in self._selected_values)
+
+    def _notify_payload(self) -> object:
+        if self.selection_mode == "single":

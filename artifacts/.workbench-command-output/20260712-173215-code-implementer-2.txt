@@ -1,0 +1,270 @@
+diff --git a/examples/css_feature_probes/visual_audit_manifest.json b/examples/css_feature_probes/visual_audit_manifest.json
+index b513532..3ce927e 100644
+--- a/examples/css_feature_probes/visual_audit_manifest.json
++++ b/examples/css_feature_probes/visual_audit_manifest.json
+@@ -245,6 +245,96 @@
+     "manual": false,
+     "notes": "Default-only visual stress target with minimal layout styling and no custom visual theme."
+   },
++  {
++    "id": "all-features-professional-overview",
++    "name": "All Features Professional Demo - Overview",
++    "script": "examples/css_feature_probes/all_features_professional_demo_probe.py",
++    "category": "layout",
++    "features": ["Professional demo", "AppShell", "Sidebar", "Toolbar", "Tabs", "Body", "StatusBar", "LinePlot", "PieChart", "DataFrameTable"],
++    "sizes": [[1440, 900], [1180, 760], [900, 640], [390, 720], [320, 640]],
++    "manual": false,
++    "notes": "Route-specific capture for the professional all-features demo overview page."
++  },
++  {
++    "id": "all-features-professional-explore",
++    "name": "All Features Professional Demo - Explore",
++    "script": "examples/css_feature_probes/all_features_professional_demo_probe.py",
++    "category": "layout",
++    "features": ["Professional demo", "Scatter3D", "ScatterPlot2D", "Splitter", "Pane", "Toolbar", "SearchBox"],
++    "sizes": [[1440, 900], [1180, 760], [900, 640], [390, 720], [320, 640]],
++    "manual": false,
++    "notes": "Route-specific capture for the professional all-features demo 3D explore page."
++  },
++  {
++    "id": "adjacent-scatter-interaction",
++    "name": "Adjacent Scatter Interaction Isolation",
++    "script": "examples/css_feature_probes/adjacent_scatter_interaction_probe.py",
++    "category": "layout",
++    "features": ["Scatter3D", "ScatterPlot2D", "hit testing", "mouse interaction", "debug_snapshot"],
++    "sizes": [[1120, 720]],
++    "manual": false,
++    "notes": "Automated two-plot interaction probe for adjacent scatter state isolation."
++  },
++  {
++    "id": "all-features-professional-timeseries",
++    "name": "All Features Professional Demo - Timeseries",
++    "script": "examples/css_feature_probes/all_features_professional_demo_probe.py",
++    "category": "layout",
++    "features": ["Professional demo", "GridLayout", "LinePlot", "Histogram", "Heatmap", "BarChart"],
++    "sizes": [[1440, 900], [1180, 760], [900, 640], [390, 720], [320, 640]],
++    "manual": false,
++    "notes": "Route-specific capture for the professional all-features demo time-series page."
++  },
++  {
++    "id": "all-features-professional-data",
++    "name": "All Features Professional Demo - Data",
++    "script": "examples/css_feature_probes/all_features_professional_demo_probe.py",
++    "category": "layout",
++    "features": ["Professional demo", "DataFrameTable", "PropertyGrid", "Splitter", "ContextMenu", "SearchBox"],
++    "sizes": [[1440, 900], [1180, 760], [900, 640], [390, 720], [320, 640]],
++    "manual": false,
++    "notes": "Route-specific capture for the professional all-features demo data review page."
++  },
++  {
++    "id": "all-features-professional-workflow",
++    "name": "All Features Professional Demo - Workflow",
++    "script": "examples/css_feature_probes/all_features_professional_demo_probe.py",
++    "category": "layout",
++    "features": ["Professional demo", "TreeView", "SelectableList", "DragSource", "DropZone", "CodeEditor", "LogView", "DateTimeInput"],
++    "sizes": [[1440, 900], [1180, 760], [900, 640], [390, 720], [320, 640]],
++    "manual": false,
++    "notes": "Route-specific capture for the professional all-features demo workflow page."
++  },
++  {
++    "id": "all-features-professional-reports",
++    "name": "All Features Professional Demo - Reports",
++    "script": "examples/css_feature_probes/all_features_professional_demo_probe.py",
++    "category": "layout",
++    "features": ["Professional demo", "HtmlReport", "Image", "Splitter", "Toolbar", "File dialogs"],
++    "sizes": [[1440, 900], [1180, 760], [900, 640], [390, 720], [320, 640]],
++    "manual": false,
++    "notes": "Route-specific capture for the professional all-features demo reports page."
++  },
++  {
++    "id": "all-features-professional-runtime",
++    "name": "All Features Professional Demo - Runtime",
++    "script": "examples/css_feature_probes/all_features_professional_demo_probe.py",
++    "category": "layout",
++    "features": ["Professional demo", "ThreadMonitor", "ProgressBar", "LogView", "replace_children", "debug_snapshot"],
++    "sizes": [[1440, 900], [1180, 760], [900, 640], [390, 720], [320, 640]],
++    "manual": false,
++    "notes": "Route-specific capture for the professional all-features demo runtime diagnostics page."
++  },
++  {
++    "id": "all-features-professional-styling",
++    "name": "All Features Professional Demo - Styling",
++    "script": "examples/css_feature_probes/all_features_professional_demo_probe.py",
++    "category": "layout",
++    "features": ["Professional demo", "ColorPicker", "CSS parts", "Pseudo states", "Compact controls", "GridLayout"],
++    "sizes": [[1440, 900], [1180, 760], [900, 640], [390, 720], [320, 640]],
++    "manual": false,
++    "notes": "Route-specific capture for the professional all-features demo styling page."
++  },
+   {
+     "id": "layout-panel-bounds",
+     "name": "Layout Panel Bounds",
+diff --git a/native/src/runtime.rs b/native/src/runtime.rs
+index 00dfb59..a5854b7 100644
+--- a/native/src/runtime.rs
++++ b/native/src/runtime.rs
+@@ -12475,7 +12475,46 @@ impl WgpuState {
+ 
+         if include_detail {
+             let cs = rt.widget.camera_state();
++            let [clip_left, clip_top, clip_right, clip_bottom] = rt.widget.viewport_clip();
+             map.insert("fitted_once".to_string(), json!(rt.fitted_once));
++            map.insert(
++                "viewport".to_string(),
++                json!({
++                    "offset": rt.widget.offset,
++                    "size": [rt.widget.width, rt.widget.height],
++                    "clip": [clip_left, clip_top, clip_right, clip_bottom],
++                }),
++            );
++            map.insert(
++                "bounds".to_string(),
++                json!({
++                    "min": [rt.data_min.x, rt.data_min.y, rt.data_min.z],
++                    "max": [rt.data_max.x, rt.data_max.y, rt.data_max.z],
++                }),
++            );
++            map.insert(
++                "actors".to_string(),
++                json!({
++                    "extra_count": rt.widget.extra_actors.len(),
++                    "mesh_count": rt.widget.mesh_actors.len(),
++                    "label_count": rt.widget.user_labels.len(),
++                }),
++            );
++            map.insert(
++                "hover".to_string(),
++                json!({
++                    "label": rt.widget.hover_label.as_ref().map(|label| label.text.as_str()),
++                    "primary_meta_count": rt.primary_hover_meta.len(),
++                    "primary_column_count": rt.primary_hover_columns.len(),
++                }),
++            );
++            map.insert(
++                "selection".to_string(),
++                json!({
++                    "rect": rt.widget.selection_rect,
++                    "polygon_points": rt.widget.selection_polygon.as_ref().map(|poly| poly.len()).unwrap_or(0),
++                }),
++            );
+             map.insert(
+                 "payload_format".to_string(),
+                 json!(rt.payload_format.as_str()),
+@@ -15097,6 +15136,10 @@ impl DragonApp {
+         runtime.insert("orbit_active".to_string(), json!(self.orbit_active));
+         runtime.insert("pan_active".to_string(), json!(self.pan_active));
+         runtime.insert("pan_button".to_string(), json!(pan_button_snapshot));
++        runtime.insert(
++            "active_scatter_id".to_string(),
++            json!(self.active_scatter_id.as_deref()),
++        );
+         runtime.insert("pressed_id".to_string(), json!(self.pressed_id.as_deref()));
+         runtime.insert("last_mouse_pos".to_string(), json!(self.last_mouse_pos));
+         runtime.insert("scrollbar_drag".to_string(), json!(scrollbar_drag_snapshot));
+@@ -15187,6 +15230,32 @@ impl DragonApp {
+         true
+     }
+ 
++    fn cancel_scatter_interaction(&mut self) -> bool {
++        let had_interaction = self.orbit_active
++            || self.pan_active
++            || self.rect_select_active
++            || self.scatter_press_pos.is_some()
++            || self.active_scatter_id.is_some();
++        let active_id = self.active_scatter_id.clone();
++        self.orbit_active = false;
++        self.pan_active = false;
++        self.pan_button = None;
++        self.rect_select_active = false;
++        self.scatter_press_pos = None;
++        self.active_scatter_id = None;
++        if let Some(sid) = active_id {
++            if let Some(gpu) = &mut self.gpu {
++                if let Some(rt) = gpu.scatters.get_mut(&sid) {
++                    rt.widget.selection_rect = None;
++                    rt.widget.selection_polygon = None;
++                    rt.set_interaction_lod_active(false, &gpu.device, &gpu.queue);
++                    rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
++                }
++            }
++        }
++        had_interaction
++    }
++
+     fn has_open_popup(&self) -> bool {
+         self.gpu.as_ref().is_some_and(WgpuState::has_open_popup)
+     }
+@@ -20068,6 +20137,12 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
+                 self.request_redraw();
+             }
+ 
++            WindowEvent::Focused(false) => {
++                if self.cancel_scatter_interaction() {
++                    self.request_redraw();
++                }
++            }
++
+             WindowEvent::MouseInput { state, button, .. } => {
+                 let pressed = state == ElementState::Pressed;
+ 
+@@ -20766,6 +20841,9 @@ impl ApplicationHandler<RuntimeEvent> for DragonApp {
+             }
+ 
+             WindowEvent::CursorLeft { .. } => {
++                if self.cancel_scatter_interaction() {
++                    self.request_redraw();
++                }
+                 self.last_mouse_pos = None;
+                 if let Some(gpu) = &mut self.gpu {
+                     let old_hover = gpu.current_hover_id();
+diff --git a/python/dragongui/widgets.py b/python/dragongui/widgets.py
+index a68d82a..f472bd3 100644
+--- a/python/dragongui/widgets.py
++++ b/python/dragongui/widgets.py
+@@ -2649,6 +2649,8 @@ def _normalize_splitter_size(value: SplitterSize) -> float | str | None:
+     size = float(value)
+     if not math.isfinite(size) or size < 0:
+         raise ValueError("Splitter sizes must be non-negative finite values")
++    if 0 < size < 1:
++        return f"{size:g}fr"
+     return size
+ 
+ 
+@@ -2720,7 +2722,7 @@ class Splitter(Container):
+             size = self.sizes[index]
+             if isinstance(size, str):
+                 child.set_size(None)
+-                child.flex = _splitter_size_to_flex(size)
++                child.set_flex(_splitter_size_to_flex(size))
+             else:
+                 child.set_size(size)
+ 
+@@ -2769,7 +2771,7 @@ class Pane(Container):
+         tooltip: str | None = None,
+         parent: Container | None | object = _AUTO_PARENT,
+     ) -> None:
+-        self._explicit_size = self._normalize_optional_size(size, "size")
++        self._explicit_size, size_flex = self._normalize_size_and_flex(size)
+         if min_size is _UNSET:
+             self._explicit_min_size = None
+             self._default_min_size: float | None = 80.0
+@@ -2777,7 +2779,7 @@ class Pane(Container):
+             self._explicit_min_size = self._normalize_optional_size(min_size, "min_size")
+             self._default_min_size = None
+         self._explicit_max_size = self._normalize_optional_size(max_size, "max_size")
+-        flex_value = float(flex)
++        flex_value = size_flex if size_flex is not None else float(flex)
+         if not math.isfinite(flex_value) or flex_value <= 0:
+             raise ValueError("Pane flex must be a positive finite value")
+         self.flex = flex_value
+@@ -2798,6 +2800,13 @@ class Pane(Container):
+warning: LF will be replaced by CRLF in examples/css_feature_probes/visual_audit_manifest.json.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in native/src/runtime.rs.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in python/dragongui/widgets.py.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in tests/test_visual_audit.py.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in tools/visual_audit.py.
+The file will have its original line endings in your working directory

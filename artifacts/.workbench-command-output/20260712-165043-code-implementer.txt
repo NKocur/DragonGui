@@ -1,0 +1,145 @@
+native/src/scatter/mod.rs:138:/// Where the legend is anchored within the scatter viewport.
+native/src/scatter/mod.rs:325:/// Project a 3D world-space position to viewport-local screen-space coordinates.
+native/src/scatter/mod.rs:352:/// Stores the projected viewport-local coordinates of all visible points in a
+native/src/scatter/mod.rs:354:/// invalidated whenever the view–projection matrix or viewport dimensions change.
+native/src/scatter/mod.rs:365:    /// Projected viewport-local `[sx, sy]` for each source point.
+native/src/scatter/mod.rs:382:    /// `width × height` viewport.
+native/src/scatter/mod.rs:471:    /// centred at `(local_x, local_y)` (viewport-local pixels) with radius `radius_px`.
+native/src/scatter/mod.rs:639:/// World-space label projected to the scatter viewport's screen space.
+native/src/scatter/mod.rs:702:fn scatter_label_rect(local_x: f32, local_y: f32, text: &str, is_title: bool) -> [f32; 4] {
+native/src/scatter/mod.rs:707:fn scatter_rects_overlap(a: [f32; 4], b: [f32; 4], gap: f32) -> bool {
+native/src/scatter/mod.rs:711:fn push_scatter_title_away_from_rects(
+native/src/scatter/mod.rs:729:        let rect = scatter_label_rect(local_x, local_y, text, true);
+native/src/scatter/mod.rs:732:            .any(|&obstacle| scatter_rects_overlap(rect, obstacle, LABEL_GAP_PX))
+native/src/scatter/mod.rs:1104:fn scatter_layout_rect(
+native/src/scatter/mod.rs:1201:    /// TriangleList pipeline for background fill quad — respects viewport/scissor.
+native/src/scatter/mod.rs:2317:    /// Updates the stored offset, dimensions, camera aspect ratio, and
+native/src/scatter/mod.rs:2329:        let rect = scatter_layout_rect(x, y, w, h, visible_clip);
+native/src/scatter/mod.rs:2353:    /// Returns the viewport bounds as [left, top, right, bottom] in physical pixels.
+native/src/scatter/mod.rs:2355:    pub fn viewport_clip(&self) -> [f32; 4] {
+native/src/scatter/mod.rs:2357:            self.offset[0],
+native/src/scatter/mod.rs:2358:            self.offset[1],
+native/src/scatter/mod.rs:2359:            self.offset[0] + self.width as f32,
+native/src/scatter/mod.rs:2360:            self.offset[1] + self.height as f32,
+native/src/scatter/mod.rs:2364:    /// True when the scatter has a non-empty visible viewport.
+native/src/scatter/mod.rs:2368:    /// dimensions, otherwise a zero-width layout produces an extreme aspect
+native/src/scatter/mod.rs:2370:    pub fn has_visible_viewport(&self) -> bool {
+native/src/scatter/mod.rs:2428:            return Err("scatter widget has zero dimensions".to_string());
+native/src/scatter/mod.rs:2436:        // Reuse cached GPU resources when dimensions match.
+native/src/scatter/mod.rs:2782:        let sx0 = self.scissor_offset[0] as f32;
+native/src/scatter/mod.rs:2783:        let sy0 = self.scissor_offset[1] as f32;
+native/src/scatter/mod.rs:2790:            let screen_x = offset[0] + local_x;
+native/src/scatter/mod.rs:2791:            let screen_y = offset[1] + local_y;
+native/src/scatter/mod.rs:2863:                tick_label_rects.push(scatter_label_rect(local_x, local_y, &anchor.text, false));
+native/src/scatter/mod.rs:2865:                    screen_x: self.offset[0] + local_x,
+native/src/scatter/mod.rs:2866:                    screen_y: self.offset[1] + local_y,
+native/src/scatter/mod.rs:2878:            let (local_x, local_y) = push_scatter_title_away_from_rects(
+native/src/scatter/mod.rs:2888:            occupied_rects.push(scatter_label_rect(local_x, local_y, &title.text, true));
+native/src/scatter/mod.rs:2890:                screen_x: self.offset[0] + local_x,
+native/src/scatter/mod.rs:2891:                screen_y: self.offset[1] + local_y,
+native/src/scatter/mod.rs:2918:        // Background fill: 6 NDC-space vertices (2 triangles) covering the viewport.
+native/src/scatter/mod.rs:2919:        // Drawn with bg_pipeline (TriangleList) so viewport/scissor clips it — not a pass clear.
+native/src/scatter/mod.rs:3003:        // Helper: convert viewport-local px coords → NDC
+native/src/scatter/mod.rs:3072:                    screen_x: self.offset[0] + legend_x,
+native/src/scatter/mod.rs:3073:                    screen_y: self.offset[1] + legend_y,
+native/src/scatter/mod.rs:3105:                let tx = self.offset[0] + ex + 5.0;
+native/src/scatter/mod.rs:3106:                let ty = self.offset[1] + sy + (entry_h * 0.5 - 5.0);
+native/src/scatter/mod.rs:3158:            let label_x = self.offset[0] + bar_x2 + 4.0;
+native/src/scatter/mod.rs:3166:                let label_y = self.offset[1] + bar_top + (1.0 - t) * bar_h - 5.0;
+native/src/scatter/mod.rs:3179:                    screen_x: self.offset[0] + bar_x1,
+native/src/scatter/mod.rs:3180:                    screen_y: self.offset[1] + bar_top - 16.0,
+native/src/scatter/mod.rs:3239:            let sx0 = self.scissor_offset[0] as f32;
+native/src/scatter/mod.rs:3240:            let sy0 = self.scissor_offset[1] as f32;
+native/src/scatter/mod.rs:3258:                let screen_x = self.offset[0] + local_x;
+native/src/scatter/mod.rs:3259:                let screen_y = self.offset[1] + local_y;
+native/src/scatter/mod.rs:3932:    pub fn contains_point(&self, x: f32, y: f32) -> bool {
+native/src/scatter/mod.rs:3933:        let left = self.offset[0];
+native/src/scatter/mod.rs:3934:        let top = self.offset[1];
+native/src/scatter/mod.rs:3937:        let scissor_left = self.scissor_offset[0] as f32;
+native/src/scatter/mod.rs:3938:        let scissor_top = self.scissor_offset[1] as f32;
+native/src/scatter/mod.rs:3992:    /// within the pixel rect `[x0, y0, x1, y1]` relative to the scatter viewport.
+native/src/scatter/mod.rs:4032:    /// `poly` is a list of viewport-local pixel coordinates forming the polygon boundary.
+native/src/scatter/mod.rs:4073:    /// Applies viewport and scissor so the scatter only draws within its region.
+native/src/scatter/mod.rs:4075:        self.render_with_viewport(
+native/src/scatter/mod.rs:4091:        self.render_with_viewport(
+native/src/scatter/mod.rs:4114:        let left = ((self.scissor_offset[0] as f32 - self.offset[0]).max(0.0) * sx)
+native/src/scatter/mod.rs:4117:        let top = ((self.scissor_offset[1] as f32 - self.offset[1]).max(0.0) * sy)
+native/src/scatter/mod.rs:4120:        let right = ((self.scissor_offset[0] as f32 + self.scissor_size[0] as f32 - self.offset[0])
+native/src/scatter/mod.rs:4125:        let bottom = ((self.scissor_offset[1] as f32 + self.scissor_size[1] as f32
+native/src/scatter/mod.rs:4126:            - self.offset[1])
+native/src/scatter/mod.rs:4137:    fn render_with_viewport<'pass, 'data: 'pass>(
+native/src/scatter/mod.rs:4140:        viewport_offset: [f32; 2],
+native/src/scatter/mod.rs:4141:        viewport_size: [f32; 2],
+native/src/scatter/mod.rs:4172:        pass.set_viewport(
+native/src/scatter/mod.rs:4173:            viewport_offset[0],
+native/src/scatter/mod.rs:4174:            viewport_offset[1],
+native/src/scatter/mod.rs:4175:            viewport_size[0],
+native/src/scatter/mod.rs:4176:            viewport_size[1],
+native/src/scatter/mod.rs:4181:            scissor_offset[0],
+native/src/scatter/mod.rs:4182:            scissor_offset[1],
+native/src/scatter/mod.rs:4479:    fn clipped_scatter_keeps_full_viewport_and_visible_scissor() {
+native/src/scatter/mod.rs:4480:        let rect = scatter_layout_rect(20.0, 40.0, 300.0, 180.0, Some([20.0, 96.0, 300.0, 72.0]));
+native/src/scatter/mod.rs:4525:    // For a 100×100 viewport:
+native/src/scatter/mod.rs:4582:        // pos (0,0,0.5) → screen (50,50) in 100×100 viewport.
+native/src/scatter/mod.rs:4612:        // p0 → screen (10,10), p1 → screen (90,90) in 100×100 viewport.
+native/src/scatter/mod.rs:4633:        // A radius of 100px from center (50,50) covers the whole viewport.
+native/src/runtime.rs:2903:        "offset_x": shadow.offset_x,
+native/src/runtime.rs:2904:        "offset_y": shadow.offset_y,
+native/src/runtime.rs:5047:            "clicking below the thumb should page down by one viewport, not jump to the click"
+native/src/runtime.rs:5052:            "clicking above the thumb should page up by one viewport"
+native/src/runtime.rs:5799:    scatters: HashMap<String, ScatterRuntime>,
+native/src/runtime.rs:5805:    visible_scatter_order: Vec<String>,
+native/src/runtime.rs:6002:struct ScatterRuntime {
+native/src/runtime.rs:6019:    /// Fit command received before the scatter had a real viewport.
+native/src/runtime.rs:6035:impl ScatterRuntime {
+native/src/runtime.rs:6081:        if !self.widget.has_visible_viewport() {
+native/src/runtime.rs:6171:    /// Caches are rebuilt automatically when the view–projection matrix or viewport
+native/src/runtime.rs:6186:        if !self.widget.contains_point(x, y) || self.widget.width == 0 || self.widget.height == 0 {
+native/src/runtime.rs:6189:        let local_x = x - self.widget.offset[0];
+native/src/runtime.rs:6190:        let local_y = y - self.widget.offset[1];
+native/src/runtime.rs:7239:        // Build one ScatterRuntime per Scatter3D node in the tree.
+native/src/runtime.rs:7240:        let mut scatters: HashMap<String, ScatterRuntime> = HashMap::new();
+native/src/runtime.rs:7328:                    ScatterRuntime {
+native/src/runtime.rs:7429:            visible_scatter_order: Vec::new(),
+native/src/runtime.rs:7526:    fn reapply_stylesheets_for_current_viewport(&mut self) {
+native/src/runtime.rs:7560:    /// Recompute layout and push scatter viewport + primitives + text to GPU.
+native/src/runtime.rs:7564:        self.reapply_stylesheets_for_current_viewport();
+native/src/runtime.rs:7586:            visible_scatter_order,
+native/src/runtime.rs:7647:        // Collect visible scatter order and update each widget's layout rect.
+native/src/runtime.rs:7651:        *visible_scatter_order = new_visible_order.clone();
+native/src/runtime.rs:7703:                        && runtime.widget.has_visible_viewport()
+native/src/runtime.rs:8831:        for id in self.visible_scatter_order.iter().rev() {
+native/src/runtime.rs:8833:                if runtime.widget.contains_point(pos[0], pos[1]) {
+native/src/runtime.rs:8887:    /// `rect` is in physical pixels relative to the scatter viewport.
+native/src/runtime.rs:8888:    fn scatter_select_payload(&mut self, id: &str, rect: [f32; 4]) -> Option<String> {
+native/src/runtime.rs:9965:        if !runtime.fitted_once && runtime.widget.has_visible_viewport() {
+native/src/runtime.rs:10008:    fn update_scatter_actor_points(
+native/src/runtime.rs:10035:        if !runtime.fitted_once && runtime.widget.has_visible_viewport() {
+native/src/runtime.rs:10274:                    ScatterRuntime {
+native/src/runtime.rs:11770:                    && runtime.widget.has_visible_viewport()
+native/src/runtime.rs:11867:                        && runtime.widget.has_visible_viewport()
+native/src/runtime.rs:12052:        // an inactive page. Hidden scatters have a zero-sized layout rect, and
+native/src/runtime.rs:12055:        // can fit with the real viewport dimensions.
+native/src/runtime.rs:12059:            && runtime.widget.has_visible_viewport()
+native/src/runtime.rs:12127:            .visible_scatter_order
+native/src/runtime.rs:12213:        self.reapply_stylesheets_for_current_viewport();
+native/src/runtime.rs:12325:        rt: &ScatterRuntime,
+native/src/runtime.rs:12557:        let scatter = self.visible_scatter_order.first().and_then(|id| {
+native/src/runtime.rs:12698:                "scatter_widget_id": self.visible_scatter_order.first().map(|s| s.as_str()),
+native/src/runtime.rs:13518:                visible_scatter_order,
+native/src/runtime.rs:13534:                for id in visible_scatter_order.iter() {
+native/src/runtime.rs:13536:                        let [vl, vt, vr, vb] = rt.widget.viewport_clip();
+native/src/runtime.rs:13650:        let scatter_order = self.visible_scatter_order.clone();
+native/src/runtime.rs:13750:                            runtime.widget.offset[0],
+native/src/runtime.rs:13751:                            runtime.widget.offset[1],
+native/src/runtime.rs:13861:            pass.set_viewport(
+native/src/runtime.rs:14810:    fn update_scatter_quality_budgets(&mut self, frame_ms: f64) -> bool {
+native/src/runtime.rs:15929:                    if !rt.widget.has_visible_viewport() {
+native/src/runtime.rs:16890:                            gpu.update_scatter_actor_points(
+native/src/runtime.rs:16939:                            gpu.update_scatter_actor_points(
+native/src/runtime.rs:19537:                    .or_else(|| gpu.visible_scatter_order.first().cloned());
+native/src/runtime.rs:20678:                                                pos[0] - rt.widget.offset[0],
+native/src/runtime.rs:20679:                                                pos[1] - rt.widget.offset[1],
+native/src/runtime.rs:20895:                                    new_pos[0] - rt.widget.offset[0],
+native/src/runtime.rs:20896:                                    new_pos[1] - rt.widget.offset[1],
+native/src/runtime.rs:21459:                    if self.update_scatter_quality_budgets(quality_budget_ms) {

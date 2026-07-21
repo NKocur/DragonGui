@@ -1,0 +1,180 @@
+                                            gpu.create_range_slider_drag(&id, pos[0]);
+                                    }
+                                    if kind == WidgetKind::DragNumber {
+                                        self.drag_number_drag =
+                                            gpu.create_drag_number_drag(&id, pos[0]);
+                                    }
+                                    gpu.rebuild_visuals();
+                                }
+                                if kind == WidgetKind::Slider {
+                                    self.update_slider_drag(pos[0], true);
+                                }
+                                if kind == WidgetKind::RangeSlider {
+                                    self.update_range_slider_drag(pos[0], true);
+                                }
+                                self.request_redraw();
+                                return;
+                            }
+
+                            if modal_active {
+                                self.set_focus(None);
+                                return;
+                            }
+
+                            let scatter_id = self.gpu.as_ref().and_then(|g| g.scatter_at(pos));
+
+                            if let Some(sid) = scatter_id {
+                                self.set_focus(None);
+                                self.scatter_press_pos = Some(pos);
+                                self.active_scatter_id = Some(sid.clone());
+                                let picking_mode = self
+                                    .gpu
+                                    .as_ref()
+                                    .and_then(|g| g.scatters.get(&sid))
+                                    .map(|rt| rt.widget.picking_mode)
+                                    .unwrap_or(scatter::PickingMode::Point);
+                                if picking_mode == scatter::PickingMode::None {
+                                    // Interaction disabled - consume the event but do nothing.
+                                    self.orbit_active = false;
+                                    self.rect_select_active = false;
+                                    self.pan_active = false;
+                                    self.pan_button = None;
+                                } else if self.modifiers.shift_key() {
+                                    // Shift+left-drag matches the middle-drag pan path.
+                                    self.rect_select_active = false;
+                                    self.begin_scatter_pan(sid, MouseButton::Left);
+                                    self.request_redraw();
+                                    return;
+                                } else if picking_mode == scatter::PickingMode::Rectangle
+                                    || picking_mode == scatter::PickingMode::Lasso
+                                {
+                                    // Rectangle / lasso: start selection drag
+                                    let local_pos = self
+                                        .gpu
+                                        .as_ref()
+                                        .and_then(|g| g.scatters.get(&sid))
+                                        .map(|rt| {
+                                            [
+                                                pos[0] - rt.widget.offset[0],
+                                                pos[1] - rt.widget.offset[1],
+                                            ]
+                                        })
+                                        .unwrap_or(pos);
+                                    if let Some(gpu) = &mut self.gpu {
+                                        if let Some(rt) = gpu.scatters.get_mut(&sid) {
+                                            if picking_mode == scatter::PickingMode::Lasso {
+                                                rt.widget.selection_polygon = Some(vec![local_pos]);
+                                                rt.widget.selection_rect = None;
+                                            } else {
+                                                rt.widget.selection_rect = Some([
+                                                    local_pos[0],
+                                                    local_pos[1],
+                                                    local_pos[0],
+                                                    local_pos[1],
+                                                ]);
+                                                rt.widget.selection_polygon = None;
+                                            }
+                                            rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                                        }
+                                    }
+                                    self.orbit_active = false;
+                                    self.rect_select_active = true;
+                                } else {
+                                    // PickingMode::Point â€” left drag orbits.
+                                    self.orbit_active = true;
+                                    self.pan_active = false;
+                                    self.pan_button = None;
+                                    self.rect_select_active = false;
+                                    if let Some(gpu) = &mut self.gpu {
+                                        if let Some(rt) = gpu.scatters.get_mut(&sid) {
+                                            rt.set_interaction_lod_active(
+                                                true,
+                                                &gpu.device,
+                                                &gpu.queue,
+                                            );
+                                        }
+                                    }
+                                }
+                            } else {
+                                self.active_scatter_id = None;
+                                self.set_focus(None);
+                            }
+                        }
+                    }
+
+                    MouseButton::Middle | MouseButton::Right => {
+                        if !pressed {
+                            if self.finish_scatter_pan(button) {
+                                self.request_redraw();
+                            }
+                        } else {
+                            let pos = self.last_mouse_pos.unwrap_or([0.0, 0.0]);
+                            if self
+                                .gpu
+                                .as_ref()
+                                .map(WgpuState::has_active_modal)
+                                .unwrap_or(false)
+                            {
+                                return;
+                            }
+                            if button == MouseButton::Right {
+                                if let Some(menu_id) =
+                                    self.gpu.as_ref().and_then(|g| g.context_menu_for_pos(pos))
+                                {
+                                    self.set_focus(None);
+                                    if let Some(gpu) = &mut self.gpu {
+                                        gpu.open_context_menu_at(&menu_id, pos);
+                                    }
+                                    self.request_redraw();
+                                    return;
+                                }
+                                if self.gpu.as_mut().is_some_and(WgpuState::close_popups) {
+                                    self.request_redraw();
+                                    return;
+                                }
+                            }
+                            let pan_scatter_id = self.gpu.as_ref().and_then(|g| g.scatter_at(pos));
+                            if let Some(sid) = pan_scatter_id {
+                                self.begin_scatter_pan(sid, button);
+                                self.request_redraw();
+                            }
+                        }
+                    }
+
+                    _ => {}
+                }
+            }
+
+            WindowEvent::CursorLeft { .. } => {
+                self.last_mouse_pos = None;
+                if let Some(gpu) = &mut self.gpu {
+                    let old_hover = gpu.current_hover_id();
+                    let requires_layout =
+                        gpu.hover_change_requires_layout(old_hover.as_deref(), None);
+                    let cleared = gpu.update_hover_state(None, None);
+                    let cleared_line_plot_hover = gpu.clear_line_plot_hover_all();
+                    let (cleared_heatmap_hover, heatmap_payloads) = gpu.clear_heatmap_hover_all();
+                    let (cleared_bar_chart_hover, bar_chart_payloads) =
+                        gpu.clear_bar_chart_hover_all();
+                    if cleared
+                        || cleared_line_plot_hover
+                        || cleared_heatmap_hover
+                        || cleared_bar_chart_hover
+                    {
+                        if requires_layout {
+                            gpu.apply_layout();
+                        } else {
+                            gpu.rebuild_visuals();
+                        }
+                        self.request_redraw();
+                    }
+                    for (id, payload) in heatmap_payloads {
+                        self.emit_change(&id, ChangeValue::Text(payload));
+                    }
+                    for (id, payload) in bar_chart_payloads {
+                        self.emit_change(&id, ChangeValue::Text(payload));
+                    }
+                }
+                let mut stale_payloads: Vec<(String, String)> = Vec::new();
+                let mut scatter_cleared = false;
+                if let Some(gpu) = &mut self.gpu {

@@ -1,0 +1,881 @@
+native/src/document.rs:1155:    ScrollArea,
+native/src/document.rs:1225:            "scroll_area" => WidgetKind::ScrollArea,
+native/src/document.rs:1230:            "panel" => WidgetKind::Panel,
+native/src/document.rs:2221:        WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal | WidgetKind::Collapsible => {
+python/dragongui/widgets.py:510:    "panel": {"accent", "scrollbar-track", "scrollbar-thumb"},
+python/dragongui/widgets.py:2120:            "overflow_y": "hidden",
+python/dragongui/widgets.py:2163:            "overflow_y": "hidden",
+python/dragongui/widgets.py:2178:class ScrollArea(Container):
+python/dragongui/widgets.py:2184:    bounded rectangle, such as a page, panel body, or grid cell.
+python/dragongui/widgets.py:2206:            raise ValueError("ScrollArea axis must be 'x', 'y', 'both', or 'none'")
+python/dragongui/widgets.py:2208:            raise ValueError("ScrollArea gap must be non-negative")
+python/dragongui/widgets.py:2210:            raise ValueError("ScrollArea width cannot be negative")
+python/dragongui/widgets.py:2212:            raise ValueError("ScrollArea height cannot be negative")
+python/dragongui/widgets.py:2222:        extra["overflow_y"] = "auto" if axis_value in {"y", "both"} else "hidden"
+python/dragongui/widgets.py:2248:class Body(ScrollArea):
+python/dragongui/widgets.py:2293:class WorkbenchMain(ScrollArea):
+python/dragongui/widgets.py:3440:    kind = "panel"
+python/dragongui/widgets.py:6003:            merged_style.setdefault("overflow_y", "auto")
+python/dragongui/widgets.py:6513:            style={"gap": 3, "width": "100%", "flex": 1, "min_height": 0, "overflow_y": "auto"},
+python/dragongui/widgets.py:7018:    narrow parent panels instead of overflowing them.
+native/src/primitives/mod.rs:16:    is_scroll_container_node, panel_title_body_gap_lp, panel_title_line_height_lp,
+native/src/primitives/mod.rs:17:    panel_title_top_padding_lp, scroll_container_max_x, scroll_container_max_y,
+native/src/primitives/mod.rs:336:        ((panel_title_top_padding_lp(node, theme) + panel_title_line_height_lp(node, theme)) * sf)
+native/src/primitives/mod.rs:2224:        WidgetKind::Panel | WidgetKind::Modal | WidgetKind::Tooltip | WidgetKind::Toast
+native/src/primitives/mod.rs:8257:pub(crate) fn panel_scrollbar_geometry(
+native/src/primitives/mod.rs:8266:        .scroll_max_x
+native/src/primitives/mod.rs:8269:        .unwrap_or_else(|| scroll_container_max_x(node, layout));
+native/src/primitives/mod.rs:8271:        .scroll_max_y
+native/src/primitives/mod.rs:8274:        .unwrap_or_else(|| scroll_container_max_y(node, layout));
+native/src/primitives/mod.rs:8275:    let min_scroll = (SCROLLBAR_VISIBILITY_EPSILON_PX * sf).max(1.0);
+native/src/primitives/mod.rs:8284:    let implicit_container_scrollbar = matches!(node.kind, WidgetKind::Panel | WidgetKind::Modal)
+native/src/primitives/mod.rs:8287:        && node.style.layout.overflow_y.is_none();
+native/src/primitives/mod.rs:8296:        .unwrap_or_else(|| state.container_scroll_x(&node.id, max_scroll_x));
+native/src/primitives/mod.rs:8301:        .unwrap_or_else(|| state.container_scroll_y(&node.id, max_scroll_y));
+native/src/primitives/mod.rs:8304:    let panel_radius_lp = visual.border_radius.unwrap_or(theme.radius * 0.5).max(0.0);
+native/src/primitives/mod.rs:8305:    let panel_radii = visual_radii(&visual, panel_radius_lp, sf);
+native/src/primitives/mod.rs:8306:    let title_inset = panel_scrollbar_title_inset(node, theme, sf).min(rect.h.max(0.0));
+native/src/primitives/mod.rs:8309:    let track_thickness = scrollbar_part_width_px(node, "scrollbar-track", 4.0, sf).max(2.0);
+native/src/primitives/mod.rs:8326:        let right_radius = panel_radii[1].max(panel_radii[2]);
+native/src/primitives/mod.rs:8350:            let thumb_y = track_y + travel * (scroll_y / max_scroll_y).clamp(0.0, 1.0);
+native/src/primitives/mod.rs:8364:                max_scroll: max_scroll_y,
+native/src/primitives/mod.rs:8371:        let bottom_radius = panel_radii[2].max(panel_radii[3]);
+native/src/primitives/mod.rs:8395:            let thumb_x = track_x + travel * (scroll_x / max_scroll_x).clamp(0.0, 1.0);
+native/src/primitives/mod.rs:8409:                max_scroll: max_scroll_x,
+native/src/primitives/mod.rs:8445:    let track_thickness = scrollbar_part_width_px(node, "scrollbar-track", 4.0, sf).max(2.0);
+native/src/primitives/mod.rs:8489:                track_y + travel * (table_state.scroll_row as f32 / max_scroll_y).clamp(0.0, 1.0);
+native/src/primitives/mod.rs:8503:                max_scroll: max_scroll_y,
+native/src/primitives/mod.rs:8522:                track_x + travel * (table_state.scroll_col as f32 / max_scroll_x).clamp(0.0, 1.0);
+native/src/primitives/mod.rs:8536:                max_scroll: max_scroll_x,
+native/src/primitives/mod.rs:8548:fn emit_panel_scrollbar(
+native/src/primitives/mod.rs:8559:        panel_scrollbar_geometry(node, layout, state, theme, sf, Rect { x, y, w, h })
+native/src/primitives/mod.rs:8674:fn panel_scrollbar_title_inset(node: &WidgetNode, theme: &Theme, sf: f32) -> f32 {
+native/src/primitives/mod.rs:8675:    if !matches!(node.kind, WidgetKind::Panel | WidgetKind::Modal) {
+native/src/primitives/mod.rs:8686:    (panel_title_top_padding_lp(node, theme)
+native/src/primitives/mod.rs:8687:        + panel_title_line_height_lp(node, theme)
+native/src/primitives/mod.rs:8688:        + panel_title_body_gap_lp(node, theme))
+native/src/primitives/mod.rs:9530:            | WidgetKind::ScrollArea
+native/src/primitives/mod.rs:9572:        let tab_attached_panel = context.tab_body_start && node.kind == WidgetKind::Panel;
+native/src/primitives/mod.rs:9589:            let shadow_radii = if tab_attached_panel {
+native/src/primitives/mod.rs:9590:                let panel_radius_lp = visual.border_radius.unwrap_or(theme.radius * 0.5).max(0.0);
+native/src/primitives/mod.rs:9591:                let mut panel_radii = visual_radii(&visual, panel_radius_lp, sf);
+native/src/primitives/mod.rs:9592:                panel_radii[0] = 0.0;
+native/src/primitives/mod.rs:9593:                panel_radii[1] = 0.0;
+native/src/primitives/mod.rs:9594:                panel_radii
+native/src/primitives/mod.rs:9609:            WidgetKind::Panel => {
+native/src/primitives/mod.rs:9610:                let panel_radius_lp = visual.border_radius.unwrap_or(theme.radius * 0.5).max(0.0);
+native/src/primitives/mod.rs:9611:                let mut panel_radii = visual_radii(&visual, panel_radius_lp, sf);
+native/src/primitives/mod.rs:9612:                if tab_attached_panel {
+native/src/primitives/mod.rs:9613:                    panel_radii[0] = 0.0;
+native/src/primitives/mod.rs:9614:                    panel_radii[1] = 0.0;
+native/src/primitives/mod.rs:9616:                let panel_fill = resolve_background_paint(&visual, theme, theme.surface);
+native/src/primitives/mod.rs:9621:                    panel_fill,
+native/src/primitives/mod.rs:9622:                    panel_radii,
+native/src/primitives/mod.rs:9645:                        let inner_radii = inset_radii(panel_radii, border_w);
+native/src/primitives/mod.rs:9852:                    let title_band_h = ((panel_title_top_padding_lp(node, theme)
+native/src/primitives/mod.rs:9853:                        + panel_title_line_height_lp(node, theme))
+native/src/primitives/mod.rs:12445:            | WidgetKind::ScrollArea
+native/src/primitives/mod.rs:12514:            emit_panel_scrollbar(node, layout, state, theme, sf, [r.x, r.y, r.w, r.h], out);
+native/src/primitives/mod.rs:13421:        assert!(scrolled.scroll_text_area_with_max_scroll("notes", 12.0, 0.0, 0.0));
+native/src/primitives/mod.rs:13796:        let mut root = node("root", WidgetKind::Panel);
+native/src/primitives/mod.rs:14526:    fn clipped_panel_keeps_full_paint_rect_and_uses_local_clip() {
+native/src/primitives/mod.rs:14527:        let mut panel = node("panel", WidgetKind::Panel);
+native/src/primitives/mod.rs:14528:        panel.style.visual.background = Some(ColorRef::Rgba([0.4, 0.5, 0.6, 1.0]));
+native/src/primitives/mod.rs:14529:        panel.style.visual.border_color = Some(ColorRef::Rgba([0.1, 0.2, 0.3, 1.0]));
+native/src/primitives/mod.rs:14530:        panel.style.visual.border_width = Some(2.0);
+native/src/primitives/mod.rs:14531:        panel.style.visual.border_radius = Some(8.0);
+native/src/primitives/mod.rs:14535:            "panel".to_string(),
+native/src/primitives/mod.rs:14543:        layout.clips.insert(
+native/src/primitives/mod.rs:14544:            "panel".to_string(),
+native/src/primitives/mod.rs:14552:        layout.paint_clips.insert(
+native/src/primitives/mod.rs:14553:            "panel".to_string(),
+native/src/primitives/mod.rs:14564:            &panel,
+native/src/primitives/mod.rs:14576:            .expect("panel fill should be emitted");
+native/src/primitives/mod.rs:14583:            .expect("panel border should be emitted");
+native/src/primitives/mod.rs:14589:    fn fully_visible_panel_keeps_antialias_clip_pad() {
+native/src/primitives/mod.rs:14590:        let mut panel = node("panel", WidgetKind::Panel);
+native/src/primitives/mod.rs:14591:        panel.style.visual.background = Some(ColorRef::Rgba([0.4, 0.5, 0.6, 1.0]));
+native/src/primitives/mod.rs:14592:        panel.style.visual.border_color = Some(ColorRef::Rgba([0.1, 0.2, 0.3, 1.0]));
+native/src/primitives/mod.rs:14593:        panel.style.visual.border_width = Some(2.0);
+native/src/primitives/mod.rs:14594:        panel.style.visual.border_radius = Some(8.0);
+native/src/primitives/mod.rs:14598:            "panel".to_string(),
+native/src/primitives/mod.rs:14606:        layout.clips.insert(
+native/src/primitives/mod.rs:14607:            "panel".to_string(),
+native/src/primitives/mod.rs:14615:        layout.paint_clips.insert(
+native/src/primitives/mod.rs:14616:            "panel".to_string(),
+native/src/primitives/mod.rs:14627:            &panel,
+native/src/primitives/mod.rs:14639:            .expect("panel border should be emitted");
+native/src/primitives/mod.rs:14662:        layout.clips.insert(
+native/src/primitives/mod.rs:14671:        layout.paint_clips.insert(
+native/src/primitives/mod.rs:14719:        layout.clips.insert(
+native/src/primitives/mod.rs:14728:        layout.paint_clips.insert(
+native/src/primitives/mod.rs:14826:        layout.clips.insert(
+native/src/primitives/mod.rs:14835:        layout.paint_clips.insert(
+native/src/primitives/mod.rs:14964:        let mut panel = node("panel", WidgetKind::Panel);
+native/src/primitives/mod.rs:14965:        panel.style.visual.background_paint =
+native/src/primitives/mod.rs:14983:            "panel".to_string(),
+native/src/primitives/mod.rs:14994:            &panel,
+native/src/primitives/mod.rs:15076:        let mut panel = node("panel", WidgetKind::Panel);
+native/src/primitives/mod.rs:15077:        panel.style.visual.background_paint =
+native/src/primitives/mod.rs:15099:            "panel".to_string(),
+native/src/primitives/mod.rs:15110:            &panel,
+native/src/primitives/mod.rs:15133:        let mut panel = node("panel", WidgetKind::Panel);
+native/src/primitives/mod.rs:15134:        panel.style.visual.background_paint =
+native/src/primitives/mod.rs:15168:            "panel".to_string(),
+native/src/primitives/mod.rs:15179:            &panel,
+native/src/primitives/mod.rs:15202:        let mut panel = node("panel", WidgetKind::Panel);
+native/src/primitives/mod.rs:15203:        panel.style.visual.gradient_interpolation = Some(GradientInterpolation::Oklab);
+native/src/primitives/mod.rs:15204:        panel.style.visual.background_paint =
+native/src/primitives/mod.rs:15222:            "panel".to_string(),
+native/src/primitives/mod.rs:15233:            &panel,
+native/src/primitives/mod.rs:15251:        let mut panel = node("panel", WidgetKind::Panel);
+native/src/primitives/mod.rs:15252:        panel.style.visual.gradient_interpolation = Some(GradientInterpolation::Oklab);
+native/src/primitives/mod.rs:15253:        panel.style.visual.background_paint = Some(BackgroundPaint::BlobGradient(BlobGradient {
+native/src/primitives/mod.rs:15270:            "panel".to_string(),
+native/src/primitives/mod.rs:15281:            &panel,
+native/src/primitives/mod.rs:15303:        let mut panel = node("panel", WidgetKind::Panel);
+native/src/primitives/mod.rs:15304:        panel.style.visual.gradient_interpolation = Some(GradientInterpolation::Oklab);
+native/src/primitives/mod.rs:15305:        panel.style.visual.background_paint = Some(BackgroundPaint::MeshGradient(MeshGradient {
+native/src/primitives/mod.rs:15314:            "panel".to_string(),
+native/src/primitives/mod.rs:15325:            &panel,
+native/src/primitives/mod.rs:15359:        let mut panel = node("panel", WidgetKind::Panel);
+native/src/primitives/mod.rs:15360:        panel.style.visual.background_paint =
+native/src/primitives/mod.rs:15386:            "panel".to_string(),
+native/src/primitives/mod.rs:15397:            &panel,
+native/src/primitives/mod.rs:15416:        let mut panel = node("panel", WidgetKind::Panel);
+native/src/primitives/mod.rs:15417:        panel.style.visual.background_paint = Some(BackgroundPaint::Layers(vec![
+native/src/primitives/mod.rs:15450:            "panel".to_string(),
+native/src/primitives/mod.rs:15461:            &panel,
+native/src/primitives/mod.rs:15479:        let mut panel = node("panel", WidgetKind::Panel);
+native/src/primitives/mod.rs:15480:        panel.style.visual.background_paint =
+native/src/primitives/mod.rs:15495:        panel.style.visual.background_noise = Some(0.035);
+native/src/primitives/mod.rs:15499:            "panel".to_string(),
+native/src/primitives/mod.rs:15510:            &panel,
+native/src/primitives/mod.rs:15527:    fn panel_scrollbar_stays_inside_rounded_panel_surface() {
+native/src/primitives/mod.rs:15528:        let mut panel = node("panel", WidgetKind::Panel);
+native/src/primitives/mod.rs:15529:        panel.props.text = Some("Controls".to_string());
+native/src/primitives/mod.rs:15530:        panel.style.visual.border_radius = Some(20.0);
+native/src/primitives/mod.rs:15531:        panel.style.visual.border_width = Some(1.0);
+native/src/primitives/mod.rs:15532:        panel.style.layout.padding = Some(18.0);
+native/src/primitives/mod.rs:15536:            "panel".to_string(),
+native/src/primitives/mod.rs:15544:        layout.scroll_max_y.insert("panel".to_string(), 120.0);
+native/src/primitives/mod.rs:15545:        layout.scroll_y.insert("panel".to_string(), 0.0);
+native/src/primitives/mod.rs:15551:            &panel,
+native/src/primitives/mod.rs:15574:        let title_inset = panel_scrollbar_title_inset(&panel, &theme, 1.0);
+native/src/primitives/mod.rs:15577:            "titled panel scrollbar should start in the body area: {:?}",
+native/src/primitives/mod.rs:15590:    fn titled_panel_scrollbar_track_stays_inside_body_with_styled_padding() {
+native/src/primitives/mod.rs:15591:        let mut panel = node("panel", WidgetKind::Panel);
+native/src/primitives/mod.rs:15592:        panel.props.text = Some("Spacer behavior".to_string());
+native/src/primitives/mod.rs:15593:        panel.style.visual.border_radius = Some(14.0);
+native/src/primitives/mod.rs:15594:        panel.style.visual.border_width = Some(1.0);
+native/src/primitives/mod.rs:15595:        panel.style.layout.padding = Some(14.0);
+native/src/primitives/mod.rs:15596:        panel.style.parts.parts.insert(
+native/src/primitives/mod.rs:15607:        panel.style.parts.parts.insert(
+native/src/primitives/mod.rs:15620:            "panel".to_string(),
+native/src/primitives/mod.rs:15628:        layout.scroll_max_y.insert("panel".to_string(), 80.0);
+native/src/primitives/mod.rs:15629:        layout.scroll_y.insert("panel".to_string(), 0.0);
+native/src/primitives/mod.rs:15631:        let geometry = panel_scrollbar_geometry(
+native/src/primitives/mod.rs:15632:            &panel,
+native/src/primitives/mod.rs:15646:        let title_inset = panel_scrollbar_title_inset(&panel, &Theme::dark(), 1.0);
+native/src/primitives/mod.rs:15655:            "track should not overhang panel bottom: {:?}",
+native/src/primitives/mod.rs:15716:        layout.scroll_max_y.insert("modal".to_string(), 120.0);
+native/src/primitives/mod.rs:15719:        let geometry = panel_scrollbar_geometry(
+native/src/primitives/mod.rs:15734:        let title_inset = panel_scrollbar_title_inset(&modal, &Theme::dark(), 1.0);
+native/src/primitives/mod.rs:15744:    fn panel_scrollbar_geometry_stays_anchored_when_parent_clips_panel() {
+native/src/primitives/mod.rs:15745:        let mut panel = node("panel", WidgetKind::Panel);
+native/src/primitives/mod.rs:15746:        panel.props.text = Some("Controls".to_string());
+native/src/primitives/mod.rs:15747:        panel.style.visual.border_radius = Some(20.0);
+native/src/primitives/mod.rs:15748:        panel.style.visual.border_width = Some(1.0);
+native/src/primitives/mod.rs:15749:        panel.style.layout.padding = Some(18.0);
+native/src/primitives/mod.rs:15753:            "panel".to_string(),
+native/src/primitives/mod.rs:15761:        full_layout.clips.insert(
+native/src/primitives/mod.rs:15762:            "panel".to_string(),
+native/src/primitives/mod.rs:15770:        full_layout.paint_clips.insert(
+native/src/primitives/mod.rs:15771:            "panel".to_string(),
+native/src/primitives/mod.rs:15779:        full_layout.scroll_max_y.insert("panel".to_string(), 120.0);
+native/src/primitives/mod.rs:15780:        full_layout.scroll_y.insert("panel".to_string(), 0.0);
+native/src/primitives/mod.rs:15784:            "panel".to_string(),
+native/src/primitives/mod.rs:15792:        clipped_layout.clips.insert(
+native/src/primitives/mod.rs:15793:            "panel".to_string(),
+native/src/primitives/mod.rs:15802:            .scroll_max_y
+native/src/primitives/mod.rs:15803:            .insert("panel".to_string(), 120.0);
+native/src/primitives/mod.rs:15804:        clipped_layout.scroll_y.insert("panel".to_string(), 0.0);
+native/src/primitives/mod.rs:15805:        clipped_layout.paint_clips.insert(
+native/src/primitives/mod.rs:15806:            "panel".to_string(),
+native/src/primitives/mod.rs:15820:            &panel,
+native/src/primitives/mod.rs:15829:            &panel,
+native/src/primitives/mod.rs:15855:    fn panel_scrollbar_suppresses_tiny_rounding_overflow() {
+native/src/primitives/mod.rs:15856:        let panel = node("panel", WidgetKind::Panel);
+native/src/primitives/mod.rs:15859:            "panel".to_string(),
+native/src/primitives/mod.rs:15867:        layout.scroll_max_y.insert("panel".to_string(), 1.5);
+native/src/primitives/mod.rs:15869:        let geometry = panel_scrollbar_geometry(
+native/src/primitives/mod.rs:15870:            &panel,
+native/src/primitives/mod.rs:15890:    fn panel_scrollbar_suppresses_unusable_small_tracks() {
+native/src/primitives/mod.rs:15891:        let mut panel = node("panel", WidgetKind::Panel);
+native/src/primitives/mod.rs:15892:        panel.style.parts.parts.insert(
+native/src/primitives/mod.rs:15903:        panel.style.parts.parts.insert(
+native/src/primitives/mod.rs:15915:            "panel".to_string(),
+native/src/primitives/mod.rs:15923:        layout.scroll_max_y.insert("panel".to_string(), 32.0);
+native/src/primitives/mod.rs:15925:        let geometry = panel_scrollbar_geometry(
+native/src/primitives/mod.rs:15926:            &panel,
+native/src/primitives/mod.rs:15941:            "small panels should not draw oversized scrollbar tracks"
+native/src/primitives/mod.rs:15946:    fn panel_horizontal_scrollbar_stays_inside_rounded_panel_surface() {
+native/src/primitives/mod.rs:15947:        let mut panel = node("panel", WidgetKind::Panel);
+native/src/primitives/mod.rs:15948:        panel.style.visual.border_radius = Some(20.0);
+native/src/primitives/mod.rs:15949:        panel.style.visual.border_width = Some(1.0);
+native/src/primitives/mod.rs:15950:        panel.style.layout.padding = Some(18.0);
+native/src/primitives/mod.rs:15954:            "panel".to_string(),
+native/src/primitives/mod.rs:15962:        layout.scroll_max_x.insert("panel".to_string(), 180.0);
+native/src/primitives/mod.rs:15963:        layout.scroll_x.insert("panel".to_string(), 45.0);
+native/src/primitives/mod.rs:15969:            &panel,
+native/src/primitives/mod.rs:16003:            "horizontal scrollbar track should be centered on the panel surface: left_gap={left_gap} right_gap={right_gap}"
+native/src/primitives/mod.rs:16010:    fn panel_scrollbars_avoid_bottom_right_corner_overlap() {
+native/src/primitives/mod.rs:16011:        let mut panel = node("panel", WidgetKind::Panel);
+native/src/primitives/mod.rs:16012:        panel.style.visual.border_radius = Some(20.0);
+native/src/primitives/mod.rs:16013:        panel.style.visual.border_width = Some(1.0);
+native/src/primitives/mod.rs:16017:            "panel".to_string(),
+native/src/primitives/mod.rs:16025:        layout.scroll_max_x.insert("panel".to_string(), 120.0);
+native/src/primitives/mod.rs:16026:        layout.scroll_x.insert("panel".to_string(), 0.0);
+native/src/primitives/mod.rs:16027:        layout.scroll_max_y.insert("panel".to_string(), 120.0);
+native/src/primitives/mod.rs:16028:        layout.scroll_y.insert("panel".to_string(), 0.0);
+native/src/primitives/mod.rs:16032:            &panel,
+native/src/primitives/mod.rs:16066:    fn panel_scrollbar_uses_scrollbar_part_styles() {
+native/src/primitives/mod.rs:16067:        let mut panel = node("panel", WidgetKind::Panel);
+native/src/primitives/mod.rs:16068:        panel.style.visual.border_radius = Some(20.0);
+native/src/primitives/mod.rs:16069:        panel.style.parts.parts.insert(
+native/src/primitives/mod.rs:16085:        panel.style.parts.parts.insert(
+native/src/primitives/mod.rs:16103:            "panel".to_string(),
+native/src/primitives/mod.rs:16111:        layout.scroll_max_y.insert("panel".to_string(), 120.0);
+native/src/primitives/mod.rs:16112:        layout.scroll_y.insert("panel".to_string(), 0.0);
+native/src/primitives/mod.rs:16116:            &panel,
+native/src/primitives/mod.rs:16248:            panel_title_top_padding_lp(&modal, &theme) + panel_title_line_height_lp(&modal, &theme);
+native/src/primitives/mod.rs:16310:        let mut panel = node("panel", WidgetKind::Panel);
+native/src/primitives/mod.rs:16311:        panel.style.visual.background = Some(ColorRef::Rgba([0.8, 0.0, 0.0, 1.0]));
+native/src/primitives/mod.rs:16313:        root.children = vec![modal, panel];
+native/src/primitives/mod.rs:16335:            "panel".to_string(),
+native/src/primitives/mod.rs:16361:        let panel_index = out
+native/src/primitives/mod.rs:16364:            .expect("panel surface");
+native/src/primitives/mod.rs:16371:            modal_index > panel_index,
+native/src/primitives/mod.rs:16372:            "open modal should paint after normal content: panel={panel_index} modal={modal_index}"
+native/src/primitives/mod.rs:16380:        row.style.layout.overflow_y = Some(OverflowStyle::Hidden);
+native/src/primitives/mod.rs:16421:        layout.scroll_max_x.insert("row".to_string(), 180.0);
+native/src/primitives/mod.rs:16451:        let mut panel = node("panel", WidgetKind::Panel);
+native/src/primitives/mod.rs:16452:        panel.style.visual.background_paint =
+native/src/primitives/mod.rs:16470:            "panel".to_string(),
+native/src/primitives/mod.rs:16481:            &panel,
+native/src/primitives/mod.rs:16948:        let mut panel = node("panel", WidgetKind::Panel);
+native/src/primitives/mod.rs:16949:        panel.style.visual.transform = Some(TransformStyle {
+native/src/primitives/mod.rs:16956:        panel.children.push(node("run", WidgetKind::Button));
+native/src/primitives/mod.rs:16960:            "panel".to_string(),
+native/src/primitives/mod.rs:16980:            &panel,
+native/src/primitives/mod.rs:17385:        layout.clips.insert(
+native/src/primitives/mod.rs:17592:    fn panel_at_active_tab_body_start_connects_with_square_top_corners() {
+native/src/primitives/mod.rs:17593:        let mut panel = node("panel", WidgetKind::Panel);
+native/src/primitives/mod.rs:17594:        panel.style.visual.background = Some(rgba(0.18, 0.28, 0.38));
+native/src/primitives/mod.rs:17595:        panel.style.visual.border_radius = Some(10.0);
+native/src/primitives/mod.rs:17597:        tab.children = vec![panel];
+native/src/primitives/mod.rs:17610:            "panel".to_string(),
+native/src/primitives/mod.rs:17640:        let panel_surface = out
+native/src/primitives/mod.rs:17643:            .expect("active tab content panel surface should be emitted");
+native/src/primitives/mod.rs:17644:        assert_eq!(panel_surface.radii[0], 0.0);
+native/src/primitives/mod.rs:17645:        assert_eq!(panel_surface.radii[1], 0.0);
+native/src/primitives/mod.rs:17646:        assert!(panel_surface.radii[2] > 0.0);
+native/src/primitives/mod.rs:17647:        assert!(panel_surface.radii[3] > 0.0);
+native/src/layout.rs:77:    pub scroll_max_x: HashMap<String, f32>,
+native/src/layout.rs:78:    pub scroll_max_y: HashMap<String, f32>,
+native/src/layout.rs:200:    let child_parent_size = definite_content_size(&style, parent_size);
+native/src/layout.rs:217:        let body_parent_size = definite_content_size(&body_style, child_parent_size);
+native/src/layout.rs:356:    let panel_pad = (theme.spacing + 2.0) * sf;
+native/src/layout.rs:408:        WidgetKind::ScrollArea => Style {
+native/src/layout.rs:602:                left: LengthPercentage::Length(panel_pad),
+native/src/layout.rs:603:                right: LengthPercentage::Length(panel_pad),
+native/src/layout.rs:643:        WidgetKind::Panel | WidgetKind::Sidebar => {
+native/src/layout.rs:667:                    left: LengthPercentage::Length(panel_pad),
+native/src/layout.rs:668:                    right: LengthPercentage::Length(panel_pad),
+native/src/layout.rs:669:                    top: LengthPercentage::Length(panel_pad),
+native/src/layout.rs:670:                    bottom: LengthPercentage::Length(panel_pad),
+native/src/layout.rs:683:            let body_pad = if expanded { panel_pad } else { 0.0 };
+native/src/layout.rs:743:                left: LengthPercentage::Length(panel_pad),
+native/src/layout.rs:744:                right: LengthPercentage::Length(panel_pad),
+native/src/layout.rs:745:                top: LengthPercentage::Length(panel_pad),
+native/src/layout.rs:746:                bottom: LengthPercentage::Length(panel_pad),
+native/src/layout.rs:1115:        reserve_panel_title_space(&mut style, node, sf, theme);
+native/src/layout.rs:1121:    if matches!(parent_kind, Some(WidgetKind::ScrollArea)) {
+native/src/layout.rs:1415:            | WidgetKind::Panel
+native/src/layout.rs:1418:            | WidgetKind::ScrollArea
+native/src/layout.rs:1473:            | WidgetKind::Panel
+native/src/layout.rs:1485:        WidgetKind::Window | WidgetKind::HLayout | WidgetKind::ScrollArea
+native/src/layout.rs:1590:        WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal => {
+native/src/layout.rs:1617:        WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal => (theme.spacing + 2.0) * sf,
+native/src/layout.rs:1668:        WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal
+native/src/layout.rs:1678:    let top_margin = (panel_title_line_height_lp(node, theme)
+native/src/layout.rs:1679:        + panel_title_body_gap_lp(node, theme)
+native/src/layout.rs:2164:fn reserve_panel_title_space(style: &mut Style, node: &WidgetNode, sf: f32, theme: &Theme) {
+native/src/layout.rs:2167:        WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal
+native/src/layout.rs:2172:    let title_inset = (panel_title_line_height_lp(node, theme)
+native/src/layout.rs:2173:        + panel_title_body_gap_lp(node, theme)
+native/src/layout.rs:2182:pub(crate) fn panel_title_line_height_lp(node: &WidgetNode, theme: &Theme) -> f32 {
+native/src/layout.rs:2191:pub(crate) fn panel_title_gap_lp(node: &WidgetNode, theme: &Theme) -> f32 {
+native/src/layout.rs:2199:pub(crate) fn panel_title_body_gap_lp(node: &WidgetNode, theme: &Theme) -> f32 {
+native/src/layout.rs:2200:    let gap = panel_title_gap_lp(node, theme);
+native/src/layout.rs:2208:pub(crate) fn panel_title_top_padding_lp(node: &WidgetNode, theme: &Theme) -> f32 {
+native/src/layout.rs:2698:    let overflow_y = layout.overflow_y.or(layout.overflow);
+native/src/layout.rs:2699:    if overflow_x.is_some() || overflow_y.is_some() {
+native/src/layout.rs:2702:            y: taffy_overflow(overflow_y.unwrap_or(OverflowStyle::Hidden)),
+native/src/layout.rs:2844:        node_overflow_y(node),
+native/src/layout.rs:2850:    explicitly_scrolls_y(node) || (implicit_panel_may_need_vertical_scrollbar_gutter(node))
+native/src/layout.rs:2853:fn implicit_panel_may_need_vertical_scrollbar_gutter(node: &WidgetNode) -> bool {
+native/src/layout.rs:2857:        && node_overflow_y(node).is_none()
+native/src/layout.rs:2932:            grid_track_fit_content_size(value, sf),
+native/src/layout.rs:2965:fn grid_track_fit_content_size(value: GridTrackFitContentSize, sf: f32) -> LengthPercentage {
+native/src/layout.rs:3019:fn definite_content_size(style: &Style, parent_size: Option<(f32, f32)>) -> Option<(f32, f32)> {
+native/src/layout.rs:3242:    matches!(kind, WidgetKind::Panel | WidgetKind::Modal)
+native/src/layout.rs:3257:    match node_overflow_y(node) {
+native/src/layout.rs:3264:pub(crate) fn scroll_container_max_x(node: &WidgetNode, result: &LayoutResult) -> f32 {
+native/src/layout.rs:3265:    scroll_container_max_x_with_viewport(node, result, false, result.scale_factor, &Theme::dark())
+native/src/layout.rs:3268:fn scroll_container_max_x_with_viewport(
+native/src/layout.rs:3299:pub(crate) fn scroll_container_max_y(node: &WidgetNode, result: &LayoutResult) -> f32 {
+native/src/layout.rs:3300:    scroll_container_max_y_with_viewport(node, result, false, result.scale_factor, &Theme::dark())
+native/src/layout.rs:3303:fn scroll_container_max_y_with_viewport(
+native/src/layout.rs:3342:            WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal
+native/src/layout.rs:3383:    match node_overflow_y(node).or_else(|| node_overflow_x(node)) {
+native/src/layout.rs:3390:                | WidgetKind::ScrollArea
+native/src/layout.rs:3406:        .or_else(|| (node.kind == WidgetKind::ScrollArea).then_some(OverflowStyle::Hidden))
+native/src/layout.rs:3409:fn node_overflow_y(node: &WidgetNode) -> Option<OverflowStyle> {
+native/src/layout.rs:3412:        .overflow_y
+native/src/layout.rs:3414:        .or_else(|| (node.kind == WidgetKind::ScrollArea).then_some(OverflowStyle::Auto))
+native/src/layout.rs:3493:            scroll_container_max_x_with_viewport(node, result, use_own_viewport, sf, theme);
+native/src/layout.rs:3495:            scroll_container_max_y_with_viewport(node, result, use_own_viewport, sf, theme);
+native/src/layout.rs:3496:        let scroll_x = state.container_scroll_x(&node.id, max_scroll_x);
+native/src/layout.rs:3497:        let scroll_y = state.container_scroll_y(&node.id, max_scroll_y);
+native/src/layout.rs:3498:        result.scroll_max_x.insert(node.id.clone(), max_scroll_x);
+native/src/layout.rs:3499:        result.scroll_max_y.insert(node.id.clone(), max_scroll_y);
+native/src/layout.rs:3511:            inside_scrolled_ancestor || max_scroll_x > 0.0 || max_scroll_y > 0.0;
+native/src/layout.rs:3632:        WidgetKind::Panel | WidgetKind::Sidebar | WidgetKind::Modal
+native/src/layout.rs:3641:    (panel_title_top_padding_lp(node, theme)
+native/src/layout.rs:3642:        + panel_title_line_height_lp(node, theme)
+native/src/layout.rs:3643:        + panel_title_body_gap_lp(node, theme))
+native/src/layout.rs:3741:        WidgetKind::Panel | WidgetKind::VLayout | WidgetKind::HLayout => {
+native/src/layout.rs:4003:    result.scroll_max_x.remove(&node.id);
+native/src/layout.rs:4004:    result.scroll_max_y.remove(&node.id);
+native/src/layout.rs:4155:                            "objects-panel",
+native/src/layout.rs:4156:                            WidgetKind::Panel,
+native/src/layout.rs:4175:        assert!(layout.rects.contains_key("objects-panel"));
+native/src/layout.rs:4177:        let panel_clip = layout.clips.get("objects-panel").copied().unwrap();
+native/src/layout.rs:4178:        let button_clip = layout.clips.get("objects-button").copied().unwrap();
+native/src/layout.rs:4180:            panel_clip.h > 0.0,
+native/src/layout.rs:4181:            "active tab body panel should not be clipped by the tab header"
+native/src/layout.rs:4235:                            "body-panel",
+native/src/layout.rs:4236:                            WidgetKind::Panel,
+native/src/layout.rs:4299:                            "objects-panel",
+native/src/layout.rs:4300:                            WidgetKind::Panel,
+native/src/layout.rs:4319:        assert!(layout.rects.contains_key("objects-panel"));
+native/src/layout.rs:4410:                        "panel",
+native/src/layout.rs:4411:                        WidgetKind::Panel,
+native/src/layout.rs:4430:        let panel = layout.rects.get("panel").unwrap();
+native/src/layout.rs:4434:        assert_eq!(panel.h, 800.0);
+native/src/layout.rs:5036:                        WidgetKind::Panel,
+native/src/layout.rs:5096:                WidgetKind::Panel,
+native/src/layout.rs:5243:            WidgetKind::ScrollArea,
+native/src/layout.rs:5247:                WidgetKind::Panel,
+native/src/layout.rs:5266:            WidgetKind::ScrollArea,
+native/src/layout.rs:5276:        body.style.layout.overflow_y = Some(OverflowStyle::Auto);
+native/src/layout.rs:5472:    fn label_wraps_and_reserves_multiline_height_in_narrow_panel() {
+native/src/layout.rs:5478:                "panel",
+native/src/layout.rs:5479:                WidgetKind::Panel,
+native/src/layout.rs:5489:                            "This label should wrap onto several lines inside a narrow panel"
+native/src/layout.rs:5727:    fn titled_panel_style_padding_still_reserves_title_space() {
+native/src/layout.rs:5728:        let mut panel = node(
+native/src/layout.rs:5729:            "panel",
+native/src/layout.rs:5730:            WidgetKind::Panel,
+native/src/layout.rs:5745:        panel.style.layout.padding = Some(14.0);
+native/src/layout.rs:5746:        panel.style.layout.gap = Some(10.0);
+native/src/layout.rs:5751:            vec![panel],
+native/src/layout.rs:5755:        let panel = layout.rects.get("panel").unwrap();
+native/src/layout.rs:5759:            button.y - panel.y >= 39.0,
+native/src/layout.rs:5760:            "custom padding let titled panel child overlap title: panel={panel:?} button={button:?}"
+native/src/layout.rs:5765:    fn titled_panel_offsets_first_child_from_content_clip_for_control_antialiasing() {
+native/src/layout.rs:5785:        let mut panel = node(
+native/src/layout.rs:5786:            "panel",
+native/src/layout.rs:5787:            WidgetKind::Panel,
+native/src/layout.rs:5794:        panel.style.layout.padding = Some(14.0);
+native/src/layout.rs:5795:        panel.style.layout.gap = Some(10.0);
+native/src/layout.rs:5796:        panel.style.layout.width = Some(260.0);
+native/src/layout.rs:5802:            vec![panel],
+native/src/layout.rs:5808:        let panel_node = root.children.first().unwrap();
+native/src/layout.rs:5809:        let content_clip_top = layout.rects.get("panel").unwrap().y
+native/src/layout.rs:5810:            + panel_title_top_padding_lp(panel_node, &theme)
+native/src/layout.rs:5811:            + panel_title_line_height_lp(panel_node, &theme)
+native/src/layout.rs:5812:            + panel_title_body_gap_lp(panel_node, &theme);
+native/src/layout.rs:5825:    fn titled_panel_reservation_uses_title_font_size_and_gap() {
+native/src/layout.rs:5826:        let mut panel = node(
+native/src/layout.rs:5827:            "panel",
+native/src/layout.rs:5828:            WidgetKind::Panel,
+native/src/layout.rs:5843:        panel.style.layout.padding = Some(14.0);
+native/src/layout.rs:5844:        panel.style.layout.gap = Some(12.0);
+native/src/layout.rs:5845:        panel.style.text.font_size = Some(22.0);
+native/src/layout.rs:5850:            vec![panel],
+native/src/layout.rs:5854:        let panel = layout.rects.get("panel").unwrap();
+native/src/layout.rs:5858:            button.y - panel.y >= 53.0,
+native/src/layout.rs:5859:            "large titled panel did not reserve font+gap space: panel={panel:?} button={button:?}"
+native/src/layout.rs:5864:    fn titled_panel_reservation_uses_custom_title_line_height() {
+native/src/layout.rs:5865:        let mut panel = node(
+native/src/layout.rs:5866:            "panel",
+native/src/layout.rs:5867:            WidgetKind::Panel,
+native/src/layout.rs:5882:        panel.style.layout.padding = Some(0.0);
+native/src/layout.rs:5883:        panel.style.layout.gap = Some(0.0);
+native/src/layout.rs:5884:        panel.style.layout.height = Some(100.0);
+native/src/layout.rs:5885:        panel.style.text.line_height = Some(LineHeight::LogicalPx(44.0));
+native/src/layout.rs:5890:            vec![panel],
+native/src/layout.rs:5894:        let panel = layout.rects.get("panel").unwrap();
+native/src/layout.rs:5897:        assert_eq!(layout.scroll_max_y.get("panel").copied(), None);
+native/src/layout.rs:5899:            button.y >= panel.y + 44.0,
+native/src/layout.rs:5900:            "custom title line-height was not reserved: panel={panel:?} button={button:?}"
+native/src/layout.rs:6045:                node("panel", WidgetKind::Panel, NodeProps::default(), vec![]),
+native/src/layout.rs:6066:        let panel = layout.rects.get("panel").unwrap();
+native/src/layout.rs:6069:        assert_eq!(panel.w, 300.0);
+native/src/layout.rs:6075:        let mut fixed = node("fixed", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:6077:        let flexible = node("flexible", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:6162:        let mut fixed = node("fixed", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:6167:        let mut flexible = node("flexible", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:6244:        let mut sidebar = node("sidebar", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:6274:        let mut target_panel = node(
+native/src/layout.rs:6275:            "target-panel",
+native/src/layout.rs:6276:            WidgetKind::Panel,
+native/src/layout.rs:6280:        target_panel.style.layout.flex_grow = Some(1.0);
+native/src/layout.rs:6281:        target_panel.style.layout.flex_shrink = Some(1.0);
+native/src/layout.rs:6282:        target_panel.style.layout.min_width = Some(0.0);
+native/src/layout.rs:6283:        target_panel.style.layout.padding = Some(0.0);
+native/src/layout.rs:6289:            vec![sidebar, target_panel],
+native/src/layout.rs:6313:        let mut label = node("label", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:6544:        let mut panel = node(
+native/src/layout.rs:6545:            "panel",
+native/src/layout.rs:6546:            WidgetKind::Panel,
+native/src/layout.rs:6550:        panel.style.layout.width = Some(320.0);
+native/src/layout.rs:6551:        panel.style.layout.height = Some(180.0);
+native/src/layout.rs:6552:        panel.style.layout.flex_grow = Some(0.0);
+native/src/layout.rs:6553:        panel.style.layout.flex_shrink = Some(0.0);
+native/src/layout.rs:6558:            vec![panel],
+native/src/layout.rs:6562:        let panel = layout.rects.get("panel").unwrap();
+native/src/layout.rs:6566:        assert_eq!(panel.w, 320.0);
+native/src/layout.rs:6567:        assert_eq!(panel.h, 180.0);
+native/src/layout.rs:6570:        assert_eq!(pin.x, panel.x + panel.w - 18.0 - pin.w);
+native/src/layout.rs:6571:        assert_eq!(pin.y, panel.y + 14.0);
+native/src/layout.rs:6579:    fn absolute_child_in_titled_panel_uses_panel_body_top() {
+native/src/layout.rs:6588:        let mut panel = node(
+native/src/layout.rs:6589:            "panel",
+native/src/layout.rs:6590:            WidgetKind::Panel,
+native/src/layout.rs:6592:                text: Some("Titled panel".to_string()),
+native/src/layout.rs:6597:        panel.style.layout.width = Some(320.0);
+native/src/layout.rs:6598:        panel.style.layout.height = Some(180.0);
+native/src/layout.rs:6599:        panel.style.layout.flex_grow = Some(0.0);
+native/src/layout.rs:6600:        panel.style.layout.flex_shrink = Some(0.0);
+native/src/layout.rs:6605:            vec![panel.clone()],
+native/src/layout.rs:6610:        let panel_rect = layout.rects.get("panel").unwrap();
+native/src/layout.rs:6612:        let expected_body_top = panel_rect.y
+native/src/layout.rs:6613:            + titled_container_body_offset_px(&panel, 1.0, &theme)
+native/src/layout.rs:6616:        assert_eq!(pin.x, panel_rect.x + theme.spacing + 2.0 + 16.0);
+native/src/layout.rs:6623:        let mut dock = node("dock", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:6630:        let mut panel = node(
+native/src/layout.rs:6631:            "panel",
+native/src/layout.rs:6632:            WidgetKind::Panel,
+native/src/layout.rs:6636:        panel.style.layout.width = Some(240.0);
+native/src/layout.rs:6637:        panel.style.layout.height = Some(120.0);
+native/src/layout.rs:6638:        panel.style.layout.flex_grow = Some(0.0);
+native/src/layout.rs:6639:        panel.style.layout.flex_shrink = Some(0.0);
+native/src/layout.rs:6640:        panel.style.layout.overflow = Some(OverflowStyle::Hidden);
+native/src/layout.rs:6645:            vec![panel],
+native/src/layout.rs:6649:        let panel = layout.rects.get("panel").unwrap();
+native/src/layout.rs:6652:        let dock_clip = layout.clips.get("dock").unwrap();
+native/src/layout.rs:6654:        assert_eq!(panel.w, 240.0);
+native/src/layout.rs:6655:        assert_eq!(panel.h, 120.0);
+native/src/layout.rs:6661:            flow.y < panel.y + panel.h,
+native/src/layout.rs:6672:        let mut left = node("left", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:6674:        let right = node("right", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:6695:        let mut left = node("left", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:6700:        let mut right = node("right", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:6727:        let mut left = node("left", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:6732:        let mut right = node("right", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:6756:        let mut first = node("first", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:6760:        let mut second = node("second", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:6796:        let mut centered = node("centered", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:6822:        let mut first = node("first", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:6829:        let mut second = node("second", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:6858:        let mut grid = node("grid", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:6874:        let mut sidebar = node("sidebar", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:6883:        let mut main = node("main", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:6923:                node("first", WidgetKind::Panel, NodeProps::default(), vec![]),
+native/src/layout.rs:6924:                node("second", WidgetKind::Panel, NodeProps::default(), vec![]),
+native/src/layout.rs:6942:            "second panel should be in the next column"
+native/src/layout.rs:6952:            let mut node = node(id, WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:7022:            node(id, WidgetKind::Panel, NodeProps::default(), children)
+native/src/layout.rs:7062:    fn masonry_grid_shrink_updates_auto_height_parent_panel() {
+native/src/layout.rs:7064:            let mut node = node(id, WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:7102:            WidgetKind::Panel,
+native/src/layout.rs:7148:            "auto-height parent panel should hug packed masonry content: section={section:?} grid={grid:?}"
+native/src/layout.rs:7168:                node("first", WidgetKind::Panel, NodeProps::default(), vec![]),
+native/src/layout.rs:7169:                node("second", WidgetKind::Panel, NodeProps::default(), vec![]),
+native/src/layout.rs:7188:            "second panel should wrap below the first"
+native/src/layout.rs:7231:        let mut first = node("first", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:7234:        let mut second = node("second", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:7237:        let mut third = node("third", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:7327:        let mut grid = node("grid", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:7363:        let mut sidebar = node("sidebar", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:7365:        let mut main = node("main", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:7462:        let mut panel = node(
+native/src/layout.rs:7463:            "panel",
+native/src/layout.rs:7464:            WidgetKind::Panel,
+native/src/layout.rs:7487:        panel.style.layout.height = Some(40.0);
+native/src/layout.rs:7488:        panel.style.layout.padding = Some(0.0);
+native/src/layout.rs:7489:        panel.style.layout.gap = Some(0.0);
+native/src/layout.rs:7494:            vec![panel],
+native/src/layout.rs:7498:        let panel = layout.rects.get("panel").unwrap();
+native/src/layout.rs:7499:        let second = layout.clips.get("second").unwrap();
+native/src/layout.rs:7502:            second.y + second.h <= panel.y + panel.h,
+native/src/layout.rs:7503:            "child visible clip escaped parent: panel={panel:?} second_clip={second:?}"
+native/src/layout.rs:7508:    fn panel_scroll_offset_moves_children_and_preserves_clip() {
+native/src/layout.rs:7509:        let mut panel = node(
+native/src/layout.rs:7510:            "panel",
+native/src/layout.rs:7511:            WidgetKind::Panel,
+native/src/layout.rs:7520:        panel.style.layout.padding = Some(0.0);
+native/src/layout.rs:7521:        panel.style.layout.gap = Some(0.0);
+native/src/layout.rs:7522:        panel.style.layout.height = Some(100.0);
+native/src/layout.rs:7527:            vec![panel],
+native/src/layout.rs:7531:        state.container_scroll_y.insert("panel".to_string(), 40.0);
+native/src/layout.rs:7537:        let panel = scrolled.rects.get("panel").unwrap();
+native/src/layout.rs:7540:        let applied_scroll = scrolled.scroll_y.get("panel").copied().unwrap_or(0.0);
+native/src/layout.rs:7542:        assert_eq!(panel.y, 0.0);
+native/src/layout.rs:7544:            assert!(first_clip.y >= panel.y);
+native/src/layout.rs:7545:            assert!(first_clip.y + first_clip.h <= panel.y + panel.h);
+native/src/layout.rs:7547:        assert!(scroll_container_max_y(root.children.first().unwrap(), &unscrolled) > 0.0);
+native/src/layout.rs:7548:        assert_eq!(scrolled.scroll_y.get("panel").copied(), Some(36.0));
+native/src/layout.rs:7549:        assert_eq!(scrolled.scroll_max_y.get("panel").copied(), Some(36.0));
+native/src/layout.rs:7554:        let mut panel = node(
+native/src/layout.rs:7555:            "panel",
+native/src/layout.rs:7556:            WidgetKind::Panel,
+native/src/layout.rs:7563:        panel.style.layout.height = Some(44.0);
+native/src/layout.rs:7564:        panel.style.layout.padding = Some(0.0);
+native/src/layout.rs:7565:        panel.style.layout.gap = Some(0.0);
+native/src/layout.rs:7570:            vec![panel],
+native/src/layout.rs:7575:        let panel_clip = layout.clips.get("panel").copied().unwrap();
+native/src/layout.rs:7577:        let second_clip = layout.clips.get("second").copied().unwrap();
+native/src/layout.rs:7591:            (panel_clip.x, panel_clip.y, panel_clip.w, panel_clip.h)
+native/src/layout.rs:7638:        scroller.style.layout.overflow_y = Some(OverflowStyle::Hidden);
+native/src/layout.rs:7659:        assert!(scroll_container_max_x(root.children.first().unwrap(), &unscrolled) > 0.0);
+native/src/layout.rs:7668:                .scroll_max_x
+native/src/layout.rs:7677:    fn panel_scroll_range_preserves_bottom_padding() {
+native/src/layout.rs:7678:        let mut panel = node(
+native/src/layout.rs:7679:            "panel",
+native/src/layout.rs:7680:            WidgetKind::Panel,
+native/src/layout.rs:7689:        panel.style.layout.padding = Some(14.0);
+native/src/layout.rs:7690:        panel.style.layout.gap = Some(0.0);
+native/src/layout.rs:7691:        panel.style.layout.height = Some(100.0);
+native/src/layout.rs:7696:            vec![panel],
+native/src/layout.rs:7699:        state.container_scroll_y.insert("panel".to_string(), 999.0);
+native/src/layout.rs:7702:        let panel = layout.rects.get("panel").unwrap();
+native/src/layout.rs:7705:        assert_eq!(layout.scroll_max_y.get("panel").copied(), Some(64.0));
+native/src/layout.rs:7706:        assert_eq!(layout.scroll_y.get("panel").copied(), Some(64.0));
+native/src/layout.rs:7707:        assert_eq!(panel.y + panel.h - (fourth.y + fourth.h), 14.0);
+native/src/layout.rs:7712:        let mut child = node("child", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:7714:        let mut panel = node(
+native/src/layout.rs:7715:            "panel",
+native/src/layout.rs:7716:            WidgetKind::Panel,
+native/src/layout.rs:7720:        panel.style.layout.height_value = Some(LayoutLength::LogicalPx(40.0));
+native/src/layout.rs:7721:        panel.style.layout.padding = Some(0.0);
+native/src/layout.rs:7722:        panel.style.layout.overflow = Some(OverflowStyle::Visible);
+native/src/layout.rs:7727:            vec![panel],
+native/src/layout.rs:7731:        let panel = layout.rects.get("panel").unwrap();
+native/src/layout.rs:7732:        let child_clip = layout.clips.get("child").unwrap();
+native/src/layout.rs:7734:        assert!(child_clip.y + child_clip.h > panel.y + panel.h);
+native/src/layout.rs:7770:    fn explicit_hidden_hlayout_clips_child_paint() {
+native/src/layout.rs:7807:    fn overflow_auto_opts_non_panel_container_into_scroll() {
+native/src/layout.rs:7820:        scroller.style.layout.overflow_y = Some(OverflowStyle::Auto);
+native/src/layout.rs:7834:        assert!(layout.scroll_max_y.get("scroller").copied().unwrap_or(0.0) > 0.0);
+native/src/layout.rs:7839:    fn nested_vlayout_scroll_body_inside_titled_panel_gets_scroll_range() {
+native/src/layout.rs:7844:                text: Some("The title should stay above the scrollable body.".to_string()),
+native/src/layout.rs:7878:        body.style.layout.overflow_y = Some(OverflowStyle::Auto);
+native/src/layout.rs:7886:            WidgetKind::Panel,
+native/src/layout.rs:7888:                text: Some("Scrollable titled panel".to_string()),
+native/src/layout.rs:7908:            .scroll_max_y
+native/src/layout.rs:7914:            "nested fixed-height VLayout clips children and should be scrollable"
+native/src/layout.rs:7917:        let pass_clip = layout.clips.get("pass").unwrap();
+native/src/layout.rs:7940:            "props": {"text": "The title should stay above the scrollable body."},
+native/src/layout.rs:7967:                "overflow_y": "auto",
+native/src/layout.rs:7977:            "type": "panel",
+native/src/layout.rs:7979:            "props": {"text": "Scrollable titled panel"},
+native/src/layout.rs:8036:            .scroll_max_y
+native/src/layout.rs:8084:            WidgetKind::ScrollArea,
+native/src/layout.rs:8104:            WidgetKind::Panel,
+native/src/layout.rs:8123:        let refresh_clip = layout.clips.get("refresh").unwrap();
+native/src/layout.rs:8126:        let auto_clip = layout.clips.get("auto-stats").unwrap();
+native/src/layout.rs:8128:            .scroll_max_y
+native/src/layout.rs:8146:            "scroll area should own overflow from its rows: scroller={scroller_rect:?} first_row={first_row:?} last_row={last_row:?} max_scroll={max_scroll}"
+native/src/layout.rs:8152:        let mut first = node("first", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:8154:        let mut second = node("second", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:8156:        let mut third = node("third", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:8158:        let mut fourth = node("fourth", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:8178:            WidgetKind::ScrollArea,
+native/src/layout.rs:8196:        let first_rect = layout.rects.get("first").expect("first panel rect");
+native/src/layout.rs:8197:        let third_rect = layout.rects.get("third").expect("third panel rect");
+native/src/layout.rs:8198:        let max_scroll = layout.scroll_max_y.get("scroller").copied().unwrap_or(0.0);
+native/src/layout.rs:8202:            "auto grid row should start after tallest previous row inside ScrollArea: first={first_rect:?} third={third_rect:?}"
+native/src/layout.rs:8205:            grid_rect.h > scroller_rect.h && max_scroll > 0.0,
+native/src/layout.rs:8206:            "ScrollArea grid child should keep content height and produce scroll range: scroller={scroller_rect:?} grid={grid_rect:?} max_scroll={max_scroll}"
+native/src/layout.rs:8216:                text: Some("The title should stay above the scrollable body.".to_string()),
+native/src/layout.rs:8253:        body.style.layout.overflow_y = Some(OverflowStyle::Auto);
+native/src/layout.rs:8261:            WidgetKind::Panel,
+native/src/layout.rs:8263:                text: Some("Scrollable titled panel".to_string()),
+native/src/layout.rs:8273:        let mut before = node("before", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:8276:        let mut after = node("after", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:8288:        root_scroller.style.layout.overflow_y = Some(OverflowStyle::Auto);
+native/src/layout.rs:8304:        let body_clip = layout.clips.get("layout-scroll-body").unwrap();
+native/src/layout.rs:8306:            .scroll_max_y
+native/src/layout.rs:8322:    fn scrollable_panel_reserves_padding_for_styled_vertical_scrollbar() {
+native/src/layout.rs:8323:        let mut panel = node(
+native/src/layout.rs:8324:            "panel",
+native/src/layout.rs:8325:            WidgetKind::Panel,
+native/src/layout.rs:8334:        panel.style.layout.width = Some(180.0);
+native/src/layout.rs:8335:        panel.style.layout.height = Some(80.0);
+native/src/layout.rs:8336:        panel.style.layout.padding = Some(4.0);
+native/src/layout.rs:8337:        panel.style.layout.gap = Some(4.0);
+native/src/layout.rs:8338:        panel.style.layout.overflow_y = Some(OverflowStyle::Auto);
+native/src/layout.rs:8339:        panel.style.parts.parts.insert(
+native/src/layout.rs:8350:        panel.style.parts.parts.insert(
+native/src/layout.rs:8364:            vec![panel],
+native/src/layout.rs:8367:        state.container_scroll_y.insert("panel".to_string(), 10.0);
+native/src/layout.rs:8370:        let panel_rect = layout.rects.get("panel").unwrap();
+native/src/layout.rs:8373:        assert!(layout.scroll_max_y.get("panel").copied().unwrap_or(0.0) > 0.0);
+native/src/layout.rs:8375:            first_rect.x + first_rect.w <= panel_rect.x + panel_rect.w - 24.0 + 0.5,
+native/src/layout.rs:8376:            "stretched child should leave room for styled scrollbar gutter: panel={panel_rect:?} first={first_rect:?}"
+native/src/layout.rs:8381:    fn implicit_scrollable_panel_reserves_padding_for_styled_vertical_scrollbar() {
+native/src/layout.rs:8382:        let mut left = node("left", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:8388:        let mut right = node("right", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:8403:        let mut panel = node(
+native/src/layout.rs:8404:            "panel",
+native/src/layout.rs:8405:            WidgetKind::Panel,
+native/src/layout.rs:8412:        panel.style.layout.width = Some(420.0);
+native/src/layout.rs:8413:        panel.style.layout.height = Some(180.0);
+native/src/layout.rs:8414:        panel.style.layout.padding = Some(14.0);
+native/src/layout.rs:8415:        panel.style.layout.gap = Some(10.0);
+native/src/layout.rs:8416:        panel.style.parts.parts.insert(
+native/src/layout.rs:8427:        panel.style.parts.parts.insert(
+native/src/layout.rs:8442:            vec![panel],
+native/src/layout.rs:8453:        let panel_rect = layout.rects.get("panel").unwrap();
+native/src/layout.rs:8455:        let reserve = scrollbar_gutter_reserve_px(root.children.first().expect("panel"), 1.0);
+native/src/layout.rs:8458:            right_rect.x + right_rect.w <= panel_rect.x + panel_rect.w - reserve + 0.5,
+native/src/layout.rs:8459:            "right tile should leave implicit scrollbar gutter: panel={panel_rect:?} right={right_rect:?} reserve={reserve}"
+native/src/layout.rs:8468:    fn titled_scroll_panel_with_clipped_buttons_gets_scroll_range() {
+native/src/layout.rs:8473:                text: Some("The title should stay above the scrollable body.".to_string()),
+native/src/layout.rs:8498:        let mut panel = node(
+native/src/layout.rs:8499:            "panel",
+native/src/layout.rs:8500:            WidgetKind::Panel,
+native/src/layout.rs:8502:                text: Some("Scrollable titled panel".to_string()),
+native/src/layout.rs:8507:        panel.style.layout.width_value = Some(LayoutLength::Percent(100.0));
+native/src/layout.rs:8508:        panel.style.layout.height = Some(250.0);
+native/src/layout.rs:8509:        panel.style.layout.overflow_y = Some(OverflowStyle::Auto);
+native/src/layout.rs:8510:        panel.style.layout.overflow_x = Some(OverflowStyle::Hidden);
+native/src/layout.rs:8511:        panel.style.layout.padding = Some(14.0);
+native/src/layout.rs:8512:        panel.style.layout.padding_right = Some(26.0);
+native/src/layout.rs:8513:        panel.style.layout.padding_bottom = Some(22.0);
+native/src/layout.rs:8514:        panel.style.layout.gap = Some(10.0);
+native/src/layout.rs:8520:            vec![panel],
+native/src/layout.rs:8525:        let max_scroll = layout.scroll_max_y.get("panel").copied().unwrap_or(0.0);
+native/src/layout.rs:8528:            "titled panel has clipped children and should be scrollable"
+native/src/layout.rs:8531:        let pass_clip = layout.clips.get("pass").unwrap();
+native/src/layout.rs:8537:        state.container_scroll_y.insert("panel".to_string(), 999.0);
+native/src/layout.rs:8542:            "final label should become visible after scrolling the titled panel"
+native/src/layout.rs:8547:    fn titled_scroll_panel_clips_children_below_title() {
+native/src/layout.rs:8548:        let mut panel = node(
+native/src/layout.rs:8549:            "panel",
+native/src/layout.rs:8550:            WidgetKind::Panel,
+native/src/layout.rs:8562:        panel.style.layout.padding = Some(0.0);
+native/src/layout.rs:8563:        panel.style.layout.gap = Some(0.0);
+native/src/layout.rs:8564:        panel.style.layout.height = Some(100.0);
+native/src/layout.rs:8569:            vec![panel],
+native/src/layout.rs:8572:        state.container_scroll_y.insert("panel".to_string(), 40.0);
+native/src/layout.rs:8577:        let panel = layout.rects.get("panel").unwrap();
+native/src/layout.rs:8578:        let title_bottom = panel.y
+native/src/layout.rs:8579:            + panel_title_top_padding_lp(root.children.first().unwrap(), &theme)
+native/src/layout.rs:8580:            + panel_title_line_height_lp(root.children.first().unwrap(), &theme)
+native/src/layout.rs:8581:            + panel_title_gap_lp(root.children.first().unwrap(), &theme);
+native/src/layout.rs:8585:            let clip = layout.clips.get(id).unwrap();
+native/src/layout.rs:8592:                assert!(clip.y >= panel.y);
+native/src/layout.rs:8599:    fn titled_scroll_panel_max_scroll_reveals_last_child() {
+native/src/layout.rs:8604:                text: Some("Wheel inside this panel.".to_string()),
+native/src/layout.rs:8620:        let mut panel = node(
+native/src/layout.rs:8621:            "panel",
+native/src/layout.rs:8622:            WidgetKind::Panel,
+native/src/layout.rs:8629:        panel.style.layout.height = Some(205.0);
+native/src/layout.rs:8630:        panel.style.layout.padding = Some(14.0);
+native/src/layout.rs:8631:        panel.style.layout.gap = Some(8.0);
+native/src/layout.rs:8632:        panel.style.layout.overflow_y = Some(OverflowStyle::Auto);
+native/src/layout.rs:8633:        panel.style.layout.overflow_x = Some(OverflowStyle::Hidden);
+native/src/layout.rs:8638:            vec![panel],
+native/src/layout.rs:8641:        state.container_scroll_y.insert("panel".to_string(), 999.0);
+native/src/layout.rs:8645:        let last_clip = layout.clips.get("action-9").unwrap();
+native/src/layout.rs:8649:            "last child should be fully visible at max scroll: rect={last_rect:?} clip={last_clip:?} scroll={:?} max={:?}",
+native/src/layout.rs:8650:            layout.scroll_y.get("panel"),
+native/src/layout.rs:8651:            layout.scroll_max_y.get("panel")
+native/src/layout.rs:8656:    fn overflow_probe_vertical_panel_reveals_last_child_at_startup_size() {
+native/src/layout.rs:8671:                    text: Some("Wheel inside this panel.".to_string()),
+native/src/layout.rs:8689:            "vertical-panel",
+native/src/layout.rs:8690:            WidgetKind::Panel,
+native/src/layout.rs:8699:        vertical.style.layout.overflow_y = Some(OverflowStyle::Auto);
+native/src/layout.rs:8703:            "hidden-panel",
+native/src/layout.rs:8704:            WidgetKind::Panel,
+native/src/layout.rs:8752:            .insert("vertical-panel".to_string(), 999.0);
+native/src/layout.rs:8755:        let panel_rect = layout.rects.get("vertical-panel").unwrap();
+native/src/layout.rs:8756:        let panel_clip = layout.clips.get("vertical-panel").unwrap();
+native/src/layout.rs:8758:        let last_clip = layout.clips.get("probe-action-9").unwrap();
+native/src/layout.rs:8761:            panel_clip.h >= panel_rect.h - 0.5,
+native/src/layout.rs:8762:            "vertical panel itself should be visible at startup size: rect={panel_rect:?} clip={panel_clip:?}"
+native/src/layout.rs:8766:            "last probe button should be fully visible at max scroll: rect={last_rect:?} clip={last_clip:?} scroll={:?} max={:?}",
+native/src/layout.rs:8767:            layout.scroll_y.get("vertical-panel"),
+native/src/layout.rs:8768:            layout.scroll_max_y.get("vertical-panel")
+native/src/layout.rs:8773:    fn partially_clipped_scroll_panel_uses_visible_viewport_for_max_scroll() {
+native/src/layout.rs:8786:        let mut panel = node("panel", WidgetKind::Panel, NodeProps::default(), children);
+native/src/layout.rs:8787:        panel.style.layout.height = Some(220.0);
+native/src/layout.rs:8788:        panel.style.layout.padding = Some(14.0);
+native/src/layout.rs:8789:        panel.style.layout.gap = Some(8.0);
+native/src/layout.rs:8790:        panel.style.layout.overflow_y = Some(OverflowStyle::Auto);
+native/src/layout.rs:8801:            vec![spacer, panel],
+native/src/layout.rs:8804:        state.container_scroll_y.insert("panel".to_string(), 999.0);
+native/src/layout.rs:8807:        let panel_rect = layout.rects.get("panel").unwrap();
+native/src/layout.rs:8808:        let panel_clip = layout.clips.get("panel").unwrap();
+native/src/layout.rs:8810:        let last_clip = layout.clips.get("clipped-action-9").unwrap();
+native/src/layout.rs:8813:            panel_clip.h < panel_rect.h,
+native/src/layout.rs:8814:            "test requires panel to be clipped by the window: rect={panel_rect:?} clip={panel_clip:?}"
+native/src/layout.rs:8818:            "last child should be fully visible inside clipped viewport at max scroll: rect={last_rect:?} clip={last_clip:?} scroll={:?} max={:?}",
+native/src/layout.rs:8819:            layout.scroll_y.get("panel"),
+native/src/layout.rs:8820:            layout.scroll_max_y.get("panel")
+native/src/layout.rs:8828:            let mut panel = node(
+native/src/layout.rs:8829:                &format!("panel-{row_index}"),
+native/src/layout.rs:8830:                WidgetKind::Panel,
+native/src/layout.rs:8856:            panel.style.layout.min_height = Some(150.0);
+native/src/layout.rs:8857:            panel.style.layout.padding = Some(12.0);
+native/src/layout.rs:8858:            panel.style.layout.gap = Some(8.0);
+native/src/layout.rs:8863:                vec![panel],
+native/src/layout.rs:8870:        root_scroller.style.layout.overflow_y = Some(OverflowStyle::Auto);
+native/src/layout.rs:8882:            let panel = layout.rects.get(&format!("panel-{row_index}")).unwrap();
+native/src/layout.rs:8884:                row.h >= panel.h - 0.5,
+native/src/layout.rs:8885:                "row should not clip its panel content height: row={row:?} panel={panel:?}"
+native/src/layout.rs:8888:                panel.h >= 150.0,
+native/src/layout.rs:8889:                "panel min-height should survive inside scroll row: {panel:?}"
+native/src/layout.rs:8893:            layout.scroll_max_y.get("scroller").copied().unwrap_or(0.0) > 0.0,
+native/src/layout.rs:8900:        let mut top = node("top", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:8903:        let mut middle = node("middle", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:8906:        let mut bottom = node("bottom", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:8924:        root.style.layout.overflow_y = Some(OverflowStyle::Auto);
+native/src/layout.rs:8931:            layout.scroll_max_y.get("window").copied().unwrap_or(0.0) > 100.0,
+native/src/layout.rs:8932:            "explicitly scrollable window should expose a root scroll range when direct content is taller than the viewport"
+native/src/layout.rs:8934:        let bottom_clip = layout.clips.get("bottom").copied().unwrap();
+native/src/layout.rs:8937:            "overflowing bottom panel should be clipped by the window viewport before scrolling"
+native/src/layout.rs:8943:        let mut top = node("top", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:8946:        let mut middle = node("middle", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:8949:        let mut bottom = node("bottom", WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:8967:        root.style.layout.overflow_y = Some(OverflowStyle::Auto);
+native/src/layout.rs:8974:        let bottom_clip = layout.clips.get("bottom").copied().unwrap();
+native/src/layout.rs:8978:            "scrolling the window should reveal the bottom panel: rect={bottom_rect:?} clip={bottom_clip:?}"
+native/src/layout.rs:8983:    fn parent_scroll_clipping_does_not_create_child_panel_scroll_range() {
+native/src/layout.rs:8984:        let mut panel = node(
+native/src/layout.rs:8985:            "panel",
+native/src/layout.rs:8986:            WidgetKind::Panel,
+native/src/layout.rs:8988:                text: Some("Table panel".to_string()),
+native/src/layout.rs:8996:        panel.style.layout.height = Some(140.0);
+native/src/layout.rs:8997:        panel.style.layout.padding = Some(10.0);
+native/src/layout.rs:8998:        panel.style.layout.gap = Some(8.0);
+native/src/layout.rs:9009:            vec![before, panel, after],
+native/src/layout.rs:9012:        scroller.style.layout.overflow_y = Some(OverflowStyle::Auto);
+native/src/layout.rs:9028:            let panel_rect = layout.rects.get("panel").expect("panel rect");
+native/src/layout.rs:9029:            let panel_clip = layout.clips.get("panel").expect("panel clip");
+native/src/layout.rs:9032:                panel_clip.h < panel_rect.h,
+native/src/layout.rs:9033:                "test should leave panel partially clipped by parent scroll: scroll_y={scroll_y} panel={panel_rect:?} clip={panel_clip:?}"
+native/src/layout.rs:9036:                layout.scroll_max_y.get("panel").copied(),
+native/src/layout.rs:9038:                "parent clipping should not make a fitting panel grow an internal scroll range at scroll_y={scroll_y}"
+native/src/layout.rs:9044:    fn parent_scroll_does_not_flash_implicit_panel_scrollbars_across_offsets() {
+native/src/layout.rs:9045:        fn make_metric_panel(id: &str, table_h: f32) -> WidgetNode {
+native/src/layout.rs:9054:            let mut panel = node(
+native/src/layout.rs:9056:                WidgetKind::Panel,
+native/src/layout.rs:9076:                            text: Some("PASS: panel should not get its own scrollbar".to_string()),
+native/src/layout.rs:9083:            panel.style.layout.min_width = Some(390.0);
+native/src/layout.rs:9084:            panel.style.layout.padding = Some(14.0);
+native/src/layout.rs:9085:            panel.style.layout.gap = Some(10.0);
+native/src/layout.rs:9086:            panel
+native/src/layout.rs:9094:                make_metric_panel("text-rows", 180.0),
+native/src/layout.rs:9095:                make_metric_panel("text-type", 210.0),
+native/src/layout.rs:9105:                make_metric_panel("compact-table", 214.0),
+native/src/layout.rs:9106:                make_metric_panel("roomy-table", 274.0),
+native/src/layout.rs:9142:        root_scroller.style.layout.overflow_y = Some(OverflowStyle::Auto);
+native/src/layout.rs:9156:            for panel_id in ["text-rows", "text-type", "compact-table", "roomy-table"] {
+native/src/layout.rs:9158:                    layout.scroll_max_y.get(panel_id).copied(),
+native/src/layout.rs:9160:                    "implicit panel {panel_id} should not gain an internal vertical scrollbar at root scroll_y={scroll_y}"
+native/src/layout.rs:9167:    fn page_panel_scroll_offset_is_applied_once() {
+native/src/layout.rs:9168:        let mut panel = node(
+native/src/layout.rs:9170:            WidgetKind::Panel,
+native/src/layout.rs:9230:        panel.style.layout.padding = Some(14.0);
+native/src/layout.rs:9231:        panel.style.layout.gap = Some(10.0);
+native/src/layout.rs:9243:                vec![panel],
+native/src/layout.rs:9274:            + panel_title_top_padding_lp(
+native/src/layout.rs:9281:            + panel_title_line_height_lp(
+native/src/layout.rs:9288:            + panel_title_gap_lp(
+native/src/layout.rs:9317:            WidgetKind::ScrollArea,
+native/src/layout.rs:9357:        let max_scroll_y = layout.scroll_max_y.get("scroller").copied().unwrap_or(0.0);
+native/src/layout.rs:9360:            "ScrollArea should be a bounded vertical scroll container inside the active page: scroller={scroller_rect:?} last={last_button_rect:?} max_scroll_y={max_scroll_y} scroll_maps={:?}",
+native/src/layout.rs:9361:            layout.scroll_max_y
+native/src/layout.rs:9366:    fn titled_panel_bounds_nested_scroll_area_to_body() {
+native/src/layout.rs:9400:            WidgetKind::ScrollArea,
+native/src/layout.rs:9405:        scroller.style.layout.overflow_y = Some(OverflowStyle::Auto);
+native/src/layout.rs:9410:        let mut panel = node(
+native/src/layout.rs:9412:            WidgetKind::Panel,
+native/src/layout.rs:9419:        panel.style.layout.width = Some(360.0);
+native/src/layout.rs:9420:        panel.style.layout.height = Some(190.0);
+native/src/layout.rs:9421:        panel.style.layout.padding = Some(10.0);
+native/src/layout.rs:9422:        panel.style.layout.gap = Some(8.0);
+native/src/layout.rs:9423:        panel.style.layout.overflow_y = Some(OverflowStyle::Hidden);
+native/src/layout.rs:9429:            vec![panel],
+native/src/layout.rs:9434:        let panel_rect = layout.rects.get("line-controls").expect("panel rect");
+native/src/layout.rs:9437:        let title_bottom = panel_rect.y
+native/src/layout.rs:9438:            + panel_title_top_padding_lp(root.children.first().unwrap(), &theme)
+native/src/layout.rs:9439:            + panel_title_line_height_lp(root.children.first().unwrap(), &theme)
+native/src/layout.rs:9440:            + panel_title_body_gap_lp(root.children.first().unwrap(), &theme);
+native/src/layout.rs:9444:            "nested scroll area should begin in panel body: panel={panel_rect:?} scroller={scroller_rect:?} title_bottom={title_bottom}"
+native/src/layout.rs:9452:                .scroll_max_y
+native/src/layout.rs:9458:            layout.scroll_max_y
+native/src/layout.rs:9463:    fn titled_panel_body_preserves_child_gap() {
+native/src/layout.rs:9464:        let mut panel = node(
+native/src/layout.rs:9465:            "panel",
+native/src/layout.rs:9466:            WidgetKind::Panel,
+native/src/layout.rs:9492:        panel.style.layout.width = Some(260.0);
+native/src/layout.rs:9493:        panel.style.layout.height = Some(180.0);
+native/src/layout.rs:9494:        panel.style.layout.padding = Some(10.0);
+native/src/layout.rs:9495:        panel.style.layout.gap = Some(14.0);
+native/src/layout.rs:9501:            vec![panel],
+native/src/layout.rs:9509:            "titled panel body did not preserve child gap: first={first:?} second={second:?} actual_gap={actual_gap}"
+native/src/layout.rs:9643:            WidgetKind::ScrollArea,
+native/src/layout.rs:9652:        scroll.style.layout.overflow_y = Some(OverflowStyle::Auto);
+native/src/layout.rs:9654:        let mut panel = node(
+native/src/layout.rs:9656:            WidgetKind::Panel,
+native/src/layout.rs:9663:        panel.style.layout.width = Some(280.0);
+native/src/layout.rs:9664:        panel.style.layout.height_value = Some(LayoutLength::Calc(crate::style::CalcLength {
+native/src/layout.rs:9668:        panel.style.layout.max_height_value = Some(LayoutLength::Calc(crate::style::CalcLength {
+native/src/layout.rs:9672:        panel.style.layout.padding = Some(10.0);
+native/src/layout.rs:9673:        panel.style.layout.gap = Some(8.0);
+native/src/layout.rs:9674:        panel.style.layout.flex_grow = Some(0.0);
+native/src/layout.rs:9675:        panel.style.layout.flex_shrink = Some(0.0);
+native/src/layout.rs:9676:        panel.style.layout.min_height = Some(0.0);
+native/src/layout.rs:9677:        panel.style.layout.overflow_y = Some(OverflowStyle::Hidden);
+native/src/layout.rs:9684:                "plot-panel",
+native/src/layout.rs:9685:                WidgetKind::Panel,
+native/src/layout.rs:9707:            vec![panel, stack],
+native/src/layout.rs:9715:        line_layout.style.layout.overflow_y = Some(OverflowStyle::Hidden);
+native/src/layout.rs:9750:        let panel_rect = layout
+native/src/layout.rs:9753:            .expect("controls panel rect");
+native/src/layout.rs:9769:            panel_rect.w >= 279.0,
+native/src/layout.rs:9770:            "controls panel collapsed: {panel_rect:?}"
+native/src/layout.rs:9774:            "controls scroll body should fill the titled panel body: panel={panel_rect:?} scroll={scroll_rect:?}"
+native/src/layout.rs:9790:                .scroll_max_y
+native/src/layout.rs:9795:            "line controls should remain scrollable: {:?}",
+native/src/layout.rs:9796:            layout.scroll_max_y
+native/src/layout.rs:9865:            let mut node = node(id, WidgetKind::Panel, NodeProps::default(), vec![]);
+native/src/layout.rs:9973:        let max_scroll = layout.scroll_max_y.get("modal").copied().unwrap_or(0.0);
+native/src/layout.rs:9977:            "fixed-height modal should be scrollable when body content overflows: modal={modal:?} last={last:?}"

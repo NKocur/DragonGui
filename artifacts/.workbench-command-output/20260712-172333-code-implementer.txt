@@ -1,0 +1,180 @@
+        if not capture_available:
+            stdout, stderr, _terminated = collect_process_output(
+                proc, timeout_s=timeout_ms / 1000
+            )
+            write_process_logs(stdout_path, stderr_path, stdout, stderr)
+            return {
+                "status": "blocked",
+                "notes": with_screenshot_error_note(
+                    f"Native screenshot was not written and external capture is unavailable: {capture_reason}",
+                    screenshot_path,
+                ),
+                "screenshot": False,
+                "snapshot": snapshot_path.exists(),
+            }
+
+        hwnd = wait_for_window(proc.pid, timeout_ms=max(wait_ms, 1000))
+        if hwnd is None:
+            if proc.poll() is None:
+                screenshot_ok = capture_screen(screenshot_path)
+                stdout, stderr, _terminated = collect_process_output(
+                    proc, timeout_s=timeout_ms / 1000
+                )
+                write_process_logs(stdout_path, stderr_path, stdout, stderr)
+                if proc.returncode not in (0, None):
+                    return {
+                        "status": "blocked",
+                        "notes": with_screenshot_error_note(
+                            f"Probe exited with code {proc.returncode}; full-screen fallback captured because window bounds were not detected.",
+                            screenshot_path,
+                        ),
+                        "screenshot": screenshot_ok,
+                        "snapshot": snapshot_path.exists(),
+                    }
+                return {
+                    "status": "blocked",
+                    "notes": with_screenshot_error_note(
+                        "Whole-window bounds were not detected; captured the desktop as diagnostic evidence only.",
+                        screenshot_path,
+                    ),
+                    "screenshot": screenshot_ok,
+                    "snapshot": snapshot_path.exists(),
+                }
+            stdout, stderr = proc.communicate(timeout=timeout_ms / 1000)
+            write_process_logs(stdout_path, stderr_path, stdout, stderr)
+            return {
+                "status": "blocked",
+                "notes": with_screenshot_error_note(
+                    window_blocker(proc.returncode, stdout, stderr), screenshot_path
+                ),
+                "screenshot": False,
+                "snapshot": snapshot_path.exists(),
+            }
+        if size is not None:
+            move_window(hwnd.hwnd, size[0], size[1])
+        time.sleep(wait_ms / 1000)
+        hwnd = window_for_pid(proc.pid) or hwnd
+        if not likely_probe_window(hwnd):
+            screenshot_ok = capture_screen(screenshot_path)
+            stdout, stderr, _terminated = collect_process_output(
+                proc, timeout_s=(timeout_ms - wait_ms) / 1000
+            )
+            write_process_logs(stdout_path, stderr_path, stdout, stderr)
+            return {
+                "status": "blocked",
+                "notes": with_screenshot_error_note(
+                    f"Detected window title/rect was not a reliable DragonGUI probe crop: {hwnd.title!r} {hwnd.rect}; captured desktop as diagnostic evidence only.",
+                    screenshot_path,
+                ),
+                "screenshot": screenshot_ok,
+                "snapshot": snapshot_path.exists(),
+            }
+        screenshot_ok = capture_window(hwnd.rect, screenshot_path)
+        stdout, stderr, terminated = collect_process_output(
+            proc, timeout_s=(timeout_ms - wait_ms) / 1000
+        )
+        if terminated:
+            notes = "Probe did not exit after audit capture and was terminated."
+        write_process_logs(stdout_path, stderr_path, stdout, stderr)
+        if proc.returncode not in (0, None):
+            return {
+                "status": "blocked",
+                "notes": f"Probe exited with code {proc.returncode}; see stderr log.",
+                "screenshot": screenshot_ok,
+                "snapshot": snapshot_path.exists(),
+            }
+        return {
+            "status": "pass",
+            "notes": notes,
+            "screenshot": screenshot_ok,
+            "snapshot": snapshot_path.exists(),
+        }
+    finally:
+        try:
+            wrapper.unlink(missing_ok=True)
+        except OSError:
+            pass
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+
+def make_wrapper(script: Path) -> Path:
+    content = f"""
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import runpy
+import sys
+import threading
+import time
+import traceback
+import struct
+import zlib
+
+sys.path.insert(0, {str(ROOT / "python")!r})
+sys.path.insert(0, {str(script.parent)!r})
+
+import dragongui as dg
+
+_original_run = dg.App.run
+_original_window_init = dg.Window.__init__
+
+
+def _png_chunk(kind, data):
+    return (
+        struct.pack(">I", len(data))
+        + kind
+        + data
+        + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+    )
+
+
+def _write_rgba_png(path, width, height, rgba):
+    rows = []
+    stride = width * 4
+    for y in range(height):
+        start = y * stride
+        rows.append(b"\\x00" + rgba[start:start + stride])
+    payload = b"".join(rows)
+    png = (
+        b"\\x89PNG\\r\\n\\x1a\\n"
+        + _png_chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+        + _png_chunk(b"IDAT", zlib.compress(payload))
+        + _png_chunk(b"IEND", b"")
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(png)
+
+
+def _write_screenshot_error(path, kind, error, **extra):
+    payload = {{"kind": kind, "error": str(error), **extra}}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    print(f"DragonGUI visual audit screenshot error: {{kind}}: {{error}}", file=sys.stderr)
+
+
+def _audited_window_init(self, *args, **kwargs):
+    width = os.environ.get("DRAGONGUI_AUDIT_WIDTH")
+    height = os.environ.get("DRAGONGUI_AUDIT_HEIGHT")
+    if width and height:
+        kwargs["width"] = int(width)
+        kwargs["height"] = int(height)
+    return _original_window_init(self, *args, **kwargs)
+
+
+def _audited_run(self, window):
+    wait_ms = int(os.environ.get("DRAGONGUI_AUDIT_WAIT_MS", "1800"))
+    exit_ms = int(os.environ.get("DRAGONGUI_AUDIT_EXIT_MS", str(wait_ms + 1200)))
+    snapshot_path = Path(os.environ["DRAGONGUI_AUDIT_SNAPSHOT"])
+    screenshot_path = Path(os.environ["DRAGONGUI_AUDIT_SCREENSHOT"])
+    screenshot_error_path = Path(os.environ["DRAGONGUI_AUDIT_SCREENSHOT_ERROR"])
+
+    def worker():
+        deadline = time.monotonic() + max(1.0, wait_ms / 1000.0)
+        while time.monotonic() < deadline:

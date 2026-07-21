@@ -1,0 +1,260 @@
+    1: pub mod camera;
+    2: pub mod colormap;
+    3: pub mod grid;
+    4: 
+    5: use bytemuck::{Pod, Zeroable};
+    6: use camera::Camera;
+    7: use grid::{build_grid, stable_face_bits, sticky_nice_bounds, GridGeometry, LineVertex};
+    8: use std::{borrow::Cow, time::Instant};
+    9: 
+   10: // ---------------------------------------------------------------------------
+   11: // GPU vertex layout
+   12: // ---------------------------------------------------------------------------
+   13: 
+   14: /// One point rendered as a screen-space billboard quad (4 vertices, instanced).
+   15: /// Matches @location attributes in points.wgsl.
+   16: #[repr(C)]
+   17: #[derive(Copy, Clone, Pod, Zeroable)]
+   18: pub struct PointInstance {
+   19:     pub position: [f32; 3], // @location(0)
+   20:     pub size: f32,          // @location(1)  pixels
+   21:     pub color: [f32; 3],    // @location(2)
+   22:     pub alpha: f32,         // @location(3)
+   23: }
+   24: 
+   25: const MAX_GPU_COLORMAP_POINTS: usize = 9;
+   26: 
+   27: static POINT_ATTRS: [wgpu::VertexAttribute; 4] = [
+   28:     wgpu::VertexAttribute {
+   29:         format: wgpu::VertexFormat::Float32x3,
+   30:         offset: 0,
+   31:         shader_location: 0,
+   32:     },
+   33:     wgpu::VertexAttribute {
+   34:         format: wgpu::VertexFormat::Float32,
+   35:         offset: 12,
+   36:         shader_location: 1,
+   37:     },
+   38:     wgpu::VertexAttribute {
+   39:         format: wgpu::VertexFormat::Float32x3,
+   40:         offset: 16,
+   41:         shader_location: 2,
+   42:     },
+   43:     wgpu::VertexAttribute {
+   44:         format: wgpu::VertexFormat::Float32,
+   45:         offset: 28,
+   46:         shader_location: 3,
+   47:     },
+   48: ];
+   49: 
+   50: fn point_instance_layout() -> wgpu::VertexBufferLayout<'static> {
+   51:     wgpu::VertexBufferLayout {
+   52:         array_stride: std::mem::size_of::<PointInstance>() as u64,
+   53:         step_mode: wgpu::VertexStepMode::Instance,
+   54:         attributes: &POINT_ATTRS,
+   55:     }
+   56: }
+   57: 
+   58: static XYZ_POINT_ATTRS: [wgpu::VertexAttribute; 1] = [wgpu::VertexAttribute {
+   59:     format: wgpu::VertexFormat::Float32x3,
+   60:     offset: 0,
+   61:     shader_location: 0,
+   62: }];
+   63: 
+   64: fn xyz_point_layout() -> wgpu::VertexBufferLayout<'static> {
+   65:     wgpu::VertexBufferLayout {
+   66:         array_stride: 12,
+   67:         step_mode: wgpu::VertexStepMode::Instance,
+   68:         attributes: &XYZ_POINT_ATTRS,
+   69:     }
+   70: }
+   71: 
+   72: fn points_are_opaque(points: &[PointInstance]) -> bool {
+   73:     points.iter().all(|point| point.alpha >= 0.999)
+   74: }
+   75: 
+   76: fn point_instance_bytes_are_opaque(bytes: &[u8]) -> bool {
+   77:     const ALPHA_OFFSET: usize = 28;
+   78:     const STRIDE: usize = std::mem::size_of::<PointInstance>();
+   79:     bytes.chunks_exact(STRIDE).all(|chunk| {
+   80:         let alpha = f32::from_le_bytes([
+   81:             chunk[ALPHA_OFFSET],
+   82:             chunk[ALPHA_OFFSET + 1],
+   83:             chunk[ALPHA_OFFSET + 2],
+   84:             chunk[ALPHA_OFFSET + 3],
+   85:         ]);
+   86:         alpha >= 0.999
+   87:     })
+   88: }
+   89: 
+   90: fn gpu_colormap_uniform(name: &str) -> ([[f32; 4]; MAX_GPU_COLORMAP_POINTS], u32) {
+   91:     let points = colormap::resolve(name);
+   92:     let mut out = [[0.0; 4]; MAX_GPU_COLORMAP_POINTS];
+   93:     let len = points.len().min(MAX_GPU_COLORMAP_POINTS).max(2);
+   94:     for i in 0..MAX_GPU_COLORMAP_POINTS {
+   95:         let source = points[i.min(points.len().saturating_sub(1))];
+   96:         out[i] = [source[0], source[1], source[2], 1.0];
+   97:     }
+   98:     (out, len as u32)
+   99: }
+  100: 
+  101: // ---------------------------------------------------------------------------
+  102: // Uniform block â€” matches Uniforms struct in points.wgsl
+  103: // ---------------------------------------------------------------------------
+  104: 
+  105: #[repr(C)]
+  106: #[derive(Copy, Clone, Pod, Zeroable, PartialEq)]
+  107: struct Uniforms {
+  108:     view_proj: [[f32; 4]; 4],
+  109:     screen_size: [f32; 2],
+  110:     style: u32,
+  111:     point_size: f32,
+  112:     point_size_scale: f32,
+  113:     _pad0: [f32; 3],
+  114:     clip_radii: [f32; 4],
+  115:     compact_z_range: [f32; 2],
+  116:     compact_colormap_len: u32,
+  117:     _pad1: u32,
+  118:     compact_colormap: [[f32; 4]; MAX_GPU_COLORMAP_POINTS],
+  119: }
+  120: 
+  121: #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+  122: enum PrimaryPointStorage {
+  123:     PointInstance,
+  124:     XyzF32,
+  125: }
+  126: 
+  127: // ---------------------------------------------------------------------------
+  128: // Chrome state: grid, axes, background
+  129: // ---------------------------------------------------------------------------
+  130: 
+  131: /// One entry in the categorical legend (label + swatch color).
+  132: #[derive(Clone, Debug, PartialEq)]
+  133: pub struct LegendEntry {
+  134:     pub label: String,
+  135:     pub color: [f32; 3],
+  136: }
+  137: 
+  138: /// Where the legend is anchored within the scatter viewport.
+  139: #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+  140: pub enum LegendPosition {
+  141:     #[default]
+  142:     TopRight,
+  143:     TopLeft,
+  144:     BottomRight,
+  145:     BottomLeft,
+  146: }
+  147: 
+  148: impl LegendPosition {
+  149:     pub fn from_str(s: &str) -> Self {
+  150:         match s.trim() {
+  151:             "top-left" => Self::TopLeft,
+  152:             "bottom-right" => Self::BottomRight,
+  153:             "bottom-left" => Self::BottomLeft,
+  154:             _ => Self::TopRight,
+  155:         }
+  156:     }
+  157: }
+  158: 
+  159: #[derive(Clone, Debug, Default, PartialEq)]
+  160: pub struct LegendState {
+  161:     pub visible: bool,
+  162:     pub position: LegendPosition,
+  163:     pub entries: Vec<LegendEntry>,
+  164:     pub title: Option<String>,
+  165: }
+  166: 
+  167: #[derive(Clone, Debug, PartialEq)]
+  168: pub struct ScalarBarState {
+  169:     pub visible: bool,
+  170:     pub vmin: f32,
+  171:     pub vmax: f32,
+  172:     pub log_scale: bool,
+  173:     pub colormap: String,
+  174:     pub title: Option<String>,
+  175: }
+  176: 
+  177: impl Default for ScalarBarState {
+  178:     fn default() -> Self {
+  179:         Self {
+  180:             visible: false,
+  181:             vmin: 0.0,
+  182:             vmax: 1.0,
+  183:             log_scale: false,
+  184:             colormap: "viridis".to_string(),
+  185:             title: None,
+  186:         }
+  187:     }
+  188: }
+  189: 
+  190: /// Format a scalar bar tick value for display.
+  191: /// `value` is always a raw-domain value (matching DragonSci public API).
+  192: /// For log-scale bars the value is displayed in scientific notation; for linear bars as decimal.
+  193: pub fn format_scalar_bar_tick(value: f32, log_scale: bool) -> String {
+  194:     if log_scale {
+  195:         format!("{:.2e}", value)
+  196:     } else {
+  197:         format!("{:.3}", value)
+  198:     }
+  199: }
+  200: 
+  201: /// Return up to `count` evenly-spaced tick values between `vmin` and `vmax` (inclusive).
+  202: /// For log-scale bars the spacing is even in ln-space but the returned values are raw domain.
+  203: /// Returns an empty vec when count < 2; returns a single-element vec when vmin == vmax.
+  204: pub fn scalar_bar_tick_values(vmin: f32, vmax: f32, log_scale: bool, count: usize) -> Vec<f32> {
+  205:     if count < 2 {
+  206:         return Vec::new();
+  207:     }
+  208:     if vmin == vmax {
+  209:         return vec![vmin];
+  210:     }
+  211:     if log_scale && vmin > 0.0 && vmax > 0.0 {
+  212:         let ln_min = vmin.ln();
+  213:         let ln_max = vmax.ln();
+  214:         (0..count)
+  215:             .map(|i| {
+  216:                 let t = i as f32 / (count - 1) as f32;
+  217:                 (ln_min + t * (ln_max - ln_min)).exp()
+  218:             })
+  219:             .collect()
+  220:     } else {
+  221:         (0..count)
+  222:             .map(|i| {
+  223:                 let t = i as f32 / (count - 1) as f32;
+  224:                 vmin + t * (vmax - vmin)
+  225:             })
+  226:             .collect()
+  227:     }
+  228: }
+  229: 
+  230: #[derive(Clone, Debug, PartialEq)]
+  231: pub struct ScatterChromeState {
+  232:     pub grid_visible: bool,
+  233:     pub major_planes: bool,
+  234:     pub minor_planes: bool,
+  235:     pub grid_sticky: bool,
+  236:     pub grid_all_edges: bool,
+  237:     pub tick_override: [Option<usize>; 3],
+  238:     pub axis_labels: [String; 3],
+  239:     pub axis_visible: [bool; 3],
+  240:     pub background_color: Option<[f32; 4]>,
+  241:     pub legend: LegendState,
+  242:     pub scalar_bar: ScalarBarState,
+  243:     pub orientation_axes_visible: bool,
+  244: }
+  245: 
+  246: impl Default for ScatterChromeState {
+  247:     fn default() -> Self {
+  248:         Self {
+  249:             grid_visible: false,
+  250:             major_planes: false,
+  251:             minor_planes: false,
+  252:             grid_sticky: true,
+  253:             grid_all_edges: false,
+  254:             tick_override: [None; 3],
+  255:             axis_labels: ["X".to_string(), "Y".to_string(), "Z".to_string()],
+  256:             axis_visible: [true; 3],
+  257:             background_color: None,
+  258:             legend: LegendState::default(),
+  259:             scalar_bar: ScalarBarState::default(),
+  260:             orientation_axes_visible: false,

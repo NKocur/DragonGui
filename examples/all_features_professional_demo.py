@@ -1,0 +1,1000 @@
+from __future__ import annotations
+
+import math
+import os
+import random
+import struct
+import sys
+import threading
+import time
+import zlib
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+if __name__ == "__main__" and __package__ is None:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "python"))
+
+try:
+    import numpy as np
+except ImportError as exc:
+    raise SystemExit(
+        "all_features_professional_demo.py requires NumPy for DragonGUI plot payloads. "
+        "Install numpy or run a non-plot example."
+    ) from exc
+
+import dragongui as dg
+
+
+ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_OUT_DIR = ROOT / "artifacts" / "generated" / "all_features_professional_demo"
+
+POINTS = int(os.environ.get("DG_PRO_DEMO_POINTS", "16000"))
+ROWS = int(os.environ.get("DG_PRO_DEMO_ROWS", "180"))
+SERIES_POINTS = int(os.environ.get("DG_PRO_DEMO_SERIES_POINTS", "720"))
+
+ROUTES = [
+    ("overview", "Overview", "4"),
+    ("explore", "3D Explore", None),
+    ("timeseries", "Time Series", "live"),
+    ("data", "Data", None),
+    ("workflow", "Workflow", "9"),
+    ("reports", "Reports", None),
+    ("runtime", "Runtime", None),
+    ("styling", "Styling", None),
+]
+
+
+class DemoState:
+    def __init__(self) -> None:
+        self.app: dg.App | None = None
+        self.pages: dg.Pages | None = None
+        self.tabs: dg.Tabs | None = None
+        self.status: dg.Label | None = None
+        self.status_badge: dg.Badge | None = None
+        self.stream_led: dg.LED | None = None
+        self.progress: dg.ProgressBar | None = None
+        self.incident_badge: dg.Badge | None = None
+        self.data_table: dg.DataFrameTable | None = None
+        self.scatter: dg.Scatter3D | None = None
+        self.scatter2d: dg.ScatterPlot2D | None = None
+        self.line_plot: dg.LinePlot | None = None
+        self.heatmap: dg.Heatmap | None = None
+        self.bar_chart: dg.BarChart | None = None
+        self.pie_chart: dg.PieChart | None = None
+        self.report: dg.HtmlReport | None = None
+        self.image: dg.Image | None = None
+        self.log: dg.LogView | None = None
+        self.code: dg.CodeEditor | None = None
+        self.palette: dg.CommandPalette | None = None
+        self.modal: dg.Modal | None = None
+        self.alert_modal: dg.Modal | None = None
+        self.confirm_modal: dg.Modal | None = None
+        self.live_panel: dg.Panel | None = None
+        self.theme_chip: dg.Tag | None = None
+        self.nav_items: dict[str, dg.NavItem] = {}
+        self.stream_stop = threading.Event()
+        self.stream_thread: threading.Thread | None = None
+        self.resource_uploaded = False
+        self.resource_id = "professional-demo:telemetry-preview"
+        self.stream_count = 0
+
+
+state = DemoState()
+
+
+def frame_from_columns(**columns: Any) -> dict[str, list[Any]]:
+    return {name: list(values) for name, values in columns.items()}
+
+
+def build_scatter_frame(
+    count: int = POINTS,
+    phase: float = 0.0,
+    *,
+    rng: np.random.Generator | None = None,
+) -> dict[str, list[Any]]:
+    rng = rng or np.random.default_rng(42)
+    t = np.linspace(0, 9 * math.pi, count, dtype=np.float32)
+    ring = 1.0 + 0.24 * np.sin(t * 0.37 + phase)
+    x = ring * np.cos(t) + rng.normal(0, 0.055, count)
+    y = ring * np.sin(t) + rng.normal(0, 0.055, count)
+    z = np.linspace(-1.4, 1.4, count, dtype=np.float32) + 0.32 * np.sin(t * 0.6 + phase)
+    health = np.clip(82 + 11 * np.sin(t * 0.19 + phase) + rng.normal(0, 3, count), 0, 100)
+    temp = np.clip(58 + 16 * np.cos(t * 0.11 - phase) + rng.normal(0, 2.5, count), 15, 95)
+    return frame_from_columns(
+        x=x,
+        y=y,
+        z=z,
+        health=health,
+        temperature=temp,
+        zone=[f"zone-{i % 8}" for i in range(count)],
+        asset=[f"cell-{(i * 7) % 19:02d}" for i in range(count)],
+    )
+
+
+def build_table(rows: int = ROWS) -> list[dict[str, Any]]:
+    owners = ["ingest", "model", "quality", "export", "field"]
+    states = ["ready", "running", "queued", "watch", "blocked"]
+    table: list[dict[str, Any]] = []
+    now = datetime(2026, 7, 10, 9, 0)
+    for i in range(rows):
+        latency = 18 + (i % 17) * 2.6 + (i % 5) * 0.7
+        error_rate = round(max(0, math.sin(i * 0.21) * 1.8 + (i % 9) * 0.17), 2)
+        state_name = states[(i + (1 if error_rate > 1.8 else 0)) % len(states)]
+        table.append(
+            {
+                "route": f"plant.north.line-{i % 6}.cell-{i % 14}.sensor-feed",
+                "owner": owners[i % len(owners)],
+                "state": state_name,
+                "latency_ms": round(latency, 2),
+                "error_rate": error_rate,
+                "throughput": 950 + (i * 37) % 760,
+                "updated": (now - timedelta(minutes=i * 3)).isoformat(timespec="minutes"),
+            }
+        )
+    return table
+
+
+def build_series(points: int = SERIES_POINTS, *, rng: np.random.Generator | None = None) -> dict[str, list[float]]:
+    rng = rng or np.random.default_rng(42)
+    x = np.arange(points, dtype=np.float32)
+    base = np.sin(x / 31.0) * 6 + np.cos(x / 87.0) * 4
+    return frame_from_columns(
+        minute=x,
+        latency=32 + base + rng.normal(0, 1.5, points),
+        throughput=1200 + 110 * np.sin(x / 42.0) + rng.normal(0, 24, points),
+        error_budget=np.clip(92 - np.abs(base) * 2 + rng.normal(0, 1.2, points), 65, 100),
+    )
+
+
+def build_heatmap() -> tuple[list[list[float]], list[str], list[str]]:
+    y_labels = [f"L{i + 1}" for i in range(8)]
+    x_labels = [f"{hour:02d}:00" for hour in range(0, 24, 2)]
+    matrix = []
+    for y in range(len(y_labels)):
+        row = []
+        for x in range(len(x_labels)):
+            row.append(18 + 8 * math.sin(x / 2.4) + 3.5 * math.cos(y * 0.8) + (x * y) % 4)
+        matrix.append(row)
+    return matrix, x_labels, y_labels
+
+
+def write_png(path: Path, width: int = 420, height: int = 220) -> None:
+    rows = []
+    for y in range(height):
+        raw = bytearray([0])
+        for x in range(width):
+            signal = int(80 + 70 * math.sin((x + y) / 33.0))
+            raw.extend((24 + x * 70 // width, 70 + signal // 3, 92 + y * 95 // height))
+        rows.append(bytes(raw))
+    payload = zlib.compress(b"".join(rows), 9)
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    png = (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", payload)
+        + chunk(b"IEND", b"")
+    )
+    path.write_bytes(png)
+
+
+def write_report(path: Path) -> None:
+    path.write_text(
+        """<!doctype html>
+<html><head><meta charset="utf-8"><title>DragonGUI Operations Report</title>
+<style>
+body{font-family:Segoe UI,Arial,sans-serif;margin:28px;color:#172033;background:#f7f8fb}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.card{background:white;border:1px solid #d9dee8;border-radius:8px;padding:14px}
+h1{font-size:24px;margin:0 0 12px}.metric{font-size:28px;font-weight:700}.ok{color:#137b3a}.warn{color:#9b6500}.bad{color:#b42318}
+table{width:100%;border-collapse:collapse;margin-top:16px}td,th{border-bottom:1px solid #dde3ee;padding:8px;text-align:left;font-size:13px}
+</style></head><body>
+<h1>North Plant Sensor Operations</h1>
+<div class="grid">
+<div class="card"><div>Availability</div><div class="metric ok">99.2%</div></div>
+<div class="card"><div>Open Incidents</div><div class="metric warn">4</div></div>
+<div class="card"><div>Blocked Routes</div><div class="metric bad">2</div></div>
+</div>
+<table><tr><th>Route</th><th>Owner</th><th>Status</th><th>Note</th></tr>
+<tr><td>line-2 / cell-07</td><td>model</td><td>watch</td><td>drift above p95</td></tr>
+<tr><td>line-4 / cell-03</td><td>quality</td><td>ready</td><td>calibration complete</td></tr>
+<tr><td>line-1 / cell-11</td><td>export</td><td>queued</td><td>awaiting report bundle</td></tr>
+</table></body></html>
+""",
+        encoding="utf-8",
+    )
+
+
+SCATTER_FRAME: dict[str, list[Any]] = {}
+TABLE_ROWS: list[dict[str, Any]] = []
+TABLE_FRAME: dict[str, list[Any]] = {}
+SERIES_FRAME: dict[str, list[Any]] = {}
+HEAT_MATRIX: list[list[float]] = []
+HEAT_X: list[str] = []
+HEAT_Y: list[str] = []
+REPORT_PATH: Path = DEFAULT_OUT_DIR / "operations_report.html"
+IMAGE_PATH: Path = DEFAULT_OUT_DIR / "sensor_preview.png"
+
+
+def _table_frame(rows: list[dict[str, Any]]) -> dict[str, list[Any]]:
+    return frame_from_columns(
+        route=[row["route"] for row in rows],
+        owner=[row["owner"] for row in rows],
+        state=[row["state"] for row in rows],
+        latency_ms=[row["latency_ms"] for row in rows],
+        error_rate=[row["error_rate"] for row in rows],
+        throughput=[row["throughput"] for row in rows],
+        updated=[row["updated"] for row in rows],
+    )
+
+
+def prepare_demo_fixtures(
+    output_dir: Path | str = DEFAULT_OUT_DIR,
+    *,
+    points: int = POINTS,
+    rows: int = ROWS,
+    series_points: int = SERIES_POINTS,
+) -> dict[str, Any]:
+    """Build datasets and local report assets explicitly for demo startup/tests."""
+    global SCATTER_FRAME, TABLE_ROWS, TABLE_FRAME, SERIES_FRAME
+    global HEAT_MATRIX, HEAT_X, HEAT_Y, REPORT_PATH, IMAGE_PATH
+
+    out_dir = Path(output_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(42)
+
+    SCATTER_FRAME = build_scatter_frame(points, rng=rng)
+    TABLE_ROWS = build_table(rows)
+    TABLE_FRAME = _table_frame(TABLE_ROWS)
+    SERIES_FRAME = build_series(series_points, rng=rng)
+    HEAT_MATRIX, HEAT_X, HEAT_Y = build_heatmap()
+    REPORT_PATH = out_dir / "operations_report.html"
+    IMAGE_PATH = out_dir / "sensor_preview.png"
+    write_report(REPORT_PATH)
+    write_png(IMAGE_PATH)
+    return {
+        "scatter_frame": SCATTER_FRAME,
+        "table_rows": TABLE_ROWS,
+        "table_frame": TABLE_FRAME,
+        "series_frame": SERIES_FRAME,
+        "heat_matrix": HEAT_MATRIX,
+        "heat_x": HEAT_X,
+        "heat_y": HEAT_Y,
+        "report_path": REPORT_PATH,
+        "image_path": IMAGE_PATH,
+    }
+
+
+def ensure_demo_fixtures(output_dir: Path | str = DEFAULT_OUT_DIR) -> dict[str, Any]:
+    if not SCATTER_FRAME or not TABLE_ROWS or not SERIES_FRAME or not HEAT_MATRIX:
+        return prepare_demo_fixtures(output_dir)
+    return {
+        "scatter_frame": SCATTER_FRAME,
+        "table_rows": TABLE_ROWS,
+        "table_frame": TABLE_FRAME,
+        "series_frame": SERIES_FRAME,
+        "heat_matrix": HEAT_MATRIX,
+        "heat_x": HEAT_X,
+        "heat_y": HEAT_Y,
+        "report_path": REPORT_PATH,
+        "image_path": IMAGE_PATH,
+    }
+
+
+def log(message: str) -> None:
+    text = f"{datetime.now().strftime('%H:%M:%S')}  {message}"
+    print(text)
+    if state.log is not None:
+        state.log.append_line(text)
+    if state.status is not None:
+        state.status.set_value(message)
+
+
+def thread_diagnostic(message: str) -> None:
+    print(f"{datetime.now().strftime('%H:%M:%S')}  {message}")
+
+
+def set_status(message: str, level: str = "info") -> None:
+    if state.status_badge is not None:
+        state.status_badge.set_value(level)
+        state.status_badge.set_level("danger" if level == "error" else level)
+    log(message)
+
+
+def navigate(route: str) -> None:
+    if state.pages is not None:
+        state.pages.set_value(route)
+    if state.tabs is not None:
+        state.tabs.set_value(route)
+    set_status(f"Route changed to {route}")
+
+
+def show_palette() -> None:
+    if state.palette is not None:
+        state.palette.show()
+
+
+def show_review_modal() -> None:
+    if state.modal is not None:
+        state.modal.show()
+
+
+def show_confirm_modal() -> None:
+    if state.confirm_modal is not None:
+        state.confirm_modal.show()
+
+
+def show_alert_modal() -> None:
+    if state.alert_modal is not None:
+        state.alert_modal.show()
+
+
+def show_toast() -> None:
+    if state.app is not None:
+        state.app.toast("Operations toast from the professional demo", level="success", duration=2400)
+    set_status("Toast requested", "success")
+
+
+def update_table_filter(owner: str = "all") -> None:
+    rows = TABLE_ROWS if owner == "all" else [row for row in TABLE_ROWS if row["owner"] == owner]
+    if state.data_table is not None:
+        state.data_table.set_frame(rows)
+    set_status(f"Table loaded {len(rows)} rows for owner={owner}", "success")
+
+
+def randomize_visuals() -> None:
+    phase = random.random() * math.tau
+    rng = np.random.default_rng(int(phase * 1_000_000) % (2**32 - 1))
+    next_frame = build_scatter_frame(max(4000, POINTS // 2), phase=phase, rng=rng)
+    if state.scatter is not None:
+        state.scatter.set_points(next_frame, x="x", y="y", z="z", fit=True)
+        state.scatter.set_colormap(random.choice(["viridis", "turbo", "plasma", "cividis"]))
+    if state.scatter2d is not None:
+        state.scatter2d.set_points(next_frame, x="x", y="temperature", fit=True)
+    if state.heatmap is not None:
+        matrix, _, _ = build_heatmap()
+        state.heatmap.set_data([[value + random.uniform(-2, 2) for value in row] for row in matrix])
+    set_status("Visual workspaces refreshed", "success")
+
+
+def update_report_inline() -> None:
+    if state.report is not None:
+        state.report.set_html(
+            "<h1>Inline Operations Memo</h1><p>Generated from a DragonGUI callback. "
+            "Native WebView2 support can render this in-app where available.</p>"
+        )
+    set_status("Report switched to inline HTML", "success")
+
+
+def open_report_external() -> None:
+    opened = False
+    if state.report is not None:
+        opened = state.report.open_external()
+    set_status("Opened report externally" if opened else "External report fallback unavailable", "warning")
+
+
+def run_file_dialog(kind: str) -> None:
+    def selected(value: object) -> None:
+        set_status(f"{kind} dialog returned: {value or 'cancelled'}")
+
+    if kind == "open":
+        dg.open_file_dialog("Open operations input", filters=[("Data", "*.csv;*.json"), ("All", "*.*")], on_select=selected, app=state.app)
+    elif kind == "save":
+        dg.save_file_dialog("Save report bundle", filters=[("HTML", "*.html"), ("All", "*.*")], on_select=selected, app=state.app)
+    else:
+        dg.pick_folder_dialog("Pick export folder", on_select=selected, app=state.app)
+
+
+def snapshot_summary() -> None:
+    if state.app is None:
+        return
+    try:
+        snapshot = state.app.debug_snapshot(timeout_ms=700)
+        debug = snapshot.get("debug_snapshot", snapshot)
+        widgets = len(debug.get("widgets", [])) if isinstance(debug, dict) else 0
+        keys = sorted(debug.keys())[:8] if isinstance(debug, dict) else []
+        set_status(f"Snapshot captured: widgets={widgets}, keys={keys}", "success")
+    except Exception as exc:
+        set_status(f"Snapshot failed: {exc}", "error")
+
+
+def upload_resource() -> None:
+    if state.app is None:
+        return
+    payload = np.asarray(SERIES_FRAME["latency"][:128], dtype=np.float32).tobytes()
+    try:
+        state.app.set_buffer_resource(state.resource_id, payload, kind="f32")
+        state.resource_uploaded = True
+        set_status(f"Uploaded generic buffer resource {state.resource_id}", "success")
+    except Exception as exc:
+        set_status(f"Resource upload failed: {exc}", "error")
+
+
+def release_resource() -> None:
+    if state.app is None:
+        return
+    try:
+        state.app.release_resource(state.resource_id)
+        state.resource_uploaded = False
+        set_status(f"Released generic buffer resource {state.resource_id}", "success")
+    except Exception as exc:
+        set_status(f"Resource release failed: {exc}", "error")
+
+
+def replace_live_children() -> None:
+    if state.live_panel is None:
+        return
+    state.stream_count += 1
+    rows: list[dg.Widget] = []
+    for i in range(3):
+        rows.append(
+            dg.Label(
+                f"Diagnostic child {state.stream_count}.{i + 1}: queue depth {(state.stream_count + i) % 7}",
+                parent=None,
+            )
+        )
+    state.live_panel.replace_children(rows)
+    set_status("Runtime diagnostic children replaced", "success")
+
+
+def start_stream() -> None:
+    if state.stream_thread is not None and state.stream_thread.is_alive():
+        set_status("Stream already running", "warning")
+        return
+    if state.app is None:
+        return
+    state.stream_stop.clear()
+
+    def worker() -> None:
+        phase = 0.0
+        while not state.stream_stop.is_set():
+            phase += 0.23
+            rng = np.random.default_rng(int(phase * 1_000_000) % (2**32 - 1))
+            sample = build_series(120, rng=rng)
+            payload_frame = build_scatter_frame(max(3000, POINTS // 4), phase=phase, rng=rng)
+
+            def apply() -> None:
+                state.stream_count += 1
+                if state.stream_led is not None:
+                    state.stream_led.set_on(True)
+                if state.progress is not None:
+                    state.progress.set_value((state.stream_count % 100) / 100)
+                if state.line_plot is not None:
+                    base = state.stream_count * 120
+                    xs = np.arange(base, base + 120, dtype=np.float32)
+                    ys = np.asarray(sample["latency"], dtype=np.float32)
+                    state.line_plot.append_points(xs, ys, series="latency", max_points=900)
+                if state.scatter is not None and state.stream_count % 2 == 0:
+                    try:
+                        payload = dg.Scatter3D.prepare_points(payload_frame, x="x", y="y", z="z", colormap="turbo")
+                        state.scatter.enqueue_prepared_points(payload, coalesce=True, fit=False)
+                    except Exception as exc:
+                        log(f"Prepared scatter update skipped: {exc}")
+                if state.incident_badge is not None:
+                    state.incident_badge.set_value(str(4 + state.stream_count % 5))
+                log(f"Stream tick {state.stream_count}")
+
+            try:
+                state.app.call_soon_threadsafe(apply)
+            except Exception as exc:
+                state.stream_stop.set()
+                thread_diagnostic(f"Background stream scheduling failed: {exc}")
+                break
+            state.stream_stop.wait(0.9)
+
+        def stopped() -> None:
+            if state.stream_led is not None:
+                state.stream_led.set_on(False)
+            log("Background stream stopped")
+
+        try:
+            state.app.call_soon_threadsafe(stopped)
+        except Exception as exc:
+            thread_diagnostic(f"Could not schedule stream stop notification: {exc}")
+
+    state.stream_thread = threading.Thread(target=worker, name="dg-pro-demo-stream", daemon=True)
+    state.stream_thread.start()
+    set_status("Background stream started", "success")
+
+
+def stop_stream() -> None:
+    state.stream_stop.set()
+    set_status("Stop requested for background stream")
+
+
+def build_metric_card(label: str, value: str, detail: str, level: str = "info") -> None:
+    with dg.Panel(class_="metric-card"):
+        with dg.HLayout(style={"align_items": "center", "gap": 8}):
+            dg.Badge(level, level=level)
+            dg.Label(label, class_="kicker", wrap=False)
+        dg.Label(value, class_="metric-value", wrap=False)
+        dg.Label(detail, class_="muted")
+
+
+def page_header(route: str, title: str, detail: str) -> None:
+    with dg.VLayout(class_="page-header"):
+        dg.Breadcrumbs(
+            [
+                ("Operations", "overview"),
+                ("North Plant Command Center", "overview"),
+                (title, route),
+            ],
+            on_select=lambda item: navigate(item.value),
+        )
+        with dg.HLayout(style={"align_items": "center", "gap": 10, "min_width": 0}):
+            dg.Label(title, class_="page-title", wrap=False)
+            dg.Tag("generated data", level="neutral")
+        dg.Label(detail, class_="muted")
+
+
+def build_overview_page() -> None:
+    page_header("overview", "Operations Overview", "Live sensor pipeline health, incidents, and throughput.")
+    with dg.GridLayout(columns=4, min_column_width=180, gap=10):
+        build_metric_card("Availability", "99.2%", "rolling 24h across 84 feeds", "success")
+        build_metric_card("Open incidents", "4", "two require model-owner review", "warning")
+        build_metric_card("Median latency", "34 ms", "p95 remains under 71 ms", "info")
+        build_metric_card("Export backlog", "18", "report queue is draining", "neutral")
+    with dg.Splitter(orientation="horizontal", style={"height": 360, "min_height": 260}):
+        with dg.Pane(flex=62, min_size=320):
+            with dg.Panel("Fleet Pulse", style={"height": "100%"}):
+                dg.LinePlot(
+                    SERIES_FRAME,
+                    x="minute",
+                    y=["latency", "error_budget"],
+                    labels=["latency", "error budget"],
+                    colors=["#36a3ff", "#2fb344"],
+                    show_toolbar=True,
+                    show_legend=True,
+                    style={"height": "100%", "min_height": 220},
+                )
+        with dg.Pane(flex=38, min_size=260):
+            with dg.Panel("Incident Mix", style={"height": "100%"}):
+                state.incident_badge = dg.Badge("4", level="warning")
+                dg.PieChart(
+                    labels=["watch", "queued", "blocked", "ready"],
+                    values=[8, 14, 4, 62],
+                    donut=True,
+                    center_value="88",
+                    center_label="routes",
+                    show_legend=True,
+                    legend_position="right",
+                    style={"height": 245},
+                )
+    with dg.Panel("Recent Events"):
+        dg.DataFrameTable(TABLE_ROWS[:28], page_size=28, sample_rows=28, style={"height": 260, "width": "100%"})
+
+
+def build_explore_page() -> None:
+    page_header("explore", "3D Sensor Explore", "Inspect the same generated plant telemetry in GPU plot surfaces.")
+    with dg.Toolbar():
+        dg.IconButton("refresh", tooltip="Refresh points", on_click=randomize_visuals)
+        dg.IconButton("search", tooltip="Command palette", on_click=show_palette)
+        dg.ToolbarSeparator()
+        dg.SmallButton("Fit/Reset", on_click=randomize_visuals)
+        dg.SearchBox("asset:cell", placeholder="filter asset or zone", style={"width": 220})
+    with dg.Splitter(orientation="horizontal", style={"height": 610, "min_height": 360}):
+        with dg.Pane(flex=72, min_size=360):
+            state.scatter = dg.Scatter3D(
+                SCATTER_FRAME,
+                x="x",
+                y="y",
+                z="z",
+                color="temperature",
+                colormap="turbo",
+                grid=True,
+                scalar_bar=True,
+                hover=["asset", "zone", "temperature"],
+                point_size=3,
+                auto_quality=True,
+                lod=True,
+                style={"height": "100%", "min_height": 340},
+                on_pick=lambda pick: set_status(f"Picked point {pick.index}: z={pick.z:.3f}", "info"),
+            )
+        with dg.Pane(flex=28, min_size=260):
+            with dg.Panel("Explore Controls", style={"height": "100%"}):
+                dg.Dropdown(["turbo", "viridis", "plasma", "cividis"], value="turbo", on_change=lambda v: state.scatter.set_colormap(v) if state.scatter else None)
+                dg.Checkbox("Grid visible", checked=True, on_change=lambda v: state.scatter.show_grid(v) if state.scatter else None)
+                dg.ToggleSwitch("Auto quality", checked=True, on_change=lambda v: state.scatter.set_auto_quality(v) if state.scatter else None)
+                dg.Slider(0.85, min=0.25, max=1, step=0.05, on_change=lambda v: state.scatter.set_interactive_render_scale(v) if state.scatter else None)
+                dg.RangeSlider((20, 84), min=0, max=100, step=1, on_change=lambda r: set_status(f"Health band {r[0]:.0f}-{r[1]:.0f}"))
+                dg.DragNumber(3, min=1, max=12, step=0.5, on_change=lambda v: state.scatter.set_auto_point_size(v > 6) if state.scatter else None)
+                dg.DragVector((1, 0, 0), labels=("dx", "dy", "dz"), min=-1, max=1, step=0.1, on_change=lambda v: set_status(f"Vector control {v}"))
+                dg.Separator()
+                state.scatter2d = dg.ScatterPlot2D(
+                    SCATTER_FRAME,
+                    x="temperature",
+                    y="health",
+                    color="zone",
+                    legend=True,
+                    style={"height": 210},
+                )
+
+
+def build_timeseries_page() -> None:
+    page_header("timeseries", "Time Series", "Telemetry, distribution, heatmap, and categorical charts share generated fixtures.")
+    with dg.GridLayout(columns=2, min_column_width=360, gap=10):
+        with dg.Panel("Live Latency"):
+            state.line_plot = dg.LinePlot(
+                SERIES_FRAME,
+                x="minute",
+                y="latency",
+                label="latency",
+                color="#36a3ff",
+                show_toolbar=True,
+                max_points=900,
+                style={"height": 270},
+            )
+        with dg.Panel("Latency Distribution"):
+            dg.Histogram(SERIES_FRAME["latency"], bins=36, mode="count", style={"height": 270})
+        with dg.Panel("Route Heatmap"):
+            state.heatmap = dg.Heatmap(HEAT_MATRIX, x_labels=HEAT_X, y_labels=HEAT_Y, title="p95 latency by line and hour", colormap="magma", style={"height": 300})
+        with dg.Panel("Throughput By Owner"):
+            state.bar_chart = dg.BarChart(
+                TABLE_FRAME,
+                category="owner",
+                value=["throughput", "latency_ms"],
+                aggregate="mean",
+                series=["throughput", "latency"],
+                show_toolbar=True,
+                style={"height": 300},
+                on_hover=lambda bar: set_status(f"Bar hover: {bar.label if bar else 'none'}"),
+            )
+
+
+def build_data_page() -> None:
+    page_header("data", "Data Review", "Virtualized table, property inspector, search, selection, and context menus.")
+    with dg.Toolbar():
+        dg.SearchBox("", placeholder="search routes", on_change=lambda q: set_status(f"Search changed: {q}"), style={"width": 260})
+        dg.ToolbarSeparator()
+        dg.SmallButton("All", on_click=lambda: update_table_filter("all"))
+        for owner in ["ingest", "model", "quality", "export"]:
+            dg.SmallButton(owner.title(), on_click=lambda owner=owner: update_table_filter(owner))
+    with dg.Splitter(orientation="horizontal", style={"height": 620, "min_height": 380}):
+        with dg.Pane(flex=70, min_size=360):
+            state.data_table = dg.DataFrameTable(
+                TABLE_ROWS,
+                page_size=80,
+                sample_rows=120,
+                on_select=lambda s: set_status(f"Selected row {s.row_index}, {s.column}={s.value}"),
+                style={
+                    "height": "100%",
+                    "width": "100%",
+                    "parts": {
+                        "header": {"background": "surface_alt"},
+                        "row-selected": {"background": "accent_mix_20"},
+                    },
+                },
+            )
+            with dg.ContextMenu(target=state.data_table, width=230):
+                dg.MenuItem("Open route details", on_click=lambda: set_status("Context action: open route details"))
+                dg.MenuItem("Suppress for one hour", on_click=show_confirm_modal)
+                dg.MenuItem("Export selected row", on_click=lambda: run_file_dialog("save"))
+        with dg.Pane(flex=30, min_size=280):
+            with dg.Panel("Selected Route Inspector", style={"height": "100%"}):
+                dg.PropertyGrid(
+                    {
+                        "Route": "plant.north.line-2.cell-07.sensor-feed",
+                        "Enabled": True,
+                        "Owner": "model",
+                        "Priority": 2,
+                        "Latency Window": (18, 84),
+                        "Accent": "#36a3ff",
+                        "Notes": "Escalate when p95 drift is above threshold for 10 minutes.",
+                    },
+                    schema={
+                        "Owner": {"type": "choice", "options": ["ingest", "model", "quality", "export"]},
+                        "Priority": {"type": "number", "min": 1, "max": 5, "step": 1},
+                        "Latency Window": {"type": "range", "min": 0, "max": 120, "step": 1},
+                        "Accent": {"type": "color"},
+                        "Notes": {"type": "multiline", "rows": 4},
+                    },
+                    on_change=lambda change: set_status(f"Property {change.key} -> {change.value}"),
+                    label_width=110,
+                )
+
+
+def build_workflow_page() -> None:
+    page_header("workflow", "Operator Workflow", "Forms, tree navigation, drag/drop, command palette, code editor, and logs.")
+    with dg.GridLayout(columns=2, min_column_width=360, gap=10):
+        with dg.Panel("Pipeline Tree", style={"height": 360}):
+            with dg.ScrollArea(axis="y", height=150, gap=4):
+                with dg.TreeView(selected="line-2.cell-07", on_select=lambda node: set_status(f"Tree selected {node}")):
+                    with dg.TreeNode("North Plant", node_id="north", expanded=True):
+                        with dg.TreeNode("Line 2", node_id="line-2", expanded=True):
+                            dg.TreeNode("Cell 07 sensor-feed", node_id="line-2.cell-07", leaf=True)
+                            dg.TreeNode("Cell 08 calibration", node_id="line-2.cell-08", leaf=True)
+                        with dg.TreeNode("Line 4", node_id="line-4", expanded=True):
+                            dg.TreeNode("Cell 03 export queue", node_id="line-4.cell-03", leaf=True)
+            dg.Separator()
+            dg.SelectableList(
+                [
+                    {"label": "Run validation plan", "value": "validate"},
+                    {"label": "Queue model review", "value": "review"},
+                    {"label": "Publish report bundle", "value": "publish"},
+                ],
+                selected=["validate", "review"],
+                selection_mode="multiple",
+                on_change=lambda values: set_status(f"Workflow selection: {values}"),
+            )
+        with dg.Panel("Action Form", style={"height": 360}):
+            dg.TextInput("plant.north.line-2.cell-07", placeholder="route")
+            dg.TextArea("Review p95 drift and attach report bundle.", rows=4)
+            dg.RadioGroup(["Monitor", "Escalate", "Suppress"], value="Monitor", orientation="horizontal", on_change=lambda value: set_status(f"Disposition {value}"))
+            with dg.HLayout(style={"gap": 8, "align_items": "center"}):
+                dg.DateInput("2026-07-10", on_change=lambda value: set_status(f"Date {value}"))
+                dg.TimeInput("09:30", on_change=lambda value: set_status(f"Time {value}"))
+            dg.DateTimeInput("2026-07-10T09:30:00", on_change=lambda value: set_status(f"DateTime {value}"))
+            dg.NumberInput(15, min=1, max=120, step=1, on_change=lambda value: set_status(f"Snooze {value} minutes"))
+            dg.Button("Open Review Modal", on_click=show_review_modal, badge="2")
+        with dg.Panel("Drag Metrics", style={"height": 320}):
+            with dg.FlowLayout(gap=8, row_gap=8):
+                for payload in [
+                    {"metric": "latency", "window": "p95"},
+                    {"metric": "error_budget", "window": "24h"},
+                    {"metric": "throughput", "window": "hour"},
+                ]:
+                    with dg.DragSource(payload, drag_kind="metric", style={"padding": 8, "border_color": "border", "border_width": 1}):
+                        dg.Tag(f"{payload['metric']} / {payload['window']}", level="info")
+            dg.DropZone("Drop metric here", accept="metric", on_drop=lambda payload: set_status(f"Dropped metric payload: {payload}"), style={"height": 120})
+        with dg.Panel("Automation Script", style={"height": 320}):
+            state.code = dg.CodeEditor(
+                "def remediate(route):\n    snapshot = collect(route)\n    if snapshot.p95_latency > 70:\n        escalate(route, owner='model')\n",
+                language="python",
+                rows=9,
+                on_change=lambda value: set_status(f"Code editor changed: {len(value)} chars"),
+                style={"height": 210},
+            )
+            state.log = dg.LogView(["Demo activity log initialized."], rows=5, follow=True, wrap=True, variant="activity")
+
+
+def build_reports_page() -> None:
+    page_header("reports", "Reports", "Local HTML reports, generated PNG previews, file dialogs, and export actions.")
+    with dg.Toolbar():
+        dg.SmallButton("Inline HTML", on_click=update_report_inline)
+        dg.SmallButton("Open External", on_click=open_report_external)
+        dg.ToolbarSeparator()
+        dg.IconButton("folder-open", tooltip="Open data file", on_click=lambda: run_file_dialog("open"))
+        dg.IconButton("save", tooltip="Save report", on_click=lambda: run_file_dialog("save"))
+        dg.IconButton("folder", tooltip="Pick folder", on_click=lambda: run_file_dialog("folder"))
+    with dg.Splitter(orientation="horizontal", style={"height": 630, "min_height": 380}):
+        with dg.Pane(flex=62, min_size=360):
+            state.report = dg.HtmlReport(REPORT_PATH, height=None, style={"height": "100%"})
+        with dg.Pane(flex=38, min_size=280):
+            with dg.Panel("Sensor Preview", style={"height": "100%"}):
+                state.image = dg.Image(IMAGE_PATH, fit="cover", style={"height": 260, "width": "100%"})
+                dg.Label("Generated PNG asset used by Image. Report actions degrade to external browser when in-app HTML viewing is unavailable.", class_="muted")
+                dg.Button("Reload Image", on_click=lambda: state.image.reload() if state.image else None)
+
+
+def build_runtime_page() -> None:
+    page_header("runtime", "Runtime Diagnostics", "Thread monitor, debug snapshots, worker stream, resource APIs, and live child replacement.")
+    with dg.Toolbar():
+        dg.SmallButton("Start Stream", on_click=start_stream)
+        dg.SmallButton("Stop Stream", on_click=stop_stream)
+        dg.ToolbarSeparator()
+        dg.SmallButton("Snapshot", on_click=snapshot_summary)
+        dg.SmallButton("Upload Buffer", on_click=upload_resource)
+        dg.SmallButton("Release Buffer", on_click=release_resource)
+        dg.SmallButton("Replace Children", on_click=replace_live_children)
+    with dg.GridLayout(columns=2, min_column_width=360, gap=10):
+        dg.ThreadMonitor(show_threads=True, show_queue=True, show_failures=True, history_seconds=30, style={"height": 420})
+        with dg.Panel("Live Runtime Surface", style={"height": 420}):
+            with dg.HLayout(style={"gap": 8, "align_items": "center"}):
+                state.stream_led = dg.LED(False)
+                state.progress = dg.ProgressBar(0, show_value=True, style={"flex": 1, "min_width": 120})
+            state.live_panel = dg.Panel("Replaceable Diagnostics", style={"height": 180, "width": "100%"})
+            with state.live_panel:
+                dg.Label("Click Replace Children to swap this panel content through Container.replace_children().")
+            dg.LogView(["Runtime page ready.", "Use Start Stream to schedule UI work from a worker thread."], rows=8, wrap=True, variant="debug")
+
+
+def build_styling_page() -> None:
+    page_header("styling", "Styling Lab", "Theme controls, CSS classes, pseudo-state styles, widget parts, and compact control gallery.")
+    with dg.GridLayout(columns=3, min_column_width=300, gap=10):
+        with dg.Panel("Theme And State"):
+            state.theme_chip = dg.Tag("dark operations", level="info")
+            dg.ColorPicker((54, 163, 255, 255), title="Accent", on_change=lambda rgba: set_status(f"Accent color {rgba}"))
+            dg.ToggleSwitch("Dark theme", checked=True, on_change=lambda value: state.theme_chip.set_value("dark operations" if value else "light operations") if state.theme_chip else None)
+            dg.Button(
+                "Pseudo-state button",
+                on_click=lambda: set_status("Pseudo-state button clicked"),
+                style={
+                    "background": "surface_alt",
+                    "hover": {"background": "accent_mix_20"},
+                    "active": {"background": "accent_dark"},
+                    "focus": {"border_color": "focus"},
+                },
+            )
+        with dg.Panel("Parts And Inline Styles"):
+            dg.ProgressBar(
+                0.72,
+                show_value=True,
+                style={"parts": {"track": {"background": "surface_alt"}, "fill": {"background": "success"}}},
+            )
+            dg.NumberInput(
+                42,
+                min=0,
+                max=100,
+                style={"parts": {"stepper-up": {"background": "accent_mix_20"}, "stepper-down": {"background": "surface_alt"}}},
+            )
+            dg.Checkbox("Styled checkbox", checked=True, style={"parts": {"box": {"border_color": "accent"}, "label": {"color": "text"}}})
+            dg.Separator()
+            with dg.FlowLayout(gap=6, row_gap=6):
+                for level in ["neutral", "info", "success", "warning", "danger"]:
+                    dg.Badge(level, level=level)
+                    dg.Tag(level, level=level)
+        with dg.Panel("Compact Controls"):
+            dg.Label("Long labels in compact controls should wrap or truncate without overlapping neighboring UI.", class_="muted")
+            dg.Dropdown(["Automatic quality", "Operator review", "Diagnostics hold"], value="Automatic quality")
+            dg.Slider(64, min=0, max=100, step=1)
+            dg.RangeSlider((22, 78), min=0, max=100, step=1)
+            dg.DragNumber(0.42, min=0, max=1, step=0.01)
+            dg.DragVector((0.1, 0.2, 0.7), labels=("x", "y", "z"), min=-1, max=1, step=0.1)
+
+
+def build_shell() -> dg.Window:
+    with dg.Window(title="DragonGUI Professional All Features Demo", width=1440, height=900) as win:
+        with dg.AppShell(class_="pro-shell", style={"width": "100%", "height": "100%", "overflow": "hidden"}):
+            with dg.Sidebar(title="DragonOps", width=214, class_="pro-sidebar"):
+                dg.Label("North Plant Command Center", class_="sidebar-caption")
+                for route, label, badge in ROUTES:
+                    state.nav_items[route] = dg.NavItem(label, page=route, badge=badge)
+                dg.Separator()
+                with dg.FlowLayout(gap=6, row_gap=6):
+                    dg.Badge("online", level="success")
+                    dg.Tag("v4 widgets", level="info")
+            with dg.WorkbenchLayout(gap=6, padding=8, style={"min_width": 0}):
+                with dg.MenuBar():
+                    with dg.Menu("File"):
+                        dg.MenuItem("Open data file", on_click=lambda: run_file_dialog("open"))
+                        dg.MenuItem("Save report bundle", on_click=lambda: run_file_dialog("save"))
+                        dg.MenuItem("Pick export folder", on_click=lambda: run_file_dialog("folder"))
+                    with dg.Menu("View"):
+                        dg.MenuItem("Overview", on_click=lambda: navigate("overview"))
+                        dg.MenuItem("Runtime diagnostics", on_click=lambda: navigate("runtime"))
+                        dg.MenuItem("Command palette", on_click=show_palette)
+                    with dg.Menu("Actions"):
+                        dg.MenuItem("Start stream", on_click=start_stream)
+                        dg.MenuItem("Stop stream", on_click=stop_stream)
+                        dg.MenuItem("Debug snapshot", on_click=snapshot_summary)
+                        dg.MenuItem("Show alert", on_click=show_alert_modal)
+                        dg.MenuItem("Show toast", on_click=show_toast)
+                with dg.Toolbar(class_="top-toolbar"):
+                    dg.IconButton("play", tooltip="Start background stream", on_click=start_stream)
+                    dg.IconButton("pause", tooltip="Stop background stream", on_click=stop_stream)
+                    dg.IconButton("terminal", tooltip="Command palette", on_click=show_palette)
+                    dg.ToolbarSeparator()
+                    dg.SearchBox("", placeholder="search routes, commands, owners", on_change=lambda q: set_status(f"Global search: {q}"), style={"width": 280})
+                    dg.Spacer()
+                    dg.SmallButton("Snapshot", on_click=snapshot_summary)
+                    dg.SmallButton("Toast", on_click=show_toast)
+                state.tabs = dg.Tabs(value="overview", on_change=navigate)
+                with state.tabs:
+                    for route, label, badge in ROUTES:
+                        with dg.Tab(label, value=route, badge=badge):
+                            pass
+                with dg.Body(scroll="y", gap=10, style={"height": 0, "flex": 1, "min_width": 0}):
+                    state.pages = dg.Pages(value="overview", on_change=lambda route: state.tabs.set_value(route) if state.tabs else None)
+                    with state.pages:
+                        with dg.Page("overview", title="Overview"):
+                            build_overview_page()
+                        with dg.Page("explore", title="3D Explore"):
+                            build_explore_page()
+                        with dg.Page("timeseries", title="Time Series"):
+                            build_timeseries_page()
+                        with dg.Page("data", title="Data"):
+                            build_data_page()
+                        with dg.Page("workflow", title="Workflow"):
+                            build_workflow_page()
+                        with dg.Page("reports", title="Reports"):
+                            build_reports_page()
+                        with dg.Page("runtime", title="Runtime"):
+                            build_runtime_page()
+                        with dg.Page("styling", title="Styling"):
+                            build_styling_page()
+                with dg.StatusBar(height=28):
+                    state.status_badge = dg.Badge("ready", level="success")
+                    state.status = dg.Label("Ready", wrap=False, style={"flex": 1, "min_width": 0})
+                    dg.Tag("1440x900 default", level="neutral")
+    return win
+
+
+def build_overlays(win: dg.Window) -> None:
+    state.modal = dg.Modal("Review Route", open=False, width=520, height=300, parent=win)
+    with state.modal:
+        dg.Label("Route review is staged with generated incident context.")
+        dg.TextArea("Model owner should verify calibration drift before suppression.", rows=4)
+        with dg.HLayout(style={"justify_content": "flex_end", "gap": 8}):
+            dg.Button("Close", on_click=lambda: state.modal.close() if state.modal else None)
+            dg.Button("Create Review Task", on_click=lambda: (state.modal.close(), set_status("Review task created", "success")) if state.modal else None)
+    state.alert_modal = dg.alert(
+        "Operations Notice",
+        "This alert modal is generated by the public alert helper and attached to the demo window.",
+        open=False,
+        on_close=lambda: set_status("Alert closed"),
+        parent=win,
+    )
+    state.confirm_modal = dg.confirm(
+        "Suppress Incident",
+        "Suppress this route for one hour and notify the owner?",
+        open=False,
+        on_confirm=lambda: set_status("Suppression confirmed", "warning"),
+        on_cancel=lambda: set_status("Suppression cancelled"),
+        parent=win,
+    )
+    state.palette = dg.CommandPalette(
+        [
+            dg.Command("route.overview", "Open Overview", on_run=lambda: navigate("overview"), subtitle="Go to operations summary"),
+            dg.Command("route.runtime", "Open Runtime Diagnostics", on_run=lambda: navigate("runtime"), subtitle="Inspect threads and queues"),
+            dg.Command("stream.start", "Start Background Stream", on_run=start_stream),
+            dg.Command("stream.stop", "Stop Background Stream", on_run=stop_stream),
+            dg.Command("snapshot", "Capture Debug Snapshot", on_run=snapshot_summary),
+            dg.Command("report.external", "Open Report Externally", on_run=open_report_external),
+        ],
+        open=False,
+        max_results=8,
+        on_run=lambda command: set_status(f"Command ran: {command.id}", "success"),
+        parent=win,
+    )
+    if state.status is not None:
+        with dg.Tooltip(target=state.status, width=360, parent=win):
+            dg.Label("Status bar receives callback output, stream updates, file dialog results, and debug summaries.")
+
+
+def build_app(output_dir: Path | str = DEFAULT_OUT_DIR) -> tuple[dg.App, dg.Window]:
+    ensure_demo_fixtures(output_dir)
+    app = dg.App(theme=dg.Theme.dark())
+    state.app = app
+    app.stylesheet(
+        """
+        .pro-shell { background: background; }
+        Sidebar.pro-sidebar { width: 214px; }
+        .sidebar-caption { color: muted_text; font-size: 12px; }
+        .top-toolbar { flex-shrink: 0; }
+        .page-header { gap: 4px; padding-bottom: 2px; }
+        .page-title { font-size: 22px; font-weight: 760; }
+        .muted { color: muted_text; font-size: 12px; }
+        .kicker { color: muted_text; font-size: 11px; text-transform: uppercase; }
+        Panel.metric-card { min-height: 112px; }
+        .metric-value { font-size: 28px; font-weight: 780; }
+        Panel { min-width: 0; }
+        DataFrameTable { min-height: 120px; }
+        @media (max-width: 720px) {
+            .pro-shell { flex-direction: column; }
+            Sidebar.pro-sidebar { width: 100%; height: 210px; flex-shrink: 0; }
+            .page-title { font-size: 18px; }
+            .metric-value { font-size: 22px; }
+            .top-toolbar { flex-wrap: wrap; height: auto; }
+        }
+        """
+    )
+    win = build_shell()
+    build_overlays(win)
+    return app, win
+
+
+def main() -> int:
+    app, win = build_app()
+    try:
+        result = app.run(win)
+        print(result)
+        return 0
+    except dg.BackendUnavailableError as exc:
+        print("DragonGUI native backend is unavailable; source import path works.")
+        print(f"Reason: {exc}")
+        print("Demo summary:")
+        print(f"- window: {win.title} ({win.width}x{win.height})")
+        print(f"- routes: {', '.join(route for route, _, _ in ROUTES)}")
+        print(f"- generated rows: {len(TABLE_ROWS)}, scatter points: {len(SCATTER_FRAME['x'])}")
+        print(f"- report: {REPORT_PATH}")
+        return 0
+    finally:
+        state.stream_stop.set()
+        if state.stream_thread is not None and state.stream_thread.is_alive():
+            state.stream_thread.join(timeout=2.0)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

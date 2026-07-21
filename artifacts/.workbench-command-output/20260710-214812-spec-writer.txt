@@ -1,0 +1,109 @@
+77:    pub scroll_max_x: HashMap<String, f32>,
+78:    pub scroll_max_y: HashMap<String, f32>,
+204:            | WidgetKind::Pages
+408:        WidgetKind::ScrollArea => Style {
+1055:        WidgetKind::Pages => Style {
+1076:        WidgetKind::Page => Style {
+1121:    if matches!(parent_kind, Some(WidgetKind::ScrollArea)) {
+1259:    let content_bottom = column_bottoms.into_iter().fold(content_top, f32::max) - row_gap.max(0.0);
+1261:        let new_height = (content_bottom + padding_bottom - grid_rect.y).max(0.0);
+1342:    let mut content_bottom = cursor_y;
+1357:        content_bottom = cursor_y + row_height;
+1358:        cursor_y = content_bottom + row_gap;
+1362:        let new_height = rect.h.max(content_bottom + padding_bottom - grid_rect.y);
+1418:            | WidgetKind::ScrollArea
+1420:            | WidgetKind::Page
+1479:            | WidgetKind::Page
+1485:        WidgetKind::Window | WidgetKind::HLayout | WidgetKind::ScrollArea
+1519:    let mut content_bottom: Option<f32> = None;
+1525:            content_bottom = Some(
+1526:                content_bottom
+1532:    let Some(content_bottom) = content_bottom else {
+1537:    let mut new_height = (content_bottom + padding_bottom - rect.y).max(0.0);
+3264:pub(crate) fn scroll_container_max_x(node: &WidgetNode, result: &LayoutResult) -> f32 {
+3265:    scroll_container_max_x_with_viewport(node, result, false, result.scale_factor, &Theme::dark())
+3268:fn scroll_container_max_x_with_viewport(
+3299:pub(crate) fn scroll_container_max_y(node: &WidgetNode, result: &LayoutResult) -> f32 {
+3300:    scroll_container_max_y_with_viewport(node, result, false, result.scale_factor, &Theme::dark())
+3303:fn scroll_container_max_y_with_viewport(
+3390:                | WidgetKind::ScrollArea
+3406:        .or_else(|| (node.kind == WidgetKind::ScrollArea).then_some(OverflowStyle::Hidden))
+3414:        .or_else(|| (node.kind == WidgetKind::ScrollArea).then_some(OverflowStyle::Auto))
+3492:        let max_scroll_x =
+3493:            scroll_container_max_x_with_viewport(node, result, use_own_viewport, sf, theme);
+3494:        let max_scroll_y =
+3495:            scroll_container_max_y_with_viewport(node, result, use_own_viewport, sf, theme);
+3496:        let scroll_x = state.container_scroll_x(&node.id, max_scroll_x);
+3497:        let scroll_y = state.container_scroll_y(&node.id, max_scroll_y);
+3498:        result.scroll_max_x.insert(node.id.clone(), max_scroll_x);
+3499:        result.scroll_max_y.insert(node.id.clone(), max_scroll_y);
+3511:            inside_scrolled_ancestor || max_scroll_x > 0.0 || max_scroll_y > 0.0;
+3656:        WidgetKind::Pages => layout_pages(node, result, sf, theme, state),
+3927:        .filter(|child| child.kind == WidgetKind::Page)
+4003:    result.scroll_max_x.remove(&node.id);
+4004:    result.scroll_max_y.remove(&node.id);
+4271:                WidgetKind::Pages,
+4279:                        WidgetKind::Page,
+4293:                        WidgetKind::Page,
+5127:            WidgetKind::Page,
+5137:            WidgetKind::Pages,
+5243:            WidgetKind::ScrollArea,
+5266:            WidgetKind::ScrollArea,
+5897:        assert_eq!(layout.scroll_max_y.get("panel").copied(), None);
+7547:        assert!(scroll_container_max_y(root.children.first().unwrap(), &unscrolled) > 0.0);
+7549:        assert_eq!(scrolled.scroll_max_y.get("panel").copied(), Some(36.0));
+7659:        assert!(scroll_container_max_x(root.children.first().unwrap(), &unscrolled) > 0.0);
+7668:                .scroll_max_x
+7705:        assert_eq!(layout.scroll_max_y.get("panel").copied(), Some(64.0));
+7834:        assert!(layout.scroll_max_y.get("scroller").copied().unwrap_or(0.0) > 0.0);
+7907:        let max_scroll = layout
+7908:            .scroll_max_y
+7913:            max_scroll > 0.0,
+8035:        let max_scroll = layout
+8036:            .scroll_max_y
+8047:            max_scroll > 0.0,
+8084:            WidgetKind::ScrollArea,
+8127:        let max_scroll = layout
+8128:            .scroll_max_y
+8145:            max_scroll > 0.0,
+8146:            "scroll area should own overflow from its rows: scroller={scroller_rect:?} first_row={first_row:?} last_row={last_row:?} max_scroll={max_scroll}"
+8178:            WidgetKind::ScrollArea,
+8198:        let max_scroll = layout.scroll_max_y.get("scroller").copied().unwrap_or(0.0);
+8202:            "auto grid row should start after tallest previous row inside ScrollArea: first={first_rect:?} third={third_rect:?}"
+8205:            grid_rect.h > scroller_rect.h && max_scroll > 0.0,
+8206:            "ScrollArea grid child should keep content height and produce scroll range: scroller={scroller_rect:?} grid={grid_rect:?} max_scroll={max_scroll}"
+8305:        let max_scroll = layout
+8306:            .scroll_max_y
+8316:            max_scroll > 0.0,
+8373:        assert!(layout.scroll_max_y.get("panel").copied().unwrap_or(0.0) > 0.0);
+8525:        let max_scroll = layout.scroll_max_y.get("panel").copied().unwrap_or(0.0);
+8527:            max_scroll > 0.0,
+8599:    fn titled_scroll_panel_max_scroll_reveals_last_child() {
+8651:            layout.scroll_max_y.get("panel")
+8768:            layout.scroll_max_y.get("vertical-panel")
+8773:    fn partially_clipped_scroll_panel_uses_visible_viewport_for_max_scroll() {
+8820:            layout.scroll_max_y.get("panel")
+8893:            layout.scroll_max_y.get("scroller").copied().unwrap_or(0.0) > 0.0,
+8931:            layout.scroll_max_y.get("window").copied().unwrap_or(0.0) > 100.0,
+9036:                layout.scroll_max_y.get("panel").copied(),
+9158:                    layout.scroll_max_y.get(panel_id).copied(),
+9234:            WidgetKind::Page,
+9252:                WidgetKind::Pages,
+9317:            WidgetKind::ScrollArea,
+9325:            WidgetKind::Page,
+9340:                WidgetKind::Pages,
+9354:            "active Page padding should be honored for children: page={page_rect:?} scroller={scroller_rect:?}"
+9357:        let max_scroll_y = layout.scroll_max_y.get("scroller").copied().unwrap_or(0.0);
+9359:            max_scroll_y > 0.0,
+9360:            "ScrollArea should be a bounded vertical scroll container inside the active page: scroller={scroller_rect:?} last={last_button_rect:?} max_scroll_y={max_scroll_y} scroll_maps={:?}",
+9361:            layout.scroll_max_y
+9400:            WidgetKind::ScrollArea,
+9452:                .scroll_max_y
+9458:            layout.scroll_max_y
+9643:            WidgetKind::ScrollArea,
+9719:            WidgetKind::Page,
+9728:            WidgetKind::Pages,
+9790:                .scroll_max_y
+9796:            layout.scroll_max_y
+9973:        let max_scroll = layout.scroll_max_y.get("modal").copied().unwrap_or(0.0);
+9976:            max_scroll > 0.0,

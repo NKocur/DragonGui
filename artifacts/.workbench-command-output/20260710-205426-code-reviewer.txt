@@ -1,0 +1,130 @@
+ 641:                 style={"height": 300},
+ 642:                 on_hover=lambda bar: set_status(f"Bar hover: {bar.label if bar else 'none'}"),
+ 643:             )
+ 644: 
+ 645: 
+ 646: def build_data_page() -> None:
+ 647:     page_header("data", "Data Review", "Virtualized table, property inspector, search, selection, and context menus.")
+ 648:     with dg.Toolbar():
+ 649:         dg.SearchBox("", placeholder="search routes", on_change=lambda q: set_status(f"Search changed: {q}"), style={"width": 260})
+ 650:         dg.ToolbarSeparator()
+ 651:         dg.SmallButton("All", on_click=lambda: update_table_filter("all"))
+ 652:         for owner in ["ingest", "model", "quality", "export"]:
+ 653:             dg.SmallButton(owner.title(), on_click=lambda owner=owner: update_table_filter(owner))
+ 654:     with dg.Splitter(orientation="horizontal", style={"height": 620, "min_height": 380}):
+ 655:         with dg.Pane(size=0.7, min_size=360):
+ 656:             state.data_table = dg.DataFrameTable(
+ 657:                 TABLE_ROWS,
+ 658:                 page_size=80,
+ 659:                 sample_rows=120,
+ 660:                 on_select=lambda s: set_status(f"Selected row {s.row_index}, {s.column}={s.value}"),
+ 661:                 style={
+ 662:                     "height": "100%",
+ 663:                     "width": "100%",
+ 664:                     "parts": {
+ 665:                         "header": {"background": "surface_alt"},
+ 666:                         "row-selected": {"background": "accent_mix_20"},
+ 667:                     },
+ 668:                 },
+ 669:             )
+ 670:             with dg.ContextMenu(target=state.data_table, width=230):
+ 671:                 dg.MenuItem("Open route details", on_click=lambda: set_status("Context action: open route details"))
+ 672:                 dg.MenuItem("Suppress for one hour", on_click=show_confirm_modal)
+ 673:                 dg.MenuItem("Export selected row", on_click=lambda: run_file_dialog("save"))
+ 674:         with dg.Pane(size=0.3, min_size=280):
+ 675:             with dg.Panel("Selected Route Inspector", style={"height": "100%"}):
+ 676:                 dg.PropertyGrid(
+ 677:                     {
+ 678:                         "Route": "plant.north.line-2.cell-07.sensor-feed",
+ 679:                         "Enabled": True,
+ 680:                         "Owner": "model",
+ 681:                         "Priority": 2,
+ 682:                         "Latency Window": (18, 84),
+ 683:                         "Accent": "#36a3ff",
+ 684:                         "Notes": "Escalate when p95 drift is above threshold for 10 minutes.",
+ 685:                     },
+ 686:                     schema={
+ 687:                         "Owner": {"type": "choice", "options": ["ingest", "model", "quality", "export"]},
+ 688:                         "Priority": {"type": "number", "min": 1, "max": 5, "step": 1},
+ 689:                         "Latency Window": {"type": "range", "min": 0, "max": 120, "step": 1},
+ 690:                         "Accent": {"type": "color"},
+ 691:                         "Notes": {"type": "multiline", "rows": 4},
+ 692:                     },
+ 693:                     on_change=lambda change: set_status(f"Property {change.key} -> {change.value}"),
+ 694:                     label_width=110,
+ 695:                 )
+ 696: 
+ 697: 
+ 698: def build_workflow_page() -> None:
+ 699:     page_header("workflow", "Operator Workflow", "Forms, tree navigation, drag/drop, command palette, code editor, and logs.")
+ 700:     with dg.GridLayout(columns=2, min_column_width=360, gap=10):
+ 701:         with dg.Panel("Pipeline Tree", style={"height": 360}):
+ 702:             with dg.ScrollArea(axis="y", height=150, gap=4):
+ 703:                 with dg.TreeView(selected="line-2.cell-07", on_select=lambda node: set_status(f"Tree selected {node}")):
+ 704:                     with dg.TreeNode("North Plant", node_id="north", expanded=True):
+ 705:                         with dg.TreeNode("Line 2", node_id="line-2", expanded=True):
+ 706:                             dg.TreeNode("Cell 07 sensor-feed", node_id="line-2.cell-07", leaf=True)
+ 707:                             dg.TreeNode("Cell 08 calibration", node_id="line-2.cell-08", leaf=True)
+ 708:                         with dg.TreeNode("Line 4", node_id="line-4", expanded=True):
+ 709:                             dg.TreeNode("Cell 03 export queue", node_id="line-4.cell-03", leaf=True)
+ 710:             dg.Separator()
+ 711:             dg.SelectableList(
+ 712:                 [
+ 713:                     {"label": "Run validation plan", "value": "validate"},
+ 714:                     {"label": "Queue model review", "value": "review"},
+ 715:                     {"label": "Publish report bundle", "value": "publish"},
+ 716:                 ],
+ 717:                 selected=["validate", "review"],
+ 718:                 selection_mode="multiple",
+ 719:                 on_change=lambda values: set_status(f"Workflow selection: {values}"),
+ 720:             )
+ 721:         with dg.Panel("Action Form", style={"height": 360}):
+ 722:             dg.TextInput("plant.north.line-2.cell-07", placeholder="route")
+ 723:             dg.TextArea("Review p95 drift and attach report bundle.", rows=4)
+ 724:             dg.RadioGroup(["Monitor", "Escalate", "Suppress"], value="Monitor", orientation="horizontal", on_change=lambda value: set_status(f"Disposition {value}"))
+ 725:             with dg.HLayout(style={"gap": 8, "align_items": "center"}):
+ 726:                 dg.DateInput("2026-07-10", on_change=lambda value: set_status(f"Date {value}"))
+ 727:                 dg.TimeInput("09:30", on_change=lambda value: set_status(f"Time {value}"))
+ 728:             dg.DateTimeInput("2026-07-10T09:30:00", on_change=lambda value: set_status(f"DateTime {value}"))
+ 729:             dg.NumberInput(15, min=1, max=120, step=1, on_change=lambda value: set_status(f"Snooze {value} minutes"))
+ 730:             dg.Button("Open Review Modal", on_click=show_review_modal, badge="2")
+ 731:         with dg.Panel("Drag Metrics", style={"height": 320}):
+ 732:             with dg.FlowLayout(gap=8, row_gap=8):
+ 733:                 for payload in [
+ 734:                     {"metric": "latency", "window": "p95"},
+ 735:                     {"metric": "error_budget", "window": "24h"},
+ 736:                     {"metric": "throughput", "window": "hour"},
+ 737:                 ]:
+ 738:                     with dg.DragSource(payload, drag_kind="metric", style={"padding": 8, "border_color": "border", "border_width": 1}):
+ 739:                         dg.Tag(f"{payload['metric']} / {payload['window']}", level="info")
+ 740:             dg.DropZone("Drop metric here", accept="metric", on_drop=lambda payload: set_status(f"Dropped metric payload: {payload}"), style={"height": 120})
+ 741:         with dg.Panel("Automation Script", style={"height": 320}):
+ 742:             state.code = dg.CodeEditor(
+ 743:                 "def remediate(route):\n    snapshot = collect(route)\n    if snapshot.p95_latency > 70:\n        escalate(route, owner='model')\n",
+ 744:                 language="python",
+ 745:                 rows=9,
+ 746:                 on_change=lambda value: set_status(f"Code editor changed: {len(value)} chars"),
+ 747:                 style={"height": 210},
+ 748:             )
+ 749:             state.log = dg.LogView(["Demo activity log initialized."], rows=5, follow=True, wrap=True, variant="activity")
+ 750: 
+ 751: 
+ 752: def build_reports_page() -> None:
+ 753:     page_header("reports", "Reports", "Local HTML reports, generated PNG previews, file dialogs, and export actions.")
+ 754:     with dg.Toolbar():
+ 755:         dg.SmallButton("Inline HTML", on_click=update_report_inline)
+ 756:         dg.SmallButton("Open External", on_click=open_report_external)
+ 757:         dg.ToolbarSeparator()
+ 758:         dg.IconButton("folder-open", tooltip="Open data file", on_click=lambda: run_file_dialog("open"))
+ 759:         dg.IconButton("save", tooltip="Save report", on_click=lambda: run_file_dialog("save"))
+ 760:         dg.IconButton("folder", tooltip="Pick folder", on_click=lambda: run_file_dialog("folder"))
+ 761:     with dg.Splitter(orientation="horizontal", style={"height": 630, "min_height": 380}):
+ 762:         with dg.Pane(size=0.62, min_size=360):
+ 763:             state.report = dg.HtmlReport(REPORT_PATH, height=None, style={"height": "100%"})
+ 764:         with dg.Pane(size=0.38, min_size=280):
+ 765:             with dg.Panel("Sensor Preview", style={"height": "100%"}):
+ 766:                 state.image = dg.Image(IMAGE_PATH, fit="cover", style={"height": 260, "width": "100%"})
+ 767:                 dg.Label("Generated PNG asset used by Image. Report actions degrade to external browser when in-app HTML viewing is unavailable.", class_="muted")
+ 768:                 dg.Button("Reload Image", on_click=lambda: state.image.reload() if state.image else None)
+ 769: 
+ 770:

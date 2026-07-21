@@ -1,0 +1,330 @@
+            "data_format": "f32_matrix_v0",
+            "_payload_token": self._payload_token,
+            "vmin": self.vmin,
+            "vmax": self.vmax,
+            "colormap": self.colormap,
+            "x_labels": list(self.x_labels),
+            "y_labels": list(self.y_labels),
+            "show_labels": self.show_labels,
+            "scalar_bar": self.scalar_bar,
+            "events": ["change"] if self.on_hover is not None else [],
+        }
+        if self.title is not None:
+            payload["title"] = self.title
+        if include_payload:
+            payload["data_b64"] = self._payload_data_b64()
+        return payload
+
+
+class LinePlot(Widget):
+    kind = "line_plot"
+
+    def __init__(
+        self,
+        frame: Any = None,
+        *,
+        x: str | None = None,
+        y: str | Sequence[str],
+        label: str | None = None,
+        labels: Sequence[str] | None = None,
+        color: str | Sequence[object] | None = None,
+        colors: Sequence[object] | None = None,
+        x_label: str | None = None,
+        y_label: str | None = None,
+        show_grid: bool = True,
+        show_axes: bool = True,
+        show_ticks: bool = True,
+        show_toolbar: bool = False,
+        show_legend: bool = False,
+        legend_position: str = "top-right",
+        interaction: str = "inspect",
+        tick_count: int = 5,
+        auto_fit: bool = True,
+        line_width: float = 2.0,
+        line_style: str | Sequence[object] = "solid",
+        line_styles: Sequence[object] | None = None,
+        window_size: float | None = None,
+        max_points: int | None = None,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.frame = frame
+        self.x = x
+        self.y_columns = _line_plot_columns(y)
+        if labels is not None and label is not None:
+            raise ValueError("LinePlot accepts either label or labels, not both")
+        if colors is not None and color is not None:
+            raise ValueError("LinePlot accepts either color or colors, not both")
+        if line_styles is not None and line_style != "solid":
+            raise ValueError("LinePlot accepts either line_style or line_styles, not both")
+        label_values = (
+            _line_plot_optional_values(labels, count=len(self.y_columns), name="labels")
+            if labels is not None
+            else _line_plot_optional_values(label, count=len(self.y_columns), name="label")
+        )
+        self.labels = tuple(None if item is None else str(item) for item in label_values)
+        self.colors = _line_plot_optional_colors(
+            colors if colors is not None else color,
+            count=len(self.y_columns),
+            name="colors",
+        )
+        self.line_styles = _line_plot_optional_line_styles(
+            line_styles if line_styles is not None else line_style,
+            count=len(self.y_columns),
+            name="line_styles",
+        )
+        self.x_label = str(x_label if x_label is not None else (x if x is not None else "sample"))
+        self.y_label = str(y_label if y_label is not None else self.y_columns[0])
+        self.show_grid = bool(show_grid)
+        self.show_axes = bool(show_axes)
+        self.show_ticks = bool(show_ticks)
+        self.show_toolbar = bool(show_toolbar)
+        self.show_legend = bool(show_legend)
+        self.legend_position = str(legend_position).strip().lower()
+        if self.legend_position not in _LINE_PLOT_LEGEND_POSITIONS:
+            raise ValueError(
+                f"LinePlot legend_position must be one of {sorted(_LINE_PLOT_LEGEND_POSITIONS)}"
+            )
+        if interaction not in {"inspect", "pan", "zoom", "box_zoom"}:
+            raise ValueError(
+                "LinePlot interaction must be 'inspect', 'pan', 'zoom', or 'box_zoom'"
+            )
+        self.interaction = interaction
+        self.tick_count = max(2, min(9, int(tick_count)))
+        self.auto_fit = bool(auto_fit)
+        self.line_width = max(0.5, float(line_width))
+        self.window_size = (
+            None
+            if window_size is None
+            else max(float(window_size), 0.000001)
+        )
+        self.max_points = None if max_points is None else max(1, int(max_points))
+        self.frame_summary = summarize_frame(frame)
+        self.data_format = "xy_f32_v0"
+        self._cached_payloads: dict[str, bytes | None] = {}
+        self._cached_payload_b64: dict[str, str | None] = {}
+        self._payload_tokens: dict[str, int] = {}
+        self._refresh_cached_payload_b64()
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    @property
+    def y(self) -> str | list[str]:
+        return self.y_columns[0] if len(self.y_columns) == 1 else list(self.y_columns)
+
+    @property
+    def label(self) -> str | None:
+        label = self.labels[0] if self.labels else None
+        return label if label else None
+
+    @property
+    def color(self) -> object | None:
+        return self.colors[0] if self.colors else None
+
+    @staticmethod
+    def _immutable_payload_bytes(payload: object) -> bytes:
+        if isinstance(payload, bytes):
+            return payload
+        return memoryview(payload).tobytes()
+
+    @staticmethod
+    def _payload_point_count(payload: bytes, payload_format: str) -> int:
+        bytes_per_point = 8 if payload_format == "xy_f32_v0" else 0
+        return len(payload) // bytes_per_point if bytes_per_point else 0
+
+    def _series_label(self, index: int) -> str:
+        label = self.labels[index] if index < len(self.labels) else None
+        return str(label) if label else self.y_columns[index]
+
+    def _series_color(self, index: int) -> object | None:
+        return self.colors[index] if index < len(self.colors) else None
+
+    def _series_line_style(self, index: int) -> str:
+        return self.line_styles[index] if index < len(self.line_styles) else "solid"
+
+    def _build_payload(self, y_column: str) -> bytes | None:
+        return _pack_xy_bytes(self.frame, self.x, y_column)
+
+    def _refresh_cached_payload_b64(self) -> None:
+        self._cached_payloads.clear()
+        self._cached_payload_b64.clear()
+        self._payload_tokens.clear()
+        for y_column in self.y_columns:
+            payload = self._build_payload(y_column)
+            if payload is None:
+                self._cached_payloads[y_column] = None
+                self._cached_payload_b64[y_column] = None
+                self._payload_tokens[y_column] = 0
+                continue
+            data = self._immutable_payload_bytes(payload)
+            self._cached_payloads[y_column] = data
+            self._cached_payload_b64[y_column] = base64.b64encode(data).decode("ascii")
+            self._payload_tokens[y_column] = zlib.crc32(data) if data else 0
+
+    @classmethod
+    def prepare_points(
+        cls,
+        frame: Any,
+        *,
+        x: str | None = None,
+        y: str,
+        x_label: str | None = None,
+        y_label: str | None = None,
+    ) -> LinePlotPayload:
+        """Pack one LinePlot series without mutating a live widget."""
+        t0 = time.perf_counter()
+        raw = _pack_xy_bytes(frame, x, y)
+        pack_ms = (time.perf_counter() - t0) * 1000.0
+        if raw is None:
+            raise RuntimeError("LinePlot.prepare_points requires NumPy and a numeric y column")
+        data = cls._immutable_payload_bytes(raw)
+        return LinePlotPayload(
+            data=data,
+            payload_format="xy_f32_v0",
+            point_count=cls._payload_point_count(data, "xy_f32_v0"),
+            pack_ms=pack_ms,
+            x_label=str(x_label if x_label is not None else (x if x is not None else "sample")),
+            y_label=str(y_label if y_label is not None else y),
+            frame_summary=summarize_frame(frame),
+        )
+
+    @classmethod
+    def prepare_series(
+        cls,
+        frame: Any,
+        *,
+        x: str | None = None,
+        y: str | Sequence[str],
+    ) -> tuple[LinePlotPayload, ...]:
+        """Pack one or more LinePlot series without mutating a live widget."""
+        return tuple(cls.prepare_points(frame, x=x, y=column) for column in _line_plot_columns(y))
+
+    def set_data(
+        self,
+        frame: Any,
+        *,
+        x: str | None = None,
+        y: str | Sequence[str] | None = None,
+        label: str | None = None,
+        labels: Sequence[str] | None = None,
+        color: str | Sequence[object] | None = None,
+        colors: Sequence[object] | None = None,
+        line_style: str | Sequence[object] | None = None,
+        line_styles: Sequence[object] | None = None,
+        fit: bool = True,
+    ) -> None:
+        self.frame = frame
+        self.x = x
+        if y is not None:
+            self.y_columns = _line_plot_columns(y)
+        if labels is not None or label is not None:
+            if labels is not None and label is not None:
+                raise ValueError("LinePlot.set_data accepts either label or labels, not both")
+            label_values = (
+                _line_plot_optional_values(labels, count=len(self.y_columns), name="labels")
+                if labels is not None
+                else _line_plot_optional_values(label, count=len(self.y_columns), name="label")
+            )
+            self.labels = tuple(None if item is None else str(item) for item in label_values)
+        if colors is not None or color is not None:
+            if colors is not None and color is not None:
+                raise ValueError("LinePlot.set_data accepts either color or colors, not both")
+            self.colors = _line_plot_optional_colors(
+                colors if colors is not None else color,
+                count=len(self.y_columns),
+                name="colors",
+            )
+        if line_styles is not None or line_style is not None:
+            if line_styles is not None and line_style is not None:
+                raise ValueError("LinePlot.set_data accepts either line_style or line_styles, not both")
+            self.line_styles = _line_plot_optional_line_styles(
+                line_styles if line_styles is not None else line_style,
+                count=len(self.y_columns),
+                name="line_styles",
+            )
+        self.x_label = str(x if x is not None else "sample")
+        self.y_label = self._series_label(0)
+        self.frame_summary = summarize_frame(frame)
+        self._refresh_cached_payload_b64()
+        if (handle := self._live()) is not None:
+            handle.enqueue_clear_line_plot_series()
+            handle.enqueue_set_prop("x_label", self.x_label)
+            handle.enqueue_set_prop("y_label", self.y_label)
+            for index, y_column in enumerate(self.y_columns):
+                payload = self._cached_payloads.get(y_column)
+                if payload is None:
+                    raise RuntimeError("live LinePlot.set_data requires numeric x/y columns")
+                handle.enqueue_set_line_plot_data_packed(
+                    self._series_label(index),
+                    payload,
+                    label=self._series_label(index),
+                    color=self._series_color(index),
+                    line_width=self.line_width,
+                    line_style=self._series_line_style(index),
+                    show_grid=self.show_grid,
+                    auto_fit=self.auto_fit,
+                    max_points=self.max_points,
+                    fit=fit,
+                )
+
+    def append_points(
+        self,
+        x_values: Any,
+        y_values: Any | None = None,
+        *,
+        series: str | None = None,
+        max_points: int | None = None,
+    ) -> None:
+        payload = _pack_xy_values(x_values, y_values)
+        if payload is None:
+            raise RuntimeError("LinePlot.append_points requires numeric x/y values")
+        target = series or self._series_label(0)
+        effective_max = max_points if max_points is not None else self.max_points
+        if (handle := self._live()) is not None:
+            handle.enqueue_append_line_plot_points_packed(
+                target,
+                payload,
+                max_points=None if effective_max is None else int(effective_max),
+            )
+
+    def clear(self, series: str | None = None) -> None:
+        if (handle := self._live()) is not None:
+            handle.enqueue_clear_line_plot_series(series)
+
+    def _queue_startup_resources(self) -> None:
+        handle = self._live()
+        if handle is None:
+            return
+        for index, y_column in enumerate(self.y_columns):
+            payload = self._cached_payloads.get(y_column)
+            if payload is None:
+                continue
+            handle.enqueue_set_line_plot_data_packed(
+                self._series_label(index),
+                payload,
+                label=self._series_label(index),
+                color=self._series_color(index),
+                line_width=self.line_width,
+                line_style=self._series_line_style(index),
+                show_grid=self.show_grid,
+                auto_fit=self.auto_fit,
+                max_points=self.max_points,
+                fit=self.auto_fit,
+                coalesce=True,
+            )
+
+    def set_line_width(self, width: float) -> None:
+        self.line_width = max(0.5, float(width))
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("line_width", self.line_width)
+
+    def set_grid_visible(self, visible: bool) -> None:
+        self.show_grid = bool(visible)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("show_grid", self.show_grid)
+
+    def set_axes_visible(self, visible: bool) -> None:
+        self.show_axes = bool(visible)

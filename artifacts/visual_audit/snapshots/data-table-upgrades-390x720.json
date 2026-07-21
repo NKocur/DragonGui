@@ -1168,34 +1168,34 @@
     },
     "framework": {
       "apply_layout": {
-        "avg_ms": 0.6988,
+        "avg_ms": 1.6403,
         "count": 3,
-        "last_ms": 0.34900000000000003,
-        "total_ms": 2.0964
+        "last_ms": 0.5025999999999999,
+        "total_ms": 4.9209000000000005
       },
       "container_style": {
-        "avg_ms": 0.0009333333333333333,
+        "avg_ms": 0.0010333333333333334,
         "count": 3,
-        "last_ms": 9.999999999999999e-05,
-        "total_ms": 0.0028
+        "last_ms": 0.00039999999999999996,
+        "total_ms": 0.0031000000000000003
       },
       "image_rebuild": {
-        "avg_ms": 0.04473333333333334,
+        "avg_ms": 0.056299999999999996,
         "count": 3,
-        "last_ms": 0.0443,
-        "total_ms": 0.1342
+        "last_ms": 0.0653,
+        "total_ms": 0.1689
       },
       "layout_compute": {
-        "avg_ms": 0.0772,
+        "avg_ms": 0.17653333333333335,
         "count": 3,
-        "last_ms": 0.06509999999999999,
-        "total_ms": 0.2316
+        "last_ms": 0.1618,
+        "total_ms": 0.5296000000000001
       },
       "line_plot_rebuild": {
-        "avg_ms": 0.039425,
+        "avg_ms": 0.0247,
         "count": 4,
-        "last_ms": 0.1275,
-        "total_ms": 0.1577
+        "last_ms": 0.031099999999999996,
+        "total_ms": 0.0988
       },
       "prewarm_scatter_widgets": {
         "avg_ms": 0.0,
@@ -1204,28 +1204,28 @@
         "total_ms": 0.0
       },
       "primitive_rebuild": {
-        "avg_ms": 0.034825,
+        "avg_ms": 0.0603,
         "count": 4,
-        "last_ms": 0.0294,
-        "total_ms": 0.1393
+        "last_ms": 0.0577,
+        "total_ms": 0.2412
       },
       "rebuild_primitives": {
-        "avg_ms": 0.0144,
+        "avg_ms": 0.041999999999999996,
         "count": 1,
-        "last_ms": 0.0144,
-        "total_ms": 0.0144
+        "last_ms": 0.041999999999999996,
+        "total_ms": 0.041999999999999996
       },
       "rebuild_text": {
-        "avg_ms": 0.2205,
+        "avg_ms": 0.6164000000000001,
         "count": 1,
-        "last_ms": 0.2205,
-        "total_ms": 0.2205
+        "last_ms": 0.6164000000000001,
+        "total_ms": 0.6164000000000001
       },
       "rebuild_visuals": {
-        "avg_ms": 0.23929999999999998,
+        "avg_ms": 0.6650999999999999,
         "count": 1,
-        "last_ms": 0.23929999999999998,
-        "total_ms": 0.23929999999999998
+        "last_ms": 0.6650999999999999,
+        "total_ms": 0.6650999999999999
       },
       "replace_children_maps": {
         "avg_ms": 0.0,
@@ -1264,22 +1264,22 @@
         "total_ms": 0.0
       },
       "retained_line_plot_sync": {
-        "avg_ms": 9.999999999999999e-05,
+        "avg_ms": 0.00015,
         "count": 2,
         "last_ms": 9.999999999999999e-05,
-        "total_ms": 0.00019999999999999998
+        "total_ms": 0.0003
       },
       "retained_maps": {
-        "avg_ms": 0.0142,
+        "avg_ms": 0.0214,
         "count": 2,
-        "last_ms": 0.0052,
-        "total_ms": 0.0284
+        "last_ms": 0.0085,
+        "total_ms": 0.0428
       },
       "retained_resources": {
-        "avg_ms": 0.0019,
+        "avg_ms": 0.0038,
         "count": 2,
-        "last_ms": 0.0015,
-        "total_ms": 0.0038
+        "last_ms": 0.0023,
+        "total_ms": 0.0076
       },
       "retained_scatter_chrome": {
         "avg_ms": 0.0,
@@ -1288,10 +1288,10 @@
         "total_ms": 0.0
       },
       "retained_scatter_collect": {
-        "avg_ms": 0.00019999999999999998,
+        "avg_ms": 0.00015,
         "count": 2,
         "last_ms": 9.999999999999999e-05,
-        "total_ms": 0.00039999999999999996
+        "total_ms": 0.0003
       },
       "retained_scatter_decode": {
         "avg_ms": 0.0,
@@ -1306,16 +1306,16 @@
         "total_ms": 0.0
       },
       "retained_scatter_retain": {
-        "avg_ms": 9.999999999999999e-05,
+        "avg_ms": 0.00015,
         "count": 2,
         "last_ms": 9.999999999999999e-05,
-        "total_ms": 0.00019999999999999998
+        "total_ms": 0.0003
       },
       "retained_scatter_sync": {
-        "avg_ms": 0.00135,
+        "avg_ms": 0.0014,
         "count": 2,
         "last_ms": 0.00019999999999999998,
-        "total_ms": 0.0027
+        "total_ms": 0.0028
       },
       "retained_scatter_upload": {
         "avg_ms": 0.0,
@@ -1324,128 +1324,128 @@
         "total_ms": 0.0
       },
       "retained_state_preserve": {
-        "avg_ms": 0.00395,
+        "avg_ms": 0.00475,
         "count": 2,
-        "last_ms": 0.00039999999999999996,
-        "total_ms": 0.0079
+        "last_ms": 0.0006,
+        "total_ms": 0.0095
       },
       "retained_widget_kinds": {
-        "avg_ms": 0.0012000000000000001,
+        "avg_ms": 0.0023,
         "count": 2,
-        "last_ms": 0.0009,
-        "total_ms": 0.0024000000000000002
+        "last_ms": 0.0014,
+        "total_ms": 0.0046
       },
       "retained_widget_state": {
-        "avg_ms": 0.00265,
+        "avg_ms": 0.0049,
         "count": 2,
-        "last_ms": 0.0015,
-        "total_ms": 0.0053
+        "last_ms": 0.0026,
+        "total_ms": 0.0098
       },
       "scatter_layout": {
-        "avg_ms": 0.0012333333333333335,
+        "avg_ms": 0.0022,
         "count": 3,
-        "last_ms": 0.0011,
-        "total_ms": 0.0037
+        "last_ms": 0.0026,
+        "total_ms": 0.0066
       },
       "style_reapply": {
-        "avg_ms": 0.022533333333333332,
+        "avg_ms": 0.056400000000000006,
         "count": 3,
-        "last_ms": 0.0023,
-        "total_ms": 0.0676
+        "last_ms": 0.0070999999999999995,
+        "total_ms": 0.16920000000000002
       },
       "text_rebuild": {
-        "avg_ms": 0.38805,
+        "avg_ms": 1.062475,
         "count": 4,
-        "last_ms": 0.0666,
-        "total_ms": 1.5522
+        "last_ms": 0.1391,
+        "total_ms": 4.2499
       },
       "transition_sync": {
-        "avg_ms": 0.009333333333333334,
+        "avg_ms": 0.0248,
         "count": 3,
-        "last_ms": 0.0086,
-        "total_ms": 0.028
+        "last_ms": 0.0235,
+        "total_ms": 0.0744
       }
     },
     "layout": {
       "clips": {
         "dg-1": {
-          "h": 900.0,
-          "w": 488.0,
+          "h": 720.0,
+          "w": 390.0,
           "x": 0.0,
           "y": 0.0
         },
         "dg-10": {
           "h": 0.0,
           "w": 0.0,
-          "x": 506.0,
-          "y": 184.0
+          "x": 404.0,
+          "y": 146.0
         },
         "dg-11": {
           "h": 0.0,
           "w": 0.0,
-          "x": 506.0,
-          "y": 277.0
+          "x": 404.0,
+          "y": 236.0
         },
         "dg-12": {
-          "h": 59.0,
-          "w": 443.0,
-          "x": 23.0,
-          "y": 819.0
+          "h": 47.0,
+          "w": 354.0,
+          "x": 18.0,
+          "y": 655.0
         },
         "dg-2": {
-          "h": 855.0,
-          "w": 443.0,
-          "x": 23.0,
-          "y": 23.0
+          "h": 684.0,
+          "w": 354.0,
+          "x": 18.0,
+          "y": 18.0
         },
         "dg-3": {
-          "h": 40.0,
-          "w": 443.0,
-          "x": 23.0,
-          "y": 23.0
+          "h": 32.0,
+          "w": 354.0,
+          "x": 18.0,
+          "y": 18.0
         },
         "dg-4": {
-          "h": 32.0,
-          "w": 443.0,
-          "x": 23.0,
-          "y": 78.0
+          "h": 26.0,
+          "w": 354.0,
+          "x": 18.0,
+          "y": 62.0
         },
         "dg-5": {
-          "h": 679.0,
-          "w": 443.0,
-          "x": 23.0,
-          "y": 126.0
+          "h": 543.0,
+          "w": 354.0,
+          "x": 18.0,
+          "y": 100.0
         },
         "dg-6": {
-          "h": 679.0,
-          "w": 450.0,
-          "x": 23.0,
-          "y": 126.0
+          "h": 543.0,
+          "w": 360.0,
+          "x": 18.0,
+          "y": 100.0
         },
         "dg-7": {
-          "h": 117.0,
-          "w": 408.0,
-          "x": 41.0,
-          "y": 184.0
+          "h": 110.0,
+          "w": 326.0,
+          "x": 32.0,
+          "y": 146.0
         },
         "dg-8": {
-          "h": 325.0,
-          "w": 408.0,
-          "x": 41.0,
-          "y": 317.0
+          "h": 260.0,
+          "w": 326.0,
+          "x": 32.0,
+          "y": 268.0
         },
         "dg-9": {
           "h": 0.0,
           "w": 0.0,
-          "x": 488.0,
-          "y": 126.0
+          "x": 390.0,
+          "y": 100.0
         }
       },
       "diagnostics": {
         "dg-1": {
           "available": {
-            "height": 900.0,
-            "width": 488.0,
+            "height": 720.0,
+            "width": 390.0,
             "x": 0.0,
             "y": 0.0
           },
@@ -1458,8 +1458,8 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 900.0,
-            "width": 488.0,
+            "height": 720.0,
+            "width": 390.0,
             "x": 0.0,
             "y": 0.0
           },
@@ -1472,22 +1472,22 @@
           "available": {
             "height": 0.0,
             "width": 0.0,
-            "x": 506.0,
-            "y": 184.0
+            "x": 404.0,
+            "y": 146.0
           },
           "overflow": {
             "bottom": 78.0,
             "height": 78.0,
             "left": 0.0,
-            "right": 408.0,
+            "right": 326.0,
             "top": 0.0,
-            "width": 408.0
+            "width": 326.0
           },
           "resolved": {
             "height": 78.0,
-            "width": 408.0,
-            "x": 506.0,
-            "y": 184.0
+            "width": 326.0,
+            "x": 404.0,
+            "y": 146.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -1498,22 +1498,22 @@
           "available": {
             "height": 0.0,
             "width": 0.0,
-            "x": 506.0,
-            "y": 277.0
+            "x": 404.0,
+            "y": 236.0
           },
           "overflow": {
-            "bottom": 325.0,
-            "height": 325.0,
+            "bottom": 260.0,
+            "height": 260.0,
             "left": 0.0,
-            "right": 408.0,
+            "right": 326.0,
             "top": 0.0,
-            "width": 408.0
+            "width": 326.0
           },
           "resolved": {
-            "height": 325.0,
-            "width": 408.0,
-            "x": 506.0,
-            "y": 277.0
+            "height": 260.0,
+            "width": 326.0,
+            "x": 404.0,
+            "y": 236.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -1522,10 +1522,10 @@
         },
         "dg-12": {
           "available": {
-            "height": 59.0,
-            "width": 443.0,
-            "x": 23.0,
-            "y": 819.0
+            "height": 47.0,
+            "width": 354.0,
+            "x": 18.0,
+            "y": 655.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -1536,10 +1536,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 59.0,
-            "width": 443.0,
-            "x": 23.0,
-            "y": 819.0
+            "height": 47.0,
+            "width": 354.0,
+            "x": 18.0,
+            "y": 655.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -1548,10 +1548,10 @@
         },
         "dg-2": {
           "available": {
-            "height": 855.0,
-            "width": 443.0,
-            "x": 23.0,
-            "y": 23.0
+            "height": 684.0,
+            "width": 354.0,
+            "x": 18.0,
+            "y": 18.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -1562,10 +1562,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 855.0,
-            "width": 443.0,
-            "x": 23.0,
-            "y": 23.0
+            "height": 684.0,
+            "width": 354.0,
+            "x": 18.0,
+            "y": 18.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -1574,10 +1574,10 @@
         },
         "dg-3": {
           "available": {
-            "height": 40.0,
-            "width": 443.0,
-            "x": 23.0,
-            "y": 23.0
+            "height": 32.0,
+            "width": 354.0,
+            "x": 18.0,
+            "y": 18.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -1588,10 +1588,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 40.0,
-            "width": 443.0,
-            "x": 23.0,
-            "y": 23.0
+            "height": 32.0,
+            "width": 354.0,
+            "x": 18.0,
+            "y": 18.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -1600,10 +1600,10 @@
         },
         "dg-4": {
           "available": {
-            "height": 32.0,
-            "width": 443.0,
-            "x": 23.0,
-            "y": 78.0
+            "height": 26.0,
+            "width": 354.0,
+            "x": 18.0,
+            "y": 62.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -1614,10 +1614,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 32.0,
-            "width": 443.0,
-            "x": 23.0,
-            "y": 78.0
+            "height": 26.0,
+            "width": 354.0,
+            "x": 18.0,
+            "y": 62.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -1626,10 +1626,10 @@
         },
         "dg-5": {
           "available": {
-            "height": 679.0,
-            "width": 443.0,
-            "x": 23.0,
-            "y": 126.0
+            "height": 543.0,
+            "width": 354.0,
+            "x": 18.0,
+            "y": 100.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -1640,10 +1640,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 679.0,
-            "width": 443.0,
-            "x": 23.0,
-            "y": 126.0
+            "height": 543.0,
+            "width": 354.0,
+            "x": 18.0,
+            "y": 100.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -1652,10 +1652,10 @@
         },
         "dg-6": {
           "available": {
-            "height": 679.0,
-            "width": 450.0,
-            "x": 23.0,
-            "y": 126.0
+            "height": 543.0,
+            "width": 360.0,
+            "x": 18.0,
+            "y": 100.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -1666,10 +1666,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 679.0,
-            "width": 450.0,
-            "x": 23.0,
-            "y": 126.0
+            "height": 543.0,
+            "width": 360.0,
+            "x": 18.0,
+            "y": 100.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -1678,10 +1678,10 @@
         },
         "dg-7": {
           "available": {
-            "height": 117.0,
-            "width": 408.0,
-            "x": 41.0,
-            "y": 184.0
+            "height": 110.0,
+            "width": 326.0,
+            "x": 32.0,
+            "y": 146.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -1692,10 +1692,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 117.0,
-            "width": 408.0,
-            "x": 41.0,
-            "y": 184.0
+            "height": 110.0,
+            "width": 326.0,
+            "x": 32.0,
+            "y": 146.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -1704,10 +1704,10 @@
         },
         "dg-8": {
           "available": {
-            "height": 325.0,
-            "width": 408.0,
-            "x": 41.0,
-            "y": 317.0
+            "height": 260.0,
+            "width": 326.0,
+            "x": 32.0,
+            "y": 268.0
           },
           "overflow": {
             "bottom": 0.0,
@@ -1718,10 +1718,10 @@
             "width": 0.0
           },
           "resolved": {
-            "height": 325.0,
-            "width": 408.0,
-            "x": 41.0,
-            "y": 317.0
+            "height": 260.0,
+            "width": 326.0,
+            "x": 32.0,
+            "y": 268.0
           },
           "scroll_range": {
             "x": 0.0,
@@ -1732,101 +1732,101 @@
           "available": {
             "height": 0.0,
             "width": 0.0,
-            "x": 488.0,
-            "y": 126.0
+            "x": 390.0,
+            "y": 100.0
           },
           "overflow": {
-            "bottom": 679.0,
-            "height": 679.0,
+            "bottom": 543.0,
+            "height": 543.0,
             "left": 0.0,
-            "right": 450.0,
+            "right": 360.0,
             "top": 0.0,
-            "width": 450.0
+            "width": 360.0
           },
           "resolved": {
-            "height": 679.0,
-            "width": 450.0,
-            "x": 488.0,
-            "y": 126.0
+            "height": 543.0,
+            "width": 360.0,
+            "x": 390.0,
+            "y": 100.0
           },
           "scroll_range": {
             "x": 0.0,
-            "y": 437.25
+            "y": 365.0
           }
         }
       },
       "rects": {
         "dg-1": {
-          "h": 900.0,
-          "w": 488.0,
+          "h": 720.0,
+          "w": 390.0,
           "x": 0.0,
           "y": 0.0
         },
         "dg-10": {
           "h": 78.0,
-          "w": 408.0,
-          "x": 506.0,
-          "y": 184.0
+          "w": 326.0,
+          "x": 404.0,
+          "y": 146.0
         },
         "dg-11": {
-          "h": 325.0,
-          "w": 408.0,
-          "x": 506.0,
-          "y": 277.0
+          "h": 260.0,
+          "w": 326.0,
+          "x": 404.0,
+          "y": 236.0
         },
         "dg-12": {
-          "h": 59.0,
-          "w": 443.0,
-          "x": 23.0,
-          "y": 819.0
+          "h": 47.0,
+          "w": 354.0,
+          "x": 18.0,
+          "y": 655.0
         },
         "dg-2": {
-          "h": 855.0,
-          "w": 443.0,
-          "x": 23.0,
-          "y": 23.0
+          "h": 684.0,
+          "w": 354.0,
+          "x": 18.0,
+          "y": 18.0
         },
         "dg-3": {
-          "h": 40.0,
-          "w": 443.0,
-          "x": 23.0,
-          "y": 23.0
+          "h": 32.0,
+          "w": 354.0,
+          "x": 18.0,
+          "y": 18.0
         },
         "dg-4": {
-          "h": 32.0,
-          "w": 443.0,
-          "x": 23.0,
-          "y": 78.0
+          "h": 26.0,
+          "w": 354.0,
+          "x": 18.0,
+          "y": 62.0
         },
         "dg-5": {
-          "h": 679.0,
-          "w": 443.0,
-          "x": 23.0,
-          "y": 126.0
+          "h": 543.0,
+          "w": 354.0,
+          "x": 18.0,
+          "y": 100.0
         },
         "dg-6": {
-          "h": 679.0,
-          "w": 450.0,
-          "x": 23.0,
-          "y": 126.0
+          "h": 543.0,
+          "w": 360.0,
+          "x": 18.0,
+          "y": 100.0
         },
         "dg-7": {
-          "h": 117.0,
-          "w": 408.0,
-          "x": 41.0,
-          "y": 184.0
+          "h": 110.0,
+          "w": 326.0,
+          "x": 32.0,
+          "y": 146.0
         },
         "dg-8": {
-          "h": 325.0,
-          "w": 408.0,
-          "x": 41.0,
-          "y": 317.0
+          "h": 260.0,
+          "w": 326.0,
+          "x": 32.0,
+          "y": 268.0
         },
         "dg-9": {
-          "h": 679.0,
-          "w": 450.0,
-          "x": 488.0,
-          "y": 126.0
+          "h": 543.0,
+          "w": 360.0,
+          "x": 390.0,
+          "y": 100.0
         }
       },
       "scroll_max_x": {
@@ -1835,7 +1835,7 @@
       },
       "scroll_max_y": {
         "dg-6": 0.0,
-        "dg-9": 437.25
+        "dg-9": 365.0
       },
       "scroll_x": {
         "dg-6": 0.0,
@@ -1872,8 +1872,8 @@
         "enabled": true,
         "last_decimate_ms": 0.0,
         "last_emit_ms": 0.002,
-        "last_encode_ms": 0.0003,
-        "last_upload_ms": 0.0005,
+        "last_encode_ms": 0.0007999999999999999,
+        "last_upload_ms": 0.0,
         "max_segments_per_series": 8192,
         "point_bytes": 0,
         "point_count": 0,
@@ -1882,7 +1882,7 @@
         "series_count": 0,
         "source_point_count": 0
       },
-      "present_mode": "immediate",
+      "present_mode": "fifo",
       "present_mode_env": null,
       "primitives": {
         "base_batches": 5,
@@ -1890,11 +1890,11 @@
         "complex_batches": 2,
         "complex_bytes": 480,
         "complex_count": 2,
-        "last_base_encode_ms": 0.0037,
-        "last_emit_ms": 0.0162,
+        "last_base_encode_ms": 0.0081,
+        "last_emit_ms": 0.0346,
         "last_overlay_encode_ms": 0.0,
-        "last_split_ms": 0.0009,
-        "last_upload_ms": 0.0063,
+        "last_split_ms": 0.0022,
+        "last_upload_ms": 0.012700000000000001,
         "line_batches": 0,
         "line_bytes": 0,
         "line_count": 0,
@@ -1911,8 +1911,10 @@
       "scatter_widget_id": null,
       "scatter_widget_pool": 0,
       "supported_present_modes": [
-        "immediate",
-        "fifo"
+        "fifo",
+        "fifo-relaxed",
+        "mailbox",
+        "immediate"
       ],
       "surface_format": "Bgra8UnormSrgb",
       "widget_count": 12
@@ -2862,60 +2864,60 @@
       "type": "window"
     },
     "window": {
-      "height": 900,
-      "scale_factor": 1.25,
-      "width": 488
+      "height": 720,
+      "scale_factor": 1.0,
+      "width": 390
     }
   },
   "runtime": {
     "command_drain": {
       "apply": {
-        "avg_ms": 0.03423333333333333,
+        "avg_ms": 0.0459,
         "count": 3,
         "last_ms": 0.0,
-        "total_ms": 0.1027
+        "total_ms": 0.13770000000000002
       },
       "coalesce": {
-        "avg_ms": 0.0007333333333333332,
-        "count": 3,
-        "last_ms": 9.999999999999999e-05,
-        "total_ms": 0.0021999999999999997
-      },
-      "fetch": {
-        "avg_ms": 0.0007333333333333333,
-        "count": 3,
-        "last_ms": 9.999999999999999e-05,
-        "total_ms": 0.0022
-      },
-      "flush_rebuilds": {
-        "avg_ms": 0.07986666666666667,
+        "avg_ms": 0.0008666666666666666,
         "count": 3,
         "last_ms": 0.0,
-        "total_ms": 0.2396
+        "total_ms": 0.0026
+      },
+      "fetch": {
+        "avg_ms": 0.0007,
+        "count": 3,
+        "last_ms": 0.0,
+        "total_ms": 0.0021
+      },
+      "flush_rebuilds": {
+        "avg_ms": 0.22183333333333333,
+        "count": 3,
+        "last_ms": 0.0,
+        "total_ms": 0.6655
       },
       "last_batches": 0,
       "last_commands": 0,
       "last_pending": 0,
       "timing": {
-        "avg_ms": 0.11629999999999997,
+        "avg_ms": 0.26966666666666667,
         "count": 3,
-        "last_ms": 0.00019999999999999998,
-        "total_ms": 0.34889999999999993
+        "last_ms": 9.999999999999999e-05,
+        "total_ms": 0.809
       }
     },
     "command_queue_depth": 0,
     "command_timings": {
       "DebugSnapshot": {
-        "avg_ms": 0.0265,
+        "avg_ms": 0.007500000000000001,
         "count": 1,
-        "last_ms": 0.0265,
-        "total_ms": 0.0265
+        "last_ms": 0.007500000000000001,
+        "total_ms": 0.007500000000000001
       },
       "SetTableDataColumns": {
-        "avg_ms": 0.04955,
+        "avg_ms": 0.0671,
         "count": 2,
-        "last_ms": 0.019,
-        "total_ms": 0.0991
+        "last_ms": 0.0265,
+        "total_ms": 0.1342
       }
     },
     "commands": {
@@ -2926,7 +2928,7 @@
           "command": "SetTableDataColumns",
           "detail": "table_bytes=329, buffer_columns=5",
           "dirty": "text",
-          "elapsed_ms": 0.08009999999999999,
+          "elapsed_ms": 0.1077,
           "frame": 0,
           "outcome": "applied",
           "requested_redraw": true,
@@ -2937,7 +2939,7 @@
           "command": "SetTableDataColumns",
           "detail": "table_bytes=332, buffer_columns=5",
           "dirty": "text",
-          "elapsed_ms": 0.019,
+          "elapsed_ms": 0.0265,
           "frame": 0,
           "outcome": "applied",
           "requested_redraw": true,
@@ -2948,8 +2950,8 @@
           "command": "DebugSnapshot",
           "detail": "request_id=0",
           "dirty": null,
-          "elapsed_ms": 0.0265,
-          "frame": 2,
+          "elapsed_ms": 0.007500000000000001,
+          "frame": 1,
           "outcome": "completed",
           "requested_redraw": false,
           "seq": 3,
@@ -2957,7 +2959,7 @@
         }
       ]
     },
-    "cpu_frame_ms": 1.2248999999999999,
+    "cpu_frame_ms": 3.7569,
     "dirty": {
       "current": null,
       "note": "DragonGUI applies coarse dirty flags immediately; this history records the recent command reasons that triggered them.",
@@ -2966,7 +2968,7 @@
           "command": "SetTableDataColumns",
           "detail": "table_bytes=329, buffer_columns=5",
           "dirty": "text",
-          "elapsed_ms": 0.08009999999999999,
+          "elapsed_ms": 0.1077,
           "frame": 0,
           "outcome": "applied",
           "requested_redraw": true,
@@ -2977,7 +2979,7 @@
           "command": "SetTableDataColumns",
           "detail": "table_bytes=332, buffer_columns=5",
           "dirty": "text",
-          "elapsed_ms": 0.019,
+          "elapsed_ms": 0.0265,
           "frame": 0,
           "outcome": "applied",
           "requested_redraw": true,
@@ -2988,30 +2990,30 @@
     },
     "drag_drop_session": null,
     "drag_number_drag": null,
-    "frame_acquire_ms": 0.0193,
-    "frame_acquire_ms_avg": 0.01965,
-    "frame_encode_ms": 0.0209,
-    "frame_encode_ms_avg": 0.0196,
-    "frame_ms": 2.11855,
-    "frame_ms_avg": 2.11855,
-    "frame_prepare_ms": 0.09280000000000001,
-    "frame_prepare_ms_avg": 1.1905000000000001,
-    "frame_present_ms": 0.0167,
-    "frame_present_ms_avg": 0.11935,
-    "frame_submit_ms": 1.0748000000000002,
-    "frame_submit_ms_avg": 0.7690000000000001,
-    "frame_window_count": 2,
-    "frame_work_ms": 1.1885000000000001,
-    "frame_work_ms_avg": 1.9791000000000003,
-    "frames_rendered": 2,
+    "frame_acquire_ms": 0.0776,
+    "frame_acquire_ms_avg": 0.0776,
+    "frame_encode_ms": 0.04,
+    "frame_encode_ms_avg": 0.04,
+    "frame_ms": 3.7569,
+    "frame_ms_avg": 3.7569,
+    "frame_prepare_ms": 3.2351,
+    "frame_prepare_ms_avg": 3.2351,
+    "frame_present_ms": 0.0592,
+    "frame_present_ms_avg": 0.0592,
+    "frame_submit_ms": 0.3422,
+    "frame_submit_ms_avg": 0.3422,
+    "frame_window_count": 1,
+    "frame_work_ms": 3.6173,
+    "frame_work_ms_avg": 3.6173,
+    "frames_rendered": 1,
     "gpu_ready": true,
-    "last_frame_ms": 1.2248999999999999,
+    "last_frame_ms": 3.7569,
     "last_mouse_pos": null,
     "loading_screen": {
       "enabled": true,
       "frames": 1,
       "min_duration_ms": 120,
-      "present_ms": 24.7985,
+      "present_ms": 136.7324,
       "shown": true,
       "startup_resource_ms": 0.0
     },
@@ -3036,7 +3038,7 @@
     "table_column_resize_drag": null,
     "table_scrollbar_drag": null,
     "upload_ms": 0.0,
-    "wall_fps": 188.98233015213077,
+    "wall_fps": 0.0,
     "window_open": true
   },
   "schema": 1

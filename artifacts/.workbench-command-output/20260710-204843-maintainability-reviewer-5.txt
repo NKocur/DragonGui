@@ -1,0 +1,150 @@
+ 301:     set_status("Report switched to inline HTML", "success")
+ 302: 
+ 303: 
+ 304: def open_report_external() -> None:
+ 305:     opened = False
+ 306:     if state.report is not None:
+ 307:         opened = state.report.open_external()
+ 308:     set_status("Opened report externally" if opened else "External report fallback unavailable", "warning")
+ 309: 
+ 310: 
+ 311: def run_file_dialog(kind: str) -> None:
+ 312:     def selected(value: object) -> None:
+ 313:         set_status(f"{kind} dialog returned: {value or 'cancelled'}")
+ 314: 
+ 315:     if kind == "open":
+ 316:         dg.open_file_dialog("Open operations input", filters=[("Data", "*.csv;*.json"), ("All", "*.*")], on_select=selected, app=state.app)
+ 317:     elif kind == "save":
+ 318:         dg.save_file_dialog("Save report bundle", filters=[("HTML", "*.html"), ("All", "*.*")], on_select=selected, app=state.app)
+ 319:     else:
+ 320:         dg.pick_folder_dialog("Pick export folder", on_select=selected, app=state.app)
+ 321: 
+ 322: 
+ 323: def snapshot_summary() -> None:
+ 324:     if state.app is None:
+ 325:         return
+ 326:     try:
+ 327:         snapshot = state.app.debug_snapshot(timeout_ms=700)
+ 328:         debug = snapshot.get("debug_snapshot", snapshot)
+ 329:         widgets = len(debug.get("widgets", [])) if isinstance(debug, dict) else 0
+ 330:         keys = sorted(debug.keys())[:8] if isinstance(debug, dict) else []
+ 331:         set_status(f"Snapshot captured: widgets={widgets}, keys={keys}", "success")
+ 332:     except Exception as exc:
+ 333:         set_status(f"Snapshot failed: {exc}", "error")
+ 334: 
+ 335: 
+ 336: def upload_resource() -> None:
+ 337:     if state.app is None:
+ 338:         return
+ 339:     payload = np.asarray(SERIES_FRAME["latency"][:128], dtype=np.float32).tobytes()
+ 340:     try:
+ 341:         state.app.set_buffer_resource(state.resource_id, payload, kind="f32")
+ 342:         state.resource_uploaded = True
+ 343:         set_status(f"Uploaded generic buffer resource {state.resource_id}", "success")
+ 344:     except Exception as exc:
+ 345:         set_status(f"Resource upload failed: {exc}", "error")
+ 346: 
+ 347: 
+ 348: def release_resource() -> None:
+ 349:     if state.app is None:
+ 350:         return
+ 351:     try:
+ 352:         state.app.release_resource(state.resource_id)
+ 353:         state.resource_uploaded = False
+ 354:         set_status(f"Released generic buffer resource {state.resource_id}", "success")
+ 355:     except Exception as exc:
+ 356:         set_status(f"Resource release failed: {exc}", "error")
+ 357: 
+ 358: 
+ 359: def replace_live_children() -> None:
+ 360:     if state.live_panel is None:
+ 361:         return
+ 362:     state.stream_count += 1
+ 363:     rows: list[dg.Widget] = []
+ 364:     for i in range(3):
+ 365:         rows.append(
+ 366:             dg.Label(
+ 367:                 f"Diagnostic child {state.stream_count}.{i + 1}: queue depth {(state.stream_count + i) % 7}",
+ 368:                 parent=None,
+ 369:             )
+ 370:         )
+ 371:     state.live_panel.replace_children(rows)
+ 372:     set_status("Runtime diagnostic children replaced", "success")
+ 373: 
+ 374: 
+ 375: def start_stream() -> None:
+ 376:     if state.stream_thread is not None and state.stream_thread.is_alive():
+ 377:         set_status("Stream already running", "warning")
+ 378:         return
+ 379:     if state.app is None:
+ 380:         return
+ 381:     state.stream_stop.clear()
+ 382: 
+ 383:     def worker() -> None:
+ 384:         phase = 0.0
+ 385:         while not state.stream_stop.is_set():
+ 386:             phase += 0.23
+ 387:             sample = build_series(120)
+ 388:             payload_frame = build_scatter_frame(max(3000, POINTS // 4), phase=phase)
+ 389: 
+ 390:             def apply() -> None:
+ 391:                 state.stream_count += 1
+ 392:                 if state.stream_led is not None:
+ 393:                     state.stream_led.set_on(True)
+ 394:                 if state.progress is not None:
+ 395:                     state.progress.set_value((state.stream_count % 100) / 100)
+ 396:                 if state.line_plot is not None:
+ 397:                     base = state.stream_count * 120
+ 398:                     xs = np.arange(base, base + 120, dtype=np.float32)
+ 399:                     ys = np.asarray(sample["latency"], dtype=np.float32)
+ 400:                     state.line_plot.append_points(xs, ys, series="latency", max_points=900)
+ 401:                 if state.scatter is not None and state.stream_count % 2 == 0:
+ 402:                     try:
+ 403:                         payload = dg.Scatter3D.prepare_points(payload_frame, x="x", y="y", z="z", colormap="turbo")
+ 404:                         state.scatter.enqueue_prepared_points(payload, coalesce=True, fit=False)
+ 405:                     except Exception as exc:
+ 406:                         log(f"Prepared scatter update skipped: {exc}")
+ 407:                 if state.incident_badge is not None:
+ 408:                     state.incident_badge.set_value(str(4 + state.stream_count % 5))
+ 409:                 log(f"Stream tick {state.stream_count}")
+ 410: 
+ 411:             try:
+ 412:                 state.app.call_soon_threadsafe(apply)
+ 413:             except Exception:
+ 414:                 break
+ 415:             state.stream_stop.wait(0.9)
+ 416: 
+ 417:         def stopped() -> None:
+ 418:             if state.stream_led is not None:
+ 419:                 state.stream_led.set_on(False)
+ 420:             log("Background stream stopped")
+ 421: 
+ 422:         try:
+ 423:             state.app.call_soon_threadsafe(stopped)
+ 424:         except Exception:
+ 425:             pass
+ 426: 
+ 427:     state.stream_thread = threading.Thread(target=worker, name="dg-pro-demo-stream", daemon=True)
+ 428:     state.stream_thread.start()
+ 429:     set_status("Background stream started", "success")
+ 430: 
+ 431: 
+ 432: def stop_stream() -> None:
+ 433:     state.stream_stop.set()
+ 434:     set_status("Stop requested for background stream")
+ 435: 
+ 436: 
+ 437: def build_metric_card(label: str, value: str, detail: str, level: str = "info") -> None:
+ 438:     with dg.Panel(class_="metric-card"):
+ 439:         with dg.HLayout(style={"align_items": "center", "gap": 8}):
+ 440:             dg.Badge(level, level=level)
+ 441:             dg.Label(label, class_="kicker", wrap=False)
+ 442:         dg.Label(value, class_="metric-value", wrap=False)
+ 443:         dg.Label(detail, class_="muted")
+ 444: 
+ 445: 
+ 446: def page_header(route: str, title: str, detail: str) -> None:
+ 447:     with dg.VLayout(class_="page-header"):
+ 448:         dg.Breadcrumbs(
+ 449:             [
+ 450:                 ("Operations", "overview"),

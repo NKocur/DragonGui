@@ -1,0 +1,220 @@
+        dg.SmallButton("Replace Children", on_click=replace_live_children)
+    with dg.GridLayout(columns=2, min_column_width=360, gap=10):
+        dg.ThreadMonitor(show_threads=True, show_queue=True, show_failures=True, history_seconds=30, style={"height": 420})
+        with dg.Panel("Live Runtime Surface", style={"height": 420}):
+            with dg.HLayout(style={"gap": 8, "align_items": "center"}):
+                state.stream_led = dg.LED(False)
+                state.progress = dg.ProgressBar(0, show_value=True, style={"flex": 1, "min_width": 120})
+            state.live_panel = dg.Panel("Replaceable Diagnostics", style={"height": 180, "width": "100%"})
+            with state.live_panel:
+                dg.Label("Click Replace Children to swap this panel content through Container.replace_children().")
+            dg.LogView(["Runtime page ready.", "Use Start Stream to schedule UI work from a worker thread."], rows=8, wrap=True, variant="debug")
+
+
+def build_styling_page() -> None:
+    page_header("styling", "Styling Lab", "Theme controls, CSS classes, pseudo-state styles, widget parts, and compact control gallery.")
+    with dg.GridLayout(columns=3, min_column_width=300, gap=10):
+        with dg.Panel("Theme And State"):
+            state.theme_chip = dg.Tag("dark operations", level="info")
+            dg.ColorPicker((54, 163, 255, 255), title="Accent", on_change=lambda rgba: set_status(f"Accent color {rgba}"))
+            dg.ToggleSwitch("Dark theme", checked=True, on_change=lambda value: state.theme_chip.set_value("dark operations" if value else "light operations") if state.theme_chip else None)
+            dg.Button(
+                "Pseudo-state button",
+                on_click=lambda: set_status("Pseudo-state button clicked"),
+                style={
+                    "background": "surface_alt",
+                    "hover": {"background": "accent_mix_20"},
+                    "active": {"background": "accent_dark"},
+                    "focus": {"border_color": "focus"},
+                },
+            )
+        with dg.Panel("Parts And Inline Styles"):
+            dg.ProgressBar(
+                0.72,
+                show_value=True,
+                style={"parts": {"track": {"background": "surface_alt"}, "fill": {"background": "success"}}},
+            )
+            dg.NumberInput(
+                42,
+                min=0,
+                max=100,
+                style={"parts": {"stepper-up": {"background": "accent_mix_20"}, "stepper-down": {"background": "surface_alt"}}},
+            )
+            dg.Checkbox("Styled checkbox", checked=True, style={"parts": {"box": {"border_color": "accent"}, "label": {"color": "text"}}})
+            dg.Separator()
+            with dg.FlowLayout(gap=6, row_gap=6):
+                for level in ["neutral", "info", "success", "warning", "danger"]:
+                    dg.Badge(level, level=level)
+                    dg.Tag(level, level=level)
+        with dg.Panel("Compact Controls"):
+            dg.Label("Long labels in compact controls should wrap or truncate without overlapping neighboring UI.", class_="muted")
+            dg.Dropdown(["Automatic quality", "Operator review", "Diagnostics hold"], value="Automatic quality")
+            dg.Slider(64, min=0, max=100, step=1)
+            dg.RangeSlider((22, 78), min=0, max=100, step=1)
+            dg.DragNumber(0.42, min=0, max=1, step=0.01)
+            dg.DragVector((0.1, 0.2, 0.7), labels=("x", "y", "z"), min=-1, max=1, step=0.1)
+
+
+def build_shell() -> dg.Window:
+    with dg.Window(title="DragonGUI Professional All Features Demo", width=1440, height=900) as win:
+        with dg.AppShell(class_="pro-shell", style={"width": "100%", "height": "100%", "overflow": "hidden"}):
+            with dg.Sidebar(title="DragonOps", width=214, class_="pro-sidebar"):
+                dg.Label("North Plant Command Center", class_="sidebar-caption")
+                for route, label, badge in ROUTES:
+                    state.nav_items[route] = dg.NavItem(label, page=route, badge=badge)
+                dg.Separator()
+                with dg.FlowLayout(gap=6, row_gap=6):
+                    dg.Badge("online", level="success")
+                    dg.Tag("v4 widgets", level="info")
+            with dg.WorkbenchLayout(gap=6, padding=8, style={"min_width": 0}):
+                with dg.MenuBar():
+                    with dg.Menu("File"):
+                        dg.MenuItem("Open data file", on_click=lambda: run_file_dialog("open"))
+                        dg.MenuItem("Save report bundle", on_click=lambda: run_file_dialog("save"))
+                        dg.MenuItem("Pick export folder", on_click=lambda: run_file_dialog("folder"))
+                    with dg.Menu("View"):
+                        dg.MenuItem("Overview", on_click=lambda: navigate("overview"))
+                        dg.MenuItem("Runtime diagnostics", on_click=lambda: navigate("runtime"))
+                        dg.MenuItem("Command palette", on_click=show_palette)
+                    with dg.Menu("Actions"):
+                        dg.MenuItem("Start stream", on_click=start_stream)
+                        dg.MenuItem("Stop stream", on_click=stop_stream)
+                        dg.MenuItem("Debug snapshot", on_click=snapshot_summary)
+                        dg.MenuItem("Show alert", on_click=show_alert_modal)
+                        dg.MenuItem("Show toast", on_click=show_toast)
+                with dg.Toolbar(class_="top-toolbar"):
+                    dg.IconButton("play", tooltip="Start background stream", on_click=start_stream)
+                    dg.IconButton("pause", tooltip="Stop background stream", on_click=stop_stream)
+                    dg.IconButton("terminal", tooltip="Command palette", on_click=show_palette)
+                    dg.ToolbarSeparator()
+                    dg.SearchBox("", placeholder="search routes, commands, owners", on_change=lambda q: set_status(f"Global search: {q}"), style={"width": 280})
+                    dg.Spacer()
+                    dg.SmallButton("Snapshot", on_click=snapshot_summary)
+                    dg.SmallButton("Toast", on_click=show_toast)
+                state.tabs = dg.Tabs(value="overview", on_change=navigate)
+                with state.tabs:
+                    for route, label, badge in ROUTES:
+                        with dg.Tab(label, value=route, badge=badge):
+                            pass
+                with dg.Body(scroll="y", gap=10, style={"height": 0, "flex": 1, "min_width": 0}):
+                    state.pages = dg.Pages(value="overview", on_change=lambda route: state.tabs.set_value(route) if state.tabs else None)
+                    with state.pages:
+                        with dg.Page("overview", title="Overview"):
+                            build_overview_page()
+                        with dg.Page("explore", title="3D Explore"):
+                            build_explore_page()
+                        with dg.Page("timeseries", title="Time Series"):
+                            build_timeseries_page()
+                        with dg.Page("data", title="Data"):
+                            build_data_page()
+                        with dg.Page("workflow", title="Workflow"):
+                            build_workflow_page()
+                        with dg.Page("reports", title="Reports"):
+                            build_reports_page()
+                        with dg.Page("runtime", title="Runtime"):
+                            build_runtime_page()
+                        with dg.Page("styling", title="Styling"):
+                            build_styling_page()
+                with dg.StatusBar(height=28):
+                    state.status_badge = dg.Badge("ready", level="success")
+                    state.status = dg.Label("Ready", wrap=False, style={"flex": 1, "min_width": 0})
+                    dg.Tag("1440x900 default", level="neutral")
+    return win
+
+
+def build_overlays(win: dg.Window) -> None:
+    state.modal = dg.Modal("Review Route", open=False, width=520, height=300, parent=win)
+    with state.modal:
+        dg.Label("Route review is staged with generated incident context.")
+        dg.TextArea("Model owner should verify calibration drift before suppression.", rows=4)
+        with dg.HLayout(style={"justify_content": "flex_end", "gap": 8}):
+            dg.Button("Close", on_click=lambda: state.modal.close() if state.modal else None)
+            dg.Button("Create Review Task", on_click=lambda: (state.modal.close(), set_status("Review task created", "success")) if state.modal else None)
+    state.alert_modal = dg.alert(
+        "Operations Notice",
+        "This alert modal is generated by the public alert helper and attached to the demo window.",
+        open=False,
+        on_close=lambda: set_status("Alert closed"),
+        parent=win,
+    )
+    state.confirm_modal = dg.confirm(
+        "Suppress Incident",
+        "Suppress this route for one hour and notify the owner?",
+        open=False,
+        on_confirm=lambda: set_status("Suppression confirmed", "warning"),
+        on_cancel=lambda: set_status("Suppression cancelled"),
+        parent=win,
+    )
+    state.palette = dg.CommandPalette(
+        [
+            dg.Command("route.overview", "Open Overview", on_run=lambda: navigate("overview"), subtitle="Go to operations summary"),
+            dg.Command("route.runtime", "Open Runtime Diagnostics", on_run=lambda: navigate("runtime"), subtitle="Inspect threads and queues"),
+            dg.Command("stream.start", "Start Background Stream", on_run=start_stream),
+            dg.Command("stream.stop", "Stop Background Stream", on_run=stop_stream),
+            dg.Command("snapshot", "Capture Debug Snapshot", on_run=snapshot_summary),
+            dg.Command("report.external", "Open Report Externally", on_run=open_report_external),
+        ],
+        open=False,
+        max_results=8,
+        on_run=lambda command: set_status(f"Command ran: {command.id}", "success"),
+        parent=win,
+    )
+    if state.status is not None:
+        with dg.Tooltip(target=state.status, width=360, parent=win):
+            dg.Label("Status bar receives callback output, stream updates, file dialog results, and debug summaries.")
+
+
+def build_app() -> tuple[dg.App, dg.Window]:
+    app = dg.App(theme=dg.Theme.dark())
+    state.app = app
+    app.stylesheet(
+        """
+        .pro-shell { background: background; }
+        Sidebar.pro-sidebar { width: 214px; }
+        .sidebar-caption { color: muted_text; font-size: 12px; }
+        .top-toolbar { flex-shrink: 0; }
+        .page-header { gap: 4px; padding-bottom: 2px; }
+        .page-title { font-size: 22px; font-weight: 760; }
+        .muted { color: muted_text; font-size: 12px; }
+        .kicker { color: muted_text; font-size: 11px; text-transform: uppercase; }
+        Panel.metric-card { min-height: 112px; }
+        .metric-value { font-size: 28px; font-weight: 780; }
+        Panel { min-width: 0; }
+        DataFrameTable { min-height: 120px; }
+        @media (max-width: 720px) {
+            .pro-shell { flex-direction: column; }
+            Sidebar.pro-sidebar { width: 100%; height: 210px; flex-shrink: 0; }
+            .page-title { font-size: 18px; }
+            .metric-value { font-size: 22px; }
+            .top-toolbar { flex-wrap: wrap; height: auto; }
+        }
+        """
+    )
+    win = build_shell()
+    build_overlays(win)
+    return app, win
+
+
+def main() -> int:
+    app, win = build_app()
+    try:
+        result = app.run(win)
+        print(result)
+        return 0
+    except dg.BackendUnavailableError as exc:
+        print("DragonGUI native backend is unavailable; source import path works.")
+        print(f"Reason: {exc}")
+        print("Demo summary:")
+        print(f"- window: {win.title} ({win.width}x{win.height})")
+        print(f"- routes: {', '.join(route for route, _, _ in ROUTES)}")
+        print(f"- generated rows: {len(TABLE_ROWS)}, scatter points: {len(SCATTER_FRAME['x'])}")
+        print(f"- report: {REPORT_PATH}")
+        return 0
+    finally:
+        state.stream_stop.set()
+        if state.stream_thread is not None and state.stream_thread.is_alive():
+            state.stream_thread.join(timeout=2.0)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

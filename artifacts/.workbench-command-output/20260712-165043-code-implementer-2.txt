@@ -1,0 +1,180 @@
+    /// World-space grid label anchors from the last grid geometry rebuild.
+    grid_labels: Vec<grid::LabelAnchor>,
+    /// Grid, overlay, and annotation labels projected to screen space.
+    pub pending_labels: Vec<ProjectedLabel>,
+    /// Number of grid-axis labels at the front of `pending_labels`; overlay labels follow.
+    pending_overlay_offset: usize,
+    reproject_overlay_scratch: Vec<ProjectedLabel>,
+    grid_label_rects_scratch: Vec<[f32; 4]>,
+    grid_title_projection_scratch: Vec<GridLabelProjection>,
+    last_face_bits: u8,
+    last_grid_bounds: Option<(glam::Vec3, glam::Vec3)>,
+    pub(crate) grid_display_bounds: Option<(glam::Vec3, glam::Vec3)>,
+    last_grid_ortho_scale: Option<(f32, f32)>,
+    last_grid_label_projection_key: Option<GridLabelProjectionCacheKey>,
+    pub chrome_dirty: bool,
+    // â”€â”€ 2D screen-space overlays (legend, scalar bar, orientation axes) â”€â”€â”€â”€â”€â”€
+    overlay_pipeline: Option<wgpu::RenderPipeline>,
+    overlay_vertex_buffer: Option<wgpu::Buffer>,
+    overlay_vertex_cap: u64,
+    pub overlay_vertex_count: u32,
+    /// TriangleList pipeline for background fill quad â€” respects viewport/scissor.
+    bg_pipeline: Option<wgpu::RenderPipeline>,
+    bg_vertex_buffer: Option<wgpu::Buffer>,
+    bg_vertex_cap: u64,
+    bg_vertex_count: u32,
+    overlay_vertices_scratch: Vec<OverlayVertex>,
+    scalar_bar_vertex_cache_key: Option<ScalarBarVertexCacheKey>,
+    scalar_bar_vertex_cache: Vec<OverlayVertex>,
+    // â”€â”€ Multi-actor point layers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    /// Additional independently rendered point actors (actors beyond the legacy single buffer).
+    pub extra_actors: std::collections::HashMap<u32, PointActor>,
+    // â”€â”€ LOD (Level of Detail during interaction) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    pub lod_enabled: bool,
+    pub lod_threshold: u32,
+    pub lod_factor: u32,
+    pub lod_active: bool,
+    /// Hash-sorted copy of the main vertex buffer for representative LOD sampling.
+    lod_vertex_buffer: Option<wgpu::Buffer>,
+    lod_vertex_cap: u64,
+    lod_sampled_scratch: Vec<PointInstance>,
+    lod_bucket_keys_scratch: Vec<u32>,
+    lod_occupied_scratch: Vec<bool>,
+    // â”€â”€ Interaction / picking mode â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    pub picking_mode: PickingMode,
+    // â”€â”€ Selection rectangle overlay â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    /// Viewport-local pixel rect (x0, y0, x1, y1) drawn during rectangle drag selection.
+    pub selection_rect: Option<[f32; 4]>,
+    /// Viewport-local pixel path accumulated during freehand lasso drag.
+    pub selection_polygon: Option<Vec<[f32; 2]>>,
+    /// Floating coordinate tooltip shown when hover_tooltip is enabled.
+    pub hover_label: Option<ProjectedLabel>,
+    // â”€â”€ User annotations (labels, line overlays, boxes) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    pub user_labels: Vec<UserLabel>,
+    pub line_overlays: Vec<LineOverlay>,
+    user_line_vertex_buffer: Option<wgpu::Buffer>,
+    user_line_vertex_cap: u64,
+    pub user_line_vertex_count: u32,
+    // â”€â”€ Mesh overlays (hulls, ellipsoids) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    mesh_solid_pipeline: Option<wgpu::RenderPipeline>,
+    mesh_transparent_pipeline: Option<wgpu::RenderPipeline>,
+    mesh_wire_pipeline: Option<wgpu::RenderPipeline>,
+    pub mesh_actors: std::collections::HashMap<u32, MeshActor>,
+    // â”€â”€ Phase 7: Screenshot cache â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    surface_format: wgpu::TextureFormat,
+    screenshot_cache: Option<ScreenshotCache>,
+    scene_revision: u64,
+    last_uniforms: Option<Uniforms>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ScatterUploadTimings {
+    pub primary_ms: f64,
+    pub lod_ms: f64,
+}
+
+struct ScreenshotCache {
+    w: u32,
+    h: u32,
+    color_tex: wgpu::Texture,
+    color_view: wgpu::TextureView,
+    _depth_tex: wgpu::Texture,
+    depth_view: wgpu::TextureView,
+    readback: wgpu::Buffer,
+    padded_row: u32,
+}
+
+/// Ray-casting even-odd point-in-polygon test (2D screen coordinates).
+fn point_in_polygon(x: f32, y: f32, poly: &[[f32; 2]]) -> bool {
+    let n = poly.len();
+    let mut inside = false;
+    let mut j = n - 1;
+    for i in 0..n {
+        let [xi, yi] = poly[i];
+        let [xj, yj] = poly[j];
+        if ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi) {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
+}
+
+/// Murmur3-style hash of a point's position bits â€” used to sort the LOD buffer
+/// so that the first N points give an even spatial sample instead of a prefix cluster.
+fn lod_sort_key(p: &PointInstance) -> u32 {
+    let xb = p.position[0].to_bits();
+    let yb = p.position[1].to_bits();
+    let zb = p.position[2].to_bits();
+    let h = xb ^ yb.rotate_left(11) ^ zb.rotate_left(22);
+    let h = h ^ (h >> 16);
+    let h = h.wrapping_mul(0x85ebca6b_u32);
+    let h = h ^ (h >> 13);
+    let h = h.wrapping_mul(0xc2b2ae35_u32);
+    h ^ (h >> 16)
+}
+
+fn lod_sample_count(point_count: usize, lod_factor: u32) -> usize {
+    if point_count == 0 {
+        return 0;
+    }
+    let factor = (lod_factor as usize).max(1);
+    (point_count / factor).max(1).min(point_count)
+}
+
+/// Allocate (or reuse) `lod_buf`/`lod_cap` and write a hash-selected LOD sample of `pts`.
+/// The three scratch Vecs are reused across calls to avoid per-frame heap allocation.
+fn upload_lod_buffer(
+    pts: &[PointInstance],
+    lod_factor: u32,
+    lod_buf: &mut Option<wgpu::Buffer>,
+    lod_cap: &mut u64,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    sampled_scratch: &mut Vec<PointInstance>,
+    bucket_keys_scratch: &mut Vec<u32>,
+    occupied_scratch: &mut Vec<bool>,
+) {
+    let sample_count = lod_sample_count(pts.len(), lod_factor);
+    let size = (sample_count * std::mem::size_of::<PointInstance>()) as u64;
+    if size == 0 {
+        return;
+    }
+    if lod_buf.is_none() || size > *lod_cap {
+        let cap = (size * 2).max(4 * 1024 * 1024);
+        *lod_buf = Some(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("scatter-lod-vb"),
+            size: cap,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        }));
+        *lod_cap = cap;
+    }
+    if sample_count >= pts.len() {
+        queue.write_buffer(lod_buf.as_ref().unwrap(), 0, bytemuck::cast_slice(pts));
+        return;
+    }
+
+    // Grow scratch buffers if needed (never shrink â€” capacity is reused on future calls).
+    if sampled_scratch.len() < sample_count {
+        sampled_scratch.resize(sample_count, PointInstance::zeroed());
+    }
+    if bucket_keys_scratch.len() < sample_count {
+        bucket_keys_scratch.resize(sample_count, u32::MAX);
+    }
+    // Always reset the first sample_count slots â€” old data is stale.
+    bucket_keys_scratch[..sample_count].fill(u32::MAX);
+    if occupied_scratch.len() < sample_count {
+        occupied_scratch.resize(sample_count, false);
+    }
+    occupied_scratch[..sample_count].fill(false);
+
+    let sampled = &mut sampled_scratch[..sample_count];
+    let bucket_keys = &mut bucket_keys_scratch[..sample_count];
+    let occupied = &mut occupied_scratch[..sample_count];
+
+    let mut occupied_count = 0usize;
+    for point in pts {
+        let key = lod_sort_key(point);
+        let bucket = ((key as u64 * sample_count as u64) >> 32) as usize;
+        if !occupied[bucket] {

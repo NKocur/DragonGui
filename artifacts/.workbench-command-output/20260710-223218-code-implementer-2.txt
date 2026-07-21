@@ -1,0 +1,220 @@
+from __future__ import annotations
+
+import base64
+import json
+import struct
+from collections.abc import Callable, Iterable, Mapping, Sequence
+import zlib
+from contextlib import AbstractContextManager
+from contextvars import ContextVar
+from dataclasses import dataclass, replace
+from datetime import date as _Date, datetime as _DateTime, time as _Time
+from itertools import count
+import math
+import numbers
+from pathlib import Path
+import re
+import tempfile
+import threading
+import time
+from typing import Any, ClassVar, Self
+import webbrowser
+
+from .dataframe import (
+    DEFAULT_TABLE_SAMPLE_ROWS,
+    extract_table_column_buffers,
+    extract_table_sample,
+    summarize_frame,
+)
+
+_INCLUDE_STARTUP_RESOURCE_PAYLOADS: ContextVar[bool] = ContextVar(
+    "dragongui_include_startup_resource_payloads",
+    default=True,
+)
+
+
+class _StartupResourcePayloadScope(AbstractContextManager[None]):
+    def __init__(self, include: bool) -> None:
+        self._include = bool(include)
+        self._token: object | None = None
+
+    def __enter__(self) -> None:
+        self._token = _INCLUDE_STARTUP_RESOURCE_PAYLOADS.set(self._include)
+        return None
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        if self._token is not None:
+            _INCLUDE_STARTUP_RESOURCE_PAYLOADS.reset(self._token)  # type: ignore[arg-type]
+            self._token = None
+
+
+def _startup_resource_payload_scope(include: bool) -> AbstractContextManager[None]:
+    return _StartupResourcePayloadScope(include)
+
+
+def _include_startup_resource_payloads() -> bool:
+    return bool(_INCLUDE_STARTUP_RESOURCE_PAYLOADS.get())
+
+
+def _get_frame_col(frame: Any, col: str) -> Any:
+    """Extract a column from a frame, trying subscript access before attribute access."""
+    try:
+        return frame[col]
+    except (KeyError, TypeError, IndexError):
+        pass
+    return getattr(frame, col)
+
+
+def _pack_xyz_bytes(frame: Any, x_col: str, y_col: str, z_col: str) -> object | None:
+    """Serialize xyz columns as packed float32 little-endian xyz triples.
+
+    Returns raw bytes on success, or None if the frame has no accessible array
+    attributes (e.g. mock frames used in tests).  NumPy is required for
+    efficient serialization; without it this returns None.
+    """
+    try:
+        import numpy as np
+
+        xs = np.asarray(_get_frame_col(frame, x_col), dtype=np.float32)
+        ys = np.asarray(_get_frame_col(frame, y_col), dtype=np.float32)
+        zs = np.asarray(_get_frame_col(frame, z_col), dtype=np.float32)
+        if len(xs) == 0:
+            return b""
+        out = np.empty((len(xs), 3), dtype="<f4")
+        out[:, 0] = xs
+        out[:, 1] = ys
+        out[:, 2] = zs
+        return out.view(np.uint8).reshape(-1)
+    except (ImportError, AttributeError, TypeError, ValueError):
+        return None
+
+
+def _try_pack_xyz(frame: Any, x_col: str, y_col: str, z_col: str) -> str | None:
+    """Serialize xyz columns as base64 for startup document compatibility."""
+    buf = _pack_xyz_bytes(frame, x_col, y_col, z_col)
+    if buf is None:
+        return None
+    return base64.b64encode(buf).decode("ascii")
+
+
+class _Scatter2DFrame:
+    """Frame adapter that supplies a synthetic zero-z column for Scatter3D."""
+
+    z_col = "_scatter2d_z"
+
+    def __init__(self, frame: Any, x_col: str, y_col: str) -> None:
+        self._frame = frame
+        self._x_col = str(x_col)
+        self._y_col = str(y_col)
+        source_columns = getattr(frame, "columns", None)
+        if source_columns is not None:
+            columns = tuple(str(column) for column in source_columns)
+        else:
+            columns = (self._x_col, self._y_col)
+        if self.z_col not in columns:
+            columns = (*columns, self.z_col)
+        self.columns = columns
+
+        source_dtypes = getattr(frame, "dtypes", None)
+        try:
+            dtypes = tuple(str(dtype) for dtype in source_dtypes) if source_dtypes is not None else ()
+        except TypeError:
+            dtypes = ()
+        if len(dtypes) == len(columns) - 1:
+            dtypes = (*dtypes, "float32")
+        elif len(dtypes) != len(columns):
+            dtypes = tuple("" for _ in columns)
+        self.dtypes = dtypes
+
+        source_shape = getattr(frame, "shape", None)
+        if isinstance(source_shape, tuple) and source_shape:
+            self.shape = (source_shape[0], len(columns))
+        else:
+            try:
+                self.shape = (len(frame), len(columns))
+            except TypeError:
+                self.shape = (None, len(columns))
+
+    @property
+    def index(self) -> Any:
+        return getattr(self._frame, "index")
+
+    def _zero_z(self) -> Any:
+        import numpy as np
+
+        y = np.asarray(_get_frame_col(self._frame, self._y_col), dtype=np.float32).reshape(-1)
+        return np.zeros(len(y), dtype=np.float32)
+
+    def __getitem__(self, column: str) -> Any:
+        if str(column) == self.z_col:
+            return self._zero_z()
+        try:
+            return self._frame[column]
+        except (KeyError, TypeError, IndexError):
+            pass
+        try:
+            return getattr(self._frame, str(column))
+        except AttributeError as exc:
+            raise KeyError(column) from exc
+
+    def __getattr__(self, name: str) -> Any:
+        if name == self.z_col:
+            return self._zero_z()
+        return getattr(self._frame, name)
+
+
+def _pack_xy_bytes(frame: Any, x_col: str | None, y_col: str) -> object | None:
+    """Serialize xy columns as packed float32 little-endian pairs."""
+    try:
+        import numpy as np
+
+        ys = np.asarray(_get_frame_col(frame, y_col), dtype=np.float32).reshape(-1)
+        if x_col is None:
+            xs = np.arange(len(ys), dtype=np.float32)
+        else:
+            xs = np.asarray(_get_frame_col(frame, x_col), dtype=np.float32).reshape(-1)
+        if len(xs) != len(ys):
+            raise ValueError("LinePlot x and y columns must have the same length")
+        if len(ys) == 0:
+            return b""
+        out = np.empty((len(ys), 2), dtype="<f4")
+        out[:, 0] = xs
+        out[:, 1] = ys
+        return out.view(np.uint8).reshape(-1)
+    except (ImportError, AttributeError, TypeError, ValueError):
+        return None
+
+
+def _try_pack_xy(frame: Any, x_col: str | None, y_col: str) -> str | None:
+    """Serialize xy columns as base64 for startup document compatibility."""
+    buf = _pack_xy_bytes(frame, x_col, y_col)
+    if buf is None:
+        return None
+    return base64.b64encode(buf).decode("ascii")
+
+
+# Qualitative palette for categorical colors (tab10-style, [0,1] RGB).
+_CATEGORICAL_PALETTE: list[tuple[float, float, float]] = [
+    (0.122, 0.467, 0.706),  # blue
+    (1.000, 0.498, 0.055),  # orange
+    (0.173, 0.627, 0.173),  # green
+    (0.839, 0.153, 0.157),  # red
+    (0.580, 0.404, 0.741),  # purple
+    (0.549, 0.337, 0.294),  # brown
+    (0.890, 0.467, 0.761),  # pink
+    (0.498, 0.498, 0.498),  # gray
+    (0.737, 0.741, 0.133),  # olive
+    (0.090, 0.745, 0.812),  # teal
+]
+_CATEGORICAL_MAX_UNIQUE = 20
+
+
+def _is_categorical(arr: Any) -> bool:
+    """Return True if the array looks like a categorical (string or low-cardinality int)."""
+    import numpy as np
+    a = np.asarray(arr)
+    if a.dtype.kind in ("U", "S", "O"):
+        return True
+    if a.dtype.kind in ("i", "u") and len(np.unique(a)) <= _CATEGORICAL_MAX_UNIQUE:
+        return True
+    return False

@@ -1,0 +1,220 @@
+from __future__ import annotations
+
+import json
+
+import pytest
+
+import dragongui as dg
+from dragongui.runtime import AppHandle
+from dragongui.vdom import (
+    Patch,
+    ResourceRef,
+    VNode,
+    diff,
+    retain_old_ids,
+    shallow_value_equal,
+    widget_to_vnode,
+)
+
+
+def test_widget_tree_converts_to_vnode_document_shape() -> None:
+    app = dg.App()
+    win = dg.Window("VNode", width=640, height=480, key="root", class_="demo")
+
+    with dg.HLayout(key="row", style={"gap": 12}):
+        dg.Label("Ready", key="label")
+        dg.Button("Run", key="run", style={"background": "accent"})
+
+    vnode = widget_to_vnode(win)
+
+    assert vnode.to_dict() == win.to_dict()
+    assert win.to_vnode().to_dict() == win.to_dict()
+    assert app.document(win)["window"] == vnode.to_dict()
+
+
+def test_vdom_diff_emits_targeted_prop_and_style_patches() -> None:
+    old = widget_to_vnode(
+        dg.Button(
+            "Run",
+            id="run",
+            key="run",
+            class_="primary",
+            style={"background": "surface_alt", "hover": {"background": "accent_mix_20"}},
+            parent=None,
+        )
+    )
+    new = widget_to_vnode(
+        dg.Button(
+            "Stop",
+            id="run",
+            key="run",
+            class_="danger",
+            style={"background": "danger", "hover": {"background": "accent_mix_20"}},
+            parent=None,
+        )
+    )
+
+    patches = diff(old, new)
+
+    assert {
+        (patch.kind, patch.prop) for patch in patches if patch.kind == Patch.SET_PROP
+    } == {
+        (Patch.SET_PROP, "class"),
+        (Patch.SET_PROP, "text"),
+    }
+    style_patches = [patch for patch in patches if patch.kind == Patch.SET_STYLE]
+    assert len(style_patches) == 1
+    assert style_patches[0].style == {"background": "danger"}
+    assert all(patch.kind != Patch.REPLACE_NODE for patch in patches)
+
+
+def test_vdom_diff_replaces_node_when_identity_changes() -> None:
+    old = widget_to_vnode(dg.Label("Old", id="same-id", key="old", parent=None))
+    new = widget_to_vnode(dg.Label("New", id="same-id", key="new", parent=None))
+
+    patches = diff(old, new)
+
+    assert len(patches) == 1
+    assert patches[0].kind == Patch.REPLACE_NODE
+    assert patches[0].node is new
+
+
+def test_vdom_diff_uses_keyed_child_identity_for_reorder() -> None:
+    old = dg.HLayout(id="row", key="row", parent=None)
+    dg.Label("A", id="a", key="a", parent=old)
+    dg.Label("B", id="b", key="b", parent=old)
+
+    new = dg.HLayout(id="row", key="row", parent=None)
+    dg.Label("B", id="b", key="b", parent=new)
+    dg.Label("A", id="a", key="a", parent=new)
+
+    patches = diff(widget_to_vnode(old), widget_to_vnode(new))
+
+    assert len(patches) == 1
+    assert patches[0].kind == Patch.REPLACE_CHILDREN
+    assert [child.key for child in patches[0].children] == ["b", "a"]
+
+
+def test_vdom_diff_recurses_when_child_identity_is_stable() -> None:
+    old = dg.HLayout(id="row", key="row", parent=None)
+    dg.Label("A", id="a", key="a", parent=old)
+
+    new = dg.HLayout(id="row", key="row", parent=None)
+    dg.Label("A updated", id="a", key="a", parent=new)
+
+    patches = diff(widget_to_vnode(old), widget_to_vnode(new))
+
+    assert len(patches) == 1
+    assert patches[0].kind == Patch.SET_PROP
+    assert patches[0].node_id == "a"
+    assert patches[0].prop == "text"
+    assert patches[0].value == "A updated"
+
+
+def test_retain_old_ids_preserves_matching_children_when_sibling_removed() -> None:
+    old = VNode(
+        type="h_layout",
+        id="row-old",
+        key="row",
+        children=(
+            VNode(type="button", id="a-old", key="a", props={"text": "A"}),
+            VNode(type="button", id="b-old", key="b", props={"text": "B"}),
+            VNode(type="button", id="c-old", key="c", props={"text": "C"}),
+        ),
+        container=True,
+    )
+    new = VNode(
+        type="h_layout",
+        id="row-new",
+        key="row",
+        children=(
+            VNode(type="button", id="a-new", key="a", props={"text": "A"}),
+            VNode(type="button", id="b-new", key="b", props={"text": "B"}),
+        ),
+        container=True,
+    )
+
+    retained = retain_old_ids(old, new)
+
+    assert retained.id == "row-old"
+    assert [child.id for child in retained.children] == ["a-old", "b-old"]
+    patches = diff(old, retained)
+    assert len(patches) == 1
+    assert patches[0].kind == Patch.REPLACE_CHILDREN
+    assert [child.id for child in patches[0].children] == ["a-old", "b-old"]
+
+
+def test_pseudo_state_style_mappings_compare_structurally() -> None:
+    style = {
+        "background": "surface",
+        "hover": {"background": "accent_mix_20"},
+        "active": {"background": "accent_dark"},
+    }
+
+    assert shallow_value_equal(style, dict(style))
+    assert diff(
+        VNode(type="button", id="run", key="run", style=style),
+        VNode(type="button", id="run", key="run", style=dict(style)),
+    ) == []
+
+
+def test_small_nested_sequences_compare_structurally() -> None:
+    columns = [10, {"fr": 1}, "auto"]
+
+    assert shallow_value_equal(columns, list(columns))
+    assert diff(
+        VNode(type="grid_layout", id="grid", key="grid", props={"template_columns": columns}),
+        VNode(
+            type="grid_layout",
+            id="grid",
+            key="grid",
+            props={"template_columns": list(columns)},
+        ),
+    ) == []
+
+
+def test_resource_refs_compare_by_identity_and_version_only() -> None:
+    class ExplosiveEq:
+        def __eq__(self, other: object) -> bool:
+            raise AssertionError("deep equality should not be called")
+
+    first = ExplosiveEq()
+    second = ExplosiveEq()
+
+    assert ResourceRef.from_value(first, version=1) == ResourceRef.from_value(first, version=1)
+    assert ResourceRef.from_value(first, version=1) != ResourceRef.from_value(first, version=2)
+    assert ResourceRef.from_value(first, version=1) != ResourceRef.from_value(second, version=1)
+    assert shallow_value_equal(first, first)
+    assert not shallow_value_equal(first, second)
+
+
+def test_vdom_diff_treats_resource_like_props_as_handles() -> None:
+    class ExplosiveEq:
+        def __eq__(self, other: object) -> bool:
+            raise AssertionError("deep equality should not be called")
+
+    frame = ExplosiveEq()
+    old = VNode(
+        type="scatter_3d",
+        id="scatter",
+        key="scatter",
+        props={"frame": ResourceRef.from_value(frame, version=1), "x": "x"},
+    )
+    same = VNode(
+        type="scatter_3d",
+        id="scatter",
+        key="scatter",
+        props={"frame": ResourceRef.from_value(frame, version=1), "x": "x"},
+    )
+    updated = VNode(
+        type="scatter_3d",
+        id="scatter",
+        key="scatter",
+        props={"frame": ResourceRef.from_value(frame, version=2), "x": "x"},
+    )
+
+    assert diff(old, same) == []
+    patches = diff(old, updated)
+    assert len(patches) == 1
+    assert patches[0].kind == Patch.SET_PROP
+    assert patches[0].prop == "scatter"

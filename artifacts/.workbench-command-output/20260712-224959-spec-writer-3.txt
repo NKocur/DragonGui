@@ -1,0 +1,215 @@
+native\src\scatter\composite.wgsl:2:    target_rect: vec4<f32>,
+native\src\scatter\composite.wgsl:26:    let px = uniforms.target_rect.xy + p * uniforms.target_rect.zw;
+native\src\scatter\mod.rs:138:/// Where the legend is anchored within the scatter viewport.
+native\src\scatter\mod.rs:325:/// Project a 3D world-space position to viewport-local screen-space coordinates.
+native\src\scatter\mod.rs:352:/// Stores the projected viewport-local coordinates of all visible points in a
+native\src\scatter\mod.rs:354:/// invalidated whenever the view–projection matrix or viewport dimensions change.
+native\src\scatter\mod.rs:365:    /// Projected viewport-local `[sx, sy]` for each source point.
+native\src\scatter\mod.rs:382:    /// `width × height` viewport.
+native\src\scatter\mod.rs:471:    /// centred at `(local_x, local_y)` (viewport-local pixels) with radius `radius_px`.
+native\src\scatter\mod.rs:639:/// World-space label projected to the scatter viewport's screen space.
+native\src\scatter\mod.rs:674:    scissor_offset: [u32; 2],
+native\src\scatter\mod.rs:675:    scissor_size: [u32; 2],
+native\src\scatter\mod.rs:1100:    scissor_offset: [u32; 2],
+native\src\scatter\mod.rs:1101:    scissor_size: [u32; 2],
+native\src\scatter\mod.rs:1118:    let scissor_x = left.floor().max(0.0) as u32;
+native\src\scatter\mod.rs:1119:    let scissor_y = top.floor().max(0.0) as u32;
+native\src\scatter\mod.rs:1120:    let scissor_right = right.ceil().max(scissor_x as f32) as u32;
+native\src\scatter\mod.rs:1121:    let scissor_bottom = bottom.ceil().max(scissor_y as f32) as u32;
+native\src\scatter\mod.rs:1126:        scissor_offset: [scissor_x, scissor_y],
+native\src\scatter\mod.rs:1127:        scissor_size: [
+native\src\scatter\mod.rs:1128:            scissor_right.saturating_sub(scissor_x),
+native\src\scatter\mod.rs:1129:            scissor_bottom.saturating_sub(scissor_y),
+native\src\scatter\mod.rs:1157:    scissor_offset: [u32; 2],
+native\src\scatter\mod.rs:1158:    scissor_size: [u32; 2],
+native\src\scatter\mod.rs:1201:    /// TriangleList pipeline for background fill quad — respects viewport/scissor.
+native\src\scatter\mod.rs:1550:            scissor_offset: [0, 0],
+native\src\scatter\mod.rs:1551:            scissor_size: [width, height],
+native\src\scatter\mod.rs:2336:        self.scissor_offset = rect.scissor_offset;
+native\src\scatter\mod.rs:2337:        self.scissor_size = rect.scissor_size;
+native\src\scatter\mod.rs:2341:        // Screen position and scissor changes happen continuously while a parent
+native\src\scatter\mod.rs:2353:    /// Returns the viewport bounds as [left, top, right, bottom] in physical pixels.
+native\src\scatter\mod.rs:2355:    pub fn viewport_clip(&self) -> [f32; 4] {
+native\src\scatter\mod.rs:2364:    /// True when the scatter has a non-empty visible viewport.
+native\src\scatter\mod.rs:2370:    pub fn has_visible_viewport(&self) -> bool {
+native\src\scatter\mod.rs:2371:        self.width > 1 && self.height > 1 && self.scissor_size[0] > 1 && self.scissor_size[1] > 1
+native\src\scatter\mod.rs:2499:        let saved_scissor_offset = self.scissor_offset;
+native\src\scatter\mod.rs:2500:        let saved_scissor_size = self.scissor_size;
+native\src\scatter\mod.rs:2502:        self.scissor_offset = [0, 0];
+native\src\scatter\mod.rs:2503:        self.scissor_size = [w, h];
+native\src\scatter\mod.rs:2550:        self.scissor_offset = saved_scissor_offset;
+native\src\scatter\mod.rs:2551:        self.scissor_size = saved_scissor_size;
+native\src\scatter\mod.rs:2652:            || self.scissor_size[0] == 0
+native\src\scatter\mod.rs:2653:            || self.scissor_size[1] == 0
+native\src\scatter\mod.rs:2662:            scissor_offset: self.scissor_offset,
+native\src\scatter\mod.rs:2663:            scissor_size: self.scissor_size,
+native\src\scatter\mod.rs:2782:        let sx0 = self.scissor_offset[0] as f32;
+native\src\scatter\mod.rs:2783:        let sy0 = self.scissor_offset[1] as f32;
+native\src\scatter\mod.rs:2784:        let sx1 = sx0 + self.scissor_size[0] as f32;
+native\src\scatter\mod.rs:2785:        let sy1 = sy0 + self.scissor_size[1] as f32;
+native\src\scatter\mod.rs:2789:        let visible_in_scissor = move |local_x: f32, local_y: f32| -> bool {
+native\src\scatter\mod.rs:2860:                if !visible_in_scissor(local_x, local_y) {
+native\src\scatter\mod.rs:2885:            if !visible_in_scissor(local_x, local_y) {
+native\src\scatter\mod.rs:2918:        // Background fill: 6 NDC-space vertices (2 triangles) covering the viewport.
+native\src\scatter\mod.rs:2919:        // Drawn with bg_pipeline (TriangleList) so viewport/scissor clips it — not a pass clear.
+native\src\scatter\mod.rs:3003:        // Helper: convert viewport-local px coords → NDC
+native\src\scatter\mod.rs:3239:            let sx0 = self.scissor_offset[0] as f32;
+native\src\scatter\mod.rs:3240:            let sy0 = self.scissor_offset[1] as f32;
+native\src\scatter\mod.rs:3241:            let sx1 = sx0 + self.scissor_size[0] as f32;
+native\src\scatter\mod.rs:3242:            let sy1 = sy0 + self.scissor_size[1] as f32;
+native\src\scatter\mod.rs:3937:        let scissor_left = self.scissor_offset[0] as f32;
+native\src\scatter\mod.rs:3938:        let scissor_top = self.scissor_offset[1] as f32;
+native\src\scatter\mod.rs:3939:        let scissor_right = scissor_left + self.scissor_size[0] as f32;
+native\src\scatter\mod.rs:3940:        let scissor_bottom = scissor_top + self.scissor_size[1] as f32;
+native\src\scatter\mod.rs:3941:        if x < scissor_left || x >= scissor_right || y < scissor_top || y >= scissor_bottom {
+native\src\scatter\mod.rs:3992:    /// within the pixel rect `[x0, y0, x1, y1]` relative to the scatter viewport.
+native\src\scatter\mod.rs:4032:    /// `poly` is a list of viewport-local pixel coordinates forming the polygon boundary.
+native\src\scatter\mod.rs:4073:    /// Applies viewport and scissor so the scatter only draws within its region.
+native\src\scatter\mod.rs:4075:        self.render_with_viewport(
+native\src\scatter\mod.rs:4079:            self.scissor_offset,
+native\src\scatter\mod.rs:4080:            self.scissor_size,
+native\src\scatter\mod.rs:4090:        let (scissor_offset, scissor_size) = self.scaled_local_scissor(target_width, target_height);
+native\src\scatter\mod.rs:4091:        self.render_with_viewport(
+native\src\scatter\mod.rs:4095:            scissor_offset,
+native\src\scatter\mod.rs:4096:            scissor_size,
+native\src\scatter\mod.rs:4100:    pub fn scaled_render_target_size(&self, scale: f32) -> (u32, u32) {
+native\src\scatter\mod.rs:4108:    fn scaled_local_scissor(&self, target_width: u32, target_height: u32) -> ([u32; 2], [u32; 2]) {
+native\src\scatter\mod.rs:4114:        let left = ((self.scissor_offset[0] as f32 - self.offset[0]).max(0.0) * sx)
+native\src\scatter\mod.rs:4117:        let top = ((self.scissor_offset[1] as f32 - self.offset[1]).max(0.0) * sy)
+native\src\scatter\mod.rs:4120:        let right = ((self.scissor_offset[0] as f32 + self.scissor_size[0] as f32 - self.offset[0])
+native\src\scatter\mod.rs:4125:        let bottom = ((self.scissor_offset[1] as f32 + self.scissor_size[1] as f32
+native\src\scatter\mod.rs:4137:    fn render_with_viewport<'pass, 'data: 'pass>(
+native\src\scatter\mod.rs:4140:        viewport_offset: [f32; 2],
+native\src\scatter\mod.rs:4141:        viewport_size: [f32; 2],
+native\src\scatter\mod.rs:4142:        scissor_offset: [u32; 2],
+native\src\scatter\mod.rs:4143:        scissor_size: [u32; 2],
+native\src\scatter\mod.rs:4166:            || scissor_size[0] == 0
+native\src\scatter\mod.rs:4167:            || scissor_size[1] == 0
+native\src\scatter\mod.rs:4172:        pass.set_viewport(
+native\src\scatter\mod.rs:4173:            viewport_offset[0],
+native\src\scatter\mod.rs:4174:            viewport_offset[1],
+native\src\scatter\mod.rs:4175:            viewport_size[0],
+native\src\scatter\mod.rs:4176:            viewport_size[1],
+native\src\scatter\mod.rs:4180:        pass.set_scissor_rect(
+native\src\scatter\mod.rs:4181:            scissor_offset[0],
+native\src\scatter\mod.rs:4182:            scissor_offset[1],
+native\src\scatter\mod.rs:4183:            scissor_size[0],
+native\src\scatter\mod.rs:4184:            scissor_size[1],
+native\src\scatter\mod.rs:4479:    fn clipped_scatter_keeps_full_viewport_and_visible_scissor() {
+native\src\scatter\mod.rs:4485:        assert_eq!(rect.scissor_offset, [20, 96]);
+native\src\scatter\mod.rs:4486:        assert_eq!(rect.scissor_size, [300, 72]);
+native\src\scatter\mod.rs:4525:    // For a 100×100 viewport:
+native\src\scatter\mod.rs:4582:        // pos (0,0,0.5) → screen (50,50) in 100×100 viewport.
+native\src\scatter\mod.rs:4612:        // p0 → screen (10,10), p1 → screen (90,90) in 100×100 viewport.
+native\src\scatter\mod.rs:4633:        // A radius of 100px from center (50,50) covers the whole viewport.
+native\src\runtime.rs:1259:    target_rect: [f32; 4],
+native\src\runtime.rs:1274:            label: Some("scatter-composite"),
+native\src\runtime.rs:1275:            source: wgpu::ShaderSource::Wgsl(include_str!("scatter/composite.wgsl").into()),
+native\src\runtime.rs:1278:            label: Some("scatter-composite-bgl"),
+native\src\runtime.rs:1309:            label: Some("scatter-composite-pl"),
+native\src\runtime.rs:1314:            label: Some("scatter-composite"),
+native\src\runtime.rs:1353:            label: Some("scatter-composite-sampler"),
+native\src\runtime.rs:1362:            label: Some("scatter-composite-uniforms"),
+native\src\runtime.rs:1381:            label: Some("scatter-composite-bg"),
+native\src\runtime.rs:1403:        target_rect: [f32; 4],
+native\src\runtime.rs:1408:            target_rect,
+native\src\runtime.rs:1426:struct ScatterRenderTarget {
+native\src\runtime.rs:1438:impl ScatterRenderTarget {
+native\src\runtime.rs:1594:fn collect_visible_scatter_ids(
+native\src\runtime.rs:1609:            collect_visible_scatter_ids(child, layout, out);
+native\src\runtime.rs:1616:        collect_visible_scatter_ids(child, layout, out);
+native\src\runtime.rs:5047:            "clicking below the thumb should page down by one viewport, not jump to the click"
+native\src\runtime.rs:5052:            "clicking above the thumb should page up by one viewport"
+native\src\runtime.rs:5805:    visible_scatter_order: Vec<String>,
+native\src\runtime.rs:5937:    last_render_composite_ms: f64,
+native\src\runtime.rs:5941:    render_composite_timing: StageTimingStats,
+native\src\runtime.rs:6004:    render_target: Option<ScatterRenderTarget>,
+native\src\runtime.rs:6019:    /// Fit command received before the scatter had a real viewport.
+native\src\runtime.rs:6081:        if !self.widget.has_visible_viewport() {
+native\src\runtime.rs:6171:    /// Caches are rebuilt automatically when the view–projection matrix or viewport
+native\src\runtime.rs:7330:                        render_target: None,
+native\src\runtime.rs:7429:            visible_scatter_order: Vec::new(),
+native\src\runtime.rs:7526:    fn reapply_stylesheets_for_current_viewport(&mut self) {
+native\src\runtime.rs:7560:    /// Recompute layout and push scatter viewport + primitives + text to GPU.
+native\src\runtime.rs:7564:        self.reapply_stylesheets_for_current_viewport();
+native\src\runtime.rs:7586:            visible_scatter_order,
+native\src\runtime.rs:7650:        collect_visible_scatter_ids(tree, &layout, &mut new_visible_order);
+native\src\runtime.rs:7651:        *visible_scatter_order = new_visible_order.clone();
+native\src\runtime.rs:7703:                        && runtime.widget.has_visible_viewport()
+native\src\runtime.rs:8830:    fn scatter_at(&self, pos: [f32; 2]) -> Option<String> {
+native\src\runtime.rs:8831:        for id in self.visible_scatter_order.iter().rev() {
+native\src\runtime.rs:8887:    /// `rect` is in physical pixels relative to the scatter viewport.
+native\src\runtime.rs:9965:        if !runtime.fitted_once && runtime.widget.has_visible_viewport() {
+native\src\runtime.rs:10001:            last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+native\src\runtime.rs:10035:        if !runtime.fitted_once && runtime.widget.has_visible_viewport() {
+native\src\runtime.rs:10071:            last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+native\src\runtime.rs:10276:                        render_target: None,
+native\src\runtime.rs:11743:                    last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+native\src\runtime.rs:11770:                    && runtime.widget.has_visible_viewport()
+native\src\runtime.rs:11821:                    last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+native\src\runtime.rs:11867:                        && runtime.widget.has_visible_viewport()
+native\src\runtime.rs:11918:                        last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+native\src\runtime.rs:12016:                last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+native\src\runtime.rs:12055:        // can fit with the real viewport dimensions.
+native\src\runtime.rs:12059:            && runtime.widget.has_visible_viewport()
+native\src\runtime.rs:12110:            last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+native\src\runtime.rs:12127:            .visible_scatter_order
+native\src\runtime.rs:12213:        self.reapply_stylesheets_for_current_viewport();
+native\src\runtime.rs:12381:            "last_render_composite_ms".to_string(),
+native\src\runtime.rs:12382:            json!(rt.metrics.last_render_composite_ms),
+native\src\runtime.rs:12413:            "render_composite_avg_ms".to_string(),
+native\src\runtime.rs:12414:            json!(rt.metrics.render_composite_timing.avg_ms()),
+native\src\runtime.rs:12419:                .render_target
+native\src\runtime.rs:12478:            let [clip_left, clip_top, clip_right, clip_bottom] = rt.widget.viewport_clip();
+native\src\runtime.rs:12481:                "viewport".to_string(),
+native\src\runtime.rs:12596:        let scatter = self.visible_scatter_order.first().and_then(|id| {
+native\src\runtime.rs:12737:                "scatter_widget_id": self.visible_scatter_order.first().map(|s| s.as_str()),
+native\src\runtime.rs:13557:                visible_scatter_order,
+native\src\runtime.rs:13573:                for id in visible_scatter_order.iter() {
+native\src\runtime.rs:13575:                        let [vl, vt, vr, vb] = rt.widget.viewport_clip();
+native\src\runtime.rs:13689:        let scatter_order = self.visible_scatter_order.clone();
+native\src\runtime.rs:13690:        for scatter_id in &scatter_order {
+native\src\runtime.rs:13702:                        runtime.widget.scaled_render_target_size(render_scale);
+native\src\runtime.rs:13703:                    let cached_matches = runtime.render_target.as_ref().is_some_and(|target| {
+native\src\runtime.rs:13712:                let mut composite_ms = 0.0;
+native\src\runtime.rs:13716:                        runtime.widget.scaled_render_target_size(render_scale);
+native\src\runtime.rs:13718:                        .render_target
+native\src\runtime.rs:13725:                        runtime.render_target = Some(ScatterRenderTarget::new(
+native\src\runtime.rs:13734:                        .render_target
+native\src\runtime.rs:13741:                        let target = runtime.render_target.as_ref().unwrap();
+native\src\runtime.rs:13780:                        if let Some(target) = runtime.render_target.as_mut() {
+native\src\runtime.rs:13798:                        let composite_t0 = Instant::now();
+native\src\runtime.rs:13799:                        let target = runtime.render_target.as_ref().unwrap();
+native\src\runtime.rs:13801:                            label: Some("dragongui-scatter-composite"),
+native\src\runtime.rs:13818:                        composite_ms = composite_t0.elapsed().as_secs_f64() * 1000.0;
+native\src\runtime.rs:13855:                runtime.metrics.last_render_composite_ms = composite_ms;
+native\src\runtime.rs:13862:                runtime.metrics.render_composite_timing.record(composite_ms);
+native\src\runtime.rs:13900:            pass.set_viewport(
+native\src\runtime.rs:13908:            pass.set_scissor_rect(0, 0, self.config.width, self.config.height);
+native\src\runtime.rs:14689:    active_scatter_id: Option<String>,
+native\src\runtime.rs:14777:            active_scatter_id: None,
+native\src\runtime.rs:15140:            "active_scatter_id".to_string(),
+native\src\runtime.rs:15141:            json!(self.active_scatter_id.as_deref()),
+native\src\runtime.rs:15201:        self.active_scatter_id = Some(scatter_id.clone());
+native\src\runtime.rs:15219:        if let Some(sid) = self.active_scatter_id.clone() {
+native\src\runtime.rs:15228:            self.active_scatter_id = None;
+native\src\runtime.rs:15233:    fn cancel_scatter_interaction(&mut self) -> bool {
+native\src\runtime.rs:15238:            || self.active_scatter_id.is_some();
+native\src\runtime.rs:15239:        let active_id = self.active_scatter_id.clone();
+native\src\runtime.rs:15245:        self.active_scatter_id = None;
+native\src\runtime.rs:15998:                    if !rt.widget.has_visible_viewport() {
+native\src\runtime.rs:19604:                    .active_scatter_id
+native\src\runtime.rs:19606:                    .or_else(|| gpu.visible_scatter_order.first().cloned());
+native\src\runtime.rs:20141:                if self.cancel_scatter_interaction() {
+native\src\runtime.rs:20247:                                if let Some(scatter_id) = self.active_scatter_id.clone() {
+native\src\runtime.rs:20306:                                if let Some(scatter_id) = self.active_scatter_id.clone() {
+native\src\runtime.rs:20340:                                self.active_scatter_id = None;
+native\src\runtime.rs:20719:                            let scatter_id = self.gpu.as_ref().and_then(|g| g.scatter_at(pos));
+native\src\runtime.rs:20724:                                self.active_scatter_id = Some(sid.clone());
+native\src\runtime.rs:20794:                                self.active_scatter_id = None;
+native\src\runtime.rs:20831:                            let pan_scatter_id = self.gpu.as_ref().and_then(|g| g.scatter_at(pos));
+native\src\runtime.rs:20844:                if self.cancel_scatter_interaction() {
+native\src\runtime.rs:20969:                    if let Some(sid) = self.active_scatter_id.clone() {
+native\src\runtime.rs:20990:                        if let Some(sid) = self.active_scatter_id.clone() {
+native\src\runtime.rs:21099:                    let hovered_sid = self.gpu.as_ref().and_then(|g| g.scatter_at(new_pos));
+native\src\runtime.rs:21391:                    if let Some(sid) = self.gpu.as_ref().and_then(|gpu| gpu.scatter_at(pos)) {

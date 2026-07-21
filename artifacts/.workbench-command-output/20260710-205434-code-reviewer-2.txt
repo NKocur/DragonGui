@@ -1,0 +1,180 @@
+                other_label=other_label,
+            )
+        else:
+            if labels is None or values is None:
+                raise ValueError("PieChart requires labels/values or frame data with category=")
+            payload = _normalize_pie_data(
+                labels,
+                values,
+                colors=colors,
+                top_n=top_n,
+                other_label=other_label,
+            )
+        self.data = data
+        self.category = None if category is None else str(category)
+        self.value = None if value is None else str(value)
+        self.aggregate = _pie_aggregate(aggregate)
+        self.top_n = _pie_top_n(top_n)
+        self.other_label = str(other_label)
+        self.donut = bool(donut)
+        self.inner_radius = max(0.18, min(0.82, float(inner_radius)))
+        self.start_angle = float(start_angle)
+        self.clockwise = bool(clockwise)
+        self.label_mode = _pie_label_mode(label_mode)
+        self.value_mode = _pie_value_mode(value_mode)
+        self.show_legend = bool(show_legend)
+        self.legend_position = _pie_legend_position(legend_position)
+        self.show_labels = bool(show_labels)
+        self.show_toolbar = bool(show_toolbar)
+        self.selected = selected
+        self.center_value = None if center_value is None else str(center_value)
+        self.center_label = None if center_label is None else str(center_label)
+        self.title = None if title is None else str(title)
+        self._payload = payload
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def set_data(
+        self,
+        labels: Sequence[object],
+        values: Sequence[object],
+        *,
+        colors: Sequence[object] | Mapping[str, object] | None = None,
+        top_n: int | None | object = _UNSET,
+        other_label: str | object = _UNSET,
+    ) -> None:
+        self.data = None
+        self.category = None
+        self.value = None
+        effective_top_n = self.top_n if top_n is _UNSET else _pie_top_n(top_n)
+        effective_other_label = (
+            self.other_label if other_label is _UNSET else str(other_label)
+        )
+        self.top_n = effective_top_n
+        self.other_label = effective_other_label
+        self._payload = _normalize_pie_data(
+            labels,
+            values,
+            colors=colors,
+            top_n=effective_top_n,
+            other_label=effective_other_label,
+        )
+        self._replace_live_node()
+
+    def set_frame_data(
+        self,
+        data: Any,
+        *,
+        category: str | None = None,
+        value: str | None | object = _UNSET,
+        aggregate: str | None = None,
+        colors: Sequence[object] | Mapping[str, object] | None = None,
+        top_n: int | None | object = _UNSET,
+        other_label: str | object = _UNSET,
+    ) -> None:
+        effective_category = self.category if category is None else str(category)
+        if effective_category is None:
+            raise ValueError("PieChart frame data requires category=")
+        effective_value = (
+            self.value if value is _UNSET else None if value is None else str(value)
+        )
+        effective_aggregate = self.aggregate if aggregate is None else _pie_aggregate(aggregate)
+        effective_top_n = self.top_n if top_n is _UNSET else _pie_top_n(top_n)
+        effective_other_label = (
+            self.other_label if other_label is _UNSET else str(other_label)
+        )
+
+        self.data = data
+        self.category = effective_category
+        self.value = effective_value
+        self.aggregate = effective_aggregate
+        self.top_n = effective_top_n
+        self.other_label = effective_other_label
+        self._payload = _pie_from_frame(
+            data,
+            category=effective_category,
+            value=effective_value,
+            aggregate=effective_aggregate,
+            colors=colors,
+            top_n=effective_top_n,
+            other_label=effective_other_label,
+        )
+        self._replace_live_node()
+
+    def set_selected(self, selected: str | int | None) -> None:
+        self.selected = selected
+        self._replace_live_node()
+
+    def clear_selection(self) -> None:
+        self.set_selected(None)
+
+    def set_title(self, title: str | None) -> None:
+        self.title = None if title is None else str(title)
+        self._replace_live_node()
+
+    def set_center_text(
+        self,
+        value: str | None | object = _UNSET,
+        label: str | None | object = _UNSET,
+    ) -> None:
+        if value is not _UNSET:
+            self.center_value = None if value is None else str(value)
+        if label is not _UNSET:
+            self.center_label = None if label is None else str(label)
+        self._replace_live_node()
+
+    def set_donut(self, donut: bool = True, *, inner_radius: float | object = _UNSET) -> None:
+        self.donut = bool(donut)
+        if inner_radius is not _UNSET:
+            self.inner_radius = max(0.18, min(0.82, float(inner_radius)))
+        self._replace_live_node()
+
+    def set_labels_visible(self, visible: bool) -> None:
+        self.show_labels = bool(visible)
+        self._replace_live_node()
+
+    def set_toolbar_visible(self, visible: bool) -> None:
+        self.show_toolbar = bool(visible)
+        self._replace_live_node()
+
+    def set_legend_visible(self, visible: bool) -> None:
+        self.show_legend = bool(visible)
+        self._replace_live_node()
+
+    def set_legend_position(self, position: str) -> None:
+        self.legend_position = _pie_legend_position(position)
+        self._replace_live_node()
+
+    def set_label_mode(self, mode: str) -> None:
+        self.label_mode = _pie_label_mode(mode)
+        self._replace_live_node()
+
+    def set_value_mode(self, mode: str) -> None:
+        self.value_mode = _pie_value_mode(mode)
+        self._replace_live_node()
+
+    def set_start_angle(self, angle: float) -> None:
+        self.start_angle = float(angle)
+        self._replace_live_node()
+
+    def set_clockwise(self, clockwise: bool) -> None:
+        self.clockwise = bool(clockwise)
+        self._replace_live_node()
+
+    def _replace_live_node(self) -> None:
+        if (handle := self._live()) is not None:
+            handle.enqueue_replace_node(self.to_dict())
+
+    def _data_token(self) -> float:
+        return float(zlib.crc32(repr((self._payload.labels, self._payload.values)).encode("utf-8")))
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "labels": list(self._payload.labels),
+            "values": list(self._payload.values),
+            "colors": list(self._payload.colors),
+            "total": self._payload.total,
+            "input_count": self._payload.input_count,
+            "finite_count": self._payload.finite_count,
+            "donut": self.donut,
+            "inner_radius": self.inner_radius,
+            "start_angle": self.start_angle,

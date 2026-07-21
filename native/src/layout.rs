@@ -493,10 +493,15 @@ fn style_for(
         WidgetKind::Pane => {
             let horizontal =
                 node.props.orientation.as_deref().unwrap_or("horizontal") != "vertical";
-            let active_size = state
+            let requested_size = state
                 .and_then(|state| state.pane_size(&node.id))
                 .or(node.props.pane_size)
-                .map(|size| size.max(0.0) * sf);
+                .filter(|size| size.is_finite())
+                .map(|size| size.max(0.0));
+            let fractional_flex = requested_size.filter(|size| *size > 0.0 && *size < 1.0);
+            let active_size = requested_size
+                .filter(|size| !(*size > 0.0 && *size < 1.0))
+                .map(|size| size * sf);
             let min_size = node.props.pane_min_size.unwrap_or(0.0).max(0.0) * sf;
             let max_size = node
                 .props
@@ -506,7 +511,10 @@ fn style_for(
             let flex_grow = if active_size.is_some() {
                 0.0
             } else {
-                node.props.pane_flex.unwrap_or(1.0).max(0.0)
+                fractional_flex
+                    .or(node.props.pane_flex)
+                    .unwrap_or(1.0)
+                    .max(0.0)
             };
             let mut pane_style = Style {
                 display: Display::Flex,
@@ -1018,8 +1026,7 @@ fn style_for(
         | WidgetKind::Heatmap
         | WidgetKind::LinePlot
         | WidgetKind::Scatter3D
-        | WidgetKind::DataFrameTable
-        | WidgetKind::Tabs => Style {
+        | WidgetKind::DataFrameTable => Style {
             flex_grow: 1.0,
             flex_shrink: 0.0,
             size: Size {
@@ -1028,6 +1035,30 @@ fn style_for(
             },
             ..Default::default()
         },
+
+        WidgetKind::Tabs => {
+            let has_tab_content = node
+                .children
+                .iter()
+                .any(|child| child.kind == WidgetKind::Tab && !child.children.is_empty());
+            Style {
+                flex_grow: if has_tab_content { 1.0 } else { 0.0 },
+                flex_shrink: if has_tab_content { 1.0 } else { 0.0 },
+                size: Size {
+                    width: Dimension::Auto,
+                    height: if has_tab_content {
+                        Dimension::Auto
+                    } else {
+                        Dimension::Length(ctrl_h)
+                    },
+                },
+                min_size: Size {
+                    width: Dimension::Length(0.0),
+                    height: Dimension::Length(0.0),
+                },
+                ..Default::default()
+            }
+        }
 
         WidgetKind::Pages => Style {
             flex_grow: 1.0,
@@ -3367,6 +3398,8 @@ fn child_clip_for_overflow(node: &WidgetNode, parent_clip: Rect, node_clip: Rect
                 | WidgetKind::ScrollArea
                 | WidgetKind::GridLayout
                 | WidgetKind::FlowLayout
+                | WidgetKind::Pages
+                | WidgetKind::Page
         ) =>
         {
             parent_clip
@@ -3402,14 +3435,7 @@ fn scroll_content_bounds(node: &WidgetNode, result: &LayoutResult) -> Option<Scr
     let mut top = f32::INFINITY;
     let mut bottom = f32::NEG_INFINITY;
     for child in &node.children {
-        if is_fixed_positioned_node(child) {
-            continue;
-        }
-        if let Some(rect) = result.rects.get(&child.id) {
-            right = right.max(rect.x + rect.w);
-            top = top.min(rect.y);
-            bottom = bottom.max(rect.y + rect.h);
-        }
+        scroll_content_bounds_for_child(child, result, &mut right, &mut top, &mut bottom);
     }
     if top.is_finite() {
         let scale_factor = if result.scale_factor > 0.0 {
@@ -3423,6 +3449,48 @@ fn scroll_content_bounds(node: &WidgetNode, result: &LayoutResult) -> Option<Scr
     } else {
         None
     }
+}
+
+fn scroll_content_bounds_for_child(
+    node: &WidgetNode,
+    result: &LayoutResult,
+    right: &mut f32,
+    top: &mut f32,
+    bottom: &mut f32,
+) {
+    if is_fixed_positioned_node(node) {
+        return;
+    }
+    let Some(rect) = result.rects.get(&node.id).copied() else {
+        return;
+    };
+    if rect.w <= 0.0 || rect.h <= 0.0 {
+        return;
+    }
+
+    *right = right.max(rect.x + rect.w);
+    *top = top.min(rect.y);
+    *bottom = bottom.max(rect.y + rect.h);
+
+    if subtree_scroll_bounds_stop_at_node(node) {
+        return;
+    }
+    for child in &node.children {
+        scroll_content_bounds_for_child(child, result, right, top, bottom);
+    }
+}
+
+fn subtree_scroll_bounds_stop_at_node(node: &WidgetNode) -> bool {
+    if is_scroll_container_node(node) {
+        return true;
+    }
+    matches!(
+        node_overflow_x(node),
+        Some(OverflowStyle::Hidden | OverflowStyle::Scroll | OverflowStyle::Auto)
+    ) || matches!(
+        node_overflow_y(node),
+        Some(OverflowStyle::Hidden | OverflowStyle::Scroll | OverflowStyle::Auto)
+    )
 }
 
 fn scroll_container_right_padding_lp(node: &WidgetNode) -> f32 {
@@ -4160,6 +4228,80 @@ mod tests {
         assert!(
             button_clip.h > 0.0,
             "active tab body control should not be clipped by the tab header"
+        );
+    }
+
+    #[test]
+    fn empty_tabs_strip_does_not_consume_workbench_body_space() {
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![node(
+                "workbench",
+                WidgetKind::VLayout,
+                NodeProps::default(),
+                vec![
+                    node(
+                        "tabs",
+                        WidgetKind::Tabs,
+                        NodeProps {
+                            route_value: Some("overview".to_string()),
+                            ..NodeProps::default()
+                        },
+                        vec![
+                            node(
+                                "overview-tab",
+                                WidgetKind::Tab,
+                                NodeProps {
+                                    text: Some("Overview".to_string()),
+                                    route_value: Some("overview".to_string()),
+                                    ..NodeProps::default()
+                                },
+                                vec![],
+                            ),
+                            node(
+                                "data-tab",
+                                WidgetKind::Tab,
+                                NodeProps {
+                                    text: Some("Data".to_string()),
+                                    route_value: Some("data".to_string()),
+                                    ..NodeProps::default()
+                                },
+                                vec![],
+                            ),
+                        ],
+                    ),
+                    node(
+                        "body",
+                        WidgetKind::HLayout,
+                        NodeProps::default(),
+                        vec![node(
+                            "body-panel",
+                            WidgetKind::Panel,
+                            NodeProps::default(),
+                            vec![],
+                        )],
+                    ),
+                ],
+            )],
+        );
+
+        let layout = compute_layout(&root, 1000.0, 700.0, 1.0, &Theme::dark(), None);
+        let tabs = layout.rects.get("tabs").copied().unwrap();
+        let body = layout.rects.get("body").copied().unwrap();
+
+        assert!(
+            tabs.h <= 40.0,
+            "empty tab-strip chrome should stay near control height, got {tabs:?}"
+        );
+        assert!(
+            body.y <= tabs.y + tabs.h + 1.0,
+            "body should begin immediately after tab strip, tabs={tabs:?} body={body:?}"
+        );
+        assert!(
+            body.h >= 640.0,
+            "body should receive remaining workbench height, got {body:?}"
         );
     }
 
@@ -6655,6 +6797,79 @@ mod tests {
     }
 
     #[test]
+    fn fractional_pane_sizes_distribute_splitter_space() {
+        let left = node(
+            "left",
+            WidgetKind::Pane,
+            NodeProps {
+                orientation: Some("horizontal".to_string()),
+                pane_size: Some(0.7),
+                pane_min_size: Some(360.0),
+                ..NodeProps::default()
+            },
+            vec![node(
+                "left-panel",
+                WidgetKind::Panel,
+                NodeProps::default(),
+                vec![],
+            )],
+        );
+        let right = node(
+            "right",
+            WidgetKind::Pane,
+            NodeProps {
+                orientation: Some("horizontal".to_string()),
+                pane_size: Some(0.3),
+                pane_min_size: Some(280.0),
+                ..NodeProps::default()
+            },
+            vec![node(
+                "right-panel",
+                WidgetKind::Panel,
+                NodeProps::default(),
+                vec![],
+            )],
+        );
+        let mut splitter = node(
+            "splitter",
+            WidgetKind::Splitter,
+            NodeProps {
+                orientation: Some("horizontal".to_string()),
+                gutter_size: Some(6.0),
+                ..NodeProps::default()
+            },
+            vec![left, right],
+        );
+        splitter.style.layout.width = Some(1000.0);
+        splitter.style.layout.height = Some(240.0);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![splitter],
+        );
+
+        let layout = compute_layout(&root, 1000.0, 260.0, 1.0, &Theme::dark(), None);
+        let splitter = layout.rects.get("splitter").unwrap();
+        let left = layout.rects.get("left").unwrap();
+        let right = layout.rects.get("right").unwrap();
+        let consumed = right.x + right.w - left.x;
+
+        assert!(
+            left.w > 360.0 && right.w > 280.0,
+            "fractional pane sizes should flex beyond min sizes: left={left:?} right={right:?}"
+        );
+        assert!(
+            (consumed - splitter.w).abs() <= 1.0,
+            "splitter panes should consume available width: splitter={splitter:?} left={left:?} right={right:?}"
+        );
+        assert!(
+            left.w > right.w,
+            "larger fractional pane should receive more width: left={left:?} right={right:?}"
+        );
+    }
+
+    #[test]
     fn percent_and_calc_spacing_values_lower_to_taffy() {
         let mut first = node("first", WidgetKind::Panel, NodeProps::default(), vec![]);
         first.style.layout.width_value = Some(LayoutLength::LogicalPx(50.0));
@@ -7608,6 +7823,189 @@ mod tests {
         assert_eq!(layout.scroll_max_y.get("panel").copied(), Some(64.0));
         assert_eq!(layout.scroll_y.get("panel").copied(), Some(64.0));
         assert_eq!(panel.y + panel.h - (fourth.y + fourth.h), 14.0);
+    }
+
+    #[test]
+    fn scroll_area_counts_active_page_descendant_overflow() {
+        let mut active_children = Vec::new();
+        for index in 0..5 {
+            let mut panel = node(
+                &format!("active-panel-{index}"),
+                WidgetKind::Panel,
+                NodeProps {
+                    text: Some(format!("Active {index}")),
+                    ..NodeProps::default()
+                },
+                vec![],
+            );
+            panel.style.layout.height = Some(96.0);
+            panel.style.layout.width_value = Some(LayoutLength::Percent(100.0));
+            panel.style.layout.flex_shrink = Some(0.0);
+            active_children.push(panel);
+        }
+
+        let active_page = node(
+            "active-page",
+            WidgetKind::Page,
+            NodeProps {
+                route_value: Some("active".to_string()),
+                ..NodeProps::default()
+            },
+            active_children,
+        );
+        let mut inactive_panel = node(
+            "inactive-panel",
+            WidgetKind::Panel,
+            NodeProps::default(),
+            vec![],
+        );
+        inactive_panel.style.layout.height = Some(900.0);
+        let inactive_page = node(
+            "inactive-page",
+            WidgetKind::Page,
+            NodeProps {
+                route_value: Some("inactive".to_string()),
+                ..NodeProps::default()
+            },
+            vec![inactive_panel],
+        );
+        let pages = node(
+            "pages",
+            WidgetKind::Pages,
+            NodeProps {
+                route_value: Some("active".to_string()),
+                ..NodeProps::default()
+            },
+            vec![active_page, inactive_page],
+        );
+        let mut scroller = node(
+            "body",
+            WidgetKind::ScrollArea,
+            NodeProps::default(),
+            vec![pages],
+        );
+        scroller.style.layout.height = Some(180.0);
+        scroller.style.layout.padding = Some(0.0);
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![scroller],
+        );
+
+        let mut state = WidgetState::default();
+        let layout = compute_layout(&root, 260.0, 220.0, 1.0, &Theme::dark(), Some(&state));
+        let body = layout.rects.get("body").copied().unwrap();
+        let pages = layout.rects.get("pages").copied().unwrap();
+        let last = layout.rects.get("active-panel-4").copied().unwrap();
+        let max_scroll = layout.scroll_max_y.get("body").copied().unwrap_or(0.0);
+
+        assert!(
+            pages.h <= body.h + 0.1,
+            "fixture expects viewport-sized pages wrapper: body={body:?} pages={pages:?}"
+        );
+        assert!(
+            last.y + last.h > body.y + body.h,
+            "active descendant should overflow the body viewport: body={body:?} last={last:?}"
+        );
+        assert!(
+            max_scroll >= last.y + last.h - (body.y + body.h) - 0.1,
+            "body scroll range should include active page descendants: body={body:?} last={last:?} max_scroll={max_scroll}"
+        );
+        assert!(
+            !layout.rects.contains_key("inactive-panel"),
+            "inactive page content must not inflate body scroll range"
+        );
+
+        state
+            .container_scroll_y
+            .insert("body".to_string(), max_scroll + 100.0);
+        let scrolled = compute_layout(&root, 260.0, 220.0, 1.0, &Theme::dark(), Some(&state));
+        let last_clip = scrolled.clips.get("active-panel-4").copied().unwrap();
+        assert!(
+            last_clip.h > 0.0,
+            "last active page descendant should be reachable at max scroll: clip={last_clip:?}"
+        );
+    }
+
+    #[test]
+    fn titled_panel_scroll_range_counts_body_descendant_overflow() {
+        let mut rows = Vec::new();
+        for index in 0..5 {
+            let mut row = node(
+                &format!("row-{index}"),
+                WidgetKind::Button,
+                NodeProps {
+                    text: Some(format!("Row {index}")),
+                    ..NodeProps::default()
+                },
+                vec![],
+            );
+            row.style.layout.height = Some(34.0);
+            row.style.layout.flex_shrink = Some(0.0);
+            rows.push(row);
+        }
+        let mut wrapper = node(
+            "body-wrapper",
+            WidgetKind::VLayout,
+            NodeProps::default(),
+            rows,
+        );
+        wrapper.style.layout.height = Some(82.0);
+        wrapper.style.layout.gap = Some(8.0);
+        wrapper.style.layout.overflow = Some(OverflowStyle::Visible);
+
+        let mut panel = node(
+            "panel",
+            WidgetKind::Panel,
+            NodeProps {
+                text: Some("Scrollable panel".to_string()),
+                ..NodeProps::default()
+            },
+            vec![wrapper],
+        );
+        panel.style.layout.height = Some(150.0);
+        panel.style.layout.padding = Some(8.0);
+        panel.style.layout.gap = Some(0.0);
+
+        let root = node(
+            "window",
+            WidgetKind::Window,
+            NodeProps::default(),
+            vec![panel],
+        );
+        let mut state = WidgetState::default();
+        let layout = compute_layout(&root, 260.0, 180.0, 1.0, &Theme::dark(), Some(&state));
+        let panel_rect = layout.rects.get("panel").copied().unwrap();
+        let wrapper_rect = layout.rects.get("body-wrapper").copied().unwrap();
+        let last = layout.rects.get("row-4").copied().unwrap();
+        let max_scroll = layout.scroll_max_y.get("panel").copied().unwrap_or(0.0);
+
+        assert!(
+            wrapper_rect.y + wrapper_rect.h < last.y + last.h,
+            "fixture expects descendants to overflow wrapper rect: wrapper={wrapper_rect:?} last={last:?}"
+        );
+        assert!(
+            max_scroll > 0.0,
+            "titled panel should expose body scroll range for overflowing descendants"
+        );
+
+        state
+            .container_scroll_y
+            .insert("panel".to_string(), max_scroll + 100.0);
+        let scrolled = compute_layout(&root, 260.0, 180.0, 1.0, &Theme::dark(), Some(&state));
+        let scrolled_panel = scrolled.rects.get("panel").copied().unwrap();
+        let last_clip = scrolled.clips.get("row-4").copied().unwrap();
+
+        assert_eq!(scrolled_panel.y, panel_rect.y);
+        assert!(
+            last_clip.h > 0.0,
+            "last panel body descendant should be reachable at max scroll: clip={last_clip:?}"
+        );
+        assert!(
+            last_clip.y >= scrolled_panel.y,
+            "panel body descendant should remain clipped inside titled panel: panel={scrolled_panel:?} clip={last_clip:?}"
+        );
     }
 
     #[test]

@@ -1,0 +1,200 @@
+    kind = "nav_item"
+
+    def __init__(
+        self,
+        label: str,
+        *,
+        page: str,
+        badge: BadgeValue = None,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.label = str(label)
+        self.page = str(page)
+        if not self.page:
+            raise ValueError("NavItem page cannot be empty")
+        self.badge = _badge_value(badge)
+        self.disabled = disabled
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "label": self.label,
+            "page": self.page,
+            "badge": self.badge,
+            "disabled": self.disabled,
+        }
+
+    def set_badge(self, value: BadgeValue) -> None:
+        self.badge = _badge_value(value)
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("badge", self.badge)
+
+
+class Panel(Container):
+    kind = "panel"
+
+    def __init__(
+        self,
+        title: str | None = None,
+        *,
+        width: int | None = None,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.title = title
+        self.width = width
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "title": self.title,
+            "width": self.width,
+        }
+
+
+class DragSource(Container):
+    """Transparent container that starts an app-local drag with a JSON payload."""
+
+    kind = "drag_source"
+
+    def __init__(
+        self,
+        payload: object,
+        *,
+        drag_kind: str | None = None,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.payload = _json_compatible_payload(payload)
+        self.drag_kind = _payload_kind(self.payload, drag_kind)
+        self.disabled = bool(disabled)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "payload": self.payload,
+            "drag_kind": self.drag_kind,
+            "disabled": self.disabled,
+        }
+
+
+class DropTarget(Container):
+    """Transparent container that accepts app-local drops from ``DragSource``."""
+
+    kind = "drop_target"
+
+    def __init__(
+        self,
+        *,
+        accept: DropAcceptValue = None,
+        on_drop: DropCallback | None = None,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.accept = _drop_accept_list(accept)
+        self.on_drop = on_drop
+        self.disabled = bool(disabled)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def props(self) -> dict[str, Any]:
+        return {
+            "accept": self.accept,
+            "disabled": self.disabled,
+            "events": ["change"] if self.on_drop and not self.disabled else [],
+        }
+
+
+class DropZone(DropTarget):
+    """Styled drop target convenience widget with a centered label."""
+
+    _DEFAULT_STYLE: ClassVar[dict[str, object]] = {
+        "height": 142,
+        "padding": 14,
+        "align_items": "center",
+        "justify_content": "center",
+        "gap": 6,
+    }
+
+    def __init__(
+        self,
+        label: str,
+        *,
+        accept: DropAcceptValue = None,
+        on_drop: DropCallback | None = None,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.label = str(label)
+        merged_style = {**self._DEFAULT_STYLE, **(style or {})}
+        super().__init__(
+            accept=accept,
+            on_drop=on_drop,
+            disabled=disabled,
+            id=id,
+            key=key,
+            class_=_merge_widget_class("drop-zone", class_),
+            style=merged_style,
+            tooltip=tooltip,
+            parent=parent,
+        )
+        Label(self.label, parent=self, class_="drop-zone-label")
+
+    def props(self) -> dict[str, Any]:
+        data = super().props()
+        data["text"] = self.label
+        return data
+
+
+class Collapsible(Container):
+    kind = "collapsible"
+
+    def __init__(
+        self,
+        title: str,
+        *,
+        expanded: bool = True,
+        on_change: BoolCallback | None = None,
+        disabled: bool = False,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self.title = str(title)
+        if not self.title:
+            raise ValueError("Collapsible title cannot be empty")
+        self.expanded = bool(expanded)
+        self.on_change = on_change
+        self.disabled = bool(disabled)
+        super().__init__(id=id, key=key, class_=class_, style=style, tooltip=tooltip, parent=parent)
+
+    def set_expanded(self, expanded: bool) -> None:
+        self.expanded = bool(expanded)
+        if (handle := self._live()) is not None:

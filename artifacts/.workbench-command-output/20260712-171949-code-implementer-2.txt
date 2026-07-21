@@ -1,0 +1,170 @@
+                            )
+                            .map(|payload| (id, payload))
+                        })
+                });
+                if let Some((id, payload)) = extension_move_payload {
+                    self.emit_change(&id, ChangeValue::Text(payload));
+                }
+
+                self.last_mouse_pos = Some(new_pos);
+            }
+
+            WindowEvent::MouseWheel { delta, .. } => {
+                if self
+                    .gpu
+                    .as_ref()
+                    .map(WgpuState::has_active_modal)
+                    .unwrap_or(false)
+                {
+                    return;
+                }
+                let (scroll_x, scroll_y) = match delta {
+                    MouseScrollDelta::LineDelta(x, y) => (x, y),
+                    MouseScrollDelta::PixelDelta(pos) => (pos.x as f32 * 0.01, pos.y as f32 * 0.01),
+                };
+                if let Some(pos) = self.last_mouse_pos {
+                    if let Some(id) = self.gpu.as_ref().and_then(|gpu| gpu.text_area_at(pos)) {
+                        let text_scroll_x = if scroll_x.abs() >= 0.5 {
+                            scroll_x
+                        } else if self.modifiers.shift_key() {
+                            scroll_y
+                        } else {
+                            0.0
+                        };
+                        let text_scroll_y = if self.modifiers.shift_key() && scroll_x.abs() < 0.5 {
+                            0.0
+                        } else {
+                            scroll_y
+                        };
+                        if self.gpu.as_mut().is_some_and(|gpu| {
+                            gpu.scroll_text_area(&id, text_scroll_x, text_scroll_y)
+                        }) {
+                            self.request_redraw();
+                        }
+                        return;
+                    }
+                    if let Some(id) = self.gpu.as_ref().and_then(|gpu| gpu.table_at(pos)) {
+                        let row_delta = (-(scroll_y * 3.0)).round() as isize;
+                        let col_delta = if scroll_x.abs() >= 0.5 {
+                            (-scroll_x).round() as isize
+                        } else if self.modifiers.shift_key() {
+                            (-scroll_y).round() as isize
+                        } else {
+                            0
+                        };
+                        self.scroll_table(&id, row_delta, col_delta);
+                        return;
+                    }
+                    if let Some(id) = self.gpu.as_ref().and_then(|gpu| gpu.line_plot_at(pos)) {
+                        let is_zoom = self
+                            .gpu
+                            .as_ref()
+                            .and_then(|gpu| gpu.line_plot_interaction(&id))
+                            == Some("zoom");
+                        if is_zoom {
+                            if self
+                                .gpu
+                                .as_mut()
+                                .is_some_and(|gpu| gpu.zoom_line_plot(&id, pos, scroll_y))
+                            {
+                                self.request_redraw();
+                            }
+                            return;
+                        }
+                    }
+                    if let Some(id) = self.gpu.as_ref().and_then(|gpu| gpu.histogram_at(pos)) {
+                        let is_zoom = self
+                            .gpu
+                            .as_ref()
+                            .and_then(|gpu| gpu.histogram_interaction(&id))
+                            == Some("zoom");
+                        if is_zoom {
+                            if self
+                                .gpu
+                                .as_mut()
+                                .is_some_and(|gpu| gpu.zoom_histogram(&id, pos, scroll_y))
+                            {
+                                self.request_redraw();
+                            }
+                            return;
+                        }
+                    }
+                    // Scatter zoom wins over parent scroll container when pointer is over the plot.
+                    if let Some(sid) = self.gpu.as_ref().and_then(|gpu| gpu.scatter_at(pos)) {
+                        let mut cam_payload: Option<(String, String)> = None;
+                        let mut needs_redraw = false;
+                        if let Some(gpu) = &mut self.gpu {
+                            if let Some(rt) = gpu.scatters.get_mut(&sid) {
+                                rt.widget.camera.zoom(scroll_y);
+                                rt.widget.update_camera(&gpu.queue);
+                                let (bmn, bmx) = rt.merged_bounds();
+                                rt.widget.refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
+                                rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                                needs_redraw = true;
+                                let s = rt.widget.camera.state();
+                                let payload = json!({
+                                    "event": "camera_changed",
+                                    "widget_id": sid,
+                                    "camera": {
+                                        "target": [s.target[0], s.target[1], s.target[2]],
+                                        "distance": s.distance,
+                                        "yaw": s.yaw,
+                                        "pitch": s.pitch,
+                                        "parallel": s.parallel,
+                                    },
+                                })
+                                .to_string();
+                                cam_payload = Some((sid.clone(), payload));
+                            }
+                        }
+                        if needs_redraw {
+                            self.request_redraw();
+                        }
+                        if let Some((id, payload)) = cam_payload {
+                            self.emit_change(&id, ChangeValue::Text(payload));
+                        }
+                        return;
+                    }
+                    let extension_wheel_payload = self.gpu.as_ref().and_then(|gpu| {
+                        gpu.extension_event_at(pos, "wheel").and_then(|(id, _)| {
+                            gpu.extension_event_payload(&id, "wheel", pos, scroll_x, scroll_y, None)
+                                .map(|payload| (id, payload))
+                        })
+                    });
+                    if let Some((id, payload)) = extension_wheel_payload {
+                        self.emit_change(&id, ChangeValue::Text(payload));
+                        return;
+                    }
+                    if let Some(id) = self
+                        .gpu
+                        .as_ref()
+                        .and_then(|gpu| gpu.scroll_container_at(pos))
+                    {
+                        let container_scroll_x = if scroll_x.abs() >= 0.5 {
+                            scroll_x
+                        } else if self.modifiers.shift_key() {
+                            scroll_y
+                        } else {
+                            0.0
+                        };
+                        let container_scroll_y =
+                            if self.modifiers.shift_key() && scroll_x.abs() < 0.5 {
+                                0.0
+                            } else {
+                                scroll_y
+                            };
+                        if self.gpu.as_mut().is_some_and(|gpu| {
+                            gpu.scroll_container(&id, container_scroll_x, container_scroll_y)
+                        }) {
+                            self.request_redraw();
+                        }
+                        return;
+                    }
+                }
+            }
+
+            WindowEvent::KeyboardInput { event, .. } if event.state == ElementState::Pressed => {
+                self.handle_keyboard_input(event);
+            }
+
+            WindowEvent::ModifiersChanged(modifiers) => {

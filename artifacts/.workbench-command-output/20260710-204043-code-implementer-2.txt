@@ -1,0 +1,180 @@
+        """
+        import math
+        cam = self.get_camera()
+        if cam is None:
+            raise RuntimeError("orbit_gif() requires the widget to be live")
+        orig_yaw = cam.get("yaw", 0.4)
+        orig_pitch = cam.get("pitch", 0.4)
+        pitch = float(elevation) if elevation is not None else orig_pitch
+        self.open_gif(path, fps=fps, loop=loop)
+        try:
+            for i in range(n_frames):
+                yaw = orig_yaw + 2 * math.pi * i / n_frames
+                self.set_camera({**cam, "yaw": yaw, "pitch": pitch})
+                self.write_frame()
+                if on_progress is not None:
+                    on_progress(i + 1, n_frames)
+        finally:
+            # Restore original camera state.
+            self.set_camera(cam)
+            self.close_gif()
+
+    # â”€â”€ Hover tooltip â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    @property
+    def hover_tooltip(self) -> bool:
+        """Whether to show a coordinate tooltip when hovering over a point.
+
+        When enabled, native hover picking displays the nearest point's
+        coordinate tooltip using the widget's current tooltip axis labels.
+        """
+        return self._hover_tooltip
+
+    @hover_tooltip.setter
+    def hover_tooltip(self, value: bool) -> None:
+        self._hover_tooltip = bool(value)
+        if (wh := self._live()) is not None:
+            wh.enqueue_set_scatter_hover_tooltip(bool(value))
+
+
+def _scatter2d_class(class_: str | None) -> str:
+    if class_ is None:
+        return "scatter-plot-2d"
+    classes = class_.split()
+    if "scatter-plot-2d" in classes:
+        return class_
+    return f"scatter-plot-2d {class_}"
+
+
+class ScatterPlot2D(Scatter3D):
+    """2D scatter plot backed by the packed Scatter3D point renderer."""
+
+    kind = Scatter3D.kind
+
+    def __init__(
+        self,
+        frame: Any,
+        *,
+        x: str,
+        y: str,
+        color: str | Any | None = None,
+        colors: Any | None = None,
+        scalars: str | Any | None = None,
+        colormap: str = "viridis",
+        point_size: float = 4.0,
+        point_sizes: str | Any | None = None,
+        auto_point_size: bool = True,
+        opacity: float = 1.0,
+        clim: tuple[float, float] | None = None,
+        log_scale: bool = False,
+        nan_color: tuple[float, float, float] | None = None,
+        size_range: tuple[float, float] | None = None,
+        on_pick: ScatterPickCallback | None = None,
+        grid: bool = True,
+        axis_x: str | None = None,
+        axis_y: str | None = None,
+        background: tuple[float, float, float] | None = None,
+        legend: bool = False,
+        legend_position: str = "top-right",
+        legend_entries: list[tuple[str, float, float, float]] | None = None,
+        scalar_bar: bool = False,
+        scalar_bar_vmin: "float | None" = None,
+        scalar_bar_vmax: "float | None" = None,
+        scalar_bar_log_scale: bool = False,
+        scalar_bar_colormap: str = "viridis",
+        scalar_bar_title: str | None = None,
+        hover: "str | list[str] | None" = None,
+        on_hover: "ScatterPickCallback | None" = None,
+        lod: bool = False,
+        lod_threshold: int = 200_000,
+        lod_factor: int = 8,
+        interactive_render_scale: float = 1.0,
+        auto_quality: bool = False,
+        quality_target_fps: float = 10.0,
+        id: str | None = None,
+        key: str | None = None,
+        class_: str | None = None,
+        style: Mapping[str, object] | None = None,
+        tooltip: str | None = None,
+        parent: Container | None | object = _AUTO_PARENT,
+    ) -> None:
+        self._source_frame = frame
+        self._source_x = str(x)
+        self._source_y = str(y)
+        wrapped = _Scatter2DFrame(frame, self._source_x, self._source_y)
+        super().__init__(
+            wrapped,
+            x=self._source_x,
+            y=self._source_y,
+            z=wrapped.z_col,
+            colormap=colormap,
+            color=color,
+            colors=colors,
+            scalars=scalars,
+            point_size=point_size,
+            point_sizes=point_sizes,
+            auto_point_size=auto_point_size,
+            opacity=opacity,
+            clim=clim,
+            log_scale=log_scale,
+            nan_color=nan_color,
+            size_range=size_range,
+            on_pick=on_pick,
+            grid=grid,
+            major_planes=False,
+            minor_planes=False,
+            grid_sticky=True,
+            grid_all_edges=False,
+            axis_x=axis_x or self._source_x,
+            axis_y=axis_y or self._source_y,
+            axis_z="",
+            background=background,
+            legend=legend,
+            legend_position=legend_position,
+            legend_entries=legend_entries,
+            scalar_bar=scalar_bar,
+            scalar_bar_vmin=scalar_bar_vmin,
+            scalar_bar_vmax=scalar_bar_vmax,
+            scalar_bar_log_scale=scalar_bar_log_scale,
+            scalar_bar_colormap=scalar_bar_colormap,
+            scalar_bar_title=scalar_bar_title,
+            orientation_axes=False,
+            hover=hover,
+            on_hover=on_hover,
+            lod=lod,
+            lod_threshold=lod_threshold,
+            lod_factor=lod_factor,
+            interactive_render_scale=interactive_render_scale,
+            auto_quality=auto_quality,
+            quality_target_fps=quality_target_fps,
+            id=id,
+            key=key,
+            class_=_scatter2d_class(class_),
+            style=style,
+            tooltip=tooltip,
+            parent=parent,
+        )
+        self.frame_summary = summarize_frame(frame)
+        self._axis_visible = (True, True, False)
+        self._parallel_projection = True
+
+    def _sync_2d_camera(self, *, fit: bool = False) -> None:
+        self._parallel_projection = True
+        if (handle := self._live()) is not None:
+            if fit:
+                handle.enqueue_fit_scatter_camera(None)
+            handle.enqueue_set_scatter_parallel_projection(True)
+            handle.enqueue_set_scatter_view_direction("xy")
+            handle.enqueue_set_scatter_axis_visibility(True, True, False)
+
+    def _queue_startup_resources(self) -> None:
+        super()._queue_startup_resources()
+        self._sync_2d_camera(fit=True)
+
+    def props(self) -> dict[str, Any]:
+        props = super().props()
+        props["interaction"] = "pan_2d"
+        return props
+
+    def set_points(
+        self,

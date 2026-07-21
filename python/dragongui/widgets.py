@@ -2649,6 +2649,8 @@ def _normalize_splitter_size(value: SplitterSize) -> float | str | None:
     size = float(value)
     if not math.isfinite(size) or size < 0:
         raise ValueError("Splitter sizes must be non-negative finite values")
+    if 0 < size < 1:
+        return f"{size:g}fr"
     return size
 
 
@@ -2720,7 +2722,7 @@ class Splitter(Container):
             size = self.sizes[index]
             if isinstance(size, str):
                 child.set_size(None)
-                child.flex = _splitter_size_to_flex(size)
+                child.set_flex(_splitter_size_to_flex(size))
             else:
                 child.set_size(size)
 
@@ -2769,7 +2771,7 @@ class Pane(Container):
         tooltip: str | None = None,
         parent: Container | None | object = _AUTO_PARENT,
     ) -> None:
-        self._explicit_size = self._normalize_optional_size(size, "size")
+        self._explicit_size, size_flex = self._normalize_size_and_flex(size)
         if min_size is _UNSET:
             self._explicit_min_size = None
             self._default_min_size: float | None = 80.0
@@ -2777,7 +2779,7 @@ class Pane(Container):
             self._explicit_min_size = self._normalize_optional_size(min_size, "min_size")
             self._default_min_size = None
         self._explicit_max_size = self._normalize_optional_size(max_size, "max_size")
-        flex_value = float(flex)
+        flex_value = size_flex if size_flex is not None else float(flex)
         if not math.isfinite(flex_value) or flex_value <= 0:
             raise ValueError("Pane flex must be a positive finite value")
         self.flex = flex_value
@@ -2798,6 +2800,13 @@ class Pane(Container):
             raise ValueError(f"Pane {name} must be a non-negative finite value")
         return size
 
+    @staticmethod
+    def _normalize_size_and_flex(value: float | None) -> tuple[float | None, float | None]:
+        size = Pane._normalize_optional_size(value, "size")
+        if size is not None and 0 < size < 1:
+            return None, size
+        return size, None
+
     def _effective_size(self) -> float | None:
         return self._explicit_size if self._explicit_size is not None else self._splitter_size
 
@@ -2817,9 +2826,19 @@ class Pane(Container):
         return self._splitter_flex if self._splitter_flex is not None else self.flex
 
     def set_size(self, size: float | None) -> None:
-        self._explicit_size = self._normalize_optional_size(size, "size")
+        self._explicit_size, size_flex = self._normalize_size_and_flex(size)
+        if size_flex is not None:
+            self.set_flex(size_flex)
         if (handle := self._live()) is not None:
             handle.enqueue_set_prop("size", self._explicit_size)
+
+    def set_flex(self, flex: float) -> None:
+        flex_value = float(flex)
+        if not math.isfinite(flex_value) or flex_value <= 0:
+            raise ValueError("Pane flex must be a positive finite value")
+        self.flex = flex_value
+        if (handle := self._live()) is not None:
+            handle.enqueue_set_prop("flex", self.flex)
 
     def props(self) -> dict[str, Any]:
         return {
@@ -11446,6 +11465,9 @@ class Scatter3D(Widget):
         finally:
             self._propagating = False
 
+    def _startup_fit_primary_points(self) -> bool:
+        return True
+
     def _queue_startup_resources(self) -> None:
         """Replay scene operations that were queued before the widget went live."""
         import base64 as _base64
@@ -11482,6 +11504,7 @@ class Scatter3D(Widget):
                     colormap=self.colormap,
                     payload_format=self.data_format,
                     coalesce=False,
+                    fit=self._startup_fit_primary_points(),
                 )
                 record_phase("enqueue_points_ms", enqueue_t0)
                 timings["payload_bytes"] = len(payload)
@@ -11846,6 +11869,9 @@ class ScatterPlot2D(Scatter3D):
             handle.enqueue_set_scatter_parallel_projection(True)
             handle.enqueue_set_scatter_view_direction("xy")
             handle.enqueue_set_scatter_axis_visibility(True, True, False)
+
+    def _startup_fit_primary_points(self) -> bool:
+        return False
 
     def _queue_startup_resources(self) -> None:
         super()._queue_startup_resources()

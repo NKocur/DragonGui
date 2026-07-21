@@ -1,0 +1,125 @@
+# Diagnosis: Adjacent Scatter Plot Overlay Still Present
+
+## Observed Problem
+
+The professional demo's `3D Explore` tab still has two visible scatter plots: a large left `Scatter3D` and a smaller right `ScatterPlot2D`. The user's report matches the current source behavior: when the cached/offscreen scatter path is active, the left plot's rendered data can be composited into the right plot's screen rectangle, visually combining the two plots.
+
+I reproduced the same class of failure with the adjacent scatter probe screenshot at:
+
+```text
+artifacts/visual_audit/screenshots/adjacent-scatter-interaction-1120x720.png
+```
+
+In that capture, the left plot panel is mostly blank except for edge labels, while the 3D plot grid/points are drawn over the right plot. This is the visual overlay failure, even though the probe's debug-state checks say the two widget ids still have distinct data.
+
+## Reproduction Steps
+
+Run from the workspace:
+
+```powershell
+$py='C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe'
+& $py tools\visual_audit.py --target adjacent-scatter-interaction --sizes 1120x720 --append --wait-ms 2500 --timeout-ms 16000
+```
+
+Current run details:
+
+- The probe imports the workspace package and native extension:
+  - `J:\Projects\DragonFrame\python\dragongui\__init__.py`
+  - `J:\Projects\DragonFrame\python\dragongui\_dragongui.pyd`
+- The workspace `_dragongui.pyd` and `native\target\release\_dragongui.dll` currently have matching SHA256 `8A97760CA59ED92AA6F2CA07DDA60AE9CF46BC7EFE608A1A67FC76B696A57E87`.
+- The probe prints `ADJACENT_SCATTER_INTERACTION_PASS`, but this pass marker is misleading for this bug. It only verifies state signatures and `active_scatter_id`, not pixel placement.
+- `tools/visual_audit.py` still exits nonzero for the target because the report status remains `fail`, but the useful evidence is the screenshot and snapshot.
+
+The relevant snapshot confirms both visible scatters were using the cached/composite path in the same frame:
+
+- `adjacent-left-scatter`: `last_render_cache_hit=True`, `last_render_composite_ms > 0`
+- `adjacent-right-scatter`: `last_render_cache_hit=True`, `last_render_composite_ms > 0`
+- Layout rectangles are distinct:
+  - left clip roughly `x=14, y=54, w=786, h=666`
+  - right clip roughly `x=808, y=54, w=306, h=666`
+
+## Root Cause
+
+The previous fix addressed stale pointer state (`active_scatter_id`) but did not fix the remaining compositor bug. The scatter offscreen compositor stores the placement rectangle in one shared uniform buffer owned by `ScatterCompositeRenderer`, while each scatter render target has its own texture bind group that points back at that shared buffer.
+
+File/line evidence:
+
+- [examples/all_features_professional_demo.py](J:/Projects/DragonFrame/examples/all_features_professional_demo.py:579) creates the large left `Scatter3D`.
+- [examples/all_features_professional_demo.py](J:/Projects/DragonFrame/examples/all_features_professional_demo.py:605) creates the right `ScatterPlot2D`.
+- [python/dragongui/widgets.py](J:/Projects/DragonFrame/python/dragongui/widgets.py:11752) shows `ScatterPlot2D` subclasses `Scatter3D`, and [python/dragongui/widgets.py](J:/Projects/DragonFrame/python/dragongui/widgets.py:11755) keeps `kind = Scatter3D.kind`, so both widgets share the same native scatter runtime.
+- [native/src/runtime.rs](J:/Projects/DragonFrame/native/src/runtime.rs:1264) defines `ScatterCompositeRenderer`; [native/src/runtime.rs](J:/Projects/DragonFrame/native/src/runtime.rs:1268) stores a single `uniform_buffer`.
+- [native/src/runtime.rs](J:/Projects/DragonFrame/native/src/runtime.rs:1384) binds that same compositor uniform buffer into every scatter target's composite bind group.
+- [native/src/runtime.rs](J:/Projects/DragonFrame/native/src/runtime.rs:1426) defines `ScatterRenderTarget`; it stores only `bind_group`, dimensions, format, and revision, not a per-target/per-draw composite uniform.
+- [native/src/runtime.rs](J:/Projects/DragonFrame/native/src/runtime.rs:1476) creates each render target bind group through the shared compositor.
+- [native/src/runtime.rs](J:/Projects/DragonFrame/native/src/runtime.rs:13786) writes the current scatter widget's `target_rect` into the shared uniform buffer immediately before drawing that scatter target.
+- [native/src/runtime.rs](J:/Projects/DragonFrame/native/src/runtime.rs:13800) starts the composite render pass, and [native/src/runtime.rs](J:/Projects/DragonFrame/native/src/runtime.rs:13816) draws the target using that target's texture bind group.
+- [native/src/scatter/composite.wgsl](J:/Projects/DragonFrame/native/src/scatter/composite.wgsl:26) uses `uniforms.target_rect` in the vertex shader to place the sampled target texture on screen.
+
+Why this fails: multiple `queue.write_buffer` calls update the same uniform buffer while encoding a frame. The draw bind groups sample different per-widget textures, but all of them reference the same placement uniform resource. With two cached scatter widgets in one frame, later writes can make both composite draws use the last scatter's rectangle. That produces exactly the screenshot: the left scatter texture is sampled, but placed into the right scatter's rectangle, combining with the right plot.
+
+The user trigger fits this path because clicking/dragging changes scatter interaction/cache state:
+
+- [native/src/runtime.rs](J:/Projects/DragonFrame/native/src/runtime.rs:20719) hit-tests a scatter on mouse down.
+- [native/src/runtime.rs](J:/Projects/DragonFrame/native/src/runtime.rs:20724) records `active_scatter_id`.
+- [native/src/runtime.rs](J:/Projects/DragonFrame/native/src/runtime.rs:20783) enables interaction LOD for the active scatter.
+- [native/src/scatter/mod.rs](J:/Projects/DragonFrame/native/src/scatter/mod.rs:2239) makes `active_render_scale()` drop below full scale while LOD is active.
+- [native/src/runtime.rs](J:/Projects/DragonFrame/native/src/runtime.rs:13698) routes render-scale cases through the offscreen target path.
+- [native/src/runtime.rs](J:/Projects/DragonFrame/native/src/runtime.rs:13700) also allows static full-scale cached targets to be composited, so the bug can appear even when debug state says interactions are inactive.
+
+There is a secondary invalidation risk in [native/src/scatter/mod.rs](J:/Projects/DragonFrame/native/src/scatter/mod.rs:2319): `set_layout_rect()` intentionally keeps cached render targets valid for pure screen-position/scissor changes. That is only safe if the compositor placement state is isolated per draw. With the shared uniform, position-only cache reuse makes the wrong-rectangle failure more visible.
+
+## Why The Prior Fix Did Not Solve It
+
+The previous implementation added `cancel_scatter_interaction()` and expanded debug snapshots. That was useful for stale event routing, but the current screenshot and snapshot show:
+
+- `active_scatter_id` is `null`.
+- Left/right point counts, bounds, colormaps, and scalar-bar settings remain distinct.
+- The visual failure still occurs because texture placement is wrong, not because plot data or widget ids are swapped.
+
+So the bug is in GPU compositing state, not Python data reuse, widget id collision, or stale `active_scatter_id`.
+
+## Other Places With The Same Defect Pattern
+
+Direct same-defect pattern:
+
+- [native/src/runtime.rs](J:/Projects/DragonFrame/native/src/runtime.rs:1264) through [native/src/runtime.rs](J:/Projects/DragonFrame/native/src/runtime.rs:1424): one `ScatterCompositeRenderer` with one mutable uniform buffer.
+- [native/src/runtime.rs](J:/Projects/DragonFrame/native/src/runtime.rs:1426) through [native/src/runtime.rs](J:/Projects/DragonFrame/native/src/runtime.rs:1492): each `ScatterRenderTarget` stores a bind group that references the shared uniform.
+- [native/src/runtime.rs](J:/Projects/DragonFrame/native/src/runtime.rs:13687) through [native/src/runtime.rs](J:/Projects/DragonFrame/native/src/runtime.rs:13818): visible scatter loop writes the shared uniform and composites each target.
+
+Any view with two or more visible `Scatter3D`/`ScatterPlot2D` widgets can exhibit this when at least two are rendered through the cached/offscreen compositor path. Known affected surfaces:
+
+- Professional demo `3D Explore`
+- `examples/css_feature_probes/adjacent_scatter_interaction_probe.py`
+- Any custom app with adjacent `Scatter3D` and/or `ScatterPlot2D`
+
+Other renderers are probably not affected by this exact bug. The line plot and primitive renderers use their own render paths and do not use `ScatterCompositeRenderer`.
+
+## Proposed Fix Approach
+
+Fix the compositor so composite placement data is not a mutable singleton shared by all scatter composites in a frame.
+
+Preferred implementation:
+
+1. Move the composite uniform buffer from `ScatterCompositeRenderer` into `ScatterRenderTarget`.
+2. Create each `ScatterRenderTarget` with:
+   - its offscreen color/depth textures,
+   - its own `wgpu::Buffer` for `ScatterCompositeUniforms`,
+   - a bind group that binds that target-specific uniform buffer plus the target texture view and shared sampler.
+3. Replace `ScatterCompositeRenderer::update_uniforms(...)` with either:
+   - `ScatterRenderTarget::update_composite_uniforms(...)`, or
+   - a compositor helper that accepts `&target.uniform_buffer`.
+4. In the scatter render loop, update the current target's own uniform buffer before drawing `target.bind_group`.
+5. Keep the pipeline, bind-group layout, and sampler shared in `ScatterCompositeRenderer`; only the mutable per-draw placement data needs to move.
+
+Acceptable alternatives:
+
+- Use a dynamic uniform buffer with one aligned offset per visible scatter in the frame.
+- Use immediate/push constants for `target_rect` and `screen_size` if supported cleanly by the current wgpu/backend constraints.
+
+Verification should be pixel-based, not only debug-snapshot based:
+
+- Force both adjacent scatters through the cached/offscreen compositor path.
+- Capture screenshots before and after clicking left plot, right plot, and surrounding gutter/control areas.
+- Assert each plot rectangle retains a distinct pixel signature and that left-plot pixels do not appear inside the right rectangle or vice versa.
+- Keep the existing debug-state checks, but add screenshot/pixel checks because the present bug leaves state signatures correct while pixels are wrong.
+- Rebuild and reinstall/copy `_dragongui.pyd` after the native change before rerunning the professional demo.

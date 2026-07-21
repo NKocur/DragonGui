@@ -1,0 +1,150 @@
+        let Some(runtime) = self.scatters.get_mut(id) else {
+            return Ok(false);
+        };
+        let total_t0 = Instant::now();
+        let queue_latency_ms = telemetry
+            .as_ref()
+            .map(|t| (now_epoch_ms() - t.enqueue_epoch_ms).max(0.0))
+            .unwrap_or(0.0);
+
+        if data_format == ScatterPayloadFormat::PointInstanceV1 {
+            let telemetry_bounds = telemetry.as_ref().and_then(|t| t.bounds);
+            let bounds_t0 = Instant::now();
+            let maybe_bounds = if let Some((min, max)) = telemetry_bounds {
+                Some((glam::Vec3::from_array(min), glam::Vec3::from_array(max)))
+            } else {
+                match bounds_from_scatter_point_instances_v1(&xyz) {
+                    Ok(bounds) => bounds,
+                    Err(e) => {
+                        let msg = e.to_string();
+                        eprintln!("DragonGUI: {msg}");
+                        runtime.payload_status = ScatterPayloadStatus::DecodeError(msg.clone());
+                        return Err(DragonError::Runtime(msg));
+                    }
+                }
+            };
+            let bounds_ms = if telemetry_bounds.is_some() {
+                0.0
+            } else {
+                bounds_t0.elapsed().as_secs_f64() * 1000.0
+            };
+            let point_count = xyz.len() / std::mem::size_of::<PointInstance>();
+            if maybe_bounds.is_none() && point_count > 0 {
+                runtime.payload_format = data_format;
+                runtime.points.clear();
+                runtime.primary_compact_xyz.clear();
+                runtime.primary_pick_cache = None;
+                runtime.payload_status = ScatterPayloadStatus::AllNonFinite;
+                runtime.primary_hover_meta = Vec::new();
+                runtime.primary_hover_columns = Vec::new();
+                let cleared_hover_label = runtime.widget.hover_label.take().is_some();
+                runtime.data_min = glam::Vec3::ZERO;
+                runtime.data_max = glam::Vec3::ZERO;
+                let upload_timings = runtime.widget.set_points(&self.device, &self.queue, &[]);
+                let grid_t0 = Instant::now();
+                runtime.widget.refresh_grid(
+                    glam::Vec3::ZERO,
+                    glam::Vec3::ZERO,
+                    &self.device,
+                    &self.queue,
+                );
+                let grid_ms = grid_t0.elapsed().as_secs_f64() * 1000.0;
+                let overlay_t0 = Instant::now();
+                let overlay_ms = if cleared_hover_label {
+                    runtime.widget.refresh_overlays(&self.device, &self.queue);
+                    overlay_t0.elapsed().as_secs_f64() * 1000.0
+                } else {
+                    0.0
+                };
+                let pack_ms = telemetry.as_ref().map(|t| t.pack_ms).unwrap_or(0.0);
+                let reported_payload_bytes = telemetry
+                    .as_ref()
+                    .map(|t| t.payload_bytes)
+                    .unwrap_or(xyz.len());
+                runtime.metrics = ScatterMetrics {
+                    updates: runtime.metrics.updates + 1,
+                    last_point_count: 0,
+                    last_payload_bytes: reported_payload_bytes,
+                    last_pack_ms: pack_ms,
+                    last_queue_latency_ms: queue_latency_ms,
+                    last_decode_ms: 0.0,
+                    last_bounds_ms: bounds_ms,
+                    last_upload_ms: upload_timings.primary_ms
+                        + upload_timings.lod_ms
+                        + grid_ms
+                        + overlay_ms,
+                    last_primary_upload_ms: upload_timings.primary_ms,
+                    last_lod_ms: upload_timings.lod_ms,
+                    last_grid_ms: grid_ms,
+                    last_overlay_ms: overlay_ms,
+                    last_total_native_ms: total_t0.elapsed().as_secs_f64() * 1000.0,
+                    last_render_encode_ms: runtime.metrics.last_render_encode_ms,
+                    last_render_redraw_ms: runtime.metrics.last_render_redraw_ms,
+                    last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+                    last_render_cache_hit: runtime.metrics.last_render_cache_hit,
+                    ..runtime.metrics.clone()
+                };
+                return Ok(true);
+            }
+            if let Some(upload_timings) =
+                runtime
+                    .widget
+                    .set_point_instances_raw(&self.device, &self.queue, &xyz)
+            {
+                let (data_min, data_max) =
+                    maybe_bounds.unwrap_or((glam::Vec3::ZERO, glam::Vec3::ZERO));
+                runtime.payload_format = data_format;
+                runtime.points.clear();
+                runtime.primary_compact_xyz.clear();
+                runtime.primary_pick_cache = None;
+                runtime.primary_hover_meta = Vec::new();
+                runtime.primary_hover_columns = Vec::new();
+                let cleared_hover_label = runtime.widget.hover_label.take().is_some();
+                runtime.data_min = data_min;
+                runtime.data_max = data_max;
+                runtime.payload_status = ScatterPayloadStatus::Ok;
+
+                let mut camera_fitted = false;
+                if (fit || !runtime.fitted_once)
+                    && point_count > 0
+                    && runtime.widget.has_visible_viewport()
+                {
+                    runtime
+                        .widget
+                        .fit_to_bounds(data_min, data_max, &self.queue);
+                    runtime.fitted_once = true;
+                    camera_fitted = true;
+                } else if fit {
+                    runtime.fitted_once = false;
+                }
+                let grid_t0 = Instant::now();
+                runtime
+                    .widget
+                    .refresh_grid(data_min, data_max, &self.device, &self.queue);
+                let grid_ms = grid_t0.elapsed().as_secs_f64() * 1000.0;
+                let overlay_t0 = Instant::now();
+                let overlay_ms = if camera_fitted || cleared_hover_label {
+                    runtime.widget.refresh_overlays(&self.device, &self.queue);
+                    overlay_t0.elapsed().as_secs_f64() * 1000.0
+                } else {
+                    0.0
+                };
+
+                let pack_ms = telemetry.as_ref().map(|t| t.pack_ms).unwrap_or(0.0);
+                let reported_point_count = telemetry
+                    .as_ref()
+                    .map(|t| t.point_count)
+                    .unwrap_or(point_count);
+                let reported_payload_bytes = telemetry
+                    .as_ref()
+                    .map(|t| t.payload_bytes)
+                    .unwrap_or(xyz.len());
+                runtime.metrics = ScatterMetrics {
+                    updates: runtime.metrics.updates + 1,
+                    last_point_count: reported_point_count,
+                    last_payload_bytes: reported_payload_bytes,
+                    last_pack_ms: pack_ms,
+                    last_queue_latency_ms: queue_latency_ms,
+                    last_decode_ms: 0.0,
+                    last_bounds_ms: bounds_ms,
+                    last_upload_ms: upload_timings.primary_ms

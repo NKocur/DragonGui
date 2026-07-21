@@ -1,0 +1,313 @@
+diff --git a/tools/visual_audit.py b/tools/visual_audit.py
+index dce5a2d..8b679b8 100644
+--- a/tools/visual_audit.py
++++ b/tools/visual_audit.py
+@@ -337,6 +337,39 @@ def run_target(
+                 run_result["notes"],
+                 "Badge bounds check failed: " + "; ".join(badge_violations[:4]),
+             )
++        scroll_violations = (
++            validate_professional_demo_scroll_snapshot(snapshot_path)
++            if target_id.startswith("all-features-professional-")
++            else []
++        )
++        if scroll_violations:
++            run_result["status"] = "fail"
++            run_result["notes"] = combine_notes(
++                run_result["notes"],
++                "Scroll reachability check failed: " + "; ".join(scroll_violations[:4]),
++            )
++        splitter_violations = (
++            validate_professional_demo_splitter_snapshot(snapshot_path)
++            if target_id.startswith("all-features-professional-")
++            else []
++        )
++        if splitter_violations:
++            run_result["status"] = "fail"
++            run_result["notes"] = combine_notes(
++                run_result["notes"],
++                "Splitter utilization check failed: " + "; ".join(splitter_violations[:4]),
++            )
++        scatter_violations = (
++            validate_professional_explore_scatter_snapshot(snapshot_path)
++            if target_id == "all-features-professional-explore"
++            else []
++        )
++        if scatter_violations:
++            run_result["status"] = "fail"
++            run_result["notes"] = combine_notes(
++                run_result["notes"],
++                "Scatter startup framing check failed: " + "; ".join(scatter_violations[:4]),
++            )
+         if run_result["status"] == "blocked":
+             result["status"] = "blocked"
+             result["priority"] = "high"
+@@ -351,6 +384,266 @@ def run_target(
+     return result
+ 
+ 
++def validate_professional_explore_scatter_snapshot(snapshot_path: Path) -> list[str]:
++    try:
++        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
++    except (OSError, json.JSONDecodeError) as exc:
++        return [f"{snapshot_path.name}: could not read snapshot for scatter framing: {exc}"]
++    runtime = snapshot.get("runtime") if isinstance(snapshot, dict) else None
++    commands = runtime.get("commands") if isinstance(runtime, dict) else None
++    recent = commands.get("recent") if isinstance(commands, dict) else None
++    if not isinstance(recent, list):
++        return [f"{snapshot_path.name}: missing runtime command history"]
++
++    fit_targets = {
++        str(command.get("target"))
++        for command in recent
++        if isinstance(command, dict)
++        and command.get("command") == "FitScatterCamera"
++        and command.get("target")
++    }
++    violations: list[str] = []
++    for command in recent:
++        if not isinstance(command, dict) or command.get("command") != "SetScatterPointsPacked":
++            continue
++        target = str(command.get("target") or "")
++        detail = str(command.get("detail") or "")
++        if not target or "payload_bytes=0" in detail:
++            continue
++        if "fit=true" in detail or target in fit_targets:
++            continue
++        violations.append(
++            f"{snapshot_path.name}: scatter {target} uploaded points without startup fit"
++        )
++    return violations
++
++
++def validate_professional_demo_splitter_snapshot(snapshot_path: Path) -> list[str]:
++    try:
++        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
++    except (OSError, json.JSONDecodeError) as exc:
++        return [f"{snapshot_path.name}: could not read snapshot for splitter utilization: {exc}"]
++    gpu = snapshot.get("gpu") if isinstance(snapshot, dict) else None
++    if not isinstance(gpu, dict):
++        return [f"{snapshot_path.name}: missing gpu snapshot"]
++    tree = gpu.get("tree")
++    layout = gpu.get("layout")
++    rects = layout.get("rects") if isinstance(layout, dict) else None
++    if not isinstance(tree, dict) or not isinstance(rects, dict):
++        return [f"{snapshot_path.name}: missing tree/layout rects"]
++
++    violations: list[str] = []
++
++    def walk(node: dict[str, Any]) -> None:
++        node_type = str(node.get("type") or "")
++        if node_type == "splitter":
++            violation = splitter_underutilization_violation(snapshot_path.name, node, rects)
++            if violation:
++                violations.append(violation)
++        for child in node.get("children") or []:
++            if isinstance(child, dict):
++                walk(child)
++
++    walk(tree)
++    return violations
++
++
++def splitter_underutilization_violation(
++    snapshot_name: str,
++    splitter: dict[str, Any],
++    rects: dict[str, Any],
++) -> str | None:
++    props = splitter.get("props")
++    orientation = str(props.get("orientation") if isinstance(props, dict) else "horizontal")
++    if orientation == "vertical":
++        return None
++    splitter_id = str(splitter.get("id") or "")
++    splitter_rect = rect_as_floats(rects.get(splitter_id))
++    if splitter_rect is None or splitter_rect["w"] <= 0 or splitter_rect["h"] <= 0:
++        return None
++    panes = [
++        child
++        for child in splitter.get("children") or []
++        if isinstance(child, dict) and str(child.get("type") or "") == "pane"
++    ]
++    if len(panes) < 2:
++        return None
++    if any(pane_has_explicit_max_size(pane) for pane in panes):
++        return None
++    pane_rects = [
++        rect_as_floats(rects.get(str(pane.get("id") or "")))
++        for pane in panes
++    ]
++    pane_rects = [
++        rect for rect in pane_rects if rect is not None and rect["w"] > 0 and rect["h"] > 0
++    ]
++    if len(pane_rects) < 2:
++        return None
++    left = min(rect["x"] for rect in pane_rects)
++    right = max(rect["x"] + rect["w"] for rect in pane_rects)
++    consumed = right - left
++    unused = splitter_rect["w"] - consumed
++    threshold = max(120.0, splitter_rect["w"] * 0.18)
++    if unused > threshold:
++        return (
++            f"{snapshot_name}: splitter underutilized: splitter width "
++            f"{splitter_rect['w']:.0f}px, pane span {consumed:.0f}px, unused {unused:.0f}px"
++        )
++    return None
++
++
++def pane_has_explicit_max_size(pane: dict[str, Any]) -> bool:
++    props = pane.get("props")
++    if isinstance(props, dict) and props.get("max_size") is not None:
++        return True
++    style = pane.get("style")
++    if isinstance(style, dict):
++        if style.get("max_width") is not None or style.get("max-height") is not None:
++            return True
++        layout = style.get("layout")
++        if isinstance(layout, dict) and (
++            layout.get("max_width") is not None or layout.get("max_height") is not None
++        ):
++            return True
++    return False
++
++
++def validate_professional_demo_scroll_snapshot(snapshot_path: Path) -> list[str]:
++    try:
++        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
++    except (OSError, json.JSONDecodeError) as exc:
++        return [f"{snapshot_path.name}: could not read snapshot for scroll reachability: {exc}"]
++    gpu = snapshot.get("gpu") if isinstance(snapshot, dict) else None
++    if not isinstance(gpu, dict):
++        return [f"{snapshot_path.name}: missing gpu snapshot"]
++    tree = gpu.get("tree")
++    layout = gpu.get("layout")
++    rects = layout.get("rects") if isinstance(layout, dict) else None
++    scroll_max_y = layout.get("scroll_max_y") if isinstance(layout, dict) else None
++    if not isinstance(tree, dict) or not isinstance(rects, dict):
++        return [f"{snapshot_path.name}: missing tree/layout rects"]
++    if not isinstance(scroll_max_y, dict):
++        scroll_max_y = {}
++
++    body = find_primary_body_scroll_area(tree, rects)
++    if body is None:
++        return []
++    body_id, body_node = body
++    body_rect = rect_as_floats(rects.get(body_id))
++    if body_rect is None:
++        return []
++    deepest = deepest_visible_descendant_bottom(body_node, rects, root_id=body_id)
++    if deepest is None:
++        return []
++
++    viewport_bottom = body_rect["y"] + body_rect["h"]
++    required_scroll = max(0.0, deepest - viewport_bottom)
++    actual_scroll = safe_float(scroll_max_y.get(body_id), 0.0)
++    tolerance = 32.0
++    if required_scroll > actual_scroll + tolerance:
++        return [
++            f"{snapshot_path.name}: body scroll range too small: required ~{required_scroll:.0f}px, got {actual_scroll:.0f}px"
++        ]
++    return []
++
++
++def find_primary_body_scroll_area(
++    tree: dict[str, Any], rects: dict[str, Any]
++) -> tuple[str, dict[str, Any]] | None:
++    fallback: tuple[str, dict[str, Any]] | None = None
++
++    def walk(node: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
++        nonlocal fallback
++        node_id = str(node.get("id") or "")
++        node_type = str(node.get("type") or "")
++        class_name = str(node.get("class") or "")
++        rect = rect_as_floats(rects.get(node_id))
++        if node_type == "scroll_area" and rect is not None and rect["w"] > 0 and rect["h"] > 0:
++            if "body" in class_name.split():
++                return node_id, node
++            if fallback is None:
++                fallback = (node_id, node)
++        for child in node.get("children") or []:
++            if isinstance(child, dict):
++                found = walk(child)
++                if found is not None:
++                    return found
++        return None
++
++    return walk(tree) or fallback
++
++
++def deepest_visible_descendant_bottom(
++    node: dict[str, Any],
++    rects: dict[str, Any],
++    *,
++    root_id: str,
++) -> float | None:
++    deepest: float | None = None
++
++    def walk(current: dict[str, Any]) -> None:
++        nonlocal deepest
++        node_id = str(current.get("id") or "")
++        if node_id != root_id and snapshot_node_excluded_from_scroll_bounds(current):
++            return
++        rect = rect_as_floats(rects.get(node_id))
++        if node_id != root_id and rect is not None and rect["w"] > 0 and rect["h"] > 0:
++            deepest = max(deepest or float("-inf"), rect["y"] + rect["h"])
++        for child in current.get("children") or []:
++            if isinstance(child, dict):
++                walk(child)
++
++    walk(node)
++    return deepest
++
++
++def snapshot_node_excluded_from_scroll_bounds(node: dict[str, Any]) -> bool:
++    node_type = str(node.get("type") or "")
++    if node_type in {
++        "modal",
++        "tooltip",
++        "context_menu",
++        "command_palette",
++        "toast",
++        "menu",
++        "menu_item",
++    }:
++        return True
++    style = node.get("style")
++    if not isinstance(style, dict):
++        return False
++    position = style.get("position")
++    if isinstance(position, str) and position.lower() == "fixed":
++        return True
++    layout = style.get("layout")
++    if isinstance(layout, dict):
++        position = layout.get("position")
++        if isinstance(position, str) and position.lower() == "fixed":
++            return True
++    return False
++
++
++def rect_as_floats(rect: Any) -> dict[str, float] | None:
++    if not isinstance(rect, dict):
++        return None
++    try:
++        return {
++            "x": float(rect["x"]),
++            "y": float(rect["y"]),
++            "w": float(rect["w"]),
++            "h": float(rect["h"]),
++        }
++    except (KeyError, TypeError, ValueError):
++        return None
++
++
++def safe_float(value: Any, default: float) -> float:
++    try:
++        return float(value)
++    except (TypeError, ValueError):
++        return default
++
++
+ def validate_badge_layout_snapshot(snapshot_path: Path) -> list[str]:
+     try:
+         snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+warning: LF will be replaced by CRLF in tools/visual_audit.py.
+The file will have its original line endings in your working directory

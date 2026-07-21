@@ -1,47 +1,71 @@
-# Code Review: Dramatic Default GUI Polish Pass
+# Code Review: Reopened Adjacent Scatter Interaction Fix
+
+## Findings
+
+No blocking findings.
+
+The current pass addresses the prior review blocker: it adds an adjacent scatter interaction probe, adds native scatter-interaction cleanup for stale active state, expands debug snapshots so plot state can be compared per id, and verifies the rebuilt extension is installed into both the workspace package and global Python 3.13.
 
 ## Approval Status
 
 Approved.
 
-The blocking toolbar/SearchBox overlap finding is resolved. I found no remaining blocking issue in the reviewed diff, targeted screenshots, toolbar snapshots, or focused validation artifacts.
+## Reviewed Changes
 
-## Findings
+- `native/src/runtime.rs`
+  - Adds detailed per-scatter debug state: viewport clip/offset/size, bounds, actor counts, hover metadata, selection state, and runtime `active_scatter_id`.
+  - Adds `cancel_scatter_interaction()` and calls it on `WindowEvent::CursorLeft` and `WindowEvent::Focused(false)`.
+  - The cleanup clears `active_scatter_id`, orbit/pan/selection state, press position, temporary selection overlays, and interaction LOD for the active scatter.
+- `examples/css_feature_probes/adjacent_scatter_interaction_probe.py`
+  - Creates explicit adjacent ids, distinct data ranges, distinct point counts, and distinct colormaps.
+  - Exercises hover transitions, left/right/gutter clicks, left drag, drag-outside/release, right drag, and wheel over both plots.
+  - Emits import-path diagnostics and `ADJACENT_SCATTER_INTERACTION_PASS` only after stable per-scatter signatures remain distinct and `active_scatter_id` is cleared.
+- `tools/visual_audit.py`
+  - Adds validation for the adjacent interaction target by checking fail/pass markers and import diagnostics.
+  - Keeps the prior professional Explore startup-fit guard.
+- `tests/test_visual_audit.py`
+  - Adds unit coverage for the adjacent interaction log validator.
+- Packaging/install verification
+  - `artifacts/TEST_RESULTS.md` now records rebuild, reinstall, import paths, and matching native binary hashes.
 
-No blocking findings remain.
+## Verification Reviewed
 
-## Review Notes
+From `artifacts/TEST_RESULTS.md` and direct spot checks:
 
-- Reviewed the SearchBox fix in `python/dragongui/widgets.py`: composed `SearchBox` now reserves `min_width: 164`, preventing the wrapper from shrinking to zero while its icon/input/clear children keep painting.
-- Reviewed the toolbar probe update in `examples/css_feature_probes/toolbar_probe.py`: the previous overfull toolbar row is split into an icon-command row and a search/action row, preserving coverage without forcing overlap in desktop or mobile captures.
-- Reviewed regenerated toolbar artifacts:
-  - `artifacts/visual_audit/screenshots/toolbar-desktop-1.png`
-  - `artifacts/visual_audit/screenshots/toolbar-390x720.png`
-  - `artifacts/visual_audit/snapshots/toolbar-desktop-1.json`
-  - `artifacts/visual_audit/snapshots/toolbar-390x720.json`
-- The prior overlap is gone. Snapshot geometry now shows the SearchBox wrapper (`dg-16`) at `w: 205.0`, with the following `Deploy` and disabled buttons starting after the search controls in both desktop and 390px captures.
-- Reviewed `artifacts/visual_audit/report.json`: `68` entries, `47 pass`, `21 needs_manual_interaction`, `0 fail`, `0 blocked`; `toolbar` remains `pass` with updated notes for the SearchBox fix.
-- The broader dramatic default-polish pass remains visually stronger than the first pass, and the previously reviewed app-shell, responsive-layout, flex-stress, and default-polish-stress screenshots remain acceptable.
+- Python compile: passed.
+- `cargo fmt`: passed.
+- `cargo test ... scatter`: `62 passed`, `1 ignored`.
+- `cargo test ... command_batch_coalesces_scatter_updates`: `2 passed`.
+- `cargo check`: passed.
+- Combined Python suite: `432 passed`, `3 failed`; the failures are the same unrelated existing failures documented in the artifact.
+- `adjacent-scatter-interaction`: `pass`.
+- `all-features-professional-explore`: `pass`.
+- `layout-plot-embedding`: `pass`.
+- `scatter3d` and `scatter-plot-2d`: expected `needs_manual_interaction`.
+- Native binary hashes match for:
+  - `python\dragongui\_dragongui.pyd`
+  - `native\target\release\_dragongui.dll`
+  - `C:\Users\nashk\AppData\Local\Programs\Python\Python313\Lib\site-packages\dragongui\_dragongui.pyd`
+  - SHA-256: `8A97760CA59ED92AA6F2CA07DDA60AE9CF46BC7EFE608A1A67FC76B696A57E87`
 
-## Validation Reviewed
+The adjacent probe log confirms workspace imports and stable distinct plot signatures:
 
-- Reran locally:
-  - `python -m py_compile python\dragongui\widgets.py examples\css_feature_probes\toolbar_probe.py`: passed
-- Reviewed reported validation in `artifacts/TEST_RESULTS.md`:
-  - py_compile for changed probes and `widgets.py`: passed
-  - `cargo fmt --check`: passed
-  - `cargo check`: passed
-  - focused native theme/table/framework tests: passed
-  - `default-polish-stress` visual audit: passed
-  - `toolbar --sizes desktop,mobile`: passed
+```text
+dragongui_import=J:\Projects\DragonFrame\python\dragongui\__init__.py
+dragongui_native_import=J:\Projects\DragonFrame\python\dragongui\_dragongui.pyd
+ADJACENT_SCATTER_INTERACTION_PASS
+active_scatter_id: null
+left: 720 points, turbo
+right: 360 points, viridis
+```
 
-## Residual Risks
+## Risks And Notes
 
-- Full native `cargo test --manifest-path native/Cargo.toml` was not run.
-- Full all-target visual audit from scratch was not run.
-- Python pytest was not rerun in this pass because Python 3.12 lacks pytest locally; prior Python 3.11 failures remain documented as unrelated.
-- The 21 `needs_manual_interaction` targets still need hover/open/focus/overlay coverage.
-- `SearchBox` now has a stronger default minimum width, which is the right guard for composed children but may require callers who intentionally want very narrow search fields to override `min_width`.
-- `artifacts/MAINTAINABILITY_REVIEW.md` is still stale from an earlier badge-focused pass and does not review this dramatic visual-polish implementation.
-- The working tree includes generated visual-audit artifacts, `.test-cache` churn, and untracked command-output/session files; those should be intentionally included or cleaned before merge.
+- `git status` shows the new adjacent probe and several professional demo files as untracked. They are present in the workspace and were used by the visual audit, but final integration must include intentional untracked source/artifact files or the manifest target will point at a missing script.
+- The adjacent probe is Windows-specific because it drives Win32 mouse input via `ctypes`. That matches this reported environment, but cross-platform interaction coverage would need a different driver.
+- The probe validates stable data/colormap/bounds/actor signatures and cleared active scatter state. It does not try to assert every expected camera delta from each drag/wheel operation; that is acceptable for the reported data-switch/combine defect, but deeper camera-isolation assertions would still be useful future coverage.
+- The three full-suite Python failures remain residual suite noise outside this fix.
+- If the user still sees the issue, the next required diagnostic is the exact launch command plus `dragongui.__file__` and `dragongui._dragongui.__file__` printed from inside that run.
 
+[[APPROVED]]
+[[COMMANDDOCK_DONE]]

@@ -1,0 +1,145 @@
+python/dragongui\dialogs.py:19:    and the callback is scheduled through ``app.call_soon_threadsafe`` when an
+python/dragongui\dialogs.py:153:        if app is not None and hasattr(app, "call_soon_threadsafe"):
+python/dragongui\dialogs.py:154:            app.call_soon_threadsafe(lambda: callback(result))  # type: ignore[attr-defined]
+python/dragongui\diagnostics.py:516:    """Called by the runtime when a call_soon_threadsafe task raises an exception."""
+python/dragongui\runtime.py:133:    def enqueue_replace_children(self, children: object) -> None:
+python/dragongui\runtime.py:135:        self.app.enqueue_replace_children(self.id, children)
+python/dragongui\runtime.py:597:    def release_resource(self, resource_id: str) -> None:
+python/dragongui\runtime.py:599:        self.app.release_resource(resource_id)
+python/dragongui\runtime.py:642:    def call_soon_threadsafe(
+python/dragongui\runtime.py:649:            raise TypeError("call_soon_threadsafe expects a callable")
+python/dragongui\runtime.py:691:    def enqueue_replace_children(self, widget_id: str, children: object) -> None:
+python/dragongui\runtime.py:692:        self._send_or_queue_native("enqueue_replace_children", widget_id, _children_json(children))
+python/dragongui\runtime.py:1225:    def enqueue_set_buffer_resource(
+python/dragongui\runtime.py:1234:            "enqueue_set_buffer_resource",
+python/dragongui\runtime.py:1241:    def release_resource(self, resource_id: str) -> None:
+python/dragongui\runtime.py:1242:        self._send_or_queue_native("enqueue_release_resource", _resource_id(resource_id))
+python/dragongui\runtime.py:1317:    def _python_debug_snapshot(
+python/dragongui\runtime.py:1346:    def debug_snapshot(self, timeout_ms: int = 1000) -> dict[str, Any]:
+python/dragongui\runtime.py:1354:        python_snapshot = self._python_debug_snapshot(queued_tasks, pending_native)
+python/dragongui\runtime.py:1366:        snapshot_json = sender.debug_snapshot(timeout_ms)
+python/dragongui\runtime.py:1537:                raise ValueError("replace_children patches require node_id")
+python/dragongui\runtime.py:1538:            self.enqueue_replace_children(
+python/dragongui\app.py:85:    def document(
+python/dragongui\app.py:164:            return run_document(
+python/dragongui\app.py:165:                self.document(window, include_startup_resource_payloads=not bind_live),
+python/dragongui\app.py:313:        handle.call_soon_threadsafe(build_and_replace)
+python/dragongui\app.py:317:            result = run_document(
+python/dragongui\app.py:318:                self.document(placeholder, include_startup_resource_payloads=False),
+python/dragongui\app.py:324:                snapshot = result.get("debug_snapshot")
+python/dragongui\app.py:328:                        runtime["python"] = handle._python_debug_snapshot()
+python/dragongui\app.py:339:    def call_soon_threadsafe(self, fn: Any) -> None:
+python/dragongui\app.py:343:        self._handle.call_soon_threadsafe(fn)
+python/dragongui\app.py:369:    def debug_snapshot(self, timeout_ms: int = 1000) -> dict[str, Any]:
+python/dragongui\app.py:373:        return self._handle.debug_snapshot(timeout_ms)
+python/dragongui\app.py:393:    def set_buffer_resource(
+python/dragongui\app.py:404:        ``release_resource(resource_id)``. Pass ``owner=widget`` or
+python/dragongui\app.py:411:        self._handle.enqueue_set_buffer_resource(resource_id, data, kind=kind, owner=owner)
+python/dragongui\app.py:413:    def release_resource(self, resource_id: str) -> None:
+python/dragongui\app.py:417:        self._handle.release_resource(resource_id)
+python/dragongui\manual.py:798:        "Use `append_points(...)` for streaming updates.",
+python/dragongui\manual.py:1403:- Tables: `DataFrameTable.set_frame(...)`.
+python/dragongui\manual.py:1404:- Line plots: `LinePlot.append_points(...)`, series replacement, and prepared payload updates.
+python/dragongui\manual.py:1405:- Scatter plots: `set_points`, `set_prepared_points`, `enqueue_prepared_points`, `create_live_frame`, `fit`, and camera methods.
+python/dragongui\manual.py:1410:with `app.call_soon_threadsafe(...)` and coalesce high-rate updates before they
+python/dragongui\manual.py:1582:  `app.call_soon_threadsafe(...)` for UI changes.
+python/dragongui\manual.py:1617:- Keep long-running work out of callbacks; use a thread and `app.call_soon_threadsafe`.
+python/dragongui\manual.py:1637:- `document(window)` serializes startup state without running the GUI.
+python/dragongui\manual.py:1641:- `debug_snapshot(timeout_ms=1000)` returns runtime/layout/style diagnostics.
+python/dragongui\manual.py:1644:- `call_soon_threadsafe(fn)` schedules a callable from producer/background threads.
+python/dragongui\manual.py:1699:    app.call_soon_threadsafe(lambda: progress.set_value(result.progress))
+python/dragongui\manual.py:1712:Use `app.debug_snapshot()` to inspect:
+python/dragongui\manual.py:1737:Live methods such as `set_value`, `set_style`, `set_frame`, `set_points`,
+python/dragongui\manual.py:2154:lock the table down. Runtime `set_frame(frame)` updates the data without
+python/dragongui\manual.py:2175:- `set_data(frame, x=None, y=None, ...)`
+python/dragongui\manual.py:2176:- `append_points(series, x_values, y_values)` for streaming.
+python/dragongui\manual.py:2200:- `prepare_points(...)`
+python/dragongui\manual.py:2202:- `enqueue_prepared_points(...)`
+python/dragongui\manual.py:2204:- `set_points(..., fit=True)`
+python/dragongui\manual.py:2246:- `LinePlot(frame, y="loss", x=None, colors=None)` with `set_data`,
+python/dragongui\manual.py:2247:  `append_points`, `clear`, `fit`, and toolbar/grid/axes controls.
+python/dragongui\manual.py:2254:as `prepare_points`, `set_prepared_points`, `create_live_frame`, or
+python/dragongui\manual.py:2255:`append_points` instead of rebuilding the widget tree.
+python/dragongui\manual.py:2446:work, start a worker thread and schedule UI updates through `app.call_soon_threadsafe`.
+python/dragongui\manual.py:2479:- `DataFrameTable.set_frame(frame)`
+python/dragongui\manual.py:2480:- `LinePlot.set_data(...)`, `LinePlot.append_points(...)`, `LinePlot.clear(...)`
+python/dragongui\manual.py:2481:- `Scatter3D.set_points(...)`, `Scatter3D.set_prepared_points(...)`,
+python/dragongui\manual.py:2482:  `Scatter3D.enqueue_prepared_points(...)`, `Scatter3D.create_live_frame(...)`
+python/dragongui\manual.py:2483:- Chart-specific setters such as `Heatmap.set_data(...)`,
+python/dragongui\manual.py:2484:  `PieChart.set_data(...)`, `PieChart.set_frame_data(...)`,
+python/dragongui\manual.py:2501:        app.call_soon_threadsafe(lambda: plot.append_points("loss", xs, ys))
+python/dragongui\manual.py:2522:table.set_frame(df)
+python/dragongui\manual.py:2523:plot.append_points("loss", xs, ys)
+python/dragongui\manual.py:2524:scatter.set_points(df, x="x", y="y", z="z", fit=True)
+python/dragongui\manual.py:2650:- Call UI mutation APIs from the GUI thread, or use `app.call_soon_threadsafe`
+python/dragongui\manual.py:2696:- Use worker threads for slow work and `app.call_soon_threadsafe(...)` to
+python/dragongui\manual.py:2708:- Use `DataFrameTable.set_frame(frame)` for live replacement.
+python/dragongui\manual.py:2730:- `LinePlot`: use `append_points(...)` or prepared payload replacement; batch
+python/dragongui\manual.py:2733:- `Scatter3D`: use `create_live_frame(...)`, `enqueue_prepared_points(...)`,
+python/dragongui\manual.py:2757:- Create the `LinePlot` once and update it with `append_points(...)`,
+python/dragongui\manual.py:2779:- For `Scatter3D`, use `prepare_points`, `set_prepared_points`,
+python/dragongui\manual.py:2780:  `enqueue_prepared_points`, `create_live_frame`, LOD, and auto quality.
+python/dragongui\manual.py:2883:- For `Scatter3D`, use `prepare_points`, `set_prepared_points`,
+python/dragongui\manual.py:2884:  `enqueue_prepared_points`, `create_live_frame`, LOD, and auto quality.
+python/dragongui\manual.py:2885:- For `LinePlot`, use `append_points` or prepared series payloads.
+python/dragongui\manual.py:2886:- Use `DataFrameTable.set_frame` instead of replacing surrounding layout.
+python/dragongui\manual.py:2888:- Use `app.debug_snapshot()` and benchmark probes to inspect frame timings.
+python/dragongui\manual.py:3038:    plot.append_points("loss", [step], [loss])
+python/dragongui\manual.py:3039:    plot.append_points("accuracy", [step], [accuracy])
+python/dragongui\manual.py:3042:`LinePlot.append_points(...)` is the common path for small streaming batches.
+python/dragongui\manual.py:3058:prepared = scatter.prepare_points(frame, x="x", y="y", z="z", color="loss")
+python/dragongui\manual.py:3062:For worker threads, enqueue prepared payloads with `app.call_soon_threadsafe`
+python/dragongui\manual.py:3082:Use `DataFrameTable.set_frame(...)` when filters change. Keep the table in a
+python/dragongui\manual.py:3163:`app.call_soon_threadsafe(...)`, `LinePlot.append_points(...)`,
+python/dragongui\manual.py:3274:- Batch high-rate line-plot updates with `append_points`.
+python/dragongui\manual.py:3550:- `app.debug_snapshot()` returns runtime, layout, style, command, and widget data.
+python/dragongui\thread_monitor.py:99:                    app.call_soon_threadsafe(
+python/dragongui\thread_monitor.py:742:        Show recent ``call_soon_threadsafe`` task failures.
+python/dragongui\_backend.py:81:def run_document(
+python/dragongui\_backend.py:98:            "debug_snapshot": {
+python/dragongui\vdom.py:99:    REPLACE_CHILDREN: ClassVar[str] = "replace_children"
+python/dragongui\widgets.py:977:                        handle.app.call_soon_threadsafe(
+python/dragongui\widgets.py:991:                    self.scatter.enqueue_prepared_points(
+python/dragongui\widgets.py:1005:                            handle.app.call_soon_threadsafe(
+python/dragongui\widgets.py:1033:            self.scatter.enqueue_prepared_points(
+python/dragongui\widgets.py:1064:    ``Scatter3D.set_points()`` is the simple full-scene replacement API. A
+python/dragongui\widgets.py:1163:            payload = self.scatter.prepare_points(
+python/dragongui\widgets.py:1224:        ``Scatter3D.prepare_points(...)``, then enqueue the prepared payload here.
+python/dragongui\widgets.py:1259:        self.scatter.enqueue_prepared_points(
+python/dragongui\widgets.py:1520:    def replace_children(self, children: Iterable[Widget]) -> None:
+python/dragongui\widgets.py:1523:            raise TypeError("replace_children expects DragonGUI widget children")
+python/dragongui\widgets.py:1546:            live_handle.enqueue_replace_children([child.to_dict() for child in self.children])
+python/dragongui\widgets.py:5371:            self.replace_children(children)
+python/dragongui\widgets.py:5541:            self.replace_children(children)
+python/dragongui\widgets.py:6093:            self.replace_children(widgets)
+python/dragongui\widgets.py:6285:            self.replace_children(children)
+python/dragongui\widgets.py:6591:            self.results.replace_children(rows)
+python/dragongui\widgets.py:6745:            self.replace_children(buttons)
+python/dragongui\widgets.py:7853:    def set_data(
+python/dragongui\widgets.py:8397:        self.set_data(matrix, x_labels=x_labels, y_labels=y_labels, clim=self.clim, _initial=True)
+python/dragongui\widgets.py:8400:    def set_data(
+python/dragongui\widgets.py:8628:    def prepare_points(
+python/dragongui\widgets.py:8642:            raise RuntimeError("LinePlot.prepare_points requires NumPy and a numeric y column")
+python/dragongui\widgets.py:8663:        return tuple(cls.prepare_points(frame, x=x, y=column) for column in _line_plot_columns(y))
+python/dragongui\widgets.py:8665:    def set_data(
+python/dragongui\widgets.py:8685:                raise ValueError("LinePlot.set_data accepts either label or labels, not both")
+python/dragongui\widgets.py:8694:                raise ValueError("LinePlot.set_data accepts either color or colors, not both")
+python/dragongui\widgets.py:8702:                raise ValueError("LinePlot.set_data accepts either line_style or line_styles, not both")
+python/dragongui\widgets.py:8719:                    raise RuntimeError("live LinePlot.set_data requires numeric x/y columns")
+python/dragongui\widgets.py:8733:    def append_points(
+python/dragongui\widgets.py:8743:            raise RuntimeError("LinePlot.append_points requires numeric x/y values")
+python/dragongui\widgets.py:8986:    def set_data(
+python/dragongui\widgets.py:9013:    def set_frame_data(
+python/dragongui\widgets.py:9480:    def prepare_points(
+python/dragongui\widgets.py:9504:        ``enqueue_prepared_points`` without repacking the frame.
+python/dragongui\widgets.py:9537:                "Scatter3D.prepare_points requires NumPy and addressable numeric x/y/z columns"
+python/dragongui\widgets.py:9570:        self.enqueue_prepared_points(payload, coalesce=coalesce, fit=fit)
+python/dragongui\widgets.py:9572:    def enqueue_prepared_points(
+python/dragongui\widgets.py:9661:    def set_points(
+python/dragongui\widgets.py:9715:        # Clear point-layer metadata (DragonSci parity: set_points replaces the point scene).
+python/dragongui\widgets.py:9733:                    "live Scatter3D.set_points requires NumPy and addressable numeric x/y/z columns"
+python/dragongui\widgets.py:11326:                snapshot = handle.app.debug_snapshot()
+python/dragongui\widgets.py:11388:                snap = handle.app.debug_snapshot()
+python/dragongui\widgets.py:11859:    def set_points(
+python/dragongui\widgets.py:11882:        super().set_points(
+python/dragongui\widgets.py:11993:    def set_frame(self, frame: Any, *, sample_rows: int | None = None) -> None:

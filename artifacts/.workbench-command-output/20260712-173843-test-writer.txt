@@ -1,0 +1,170 @@
+# Test Results: Reopened Adjacent Scatter Interaction Fix
+
+## Follow-Up Verification After User Rerun Report
+
+Date: 2026-07-12
+
+The user reported that the demo still showed the adjacent-plot issue and questioned whether the library had been rebuilt/reinstalled. I rechecked the build/install state and found one concrete packaging risk: after the prior reinstall, `native\target\release\_dragongui.dll` was newer than `python\dragongui\_dragongui.pyd`, so the workspace extension copy was not proven to be the newest build.
+
+I rebuilt, force-reinstalled, then copied the final release DLL into the workspace package again after pip's wheel build completed.
+
+```powershell
+$py='C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe'
+$env:PYO3_PYTHON=$py
+cargo build --manifest-path native\Cargo.toml --release --features pyo3/extension-module
+Copy-Item -LiteralPath native\target\release\_dragongui.dll -Destination python\dragongui\_dragongui.pyd -Force
+& $py -m pip install --upgrade --force-reinstall .
+Copy-Item -LiteralPath native\target\release\_dragongui.dll -Destination python\dragongui\_dragongui.pyd -Force
+```
+
+Result: passed. Pip built and installed `dragongui-0.1.0-cp312-abi3-win_amd64.whl`.
+
+Final native binary state:
+
+```text
+J:\Projects\DragonFrame\python\dragongui\_dragongui.pyd
+Length: 19625472
+LastWriteTime: 7/12/2026 5:35:49 PM
+SHA256: 8A97760CA59ED92AA6F2CA07DDA60AE9CF46BC7EFE608A1A67FC76B696A57E87
+
+J:\Projects\DragonFrame\native\target\release\_dragongui.dll
+Length: 19625472
+LastWriteTime: 7/12/2026 5:35:49 PM
+SHA256: 8A97760CA59ED92AA6F2CA07DDA60AE9CF46BC7EFE608A1A67FC76B696A57E87
+
+C:\Users\nashk\AppData\Local\Programs\Python\Python313\Lib\site-packages\dragongui\_dragongui.pyd
+Length: 19625472
+LastWriteTime: 7/12/2026 5:35:50 PM
+SHA256: 8A97760CA59ED92AA6F2CA07DDA60AE9CF46BC7EFE608A1A67FC76B696A57E87
+```
+
+Import verification after reinstall/final copy:
+
+```powershell
+& $py -c "import dragongui as dg, dragongui._dragongui as native; print('bare_dg=' + dg.__file__); print('bare_native=' + native.__file__); print(dg.native_backend_available(), dg.backend_info())"
+& $py -c "import sys; sys.path.insert(0, 'python'); import dragongui as dg, dragongui._dragongui as native; print('workspace_dg=' + dg.__file__); print('workspace_native=' + native.__file__); print(dg.native_backend_available(), dg.backend_info())"
+```
+
+Results:
+
+```text
+bare_dg=C:\Users\nashk\AppData\Local\Programs\Python\Python313\Lib\site-packages\dragongui\__init__.py
+bare_native=C:\Users\nashk\AppData\Local\Programs\Python\Python313\Lib\site-packages\dragongui\_dragongui.pyd
+True {'name': 'dragongui', 'native': True, 'renderer': 'wgpu', 'status': 'm8-w0-shipping-widgets', 'layout': 'taffy', 'text': 'glyphon'}
+
+workspace_dg=J:\Projects\DragonFrame\python\dragongui\__init__.py
+workspace_native=J:\Projects\DragonFrame\python\dragongui\_dragongui.pyd
+True {'name': 'dragongui', 'native': True, 'renderer': 'wgpu', 'status': 'm8-w0-shipping-widgets', 'layout': 'taffy', 'text': 'glyphon'}
+```
+
+Post-rebuild validation commands:
+
+```powershell
+& $py -m py_compile tools\visual_audit.py examples\all_features_professional_demo.py examples\css_feature_probes\scatter3d_probe.py examples\css_feature_probes\adjacent_scatter_interaction_probe.py
+cargo fmt --manifest-path native\Cargo.toml -- --check
+$env:PYO3_PYTHON='C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe'
+cargo test --manifest-path native\Cargo.toml scatter -- --nocapture
+cargo test --manifest-path native\Cargo.toml command_batch_coalesces_scatter_updates -- --nocapture
+cargo check --manifest-path native\Cargo.toml
+& $py -m pytest tests\test_vdom.py tests\test_visual_audit.py tests\test_python_api.py -q
+```
+
+Results:
+
+- Python compile: passed.
+- `cargo fmt`: passed.
+- `cargo test ... scatter`: `62 passed`, `1 ignored`.
+- `cargo test ... command_batch_coalesces_scatter_updates`: `2 passed`.
+- `cargo check`: passed.
+- Combined Python suite: `432 passed`, `3 failed`.
+
+The three Python failures are the same unrelated failures already documented:
+
+- `test_app_shell_and_body_provide_safe_app_layout_defaults`: `KeyError: 'width'`
+- `test_workbench_layout_and_main_provide_prompt_first_defaults`: `KeyError: 'flex'`
+- `test_node_graph_selected_terminal_widget_replaces_stale_runtime_bridge`: stale runtime bridge handle assertion.
+
+Post-final-copy visual audit commands:
+
+```powershell
+& $py tools\visual_audit.py --target adjacent-scatter-interaction --sizes 1120x720 --append --wait-ms 2500 --timeout-ms 16000
+& $py tools\visual_audit.py --target all-features-professional-explore --sizes 1440x900,1180x760,390x720,320x640 --append --wait-ms 1400 --timeout-ms 16000
+& $py tools\visual_audit.py --target layout-plot-embedding --target scatter3d --target scatter-plot-2d --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 14000
+```
+
+Results:
+
+- `adjacent-scatter-interaction`: `pass`
+- `all-features-professional-explore`: `pass`
+- `layout-plot-embedding`: `pass`
+- `scatter3d`: `needs_manual_interaction`
+- `scatter-plot-2d`: `needs_manual_interaction`
+
+Adjacent interaction evidence from `artifacts\visual_audit\logs\adjacent-scatter-interaction-1120x720.stdout.txt`:
+
+```text
+dragongui_import=J:\Projects\DragonFrame\python\dragongui\__init__.py
+dragongui_native_import=J:\Projects\DragonFrame\python\dragongui\_dragongui.pyd
+ADJACENT_SCATTER_INTERACTION_PASS
+active_scatter_id: null
+adjacent-left-scatter: 720 points, turbo, scalar bar visible
+adjacent-right-scatter: 360 points, viridis, scalar bar hidden
+```
+
+Conclusion for this follow-up: the rebuilt native binary is now installed in global Python and copied into the workspace package with matching hashes. The automated adjacent interaction probe and professional Explore audit pass against the workspace import path after that final copy. If the user still sees the issue when launching a different command, the next test should capture that exact launch command and print `dragongui.__file__` / `dragongui._dragongui.__file__` from inside that run.
+
+## Environment
+
+- Workspace: `J:\Projects\DragonFrame`
+- Date: 2026-07-12
+- Python used for validation: `C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe`
+- Native validation used `PYO3_PYTHON=C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe`.
+
+## Commands And Results
+
+Python compile:
+
+```powershell
+$py='C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe'
+& $py -m py_compile tools\visual_audit.py examples\all_features_professional_demo.py examples\css_feature_probes\scatter3d_probe.py examples\css_feature_probes\adjacent_scatter_interaction_probe.py
+```
+
+Result: passed.
+
+Visual-audit unit tests:
+
+```powershell
+& $py -m pytest tests\test_visual_audit.py -q
+```
+
+Result: `14 passed`.
+
+Native format/check/tests:
+
+```powershell
+$env:PYO3_PYTHON='C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe'
+cargo fmt --manifest-path native\Cargo.toml -- --check
+cargo test --manifest-path native\Cargo.toml scatter -- --nocapture
+cargo test --manifest-path native\Cargo.toml command_batch_coalesces_scatter_updates -- --nocapture
+cargo check --manifest-path native\Cargo.toml
+```
+
+Results:
+
+- `cargo fmt`: passed.
+- `cargo test ... scatter`: `62 passed`, `1 ignored`.
+- `cargo test ... command_batch_coalesces_scatter_updates`: `2 passed`.
+- `cargo check`: passed.
+
+Required Python suite:
+
+```powershell
+& $py -m pytest tests\test_vdom.py tests\test_visual_audit.py tests\test_python_api.py -q
+```
+
+Result: `432 passed`, `3 failed`.
+
+Failures:
+
+- `tests/test_python_api.py::test_app_shell_and_body_provide_safe_app_layout_defaults`
+  - `KeyError: 'width'`

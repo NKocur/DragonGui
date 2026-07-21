@@ -1,0 +1,824 @@
+
+
+IgnoreCase : True
+LineNumber : 5
+Line       : This is a manifest-driven visual audit. `pass` means the saved screenshot state was visually reviewed 
+             against `artifacts/SPEC.md` and no obvious defect was recorded. `needs_manual_interaction` means the 
+             static capture was reviewed, but important hover/open/drag/focus or animated states still need manual or 
+             automated interaction coverage.
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 350
+Line       : - Notes: Visual review after fix: desktop and 390x720 captures now keep dense controls inside their 
+             panels with visible usable inputs/actions. The previous zero-width controls and right-edge clipping in 
+             the sampled mobile rows are resolved in the saved screenshots. Additional run: No visual issue recorded 
+             by automated first pass. Additional run: Captured with native DragonGUI window screenshot API.
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 372
+Line       : - Features: `Professional demo`, `AppShell`, `Sidebar`, `Toolbar`, `Tabs`, `Body`, `StatusBar`, 
+             `LinePlot`, `PieChart`, `DataFrameTable`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 377
+Line       : - Suspected modules: `native/src/layout.rs`, `native/src/primitives/mod.rs`, `native/src/runtime.rs`, 
+             `native/src/scatter/mod.rs`, `native/src/table.rs`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 385
+Line       : - Features: `Professional demo`, `Scatter3D`, `ScatterPlot2D`, `Splitter`, `Pane`, `Toolbar`, `SearchBox`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 390
+Line       : - Suspected modules: `native/src/layout.rs`, `native/src/primitives/mod.rs`, `native/src/runtime.rs`, 
+             `native/src/scatter/mod.rs`, `native/src/table.rs`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 393
+Line       : ### All Features Professional Demo - Timeseries (`all-features-professional-timeseries`)
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 398
+Line       : - Features: `Professional demo`, `GridLayout`, `LinePlot`, `Histogram`, `Heatmap`, `BarChart`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 399
+Line       : - Screenshots: `screenshots/all-features-professional-timeseries-1440x900.png`, 
+             `screenshots/all-features-professional-timeseries-1180x760.png`, 
+             `screenshots/all-features-professional-timeseries-390x720.png`, 
+             `screenshots/all-features-professional-timeseries-320x640.png`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 400
+Line       : - Debug snapshots: `snapshots/all-features-professional-timeseries-1440x900.json`, 
+             `snapshots/all-features-professional-timeseries-1180x760.json`, 
+             `snapshots/all-features-professional-timeseries-390x720.json`, 
+             `snapshots/all-features-professional-timeseries-320x640.json`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 401
+Line       : - Logs: `logs/all-features-professional-timeseries-1440x900.stdout.txt`, 
+             `logs/all-features-professional-timeseries-1440x900.stderr.txt`, 
+             `logs/all-features-professional-timeseries-1180x760.stdout.txt`, 
+             `logs/all-features-professional-timeseries-1180x760.stderr.txt`, 
+             `logs/all-features-professional-timeseries-390x720.stdout.txt`, 
+             `logs/all-features-professional-timeseries-390x720.stderr.txt`, 
+             `logs/all-features-professional-timeseries-320x640.stdout.txt`, 
+             `logs/all-features-professional-timeseries-320x640.stderr.txt`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 402
+Line       : - Notes: Route-specific capture for the professional all-features demo time-series page. Additional run: 
+             Captured with native DragonGUI window screenshot API.
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 403
+Line       : - Suspected modules: `native/src/layout.rs`, `native/src/primitives/mod.rs`, `native/src/runtime.rs`, 
+             `native/src/scatter/mod.rs`, `native/src/table.rs`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 404
+Line       : - Reproduction: `python tools/visual_audit.py --target all-features-professional-timeseries --sizes 
+             1440x900`; `python tools/visual_audit.py --target all-features-professional-timeseries --sizes 1180x760`; 
+             `python tools/visual_audit.py --target all-features-professional-timeseries --sizes 390x720`; `python 
+             tools/visual_audit.py --target all-features-professional-timeseries --sizes 320x640`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 523
+Line       : ### Layout Plot Embedding (`layout-plot-embedding`)
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 527
+Line       : - Probe: `examples\css_feature_probes\layout_plot_embedding_probe.py`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 528
+Line       : - Features: `LinePlot`, `ScatterPlot2D`, `Heatmap`, `Histogram`, `BarChart`, `DataFrameTable`, `Splitter`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 529
+Line       : - Screenshots: `screenshots/layout-plot-embedding-desktop-1.png`, 
+             `screenshots/layout-plot-embedding-390x720.png`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 530
+Line       : - Debug snapshots: `snapshots/layout-plot-embedding-desktop-1.json`, 
+             `snapshots/layout-plot-embedding-390x720.json`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 531
+Line       : - Logs: `logs/layout-plot-embedding-desktop-1.stdout.txt`, 
+             `logs/layout-plot-embedding-desktop-1.stderr.txt`, `logs/layout-plot-embedding-390x720.stdout.txt`, 
+             `logs/layout-plot-embedding-390x720.stderr.txt`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 533
+Line       : - Suspected modules: `native/src/layout.rs`, `native/src/primitives/mod.rs`, `native/src/runtime.rs`, 
+             `native/src/scatter/mod.rs`, `native/src/table.rs`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 534
+Line       : - Reproduction: `python tools/visual_audit.py --target layout-plot-embedding --sizes desktop-1`; `python 
+             tools/visual_audit.py --target layout-plot-embedding --sizes 390x720`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 606
+Line       : - Features: `DataFrameTable`, `Scatter3D`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 611
+Line       : - Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`, 
+             `native/src/scatter/mod.rs`, `native/src/table.rs`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 624
+Line       : - Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`, 
+             `native/src/scatter/mod.rs`, `native/src/table.rs`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 637
+Line       : - Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`, 
+             `native/src/scatter/mod.rs`, `native/src/table.rs`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 650
+Line       : - Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`, 
+             `native/src/scatter/mod.rs`, `native/src/table.rs`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 663
+Line       : - Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`, 
+             `native/src/scatter/mod.rs`, `native/src/table.rs`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 676
+Line       : - Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`, 
+             `native/src/scatter/mod.rs`, `native/src/table.rs`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 679
+Line       : ### Line Plot (`line-plot`)
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 683
+Line       : - Probe: `examples\css_feature_probes\line_plot_probe.py`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 684
+Line       : - Features: `LinePlot`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 685
+Line       : - Screenshots: `screenshots/line-plot-desktop-1.png`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 686
+Line       : - Debug snapshots: `snapshots/line-plot-desktop-1.json`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 687
+Line       : - Logs: `logs/line-plot-desktop-1.stdout.txt`, `logs/line-plot-desktop-1.stderr.txt`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 689
+Line       : - Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`, 
+             `native/src/scatter/mod.rs`, `native/src/table.rs`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 690
+Line       : - Reproduction: `python tools/visual_audit.py --target line-plot --sizes desktop-1`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 692
+Line       : ### Line Plot Stream Benchmark (`line-plot-stream-benchmark`)
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 696
+Line       : - Probe: `examples\css_feature_probes\line_plot_stream_benchmark_probe.py`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 697
+Line       : - Features: `LinePlot`, `Streaming`, `Diagnostics`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 698
+Line       : - Screenshots: `screenshots/line-plot-stream-benchmark-desktop-1.png`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 699
+Line       : - Debug snapshots: `snapshots/line-plot-stream-benchmark-desktop-1.json`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 700
+Line       : - Logs: `logs/line-plot-stream-benchmark-desktop-1.stdout.txt`, 
+             `logs/line-plot-stream-benchmark-desktop-1.stderr.txt`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 702
+Line       : - Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`, 
+             `native/src/scatter/mod.rs`, `native/src/table.rs`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 703
+Line       : - Reproduction: `python tools/visual_audit.py --target line-plot-stream-benchmark --sizes desktop-1`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 715
+Line       : - Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`, 
+             `native/src/scatter/mod.rs`, `native/src/table.rs`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 718
+Line       : ### Scatter3D (`scatter3d`)
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 722
+Line       : - Probe: `examples\css_feature_probes\scatter3d_probe.py`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 723
+Line       : - Features: `Scatter3D`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 724
+Line       : - Screenshots: `screenshots/scatter3d-desktop-1.png`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 725
+Line       : - Debug snapshots: `snapshots/scatter3d-desktop-1.json`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 726
+Line       : - Logs: `logs/scatter3d-desktop-1.stdout.txt`, `logs/scatter3d-desktop-1.stderr.txt`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 728
+Line       : - Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`, 
+             `native/src/scatter/mod.rs`, `native/src/table.rs`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 729
+Line       : - Reproduction: `python tools/visual_audit.py --target scatter3d --sizes desktop-1`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 731
+Line       : ### Scatter3D CSS Chrome (`scatter3d-css-chrome`)
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 735
+Line       : - Probe: `examples\css_feature_probes\scatter3d_css_chrome_probe.py`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 736
+Line       : - Features: `Scatter3D`, `Legend`, `Axes`, `Grid planes`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 737
+Line       : - Screenshots: `screenshots/scatter3d-css-chrome-desktop-1.png`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 738
+Line       : - Debug snapshots: `snapshots/scatter3d-css-chrome-desktop-1.json`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 739
+Line       : - Logs: `logs/scatter3d-css-chrome-desktop-1.stdout.txt`, `logs/scatter3d-css-chrome-desktop-1.stderr.txt`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 741
+Line       : - Suspected modules: `native/src/layout.rs`, `native/src/primitives/mod.rs`, `native/src/runtime.rs`, 
+             `native/src/scatter/mod.rs`, `native/src/table.rs`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 742
+Line       : - Reproduction: `python tools/visual_audit.py --target scatter3d-css-chrome --sizes desktop-1`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 744
+Line       : ### Scatter Plot 2D (`scatter-plot-2d`)
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 748
+Line       : - Probe: `examples\css_feature_probes\scatter_plot_2d_probe.py`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 749
+Line       : - Features: `ScatterPlot2D`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 750
+Line       : - Screenshots: `screenshots/scatter-plot-2d-desktop-1.png`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 751
+Line       : - Debug snapshots: `snapshots/scatter-plot-2d-desktop-1.json`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 752
+Line       : - Logs: `logs/scatter-plot-2d-desktop-1.stdout.txt`, `logs/scatter-plot-2d-desktop-1.stderr.txt`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 754
+Line       : - Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`, 
+             `native/src/scatter/mod.rs`, `native/src/table.rs`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 755
+Line       : - Reproduction: `python tools/visual_audit.py --target scatter-plot-2d --sizes desktop-1`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 757
+Line       : ### Scatter3D Dense (`scatter3d-dense`)
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 761
+Line       : - Probe: `examples\css_feature_probes\scatter3d_dense_probe.py`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 762
+Line       : - Features: `Scatter3D`, `Dense volume`, `Depth behavior`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 763
+Line       : - Screenshots: `screenshots/scatter3d-dense-desktop-1.png`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 764
+Line       : - Debug snapshots: `snapshots/scatter3d-dense-desktop-1.json`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 765
+Line       : - Logs: `logs/scatter3d-dense-desktop-1.stdout.txt`, `logs/scatter3d-dense-desktop-1.stderr.txt`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 767
+Line       : - Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`, 
+             `native/src/scatter/mod.rs`, `native/src/table.rs`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 768
+Line       : - Reproduction: `python tools/visual_audit.py --target scatter3d-dense --sizes desktop-1`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 770
+Line       : ### Scatter3D Frame Benchmark (`scatter3d-frame-benchmark`)
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 774
+Line       : - Probe: `examples\css_feature_probes\scatter3d_frame_benchmark_probe.py`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 775
+Line       : - Features: `Scatter3D`, `Frame replacement`, `Diagnostics`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 776
+Line       : - Screenshots: `screenshots/scatter3d-frame-benchmark-desktop-1.png`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 777
+Line       : - Debug snapshots: `snapshots/scatter3d-frame-benchmark-desktop-1.json`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 778
+Line       : - Logs: `logs/scatter3d-frame-benchmark-desktop-1.stdout.txt`, 
+             `logs/scatter3d-frame-benchmark-desktop-1.stderr.txt`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 780
+Line       : - Suspected modules: `native/src/primitives/mod.rs`, `native/src/runtime.rs`, 
+             `native/src/scatter/mod.rs`, `native/src/table.rs`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}
+
+IgnoreCase : True
+LineNumber : 781
+Line       : - Reproduction: `python tools/visual_audit.py --target scatter3d-frame-benchmark --sizes desktop-1`
+Filename   : REPORT.md
+Path       : J:\Projects\DragonFrame\artifacts\visual_audit\REPORT.md
+Pattern    : plot|Plot|scatter|Scatter|combine|right|click|hover|series
+Context    : 
+Matches    : {0}

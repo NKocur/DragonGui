@@ -1,0 +1,248 @@
+native/src/scatter/mod.rs:1246:    scene_revision: u64,
+native/src/scatter/mod.rs:1620:            scene_revision: 1,
+native/src/scatter/mod.rs:1625:    pub fn scene_revision(&self) -> u64 {
+native/src/scatter/mod.rs:1626:        self.scene_revision
+native/src/scatter/mod.rs:1630:        self.scene_revision = self.scene_revision.wrapping_add(1).max(1);
+native/src/scatter/mod.rs:1981:    /// Upload an already GPU-shaped point_instance_v1 payload directly.
+native/src/scatter/mod.rs:2039:    /// Upload a compact xyz_f32_v0 payload directly and color it in the point shader.
+native/src/scatter/mod.rs:2381:    /// Set a preset view direction without changing target/distance.
+native/src/scatter/mod.rs:2383:    pub fn set_view_direction(&mut self, direction: &str, queue: &wgpu::Queue) {
+native/src/scatter/mod.rs:2385:        match direction {
+native/src/scatter/mod.rs:4100:    pub fn scaled_render_target_size(&self, scale: f32) -> (u32, u32) {
+native/src/runtime.rs:1258:struct ScatterCompositeUniforms {
+native/src/runtime.rs:1264:struct ScatterCompositeRenderer {
+native/src/runtime.rs:1271:impl ScatterCompositeRenderer {
+native/src/runtime.rs:1274:            label: Some("scatter-composite"),
+native/src/runtime.rs:1275:            source: wgpu::ShaderSource::Wgsl(include_str!("scatter/composite.wgsl").into()),
+native/src/runtime.rs:1278:            label: Some("scatter-composite-bgl"),
+native/src/runtime.rs:1309:            label: Some("scatter-composite-pl"),
+native/src/runtime.rs:1314:            label: Some("scatter-composite"),
+native/src/runtime.rs:1353:            label: Some("scatter-composite-sampler"),
+native/src/runtime.rs:1362:            label: Some("scatter-composite-uniforms"),
+native/src/runtime.rs:1363:            size: std::mem::size_of::<ScatterCompositeUniforms>() as u64,
+native/src/runtime.rs:1381:            label: Some("scatter-composite-bg"),
+native/src/runtime.rs:1407:        let uniforms = ScatterCompositeUniforms {
+native/src/runtime.rs:1435:    scene_revision: u64,
+native/src/runtime.rs:1441:        compositor: &ScatterCompositeRenderer,
+native/src/runtime.rs:1486:            scene_revision: 0,
+native/src/runtime.rs:1691:    direction: i32,
+native/src/runtime.rs:1703:        let step_back = direction < 0;
+native/src/runtime.rs:1718:        if let Some(id) = radio_neighbor_id(child, current_id, direction, state) {
+native/src/runtime.rs:1774:    direction: i32,
+native/src/runtime.rs:1779:    let next = if direction < 0 {
+native/src/runtime.rs:2340:fn flex_direction_name(direction: FlexDirectionStyle) -> &'static str {
+native/src/runtime.rs:2341:    match direction {
+native/src/runtime.rs:2586:    if let Some(value) = style.flex_direction {
+native/src/runtime.rs:2588:            "flex_direction".to_string(),
+native/src/runtime.rs:2589:            json!(flex_direction_name(value)),
+native/src/runtime.rs:2963:    if let Some(direction) = style.direction {
+native/src/runtime.rs:2965:            "direction".to_string(),
+native/src/runtime.rs:2966:            json!(animation_direction_name(direction)),
+native/src/runtime.rs:2992:fn animation_direction_name(value: AnimationDirection) -> &'static str {
+native/src/runtime.rs:3551:            let sort = table.sort.map(|(target, direction)| {
+native/src/runtime.rs:3558:                    "direction": match direction {
+native/src/runtime.rs:4065:            | "flex_direction"
+native/src/runtime.rs:5801:    scatter_widget_pool: Vec<ScatterWidget>,
+native/src/runtime.rs:5805:    visible_scatter_order: Vec<String>,
+native/src/runtime.rs:5809:    scatter_compositor: ScatterCompositeRenderer,
+native/src/runtime.rs:5937:    last_render_composite_ms: f64,
+native/src/runtime.rs:5938:    last_render_cache_hit: bool,
+native/src/runtime.rs:5941:    render_composite_timing: StageTimingStats,
+native/src/runtime.rs:5942:    render_cache_hits: u64,
+native/src/runtime.rs:6004:    render_target: Option<ScatterRenderTarget>,
+native/src/runtime.rs:6005:    last_direct_scene_revision: u64,
+native/src/runtime.rs:6482:        style.direction.unwrap_or(AnimationDirection::Normal),
+native/src/runtime.rs:6509:fn animation_directed_progress(t: f32, iteration: u32, direction: AnimationDirection) -> f32 {
+native/src/runtime.rs:6510:    match direction {
+native/src/runtime.rs:6532:    direction: AnimationDirection,
+native/src/runtime.rs:6544:        animation_directed_progress(local, iteration, direction),
+native/src/runtime.rs:6605:    let (name, duration, delay, timing, iteration_count, direction, fill_mode, play_state) =
+native/src/runtime.rs:6611:            animation_directed_progress(0.0, 0, direction),
+native/src/runtime.rs:6620:                animation_directed_progress(0.0, 0, direction),
+native/src/runtime.rs:6635:                    animation_final_progress(total, direction, timing),
+native/src/runtime.rs:6645:    let directed = animation_directed_progress(local, iteration, direction);
+native/src/runtime.rs:6646:    let eased = ease_transition(directed, timing);
+native/src/runtime.rs:7330:                        render_target: None,
+native/src/runtime.rs:7331:                        last_direct_scene_revision: 0,
+native/src/runtime.rs:7370:        let scatter_compositor = ScatterCompositeRenderer::new(&device, config.format);
+native/src/runtime.rs:7427:            scatter_widget_pool: Vec::new(),
+native/src/runtime.rs:7429:            visible_scatter_order: Vec::new(),
+native/src/runtime.rs:7586:            visible_scatter_order,
+native/src/runtime.rs:7651:        *visible_scatter_order = new_visible_order.clone();
+native/src/runtime.rs:7661:            if let Some(runtime) = scatters.get_mut(scatter_id) {
+native/src/runtime.rs:8831:        for id in self.visible_scatter_order.iter().rev() {
+native/src/runtime.rs:8832:            if let Some(runtime) = self.scatters.get(id) {
+native/src/runtime.rs:8842:        let runtime = self.scatters.get_mut(id)?;
+native/src/runtime.rs:8859:        let runtime = self.scatters.get_mut(id)?;
+native/src/runtime.rs:8889:        let runtime = self.scatters.get_mut(id)?;
+native/src/runtime.rs:9888:        let Some(runtime) = self.scatters.get_mut(id) else {
+native/src/runtime.rs:9926:        let Some(runtime) = self.scatters.get_mut(id) else {
+native/src/runtime.rs:9944:        let Some(runtime) = self.scatters.get_mut(id) else {
+native/src/runtime.rs:10001:            last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+native/src/runtime.rs:10002:            last_render_cache_hit: runtime.metrics.last_render_cache_hit,
+native/src/runtime.rs:10018:        let Some(runtime) = self.scatters.get_mut(id) else {
+native/src/runtime.rs:10071:            last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+native/src/runtime.rs:10072:            last_render_cache_hit: runtime.metrics.last_render_cache_hit,
+native/src/runtime.rs:10084:        let Some(runtime) = self.scatters.get_mut(id) else {
+native/src/runtime.rs:10101:        let missing = target.saturating_sub(self.scatter_widget_pool.len());
+native/src/runtime.rs:10108:            self.scatter_widget_pool.push(ScatterWidget::new(
+native/src/runtime.rs:10121:        self.scatter_widget_pool.pop().unwrap_or_else(|| {
+native/src/runtime.rs:10276:                        render_target: None,
+native/src/runtime.rs:10277:                        last_direct_scene_revision: 0,
+native/src/runtime.rs:10302:                    (self.scatters.get_mut(id), find_widget(tree, id))
+native/src/runtime.rs:11627:        let row_order = sort.and_then(|(target, direction)| match target {
+native/src/runtime.rs:11630:                if matches!(direction, crate::events::SortDirection::Desc) {
+native/src/runtime.rs:11637:                    .sorted_table_rows(resource_id.as_deref(), col, rows, direction)
+native/src/runtime.rs:11661:        let Some(runtime) = self.scatters.get_mut(id) else {
+native/src/runtime.rs:11743:                    last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+native/src/runtime.rs:11744:                    last_render_cache_hit: runtime.metrics.last_render_cache_hit,
+native/src/runtime.rs:11821:                    last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+native/src/runtime.rs:11822:                    last_render_cache_hit: runtime.metrics.last_render_cache_hit,
+native/src/runtime.rs:11918:                        last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+native/src/runtime.rs:11919:                        last_render_cache_hit: runtime.metrics.last_render_cache_hit,
+native/src/runtime.rs:12016:                last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+native/src/runtime.rs:12017:                last_render_cache_hit: runtime.metrics.last_render_cache_hit,
+native/src/runtime.rs:12110:            last_render_composite_ms: runtime.metrics.last_render_composite_ms,
+native/src/runtime.rs:12111:            last_render_cache_hit: runtime.metrics.last_render_cache_hit,
+native/src/runtime.rs:12127:            .visible_scatter_order
+native/src/runtime.rs:12141:            let Some(runtime) = self.scatters.get_mut(&id) else {
+native/src/runtime.rs:12381:            "last_render_composite_ms".to_string(),
+native/src/runtime.rs:12382:            json!(rt.metrics.last_render_composite_ms),
+native/src/runtime.rs:12385:            "last_render_cache_hit".to_string(),
+native/src/runtime.rs:12386:            json!(rt.metrics.last_render_cache_hit),
+native/src/runtime.rs:12393:            "render_cache_hits".to_string(),
+native/src/runtime.rs:12394:            json!(rt.metrics.render_cache_hits),
+native/src/runtime.rs:12397:            "render_cache_hit_rate".to_string(),
+native/src/runtime.rs:12401:                rt.metrics.render_cache_hits as f64 / rt.metrics.render_encode_timing.count as f64
+native/src/runtime.rs:12413:            "render_composite_avg_ms".to_string(),
+native/src/runtime.rs:12414:            json!(rt.metrics.render_composite_timing.avg_ms()),
+native/src/runtime.rs:12417:            "render_cache_revision".to_string(),
+native/src/runtime.rs:12419:                .render_target
+native/src/runtime.rs:12421:                .map(|target| target.scene_revision)),
+native/src/runtime.rs:12424:            "scene_revision".to_string(),
+native/src/runtime.rs:12425:            json!(rt.widget.scene_revision()),
+native/src/runtime.rs:12557:        let scatter = self.visible_scatter_order.first().and_then(|id| {
+native/src/runtime.rs:12698:                "scatter_widget_id": self.visible_scatter_order.first().map(|s| s.as_str()),
+native/src/runtime.rs:12700:                "scatter_widget_pool": self.scatter_widget_pool.len(),
+native/src/runtime.rs:13423:        let (target, direction) = table_state.sort?;
+native/src/runtime.rs:13424:        let descending = matches!(direction, crate::events::SortDirection::Desc);
+native/src/runtime.rs:13433:                "direction": if descending { "desc" } else { "asc" },
+native/src/runtime.rs:13444:                    "direction": if descending { "desc" } else { "asc" },
+native/src/runtime.rs:13518:                visible_scatter_order,
+native/src/runtime.rs:13534:                for id in visible_scatter_order.iter() {
+native/src/runtime.rs:13535:                    if let Some(rt) = scatters.get(id) {
+native/src/runtime.rs:13650:        let scatter_order = self.visible_scatter_order.clone();
+native/src/runtime.rs:13652:            if let Some(runtime) = self.scatters.get_mut(scatter_id) {
+native/src/runtime.rs:13657:                let scene_revision = runtime.widget.scene_revision();
+native/src/runtime.rs:13663:                        runtime.widget.scaled_render_target_size(render_scale);
+native/src/runtime.rs:13664:                    let cached_matches = runtime.render_target.as_ref().is_some_and(|target| {
+native/src/runtime.rs:13666:                            && target.scene_revision == scene_revision
+native/src/runtime.rs:13668:                    cached_matches || runtime.last_direct_scene_revision == scene_revision
+native/src/runtime.rs:13673:                let mut composite_ms = 0.0;
+native/src/runtime.rs:13677:                        runtime.widget.scaled_render_target_size(render_scale);
+native/src/runtime.rs:13679:                        .render_target
+native/src/runtime.rs:13686:                        runtime.render_target = Some(ScatterRenderTarget::new(
+native/src/runtime.rs:13695:                        .render_target
+native/src/runtime.rs:13697:                        .map(|target| target.scene_revision != scene_revision)
+native/src/runtime.rs:13702:                        let target = runtime.render_target.as_ref().unwrap();
+native/src/runtime.rs:13741:                        if let Some(target) = runtime.render_target.as_mut() {
+native/src/runtime.rs:13742:                            target.scene_revision = scene_revision;
+native/src/runtime.rs:13744:                        runtime.last_direct_scene_revision = scene_revision;
+native/src/runtime.rs:13759:                        let composite_t0 = Instant::now();
+native/src/runtime.rs:13760:                        let target = runtime.render_target.as_ref().unwrap();
+native/src/runtime.rs:13762:                            label: Some("dragongui-scatter-composite"),
+native/src/runtime.rs:13779:                        composite_ms = composite_t0.elapsed().as_secs_f64() * 1000.0;
+native/src/runtime.rs:13810:                    runtime.last_direct_scene_revision = scene_revision;
+native/src/runtime.rs:13816:                runtime.metrics.last_render_composite_ms = composite_ms;
+native/src/runtime.rs:13817:                runtime.metrics.last_render_cache_hit = cache_hit;
+native/src/runtime.rs:13823:                runtime.metrics.render_composite_timing.record(composite_ms);
+native/src/runtime.rs:13825:                    runtime.metrics.render_cache_hits =
+native/src/runtime.rs:13826:                        runtime.metrics.render_cache_hits.saturating_add(1);
+native/src/runtime.rs:14359:    let direction = if axis_pos < thumb_start {
+native/src/runtime.rs:14376:    Some((current_scroll + direction * page_scroll).clamp(0.0, max_scroll))
+native/src/runtime.rs:15164:            if let Some(rt) = gpu.scatters.get_mut(&scatter_id) {
+native/src/runtime.rs:15178:                if let Some(rt) = gpu.scatters.get_mut(&sid) {
+native/src/runtime.rs:15539:                    format!("created={created}, pool={}", gpu.scatter_widget_pool.len())
+native/src/runtime.rs:15815:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:15835:                    Some(gpu) => match gpu.scatters.get_mut(&id) {
+native/src/runtime.rs:15859:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:15876:                    if let Some(rt) = gpu.scatters.get_mut(&id) {
+native/src/runtime.rs:15899:            Command::SetScatterViewDirection { id, direction } => {
+native/src/runtime.rs:15901:                    if let Some(rt) = gpu.scatters.get_mut(&id) {
+native/src/runtime.rs:15902:                        rt.widget.set_view_direction(&direction, &gpu.queue);
+native/src/runtime.rs:15914:                    Some(direction),
+native/src/runtime.rs:15926:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:15965:                    if let Some(rt) = gpu.scatters.get_mut(&id) {
+native/src/runtime.rs:15997:                    if let Some(rt) = gpu.scatters.get_mut(&id) {
+native/src/runtime.rs:16073:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:16115:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:16148:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:16180:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:16208:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:16236:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:16264:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:16300:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:16354:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:16423:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:16457:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:16498:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:16529:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:16555:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:16577:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:16606:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:16635:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:16670:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:16696:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:16722:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:16744:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:16966:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:16995:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:17020:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:17045:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:17108:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:17202:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:17236:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:17272:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:17293:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:17318:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:17345:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:17367:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:17415:                            let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:17494:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:17525:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:17553:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:17574:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:17598:                    let Some(rt) = gpu.scatters.get_mut(&id) else {
+native/src/runtime.rs:17622:                    let rt = gpu.scatters.get_mut(&id)?;
+native/src/runtime.rs:19210:                        let direction =
+native/src/runtime.rs:19222:                                ws.move_dropdown_index(&id, direction)
+native/src/runtime.rs:19285:                        let direction = if matches!(
+native/src/runtime.rs:19296:                            radio_neighbor_id(tree, &id, direction, state)
+native/src/runtime.rs:19348:                        let direction =
+native/src/runtime.rs:19358:                            tree_node_neighbor_id(tree, layout, state, &id, direction)
+native/src/runtime.rs:19373:                        let direction =
+native/src/runtime.rs:19383:                            .and_then(|ws| ws.move_tab(&id, direction));
+native/src/runtime.rs:19407:                        let direction =
+native/src/runtime.rs:19417:                            .and_then(|ws| ws.move_nav_item(&id, direction));
+native/src/runtime.rs:19537:                    .or_else(|| gpu.visible_scatter_order.first().cloned());
+native/src/runtime.rs:19539:                    if let Some(runtime) = gpu.scatters.get_mut(&id) {
+native/src/runtime.rs:19548:    fn adjust_number_input(&mut self, id: &str, direction: f32) {
+native/src/runtime.rs:19555:                let value = ws.adjust_number(id, direction)?;
+native/src/runtime.rs:20177:                                        .and_then(|g| g.scatters.get(&scatter_id))
+native/src/runtime.rs:20185:                                            .and_then(|g| g.scatters.get(&scatter_id))
+native/src/runtime.rs:20198:                                            if let Some(rt) = gpu.scatters.get_mut(&scatter_id) {
+native/src/runtime.rs:20208:                                            .and_then(|g| g.scatters.get(&scatter_id))
+native/src/runtime.rs:20221:                                            if let Some(rt) = gpu.scatters.get_mut(&scatter_id) {
+native/src/runtime.rs:20233:                                        if let Some(rt) = gpu.scatters.get_mut(&scatter_id) {
+native/src/runtime.rs:20480:                            if let Some((id, direction)) = (!modal_active)
+native/src/runtime.rs:20487:                                self.adjust_number_input(&id, direction);
+native/src/runtime.rs:20653:                                    .and_then(|g| g.scatters.get(&sid))
+native/src/runtime.rs:20675:                                        .and_then(|g| g.scatters.get(&sid))
+native/src/runtime.rs:20684:                                        if let Some(rt) = gpu.scatters.get_mut(&sid) {
+native/src/runtime.rs:20709:                                        if let Some(rt) = gpu.scatters.get_mut(&sid) {
+native/src/runtime.rs:20893:                            if let Some(rt) = gpu.scatters.get_mut(&sid) {
+native/src/runtime.rs:20916:                                if let Some(runtime) = gpu.scatters.get_mut(&sid) {
+native/src/runtime.rs:21036:                            if let Some(rt) = gpu.scatters.get_mut(&id) {
+native/src/runtime.rs:21089:                            .and_then(|g| g.scatters.get(&sid))
+native/src/runtime.rs:21096:                                if let Some(rt) = gpu.scatters.get_mut(&sid) {
+native/src/runtime.rs:21317:                            if let Some(rt) = gpu.scatters.get_mut(&sid) {

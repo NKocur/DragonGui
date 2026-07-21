@@ -1,0 +1,190 @@
+                                Some(WidgetKind::TextArea | WidgetKind::CodeEditor)
+                            ) {
+                                gpu.ensure_text_area_cursor_visible(&drag.widget_id);
+                            }
+                            gpu.rebuild_visuals();
+                        }
+                        self.request_redraw();
+                    }
+                } else if let Some(id) = self.line_plot_pan_drag.clone() {
+                    if let Some(old) = self.last_mouse_pos {
+                        let delta = [new_pos[0] - old[0], new_pos[1] - old[1]];
+                        if self
+                            .gpu
+                            .as_mut()
+                            .is_some_and(|gpu| gpu.pan_line_plot(&id, delta))
+                        {
+                            self.request_redraw();
+                        }
+                    }
+                } else if let Some(drag) = self.line_plot_box_zoom_drag.clone() {
+                    if self.gpu.as_mut().is_some_and(|gpu| {
+                        gpu.update_line_plot_selection_rect(&drag.widget_id, drag.start, new_pos)
+                    }) {
+                        self.request_redraw();
+                    }
+                } else if let Some(id) = self.histogram_pan_drag.clone() {
+                    if let Some(old) = self.last_mouse_pos {
+                        let delta = [new_pos[0] - old[0], new_pos[1] - old[1]];
+                        if self
+                            .gpu
+                            .as_mut()
+                            .is_some_and(|gpu| gpu.pan_histogram(&id, delta))
+                        {
+                            self.request_redraw();
+                        }
+                    }
+                } else if let Some(drag) = self.histogram_box_zoom_drag.clone() {
+                    if self.gpu.as_mut().is_some_and(|gpu| {
+                        gpu.update_histogram_selection_rect(&drag.widget_id, drag.start, new_pos)
+                    }) {
+                        self.request_redraw();
+                    }
+                } else if self.rect_select_active {
+                    if let Some(sid) = self.active_scatter_id.clone() {
+                        if let Some(gpu) = &mut self.gpu {
+                            if let Some(rt) = gpu.scatters.get_mut(&sid) {
+                                let local_pos = [
+                                    new_pos[0] - rt.widget.offset[0],
+                                    new_pos[1] - rt.widget.offset[1],
+                                ];
+                                if let Some(ref mut r) = rt.widget.selection_rect {
+                                    r[2] = local_pos[0];
+                                    r[3] = local_pos[1];
+                                } else if let Some(ref mut poly) = rt.widget.selection_polygon {
+                                    poly.push(local_pos);
+                                }
+                                rt.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                            }
+                        }
+                        self.request_redraw();
+                    }
+                } else if let Some(old) = self.last_mouse_pos {
+                    let delta = glam::Vec2::new(new_pos[0] - old[0], new_pos[1] - old[1]);
+                    if self.orbit_active || self.pan_active {
+                        if let Some(sid) = self.active_scatter_id.clone() {
+                            let mut cam_payload: Option<(String, String)> = None;
+                            let mut needs_redraw = false;
+                            if let Some(gpu) = &mut self.gpu {
+                                if let Some(runtime) = gpu.scatters.get_mut(&sid) {
+                                    if self.pan_active {
+                                        runtime.widget.camera.pan(delta);
+                                    } else if self.orbit_active {
+                                        if runtime.widget.interaction_mode
+                                            == scatter::ScatterInteractionMode::Pan2D
+                                        {
+                                            runtime.widget.camera.pan(delta);
+                                        } else {
+                                            runtime.widget.camera.orbit(delta);
+                                        }
+                                    }
+                                    runtime.widget.update_camera(&gpu.queue);
+                                    let (bmn, bmx) = runtime.merged_bounds();
+                                    runtime
+                                        .widget
+                                        .refresh_grid(bmn, bmx, &gpu.device, &gpu.queue);
+                                    runtime.widget.refresh_overlays(&gpu.device, &gpu.queue);
+                                    needs_redraw = true;
+                                    // Capture camera state for Python-side linked-camera propagation.
+                                    let s = runtime.widget.camera.state();
+                                    let payload = json!({
+                                        "event": "camera_changed",
+                                        "widget_id": sid,
+                                        "camera": {
+                                            "target": [s.target[0], s.target[1], s.target[2]],
+                                            "distance": s.distance,
+                                            "yaw": s.yaw,
+                                            "pitch": s.pitch,
+                                            "parallel": s.parallel,
+                                        },
+                                    })
+                                    .to_string();
+                                    cam_payload = Some((sid.clone(), payload));
+                                }
+                            }
+                            if needs_redraw {
+                                self.request_redraw();
+                            }
+                            if let Some((id, payload)) = cam_payload {
+                                self.emit_change(&id, ChangeValue::Text(payload));
+                            }
+                        }
+                    }
+                }
+
+                // Update hover state when no button is held.
+                if self.scrollbar_drag.is_none()
+                    && self.table_scrollbar_drag.is_none()
+                    && self.splitter_drag.is_none()
+                    && self.table_column_resize_drag.is_none()
+                    && self.slider_drag.is_none()
+                    && self.range_slider_drag.is_none()
+                    && self.drag_number_drag.is_none()
+                    && self.drag_drop_session.is_none()
+                    && self.text_selection_drag.is_none()
+                    && self.line_plot_pan_drag.is_none()
+                    && self.line_plot_box_zoom_drag.is_none()
+                    && self.histogram_pan_drag.is_none()
+                    && self.histogram_box_zoom_drag.is_none()
+                    && !self.orbit_active
+                    && !self.pan_active
+                    && !self.rect_select_active
+                {
+                    let new_dropdown_hover = self
+                        .gpu
+                        .as_ref()
+                        .and_then(|g| g.dropdown_option_at(new_pos));
+                    let new_hover = if new_dropdown_hover.is_some() {
+                        None
+                    } else {
+                        self.gpu
+                            .as_ref()
+                            .and_then(|g| g.hit_test_hover(new_pos))
+                            .map(|(id, _)| id)
+                    };
+                    let old_hover = self
+                        .gpu
+                        .as_ref()
+                        .and_then(|g| g.widget_state.as_ref())
+                        .and_then(|ws| ws.hovered.clone());
+                    let old_dropdown_hover = self
+                        .gpu
+                        .as_ref()
+                        .and_then(|g| g.widget_state.as_ref())
+                        .and_then(|ws| ws.dropdown_hover.clone());
+                    if new_hover != old_hover || new_dropdown_hover != old_dropdown_hover {
+                        if let Some(gpu) = &mut self.gpu {
+                            let requires_layout = gpu.hover_change_requires_layout(
+                                old_hover.as_deref(),
+                                new_hover.as_deref(),
+                            );
+                            gpu.update_hover_state(new_hover, new_dropdown_hover);
+                            if requires_layout {
+                                // Rich tooltip content participates in overlay layout, so those
+                                // hover changes can affect rects as well as paint/text state.
+                                gpu.apply_layout();
+                            } else {
+                                gpu.rebuild_visuals();
+                            }
+                        }
+                        self.request_redraw();
+                    }
+
+                    // Clear stale hover labels on any scatter the cursor has left.
+                    let hovered_sid = self.gpu.as_ref().and_then(|g| g.scatter_at(new_pos));
+                    let mut stale_payloads: Vec<(String, String)> = Vec::new();
+                    let mut stale_scatter_cleared = false;
+                    if let Some(gpu) = &mut self.gpu {
+                        let stale: Vec<String> = gpu
+                            .scatters
+                            .iter()
+                            .filter(|(id, rt)| {
+                                rt.hover_tooltip_enabled
+                                    && rt.widget.hover_label.is_some()
+                                    && hovered_sid.as_deref() != Some(id.as_str())
+                            })
+                            .map(|(id, _)| id.clone())
+                            .collect();
+                        for id in stale {
+                            if let Some(rt) = gpu.scatters.get_mut(&id) {
+                                rt.widget.hover_label = None;

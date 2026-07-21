@@ -1,0 +1,361 @@
+        if "x" not in part:
+            raise SystemExit(f"Invalid --sizes entry {raw!r}; use desktop, mobile, or WIDTHxHEIGHT.")
+        width_text, height_text = part.split("x", 1)
+        parsed.append((int(width_text), int(height_text)))
+    return parsed or [None]
+
+
+def run_target(
+    target: dict[str, Any],
+    *,
+    out_dir: Path,
+    wait_ms: int,
+    timeout_ms: int,
+    size_selectors: list[tuple[int, int] | None],
+    no_capture: bool,
+) -> dict[str, Any]:
+    target_id = str(target["id"])
+    script = resolve_path(str(target["script"]))
+    selected_sizes = target_sizes(target, size_selectors)
+    result = {
+        "id": target_id,
+        "name": target["name"],
+        "script": str(script.relative_to(ROOT)),
+        "category": target["category"],
+        "features": target["features"],
+        "manual": bool(target.get("manual")),
+        "status": "needs_manual_interaction" if target.get("manual") else "pass",
+        "priority": "medium" if target.get("manual") else "low",
+        "notes": str(target.get("notes") or "No visual issue recorded by automated first pass."),
+        "suspected_modules": suspected_modules(target),
+        "screenshots": [],
+        "snapshots": [],
+        "logs": [],
+        "reproduction": [],
+    }
+
+    if no_capture:
+        result["status"] = "blocked"
+        result["priority"] = "low"
+        result["notes"] = "--no-capture was used; report shell generated without launching probe."
+        result["reproduction"] = [f"python {target['script']}"]
+        return result
+
+    for index, size in enumerate(selected_sizes, start=1):
+        label = size_label(size, index)
+        stdout_path = out_dir / "logs" / f"{target_id}-{label}.stdout.txt"
+        stderr_path = out_dir / "logs" / f"{target_id}-{label}.stderr.txt"
+        snapshot_path = out_dir / "snapshots" / f"{target_id}-{label}.json"
+        screenshot_path = out_dir / "screenshots" / f"{target_id}-{label}.png"
+        run_result = run_probe_process(
+            script,
+            target_id=target_id,
+            snapshot_path=snapshot_path,
+            wait_ms=wait_ms,
+            timeout_ms=timeout_ms,
+            size=size,
+            screenshot_path=screenshot_path,
+            stdout_path=stdout_path,
+            stderr_path=stderr_path,
+        )
+        result["logs"].extend(
+            [relative_artifact(stdout_path, out_dir), relative_artifact(stderr_path, out_dir)]
+        )
+        result["reproduction"].append(
+            f"python tools/visual_audit.py --target {target_id} --sizes {label}"
+        )
+        if run_result["screenshot"]:
+            result["screenshots"].append(relative_artifact(screenshot_path, out_dir))
+        if run_result["snapshot"]:
+            result["snapshots"].append(relative_artifact(snapshot_path, out_dir))
+        badge_violations = (
+            validate_badge_layout_snapshot(snapshot_path) if target_id == "badge-layout" else []
+        )
+        if badge_violations:
+            run_result["status"] = "fail"
+            run_result["notes"] = combine_notes(
+                run_result["notes"],
+                "Badge bounds check failed: " + "; ".join(badge_violations[:4]),
+            )
+        if run_result["status"] == "blocked":
+            result["status"] = "blocked"
+            result["priority"] = "high"
+            result["notes"] = combine_notes(result["notes"], run_result["notes"])
+        elif run_result["status"] == "fail":
+            result["status"] = "fail"
+            result["priority"] = "high"
+            result["notes"] = combine_notes(result["notes"], run_result["notes"])
+        else:
+            result["notes"] = combine_notes(result["notes"], run_result["notes"])
+
+    return result
+
+
+def validate_badge_layout_snapshot(snapshot_path: Path) -> list[str]:
+    try:
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return [f"{snapshot_path.name}: could not read snapshot for badge bounds check: {exc}"]
+    gpu = snapshot.get("gpu") if isinstance(snapshot, dict) else None
+    if not isinstance(gpu, dict):
+        return [f"{snapshot_path.name}: missing gpu snapshot"]
+    tree = gpu.get("tree")
+    layout = gpu.get("layout")
+    rects = layout.get("rects") if isinstance(layout, dict) else None
+    styles = gpu.get("computed_styles")
+    theme = gpu.get("theme")
+    if not isinstance(tree, dict) or not isinstance(rects, dict):
+        return [f"{snapshot_path.name}: missing tree/layout rects"]
+    if not isinstance(styles, dict):
+        styles = {}
+    if not isinstance(theme, dict):
+        theme = {}
+
+    spacing = float(theme.get("spacing") or 8.0)
+    font_size = float(theme.get("font_size") or 14.0)
+    violations: list[str] = []
+
+    def walk(node: dict[str, Any]) -> None:
+        node_type = str(node.get("type") or "")
+        props = node.get("props")
+        badge = props.get("badge") if isinstance(props, dict) else None
+        if badge and node_type in {"button", "small_button", "tab", "nav_item"}:
+            rect = rects.get(str(node.get("id")))
+            if isinstance(rect, dict):
+                violation = inline_badge_bounds_violation(
+                    str(node.get("id")),
+                    str(badge),
+                    node_type,
+                    rect,
+                    styles.get(str(node.get("id"))),
+                    spacing,
+                    font_size,
+                )
+                if violation:
+                    violations.append(violation)
+        for child in node.get("children") or []:
+            if isinstance(child, dict):
+                walk(child)
+
+    walk(tree)
+    return violations
+
+
+def inline_badge_bounds_violation(
+    node_id: str,
+    badge: str,
+    node_type: str,
+    rect: dict[str, Any],
+    computed_style: Any,
+    spacing: float,
+    theme_font_size: float,
+) -> str | None:
+    try:
+        x = float(rect["x"])
+        y = float(rect["y"])
+        w = float(rect["w"])
+        h = float(rect["h"])
+    except (KeyError, TypeError, ValueError):
+        return f"{node_id}: malformed rect"
+    style = computed_style.get("style") if isinstance(computed_style, dict) else {}
+    if not isinstance(style, dict):
+        style = {}
+    text_style = style.get("text") if isinstance(style.get("text"), dict) else {}
+    parts = style.get("parts") if isinstance(style.get("parts"), dict) else {}
+    badge_part = parts.get("badge") if isinstance(parts.get("badge"), dict) else {}
+    badge_text = badge_part.get("text") if isinstance(badge_part.get("text"), dict) else {}
+    badge_visual = badge_part.get("visual") if isinstance(badge_part.get("visual"), dict) else {}
+
+    badge_font = float(
+        badge_text.get("font_size")
+        or text_style.get("font_size")
+        or max(theme_font_size - 2.0, 10.0)
+    )
+    border = max(0.0, float(badge_visual.get("border_width") or 0.0))
+    preferred_w = max(len(badge) * badge_font * 0.68 + 8.0 * 2.0 + border * 2.0, 16.0)
+    preferred_h = max(badge_font + 6.0 + border * 2.0, 16.0)
+    right_inset = 8.0 if node_type == "tab" else spacing
+    badge_w = min(preferred_w, max(w - right_inset, 0.0))
+    badge_h = min(preferred_h, max(h - 4.0, 1.0))
+    badge_x = x + w - right_inset - badge_w
+    badge_y = y + (h - badge_h) * 0.5
+
+    if badge_w <= 0.0 or badge_h <= 0.0:
+        return f"{node_id}: badge has no visible area"
+    if badge_x < x - 0.5 or badge_y < y - 0.5:
+        return f"{node_id}: badge starts outside parent"
+    if badge_x + badge_w > x + w + 0.5 or badge_y + badge_h > y + h + 0.5:
+        return f"{node_id}: badge exceeds parent"
+    return None
+
+
+def target_sizes(
+    target: dict[str, Any],
+    selectors: list[tuple[int, int] | None],
+) -> list[tuple[int, int] | None]:
+    manifest_sizes = [tuple(size) for size in target.get("sizes", [])]
+    sizes: list[tuple[int, int] | None] = []
+    for selector in selectors:
+        if selector is None:
+            sizes.append(None)
+        elif selector in manifest_sizes:
+            sizes.append(selector)
+        else:
+            sizes.append(selector)
+    return sizes
+
+
+def screenshot_capture_available() -> tuple[bool, str]:
+    if platform.system() != "Windows":
+        return False, "Whole-window external capture currently supports Windows only."
+    try:
+        from PIL import ImageGrab  # noqa: F401
+    except Exception as exc:
+        return False, f"Pillow ImageGrab is unavailable: {exc!r}"
+    return True, "ok"
+
+
+def screenshot_error_path(screenshot_path: Path) -> Path:
+    return screenshot_path.with_suffix(".error.json")
+
+
+def read_screenshot_error(screenshot_path: Path) -> str | None:
+    error_path = screenshot_error_path(screenshot_path)
+    if not error_path.exists():
+        return None
+    try:
+        payload = json.loads(error_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return f"could not read screenshot error {error_path.name}: {exc}"
+    if not isinstance(payload, dict):
+        return f"screenshot error file {error_path.name} is not a JSON object"
+    message = str(payload.get("error") or payload.get("message") or "unknown error")
+    kind = str(payload.get("kind") or "native_screenshot_error")
+    return f"{kind}: {message}"
+
+
+def with_screenshot_error_note(note: str, screenshot_path: Path) -> str:
+    error = read_screenshot_error(screenshot_path)
+    if not error:
+        return note
+    return f"{note} Native screenshot error: {error}"
+
+
+def collect_process_output(
+    proc: subprocess.Popen[str],
+    *,
+    timeout_s: float,
+) -> tuple[str, str, bool]:
+    try:
+        stdout, stderr = proc.communicate(timeout=max(1.0, timeout_s))
+        return stdout, stderr, False
+    except subprocess.TimeoutExpired:
+        proc.terminate()
+        try:
+            stdout, stderr = proc.communicate(timeout=2)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            stdout, stderr = proc.communicate(timeout=2)
+        return stdout, stderr, True
+
+
+def write_process_logs(
+    stdout_path: Path,
+    stderr_path: Path,
+    stdout: str,
+    stderr: str,
+) -> None:
+    stdout_path.write_text(stdout, encoding="utf-8")
+    stderr_path.write_text(stderr, encoding="utf-8")
+
+
+def run_probe_process(
+    script: Path,
+    *,
+    target_id: str,
+    snapshot_path: Path,
+    wait_ms: int,
+    timeout_ms: int,
+    size: tuple[int, int] | None,
+    screenshot_path: Path,
+    stdout_path: Path,
+    stderr_path: Path,
+) -> dict[str, Any]:
+    wrapper = make_wrapper(script)
+    screenshot_error = screenshot_error_path(screenshot_path)
+    screenshot_error.unlink(missing_ok=True)
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "python") + os.pathsep + env.get("PYTHONPATH", "")
+    env["DRAGONGUI_VISUAL_AUDIT"] = "1"
+    env["DRAGONGUI_AUDIT_TARGET"] = target_id
+    env["DRAGONGUI_AUDIT_WAIT_MS"] = str(wait_ms)
+    env["DRAGONGUI_AUDIT_EXIT_MS"] = str(wait_ms + 1200)
+    env["DRAGONGUI_AUDIT_SNAPSHOT"] = str(snapshot_path)
+    env["DRAGONGUI_AUDIT_SCREENSHOT"] = str(screenshot_path)
+    env["DRAGONGUI_AUDIT_SCREENSHOT_ERROR"] = str(screenshot_error)
+    if size is not None:
+        env["DRAGONGUI_AUDIT_WIDTH"] = str(size[0])
+        env["DRAGONGUI_AUDIT_HEIGHT"] = str(size[1])
+    env.pop("DRAGONGUI_DEV_FALLBACK", None)
+
+    proc = subprocess.Popen(
+        [sys.executable, str(wrapper)],
+        cwd=str(ROOT),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    screenshot_ok = False
+    notes = "No visual issue recorded by automated first pass."
+    try:
+        native_deadline = time.monotonic() + (wait_ms + 4000) / 1000
+        while time.monotonic() < native_deadline and proc.poll() is None:
+            if screenshot_path.exists() and screenshot_path.stat().st_size > 0:
+                screenshot_ok = True
+                stdout, stderr, _terminated = collect_process_output(
+                    proc, timeout_s=timeout_ms / 1000
+                )
+                write_process_logs(stdout_path, stderr_path, stdout, stderr)
+                if proc.returncode not in (0, None):
+                    return {
+                        "status": "blocked",
+                        "notes": f"Probe exited with code {proc.returncode}; native screenshot was still written.",
+                        "screenshot": screenshot_ok,
+                        "snapshot": snapshot_path.exists(),
+                    }
+                return {
+                    "status": "pass",
+                    "notes": "Captured with native DragonGUI window screenshot API.",
+                    "screenshot": screenshot_ok,
+                    "snapshot": snapshot_path.exists(),
+                }
+            time.sleep(0.05)
+
+        if proc.poll() is not None:
+            stdout, stderr = proc.communicate(timeout=1)
+            write_process_logs(stdout_path, stderr_path, stdout, stderr)
+            return {
+                "status": "blocked",
+                "notes": with_screenshot_error_note(
+                    window_blocker(proc.returncode, stdout, stderr), screenshot_path
+                ),
+                "screenshot": False,
+                "snapshot": snapshot_path.exists(),
+            }
+
+        capture_available, capture_reason = screenshot_capture_available()
+        if not capture_available:
+            stdout, stderr, _terminated = collect_process_output(
+                proc, timeout_s=timeout_ms / 1000
+            )
+            write_process_logs(stdout_path, stderr_path, stdout, stderr)
+            return {
+                "status": "blocked",
+                "notes": with_screenshot_error_note(
+                    f"Native screenshot was not written and external capture is unavailable: {capture_reason}",
+                    screenshot_path,
+                ),
+                "screenshot": False,
+                "snapshot": snapshot_path.exists(),
+            }

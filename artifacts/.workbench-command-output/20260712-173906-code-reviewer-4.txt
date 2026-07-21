@@ -1,0 +1,225 @@
+ .codex-workbench-sessions/saved_sessions.json      |     2 +
+ .test-cache/dragongui-wheel.zip                    |   Bin 7506323 -> 7484853 bytes
+ .test-cache/v/cache/lastfailed                     |     1 -
+ .test-cache/v/cache/nodeids                        |    12 +
+ artifacts/CODE_REVIEW.md                           |   101 +-
+ artifacts/IMPLEMENTATION_NOTES.md                  |   243 +-
+ artifacts/MAINTAINABILITY_REVIEW.md                |    35 +-
+ artifacts/SPEC.md                                  |   404 +-
+ artifacts/TEST_RESULTS.md                          |   353 +-
+ artifacts/visual_audit/REPORT.md                   |   153 +-
+ .../logs/data-table-upgrades-390x720.stdout.txt    |     2 +-
+ .../logs/data-table-upgrades-desktop-1.stdout.txt  |     2 +-
+ .../logs/default-polish-stress-390x720.stdout.txt  |     2 +-
+ .../default-polish-stress-desktop-1.stdout.txt     |     2 +-
+ .../logs/layout-flex-stress-390x720.stdout.txt     |     2 +-
+ .../logs/layout-flex-stress-desktop-1.stdout.txt   |     2 +-
+ .../logs/layout-grid-masonry-390x720.stdout.txt    |     2 +-
+ .../logs/layout-grid-masonry-desktop-1.stdout.txt  |     2 +-
+ .../logs/layout-panel-bounds-390x720.stdout.txt    |     2 +-
+ .../logs/layout-panel-bounds-desktop-1.stdout.txt  |     2 +-
+ .../logs/layout-plot-embedding-390x720.stdout.txt  |     2 +-
+ .../layout-plot-embedding-desktop-1.stdout.txt     |     2 +-
+ ...layout-scrollable-composites-390x720.stdout.txt |     2 +-
+ ...yout-scrollable-composites-desktop-1.stdout.txt |     2 +-
+ .../logs/responsive-layout-390x720.stdout.txt      |     2 +-
+ .../logs/responsive-layout-desktop-1.stdout.txt    |     2 +-
+ .../logs/scatter-plot-2d-desktop-1.stdout.txt      |     2 +-
+ .../logs/scatter3d-desktop-1.stdout.txt            |     2 +-
+ .../logs/splitter-desktop-1.stdout.txt             |     2 +-
+ .../visual_audit/logs/toolbar-390x720.stdout.txt   |     2 +-
+ .../visual_audit/logs/toolbar-desktop-1.stdout.txt |     2 +-
+ artifacts/visual_audit/report.json                 |   509 +-
+ .../screenshots/app-shell-workbench-390x720.png    |   Bin 61299 -> 44034 bytes
+ .../screenshots/app-shell-workbench-desktop-1.png  |   Bin 72222 -> 52411 bytes
+ .../screenshots/data-table-upgrades-390x720.png    |   Bin 43171 -> 29646 bytes
+ .../screenshots/data-table-upgrades-desktop-1.png  |   Bin 60287 -> 43303 bytes
+ .../screenshots/default-polish-stress-390x720.png  |   Bin 47119 -> 33348 bytes
+ .../default-polish-stress-desktop-1.png            |   Bin 88205 -> 62561 bytes
+ .../screenshots/layout-flex-stress-390x720.png     |   Bin 65359 -> 44851 bytes
+ .../screenshots/layout-flex-stress-desktop-1.png   |   Bin 77671 -> 53046 bytes
+ .../screenshots/layout-grid-masonry-390x720.png    |   Bin 61431 -> 38512 bytes
+ .../screenshots/layout-grid-masonry-desktop-1.png  |   Bin 124399 -> 88306 bytes
+ .../screenshots/layout-panel-bounds-390x720.png    |   Bin 67880 -> 44497 bytes
+ .../screenshots/layout-panel-bounds-desktop-1.png  |   Bin 129856 -> 93752 bytes
+ .../screenshots/layout-plot-embedding-390x720.png  |   Bin 67671 -> 45368 bytes
+ .../layout-plot-embedding-desktop-1.png            |   Bin 188935 -> 116868 bytes
+ .../layout-scrollable-composites-390x720.png       |   Bin 77191 -> 49422 bytes
+ .../layout-scrollable-composites-desktop-1.png     |   Bin 144109 -> 103033 bytes
+ .../screenshots/responsive-layout-390x720.png      |   Bin 93211 -> 64469 bytes
+ .../screenshots/responsive-layout-desktop-1.png    |   Bin 96000 -> 68522 bytes
+ .../screenshots/scatter-plot-2d-desktop-1.png      |   Bin 71945 -> 72117 bytes
+ .../screenshots/scatter3d-desktop-1.png            |   Bin 65668 -> 79799 bytes
+ .../screenshots/splitter-desktop-1.png             |   Bin 35385 -> 34799 bytes
+ .../visual_audit/screenshots/toolbar-390x720.png   |   Bin 36433 -> 26461 bytes
+ .../visual_audit/screenshots/toolbar-desktop-1.png |   Bin 39170 -> 28077 bytes
+ .../snapshots/app-shell-workbench-390x720.json     |  1626 +--
+ .../snapshots/app-shell-workbench-desktop-1.json   |  1590 +--
+ .../snapshots/data-table-upgrades-390x720.json     |   604 +-
+ .../snapshots/data-table-upgrades-desktop-1.json   |   608 +-
+ .../snapshots/default-polish-stress-390x720.json   |  3096 +++---
+ .../snapshots/default-polish-stress-desktop-1.json |  3095 +++---
+ .../snapshots/layout-flex-stress-390x720.json      |  2434 ++---
+ .../snapshots/layout-flex-stress-desktop-1.json    |  2446 ++---
+ .../snapshots/layout-grid-masonry-390x720.json     |  5665 +++++-----
+ .../snapshots/layout-grid-masonry-desktop-1.json   |  5614 +++++-----
+ .../snapshots/layout-panel-bounds-390x720.json     |  4074 ++++---
+ .../snapshots/layout-panel-bounds-desktop-1.json   |  3976 +++----
+ .../snapshots/layout-plot-embedding-390x720.json   |  1861 ++--
+ .../snapshots/layout-plot-embedding-desktop-1.json |  1869 ++--
+ .../layout-scrollable-composites-390x720.json      | 10664 +++++++++---------
+ .../layout-scrollable-composites-desktop-1.json    | 10682 ++++++++++---------
+ .../snapshots/responsive-layout-390x720.json       |  2296 ++--
+ .../snapshots/responsive-layout-desktop-1.json     |  2316 ++--
+ .../snapshots/scatter-plot-2d-desktop-1.json       |   767 +-
+ .../snapshots/scatter3d-desktop-1.json             |  8773 +++++++++------
+ .../visual_audit/snapshots/splitter-desktop-1.json |  1125 +-
+ .../visual_audit/snapshots/toolbar-390x720.json    |  1156 +-
+ .../visual_audit/snapshots/toolbar-desktop-1.json  |  1164 +-
+ .../css_feature_probes/visual_audit_manifest.json  |    90 +
+ native/src/layout.rs                               |   424 +-
+ native/src/runtime.rs                              |    78 +
+ python/dragongui/dataframe.py                      |    27 +
+ python/dragongui/widgets.py                        |    34 +-
+ tests/test_python_api.py                           |    86 +
+ tests/test_visual_audit.py                         |   281 +
+ tools/visual_audit.py                              |   324 +
+ 86 files changed, 42894 insertions(+), 37806 deletions(-)
+.codex-workbench-sessions/saved_sessions.json
+.test-cache/dragongui-wheel.zip
+.test-cache/v/cache/lastfailed
+.test-cache/v/cache/nodeids
+artifacts/CODE_REVIEW.md
+artifacts/IMPLEMENTATION_NOTES.md
+artifacts/MAINTAINABILITY_REVIEW.md
+artifacts/SPEC.md
+artifacts/TEST_RESULTS.md
+artifacts/visual_audit/REPORT.md
+artifacts/visual_audit/logs/data-table-upgrades-390x720.stdout.txt
+artifacts/visual_audit/logs/data-table-upgrades-desktop-1.stdout.txt
+artifacts/visual_audit/logs/default-polish-stress-390x720.stdout.txt
+artifacts/visual_audit/logs/default-polish-stress-desktop-1.stdout.txt
+artifacts/visual_audit/logs/layout-flex-stress-390x720.stdout.txt
+artifacts/visual_audit/logs/layout-flex-stress-desktop-1.stdout.txt
+artifacts/visual_audit/logs/layout-grid-masonry-390x720.stdout.txt
+artifacts/visual_audit/logs/layout-grid-masonry-desktop-1.stdout.txt
+artifacts/visual_audit/logs/layout-panel-bounds-390x720.stdout.txt
+artifacts/visual_audit/logs/layout-panel-bounds-desktop-1.stdout.txt
+artifacts/visual_audit/logs/layout-plot-embedding-390x720.stdout.txt
+artifacts/visual_audit/logs/layout-plot-embedding-desktop-1.stdout.txt
+artifacts/visual_audit/logs/layout-scrollable-composites-390x720.stdout.txt
+artifacts/visual_audit/logs/layout-scrollable-composites-desktop-1.stdout.txt
+artifacts/visual_audit/logs/responsive-layout-390x720.stdout.txt
+artifacts/visual_audit/logs/responsive-layout-desktop-1.stdout.txt
+artifacts/visual_audit/logs/scatter-plot-2d-desktop-1.stdout.txt
+artifacts/visual_audit/logs/scatter3d-desktop-1.stdout.txt
+artifacts/visual_audit/logs/splitter-desktop-1.stdout.txt
+artifacts/visual_audit/logs/toolbar-390x720.stdout.txt
+artifacts/visual_audit/logs/toolbar-desktop-1.stdout.txt
+artifacts/visual_audit/report.json
+artifacts/visual_audit/screenshots/app-shell-workbench-390x720.png
+artifacts/visual_audit/screenshots/app-shell-workbench-desktop-1.png
+artifacts/visual_audit/screenshots/data-table-upgrades-390x720.png
+artifacts/visual_audit/screenshots/data-table-upgrades-desktop-1.png
+artifacts/visual_audit/screenshots/default-polish-stress-390x720.png
+artifacts/visual_audit/screenshots/default-polish-stress-desktop-1.png
+artifacts/visual_audit/screenshots/layout-flex-stress-390x720.png
+artifacts/visual_audit/screenshots/layout-flex-stress-desktop-1.png
+artifacts/visual_audit/screenshots/layout-grid-masonry-390x720.png
+artifacts/visual_audit/screenshots/layout-grid-masonry-desktop-1.png
+artifacts/visual_audit/screenshots/layout-panel-bounds-390x720.png
+artifacts/visual_audit/screenshots/layout-panel-bounds-desktop-1.png
+artifacts/visual_audit/screenshots/layout-plot-embedding-390x720.png
+artifacts/visual_audit/screenshots/layout-plot-embedding-desktop-1.png
+artifacts/visual_audit/screenshots/layout-scrollable-composites-390x720.png
+artifacts/visual_audit/screenshots/layout-scrollable-composites-desktop-1.png
+artifacts/visual_audit/screenshots/responsive-layout-390x720.png
+artifacts/visual_audit/screenshots/responsive-layout-desktop-1.png
+artifacts/visual_audit/screenshots/scatter-plot-2d-desktop-1.png
+artifacts/visual_audit/screenshots/scatter3d-desktop-1.png
+artifacts/visual_audit/screenshots/splitter-desktop-1.png
+artifacts/visual_audit/screenshots/toolbar-390x720.png
+artifacts/visual_audit/screenshots/toolbar-desktop-1.png
+artifacts/visual_audit/snapshots/app-shell-workbench-390x720.json
+artifacts/visual_audit/snapshots/app-shell-workbench-desktop-1.json
+artifacts/visual_audit/snapshots/data-table-upgrades-390x720.json
+artifacts/visual_audit/snapshots/data-table-upgrades-desktop-1.json
+artifacts/visual_audit/snapshots/default-polish-stress-390x720.json
+artifacts/visual_audit/snapshots/default-polish-stress-desktop-1.json
+artifacts/visual_audit/snapshots/layout-flex-stress-390x720.json
+artifacts/visual_audit/snapshots/layout-flex-stress-desktop-1.json
+artifacts/visual_audit/snapshots/layout-grid-masonry-390x720.json
+artifacts/visual_audit/snapshots/layout-grid-masonry-desktop-1.json
+artifacts/visual_audit/snapshots/layout-panel-bounds-390x720.json
+artifacts/visual_audit/snapshots/layout-panel-bounds-desktop-1.json
+artifacts/visual_audit/snapshots/layout-plot-embedding-390x720.json
+artifacts/visual_audit/snapshots/layout-plot-embedding-desktop-1.json
+artifacts/visual_audit/snapshots/layout-scrollable-composites-390x720.json
+artifacts/visual_audit/snapshots/layout-scrollable-composites-desktop-1.json
+artifacts/visual_audit/snapshots/responsive-layout-390x720.json
+artifacts/visual_audit/snapshots/responsive-layout-desktop-1.json
+artifacts/visual_audit/snapshots/scatter-plot-2d-desktop-1.json
+artifacts/visual_audit/snapshots/scatter3d-desktop-1.json
+artifacts/visual_audit/snapshots/splitter-desktop-1.json
+artifacts/visual_audit/snapshots/toolbar-390x720.json
+artifacts/visual_audit/snapshots/toolbar-desktop-1.json
+examples/css_feature_probes/visual_audit_manifest.json
+native/src/layout.rs
+native/src/runtime.rs
+python/dragongui/dataframe.py
+python/dragongui/widgets.py
+tests/test_python_api.py
+tests/test_visual_audit.py
+tools/visual_audit.py
+warning: LF will be replaced by CRLF in artifacts/CODE_REVIEW.md.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in artifacts/IMPLEMENTATION_NOTES.md.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in artifacts/MAINTAINABILITY_REVIEW.md.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in artifacts/SPEC.md.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in artifacts/TEST_RESULTS.md.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in examples/css_feature_probes/visual_audit_manifest.json.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in native/src/layout.rs.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in native/src/runtime.rs.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in python/dragongui/dataframe.py.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in python/dragongui/widgets.py.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in tests/test_python_api.py.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in tests/test_visual_audit.py.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in tools/visual_audit.py.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in artifacts/CODE_REVIEW.md.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in artifacts/IMPLEMENTATION_NOTES.md.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in artifacts/MAINTAINABILITY_REVIEW.md.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in artifacts/SPEC.md.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in artifacts/TEST_RESULTS.md.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in examples/css_feature_probes/visual_audit_manifest.json.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in native/src/layout.rs.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in native/src/runtime.rs.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in python/dragongui/dataframe.py.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in python/dragongui/widgets.py.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in tests/test_python_api.py.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in tests/test_visual_audit.py.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in tools/visual_audit.py.
+The file will have its original line endings in your working directory

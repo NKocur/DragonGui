@@ -1,0 +1,65 @@
+diff --git a/artifacts/MAINTAINABILITY_REVIEW.md b/artifacts/MAINTAINABILITY_REVIEW.md
+index 4221c4f..aae1a84 100644
+--- a/artifacts/MAINTAINABILITY_REVIEW.md
++++ b/artifacts/MAINTAINABILITY_REVIEW.md
+@@ -1,27 +1,43 @@
+-# Maintainability Review
++# Maintainability Review: Professional All Features Demo
+ 
+ ## Findings
+ 
+-### 1. Badge snapshot validation is target-specific logic inside the generic visual-audit runner
++### 1. Demo import has filesystem and fixture-generation side effects
+ 
+-- Pattern: God files / multi-responsibility functions
+-- Location: `tools/visual_audit.py:331`, `tools/visual_audit.py:354`, `tools/visual_audit.py:404`
++- Pattern: God files / multi-responsibility functions; code in the wrong layer
++- Location: `examples/all_features_professional_demo.py:29`, `examples/all_features_professional_demo.py:205`, `examples/all_features_professional_demo.py:220`
++- Severity: major
++- Description: Importing the module creates `artifacts/generated/all_features_professional_demo/`, builds all demo datasets, and writes the generated HTML and PNG assets before `main()` runs. That makes source import mutate the working tree, makes future tests/import-time inspection more expensive, and couples fixture generation to module loading instead of to demo startup. The test notes confirm the generated assets are now part of the handoff surface.
++- Recommended fix: Move `OUT_DIR.mkdir(...)`, `write_report(...)`, `write_png(...)`, and the heavy fixture construction behind an explicit `prepare_demo_fixtures()` or `DemoFixtures.build()` called from `build_app()`/`main()`. Keep import-time state limited to inert constants and functions. If generated assets are meant to be committed, document that; otherwise add cleanup/ignore policy.
++
++### 2. Background-stream failures are partially swallowed
++
++- Pattern: Happy-path logic and swallowed errors
++- Location: `examples/all_features_professional_demo.py:401`, `examples/all_features_professional_demo.py:411`, `examples/all_features_professional_demo.py:422`
++- Severity: major
++- Description: Scatter packing failures are logged as "skipped" and the stream continues, while `call_soon_threadsafe(apply)` failures break out without preserving the exception cause and the final `stopped` scheduling failure is discarded with `pass`. In a demo intended to prove runtime/threading APIs, this can make real API regressions look like a quiet stopped stream.
++- Recommended fix: Catch narrower exceptions where possible. When scheduling fails, log or set status with the exception before stopping the worker. Replace the final bare discard with a diagnostic log guarded for shutdown, e.g. `except Exception as exc: log(f"Could not schedule stop notification: {exc}")`.
++
++### 3. Validation does not cover the new demo's interactive contract
++
++- Pattern: Weak tests
++- Location: `artifacts/TEST_RESULTS.md:39`, `artifacts/TEST_RESULTS.md:52`, `artifacts/TEST_RESULTS.md:88`
+ - Severity: minor
+-- Description: The new badge bounds check is useful and conservative, but it adds a target-id branch and badge-specific snapshot parsing directly to the generic visual-audit runner. This is acceptable for one probe-specific guard, but if more probes add semantic validators, `run_target()` and the surrounding script will accumulate target-specific behavior and become harder to change safely.
+-- Recommended fix: No immediate blocker. If another target needs semantic validation, introduce a small validator registry such as `TARGET_VALIDATORS = {"badge-layout": validate_badge_layout_snapshot}` and keep target-specific helpers grouped away from process/report orchestration.
++- Description: Validation is currently `py_compile` plus a run through the native-backend-unavailable fallback. That proves syntax and fallback behavior, but not that page construction, callbacks, generated assets, or live update APIs behave with a native app. This is understandable in the current environment, but it leaves the broadest new surface unexercised.
++- Recommended fix: Add a lightweight automated smoke path that imports the module without side effects after finding 1 is fixed, calls fixture preparation in a temporary directory, and builds the app/window enough to assert route/page/widget counts. Keep the existing manual native inspection as a release checklist item.
+ 
+ ## Reuse Audit Answers
+ 
+-- Did it reuse the existing domain model? Yes. The badge fix uses existing `WidgetNode.props.badge`, existing widget kinds, existing `NodeStyle`/part styling, and the existing visual-audit manifest/debug-snapshot model.
+-- Did it duplicate validation/formatting/parsing/API access? No significant production duplication remains. The text and primitive renderers now share `inline_badge_layout_for_text()` instead of duplicating badge geometry. The Python visual-audit bounds check necessarily approximates the renderer for a conservative probe assertion, but it does not replace the native helper tests.
+-- Is the code in the right layer? Yes for the badge code. Shared badge sizing/geometry lives with style sizing helpers, renderers consume it, and visual-audit snapshot validation stays in the harness. The broader layout min-width policy is now documented where it is implemented and covered by focused layout tests.
+-- Does each new abstraction earn its existence? Yes. `InlineBadgeLayout` and `inline_badge_layout_for_text()` isolate the policy that labels reserve preferred badge width while visible pills clip to available parent width.
+-- Was dependency direction preserved? Yes. There are no backward imports, new service layers, or dependency inversions.
+-- Did it delete obsolete code, or only add more? It removed the duplicated local badge geometry from text/primitives and replaced it with a shared helper. It added tests and a conservative visual-audit validator.
+-- Could a future developer understand why this change exists without asking the AI? Yes. `artifacts/IMPLEMENTATION_NOTES.md`, the inline helper comment in `native/src/style.rs`, and the min-width comment in `native/src/layout.rs` explain the intent.
++- Did it reuse the existing domain model? Yes. The implementation uses DragonGUI's public widgets and app/runtime APIs directly (`App`, `Window`, `Pages`, `DataFrameTable`, plot widgets, overlays, dialogs, resource APIs) rather than inventing a parallel demo framework.
++- Did it duplicate validation/formatting/parsing/API access? No significant API-wrapper duplication was introduced. The script does include bespoke fixture and asset generation (`write_png`, `write_report`), but that is demo content generation rather than duplicated DragonGUI validation/parsing.
++- Is the code in the right layer? Mostly. UI composition and demo callbacks belong in an example script. The import-time file writes and large fixture construction are in the wrong lifecycle layer and should move to explicit startup/preparation code.
++- Does each new abstraction earn its existence? Mostly. `DemoState` is a pragmatic holder for live widget references in a single-file demo; no manager/service mirage was introduced. The global state is acceptable for an example, but it amplifies the import-side-effect problem.
++- Was dependency direction preserved? Yes. The new code imports the public `dragongui` API and standard library/NumPy only; it does not reach backward into native internals or create dependency inversions.
++- Did it delete obsolete code, or only add more? It only adds the new professional demo and generated assets. The old `examples/all_features_v3_demo.py` remains intact by design, so no obsolete code was removed.
++- Could a future developer understand why this change exists without asking the AI? Yes. `artifacts/SPEC.md`, `artifacts/IMPLEMENTATION_NOTES.md`, and the coherent page structure make the intent clear. The generated asset policy and import-time behavior are the main parts that need clearer ownership.
+ 
+ ## Overall Verdict
+ 
+-Clean.
++Needs follow-up refactor.
+ 
+-The badge-specific maintainability issues have been addressed: geometry policy is shared, label reservation is explicit, the disabled badge test now checks containment independently, and the broad min-width policy is documented and tested. The only remaining note is organizational: avoid letting `tools/visual_audit.py` grow a new target-specific branch for every future semantic probe.
++The demo is broadly aligned with the goal and avoids the worst LLM-code patterns such as fake service layers, backward imports, and duplicated public API wrappers. The maintainability issues are concentrated and fixable: make module import inert, report worker-thread failures instead of swallowing them, and add a small smoke test once import side effects are gone.
+warning: LF will be replaced by CRLF in artifacts/MAINTAINABILITY_REVIEW.md.
+The file will have its original line endings in your working directory

@@ -1,0 +1,130 @@
+                ("North Plant Command Center", "overview"),
+                (title, route),
+            ],
+            on_select=lambda item: navigate(item.value),
+        )
+        with dg.HLayout(style={"align_items": "center", "gap": 10, "min_width": 0}):
+            dg.Label(title, class_="page-title", wrap=False)
+            dg.Tag("generated data", level="neutral")
+        dg.Label(detail, class_="muted")
+
+
+def build_overview_page() -> None:
+    page_header("overview", "Operations Overview", "Live sensor pipeline health, incidents, and throughput.")
+    with dg.GridLayout(columns=4, min_column_width=180, gap=10):
+        build_metric_card("Availability", "99.2%", "rolling 24h across 84 feeds", "success")
+        build_metric_card("Open incidents", "4", "two require model-owner review", "warning")
+        build_metric_card("Median latency", "34 ms", "p95 remains under 71 ms", "info")
+        build_metric_card("Export backlog", "18", "report queue is draining", "neutral")
+    with dg.Splitter(orientation="horizontal", style={"height": 360, "min_height": 260}):
+        with dg.Pane(flex=62, min_size=320):
+            with dg.Panel("Fleet Pulse", style={"height": "100%"}):
+                dg.LinePlot(
+                    SERIES_FRAME,
+                    x="minute",
+                    y=["latency", "error_budget"],
+                    labels=["latency", "error budget"],
+                    colors=["#36a3ff", "#2fb344"],
+                    show_toolbar=True,
+                    show_legend=True,
+                    style={"height": "100%", "min_height": 220},
+                )
+        with dg.Pane(flex=38, min_size=260):
+            with dg.Panel("Incident Mix", style={"height": "100%"}):
+                state.incident_badge = dg.Badge("4", level="warning")
+                dg.PieChart(
+                    labels=["watch", "queued", "blocked", "ready"],
+                    values=[8, 14, 4, 62],
+                    donut=True,
+                    center_value="88",
+                    center_label="routes",
+                    show_legend=True,
+                    legend_position="right",
+                    style={"height": 245},
+                )
+    with dg.Panel("Recent Events"):
+        dg.DataFrameTable(TABLE_ROWS[:28], page_size=28, sample_rows=28, style={"height": 260, "width": "100%"})
+
+
+def build_explore_page() -> None:
+    page_header("explore", "3D Sensor Explore", "Inspect the same generated plant telemetry in GPU plot surfaces.")
+    with dg.Toolbar():
+        dg.IconButton("refresh", tooltip="Refresh points", on_click=randomize_visuals)
+        dg.IconButton("search", tooltip="Command palette", on_click=show_palette)
+        dg.ToolbarSeparator()
+        dg.SmallButton("Fit/Reset", on_click=randomize_visuals)
+        dg.SearchBox("asset:cell", placeholder="filter asset or zone", style={"width": 220})
+    with dg.Splitter(orientation="horizontal", style={"height": 610, "min_height": 360}):
+        with dg.Pane(flex=72, min_size=360):
+            state.scatter = dg.Scatter3D(
+                SCATTER_FRAME,
+                x="x",
+                y="y",
+                z="z",
+                color="temperature",
+                colormap="turbo",
+                grid=True,
+                scalar_bar=True,
+                hover=["asset", "zone", "temperature"],
+                point_size=3,
+                auto_quality=True,
+                lod=True,
+                style={"height": "100%", "min_height": 340},
+                on_pick=lambda pick: set_status(f"Picked point {pick.index}: z={pick.z:.3f}", "info"),
+            )
+        with dg.Pane(flex=28, min_size=260):
+            with dg.Panel("Explore Controls", style={"height": "100%"}):
+                dg.Dropdown(["turbo", "viridis", "plasma", "cividis"], value="turbo", on_change=lambda v: state.scatter.set_colormap(v) if state.scatter else None)
+                dg.Checkbox("Grid visible", checked=True, on_change=lambda v: state.scatter.show_grid(v) if state.scatter else None)
+                dg.ToggleSwitch("Auto quality", checked=True, on_change=lambda v: state.scatter.set_auto_quality(v) if state.scatter else None)
+                dg.Slider(0.85, min=0.25, max=1, step=0.05, on_change=lambda v: state.scatter.set_interactive_render_scale(v) if state.scatter else None)
+                dg.RangeSlider((20, 84), min=0, max=100, step=1, on_change=lambda r: set_status(f"Health band {r[0]:.0f}-{r[1]:.0f}"))
+                dg.DragNumber(3, min=1, max=12, step=0.5, on_change=lambda v: state.scatter.set_auto_point_size(v > 6) if state.scatter else None)
+                dg.DragVector((1, 0, 0), labels=("dx", "dy", "dz"), min=-1, max=1, step=0.1, on_change=lambda v: set_status(f"Vector control {v}"))
+                dg.Separator()
+                state.scatter2d = dg.ScatterPlot2D(
+                    SCATTER_FRAME,
+                    x="temperature",
+                    y="health",
+                    color="zone",
+                    legend=True,
+                    style={"height": 210},
+                )
+
+
+def build_timeseries_page() -> None:
+    page_header("timeseries", "Time Series", "Telemetry, distribution, heatmap, and categorical charts share generated fixtures.")
+    with dg.GridLayout(columns=2, min_column_width=360, gap=10):
+        with dg.Panel("Live Latency"):
+            state.line_plot = dg.LinePlot(
+                SERIES_FRAME,
+                x="minute",
+                y="latency",
+                label="latency",
+                color="#36a3ff",
+                show_toolbar=True,
+                max_points=900,
+                style={"height": 270},
+            )
+        with dg.Panel("Latency Distribution"):
+            dg.Histogram(SERIES_FRAME["latency"], bins=36, mode="count", style={"height": 270})
+        with dg.Panel("Route Heatmap"):
+            state.heatmap = dg.Heatmap(HEAT_MATRIX, x_labels=HEAT_X, y_labels=HEAT_Y, title="p95 latency by line and hour", colormap="magma", style={"height": 300})
+        with dg.Panel("Throughput By Owner"):
+            state.bar_chart = dg.BarChart(
+                TABLE_FRAME,
+                category="owner",
+                value=["throughput", "latency_ms"],
+                aggregate="mean",
+                series=["throughput", "latency"],
+                show_toolbar=True,
+                style={"height": 300},
+                on_hover=lambda bar: set_status(f"Bar hover: {bar.label if bar else 'none'}"),
+            )
+
+
+def build_data_page() -> None:
+    page_header("data", "Data Review", "Virtualized table, property inspector, search, selection, and context menus.")
+    with dg.Toolbar():
+        dg.SearchBox("", placeholder="search routes", on_change=lambda q: set_status(f"Search changed: {q}"), style={"width": 260})
+        dg.ToolbarSeparator()

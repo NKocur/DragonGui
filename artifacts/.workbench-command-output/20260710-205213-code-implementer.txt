@@ -1,0 +1,292 @@
+diff --git a/artifacts/IMPLEMENTATION_NOTES.md b/artifacts/IMPLEMENTATION_NOTES.md
+index e0682d0..0cec9d4 100644
+--- a/artifacts/IMPLEMENTATION_NOTES.md
++++ b/artifacts/IMPLEMENTATION_NOTES.md
+@@ -1,83 +1,40 @@
+-# Implementation Notes: Dramatic Default GUI Polish Pass
+-
+-## Initial Defects Documented
+-
+-- `artifacts/visual_audit/screenshots/app-shell-workbench-390x720.png`
+-  - Heading was clipped (`AppShell + Body + ...`).
+-  - Summary cards preserved desktop row assumptions and clipped/wasted label/body text in the narrow viewport.
+-- `artifacts/visual_audit/screenshots/responsive-layout-390x720.png`
+-  - Narrow capture showed cramped nested scrolling and fixed grid/panel sizing that hid content behind narrow regions.
+-- `artifacts/visual_audit/screenshots/layout-flex-stress-390x720.png`
+-  - Dense rows with long labels and mixed fixed/flexible controls were too squeezed on mobile.
+-- The first pass made defaults more compact, but the visual change was subtle. The screenshots still read as broad filled cards with similar surfaces and weak hierarchy.
++# Implementation Notes: Professional All Features Demo
+ 
+ ## Changed
+ 
+-- Made default dark/light theme changes more visible in `python/dragongui/theme.py` and `native/src/theme.rs`.
+-  - Dark defaults now use a deeper app background, clearer panel/surface separation, brighter foreground text, cyan accent/focus tokens, `13px` default text, `5px` spacing, and `3px` radius.
+-  - Light defaults keep parity on density/radius while using crisper border/accent tokens.
+-  - Native `Theme::control_height()` now resolves to `25px` for the default theme.
+-- Reworked default framework styling in `native/src/framework.dg.css`.
+-  - App chrome, sidebars, workbench areas, status bars, toolbars, tabs, nav rows, tables, property rows, inputs, and buttons now use tighter metrics and stronger hierarchy.
+-  - Controls are flatter and denser, with smaller icon buttons, clearer active/focus states, compact nav/tab rows, and data-table defaults closer to a professional tool surface.
+-  - Added default class styling for common app-shell/workbench/property-grid arrangements so apps get a cleaner baseline without custom visual CSS.
+-- Tightened native metrics in `native/src/style.rs`, `native/src/layout.rs`, and `native/src/table.rs`.
+-  - Checkbox, toggle, slider, stepper, tab, table header/row, index-column, and data-column defaults are smaller and more data-dense.
+-  - Table defaults now use a `25px` header, `21px` rows, `48px` index column, and `116px` data columns.
+-- Fixed probe layouts where local CSS was creating screenshot-visible defects while preserving the stress content.
+-  - `examples/css_feature_probes/app_shell_workbench_probe.py`: mobile title gets adequate height, summary cards stack, card text wraps/ellipsizes inside bounds, and narrow workbench spacing is reduced.
+-  - `examples/css_feature_probes/responsive_layout_probe.py`: mobile panels use auto height, single-column named-grid areas, reduced padding/gaps, and scroll-owned overflow.
+-  - `examples/css_feature_probes/layout_flex_stress_probe.py`: mobile stress rows stack instead of forcing side-by-side cards and use tighter label/control metrics.
+-- Fixed the blocking toolbar review finding.
+-  - `python/dragongui/widgets.py`: `SearchBox` now reserves a default `164px` minimum width so its composed icon/input/clear children do not paint over following siblings when the wrapper is squeezed.
+-  - `examples/css_feature_probes/toolbar_probe.py`: the overfull single toolbar row is now split into icon-command and search/action toolbar rows, preserving Toolbar coverage without clipping controls on mobile.
+-- Added `examples/css_feature_probes/default_polish_stress_probe.py`.
+-  - Uses defaults as much as possible, with only minimal responsive layout CSS.
+-  - Covers AppShell/sidebar, toolbar/status density, nav badges, long labels, summary cards, table, property grid, and nested scroll text.
+-  - Stacks the shell at `390px` and `320px` so long nav labels are visible instead of clipped.
+-- Added `default-polish-stress` to `examples/css_feature_probes/visual_audit_manifest.json`.
+-- Regenerated focused visual-audit screenshots, snapshots, logs, `artifacts/visual_audit/REPORT.md`, and `artifacts/visual_audit/report.json`.
+-
+-## Visual Review After Fix
+-
+-- `app-shell-workbench-390x720.png`: heading and summary card copy are now visible; summary cards stack and remaining rows are scroll-owned.
+-- `responsive-layout-390x720.png`: first viewport no longer shows text hidden by nested fixed regions; lower content is reachable through the main scroll.
+-- `layout-flex-stress-390x720.png`: dense controls stay inside panels; below-fold action rows are scroll-owned rather than overlapping.
+-- `default-polish-stress-390x720.png` and `default-polish-stress-320x640.png`: long sidebar labels, toolbar controls, status badges, summary cards, and table/property panels render without static overlap or clipped labels in the first viewport.
+-- `toolbar-desktop-1.png` and `toolbar-390x720.png`: SearchBox has nonzero width and no longer overlaps or clips the `Deploy`/disabled controls.
+-- Current visual-audit report summary: `68` entries, `47 pass`, `21 needs_manual_interaction`, `0 fail`, `0 blocked`.
+-
+-## Validation
+-
+-- Used Python 3.12 because the spec's previously referenced Python 3.13 path is not present in this workspace:
+-  - `C:\Users\nashk\AppData\Local\Programs\Python\Python312\python.exe`
+-- Passed:
+-  - `python -m py_compile examples/css_feature_probes/default_polish_stress_probe.py examples/css_feature_probes/app_shell_workbench_probe.py examples/css_feature_probes/responsive_layout_probe.py examples/css_feature_probes/layout_flex_stress_probe.py`
+-  - `cargo fmt --manifest-path native/Cargo.toml -- --check`
+-  - `cargo check --manifest-path native/Cargo.toml`
+-  - `cargo test --manifest-path native/Cargo.toml dark_theme_defaults_are_compact_and_neutral -- --nocapture`
+-  - `cargo test --manifest-path native/Cargo.toml default_metrics_are_compact_for_dense_data -- --nocapture`
+-  - `cargo test --manifest-path native/Cargo.toml framework_defaults_install_and_remain_lower_precedence_than_user_css -- --nocapture`
+-  - `python tools/visual_audit.py --target default-polish-stress --sizes desktop,390x720,320x640 --append --wait-ms 1200 --timeout-ms 12000`
+-  - `python -m py_compile python/dragongui/widgets.py examples/css_feature_probes/toolbar_probe.py`
+-  - `python tools/visual_audit.py --target toolbar --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000`
+-- Earlier in this pass, the focused required visual targets were rerun and recorded in the report:
+-  - `app-shell-workbench`: `pass`
+-  - `responsive-layout`: `pass`
+-  - `layout-flex-stress`: `pass`
+-  - `layout-panel-bounds`: `pass`
+-  - `layout-grid-masonry`: `pass`
+-  - `layout-scrollable-composites`: `pass`
+-  - `form-controls`: `pass`
+-  - `property-grid`: `pass`
+-  - `toolbar`: `pass`
+-  - `data-table-upgrades`: `pass`
+-  - `core-widgets`, `navigation-widgets`, `tree-view`: `needs_manual_interaction`
++- Added `examples/all_features_professional_demo.py`.
++  - Builds a coherent DragonOps data-operations workbench instead of another stress-script catalog.
++  - Keeps `examples/all_features_v3_demo.py` intact.
++  - Uses generated local telemetry/table/plot fixtures, plus generated PNG and HTML report assets under `artifacts/generated/all_features_professional_demo/`.
++  - Organizes the UI into overview, 3D explore, time-series, data, workflow, reports, runtime, and styling pages.
++- Covered the requested widget/API groups:
++  - Shell/layout/chrome: `Window`, `AppShell`, `Sidebar`, `WorkbenchLayout`, `Body`, `HLayout`, `VLayout`, `GridLayout`, `FlowLayout`, explicit `ScrollArea`, `Panel`, `Splitter`, `Pane`, `Spacer`, `Separator`, `StatusBar`.
++  - Navigation: `MenuBar`, `Menu`, `MenuItem`, `Pages`, `Page`, `NavItem`, `Tabs`, `Tab`, `Breadcrumbs`, `Toolbar`, `ToolbarSeparator`, `IconButton`, `SmallButton`, `SearchBox`.
++  - Controls: labels, badges/tags/LEDs, buttons, text inputs/areas, checkboxes, dropdowns, sliders, number/range/drag inputs, radio groups, toggle switches, progress bars, color picker, date/time inputs.
++  - Data/visuals: `DataFrameTable`, `Scatter3D`, `ScatterPlot2D`, `LinePlot`, `Histogram`, `Heatmap`, `BarChart`, `PieChart`, `Image`, `HtmlReport`.
++  - Inspectors/diagnostics: `PropertyGrid`, `TreeView`, `TreeNode`, `SelectableList`, `CodeEditor`, `LogView`, `ThreadMonitor`.
++  - Overlays/actions: rich `Tooltip`, `ContextMenu`, `Modal`, `alert`, `confirm`, toast action, `CommandPalette`, and file dialog helpers.
++  - Runtime: `App.call_soon_threadsafe`, `debug_snapshot`, live setters, table/scatter/plot updates, resource upload/release, and `replace_children`.
++- Added responsive CSS matching the current compact default polish direction and kept the first screen as the usable workbench.
++- Addressed maintainability follow-up findings.
++  - Importing `examples/all_features_professional_demo.py` is now inert: it no longer creates `artifacts/generated/...`, builds datasets, or writes HTML/PNG assets at import time.
++  - Added explicit `prepare_demo_fixtures(...)` / `ensure_demo_fixtures(...)` startup hooks. `build_app()` prepares fixtures by default, and tests can direct generated assets to a temporary directory.
++  - Background stream scheduling failures and stop-notification scheduling failures now preserve the exception in a diagnostic log line instead of silently breaking/passing.
++- Added `tests/test_all_features_professional_demo.py`.
++  - Verifies import does not mutate the generated artifact tree and leaves fixture globals empty.
++  - Builds small temporary fixtures and constructs the app/window without launching native UI.
++
++## Edge Cases Handled
++
++- NumPy missing exits with a concise `SystemExit` message because plot payload coverage depends on NumPy.
++- Native backend unavailable is caught in `main()` and prints a source-import/demo summary instead of crashing.
++- Background stream uses an event, ignores repeated starts, reports scheduling failures, and joins briefly in `finally`.
++- Resource upload/release can be called repeatedly; errors are caught and reported to status/log.
++- File dialog callbacks report cancellation or returned paths.
++- HTML report and PNG image are local generated assets; `HtmlReport.open_external()` is used as the fallback path.
+ 
+ ## Remaining
+ 
+-- Full native `cargo test --manifest-path native/Cargo.toml` was not run.
+-- Python 3.13 validation was not run because that interpreter path is absent here.
+-- Python pytest was not rerun in this second pass; Python 3.12 does not have `pytest` installed, and a previous Python 3.11 run had four unrelated failures outside this theme/layout polish work.
+-- The `21 needs_manual_interaction` visual-audit targets still need hover/open/focus/overlay interaction coverage.
+-- Some long content intentionally continues below the first mobile viewport; that is expected where the owning scroll area is visible and content does not overlap or paint outside bounds.
++- The optional node graph playground was not included. It remains large and would dominate the professional demo structure; the existing dedicated node graph probes still cover it.
++- No docs index was updated because the spec only required the new runnable example and artifacts.
++- Visual/manual inspection could not be completed in this non-interactive handoff beyond launch/fallback validation.
+diff --git a/artifacts/TEST_RESULTS.md b/artifacts/TEST_RESULTS.md
+index 45c824c..09a3587 100644
+--- a/artifacts/TEST_RESULTS.md
++++ b/artifacts/TEST_RESULTS.md
+@@ -1,99 +1,102 @@
+-# Test Results: Dramatic Default GUI Polish Pass
++# Test Results: Professional All Features Demo
+ 
+ ## Environment
+ 
+-- Workspace: `C:\Users\nashk\Documents\Projects\DragonGui`
++- Workspace: `J:\Projects\DragonFrame`
+ - Date: 2026-07-10
+-- Shell: PowerShell
+-- Python used: `C:\Users\nashk\AppData\Local\Programs\Python\Python312\python.exe`
+-- Cargo used: `C:\Users\nashk\.cargo\bin\cargo.exe`
++- Role: Test Writer
++- Spec-preferred Python: `C:\Users\nashk\AppData\Local\Programs\Python\Python312\python.exe`
++- Python used for validation: `C:\msys64\mingw64\bin\python.exe` (`Python 3.12.12`)
+ 
+-## Summary
++## Commands
+ 
+-Focused validation for the stronger default visual polish pass passed.
+-
+-Current `artifacts/visual_audit/report.json`:
+-
+-- Entries: `68`
+-- `pass`: `47`
+-- `needs_manual_interaction`: `21`
+-- `fail`: `0`
+-- `blocked`: `0`
+-
+-## Commands And Results
++Checked the spec-preferred interpreter:
+ 
+ ```powershell
+-$py='C:\Users\nashk\AppData\Local\Programs\Python\Python312\python.exe'
+-& $py -m py_compile examples\css_feature_probes\default_polish_stress_probe.py examples\css_feature_probes\app_shell_workbench_probe.py examples\css_feature_probes\responsive_layout_probe.py examples\css_feature_probes\layout_flex_stress_probe.py
+-& $py -m py_compile python\dragongui\widgets.py examples\css_feature_probes\toolbar_probe.py
++Test-Path 'C:\Users\nashk\AppData\Local\Programs\Python\Python312\python.exe'
+ ```
+ 
+-Result: passed.
++Result:
+ 
+-```powershell
+-$cargo='C:\Users\nashk\.cargo\bin\cargo.exe'
+-$py='C:\Users\nashk\AppData\Local\Programs\Python\Python312\python.exe'
+-$env:LIB='C:\Users\nashk\AppData\Local\Programs\Python\Python312\libs;' + $env:LIB
+-$env:PYO3_PYTHON=$py
+-& $cargo fmt --manifest-path native\Cargo.toml -- --check
+-& $cargo check --manifest-path native\Cargo.toml
++```text
++False
+ ```
+ 
+-Result: passed.
++Located available Python interpreters:
+ 
+ ```powershell
+-& $cargo test --manifest-path native\Cargo.toml dark_theme_defaults_are_compact_and_neutral -- --nocapture
+-& $cargo test --manifest-path native\Cargo.toml default_metrics_are_compact_for_dense_data -- --nocapture
+-& $cargo test --manifest-path native\Cargo.toml framework_defaults_install_and_remain_lower_precedence_than_user_css -- --nocapture
++Get-Command python,py -ErrorAction SilentlyContinue | Select-Object Name,Source,Version
++where.exe python
+ ```
+ 
+-Result: passed.
++Key result:
+ 
+ ```text
+-theme::tests::dark_theme_defaults_are_compact_and_neutral ... ok
+-table::tests::default_metrics_are_compact_for_dense_data ... ok
+-css_style::tests::framework_defaults_install_and_remain_lower_precedence_than_user_css ... ok
++python.exe C:\msys64\mingw64\bin\python.exe
++C:\msys64\mingw64\bin\python.exe
++C:\Users\nashk\AppData\Local\Programs\Python\Python311\python.exe
+ ```
+ 
+-Focused visual audit rerun:
++Ran required compile validation with the available Python 3.12:
+ 
+ ```powershell
+-& $py tools\visual_audit.py --target default-polish-stress --sizes desktop,390x720,320x640 --append --wait-ms 1200 --timeout-ms 12000
+-& $py tools\visual_audit.py --target toolbar --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 12000
++$py = 'C:\msys64\mingw64\bin\python.exe'
++& $py --version
++& $py -m py_compile examples\all_features_professional_demo.py tests\test_all_features_professional_demo.py
+ ```
+ 
+-Result: passed.
++Ran focused smoke tests:
+ 
+-```text
+-default-polish-stress: pass
+-toolbar: pass
++```powershell
++& $py -m pytest tests\test_all_features_professional_demo.py -q
+ ```
+ 
+-Report consistency check:
++Ran required launch validation:
+ 
+ ```powershell
+-& $py -c "import json; from collections import Counter; data=json.load(open('artifacts/visual_audit/report.json', encoding='utf-8')); print(len(data), Counter(i.get('status') for i in data))"
++$py = 'C:\msys64\mingw64\bin\python.exe'
++& $py examples\all_features_professional_demo.py
+ ```
+ 
+-Result:
++## Results
++
++- Preferred Python path from the spec was unavailable in this environment.
++- `py_compile` passed with Python 3.12.12.
++- Focused smoke tests passed: `2 passed`.
++  - Importing the demo by file path is inert and does not change `artifacts\generated\all_features_professional_demo`.
++  - Explicit fixture preparation in a temporary directory and app/window construction both succeeded.
++- Running `examples\all_features_professional_demo.py` exited successfully.
++- The run exercised the intended native-backend-unavailable fallback path and printed the demo summary.
++- The old demo file `examples\all_features_v3_demo.py` remains present and was not modified by this validation pass.
++- Generated demo assets are present:
++  - `artifacts\generated\all_features_professional_demo\operations_report.html`
++  - `artifacts\generated\all_features_professional_demo\sensor_preview.png`
++
++Launch output:
+ 
+ ```text
+-68 Counter({'pass': 47, 'needs_manual_interaction': 21})
++DragonGUI native backend is unavailable; source import path works.
++Reason: DragonGUI's native extension is not built. Run `maturin develop` or install a wheel from PyPI before calling App.run().
++Demo summary:
++- window: DragonGUI Professional All Features Demo (1440x900)
++- routes: overview, explore, timeseries, data, workflow, reports, runtime, styling
++- generated rows: 180, scatter points: 16000
++- report: J:\Projects\DragonFrame\artifacts\generated\all_features_professional_demo\operations_report.html
+ ```
+ 
+-## Visual Inspection Notes
++## Coverage Notes
+ 
+-- `app-shell-workbench-390x720.png`: pass. Heading, summary labels, body copy, and status bar are visible; vertical overflow is scroll-owned.
+-- `responsive-layout-390x720.png`: pass. Percent/calc and grid examples remain readable without nested static clipping in the first viewport.
+-- `layout-flex-stress-390x720.png`: pass. Dense controls remain inside panel bounds; below-fold rows are reached by scrolling.
+-- `default-polish-stress-390x720.png`: pass. Narrow shell stacks, long nav labels fit, and summary/table/property content stays contained.
+-- `default-polish-stress-320x640.png`: pass. Narrowest shell stacks and status/toolbar/nav labels remain visible; remaining content overflow is scroll-owned.
+-- `toolbar-desktop-1.png`: pass. SearchBox wrapper now has nonzero width and the search/icon/input/clear controls no longer paint over `Deploy` or the disabled button.
+-- `toolbar-390x720.png`: pass. Toolbar controls are split into icon and search/action rows so the required mobile capture does not clip controls at the panel edge.
++- Source inspection confirms the new demo includes the requested page structure: overview, explore, timeseries, data, workflow, reports, runtime, and styling.
++- Source inspection confirms representative coverage for the required widget groups, including shell/layout, navigation/chrome, controls, date/time inputs, data/visual widgets, inspector widgets, overlays, runtime actions, resource upload/release calls, and styling examples.
++- Optional node graph coverage remains intentionally excluded and is documented in `artifacts\IMPLEMENTATION_NOTES.md`.
+ 
+ ## Not Run
+ 
+-- Full `cargo test --manifest-path native/Cargo.toml`.
+-- Full all-target visual audit from scratch.
+-- Python pytest in this second pass. Python 3.12 lacks `pytest`; previous Python 3.11 pytest validation had unrelated failures documented in prior notes.
+-- Manual interaction coverage for the `21 needs_manual_interaction` visual targets.
++- Native interactive inspection of overview/chart/runtime/styling/report pages, because the local native extension is not built.
++- Automated visual checks, because the native UI could not launch.
++- Cargo checks, because no native code was changed.
++
++## Failures And Next Steps
++
++- Failure: the spec-preferred Python path does not exist locally. Validation used another Python 3.12 interpreter successfully.
++- Remaining validation: after building/installing the DragonGUI native extension, manually launch `examples\all_features_professional_demo.py` and inspect the overview, explore or timeseries, data, runtime, styling, and reports pages.
+warning: LF will be replaced by CRLF in artifacts/IMPLEMENTATION_NOTES.md.
+The file will have its original line endings in your working directory
+warning: LF will be replaced by CRLF in artifacts/TEST_RESULTS.md.
+The file will have its original line endings in your working directory

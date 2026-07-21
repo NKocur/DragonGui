@@ -1,0 +1,230 @@
+# Spec: Reproduce And Fix Adjacent Plot Interaction Leakage
+
+## Goal
+
+The professional demo still exposes a plot-library bug. In the Explore page, a large left `Scatter3D` sits next to a smaller right `ScatterPlot2D` preview. The user reports that depending on where they click, data from the plot on the right can switch/combine with the neighboring plot. They reran the demo after the prior pass and still saw the same behavior.
+
+A later pass fixed a separate startup-framing issue by making base `Scatter3D` startup uploads request `fit=True`. Keep that improvement, but do not treat it as the solution. The original click-dependent adjacent-plot interaction bug still needs a reproduction, a library fix, and verification in the package the user actually runs.
+
+Also close the build/install gap. Bare global Python 3.13 currently imports the installed `site-packages` copy, not the workspace package. A source fix is not user-visible unless the demo run is proven to import the fixed workspace package or the global package is rebuilt/reinstalled.
+
+## Source Of Truth
+
+Read these before editing:
+
+- `artifacts/visual_audit/REPORT.md`
+- `artifacts/visual_audit/report.json`
+- `artifacts/visual_audit/screenshots/all-features-professional-explore-1180x760.png`
+- `artifacts/visual_audit/screenshots/all-features-professional-explore-1440x900.png`
+- `artifacts/visual_audit/snapshots/all-features-professional-explore-1180x760.json`
+- `artifacts/visual_audit/logs/all-features-professional-explore-1180x760.stdout.txt`
+- `artifacts/IMPLEMENTATION_NOTES.md`
+- `artifacts/TEST_RESULTS.md`
+- `artifacts/CODE_REVIEW.md`
+- `examples/all_features_professional_demo.py`
+- `examples/css_feature_probes/layout_plot_embedding_probe.py`
+- `examples/css_feature_probes/scatter3d_probe.py`
+- `python/dragongui/widgets.py`
+- `python/dragongui/vdom.py`
+- `native/src/runtime.rs`
+- `native/src/scatter/mod.rs`
+- `native/src/events.rs`
+- `tools/visual_audit.py`
+- `tests/test_python_api.py`
+- `tests/test_vdom.py`
+- `tests/test_visual_audit.py`
+- `pyproject.toml`
+
+## Current Evidence
+
+The Explore page creates two adjacent plot widgets:
+
+- left: `state.scatter = dg.Scatter3D(...)`
+- right: `state.scatter2d = dg.ScatterPlot2D(...)`
+
+The latest implementation notes show the startup-fit path now records:
+
+```text
+dg-126 SetScatterPointsPacked ... colormap=turbo ... fit=true
+dg-146 SetScatterPointsPacked ... colormap=viridis ... fit=false
+dg-146 FitScatterCamera
+```
+
+`artifacts/CODE_REVIEW.md` did not approve that pass because it only covers startup command targeting. It did not add click/drag/wheel playback, did not change native scatter hit-test/event routing, and did not prove that adjacent plot state remains isolated after interaction.
+
+Import-path evidence from this workspace:
+
+```text
+Bare global Python 3.13:
+C:\Users\nashk\AppData\Local\Programs\Python\Python313\Lib\site-packages\dragongui\__init__.py
+C:\Users\nashk\AppData\Local\Programs\Python\Python313\Lib\site-packages\dragongui\_dragongui.pyd
+
+With sys.path.insert(0, "python"):
+J:\Projects\DragonFrame\python\dragongui\__init__.py
+J:\Projects\DragonFrame\python\dragongui\_dragongui.pyd
+```
+
+The next implementer must distinguish two possible reasons the user still sees the bug: the runtime bug still exists, and/or the user is running a stale installed package.
+
+## Required Outcomes
+
+1. Reproduce the click-dependent bug.
+   - Add a focused adjacent-plot probe/test with two distinct plot ids, point clouds, labels, and colors/colormaps.
+   - Exercise clicks inside the left plot, inside the right plot, near the boundary/gutter, drag/release-outside, hover transitions, and wheel zoom where feasible.
+   - Capture before/after debug snapshots and command history.
+
+2. Fix adjacent plot state isolation at the library layer.
+   - A click, drag, pick, hover, wheel, fit, or data update over one plot must not mutate the other plot unless the user explicitly linked cameras.
+   - `SetScatterPointsPacked`, `FitScatterCamera`, hover metadata, scalar-bar state, actor operations, camera state, and selection state must target only the intended widget id.
+   - `active_scatter_id`, `scatter_at(pos)`, pointer release, hover clearing, and wheel handling must not route later events to a stale neighbor.
+   - `Scatter3D._camera_links` must remain explicit opt-in behavior.
+
+3. Keep the startup-framing fix.
+   - Base `Scatter3D` startup point data should still render in frame.
+   - `ScatterPlot2D` should keep its 2D camera setup without duplicate or cross-target fits.
+
+4. Improve audit/test coverage.
+   - Static screenshot validation is not sufficient for this bug.
+   - Add automated interaction coverage if the harness supports it, or add a focused command/debug reproduction script with documented expected invariants.
+   - Visual audit should continue to fail nonempty scatter startup uploads that have neither `fit=true` nor a same-target `FitScatterCamera`.
+
+5. Rebuild/reinstall or prove the run path.
+   - Before marking complete, record both bare global Python and workspace import paths in `artifacts/TEST_RESULTS.md`.
+   - If Python package code changes, reinstall into global Python 3.13 or run the demo with a verified workspace import path.
+   - If native Rust code changes, rebuild the release extension and reinstall/copy the resulting `_dragongui.pyd`.
+   - The final validated demo command must print or record `dragongui.__file__` and `dragongui._dragongui.__file__`.
+
+## Affected Files And Modules
+
+Primary:
+
+- `native/src/runtime.rs`
+  - `WgpuState::scatter_at`
+  - `active_scatter_id`
+  - scatter pointer down/up/move/wheel paths
+  - `Command::SetScatterPointsPacked`
+  - `Command::FitScatterCamera`
+  - debug command/snapshot target-id recording.
+- `native/src/scatter/mod.rs`
+  - per-scatter point, actor, camera, hover, selection, pick, and render-target state.
+- `python/dragongui/widgets.py`
+  - `Scatter3D._queue_startup_resources`
+  - `Scatter3D.set_points`
+  - `Scatter3D.enqueue_prepared_points`
+  - `Scatter3D.fit`
+  - `ScatterPlot2D._queue_startup_resources`
+  - camera-linking and payload/cache handling.
+- `tools/visual_audit.py`
+  - startup plot guard and interaction/probe validation.
+
+Secondary:
+
+- `native/src/events.rs`, if clipped bounds or hit testing are involved.
+- `python/dragongui/vdom.py`, if widget identity/diffing contributes to data crossing.
+- `examples/all_features_professional_demo.py`, only for instrumentation or explicit documented fit behavior; do not solve by removing the right plot.
+- `examples/css_feature_probes/scatter3d_probe.py` or a new probe for adjacent plot interactions.
+- `tests/test_python_api.py`, `tests/test_vdom.py`, `tests/test_visual_audit.py`.
+- `pyproject.toml`, only as needed for install/build verification.
+
+## Implementation Guidance
+
+Start with a minimal two-plot reproduction. Use explicit ids such as `left-scatter` and `right-scatter`, different data ranges, different colormaps, and different hover labels. The reproduction should be able to say, after each interaction, which scatter id was hit and which scatter ids changed.
+
+Check these likely failure points:
+
+- `scatter_at(pos)` using too-broad widget bounds instead of visible/clipped/scissored plot bounds.
+- stale `active_scatter_id` after pointer up, release outside, or transition from one plot to another.
+- wheel events over one plot using an earlier active scatter id.
+- hover clearing or pick payload generation touching the wrong runtime.
+- actor ids or primary payload caches reused across plot instances.
+- camera-link propagation running for unlinked adjacent plots.
+
+Fix the root cause in the library. A demo-only workaround is acceptable only as instrumentation or to make intended API behavior explicit.
+
+## Expected Behavior
+
+After the fix:
+
+- The left and right Explore plots remain visually distinct after left, right, boundary, drag, hover, and wheel interactions.
+- Clicking or dragging in the right preview plot cannot replace, combine, recolor, refit, or otherwise mutate the left plot's data.
+- Clicking or dragging in the left plot cannot mutate the right preview plot's data.
+- Debug snapshots keep distinct point counts, bounds, colormaps, camera states, actor counts, hover state, and selection state per scatter id.
+- Startup framing remains fixed.
+- The user's global Python 3.13 environment imports the fixed package, or the validated demo command explicitly imports the workspace package and extension.
+
+## Validation Required
+
+Minimum checks:
+
+```powershell
+$py = 'C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe'
+$env:PYO3_PYTHON = $py
+cargo fmt --manifest-path native\Cargo.toml -- --check
+cargo test --manifest-path native\Cargo.toml scatter -- --nocapture
+cargo test --manifest-path native\Cargo.toml command_batch_coalesces_scatter_updates -- --nocapture
+cargo check --manifest-path native\Cargo.toml
+& $py -m py_compile tools\visual_audit.py examples\all_features_professional_demo.py examples\css_feature_probes\scatter3d_probe.py
+& $py -m pytest tests\test_vdom.py tests\test_visual_audit.py tests\test_python_api.py -q
+```
+
+If native code changes:
+
+```powershell
+cargo build --manifest-path native\Cargo.toml --release --features pyo3/extension-module
+Copy-Item -LiteralPath native\target\release\_dragongui.dll -Destination python\dragongui\_dragongui.pyd -Force
+```
+
+Global Python 3.13 install/import verification:
+
+```powershell
+$py = 'C:\Users\nashk\AppData\Local\Programs\Python\Python313\python.exe'
+& $py -m pip install --upgrade --force-reinstall .
+& $py -c "import dragongui as dg, dragongui._dragongui as native; print(dg.__file__); print(native.__file__); print(dg.native_backend_available(), dg.backend_info())"
+& $py -c "import sys; sys.path.insert(0, 'python'); import dragongui as dg, dragongui._dragongui as native; print(dg.__file__); print(native.__file__); print(dg.native_backend_available(), dg.backend_info())"
+```
+
+Required visual/probe reruns:
+
+```powershell
+& $py tools\visual_audit.py --target all-features-professional-explore --sizes 1440x900,1180x760,390x720,320x640 --append --wait-ms 1400 --timeout-ms 16000
+& $py tools\visual_audit.py --target layout-plot-embedding --target scatter3d --target scatter-plot-2d --sizes desktop,mobile --append --wait-ms 1200 --timeout-ms 14000
+```
+
+Also run the new adjacent-plot interaction reproduction and record:
+
+- import paths used by the run.
+- command history before/after clicks in each plot.
+- debug snapshot scatter ids, camera states, point counts, bounds, colormaps, hover/selection, and actor counts.
+- screenshots proving the left and right plots remain distinct.
+
+Record results in `artifacts/IMPLEMENTATION_NOTES.md` and `artifacts/TEST_RESULTS.md`. If reinstalling global Python is intentionally skipped, say why and give the exact demo command that uses workspace code.
+
+## Edge Cases
+
+- Two adjacent plots with no gap.
+- Two adjacent plots separated by a splitter gutter.
+- Nested plot inside a controls panel next to a larger plot.
+- Clicks near pane boundaries and clipped plot corners.
+- Pointer down in one plot and pointer up outside it.
+- Wheel zoom over a plot inside a scrollable page.
+- Hovering from one plot into another.
+- `Scatter3D` plus `ScatterPlot2D`.
+- Two `Scatter3D` widgets.
+- Explicitly linked cameras should still propagate camera state.
+- Unlinked cameras must never propagate.
+- Empty data, one-point data, dense data, and categorical/scalar color data.
+- Live `set_points`, `set_prepared_points`, actor add/update/remove, and clear operations.
+- Re-rendering with stable keys and changed data.
+- Global Python 3.13 importing a stale installed package or stale native extension.
+- `pip install --force-reinstall .` producing a wheel but another path entry still shadowing it.
+- Python-only changes where no native rebuild is needed but reinstall is still needed for `site-packages`.
+
+## Out Of Scope
+
+- Rewriting the professional demo layout.
+- Removing the right preview plot to avoid the bug.
+- Replacing the scatter renderer wholesale.
+- Broad redesign of all chart widgets.
+- Changing splitter sizing behavior unless it directly affects plot hit testing.
+- Accepting a visual-audit `pass` while adjacent plot interactions mutate the wrong plot.
+- Claiming the user-facing demo is fixed without proving the user-run Python imports the fixed package.

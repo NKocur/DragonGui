@@ -1,0 +1,320 @@
+        "last_upload_ms": 0.0107,
+        "line_batches": 0,
+        "line_bytes": 0,
+        "line_count": 0,
+        "overlay_batches": 0,
+        "rect_count": 163,
+        "simple_batches": 44,
+        "simple_bytes": 6976,
+        "simple_count": 109,
+        "source_bytes": 39120,
+        "split_collapsed": false,
+        "split_enabled": true
+      },
+      "scatter_count": 2,
+      "scatter_widget_id": "dg-126",
+      "scatter_widget_pool": 0,
+      "supported_present_modes": [
+        "fifo",
+        "fifo-relaxed",
+        "mailbox",
+        "immediate"
+      ],
+      "surface_format": "Bgra8UnormSrgb",
+      "widget_count": 440
+    },
+    "resources": {
+      "buffers": {
+        "resources": 0
+      },
+      "line_plot": {
+        "appends": 0,
+        "id": "dg-96",
+        "last_appended_points": 0,
+        "last_bounds_ms": 0.0005,
+        "last_count_ms": 9.999999999999999e-05,
+        "last_decode_ms": 0.0005,
+        "last_operation": "set",
+        "last_payload_bytes": 1920,
+        "last_point_count": 480,
+        "last_series": "error budget",
+        "last_series_count": 2,
+        "last_total_native_ms": 0.0037,
+        "last_trim_ms": 0.0,
+        "last_trimmed_points": 0,
+        "last_visible_point_count": 480,
+        "last_window_ms": 9.999999999999999e-05,
+        "sets": 2,
+        "updates": 2
+      },
+      "line_plots": {
+        "dg-161": {
+          "appends": 0,
+          "last_appended_points": 0,
+          "last_bounds_ms": 0.0006,
+          "last_count_ms": 0.00019999999999999998,
+          "last_decode_ms": 0.0007,
+          "last_operation": "set",
+          "last_payload_bytes": 1920,
+          "last_point_count": 240,
+          "last_series": "latency",
+          "last_series_count": 1,
+          "last_total_native_ms": 0.0054,
+          "last_trim_ms": 0.0,
+          "last_trimmed_points": 0,
+          "last_visible_point_count": 240,
+          "last_window_ms": 0.00019999999999999998,
+          "sets": 1,
+          "updates": 1
+        },
+        "dg-96": {
+          "appends": 0,
+          "last_appended_points": 0,
+          "last_bounds_ms": 0.0005,
+          "last_count_ms": 9.999999999999999e-05,
+          "last_decode_ms": 0.0005,
+          "last_operation": "set",
+          "last_payload_bytes": 1920,
+          "last_point_count": 480,
+          "last_series": "error budget",
+          "last_series_count": 2,
+          "last_total_native_ms": 0.0037,
+          "last_trim_ms": 0.0,
+          "last_trimmed_points": 0,
+          "last_visible_point_count": 480,
+          "last_window_ms": 9.999999999999999e-05,
+          "sets": 2,
+          "updates": 2
+        }
+      },
+      "registry": {
+        "buffers": {
+          "count": 0,
+          "items": {}
+        },
+        "tables": {
+          "count": 2,
+          "items": {
+            "dg-102:table": {
+              "buffer_bytes": 3423,
+              "buffer_columns": 7,
+              "columns": 7,
+              "rows": 28,
+              "sample_rows": 28,
+              "sampled_cells": 0,
+              "version": 2
+            },
+            "dg-193:table": {
+              "buffer_bytes": 9719,
+              "buffer_columns": 7,
+              "columns": 7,
+              "rows": 80,
+              "sample_rows": 80,
+              "sampled_cells": 0,
+              "version": 2
+            }
+          }
+        }
+      },
+      "scatter": {
+        "active_render_scale": 1.0,
+        "auto_point_size": true,
+        "auto_quality": true,
+        "effective_draw_point_count": 4000,
+        "id": "dg-126",
+        "interactive_render_scale": 1.0,
+        "last_bounds_ms": 0.0125,
+        "last_decode_ms": 0.0,
+        "last_grid_ms": 0.015000000000000001,
+        "last_lod_ms": 0.0,
+        "last_overlay_ms": 0.0069,
+        "last_pack_ms": 0.0,
+        "last_payload_bytes": 128000,
+        "last_point_count": 4000,
+        "last_primary_upload_ms": 0.0109,
+        "last_queue_latency_ms": 895.5341796875,
+        "last_render_cache_hit": false,
+        "last_render_composite_ms": 0.0,
+        "last_render_encode_ms": 2.2631,
+        "last_render_redraw_ms": 0.0094,
+        "last_total_native_ms": 0.0586,
+        "last_upload_ms": 0.032799999999999996,
+        "payload_status": "Ok",
+        "point_size_scale": 1.0,
+        "primary_compact_colormap": "turbo",
+        "quality_level": 0,
+        "quality_target_frame_ms": 100.0,
+        "render_cache_hit_rate": 0.0,
+        "render_cache_hits": 0,
+        "render_cache_revision": null,
+        "render_composite_avg_ms": 0.0,
+        "render_count": 1,
+        "render_encode_avg_ms": 2.2631,
+        "render_redraw_avg_ms": 0.0094,
+        "scalar_bar": {
+          "colormap": "turbo",
+          "log_scale": false,
+          "title": "temperature",
+          "visible": true,
+          "vmax": 81.05426788330078,
+          "vmin": 34.57933807373047
+        },
+        "scene_revision": 36,
+        "updates": 1
+      },
+      "scatters": {
+        "dg-126": {
+          "active_render_scale": 1.0,
+          "auto_point_size": true,
+          "auto_quality": true,
+          "camera": {
+            "distance": 7.4193010330200195,
+            "parallel": false,
+            "pitch": 0.4000000059604645,
+            "target": [
+              -0.0074250102043151855,
+              -0.01779794692993164,
+              -0.051536500453948975
+            ],
+            "yaw": 0.4000000059604645
+          },
+          "effective_draw_point_count": 4000,
+          "fitted_once": true,
+          "interactive_render_scale": 1.0,
+          "last_bounds_ms": 0.0125,
+          "last_decode_ms": 0.0,
+          "last_grid_ms": 0.015000000000000001,
+          "last_lod_ms": 0.0,
+          "last_overlay_ms": 0.0069,
+          "last_pack_ms": 0.0,
+          "last_payload_bytes": 128000,
+          "last_point_count": 4000,
+          "last_primary_upload_ms": 0.0109,
+          "last_queue_latency_ms": 895.5341796875,
+          "last_render_cache_hit": false,
+          "last_render_composite_ms": 0.0,
+          "last_render_encode_ms": 2.2631,
+          "last_render_redraw_ms": 0.0094,
+          "last_total_native_ms": 0.0586,
+          "last_upload_ms": 0.032799999999999996,
+          "lod": {
+            "active": false,
+            "enabled": true,
+            "factor": 8,
+            "threshold": 200000
+          },
+          "payload_format": "point_instance_v1",
+          "payload_status": "Ok",
+          "point_size_scale": 1.0,
+          "primary_compact_colormap": "turbo",
+          "quality_level": 0,
+          "quality_target_frame_ms": 100.0,
+          "render_cache_hit_rate": 0.0,
+          "render_cache_hits": 0,
+          "render_cache_revision": null,
+          "render_composite_avg_ms": 0.0,
+          "render_count": 1,
+          "render_encode_avg_ms": 2.2631,
+          "render_redraw_avg_ms": 0.0094,
+          "scalar_bar": {
+            "colormap": "turbo",
+            "log_scale": false,
+            "title": "temperature",
+            "visible": true,
+            "vmax": 81.05426788330078,
+            "vmin": 34.57933807373047
+          },
+          "scene_revision": 36,
+          "updates": 1
+        },
+        "dg-146": {
+          "active_render_scale": 1.0,
+          "auto_point_size": true,
+          "auto_quality": false,
+          "camera": {
+            "distance": 74.56417846679688,
+            "parallel": true,
+            "pitch": 0.0,
+            "target": [
+              57.816802978515625,
+              81.27811431884766,
+              0.0
+            ],
+            "yaw": 0.0
+          },
+          "effective_draw_point_count": 4000,
+          "fitted_once": true,
+          "interactive_render_scale": 1.0,
+          "last_bounds_ms": 0.0176,
+          "last_decode_ms": 0.0,
+          "last_grid_ms": 0.011899999999999999,
+          "last_lod_ms": 0.0003,
+          "last_overlay_ms": 0.0035,
+          "last_pack_ms": 0.0,
+          "last_payload_bytes": 128000,
+          "last_point_count": 4000,
+          "last_primary_upload_ms": 0.0134,
+          "last_queue_latency_ms": 894.551025390625,
+          "last_render_cache_hit": false,
+          "last_render_composite_ms": 0.0,
+          "last_render_encode_ms": 0.7077,
+          "last_render_redraw_ms": 0.0036,
+          "last_total_native_ms": 0.055,
+          "last_upload_ms": 0.0288,
+          "lod": {
+            "active": false,
+            "enabled": false,
+            "factor": 8,
+            "threshold": 200000
+          },
+          "payload_format": "point_instance_v1",
+          "payload_status": "Ok",
+          "point_size_scale": 1.0,
+          "primary_compact_colormap": "viridis",
+          "quality_level": 0,
+          "quality_target_frame_ms": 100.0,
+          "render_cache_hit_rate": 0.0,
+          "render_cache_hits": 0,
+          "render_cache_revision": null,
+          "render_composite_avg_ms": 0.0,
+          "render_count": 1,
+          "render_encode_avg_ms": 0.7077,
+          "render_redraw_avg_ms": 0.0036,
+          "scalar_bar": {
+            "colormap": "viridis",
+            "log_scale": false,
+            "title": "zone",
+            "visible": false,
+            "vmax": 1.0,
+            "vmin": 0.0
+          },
+          "scene_revision": 43,
+          "updates": 1
+        }
+      },
+      "tables": {
+        "resources": 2,
+        "widgets": 2
+      }
+    },
+    "state": {
+      "active_pages": {
+        "dg-55": "explore"
+      },
+      "active_t": {},
+      "active_tabs": {
+        "dg-45": "explore"
+      },
+      "checked": {
+        "dg-130": true,
+        "dg-131": true,
+        "dg-205": true,
+        "dg-262": true,
+        "dg-263": false,
+        "dg-264": false,
+        "dg-372": true,
+        "dg-377": true
+      },
+      "checked_t": {},
+      "container_scroll_x": {
+        "dg-101": 0.0,

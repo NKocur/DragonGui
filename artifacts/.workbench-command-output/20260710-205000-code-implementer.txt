@@ -1,0 +1,260 @@
+
+
+def show_alert_modal() -> None:
+    if state.alert_modal is not None:
+        state.alert_modal.show()
+
+
+def show_toast() -> None:
+    if state.app is not None:
+        state.app.toast("Operations toast from the professional demo", level="success", duration=2400)
+    set_status("Toast requested", "success")
+
+
+def update_table_filter(owner: str = "all") -> None:
+    rows = TABLE_ROWS if owner == "all" else [row for row in TABLE_ROWS if row["owner"] == owner]
+    if state.data_table is not None:
+        state.data_table.set_frame(rows)
+    set_status(f"Table loaded {len(rows)} rows for owner={owner}", "success")
+
+
+def randomize_visuals() -> None:
+    phase = random.random() * math.tau
+    next_frame = build_scatter_frame(max(4000, POINTS // 2), phase=phase)
+    if state.scatter is not None:
+        state.scatter.set_points(next_frame, x="x", y="y", z="z", fit=True)
+        state.scatter.set_colormap(random.choice(["viridis", "turbo", "plasma", "cividis"]))
+    if state.scatter2d is not None:
+        state.scatter2d.set_points(next_frame, x="x", y="temperature", fit=True)
+    if state.heatmap is not None:
+        matrix, _, _ = build_heatmap()
+        state.heatmap.set_data([[value + random.uniform(-2, 2) for value in row] for row in matrix])
+    set_status("Visual workspaces refreshed", "success")
+
+
+def update_report_inline() -> None:
+    if state.report is not None:
+        state.report.set_html(
+            "<h1>Inline Operations Memo</h1><p>Generated from a DragonGUI callback. "
+            "Native WebView2 support can render this in-app where available.</p>"
+        )
+    set_status("Report switched to inline HTML", "success")
+
+
+def open_report_external() -> None:
+    opened = False
+    if state.report is not None:
+        opened = state.report.open_external()
+    set_status("Opened report externally" if opened else "External report fallback unavailable", "warning")
+
+
+def run_file_dialog(kind: str) -> None:
+    def selected(value: object) -> None:
+        set_status(f"{kind} dialog returned: {value or 'cancelled'}")
+
+    if kind == "open":
+        dg.open_file_dialog("Open operations input", filters=[("Data", "*.csv;*.json"), ("All", "*.*")], on_select=selected, app=state.app)
+    elif kind == "save":
+        dg.save_file_dialog("Save report bundle", filters=[("HTML", "*.html"), ("All", "*.*")], on_select=selected, app=state.app)
+    else:
+        dg.pick_folder_dialog("Pick export folder", on_select=selected, app=state.app)
+
+
+def snapshot_summary() -> None:
+    if state.app is None:
+        return
+    try:
+        snapshot = state.app.debug_snapshot(timeout_ms=700)
+        debug = snapshot.get("debug_snapshot", snapshot)
+        widgets = len(debug.get("widgets", [])) if isinstance(debug, dict) else 0
+        keys = sorted(debug.keys())[:8] if isinstance(debug, dict) else []
+        set_status(f"Snapshot captured: widgets={widgets}, keys={keys}", "success")
+    except Exception as exc:
+        set_status(f"Snapshot failed: {exc}", "error")
+
+
+def upload_resource() -> None:
+    if state.app is None:
+        return
+    payload = np.asarray(SERIES_FRAME["latency"][:128], dtype=np.float32).tobytes()
+    try:
+        state.app.set_buffer_resource(state.resource_id, payload, kind="f32")
+        state.resource_uploaded = True
+        set_status(f"Uploaded generic buffer resource {state.resource_id}", "success")
+    except Exception as exc:
+        set_status(f"Resource upload failed: {exc}", "error")
+
+
+def release_resource() -> None:
+    if state.app is None:
+        return
+    try:
+        state.app.release_resource(state.resource_id)
+        state.resource_uploaded = False
+        set_status(f"Released generic buffer resource {state.resource_id}", "success")
+    except Exception as exc:
+        set_status(f"Resource release failed: {exc}", "error")
+
+
+def replace_live_children() -> None:
+    if state.live_panel is None:
+        return
+    state.stream_count += 1
+    rows: list[dg.Widget] = []
+    for i in range(3):
+        rows.append(
+            dg.Label(
+                f"Diagnostic child {state.stream_count}.{i + 1}: queue depth {(state.stream_count + i) % 7}",
+                parent=None,
+            )
+        )
+    state.live_panel.replace_children(rows)
+    set_status("Runtime diagnostic children replaced", "success")
+
+
+def start_stream() -> None:
+    if state.stream_thread is not None and state.stream_thread.is_alive():
+        set_status("Stream already running", "warning")
+        return
+    if state.app is None:
+        return
+    state.stream_stop.clear()
+
+    def worker() -> None:
+        phase = 0.0
+        while not state.stream_stop.is_set():
+            phase += 0.23
+            sample = build_series(120)
+            payload_frame = build_scatter_frame(max(3000, POINTS // 4), phase=phase)
+
+            def apply() -> None:
+                state.stream_count += 1
+                if state.stream_led is not None:
+                    state.stream_led.set_on(True)
+                if state.progress is not None:
+                    state.progress.set_value((state.stream_count % 100) / 100)
+                if state.line_plot is not None:
+                    base = state.stream_count * 120
+                    xs = np.arange(base, base + 120, dtype=np.float32)
+                    ys = np.asarray(sample["latency"], dtype=np.float32)
+                    state.line_plot.append_points(xs, ys, series="latency", max_points=900)
+                if state.scatter is not None and state.stream_count % 2 == 0:
+                    try:
+                        payload = dg.Scatter3D.prepare_points(payload_frame, x="x", y="y", z="z", colormap="turbo")
+                        state.scatter.enqueue_prepared_points(payload, coalesce=True, fit=False)
+                    except Exception as exc:
+                        log(f"Prepared scatter update skipped: {exc}")
+                if state.incident_badge is not None:
+                    state.incident_badge.set_value(str(4 + state.stream_count % 5))
+                log(f"Stream tick {state.stream_count}")
+
+            try:
+                state.app.call_soon_threadsafe(apply)
+            except Exception:
+                break
+            state.stream_stop.wait(0.9)
+
+        def stopped() -> None:
+            if state.stream_led is not None:
+                state.stream_led.set_on(False)
+            log("Background stream stopped")
+
+        try:
+            state.app.call_soon_threadsafe(stopped)
+        except Exception:
+            pass
+
+    state.stream_thread = threading.Thread(target=worker, name="dg-pro-demo-stream", daemon=True)
+    state.stream_thread.start()
+    set_status("Background stream started", "success")
+
+
+def stop_stream() -> None:
+    state.stream_stop.set()
+    set_status("Stop requested for background stream")
+
+
+def build_metric_card(label: str, value: str, detail: str, level: str = "info") -> None:
+    with dg.Panel(class_="metric-card"):
+        with dg.HLayout(style={"align_items": "center", "gap": 8}):
+            dg.Badge(level, level=level)
+            dg.Label(label, class_="kicker", wrap=False)
+        dg.Label(value, class_="metric-value", wrap=False)
+        dg.Label(detail, class_="muted")
+
+
+def page_header(route: str, title: str, detail: str) -> None:
+    with dg.VLayout(class_="page-header"):
+        dg.Breadcrumbs(
+            [
+                ("Operations", "overview"),
+                ("North Plant Command Center", "overview"),
+                (title, route),
+            ],
+            on_select=lambda item: navigate(item.value),
+        )
+        with dg.HLayout(style={"align_items": "center", "gap": 10, "min_width": 0}):
+            dg.Label(title, class_="page-title", wrap=False)
+            dg.Tag("generated data", level="neutral")
+        dg.Label(detail, class_="muted")
+
+
+def build_overview_page() -> None:
+    page_header("overview", "Operations Overview", "Live sensor pipeline health, incidents, and throughput.")
+    with dg.GridLayout(columns=4, min_column_width=180, gap=10):
+        build_metric_card("Availability", "99.2%", "rolling 24h across 84 feeds", "success")
+        build_metric_card("Open incidents", "4", "two require model-owner review", "warning")
+        build_metric_card("Median latency", "34 ms", "p95 remains under 71 ms", "info")
+        build_metric_card("Export backlog", "18", "report queue is draining", "neutral")
+    with dg.Splitter(orientation="horizontal", style={"height": 360, "min_height": 260}):
+        with dg.Pane(size=0.62, min_size=320):
+            with dg.Panel("Fleet Pulse", style={"height": "100%"}):
+                dg.LinePlot(
+                    SERIES_FRAME,
+                    x="minute",
+                    y=["latency", "error_budget"],
+                    labels=["latency", "error budget"],
+                    colors=["#36a3ff", "#2fb344"],
+                    show_toolbar=True,
+                    show_legend=True,
+                    style={"height": "100%", "min_height": 220},
+                )
+        with dg.Pane(size=0.38, min_size=260):
+            with dg.Panel("Incident Mix", style={"height": "100%"}):
+                state.incident_badge = dg.Badge("4", level="warning")
+                dg.PieChart(
+                    labels=["watch", "queued", "blocked", "ready"],
+                    values=[8, 14, 4, 62],
+                    donut=True,
+                    center_value="88",
+                    center_label="routes",
+                    show_legend=True,
+                    legend_position="right",
+                    style={"height": 245},
+                )
+    with dg.Panel("Recent Events"):
+        dg.DataFrameTable(TABLE_ROWS[:28], page_size=28, sample_rows=28, style={"height": 260, "width": "100%"})
+
+
+def build_explore_page() -> None:
+    page_header("explore", "3D Sensor Explore", "Inspect the same generated plant telemetry in GPU plot surfaces.")
+    with dg.Toolbar():
+        dg.IconButton("refresh", tooltip="Refresh points", on_click=randomize_visuals)
+        dg.IconButton("search", tooltip="Command palette", on_click=show_palette)
+        dg.ToolbarSeparator()
+        dg.SmallButton("Fit/Reset", on_click=randomize_visuals)
+        dg.SearchBox("asset:cell", placeholder="filter asset or zone", style={"width": 220})
+    with dg.Splitter(orientation="horizontal", style={"height": 610, "min_height": 360}):
+        with dg.Pane(size=0.72, min_size=360):
+            state.scatter = dg.Scatter3D(
+                SCATTER_FRAME,
+                x="x",
+                y="y",
+                z="z",
+                color="temperature",
+                colormap="turbo",
+                grid=True,
+                scalar_bar=True,
+                hover=["asset", "zone", "temperature"],
+                point_size=3,
+                auto_quality=True,

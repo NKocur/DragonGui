@@ -1,0 +1,39 @@
+[
+  {
+    "category": "layout",
+    "features": [
+      "Scatter3D",
+      "ScatterPlot2D",
+      "hit testing",
+      "mouse interaction",
+      "debug_snapshot"
+    ],
+    "id": "adjacent-scatter-interaction",
+    "logs": [
+      "logs/adjacent-scatter-interaction-1120x720.stdout.txt",
+      "logs/adjacent-scatter-interaction-1120x720.stderr.txt"
+    ],
+    "manual": false,
+    "name": "Adjacent Scatter Interaction Isolation",
+    "notes": "Automated two-plot interaction probe for adjacent scatter state isolation. Additional run: Captured with native DragonGUI window screenshot API.",
+    "priority": "low",
+    "reproduction": [
+      "python tools/visual_audit.py --target adjacent-scatter-interaction --sizes 1120x720"
+    ],
+    "screenshots": [
+      "screenshots/adjacent-scatter-interaction-1120x720.png"
+    ],
+    "script": "examples\\css_feature_probes\\adjacent_scatter_interaction_probe.py",
+    "snapshots": [
+      "snapshots/adjacent-scatter-interaction-1120x720.json"
+    ],
+    "status": "pass",
+    "suspected_modules": [
+      "native/src/layout.rs",
+      "native/src/primitives/mod.rs",
+      "native/src/runtime.rs",
+      "native/src/scatter/mod.rs",
+      "native/src/table.rs"
+    ]
+  }
+]

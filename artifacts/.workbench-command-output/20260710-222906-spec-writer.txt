@@ -1,0 +1,1387 @@
+docs/widgets.md:45:| `HLayout` | Horizontal flex container. Useful for rows, split panes, and button groups. |
+docs/widgets.md:50:| `Panel(title=None, width=None)` | Titled or untitled container with optional preferred width. Vertically scrolls overflowing child content with the mouse wheel. Supports `Panel::accent`. |
+docs/widgets.md:170:| `Panel` | `accent` |
+docs/widgets-reference.md:46:| context manager | `with dg.Panel(): ...` pushes the container as the active parent. |
+docs/widgets-reference.md:66:| Universal | `*`, `Panel > *` | Matches any DragonGUI widget in the current selector position. |
+docs/widgets-reference.md:73:| Descendant | `Panel Button` | Matches any ancestor relationship. |
+docs/widgets-reference.md:74:| Direct child | `Panel.controls > Button` | Checks immediate parent. |
+docs/widgets-reference.md:75:| Child chain | `Window > Panel > HLayout > Button` | Multi-level direct-child chains are supported. |
+docs/widgets-reference.md:78:| Selector function | `Button:not(.ghost)`, `Panel:has(HLayout > Badge)`, `Panel:has(> Button:first-child)`, `Panel:has(+ Button.primary)`, `Panel:has(> Checkbox:checked)`, `Panel:has(Panel:has(Button.primary))`, `Panel:has(Panel:has(> Badge) > Button.primary)` | `:not(...)`, `:is(...)`, and `:where(...)` support compound selector lists; `:has(...)` supports descendant selector chains, direct child arguments with leading `>`, following sibling arguments with leading `+` or `~`, data-backed target state pseudos, nested `:has(...)` on the argument target, and nested `:has(...)` on ancestor-side compounds in descendant or direct-child argument chains. |
+docs/widgets-reference.md:83:`Panel:is(:hover) Button`, plus broader `:has(...)` dynamic stateful and
+docs/widgets-reference.md:489:wrap it in `Panel` when you want a titled or bordered surface.
+docs/widgets-reference.md:500:### `Panel`
+docs/widgets-reference.md:505:dg.Panel(title=None, width=None, id=None, key=None, class_=None, style=None, tooltip=None, parent=...)
+docs/widgets-reference.md:524:`Panel::scrollbar-track` styles the track and uses `width` plus uniform
+docs/widgets-reference.md:525:`padding` for thickness and axis inset; `Panel::scrollbar-thumb` styles the
+docs/widgets-reference.md:530:- Type selector: `Panel`.
+docs/widgets-reference.md:532:- `Panel::accent` styles the left-side accent fill. `width` controls accent
+docs/widgets-reference.md:534:- `Panel::scrollbar-track` styles the built-in scroll track. `width` controls
+docs/widgets-reference.md:537:- `Panel::scrollbar-thumb` styles the built-in scroll thumb. `width`,
+docs/widgets-reference.md:812:- When the first visible body child of the active tab is a `Panel`, the panel's
+docs/widgets-reference.md:1330:| `title` | Panel title. |
+docs/widgets-reference.md:1340:  `Panel`, `Label`, `Slider`, and `Button` selectors, or through `class_` and
+docs/widgets-reference.md:1341:  `id` on the `ColorPicker` itself, which are passed to the outer `Panel`.
+docs/widgets-reference.md:1619:- `Panel`
+docs/widgets-reference.md:1655:- `ColorPicker` is a composite implemented as a `Panel`.
+docs/widgets-reference.md:1669:| `Panel` | `accent`, `scrollbar-track`, `scrollbar-thumb` |
+README.md:21:    Panel.controls { width: 340px; padding: 14px; gap: 10px; }
+README.md:28:    with dg.Panel("Controls", class_="controls"):
+README.md:72:| Layout & shell | `Window`, `Body`, `AppShell`, `HLayout`, `VLayout`, `Panel`, `ScrollArea`, `GridLayout`, `FlowLayout`, `Sidebar`, `StatusBar`, `Toolbar`, `ToolbarSeparator`, `Splitter`, `Pane`, `Separator`, `Spacer` |
+README.md:171:    with dg.Panel():
+README.md:189:    Panel              { background: #1a1a2e; border-radius: 8px; }
+README.md:197:    Collapsible:expanded > Panel { padding: 12px; }
+README.md:202:    Panel:has(Slider)  { padding-left: 16px; }
+README.md:213:    Panel.card        { background: linear-gradient(135deg, #1a1a2e, #0d0d1a); }
+README.md:219:    Panel.busy        { animation: pulse 1.2s ease-in-out infinite; }
+README.md:222:    @media (max-width: 800px) { Panel.controls { display: none; } }
+README.md:225:    @container (min-width: 600px) { Panel.grid { grid-template-columns: 1fr 1fr; } }
+README.md:353:| Layout | `layout_containers_probe`, `layout_grid_masonry_probe`, `responsive_layout_probe`, `overflow_scrollbar_probe`, `positioning_zindex_probe`, `splitter_probe` |
+examples\all_features_professional_demo.py:73:        self.live_panel: dg.Panel | None = None
+examples\all_features_professional_demo.py:508:    with dg.Panel(class_="metric-card"):
+examples\all_features_professional_demo.py:539:    with dg.Splitter(orientation="horizontal", style={"height": 360, "min_height": 260}):
+examples\all_features_professional_demo.py:540:        with dg.Pane(size=0.62, min_size=320):
+examples\all_features_professional_demo.py:541:            with dg.Panel("Fleet Pulse", style={"height": "100%"}):
+examples\all_features_professional_demo.py:552:        with dg.Pane(size=0.38, min_size=260):
+examples\all_features_professional_demo.py:553:            with dg.Panel("Incident Mix", style={"height": "100%"}):
+examples\all_features_professional_demo.py:565:    with dg.Panel("Recent Events"):
+examples\all_features_professional_demo.py:577:    with dg.Splitter(orientation="horizontal", style={"height": 610, "min_height": 360}):
+examples\all_features_professional_demo.py:578:        with dg.Pane(size=0.72, min_size=360):
+examples\all_features_professional_demo.py:595:        with dg.Pane(size=0.28, min_size=260):
+examples\all_features_professional_demo.py:596:            with dg.Panel("Explore Controls", style={"height": "100%"}):
+examples\all_features_professional_demo.py:618:        with dg.Panel("Live Latency"):
+examples\all_features_professional_demo.py:629:        with dg.Panel("Latency Distribution"):
+examples\all_features_professional_demo.py:631:        with dg.Panel("Route Heatmap"):
+examples\all_features_professional_demo.py:633:        with dg.Panel("Throughput By Owner"):
+examples\all_features_professional_demo.py:654:    with dg.Splitter(orientation="horizontal", style={"height": 620, "min_height": 380}):
+examples\all_features_professional_demo.py:655:        with dg.Pane(size=0.7, min_size=360):
+examples\all_features_professional_demo.py:674:        with dg.Pane(size=0.3, min_size=280):
+examples\all_features_professional_demo.py:675:            with dg.Panel("Selected Route Inspector", style={"height": "100%"}):
+examples\all_features_professional_demo.py:701:        with dg.Panel("Pipeline Tree", style={"height": 360}):
+examples\all_features_professional_demo.py:721:        with dg.Panel("Action Form", style={"height": 360}):
+examples\all_features_professional_demo.py:731:        with dg.Panel("Drag Metrics", style={"height": 320}):
+examples\all_features_professional_demo.py:741:        with dg.Panel("Automation Script", style={"height": 320}):
+examples\all_features_professional_demo.py:761:    with dg.Splitter(orientation="horizontal", style={"height": 630, "min_height": 380}):
+examples\all_features_professional_demo.py:762:        with dg.Pane(size=0.62, min_size=360):
+examples\all_features_professional_demo.py:764:        with dg.Pane(size=0.38, min_size=280):
+examples\all_features_professional_demo.py:765:            with dg.Panel("Sensor Preview", style={"height": "100%"}):
+examples\all_features_professional_demo.py:783:        with dg.Panel("Live Runtime Surface", style={"height": 420}):
+examples\all_features_professional_demo.py:787:            state.live_panel = dg.Panel("Replaceable Diagnostics", style={"height": 180, "width": "100%"})
+examples\all_features_professional_demo.py:796:        with dg.Panel("Theme And State"):
+examples\all_features_professional_demo.py:810:        with dg.Panel("Parts And Inline Styles"):
+examples\all_features_professional_demo.py:828:        with dg.Panel("Compact Controls"):
+examples\all_features_professional_demo.py:960:        Panel.metric-card { min-height: 112px; }
+examples\all_features_professional_demo.py:962:        Panel { min-width: 0; }
+docs\extension-widgets.md:14:    with dg.Panel(title, key="tile", parent=None) as panel:
+docs\layout.md:45:    with dg.Panel("A", class_="case"):
+docs\layout.md:47:    with dg.Panel("B", class_="case"):
+docs\layout.md:69:## Panels And Scrolling
+docs\layout.md:71:Titled `Panel`, `Sidebar`, and `Modal` containers reserve title space before
+docs\layout.md:75:Panels with vertical scrolling reserve a default scrollbar gutter so content is
+docs\layout.md:83:with dg.Panel("Controls", style={"height": 420, "min_height": 0}):
+examples\node_graph_binding_playground_probe.py:80:    Panel.canvas {
+examples\node_graph_binding_playground_probe.py:89:    Panel.side {
+examples\node_graph_binding_playground_probe.py:642:            with dg.Panel("Blank Node Editor", class_="canvas"):
+examples\node_graph_binding_playground_probe.py:686:        with dg.Panel("Bindable GUI Controls", class_="side"):
+examples\node_graph_binding_playground_probe.py:771:        with dg.Panel("Terminal Target", class_="side"):
+examples\node_graph_editor_probe.py:304:    Panel.canvas {
+examples\node_graph_editor_probe.py:313:    Panel.side {
+examples\node_graph_editor_probe.py:387:runtime_view_panel: dg.Panel | None = None
+examples\node_graph_editor_probe.py:1013:    with dg.Panel("Node Canvas", class_="canvas"):
+examples\node_graph_editor_probe.py:1040:    with dg.Panel("Probe Controls", class_="side"):
+examples\node_graph_editor_probe.py:1073:        runtime_view_panel = dg.Panel("Runtime View", class_="runtime-view")
+docs\library-overview.md:25:    with dg.Panel("Controls", style={"width": 320, "padding": 14, "gap": 10}):
+docs\library-overview.md:105:    with dg.Panel("Controls"):
+docs\library-overview.md:114:panel = dg.Panel("Controls")
+docs\library-overview.md:138:| `Panel` | Framed titled container for controls and grouped content. |
+docs\library-overview.md:244:    return dg.Panel(children=[
+docs\library-overview.md:308:dg.Panel(
+docs\library-overview.md:326:Panel.controls {
+docs\library-overview.md:335:Panel.controls > Button {
+examples\all_features_v3_demo.py:883:Panel,
+examples\all_features_v3_demo.py:892:Panel.highlight {
+examples\all_features_v3_demo.py:896:Panel.scroll-card {
+examples\all_features_v3_demo.py:1227:Splitter::gutter {
+examples\all_features_v3_demo.py:1487:Panel.scatter-controls {
+examples\all_features_v3_demo.py:1516:Panel.line-controls {
+examples\all_features_v3_demo.py:1547:Panel.histogram-controls {
+examples\all_features_v3_demo.py:1622:Panel,
+examples\all_features_v3_demo.py:1630:Panel.highlight {
+examples\all_features_v3_demo.py:1837:Panel,
+examples\all_features_v3_demo.py:1845:Panel.highlight {
+examples\all_features_v3_demo.py:2044:Panel,
+examples\all_features_v3_demo.py:2056:Panel.highlight {
+examples\all_features_v3_demo.py:2272:Panel::scrollbar-track {
+examples\all_features_v3_demo.py:2280:Panel::scrollbar-thumb {
+examples\all_features_v3_demo.py:3773:                with dg.Panel("Blank Node Editor", style={**panel_style, "overflow_y": "hidden"}):
+examples\all_features_v3_demo.py:3812:                with dg.Panel("Bindable GUI Controls", style=panel_style):
+examples\all_features_v3_demo.py:3862:                with dg.Panel("Terminal Target", style=panel_style):
+examples\all_features_v3_demo.py:3980:                    with dg.Panel("Frame", class_="highlight", style=CARD_STYLE):
+examples\all_features_v3_demo.py:3983:                    with dg.Panel("Data", class_="highlight", style=CARD_STYLE):
+examples\all_features_v3_demo.py:3986:                    with dg.Panel("Histograms", class_="highlight", style=CARD_STYLE):
+examples\all_features_v3_demo.py:3989:                    with dg.Panel("Layout", class_="highlight", style=CARD_STYLE):
+examples\all_features_v3_demo.py:3992:                    with dg.Panel("Quick actions", style=CARD_STYLE):
+examples\all_features_v3_demo.py:3999:                    with dg.Panel("Visual asset", style=CARD_STYLE):
+examples\all_features_v3_demo.py:4002:                    with dg.Panel("Theme", style=CARD_STYLE):
+examples\all_features_v3_demo.py:4016:                    with dg.Panel("Scatter controls", class_="scatter-controls", style=SCATTER_CONTROLS_PANEL_STYLE):
+examples\all_features_v3_demo.py:4120:                    with dg.Panel("Line plot controls", class_="line-controls", style=LINE_CONTROLS_PANEL_STYLE):
+examples\all_features_v3_demo.py:4163:                        with dg.Panel(
+examples\all_features_v3_demo.py:4190:                        with dg.Panel(
+examples\all_features_v3_demo.py:4217:                        with dg.Panel(
+examples\all_features_v3_demo.py:4247:                    with dg.Panel(
+examples\all_features_v3_demo.py:4299:                            with dg.Panel("Latency distribution", style=CARD_STYLE):
+examples\all_features_v3_demo.py:4316:                            with dg.Panel("Density normalization", style=CARD_STYLE):
+examples\all_features_v3_demo.py:4333:                            with dg.Panel("Explicit revenue bins", style=CARD_STYLE):
+examples\all_features_v3_demo.py:4350:                            with dg.Panel("Cumulative residuals", style=CARD_STYLE):
+examples\all_features_v3_demo.py:4371:                    with dg.Panel("Cloud spend by category", style=CARD_STYLE):
+examples\all_features_v3_demo.py:4386:                    with dg.Panel("Regional mix", style=CARD_STYLE):
+examples\all_features_v3_demo.py:4401:                    with dg.Panel("Accounts by segment", style=CARD_STYLE):
+examples\all_features_v3_demo.py:4420:                    with dg.Panel("Revenue by segment", style=CARD_STYLE):
+examples\all_features_v3_demo.py:4443:                        with dg.Panel("Selection and navigation", style=V4_CARD_STYLE):
+examples\all_features_v3_demo.py:4493:                        with dg.Panel("Numeric and temporal inputs", style=V4_CARD_STYLE):
+examples\all_features_v3_demo.py:4530:                        with dg.Panel("Toolbar and command palette", style=V4_CARD_STYLE):
+examples\all_features_v3_demo.py:4562:                        with dg.Panel("Property inspector and split panes", style=V4_CARD_STYLE):
+examples\all_features_v3_demo.py:4563:                            with dg.Splitter(
+examples\all_features_v3_demo.py:4570:                                with dg.Pane(min_size=110, style=V4_INSPECTOR_NAV_PANE_STYLE):
+examples\all_features_v3_demo.py:4576:                                with dg.Pane(min_size=240, style=V4_INSPECTOR_BODY_PANE_STYLE):
+examples\all_features_v3_demo.py:4617:                        with dg.Panel("Drag, drop, and table upgrades", style=V4_CARD_STYLE):
+examples\all_features_v3_demo.py:4644:                        with dg.Panel("Code editor and log view", style=V4_CARD_STYLE):
+examples\all_features_v3_demo.py:4669:                        with dg.Panel("2D scatter and heatmap", style=V4_CARD_STYLE):
+examples\all_features_v3_demo.py:4693:                        with dg.Panel("Bar chart", style=V4_CARD_STYLE):
+examples\all_features_v3_demo.py:4733:                    with dg.Panel("Form controls", style=CARD_STYLE):
+examples\all_features_v3_demo.py:4756:                    with dg.Panel("Tabs and disclosure", style=CARD_STYLE):
+examples\all_features_v3_demo.py:4774:                    with dg.Panel("Data controls", style=CARD_STYLE):
+examples\all_features_v3_demo.py:4794:                    with dg.Panel("Live commands", style=CARD_STYLE):
+examples\all_features_v3_demo.py:4801:                    with dg.Panel("ReplaceChildren target", class_="highlight", style=CARD_STYLE):
+examples\all_features_v3_demo.py:4827:                    with dg.Panel(
+examples\all_features_v3_demo.py:4858:                    with dg.Panel("Snapshot tools", style=CARD_STYLE):
+examples\all_features_v3_demo.py:4868:                    with dg.Panel("CSS themes", style=CARD_STYLE):
+examples\all_features_v3_demo.py:4874:                        with dg.Panel("Horizontal overflow", style={"height": 94, "overflow_x": "auto", "overflow_y": "hidden", "padding": 12}):
+examples\all_features_v3_demo.py:4882:                    with dg.Panel("Live style preview", style={**CARD_STYLE, **styles[0]["panel"]}) as style_panel:
+examples\all_features_v3_demo.py:4912:        "This V3 demo now includes the V4 widget set: inspectors, command palette, toolbars, split panes, drag/drop, temporal inputs, code/log views, 2D scatter, heatmap, and bar chart.",
+docs\css-cascade-optimization.md:225:`Panel.content > Button`; those still use the full ancestor path.
+examples\older\all_features_css_demo.py:140:Panel,
+examples\older\all_features_css_demo.py:149:Panel.token-panel {
+examples\older\all_features_css_demo.py:154:Panel.color-picker {
+examples\older\all_features_css_demo.py:158:Panel.horizontal-strip {
+examples\older\all_features_css_demo.py:333:Panel,
+examples\older\all_features_css_demo.py:342:Panel.token-panel {
+examples\older\all_features_css_demo.py:347:Panel.color-picker {
+examples\older\all_features_css_demo.py:351:Panel.horizontal-strip {
+examples\older\all_features_css_demo.py:709:                with dg.Panel("Scatter controls", style=CARD_STYLE):
+examples\older\all_features_css_demo.py:753:                with dg.Panel("Form controls", style=CARD_STYLE):
+examples\older\all_features_css_demo.py:818:                with dg.Panel("Tabs", style=CARD_STYLE):
+examples\older\all_features_css_demo.py:838:                with dg.Panel("Data controls", style=CARD_STYLE):
+examples\older\all_features_css_demo.py:858:                with dg.Panel("Live commands", style=CARD_STYLE):
+examples\older\all_features_css_demo.py:865:                with dg.Panel(
+examples\older\all_features_css_demo.py:874:                with dg.Panel("CSS theme controls", class_="token-panel", style=CARD_STYLE):
+examples\older\all_features_css_demo.py:878:                    with dg.Panel("Horizontal overflow", class_="horizontal-strip"):
+examples\older\all_features_css_demo.py:898:                with dg.Panel("Live style preview", style={**CARD_STYLE, **styles[0]["panel"]}) as style_panel:
+examples\older\all_features_demo.py:363:                with dg.Panel("Scatter controls", style=CARD_STYLE):
+examples\older\all_features_demo.py:407:                with dg.Panel("Form controls", style=CARD_STYLE):
+examples\older\all_features_demo.py:471:                with dg.Panel("Tabs", style=CARD_STYLE):
+examples\older\all_features_demo.py:491:                with dg.Panel("Data controls", style=CARD_STYLE):
+examples\older\all_features_demo.py:511:                with dg.Panel("Live commands", style=CARD_STYLE):
+examples\older\all_features_demo.py:518:                with dg.Panel("ReplaceChildren target", style={**CARD_STYLE, "border_color": "accent", "border_radius": 12}):
+examples\older\all_features_demo.py:525:                with dg.Panel("Token styles", class_="token-panel", style=CARD_STYLE):
+examples\older\all_features_demo.py:540:                with dg.Panel("Live style preview", style={**CARD_STYLE, **styles[0]["panel"]}) as style_panel:
+docs\css-styling.md:81:    Panel.sidebar {
+docs\css-styling.md:93:    Panel.toolbar {
+docs\css-styling.md:99:    Panel.dashboard {
+docs\css-styling.md:117:    Panel.dashboard {
+docs\css-styling.md:141:    Panel.dashboard {
+docs\css-styling.md:153:    Panel.hero {
+docs\css-styling.md:177:    Panel.dashboard {
+docs\css-styling.md:201:    Panel.hero {
+docs\css-styling.md:213:    Panel.preview {
+docs\css-styling.md:237:    Panel.glass {
+docs\css-styling.md:249:    Panel.hero {
+docs\css-styling.md:267:Panel.card {
+docs\css-styling.md:279:    Panel.summary {
+docs\css-styling.md:373:@supports (display: grid) and (selector(Panel > Button.primary)) {
+docs\css-styling.md:374:    Panel.dashboard {
+docs\css-styling.md:380:    Panel.floating {
+docs\css-styling.md:445:Panel Button { ... }            /* descendant */
+docs\css-styling.md:446:Panel.controls > Button { ... } /* direct child */
+docs\css-styling.md:447:Panel > * { ... }               /* universal child target */
+docs\css-styling.md:448:Panel > HLayout > Button { ... }/* child chain */
+docs\css-styling.md:449:Panel:has(Button.primary) { ... } /* descendant presence */
+docs\css-styling.md:450:Panel:has(> Button.primary) { ... } /* direct child presence */
+docs\css-styling.md:451:Panel:has(> Button:first-child) { ... } /* direct child structural presence */
+docs\css-styling.md:452:Panel:has(> Label:only-child) { ... } /* direct only-child structural presence */
+docs\css-styling.md:453:Panel:has(> Panel:empty) { ... } /* direct empty child presence */
+docs\css-styling.md:454:Panel:has(HLayout > Badge) { ... } /* descendant child-chain presence */
+docs\css-styling.md:455:Panel:has(+ Button.primary) { ... } /* next sibling presence */
+docs\css-styling.md:456:Panel:has(~ Badge.success) { ... } /* later sibling presence */
+docs\css-styling.md:457:Panel:has(> Checkbox:checked) { ... } /* data-backed state presence */
+docs\css-styling.md:458:Panel:has(Panel:has(Button.primary)) { ... } /* nested target presence */
+docs\css-styling.md:459:Panel:has(Panel:has(> Badge.success) > Button.primary) { ... } /* nested ancestor-chain presence */
+docs\css-styling.md:462:Panel > *:nth-child(3n+1) { ... } /* structural formula */
+docs\css-styling.md:463:Panel > *:nth-last-child(2) { ... } /* reverse structural formula */
+docs\css-styling.md:464:Panel > Panel:empty { ... }       /* no child widgets */
+docs\css-styling.md:465:Panel > Label:only-child { ... } /* structural only child */
+docs\css-styling.md:466:Panel > *:nth-child(2 of Panel > Button.primary) { ... } /* filtered structural formula */
+docs\css-styling.md:467:Panel > *:nth-last-child(1 of Button.primary) { ... } /* reverse filtered structural formula */
+docs\css-styling.md:468:Panel > *:nth-child(1 of Button:first-child) { ... } /* structural filtered formula */
+docs\css-styling.md:469:Panel > *:nth-child(1 of Checkbox:checked) { ... } /* data-backed state filter */
+docs\css-styling.md:519:- Ancestor pseudo-states inside selector functions, such as `Panel:is(:hover) Button`.
+docs\css-styling.md:530:- `Panel`
+docs\css-styling.md:564:`ColorPicker` is a Python composite widget built from `Panel`, `Label`,
+docs\css-styling.md:783:| `Panel` | `accent`, `scrollbar-track`, `scrollbar-thumb` |
+docs\css-styling.md:800:`Panel::accent` is rendered as a left-side fill slice clipped to the panel's
+docs\css-styling.md:842:control centerline; titled containers such as `Panel`, `Sidebar`, and `Modal`
+docs\css-styling.md:932:Panel {
+docs\css-styling.md:950:    Panel.dashboard {
+docs\css-styling.md:960:Panel.card {
+docs\css-capabilities-reference.md:288:@supports (width: calc(100% - 240px)) and (selector(Panel > Button.primary)) { ... }
+docs\css-capabilities-reference.md:335:| Universal | `*`, `Panel > *` |
+docs\css-capabilities-reference.md:345:| Descendant | `Panel Button` |
+docs\css-capabilities-reference.md:346:| Direct child | `Panel.controls > Button` |
+docs\css-capabilities-reference.md:347:| Multi-level child chain | `Window > Panel > HLayout > Button` |
+docs\css-capabilities-reference.md:348:| Direct child targeting a part | `Panel.controls > NumberInput::stepper` |
+docs\css-capabilities-reference.md:349:| Structural child | `Button:first-child`, `Button:last-child`, `Label:only-child`, `Panel:empty` |
+docs\css-capabilities-reference.md:350:| Structural nth child | `NavItem:nth-child(3n+1)`, `NavItem:nth-last-child(2n+1)`, `Panel > *:nth-child(2 of Panel > Button.primary)`, `Panel > *:nth-last-child(1 of Button:first-child)` |
+docs\css-capabilities-reference.md:351:| Selector function | `Button:not(:disabled)`, `Button:is(:hover, :focus)`, `:where(.quiet)`, `Panel:has(> Button:first-child)`, `Panel:has(+ Button.primary)`, `Panel:has(Panel:has(Button.primary))`, `Panel:has(Panel:has(> Badge) > Button.primary)` |
+docs\css-capabilities-reference.md:385:  `:nth-child(2 of Panel > Button.primary, Badge[level="info"])` and
+docs\css-capabilities-reference.md:395:  as `Panel:has(Button.primary)` and `Panel:has(HLayout > Badge.success)`.
+docs\css-capabilities-reference.md:397:  `Panel:has(> Badge[level="warning"])` and
+docs\css-capabilities-reference.md:398:  `Panel:has(> Button:first-child)` only check immediate children. Structural
+docs\css-capabilities-reference.md:403:  `Panel:has(+ Button.primary)` and `Panel:has(~ Badge[level="success"])`.
+docs\css-capabilities-reference.md:405:  as `Panel:has(Panel:has(Button.primary))`, and on ancestor-side compounds in
+docs\css-capabilities-reference.md:407:  `Panel:has(Panel:has(> Badge) > Button.primary)`. Target arguments may use
+docs\css-capabilities-reference.md:417:- Ancestor pseudo-states, such as `Panel:hover Button`.
+docs\css-capabilities-reference.md:419:  `Panel:is(:hover) Button`.
+docs\css-capabilities-reference.md:421:  `Panel:has(Button:hover)`, widget-part arguments, and sibling-relative
+docs\css-capabilities-reference.md:500:- `Panel`
+docs\css-capabilities-reference.md:536:- `ColorPicker` is a Python composite built from `Panel`, `Label`, `Slider`,
+docs\css-capabilities-reference.md:716:  content overflows. Panel scrollbars are kept inside rounded panel corners and
+docs\css-capabilities-reference.md:894:- Supported surfaces are `Panel`, `Modal`, `Tooltip`, and `Toast`.
+docs\css-capabilities-reference.md:1029:| `Panel` | `accent`, `scrollbar-track`, `scrollbar-thumb` |
+docs\css-capabilities-reference.md:1061:Panel::accent {
+docs\css-capabilities-reference.md:1066:Panel::scrollbar-track {
+docs\css-capabilities-reference.md:1073:Panel::scrollbar-thumb {
+docs\css-capabilities-reference.md:1099:Panel.summary::after {
+docs\css-capabilities-reference.md:1120:the control centerline, while titled containers such as `Panel`, `Sidebar`, and
+docs\css-capabilities-reference.md:1232:- `Panel`, `Collapsible`, `Tooltip`, and `Modal` surface, border, radius, and
+docs\css-capabilities-reference.md:1250:- `Panel::accent` is drawn as a left-side fill slice clipped inside the panel.
+docs\widgets.md:45:| `HLayout` | Horizontal flex container. Useful for rows, split panes, and button groups. |
+docs\widgets.md:50:| `Panel(title=None, width=None)` | Titled or untitled container with optional preferred width. Vertically scrolls overflowing child content with the mouse wheel. Supports `Panel::accent`. |
+docs\widgets.md:170:| `Panel` | `accent` |
+docs\widgets-reference.md:46:| context manager | `with dg.Panel(): ...` pushes the container as the active parent. |
+docs\widgets-reference.md:66:| Universal | `*`, `Panel > *` | Matches any DragonGUI widget in the current selector position. |
+docs\widgets-reference.md:73:| Descendant | `Panel Button` | Matches any ancestor relationship. |
+docs\widgets-reference.md:74:| Direct child | `Panel.controls > Button` | Checks immediate parent. |
+docs\widgets-reference.md:75:| Child chain | `Window > Panel > HLayout > Button` | Multi-level direct-child chains are supported. |
+docs\widgets-reference.md:78:| Selector function | `Button:not(.ghost)`, `Panel:has(HLayout > Badge)`, `Panel:has(> Button:first-child)`, `Panel:has(+ Button.primary)`, `Panel:has(> Checkbox:checked)`, `Panel:has(Panel:has(Button.primary))`, `Panel:has(Panel:has(> Badge) > Button.primary)` | `:not(...)`, `:is(...)`, and `:where(...)` support compound selector lists; `:has(...)` supports descendant selector chains, direct child arguments with leading `>`, following sibling arguments with leading `+` or `~`, data-backed target state pseudos, nested `:has(...)` on the argument target, and nested `:has(...)` on ancestor-side compounds in descendant or direct-child argument chains. |
+docs\widgets-reference.md:83:`Panel:is(:hover) Button`, plus broader `:has(...)` dynamic stateful and
+docs\widgets-reference.md:489:wrap it in `Panel` when you want a titled or bordered surface.
+docs\widgets-reference.md:500:### `Panel`
+docs\widgets-reference.md:505:dg.Panel(title=None, width=None, id=None, key=None, class_=None, style=None, tooltip=None, parent=...)
+docs\widgets-reference.md:524:`Panel::scrollbar-track` styles the track and uses `width` plus uniform
+docs\widgets-reference.md:525:`padding` for thickness and axis inset; `Panel::scrollbar-thumb` styles the
+docs\widgets-reference.md:530:- Type selector: `Panel`.
+docs\widgets-reference.md:532:- `Panel::accent` styles the left-side accent fill. `width` controls accent
+docs\widgets-reference.md:534:- `Panel::scrollbar-track` styles the built-in scroll track. `width` controls
+docs\widgets-reference.md:537:- `Panel::scrollbar-thumb` styles the built-in scroll thumb. `width`,
+docs\widgets-reference.md:812:- When the first visible body child of the active tab is a `Panel`, the panel's
+docs\widgets-reference.md:1330:| `title` | Panel title. |
+docs\widgets-reference.md:1340:  `Panel`, `Label`, `Slider`, and `Button` selectors, or through `class_` and
+docs\widgets-reference.md:1341:  `id` on the `ColorPicker` itself, which are passed to the outer `Panel`.
+docs\widgets-reference.md:1619:- `Panel`
+docs\widgets-reference.md:1655:- `ColorPicker` is a composite implemented as a `Panel`.
+docs\widgets-reference.md:1669:| `Panel` | `accent`, `scrollbar-track`, `scrollbar-thumb` |
+examples\older\badge_tool.py:87:                with dg.Panel("Jobs", style={"padding": 14, "gap": 10}):
+examples\older\badge_tool.py:96:                with dg.Panel("Logs", style={"padding": 14, "gap": 10}):
+examples\css_feature_probes\animations_probe.py:121:    Panel {
+examples\css_feature_probes\animations_probe.py:130:    Panel.case {
+examples\css_feature_probes\animations_probe.py:159:    Panel.motion {
+examples\css_feature_probes\animations_probe.py:215:    Panel.motion {
+examples\css_feature_probes\animations_probe.py:220:    Panel.paused-motion {
+examples\css_feature_probes\animations_probe.py:243:        with dg.Panel("Running animations", class_="case"):
+examples\css_feature_probes\animations_probe.py:250:        with dg.Panel("Paused animation", class_="case"):
+examples\css_feature_probes\animations_probe.py:256:        with dg.Panel("Negative delay and fractional count", class_="case"):
+examples\css_feature_probes\animations_probe.py:266:        with dg.Panel("Fill modes", class_="case"):
+examples\css_feature_probes\animations_probe.py:273:        with dg.Panel("Panel motion", class_="case motion"):
+examples\css_feature_probes\animations_probe.py:278:        with dg.Panel("Paused panel motion", class_="case paused-motion"):
+examples\css_feature_probes\animations_probe.py:284:        with dg.Panel("Rotation", class_="case"):
+examples\css_feature_probes\animations_probe.py:289:        with dg.Panel("No animation baseline", class_="case"):
+examples\older\collapsible_tool.py:24:    with dg.Panel("Controls", width=320, style={"padding": 14, "gap": 10}):
+examples\older\collapsible_tool.py:45:    with dg.Panel("Preview", style={"padding": 14, "gap": 10}):
+examples\css_feature_probes\app_shell_workbench_probe.py:68:    Panel.card {
+examples\css_feature_probes\app_shell_workbench_probe.py:78:    Panel.fixed-card {
+examples\css_feature_probes\app_shell_workbench_probe.py:83:    Panel.message {
+examples\css_feature_probes\app_shell_workbench_probe.py:171:        Panel.card,
+examples\css_feature_probes\app_shell_workbench_probe.py:172:        Panel.fixed-card {
+examples\css_feature_probes\app_shell_workbench_probe.py:187:        Panel.card Label.caption {
+examples\css_feature_probes\app_shell_workbench_probe.py:216:                    with dg.Panel(class_="card fixed-card"):
+examples\css_feature_probes\app_shell_workbench_probe.py:219:                    with dg.Panel(class_="card"):
+examples\css_feature_probes\app_shell_workbench_probe.py:222:                    with dg.Panel(class_="card"):
+examples\css_feature_probes\app_shell_workbench_probe.py:233:                        with dg.Panel(class_="message"):
+examples\older\color_scheme_media_tool.py:21:    Panel.scheme-card {
+examples\older\color_scheme_media_tool.py:65:        Panel.scheme-card {
+examples\older\color_scheme_media_tool.py:93:    with dg.Panel("Platform Color Scheme", class_="scheme-card"):
+examples\older\component_counter_tool.py:42:        with dg.Panel(
+examples\older\component_counter_tool.py:58:        with dg.Panel("What to test", id="notes", key="notes", style={"padding": 14, "gap": 10}):
+examples\css_feature_probes\backdrop_filter_probe.py:50:    Panel {
+examples\css_feature_probes\backdrop_filter_probe.py:59:    Panel.case {
+examples\css_feature_probes\backdrop_filter_probe.py:86:    Panel.backdrop-base {
+examples\css_feature_probes\backdrop_filter_probe.py:91:    Panel.blur {
+examples\css_feature_probes\backdrop_filter_probe.py:95:    Panel.bright {
+examples\css_feature_probes\backdrop_filter_probe.py:101:    Panel.saturated {
+examples\css_feature_probes\backdrop_filter_probe.py:107:    Panel.combo {
+examples\css_feature_probes\backdrop_filter_probe.py:113:    Panel.none {
+examples\css_feature_probes\backdrop_filter_probe.py:117:    Panel.rounded-clip {
+examples\css_feature_probes\backdrop_filter_probe.py:124:    Panel.moving-reference {
+examples\css_feature_probes\backdrop_filter_probe.py:154:        with dg.Panel("No filter baseline", class_="case backdrop-base none"):
+examples\css_feature_probes\backdrop_filter_probe.py:160:        with dg.Panel("Blur", class_="case backdrop-base blur"):
+examples\css_feature_probes\backdrop_filter_probe.py:167:        with dg.Panel("Brightness", class_="case backdrop-base bright"):
+examples\css_feature_probes\backdrop_filter_probe.py:173:        with dg.Panel("Saturation", class_="case backdrop-base saturated"):
+examples\css_feature_probes\backdrop_filter_probe.py:180:        with dg.Panel("Combined filter", class_="case combo"):
+examples\css_feature_probes\backdrop_filter_probe.py:186:        with dg.Panel("Rounded clipping", class_="case rounded-clip"):
+examples\css_feature_probes\backdrop_filter_probe.py:193:        with dg.Panel("Backdrop over local gradient", class_="case moving-reference"):
+examples\css_feature_probes\backdrop_filter_probe.py:199:        with dg.Panel("Scroll stability", class_="case backdrop-base combo"):
+examples\older\component_nested_tool.py:13:def MetricCard(ctx: dg.ComponentCtx, title: str, accent: str) -> dg.Panel:
+examples\older\component_nested_tool.py:16:    panel = dg.Panel(
+examples\older\component_nested_tool.py:68:        with dg.Panel(
+examples\css_feature_probes\bar_chart_probe.py:97:    Panel.case {
+examples\older\component_node_swap_tool.py:19:            with dg.Panel(
+examples\older\component_node_swap_tool.py:29:            with dg.Panel("What to test", style={"padding": 14, "gap": 10}):
+examples\older\component_node_swap_tool.py:36:            with dg.Panel(
+examples\older\component_node_swap_tool.py:46:            with dg.Panel("What this validates", style={"padding": 14, "gap": 10}):
+examples\css_feature_probes\badge_layout_probe.py:66:    Panel.summary {
+examples\css_feature_probes\badge_layout_probe.py:112:    Panel.case {
+examples\css_feature_probes\badge_layout_probe.py:294:    with dg.Panel("First-viewport badge stress summary", class_="summary"):
+examples\css_feature_probes\badge_layout_probe.py:310:    with dg.Panel("Standalone badges and tags", class_="case"):
+examples\css_feature_probes\badge_layout_probe.py:327:    with dg.Panel("Button and SmallButton badges", class_="case"):
+examples\css_feature_probes\badge_layout_probe.py:340:    with dg.Panel("Tab badges", class_="case"):
+examples\css_feature_probes\badge_layout_probe.py:355:    with dg.Panel("NavItem badges", class_="case"):
+examples\css_feature_probes\breadcrumbs_probe.py:29:    Panel.case {
+examples\css_feature_probes\breadcrumbs_probe.py:127:    with dg.Panel("File path", class_="case"):
+examples\css_feature_probes\breadcrumbs_probe.py:143:    with dg.Panel("Object hierarchy", class_="case"):
+examples\css_feature_probes\breadcrumbs_probe.py:157:    with dg.Panel("Disabled segment", class_="case"):
+examples\older\css_design_system_demo.py:76:Panel {
+examples\older\css_design_system_demo.py:86:Panel.rail {
+examples\older\css_design_system_demo.py:92:Panel.hero {
+examples\older\css_design_system_demo.py:97:Panel.card {
+examples\older\css_design_system_demo.py:112:Panel.plot-body {
+examples\older\css_design_system_demo.py:121:Panel.table-panel {
+examples\older\css_design_system_demo.py:126:Panel.table-frame {
+examples\older\css_design_system_demo.py:135:Panel.selector-panel {
+examples\older\css_design_system_demo.py:139:Panel.section-header {
+examples\older\css_design_system_demo.py:218:Panel.rail > Button {
+examples\older\css_design_system_demo.py:454:Panel {
+examples\older\css_design_system_demo.py:464:Panel.rail {
+examples\older\css_design_system_demo.py:470:Panel.hero {
+examples\older\css_design_system_demo.py:477:Panel.card {
+examples\older\css_design_system_demo.py:492:Panel.plot-body {
+examples\older\css_design_system_demo.py:501:Panel.table-panel {
+examples\older\css_design_system_demo.py:506:Panel.table-frame {
+examples\older\css_design_system_demo.py:515:Panel.selector-panel {
+examples\older\css_design_system_demo.py:519:Panel.section-header {
+examples\older\css_design_system_demo.py:600:Panel.rail > Button {
+examples\older\css_design_system_demo.py:841:Panel {
+examples\older\css_design_system_demo.py:852:Panel.rail {
+examples\older\css_design_system_demo.py:858:Panel.hero {
+examples\older\css_design_system_demo.py:863:Panel.card {
+examples\older\css_design_system_demo.py:878:Panel.plot-body {
+examples\older\css_design_system_demo.py:887:Panel.table-panel {
+examples\older\css_design_system_demo.py:892:Panel.table-frame {
+examples\older\css_design_system_demo.py:901:Panel.selector-panel {
+examples\older\css_design_system_demo.py:905:Panel.section-header {
+examples\older\css_design_system_demo.py:984:Panel.rail > Button {
+examples\older\css_design_system_demo.py:1252:Panel {
+examples\older\css_design_system_demo.py:1262:Panel.rail {
+examples\older\css_design_system_demo.py:1269:Panel.hero {
+examples\older\css_design_system_demo.py:1277:Panel.card {
+examples\older\css_design_system_demo.py:1292:Panel.plot-body {
+examples\older\css_design_system_demo.py:1301:Panel.table-panel {
+examples\older\css_design_system_demo.py:1306:Panel.table-frame {
+examples\older\css_design_system_demo.py:1315:Panel.selector-panel {
+examples\older\css_design_system_demo.py:1319:Panel.section-header {
+examples\older\css_design_system_demo.py:1405:Panel.rail > Button {
+examples\older\css_design_system_demo.py:1693:    with dg.Panel("Stylesheet Mode", class_="rail"):
+examples\older\css_design_system_demo.py:1710:        with dg.Panel(class_="hero"):
+examples\older\css_design_system_demo.py:1711:            with dg.Panel(class_="section-header"):
+examples\older\css_design_system_demo.py:1719:                with dg.Panel(class_="card"):
+examples\older\css_design_system_demo.py:1723:                with dg.Panel(class_="card"):
+examples\older\css_design_system_demo.py:1727:                with dg.Panel(class_="card"):
+examples\older\css_design_system_demo.py:1733:            with dg.Panel(class_="section-header"):
+examples\older\css_design_system_demo.py:1735:            with dg.Panel(class_="plot-body"):
+examples\older\css_design_system_demo.py:1739:            with dg.Panel(class_="table-panel"):
+examples\older\css_design_system_demo.py:1740:                with dg.Panel(class_="section-header"):
+examples\older\css_design_system_demo.py:1742:                with dg.Panel(class_="table-frame"):
+examples\older\css_design_system_demo.py:1745:            with dg.Panel(class_="selector-panel"):
+examples\older\css_design_system_demo.py:1746:                with dg.Panel(class_="section-header"):
+examples\older\css_design_system_demo.py:1749:                dg.Label("Types: Button, Panel, Table, Scatter3D")
+examples\css_feature_probes\border_outline_shadow_probe.py:46:    Panel {
+examples\css_feature_probes\border_outline_shadow_probe.py:55:    Panel.case {
+examples\css_feature_probes\border_outline_shadow_probe.py:60:    Panel.shadow-case {
+examples\css_feature_probes\border_outline_shadow_probe.py:64:    Panel.sample {
+examples\css_feature_probes\border_outline_shadow_probe.py:100:    Panel.solid-border {
+examples\css_feature_probes\border_outline_shadow_probe.py:106:    Panel.no-border {
+examples\css_feature_probes\border_outline_shadow_probe.py:112:    Panel.hidden-border {
+examples\css_feature_probes\border_outline_shadow_probe.py:118:    Panel.rounded-border {
+examples\css_feature_probes\border_outline_shadow_probe.py:125:    Panel.outline-solid {
+examples\css_feature_probes\border_outline_shadow_probe.py:131:    Panel.outline-tight {
+examples\css_feature_probes\border_outline_shadow_probe.py:139:    Panel.outline-none {
+examples\css_feature_probes\border_outline_shadow_probe.py:145:    Panel.outset-shadow {
+examples\css_feature_probes\border_outline_shadow_probe.py:149:    Panel.multi-shadow {
+examples\css_feature_probes\border_outline_shadow_probe.py:155:    Panel.inset-shadow {
+examples\css_feature_probes\border_outline_shadow_probe.py:161:    Panel.shadow-scroll {
+examples\css_feature_probes\border_outline_shadow_probe.py:169:    Panel.shadow-scroll::scrollbar-track {
+examples\css_feature_probes\border_outline_shadow_probe.py:176:    Panel.shadow-scroll::scrollbar-thumb {
+examples\css_feature_probes\border_outline_shadow_probe.py:182:    Panel.scroll-card {
+examples\css_feature_probes\border_outline_shadow_probe.py:201:    with dg.Panel(class_=f"sample {class_name}"):
+examples\css_feature_probes\border_outline_shadow_probe.py:214:        with dg.Panel("Borders", class_="case"):
+examples\css_feature_probes\border_outline_shadow_probe.py:224:        with dg.Panel("Outlines", class_="case"):
+examples\css_feature_probes\border_outline_shadow_probe.py:234:        with dg.Panel("Shadows", class_="case shadow-case"):
+examples\css_feature_probes\border_outline_shadow_probe.py:243:        with dg.Panel("Rounded shadow edges", class_="case shadow-case"):
+examples\css_feature_probes\border_outline_shadow_probe.py:249:    with dg.Panel("Scroll clipping", class_="shadow-scroll"):
+examples\css_feature_probes\border_outline_shadow_probe.py:256:            with dg.Panel(class_="scroll-card"):
+examples\older\css_showcase.py:34:    Panel {
+examples\older\css_showcase.py:44:    Panel.controls {
+examples\older\css_showcase.py:50:    Panel.controls > Button {
+examples\older\css_showcase.py:128:    with dg.Panel("CSS controls", class_="controls"):
+examples\older\css_showcase.py:140:        with dg.Panel("Styled data view", class_="plot", style={"height": 460}):
+examples\older\css_showcase.py:148:        with dg.Panel("Direct child selector"):
+examples\older\css_theme_gallery.py:83:Panel {
+examples\older\css_theme_gallery.py:88:Panel.sidebar {
+examples\older\css_theme_gallery.py:92:Panel.card {
+examples\older\css_theme_gallery.py:114:Panel.sidebar > Button { border-color: var(--accent2); }
+examples\older\css_theme_gallery.py:171:Panel {
+examples\older\css_theme_gallery.py:176:Panel.sidebar {
+examples\older\css_theme_gallery.py:180:Panel.card {
+examples\older\css_theme_gallery.py:202:Panel.sidebar > Button { border-color: var(--lav); }
+examples\older\css_theme_gallery.py:256:Panel {
+examples\older\css_theme_gallery.py:261:Panel.sidebar {
+examples\older\css_theme_gallery.py:265:Panel.card {
+examples\older\css_theme_gallery.py:287:Panel.sidebar > Button { border-color: var(--border2); }
+examples\older\css_theme_gallery.py:342:Panel {
+examples\older\css_theme_gallery.py:347:Panel.sidebar {
+examples\older\css_theme_gallery.py:351:Panel.card {
+examples\older\css_theme_gallery.py:373:Panel.sidebar > Button { border-color: var(--iris); }
+examples\older\css_theme_gallery.py:474:                with dg.Panel("Theme Picker", class_="sidebar"):
+examples\older\css_theme_gallery.py:491:                        with dg.Panel("Latency", class_="card"):
+examples\older\css_theme_gallery.py:495:                        with dg.Panel("Queue", class_="card"):
+examples\older\css_theme_gallery.py:499:                        with dg.Panel("Points", class_="card"):
+examples\older\css_theme_gallery.py:504:                    with dg.Panel(style={"flex_grow": 1, "padding": 0, "gap": 0}):
+examples\older\css_theme_gallery.py:510:                with dg.Panel("Inputs", class_="sidebar"):
+examples\older\css_theme_gallery.py:525:                    with dg.Panel("Collapsible"):
+examples\older\css_theme_gallery.py:533:                    with dg.Panel("Tabs"):
+examples\older\css_theme_gallery.py:547:                with dg.Panel("Controls", class_="sidebar"):
+examples\css_feature_probes\command_palette_probe.py:37:    Panel.case {
+examples\css_feature_probes\command_palette_probe.py:197:        with dg.Panel("SearchBox", class_="case"):
+examples\css_feature_probes\command_palette_probe.py:247:        with dg.Panel("CommandPalette", class_="case"):
+examples\older\css_julius_style_demo.py:124:Panel {
+examples\older\css_julius_style_demo.py:133:Panel::accent {
+examples\older\css_julius_style_demo.py:138:Panel.banner::accent,
+examples\older\css_julius_style_demo.py:139:Panel.table-wrap::accent {
+examples\older\css_julius_style_demo.py:143:Panel.banner {
+examples\older\css_julius_style_demo.py:151:Panel.column {
+examples\older\css_julius_style_demo.py:156:Panel.left-column {
+examples\older\css_julius_style_demo.py:162:Panel.right-column {
+examples\older\css_julius_style_demo.py:168:Panel.action-card {
+examples\older\css_julius_style_demo.py:176:Panel.action-card:hover {
+examples\older\css_julius_style_demo.py:180:Panel.chat {
+examples\older\css_julius_style_demo.py:186:Panel.message-agent {
+examples\older\css_julius_style_demo.py:194:Panel.message-user {
+examples\older\css_julius_style_demo.py:203:Panel.status-chip {
+examples\older\css_julius_style_demo.py:211:Panel.safe-chip {
+examples\older\css_julius_style_demo.py:216:Panel.danger-chip {
+examples\older\css_julius_style_demo.py:221:Panel.table-wrap {
+examples\older\css_julius_style_demo.py:228:Panel.gap-card {
+examples\older\css_julius_style_demo.py:548:        with dg.Panel(class_="banner"):
+examples\older\css_julius_style_demo.py:556:            with dg.Panel(class_="column left-column"):
+examples\older\css_julius_style_demo.py:558:                with dg.Panel(class_="action-card"):
+examples\older\css_julius_style_demo.py:565:                with dg.Panel(class_="action-card"):
+examples\older\css_julius_style_demo.py:572:                with dg.Panel(class_="action-card"):
+examples\older\css_julius_style_demo.py:581:                with dg.Panel(class_="table-wrap"):
+examples\older\css_julius_style_demo.py:584:            with dg.Panel(class_="column chat"):
+examples\older\css_julius_style_demo.py:586:                with dg.Panel(class_="message-agent"):
+examples\older\css_julius_style_demo.py:589:                with dg.Panel(class_="message-user"):
+examples\older\css_julius_style_demo.py:591:                    dg.Label("This bubble uses regular Panel and Label widgets.", class_="white")
+examples\older\css_julius_style_demo.py:592:                with dg.Panel(class_="message-agent"):
+examples\older\css_julius_style_demo.py:598:            with dg.Panel(class_="column right-column"):
+examples\older\css_julius_style_demo.py:618:                with dg.Panel(class_="gap-card"):
+examples\older\css_julius_style_demo.py:621:                with dg.Panel(class_="gap-card"):
+examples\older\css_julius_style_demo.py:624:                with dg.Panel(class_="gap-card"):
+examples\css_feature_probes\color_syntax_probe.py:46:    Panel {
+examples\css_feature_probes\color_syntax_probe.py:55:    Panel.case {
+examples\css_feature_probes\color_syntax_probe.py:82:    Panel.swatch {
+examples\css_feature_probes\color_syntax_probe.py:91:    Panel.named-white {
+examples\css_feature_probes\color_syntax_probe.py:96:    Panel.named-gray {
+examples\css_feature_probes\color_syntax_probe.py:100:    Panel.named-red {
+examples\css_feature_probes\color_syntax_probe.py:104:    Panel.transparent-swatch {
+examples\css_feature_probes\color_syntax_probe.py:113:    Panel.hex-alpha {
+examples\css_feature_probes\color_syntax_probe.py:117:    Panel.rgb {
+examples\css_feature_probes\color_syntax_probe.py:121:    Panel.rgba {
+examples\css_feature_probes\color_syntax_probe.py:125:    Panel.hsl {
+examples\css_feature_probes\color_syntax_probe.py:129:    Panel.hsla {
+examples\css_feature_probes\color_syntax_probe.py:133:    Panel.hwb {
+examples\css_feature_probes\color_syntax_probe.py:137:    Panel.lab {
+examples\css_feature_probes\color_syntax_probe.py:141:    Panel.lch {
+examples\css_feature_probes\color_syntax_probe.py:145:    Panel.oklab {
+examples\css_feature_probes\color_syntax_probe.py:149:    Panel.oklch {
+examples\css_feature_probes\color_syntax_probe.py:153:    Panel.srgb {
+examples\css_feature_probes\color_syntax_probe.py:157:    Panel.srgb-linear {
+examples\css_feature_probes\color_syntax_probe.py:161:    Panel.foreground-demo {
+examples\css_feature_probes\color_syntax_probe.py:191:    with dg.Panel(class_=f"swatch {class_name}"):
+examples\css_feature_probes\color_syntax_probe.py:204:        with dg.Panel("Named and alpha colors", class_="case"):
+examples\css_feature_probes\color_syntax_probe.py:215:        with dg.Panel("RGB family", class_="case"):
+examples\css_feature_probes\color_syntax_probe.py:227:        with dg.Panel("Perceptual color", class_="case"):
+examples\css_feature_probes\color_syntax_probe.py:236:        with dg.Panel("CSS color()", class_="case"):
+examples\css_feature_probes\color_syntax_probe.py:246:    with dg.Panel("Foreground and borders", class_="foreground-demo"):
+examples\older\css_web_capabilities_demo.py:63:    Panel {
+examples\older\css_web_capabilities_demo.py:72:    Panel::scrollbar-track {
+examples\older\css_web_capabilities_demo.py:79:    Panel::scrollbar-thumb {
+examples\older\css_web_capabilities_demo.py:85:    Panel.compact {
+examples\older\css_web_capabilities_demo.py:94:    Panel.scoped-vars {
+examples\older\css_web_capabilities_demo.py:107:    Panel.inputs {
+examples\older\css_web_capabilities_demo.py:112:    Panel.grid-demo {
+examples\older\css_web_capabilities_demo.py:126:    Panel.grid-tile {
+examples\older\css_web_capabilities_demo.py:136:    Panel.grid-demo > * {
+examples\older\css_web_capabilities_demo.py:140:    Panel.grid-demo > *:nth-child(3n + 1) {
+examples\older\css_web_capabilities_demo.py:144:    Panel.grid-demo > *:nth-child(2 of Panel.grid-demo > Panel.grid-tile) {
+examples\older\css_web_capabilities_demo.py:149:    Panel.grid-demo > *:nth-child(2 of Panel.grid-tile:first-child, Panel.grid-tile:last-child) {
+examples\older\css_web_capabilities_demo.py:153:    Panel.grid-demo > *:nth-last-child(2) {
+examples\older\css_web_capabilities_demo.py:157:    Panel.grid-demo > *:nth-last-child(1 of Panel.grid-tile) {
+examples\older\css_web_capabilities_demo.py:164:    Panel.grid-tile:has(> Badge.pin-demo) {
+examples\older\css_web_capabilities_demo.py:172:    Panel.grid-tile:has(> HLayout:last-child) {
+examples\older\css_web_capabilities_demo.py:177:    Panel.grid-tile:has(> Label:only-child) {
+examples\older\css_web_capabilities_demo.py:182:    Panel.empty-marker:empty {
+examples\older\css_web_capabilities_demo.py:190:    Panel.grid-tile:has(> Panel.empty-marker:empty) {
+examples\older\css_web_capabilities_demo.py:194:    Panel.grid-demo:has(Panel.grid-right > HLayout) {
+examples\older\css_web_capabilities_demo.py:200:    Panel.grid-left:has(+ Panel.grid-right) {
+examples\older\css_web_capabilities_demo.py:207:    Panel.grid-demo:has(Panel.grid-right:has(Badge.offset-demo)) {
+examples\older\css_web_capabilities_demo.py:211:    Panel.grid-demo:has(Panel.grid-right:has(> HLayout) > Label) {
+examples\older\css_web_capabilities_demo.py:215:    @supports (display: grid) and (selector(Panel.grid-demo > Panel.grid-tile)) {
+examples\older\css_web_capabilities_demo.py:216:        Panel.grid-demo {
+examples\older\css_web_capabilities_demo.py:222:        Panel.grid-sidebar {
+examples\older\css_web_capabilities_demo.py:227:    Panel.grid-sidebar {
+examples\older\css_web_capabilities_demo.py:236:    Panel.grid-main {
+examples\older\css_web_capabilities_demo.py:240:    Panel.grid-main::after {
+examples\older\css_web_capabilities_demo.py:252:    Panel.grid-left {
+examples\older\css_web_capabilities_demo.py:258:    Panel.grid-right {
+examples\older\css_web_capabilities_demo.py:262:    Panel.auto-flow-grid {
+examples\older\css_web_capabilities_demo.py:272:    Panel.auto-flow-grid > Panel.flow-tile {
+examples\older\css_web_capabilities_demo.py:282:    Panel.flow-wide {
+examples\older\css_web_capabilities_demo.py:286:    Panel.horizontal-strip {
+examples\older\css_web_capabilities_demo.py:375:    Panel.hero {
+examples\older\css_web_capabilities_demo.py:397:    Window > VLayout > Panel.hero > HLayout > Button[key="primary-action"] {
+examples\older\css_web_capabilities_demo.py:401:    Panel.hero > HLayout > Button:first-child {
+examples\older\css_web_capabilities_demo.py:405:    Panel.compact > Label:first-child {
+examples\older\css_web_capabilities_demo.py:409:    Panel.compact > Label:nth-child(2) {
+examples\older\css_web_capabilities_demo.py:413:    Panel.compact Label.caption {
+examples\older\css_web_capabilities_demo.py:545:    Panel.status-card:has(> Checkbox:checked) {
+examples\older\css_web_capabilities_demo.py:549:    Panel.status-card:has(> Collapsible:collapsed) {
+examples\older\css_web_capabilities_demo.py:569:    Panel.status-card > *:nth-child(1 of Checkbox:checked) {
+examples\older\css_web_capabilities_demo.py:574:    Panel.status-card > *:nth-child(1 of Collapsible:collapsed) {
+examples\older\css_web_capabilities_demo.py:728:        Panel {
+examples\older\css_web_capabilities_demo.py:732:        Panel.inputs {
+examples\older\css_web_capabilities_demo.py:751:        Panel.grid-demo {
+examples\older\css_web_capabilities_demo.py:757:        Panel.horizontal-strip {
+examples\older\css_web_capabilities_demo.py:763:        Panel.grid-demo {
+examples\older\css_web_capabilities_demo.py:781:        Panel.status-card {
+examples\older\css_web_capabilities_demo.py:800:        Panel.status-card {
+examples\older\css_web_capabilities_demo.py:806:        Panel.status-card {
+examples\older\css_web_capabilities_demo.py:819:        Panel.hero {
+examples\older\css_web_capabilities_demo.py:852:        Panel.hero {
+examples\older\css_web_capabilities_demo.py:872:        Panel.status-card {
+examples\older\css_web_capabilities_demo.py:885:        Panel.grid-demo {
+examples\older\css_web_capabilities_demo.py:930:        Panel.hero {
+examples\older\css_web_capabilities_demo.py:942:        Panel.hero {
+examples\older\css_web_capabilities_demo.py:987:    with dg.Panel(class_="hero"):
+examples\older\css_web_capabilities_demo.py:1020:        with dg.Panel("Inputs", class_="compact inputs"):
+examples\older\css_web_capabilities_demo.py:1033:        with dg.Panel("Status", class_="compact status-card"):
+examples\older\css_web_capabilities_demo.py:1049:            with dg.Panel(class_="scoped-vars"):
+examples\older\css_web_capabilities_demo.py:1074:            with dg.Panel("Horizontal overflow", class_="horizontal-strip"):
+examples\older\css_web_capabilities_demo.py:1083:            with dg.Panel(class_="auto-flow-grid"):
+examples\older\css_web_capabilities_demo.py:1084:                with dg.Panel(class_="flow-tile flow-wide"):
+examples\older\css_web_capabilities_demo.py:1086:                with dg.Panel(class_="flow-tile flow-wide"):
+examples\older\css_web_capabilities_demo.py:1088:                with dg.Panel(class_="flow-tile"):
+examples\older\css_web_capabilities_demo.py:1090:                with dg.Panel(class_="flow-tile"):
+examples\older\css_web_capabilities_demo.py:1092:                with dg.Panel(class_="flow-tile"):
+examples\older\css_web_capabilities_demo.py:1103:            with dg.Panel("Grid slice", class_="grid-demo"):
+examples\older\css_web_capabilities_demo.py:1104:                with dg.Panel(class_="grid-tile grid-sidebar"):
+examples\older\css_web_capabilities_demo.py:1107:                with dg.Panel(class_="grid-tile grid-main"):
+examples\older\css_web_capabilities_demo.py:1109:                with dg.Panel(class_="grid-tile grid-left"):
+examples\older\css_web_capabilities_demo.py:1111:                    dg.Panel(class_="empty-marker")
+examples\older\css_web_capabilities_demo.py:1113:                with dg.Panel(class_="grid-tile grid-right"):
+docs\sphinx\layout.md:9:- `Panel`: titled or untitled framed content area.
+docs\sphinx\layout.md:14:- `Splitter` and `Pane`: resizable split views.
+docs\sphinx\layout.md:20:- Use `Panel(width=...)` for fixed sidebars.
+examples\older\css_widget_parts_demo.py:57:Panel {
+examples\older\css_widget_parts_demo.py:67:Panel::accent {
+examples\older\css_widget_parts_demo.py:72:Panel:hover::accent {
+examples\older\css_widget_parts_demo.py:324:                    with dg.Panel("NumberInput Parts", width=430):
+examples\older\css_widget_parts_demo.py:330:                    with dg.Panel("Dropdown And Checkbox", width=430):
+examples\older\css_widget_parts_demo.py:337:                    with dg.Panel("Slider And Progress", width=430):
+examples\older\css_widget_parts_demo.py:343:                    with dg.Panel("Tabs And Navigation", style={"flex": 1}):
+examples\older\css_widget_parts_demo.py:353:                with dg.Panel("DataFrameTable Parts", style={"height": 270}):
+examples\css_feature_probes\code_editor_probe.py:63:    Panel.case {
+examples\css_feature_probes\code_editor_probe.py:164:        with dg.Panel("Editable", class_="case"):
+examples\css_feature_probes\code_editor_probe.py:182:        with dg.Panel("Read-only styled", class_="case"):
+examples\older\debug_snapshot_tool.py:78:    with dg.Panel("Snapshot controls", width=300, style={"padding": 14, "gap": 10}):
+examples\older\debug_snapshot_tool.py:85:    with dg.Panel("What this validates", style={"padding": 14, "gap": 10}):
+examples\css_feature_probes\data_table_upgrades_probe.py:54:    Panel.case {
+examples\css_feature_probes\data_table_upgrades_probe.py:158:        with dg.Panel("Sortable table", class_="case"):
+examples\css_feature_probes\data_table_upgrades_probe.py:171:        with dg.Panel("Non-sortable table", class_="case"):
+examples\older\live_children_tool.py:62:    with dg.Panel("Controls", width=300, style={"padding": 14, "gap": 10}):
+examples\older\live_children_tool.py:67:    with dg.Panel(
+docs\sphinx\quickstart.md:12:        with dg.Panel("Controls", width=280):
+docs\sphinx\quickstart.md:16:        with dg.Panel("Output"):
+docs\sphinx\quickstart.md:28:with dg.Panel("Controls"):
+examples\css_feature_probes\custom_properties_probe.py:36:    Panel {
+examples\css_feature_probes\custom_properties_probe.py:56:    Panel.root-vars {
+examples\css_feature_probes\custom_properties_probe.py:62:    Panel.fallback-vars {
+examples\css_feature_probes\custom_properties_probe.py:68:    Panel.selector-local {
+examples\css_feature_probes\custom_properties_probe.py:80:    Panel.embedded-vars {
+examples\css_feature_probes\custom_properties_probe.py:91:    Panel.calc-vars {
+examples\css_feature_probes\custom_properties_probe.py:99:    Panel.no-inherit-parent {
+examples\css_feature_probes\custom_properties_probe.py:123:        with dg.Panel(class_="root-vars"):
+examples\css_feature_probes\custom_properties_probe.py:127:        with dg.Panel(class_="fallback-vars"):
+examples\css_feature_probes\custom_properties_probe.py:132:        with dg.Panel(class_="selector-local"):
+examples\css_feature_probes\custom_properties_probe.py:136:        with dg.Panel(class_="embedded-vars"):
+examples\css_feature_probes\custom_properties_probe.py:141:        with dg.Panel(class_="calc-vars"):
+examples\css_feature_probes\custom_properties_probe.py:145:        with dg.Panel(class_="no-inherit-parent"):
+examples\older\live_table_tool.py:65:    with dg.Panel("Table controls", width=300, style={"padding": 14, "gap": 10}):
+examples\css_feature_probes\default_polish_stress_probe.py:83:                        with dg.Panel(style={"width": 170, "flex_shrink": 0}):
+examples\css_feature_probes\default_polish_stress_probe.py:97:                    with dg.Panel("Table", style={"width": 170, "flex_shrink": 0, "height": 230}):
+examples\css_feature_probes\default_polish_stress_probe.py:99:                    with dg.Panel("Properties", style={"width": 170, "flex_shrink": 0, "height": 230, "overflow_y": "auto"}):
+examples\css_feature_probes\default_polish_stress_probe.py:102:                with dg.Panel("Nested scroll and long text", style={"height": 220, "overflow_y": "auto"}):
+examples\css_feature_probes\default_polish_stress_probe.py:104:                        with dg.Panel(style={"width": "100%", "min_width": 0}):
+examples\css_feature_probes\core_widgets_probe.py:56:    Panel {
+examples\css_feature_probes\core_widgets_probe.py:67:    Panel.case {
+examples\css_feature_probes\core_widgets_probe.py:73:    Panel.controls-case {
+examples\css_feature_probes\core_widgets_probe.py:288:        with dg.Panel("Buttons, badges, and overlays", class_="case controls-case"):
+examples\css_feature_probes\core_widgets_probe.py:315:        with dg.Panel("Text and boolean inputs", class_="case"):
+examples\css_feature_probes\core_widgets_probe.py:340:        with dg.Panel("Numeric controls", class_="case"):
+examples\css_feature_probes\core_widgets_probe.py:359:        with dg.Panel("Composite and collapsible controls", class_="case"):
+examples\css_feature_probes\container_queries_probe.py:42:    Panel.query-card {
+examples\css_feature_probes\container_queries_probe.py:53:    Panel.narrow {
+examples\css_feature_probes\container_queries_probe.py:57:    Panel.wide {
+examples\css_feature_probes\container_queries_probe.py:80:    Panel.swatch {
+examples\css_feature_probes\container_queries_probe.py:97:        Panel.swatch {
+examples\css_feature_probes\container_queries_probe.py:112:        Panel.swatch {
+examples\css_feature_probes\container_queries_probe.py:127:        with dg.Panel("Narrow container", class_="query-card narrow"):
+examples\css_feature_probes\container_queries_probe.py:130:            with dg.Panel(class_="swatch"):
+examples\css_feature_probes\container_queries_probe.py:134:        with dg.Panel("Wide container", class_="query-card wide"):
+examples\css_feature_probes\container_queries_probe.py:137:            with dg.Panel(class_="swatch"):
+examples\older\live_update_tool.py:58:    with dg.Panel("Live controls", width=300):
+examples\older\live_update_tool.py:67:    with dg.Panel("What to test"):
+examples\css_feature_probes\data_widgets_probe.py:89:    Panel {
+examples\css_feature_probes\data_widgets_probe.py:166:    Panel.scatter-case {
+examples\css_feature_probes\data_widgets_probe.py:217:    with dg.Panel("DataFrameTable styling and selection"):
+examples\css_feature_probes\data_widgets_probe.py:229:        with dg.Panel("Scatter3D compact points", class_="scatter-case"):
+examples\css_feature_probes\data_widgets_probe.py:242:        with dg.Panel("Scatter3D large points", class_="scatter-case"):
+examples\css_feature_probes\custom_composite_widget_probe.py:50:    Panel.case {
+examples\css_feature_probes\custom_composite_widget_probe.py:59:    Panel.tile {
+examples\css_feature_probes\custom_composite_widget_probe.py:124:    with dg.Panel(name, class_="tile", key=f"{name}-tile", parent=None) as panel:
+examples\css_feature_probes\custom_composite_widget_probe.py:144:            with dg.Panel("Composite widgets", class_="case"):
+examples\css_feature_probes\custom_composite_widget_probe.py:149:            with dg.Panel("Extension leaf widgets", class_="case"):
+examples\css_feature_probes\date_time_inputs_probe.py:37:    Panel.case {
+examples\css_feature_probes\date_time_inputs_probe.py:148:        with dg.Panel("ISO inputs", class_="case"):
+examples\css_feature_probes\date_time_inputs_probe.py:169:        with dg.Panel("Programmatic setters", class_="case"):
+examples\css_feature_probes\drag_number_probe.py:34:    Panel.case {
+examples\css_feature_probes\drag_number_probe.py:140:        with dg.Panel("Single values", class_="case"):
+examples\css_feature_probes\drag_number_probe.py:164:        with dg.Panel("Vector", class_="case"):
+docs\sphinx\widgets.md:37:- Root and structural containers: `Window`, `Panel`, `Pane`, `ScrollArea`,
+docs\sphinx\widgets.md:38:  `Splitter`, `Separator`, `Spacer`.
+examples\older\meridian.py:104:Panel {
+examples\older\meridian.py:113:Panel.controls {
+examples\older\meridian.py:121:Panel.gpu-stats {
+examples\older\meridian.py:127:Panel.stat-card {
+examples\older\meridian.py:413:        with dg.Panel(class_="gpu-stats"):
+examples\older\meridian.py:432:            with dg.Panel(style={"padding": 20, "gap": 14}):
+examples\older\meridian.py:437:                    with dg.Panel(class_="stat-card"):
+examples\older\meridian.py:441:                    with dg.Panel(class_="stat-card"):
+examples\older\meridian.py:445:                    with dg.Panel(class_="stat-card"):
+examples\older\meridian.py:451:            with dg.Panel(style={"padding": 20, "gap": 14}):
+examples\older\meridian.py:455:                    with dg.Panel(class_="stat-card"):
+examples\older\meridian.py:459:                    with dg.Panel(class_="stat-card"):
+examples\older\meridian.py:464:                    with dg.Panel(class_="stat-card"):
+examples\older\meridian.py:468:                    with dg.Panel(class_="stat-card"):
+examples\older\meridian.py:476:            with dg.Panel(style={"padding": 20, "gap": 14}):
+examples\older\meridian.py:489:    with dg.Panel(class_="controls"):
+examples\older\meridian.py:524:                with dg.Panel(class_="stat-card"):
+examples\older\meridian.py:528:                with dg.Panel(class_="stat-card"):
+examples\older\meridian.py:533:                with dg.Panel(class_="stat-card"):
+examples\older\meridian.py:537:                with dg.Panel(class_="stat-card"):
+examples\css_feature_probes\drag_drop_probe.py:42:    Panel.case {
+examples\css_feature_probes\drag_drop_probe.py:52:    Panel.sources {
+examples\css_feature_probes\drag_drop_probe.py:57:    Panel.targets {
+examples\css_feature_probes\drag_drop_probe.py:211:        with dg.Panel("Sources", class_="case sources"):
+examples\css_feature_probes\drag_drop_probe.py:251:        with dg.Panel("Targets", class_="case targets"):
+examples\css_feature_probes\form_controls_probe.py:35:    Panel::scrollbar-track {
+examples\css_feature_probes\form_controls_probe.py:43:    Panel::scrollbar-thumb {
+examples\css_feature_probes\form_controls_probe.py:87:    Panel {
+examples\css_feature_probes\form_controls_probe.py:98:    Panel.case {
+examples\css_feature_probes\form_controls_probe.py:102:    Panel.theme-switcher {
+examples\css_feature_probes\form_controls_probe.py:287:        Panel.theme-switcher {
+examples\css_feature_probes\form_controls_probe.py:324:        Panel {
+examples\css_feature_probes\form_controls_probe.py:349:        Panel::scrollbar-track {
+examples\css_feature_probes\form_controls_probe.py:355:        Panel::scrollbar-thumb {
+examples\css_feature_probes\form_controls_probe.py:365:        Panel {
+examples\css_feature_probes\form_controls_probe.py:460:        Panel::scrollbar-track {
+examples\css_feature_probes\form_controls_probe.py:466:        Panel::scrollbar-thumb {
+examples\css_feature_probes\form_controls_probe.py:477:        Panel {
+examples\css_feature_probes\form_controls_probe.py:546:        Panel::scrollbar-track {
+examples\css_feature_probes\form_controls_probe.py:552:        Panel::scrollbar-thumb {
+examples\css_feature_probes\form_controls_probe.py:563:        Panel {
+examples\css_feature_probes\form_controls_probe.py:621:        Panel::scrollbar-track {
+examples\css_feature_probes\form_controls_probe.py:627:        Panel::scrollbar-thumb {
+examples\css_feature_probes\form_controls_probe.py:660:    with dg.Panel("Theme stress test", class_="theme-switcher"):
+examples\css_feature_probes\form_controls_probe.py:674:        with dg.Panel("Text entry", class_="case"):
+examples\css_feature_probes\form_controls_probe.py:704:        with dg.Panel("Choice controls", class_="case"):
+examples\css_feature_probes\form_controls_probe.py:732:        with dg.Panel("Numeric controls", class_="case"):
+examples\css_feature_probes\form_controls_probe.py:775:        with dg.Panel("Disabled and edge states", class_="case"):
+examples\css_feature_probes\font_face_probe.py:48:    Panel {
+examples\css_feature_probes\font_face_probe.py:56:    Panel.sample {
+examples\css_feature_probes\font_face_probe.py:123:    with dg.Panel(class_="sample"):
+examples\css_feature_probes\font_face_probe.py:130:    with dg.Panel(class_="sample"):
+examples\css_feature_probes\font_face_probe.py:137:    with dg.Panel(class_="sample"):
+examples\css_feature_probes\font_face_probe.py:144:    with dg.Panel(class_="sample"):
+examples\older\multi_agent_cockpit_mockup.py:135:    Splitter.root {
+examples\older\multi_agent_cockpit_mockup.py:171:    Panel {
+examples\older\multi_agent_cockpit_mockup.py:181:    Panel.sidebar,
+examples\older\multi_agent_cockpit_mockup.py:182:    Panel.queue {
+examples\older\multi_agent_cockpit_mockup.py:189:    Panel.agent-card {
+examples\older\multi_agent_cockpit_mockup.py:197:    Panel.bus {
+examples\older\multi_agent_cockpit_mockup.py:385:    with dg.Panel(spec.name, class_="agent-card"):
+examples\older\multi_agent_cockpit_mockup.py:403:    with dg.Panel("Workspace", class_="sidebar"):
+examples\older\multi_agent_cockpit_mockup.py:428:    with dg.Panel("Message Bus", class_="bus"):
+examples\older\multi_agent_cockpit_mockup.py:439:    with dg.Panel("Queue + Artifacts", class_="queue"):
+examples\older\multi_agent_cockpit_mockup.py:490:with dg.Splitter(
+examples\older\multi_agent_cockpit_mockup.py:497:    with dg.Pane(min_size=220):
+examples\older\multi_agent_cockpit_mockup.py:500:    with dg.Pane(min_size=520):
+examples\older\multi_agent_cockpit_mockup.py:512:    with dg.Pane(min_size=280):
+examples\css_feature_probes\generated_content_probe.py:44:    Panel {
+examples\css_feature_probes\generated_content_probe.py:53:    Panel.case {
+examples\css_feature_probes\generated_content_probe.py:148:    Panel.title-attr::after {
+examples\css_feature_probes\generated_content_probe.py:191:        with dg.Panel("Literal content", class_="case"):
+examples\css_feature_probes\generated_content_probe.py:198:        with dg.Panel("Attribute content", class_="case"):
+examples\css_feature_probes\generated_content_probe.py:206:        with dg.Panel("Panel title attr", class_="case title-attr"):
+examples\css_feature_probes\generated_content_probe.py:207:            dg.Label("Panel::after", class_="case-title")
+examples\css_feature_probes\generated_content_probe.py:212:        with dg.Panel("Reserved width", class_="case"):
+examples\css_feature_probes\generated_content_probe.py:219:        with dg.Panel("Clipping", class_="case"):
+examples\css_feature_probes\generated_content_probe.py:225:        with dg.Panel("Scroll stability", class_="case title-attr"):
+examples\older\pytorch_training_dashboard.py:136:        Panel {
+examples\older\pytorch_training_dashboard.py:144:        Panel.header {
+examples\older\pytorch_training_dashboard.py:152:        Panel.metric-card {
+examples\older\pytorch_training_dashboard.py:385:        with dg.Panel(class_="header"):
+examples\older\pytorch_training_dashboard.py:397:            with dg.Panel(width=300, style={"gap": 11}):
+examples\older\pytorch_training_dashboard.py:428:                    with dg.Panel(class_="metric-card", style={"flex_grow": 1}):
+examples\older\pytorch_training_dashboard.py:431:                    with dg.Panel(class_="metric-card", style={"flex_grow": 1}):
+examples\older\pytorch_training_dashboard.py:434:                    with dg.Panel(class_="metric-card", style={"flex_grow": 1}):
+examples\older\pytorch_training_dashboard.py:438:                with dg.Panel(style={"flex_grow": 1, "gap": 8}):
+examples\older\pytorch_training_dashboard.py:461:                    with dg.Panel(style={"flex_grow": 1, "gap": 8}):
+examples\older\pytorch_training_dashboard.py:472:                    with dg.Panel(width=430, style={"gap": 8}):
+examples\older\pytorch_training_dashboard.py:481:            with dg.Panel(width=280, style={"gap": 11}):
+docs\sphinx\styling.md:27:Panel.sidebar {
+docs\sphinx\styling.md:89:Panel Button { font-size: 13px; }
+docs\sphinx\styling.md:90:Panel.controls > Button { width: 100%; }
+docs\sphinx\styling.md:93:Panel:has(> Checkbox:checked) { border-color: success; }
+docs\sphinx\styling.md:94:Panel > *:nth-child(odd) { opacity: 0.96; }
+docs\sphinx\styling.md:160:| `Panel` | `accent`, `scrollbar-track`, `scrollbar-thumb` |
+docs\sphinx\styling.md:189:Panel.summary::after {
+docs\sphinx\styling.md:260:Panel.card {
+docs\sphinx\styling.md:280:Panel.card {
+docs\sphinx\styling.md:289:Panel.metric {
+docs\sphinx\styling.md:305:    Panel.sidebar {
+docs\sphinx\styling.md:320:Panel.card {
+docs\sphinx\styling.md:361:@supports (display: grid) and (selector(Panel > Button.primary)) {
+docs\sphinx\styling.md:362:    Panel.dashboard {
+examples\css_feature_probes\gradients_probe.py:34:    Panel {
+examples\css_feature_probes\gradients_probe.py:42:    Panel.swatch {
+examples\css_feature_probes\gradients_probe.py:48:    Panel.compare {
+examples\css_feature_probes\gradients_probe.py:54:    Panel.hero-swatch {
+examples\css_feature_probes\gradients_probe.py:64:    Panel.blob-swatch {
+examples\css_feature_probes\gradients_probe.py:74:    Panel.image-like-swatch {
+examples\css_feature_probes\gradients_probe.py:119:    Panel.linear {
+examples\css_feature_probes\gradients_probe.py:131:    Panel.radial {
+examples\css_feature_probes\gradients_probe.py:141:    Panel.layered {
+examples\css_feature_probes\gradients_probe.py:149:    Panel.repeating {
+examples\css_feature_probes\gradients_probe.py:159:    Panel.image-gradient {
+examples\css_feature_probes\gradients_probe.py:167:    Panel.image-none {
+examples\css_feature_probes\gradients_probe.py:173:    Panel.modern {
+examples\css_feature_probes\gradients_probe.py:208:    Panel.compare-srgb,
+examples\css_feature_probes\gradients_probe.py:209:    Panel.compare-linear,
+examples\css_feature_probes\gradients_probe.py:210:    Panel.compare-oklab {
+examples\css_feature_probes\gradients_probe.py:223:    Panel.compare-srgb {
+examples\css_feature_probes\gradients_probe.py:227:    Panel.compare-linear {
+examples\css_feature_probes\gradients_probe.py:231:    Panel.compare-oklab {
+examples\css_feature_probes\gradients_probe.py:235:    Panel.organic-blob {
+examples\css_feature_probes\gradients_probe.py:252:    Panel.image-like-mesh {
+examples\css_feature_probes\gradients_probe.py:279:        with dg.Panel(class_="swatch linear"):
+examples\css_feature_probes\gradients_probe.py:283:        with dg.Panel(class_="swatch radial"):
+examples\css_feature_probes\gradients_probe.py:288:        with dg.Panel(class_="swatch layered"):
+examples\css_feature_probes\gradients_probe.py:292:        with dg.Panel(class_="swatch repeating"):
+examples\css_feature_probes\gradients_probe.py:297:        with dg.Panel(class_="swatch image-gradient"):
+examples\css_feature_probes\gradients_probe.py:301:        with dg.Panel(class_="swatch image-none"):
+examples\css_feature_probes\gradients_probe.py:305:    with dg.Panel(class_="hero-swatch modern"):
+examples\css_feature_probes\gradients_probe.py:313:    with dg.Panel(class_="blob-swatch organic-blob"):
+examples\css_feature_probes\gradients_probe.py:321:    with dg.Panel(class_="image-like-swatch image-like-mesh"):
+examples\css_feature_probes\gradients_probe.py:336:        with dg.Panel(class_="compare compare-srgb"):
+examples\css_feature_probes\gradients_probe.py:340:        with dg.Panel(class_="compare compare-linear"):
+examples\css_feature_probes\gradients_probe.py:344:        with dg.Panel(class_="compare compare-oklab"):
+examples\older\scatter_perf_lab.py:67:    Panel.controls {
+examples\older\scatter_perf_lab.py:78:    Panel.controls::scrollbar-track {
+examples\older\scatter_perf_lab.py:85:    Panel.controls::scrollbar-thumb {
+examples\older\scatter_perf_lab.py:91:    Panel.plot {
+examples\older\scatter_perf_lab.py:582:        with dg.Panel("Perf Lab", class_="controls"):
+examples\older\scatter_perf_lab.py:691:        with dg.Panel("Scatter viewport", class_="plot"):
+examples\css_feature_probes\grid_tracks_probe.py:39:    Panel.box { padding: 10px; gap: 8px; }
+examples\css_feature_probes\grid_tracks_probe.py:63:        with dg.Panel("Compact key/value (template_columns=(72, '1fr'))", class_="box"):
+examples\css_feature_probes\grid_tracks_probe.py:77:        with dg.Panel("Intrinsic labels (template_columns=('auto', '1fr'))", class_="box"):
+examples\css_feature_probes\grid_tracks_probe.py:89:        with dg.Panel("Proportional (template_columns=('1fr', '2fr'))", class_="box"):
+examples\css_feature_probes\grid_tracks_probe.py:98:        with dg.Panel("Status table (template_columns=(10, '1fr', 72))", class_="box"):
+examples\css_feature_probes\grid_tracks_probe.py:113:        with dg.Panel("Card mode (columns=3, min_column_width=200)", class_="box"):
+examples\css_feature_probes\heatmap_probe.py:86:    Panel.case {
+examples\css_feature_probes\heatmap_probe.py:155:            with dg.Panel("Correlation matrix", class_="case"):
+examples\css_feature_probes\heatmap_probe.py:165:            with dg.Panel("Confusion matrix", class_="case"):
+examples\css_feature_probes\heatmap_probe.py:175:            with dg.Panel("Dense sensor grid", class_="case"):
+examples\older\scatter_tool.py:86:    with dg.Panel("Controls", width=340):
+examples\older\live_style_tool.py:103:    with dg.Panel("Live style controls", width=300, style={"padding": 14, "gap": 10}):
+examples\older\live_style_tool.py:109:    with dg.Panel("Live preview", style=styles[0]["panel"]) as preview_panel:
+examples\css_feature_probes\histogram_live_update_probe.py:66:    Panel.case {
+examples\older\style_showcase.py:21:    with dg.Panel(
+examples\older\style_showcase.py:90:        with dg.Panel(
+examples\older\style_showcase.py:128:        with dg.Panel(
+examples\older\streaming_scatter_tool.py:111:    with dg.Panel("Scatter stream", width=310):
+examples\css_feature_probes\histogram_probe.py:96:    Panel.case {
+examples\css_feature_probes\html_report_probe.py:255:    Panel.controls {
+examples\css_feature_probes\html_report_probe.py:264:    Panel.controls Button {
+examples\css_feature_probes\html_report_probe.py:269:    Panel.viewer-panel {
+examples\css_feature_probes\html_report_probe.py:355:    with dg.Panel("Report controls", class_="controls"):
+examples\css_feature_probes\html_report_probe.py:365:    with dg.Panel("Viewer surface", class_="viewer-panel"):
+examples\css_feature_probes\layout_containers_probe.py:35:    Panel::scrollbar-track {
+examples\css_feature_probes\layout_containers_probe.py:43:    Panel::scrollbar-thumb {
+examples\css_feature_probes\layout_containers_probe.py:75:    Panel {
+examples\css_feature_probes\layout_containers_probe.py:97:    Panel.fixed-card {
+examples\css_feature_probes\layout_containers_probe.py:105:    Panel.flex-card {
+examples\css_feature_probes\layout_containers_probe.py:114:    Panel.percent-card {
+examples\css_feature_probes\layout_containers_probe.py:126:    Panel.absolute-case {
+examples\css_feature_probes\layout_containers_probe.py:141:    Panel.nested-shell {
+examples\css_feature_probes\layout_containers_probe.py:148:    Panel.inner {
+examples\css_feature_probes\layout_containers_probe.py:155:    Panel.scroll-shell {
+examples\css_feature_probes\layout_containers_probe.py:180:    Panel.spacer-case {
+examples\css_feature_probes\layout_containers_probe.py:191:    Panel.spacer-tile {
+examples\css_feature_probes\layout_containers_probe.py:231:        "This probe isolates DragonGUI container layout: HLayout, VLayout, Panel titles, "
+examples\css_feature_probes\layout_containers_probe.py:236:    with dg.Panel("HLayout fixed plus flexible sizing"):
+examples\css_feature_probes\layout_containers_probe.py:238:            with dg.Panel(class_="fixed-card"):
+examples\css_feature_probes\layout_containers_probe.py:241:            with dg.Panel(class_="flex-card"):
+examples\css_feature_probes\layout_containers_probe.py:246:    with dg.Panel("VLayout stacking and separators"):
+examples\css_feature_probes\layout_containers_probe.py:257:    with dg.Panel("Percent and calc panel sizing"):
+examples\css_feature_probes\layout_containers_probe.py:259:            with dg.Panel(class_="percent-card"):
+examples\css_feature_probes\layout_containers_probe.py:262:            with dg.Panel(class_="percent-card"):
+examples\css_feature_probes\layout_containers_probe.py:267:    with dg.Panel("Absolute child inside titled panel", class_="absolute-case"):
+examples\css_feature_probes\layout_containers_probe.py:274:    with dg.Panel("Nested panel boundaries", class_="nested-shell"):
+examples\css_feature_probes\layout_containers_probe.py:276:        with dg.Panel("Nested child A", class_="inner"):
+examples\css_feature_probes\layout_containers_probe.py:278:        with dg.Panel("Nested child B", class_="inner"):
+examples\css_feature_probes\layout_containers_probe.py:282:    with dg.Panel("Scrollable titled panel", class_="scroll-shell"):
+examples\css_feature_probes\layout_containers_probe.py:314:    with dg.Panel("Spacer behavior", class_="spacer-case"):
+examples\css_feature_probes\layout_containers_probe.py:316:            with dg.Panel(class_="spacer-tile"):
+examples\css_feature_probes\layout_containers_probe.py:319:            with dg.Panel(class_="spacer-tile"):
+examples\css_feature_probes\layout_flex_stress_probe.py:69:    Panel.case {
+examples\css_feature_probes\layout_flex_stress_probe.py:79:    Panel.narrow-card {
+examples\css_feature_probes\layout_flex_stress_probe.py:200:    Panel.half {
+examples\css_feature_probes\layout_flex_stress_probe.py:217:        Panel.case,
+examples\css_feature_probes\layout_flex_stress_probe.py:218:        Panel.narrow-card {
+examples\css_feature_probes\layout_flex_stress_probe.py:245:        Panel.half {
+examples\css_feature_probes\layout_flex_stress_probe.py:270:    with dg.Panel("Long labels plus flexible controls", class_="case"):
+examples\css_feature_probes\layout_flex_stress_probe.py:300:    with dg.Panel("Nested flexible rows", class_="case"):
+examples\css_feature_probes\layout_flex_stress_probe.py:302:            with dg.Panel("Pipeline A", class_="half"):
+examples\css_feature_probes\layout_flex_stress_probe.py:311:            with dg.Panel("Pipeline B", class_="half"):
+examples\css_feature_probes\layout_flex_stress_probe.py:320:    with dg.Panel("Action rows under pressure", class_="case"):
+examples\css_feature_probes\layout_flex_stress_probe.py:341:    with dg.Panel("Constrained card inside a row", class_="case"):
+examples\css_feature_probes\layout_flex_stress_probe.py:343:            with dg.Panel("Compact controls", class_="half"):
+examples\css_feature_probes\layout_flex_stress_probe.py:351:            with dg.Panel("Readout", class_="half"):
+examples\older\terminal_wrapper_demo.py:23:    Panel.shell { padding: 10px; gap: 8px; }
+examples\older\terminal_wrapper_demo.py:32:with dg.Panel("Terminal", class_="shell"):
+examples\css_feature_probes\layout_grid_masonry_probe.py:71:    Panel.section {
+examples\css_feature_probes\layout_grid_masonry_probe.py:89:    Panel.card {
+examples\css_feature_probes\layout_grid_masonry_probe.py:99:    Panel.card::accent {
+examples\css_feature_probes\layout_grid_masonry_probe.py:191:    Splitter.embedded {
+examples\css_feature_probes\layout_grid_masonry_probe.py:197:    Splitter.embedded::gutter {
+examples\css_feature_probes\layout_grid_masonry_probe.py:203:    Panel.pane {
+examples\css_feature_probes\layout_grid_masonry_probe.py:280:    with dg.Panel("Masonry card packing", class_="section"):
+examples\css_feature_probes\layout_grid_masonry_probe.py:286:            with dg.Panel("Toolbar card", class_="card"):
+examples\css_feature_probes\layout_grid_masonry_probe.py:296:            with dg.Panel("Tall property card", class_="card"):
+examples\css_feature_probes\layout_grid_masonry_probe.py:308:            with dg.Panel("Status chips", class_="card"):
+examples\css_feature_probes\layout_grid_masonry_probe.py:321:            with dg.Panel("Nested split card", class_="card"):
+examples\css_feature_probes\layout_grid_masonry_probe.py:322:                dg.Label("Embedded splitter", class_="metric")
+examples\css_feature_probes\layout_grid_masonry_probe.py:323:                with dg.Splitter(
+examples\css_feature_probes\layout_grid_masonry_probe.py:330:                    with dg.Pane():
+examples\css_feature_probes\layout_grid_masonry_probe.py:331:                        with dg.Panel("Queue", class_="pane"):
+examples\css_feature_probes\layout_grid_masonry_probe.py:334:                    with dg.Pane():
+examples\css_feature_probes\layout_grid_masonry_probe.py:335:                        with dg.Panel("Latency", class_="pane"):
+examples\css_feature_probes\layout_grid_masonry_probe.py:339:            with dg.Panel("Dense row card", class_="card"):
+examples\css_feature_probes\layout_grid_masonry_probe.py:354:            with dg.Panel("Narrative card", class_="card"):
+examples\css_feature_probes\layout_grid_masonry_probe.py:362:    with dg.Panel("Standard row-aligned grid", class_="section"):
+examples\css_feature_probes\layout_grid_masonry_probe.py:369:                with dg.Panel(f"Standard card {index}", class_="card"):
+examples\older\textarea_tool.py:40:    with dg.Panel("Editor", width=500, style={"padding": 14, "gap": 10}):
+examples\older\textarea_tool.py:52:    with dg.Panel("Details", style={"padding": 14, "gap": 10}):
+examples\css_feature_probes\layout_overlay_collision_probe.py:67:    Panel::scrollbar-track,
+examples\css_feature_probes\layout_overlay_collision_probe.py:77:    Panel::scrollbar-thumb,
+examples\css_feature_probes\layout_overlay_collision_probe.py:113:    Panel.case {
+examples\css_feature_probes\layout_overlay_collision_probe.py:124:    Panel.edge-field {
+examples\css_feature_probes\layout_overlay_collision_probe.py:205:    Panel.dense-copy {
+examples\css_feature_probes\layout_overlay_collision_probe.py:250:    Panel.scroll-host {
+examples\css_feature_probes\layout_overlay_collision_probe.py:379:    with dg.Panel("", class_="dense-copy"):
+examples\css_feature_probes\layout_overlay_collision_probe.py:426:        with dg.Panel("Edge placement", class_="case"):
+examples\css_feature_probes\layout_overlay_collision_probe.py:428:            with dg.Panel("", class_="edge-field"):
+examples\css_feature_probes\layout_overlay_collision_probe.py:440:        with dg.Panel("Dense background overlays", class_="case"):
+examples\css_feature_probes\layout_overlay_collision_probe.py:453:        with dg.Panel("Scroll host collision", class_="case"):
+examples\css_feature_probes\layout_overlay_collision_probe.py:455:            with dg.Panel("", class_="scroll-host"):
+examples\css_feature_probes\layout_overlay_collision_probe.py:468:        with dg.Panel("Drag ghost and drop target", class_="case"):
+examples\older\thread_monitor_demo.py:61:    Panel.controls {
+examples\older\thread_monitor_demo.py:71:    Panel.monitor  {
+examples\older\thread_monitor_demo.py:77:    Splitter.content-stack {
+examples\older\thread_monitor_demo.py:83:    Pane.content-pane {
+examples\older\thread_monitor_demo.py:104:    with dg.Panel("Controls", class_="controls"):
+examples\older\thread_monitor_demo.py:156:    with dg.Splitter(
+examples\older\thread_monitor_demo.py:164:        with dg.Pane(class_="content-pane"):
+examples\older\thread_monitor_demo.py:173:        with dg.Pane(class_="content-pane"):
+examples\older\toast_tool.py:61:    with dg.Panel("Notifications", width=300, style={"padding": 14, "gap": 10}):
+examples\older\toast_tool.py:94:    with dg.Panel("Status", style={"padding": 14, "gap": 10}):
+examples\older\v4_showcase.py:263:    Panel.card,
+examples\older\v4_showcase.py:264:    Panel.metric {
+examples\older\v4_showcase.py:275:    Panel.metric {
+examples\older\v4_showcase.py:461:    with dg.Panel(title, class_="metric", style=CARD_STYLE):
+examples\older\v4_showcase.py:539:                            with dg.Panel("Acquisition trend", class_="card", style=CARD_STYLE):
+examples\older\v4_showcase.py:553:                            with dg.Panel("Segment mix", class_="card", style=CARD_STYLE):
+examples\older\v4_showcase.py:569:                            with dg.Panel("Routing", class_="card", style=CARD_STYLE):
+examples\older\v4_showcase.py:591:                            with dg.Panel("Action states", class_="card", style=CARD_STYLE):
+examples\older\v4_showcase.py:604:                        with dg.Splitter(
+examples\older\v4_showcase.py:611:                            with dg.Pane(min_size=220, style={"min_width": 0, "gap": 8}):
+examples\older\v4_showcase.py:641:                            with dg.Pane(min_size=520, style={"min_width": 0, "gap": 12}):
+examples\older\v4_showcase.py:648:                                    with dg.Panel("Property inspector", class_="card", style=CARD_STYLE):
+examples\older\v4_showcase.py:675:                                    with dg.Panel("Manual properties", class_="card", style=CARD_STYLE):
+examples\older\v4_showcase.py:709:                                    with dg.Panel("Command surface", class_="card", style=CARD_STYLE):
+examples\older\v4_showcase.py:730:                                    with dg.Panel("Selections", class_="card", style=CARD_STYLE):
+examples\older\v4_showcase.py:758:                            with dg.Panel("Data table", class_="card", style=CARD_STYLE):
+examples\older\v4_showcase.py:774:                            with dg.Panel("Scatter plot", class_="card", style=CARD_STYLE):
+examples\older\v4_showcase.py:789:                            with dg.Panel("Heatmap", class_="card", style=CARD_STYLE):
+examples\older\v4_showcase.py:800:                            with dg.Panel("Bar chart", class_="card", style=CARD_STYLE):
+examples\older\v4_showcase.py:814:                            with dg.Panel("Histogram", class_="card", style=CARD_STYLE):
+examples\older\v4_showcase.py:828:                            with dg.Panel("Composition", class_="card", style=CARD_STYLE):
+examples\older\v4_showcase.py:852:                            with dg.Panel("Primitive inputs", class_="card", style=CARD_STYLE):
+examples\older\v4_showcase.py:876:                            with dg.Panel("Toggles and ranges", class_="card", style=CARD_STYLE):
+examples\older\v4_showcase.py:895:                            with dg.Panel("Date and time", class_="card", style=CARD_STYLE):
+examples\older\v4_showcase.py:924:                            with dg.Panel("Disclosure", class_="card", style=CARD_STYLE):
+examples\older\v4_showcase.py:932:                            with dg.Panel("Buttons", class_="card", style=CARD_STYLE):
+examples\older\v4_showcase.py:951:                            with dg.Panel("Image asset", class_="card", style=CARD_STYLE):
+examples\older\v4_showcase.py:969:                            with dg.Panel("HTML report", class_="card", style=CARD_STYLE):
+examples\older\v4_showcase.py:983:                            with dg.Panel("Code editor", class_="card", style=CARD_STYLE):
+examples\older\v4_showcase.py:997:                            with dg.Panel("Activity log", class_="card", style=CARD_STYLE):
+examples\older\v4_showcase.py:1035:                            with dg.Panel("Runtime tools", class_="card", style=CARD_STYLE):
+examples\css_feature_probes\layout_panel_bounds_probe.py:31:app, win = probe_app("Layout Panel Bounds Probe", width=940, height=720)
+examples\css_feature_probes\layout_panel_bounds_probe.py:98:    Panel.case {
+examples\css_feature_probes\layout_panel_bounds_probe.py:107:    Panel.fixed {
+examples\css_feature_probes\layout_panel_bounds_probe.py:112:    Panel.compact-fixed {
+examples\css_feature_probes\layout_panel_bounds_probe.py:117:    Panel.inner {
+examples\css_feature_probes\layout_panel_bounds_probe.py:271:        "Panel content bounds",
+examples\css_feature_probes\layout_panel_bounds_probe.py:277:        with dg.Panel("Auto-height mixed controls", class_="case"):
+examples\css_feature_probes\layout_panel_bounds_probe.py:304:        with dg.Panel("Fixed-height scroll body", class_="case fixed"):
+examples\css_feature_probes\layout_panel_bounds_probe.py:314:        with dg.Panel("Nested panel padding and clipping", class_="case fixed"):
+examples\css_feature_probes\layout_panel_bounds_probe.py:317:                with dg.Panel("Inner group A", class_="inner"):
+examples\css_feature_probes\layout_panel_bounds_probe.py:325:                with dg.Panel("Inner group B with longer title", class_="inner"):
+examples\css_feature_probes\layout_panel_bounds_probe.py:334:        with dg.Panel("Log viewport plus footer actions", class_="case fixed"):
+examples\css_feature_probes\layout_panel_bounds_probe.py:347:        with dg.Panel("Short table constrained by panel", class_="case fixed"):
+examples\css_feature_probes\layout_panel_bounds_probe.py:361:        with dg.Panel("Compact title/body pressure", class_="case compact-fixed"):
+examples\older\tooltip_tool.py:28:    with dg.Panel("Controls", width=320, style={"padding": 14, "gap": 10}):
+examples\older\tooltip_tool.py:38:    with dg.Panel("Preview", style={"padding": 14, "gap": 10}):
+examples\css_feature_probes\layout_plot_embedding_probe.py:160:    Panel.case {
+examples\css_feature_probes\layout_plot_embedding_probe.py:173:    Panel.wide {
+examples\css_feature_probes\layout_plot_embedding_probe.py:177:    Panel.compact {
+examples\css_feature_probes\layout_plot_embedding_probe.py:181:    Panel.tiny {
+examples\css_feature_probes\layout_plot_embedding_probe.py:368:        with dg.Panel("Wide split: line plot beside virtualized table", class_="case wide"):
+examples\css_feature_probes\layout_plot_embedding_probe.py:387:                    dg.Label("Table scrollbars should stay local to this split pane.", class_="caption")
+examples\css_feature_probes\layout_plot_embedding_probe.py:404:            with dg.Panel("Compact 2D scatter", class_="case"):
+examples\css_feature_probes\layout_plot_embedding_probe.py:421:            with dg.Panel("Compact 3D scatter", class_="case"):
+examples\css_feature_probes\layout_plot_embedding_probe.py:442:            with dg.Panel("Heatmap in a card", class_="case compact"):
+examples\css_feature_probes\layout_plot_embedding_probe.py:454:            with dg.Panel("Histogram in a card", class_="case compact"):
+examples\css_feature_probes\layout_plot_embedding_probe.py:469:            with dg.Panel("Bar chart in a card", class_="case compact"):
+examples\css_feature_probes\layout_plot_embedding_probe.py:485:            with dg.Panel("Tiny mixed plot", class_="case tiny"):
+examples\css_feature_probes\layout_scrollable_composites_probe.py:137:    Panel.case {
+examples\css_feature_probes\layout_scrollable_composites_probe.py:149:    Panel.short {
+examples\css_feature_probes\layout_scrollable_composites_probe.py:408:        with dg.Panel("Wide table in a fixed card", class_="case"):
+examples\css_feature_probes\layout_scrollable_composites_probe.py:425:        with dg.Panel("Log and code scroll owners", class_="case"):
+examples\css_feature_probes\layout_scrollable_composites_probe.py:431:        with dg.Panel("Tree and selectable list", class_="case short"):
+examples\css_feature_probes\layout_scrollable_composites_probe.py:450:        with dg.Panel("Property grid in a scroll body", class_="case short"):
+examples\css_feature_probes\layout_scrollable_composites_probe.py:470:        with dg.Panel("Command results and horizontal scroll", class_="case"):
+examples\css_feature_probes\layout_scrollable_composites_probe.py:528:        with dg.Panel("Nested scroll body", class_="case"):
+examples\css_feature_probes\layout_scrollable_composites_probe.py:532:                    with dg.Panel(f"Inner scroller {section}", class_="short", style={"height": 162, "width": "100%", "min_width": 0}):
+examples\css_feature_probes\line_plot_probe.py:280:    Panel {
+examples\css_feature_probes\line_plot_probe.py:290:    Panel.controls {
+examples\css_feature_probes\line_plot_probe.py:303:    Panel.main {
+examples\css_feature_probes\line_plot_probe.py:310:    Panel.side {
+examples\css_feature_probes\line_plot_probe.py:319:    Panel.side Label.pass {
+examples\css_feature_probes\line_plot_probe.py:409:        with dg.Panel("Controls", class_="controls"):
+examples\css_feature_probes\line_plot_probe.py:442:        with dg.Panel("Live plot", class_="main"):
+examples\css_feature_probes\line_plot_probe.py:466:            with dg.Panel("Multi-series static", class_="side"):
+examples\css_feature_probes\line_plot_probe.py:482:            with dg.Panel("Sample-index plot", class_="side"):
+examples\css_feature_probes\line_plot_probe.py:496:            with dg.Panel("Event spikes", class_="side"):
+examples\css_feature_probes\loading_spinner_probe.py:29:    Panel.case {
+examples\css_feature_probes\loading_spinner_probe.py:119:    with dg.Panel("Native spinner states", class_="case"):
+examples\css_feature_probes\loading_spinner_probe.py:129:    with dg.Panel("Live controls", class_="case"):
+examples\css_feature_probes\log_view_probe.py:58:    Panel.case {
+examples\css_feature_probes\log_view_probe.py:170:        with dg.Panel("Live stream", class_="case"):
+examples\css_feature_probes\log_view_probe.py:199:        with dg.Panel("Snapshot", class_="case"):
+examples\css_feature_probes\media_probe.py:35:    Panel {
+examples\css_feature_probes\media_probe.py:43:    Panel.case {
+examples\css_feature_probes\media_probe.py:81:        Panel.wide {
+examples\css_feature_probes\media_probe.py:102:        Panel.narrow {
+examples\css_feature_probes\media_probe.py:119:        Panel.landscape {
+examples\css_feature_probes\media_probe.py:136:        Panel.portrait {
+examples\css_feature_probes\media_probe.py:153:        Panel.input {
+examples\css_feature_probes\media_probe.py:170:        Panel.scheme {
+examples\css_feature_probes\media_probe.py:183:        Panel.scheme {
+examples\css_feature_probes\media_probe.py:196:        Panel.motion {
+examples\css_feature_probes\media_probe.py:213:        Panel.query-list {
+examples\css_feature_probes\media_probe.py:243:        with dg.Panel(class_="case wide"):
+examples\css_feature_probes\media_probe.py:248:        with dg.Panel(class_="case narrow"):
+examples\css_feature_probes\media_probe.py:254:        with dg.Panel(class_="case landscape"):
+examples\css_feature_probes\media_probe.py:259:        with dg.Panel(class_="case portrait"):
+examples\css_feature_probes\media_probe.py:265:        with dg.Panel(class_="case input"):
+examples\css_feature_probes\media_probe.py:270:        with dg.Panel(class_="case query-list"):
+examples\css_feature_probes\media_probe.py:276:        with dg.Panel(class_="case scheme"):
+examples\css_feature_probes\media_probe.py:282:        with dg.Panel(class_="case motion"):
+examples\css_feature_probes\menu_overlays_probe.py:86:    Panel {
+examples\css_feature_probes\menu_overlays_probe.py:96:    Panel.edge-grid {
+examples\css_feature_probes\menu_overlays_probe.py:135:    Panel.overlap-card {
+examples\css_feature_probes\menu_overlays_probe.py:181:    with dg.Panel("Context menu edge placement", class_="edge-grid"):
+examples\css_feature_probes\menu_overlays_probe.py:204:    with dg.Panel("Overlay z-order", class_="overlap-card"):
+examples\css_feature_probes\menu_overlays_probe.py:209:    with dg.Panel("Scrollable background content"):
+examples\css_feature_probes\navigation_widgets_probe.py:162:    Panel.case {
+examples\css_feature_probes\navigation_widgets_probe.py:179:    Panel.half {
+examples\css_feature_probes\navigation_widgets_probe.py:289:                with dg.Panel("Overview page", class_="case"):
+examples\css_feature_probes\navigation_widgets_probe.py:295:                    with dg.Panel("Tabs and badges", class_="case half"):
+examples\css_feature_probes\navigation_widgets_probe.py:306:                    with dg.Panel("Context menu target", class_="case half"):
+examples\css_feature_probes\navigation_widgets_probe.py:315:                    with dg.Panel("Menu bar behavior", class_="case half"):
+examples\css_feature_probes\navigation_widgets_probe.py:320:                    with dg.Panel("Page route state", class_="case half"):
+examples\css_feature_probes\navigation_widgets_probe.py:326:                with dg.Panel("Reports page", class_="case"):
+examples\css_feature_probes\navigation_widgets_probe.py:330:                with dg.Panel("Settings page", class_="case"):
+examples\css_feature_probes\navigation_widgets_probe.py:334:                with dg.Panel("Disabled page", class_="case"):
+examples\css_feature_probes\overflow_scrollbar_probe.py:23:    Panel {
+examples\css_feature_probes\overflow_scrollbar_probe.py:48:    Panel.case {
+examples\css_feature_probes\overflow_scrollbar_probe.py:54:    Panel.hidden-case {
+examples\css_feature_probes\overflow_scrollbar_probe.py:58:    Panel.vertical-scroll {
+examples\css_feature_probes\overflow_scrollbar_probe.py:66:    Panel.hidden-clip {
+examples\css_feature_probes\overflow_scrollbar_probe.py:70:    Panel.both-scroll {
+examples\css_feature_probes\overflow_scrollbar_probe.py:95:    Panel.tile {
+examples\css_feature_probes\overflow_scrollbar_probe.py:108:    Panel.clip-card {
+examples\css_feature_probes\overflow_scrollbar_probe.py:128:    Panel.cell {
+examples\css_feature_probes\overflow_scrollbar_probe.py:140:    Panel.cell:nth-child(odd) {
+examples\css_feature_probes\overflow_scrollbar_probe.py:145:    Panel::scrollbar-track,
+examples\css_feature_probes\overflow_scrollbar_probe.py:153:    Panel::scrollbar-thumb,
+examples\css_feature_probes\overflow_scrollbar_probe.py:164:    Panel.both-scroll::scrollbar-thumb {
+examples\css_feature_probes\overflow_scrollbar_probe.py:186:        with dg.Panel(class_="case vertical-scroll"):
+examples\css_feature_probes\overflow_scrollbar_probe.py:192:        with dg.Panel("Hidden clip", class_="case hidden-case hidden-clip"):
+examples\css_feature_probes\overflow_scrollbar_probe.py:194:            with dg.Panel(class_="clip-card"):
+examples\css_feature_probes\overflow_scrollbar_probe.py:202:            with dg.Panel(class_="tile"):
+examples\css_feature_probes\overflow_scrollbar_probe.py:206:    with dg.Panel("Both axes", class_="both-scroll"):
+examples\css_feature_probes\overflow_scrollbar_probe.py:211:                    with dg.Panel(class_="cell"):
+examples\css_feature_probes\overlay_stack_probe.py:70:Panel::scrollbar-track {
+examples\css_feature_probes\overlay_stack_probe.py:78:Panel::scrollbar-thumb {
+examples\css_feature_probes\overlay_stack_probe.py:122:Panel {
+examples\css_feature_probes\overlay_stack_probe.py:133:Panel.case {
+examples\css_feature_probes\overlay_stack_probe.py:137:Panel.theme-strip {
+examples\css_feature_probes\overlay_stack_probe.py:142:Panel.edge-zone {
+examples\css_feature_probes\overlay_stack_probe.py:147:Panel.scroll-host {
+examples\css_feature_probes\overlay_stack_probe.py:272:        Panel {
+examples\css_feature_probes\overlay_stack_probe.py:310:        Panel,
+examples\css_feature_probes\overlay_stack_probe.py:362:        Panel,
+examples\css_feature_probes\overlay_stack_probe.py:435:    with dg.Panel("Theme and overlay actions", class_="theme-strip"):
+examples\css_feature_probes\overlay_stack_probe.py:445:        with dg.Panel("Modal, toast, and tooltip", class_="case"):
+examples\css_feature_probes\overlay_stack_probe.py:467:        with dg.Panel("Dropdown inside scroll container", class_="case"):
+examples\css_feature_probes\overlay_stack_probe.py:469:            with dg.Panel("Scrollable dropdown host", class_="scroll-host"):
+examples\css_feature_probes\overlay_stack_probe.py:481:        with dg.Panel("Context menu edge clamp", class_="case edge-zone"):
+examples\css_feature_probes\overlay_stack_probe.py:488:        with dg.Panel("Scrollable background density", class_="case"):
+examples\css_feature_probes\paint_widget_events_probe.py:103:    Panel.tile-card {
+examples\css_feature_probes\paint_widget_events_probe.py:136:            with dg.Panel(title, class_="tile-card"):
+examples\css_feature_probes\paint_widget_sparkline_probe.py:96:    Panel.card {
+examples\css_feature_probes\paint_widget_sparkline_probe.py:125:            with dg.Panel(label.title(), class_="card"):
+examples\css_feature_probes\pie_chart_probe.py:64:    Panel.case {
+examples\css_feature_probes\primitive_benchmark_probe.py:42:    Panel.cell {{
+examples\css_feature_probes\primitive_benchmark_probe.py:53:    Panel.solid {{
+examples\css_feature_probes\primitive_benchmark_probe.py:59:    Panel.rounded {{
+examples\css_feature_probes\primitive_benchmark_probe.py:65:    Panel.outline {{
+examples\css_feature_probes\primitive_benchmark_probe.py:71:    Panel.complex {{
+examples\css_feature_probes\primitive_benchmark_probe.py:87:        dg.Panel(None, class_=f"cell {klass}")
+examples\css_feature_probes\positioning_zindex_probe.py:44:    Panel {
+examples\css_feature_probes\positioning_zindex_probe.py:53:    Panel.case {
+examples\css_feature_probes\positioning_zindex_probe.py:99:    Panel.relative-demo {
+examples\css_feature_probes\positioning_zindex_probe.py:155:    Panel.positioned-card {
+examples\css_feature_probes\positioning_zindex_probe.py:180:    Panel.clip-host {
+examples\css_feature_probes\positioning_zindex_probe.py:220:        with dg.Panel("Relative position", class_="case relative-demo"):
+examples\css_feature_probes\positioning_zindex_probe.py:227:        with dg.Panel("Sibling z-index", class_="case"):
+examples\css_feature_probes\positioning_zindex_probe.py:236:        with dg.Panel("Absolute child", class_="case positioned-card"):
+examples\css_feature_probes\positioning_zindex_probe.py:243:        with dg.Panel("Clipping", class_="case clip-host"):
+examples\css_feature_probes\positioning_zindex_probe.py:250:        with dg.Panel("Scroll reference", class_="case"):
+examples\css_feature_probes\positioning_zindex_probe.py:256:        with dg.Panel("Extra content", class_="case"):
+examples\css_feature_probes\positioning_zindex_probe.py:264:        with dg.Panel("Bottom content", class_="case"):
+examples\css_feature_probes\positioning_zindex_probe.py:269:        with dg.Panel("Static baseline", class_="case"):
+examples\css_feature_probes\radio_group_probe.py:35:    Panel.case {
+examples\css_feature_probes\radio_group_probe.py:124:        with dg.Panel("Vertical group", class_="case"):
+examples\css_feature_probes\radio_group_probe.py:143:        with dg.Panel("Horizontal group", class_="case"):
+examples\css_feature_probes\property_grid_probe.py:37:    Panel.case {
+examples\css_feature_probes\property_grid_probe.py:154:        with dg.Panel("Schema generated", class_="case"):
+examples\css_feature_probes\property_grid_probe.py:174:        with dg.Panel("Manual rows", class_="case"):
+examples\css_feature_probes\probe_helpers.py:46:) -> Iterator[dg.Panel]:
+examples\css_feature_probes\probe_helpers.py:48:    card = dg.Panel(title, class_=classes)
+examples\css_feature_probes\scatter3d_css_chrome_probe.py:62:    Panel.case {
+examples\css_feature_probes\scatter3d_css_chrome_probe.py:118:        with dg.Panel("CSS chrome enabled", class_="case"):
+examples\css_feature_probes\scatter3d_css_chrome_probe.py:131:        with dg.Panel("CSS chrome disabled", class_="case"):
+examples\css_feature_probes\responsive_layout_probe.py:46:    Panel {
+examples\css_feature_probes\responsive_layout_probe.py:84:    Panel.percent-case {
+examples\css_feature_probes\responsive_layout_probe.py:95:    Panel.percent-child {
+examples\css_feature_probes\responsive_layout_probe.py:120:    Panel.auto-case {
+examples\css_feature_probes\responsive_layout_probe.py:130:    Panel.named-grid {
+examples\css_feature_probes\responsive_layout_probe.py:145:    Panel.grid-item {
+examples\css_feature_probes\responsive_layout_probe.py:152:    Panel.area-side {
+examples\css_feature_probes\responsive_layout_probe.py:158:    Panel.area-main {
+examples\css_feature_probes\responsive_layout_probe.py:164:    Panel.area-stats {
+examples\css_feature_probes\responsive_layout_probe.py:170:    Panel.area-detail {
+examples\css_feature_probes\responsive_layout_probe.py:176:    Panel.area-foot {
+examples\css_feature_probes\responsive_layout_probe.py:182:    Panel.auto-fit-grid {
+examples\css_feature_probes\responsive_layout_probe.py:193:    Panel.tile {
+examples\css_feature_probes\responsive_layout_probe.py:202:    Panel.tile:nth-child(odd) {
+examples\css_feature_probes\responsive_layout_probe.py:207:    Panel.tile-wide {
+examples\css_feature_probes\responsive_layout_probe.py:213:    Panel.fit-row {
+examples\css_feature_probes\responsive_layout_probe.py:221:    Panel.fit-row > Panel {
+examples\css_feature_probes\responsive_layout_probe.py:239:        Panel.percent-case,
+examples\css_feature_probes\responsive_layout_probe.py:240:        Panel.named-grid,
+examples\css_feature_probes\responsive_layout_probe.py:241:        Panel.auto-fit-grid,
+examples\css_feature_probes\responsive_layout_probe.py:242:        Panel.fit-row {
+examples\css_feature_probes\responsive_layout_probe.py:249:        Panel.auto-case {
+examples\css_feature_probes\responsive_layout_probe.py:256:        Panel.auto-case Badge {
+examples\css_feature_probes\responsive_layout_probe.py:261:        Panel.percent-child {
+examples\css_feature_probes\responsive_layout_probe.py:271:        Panel.named-grid {
+examples\css_feature_probes\responsive_layout_probe.py:282:        Panel.fit-row {
+examples\css_feature_probes\responsive_layout_probe.py:286:        Panel.auto-fit-grid {
+examples\css_feature_probes\responsive_layout_probe.py:291:        Panel.tile-wide {
+examples\css_feature_probes\responsive_layout_probe.py:295:        Panel.grid-item,
+examples\css_feature_probes\responsive_layout_probe.py:296:        Panel.fit-row > Panel {
+examples\css_feature_probes\responsive_layout_probe.py:315:    with dg.Panel("Percent and calc sizing", class_="percent-case"):
+examples\css_feature_probes\responsive_layout_probe.py:318:        with dg.Panel(class_="percent-child"):
+examples\css_feature_probes\responsive_layout_probe.py:325:    with dg.Panel("Auto sizing", class_="auto-case"):
+examples\css_feature_probes\responsive_layout_probe.py:337:    with dg.Panel("Named grid areas", class_="named-grid"):
+examples\css_feature_probes\responsive_layout_probe.py:338:        with dg.Panel(class_="grid-item area-side"):
+examples\css_feature_probes\responsive_layout_probe.py:341:        with dg.Panel(class_="grid-item area-main"):
+examples\css_feature_probes\responsive_layout_probe.py:344:        with dg.Panel(class_="grid-item area-stats"):
+examples\css_feature_probes\responsive_layout_probe.py:347:        with dg.Panel(class_="grid-item area-detail"):
+examples\css_feature_probes\responsive_layout_probe.py:350:        with dg.Panel(class_="grid-item area-foot"):
+examples\css_feature_probes\responsive_layout_probe.py:354:    with dg.Panel("Auto-fit and dense placement", class_="auto-fit-grid"):
+examples\css_feature_probes\responsive_layout_probe.py:357:            with dg.Panel(class_=tile_class):
+examples\css_feature_probes\responsive_layout_probe.py:360:    with dg.Panel("fit-content and minmax tracks", class_="fit-row"):
+examples\css_feature_probes\responsive_layout_probe.py:361:        with dg.Panel():
+examples\css_feature_probes\responsive_layout_probe.py:364:        with dg.Panel():
+examples\css_feature_probes\responsive_layout_probe.py:367:        with dg.Panel():
+examples\css_feature_probes\range_slider_probe.py:34:    Panel.case {
+examples\css_feature_probes\range_slider_probe.py:122:        with dg.Panel("Primary range", class_="case"):
+examples\css_feature_probes\range_slider_probe.py:132:        with dg.Panel("Custom parts", class_="case"):
+examples\css_feature_probes\scatter_dynamic_camera_benchmark_probe.py:96:    Panel.stage {
+examples\css_feature_probes\scatter_dynamic_camera_benchmark_probe.py:241:        with dg.Panel("Dense camera redraw path", class_="stage"):
+examples\css_feature_probes\README.md:20:    with dg.Panel("Case A", class_="case"):
+examples\css_feature_probes\README.md:22:    with dg.Panel("Case B", class_="case"):
+examples\css_feature_probes\README.md:26:Keep `Panel.case` rules focused on visual styling and minimum height. Avoid
+examples\css_feature_probes\README.md:55:24. `layout_containers_probe.py` - HLayout/VLayout sizing, titled Panel spacing, absolute children, nested panels, scrollable panels, Spacer, and Separator.
+examples\css_feature_probes\README.md:79:48. `layout_grid_masonry_probe.py` - masonry packing, standard grid alignment, nested cards, split panes, and responsive fallback.
+examples\css_feature_probes\README.md:82:51. `layout_plot_embedding_probe.py` - line, scatter, heatmap, histogram, bar, and table widgets embedded in constrained cards and split panes.
+examples\css_feature_probes\scatter3d_frame_benchmark_probe.py:131:    Panel::scrollbar-track {
+examples\css_feature_probes\scatter3d_frame_benchmark_probe.py:139:    Panel::scrollbar-thumb {
+examples\css_feature_probes\scatter3d_frame_benchmark_probe.py:156:    Panel {
+examples\css_feature_probes\scatter3d_frame_benchmark_probe.py:166:    Panel.plot {
+examples\css_feature_probes\scatter3d_frame_benchmark_probe.py:571:        with dg.Panel("Controls"):
+examples\css_feature_probes\scatter3d_frame_benchmark_probe.py:602:        with dg.Panel("Live plot", class_="plot"):
+examples\css_feature_probes\scatter3d_probe.py:128:    Panel.scroll-case::scrollbar-track {
+examples\css_feature_probes\scatter3d_probe.py:136:    Panel.scroll-case::scrollbar-thumb {
+examples\css_feature_probes\scatter3d_probe.py:149:    Panel {
+examples\css_feature_probes\scatter3d_probe.py:159:    Panel.case {
+examples\css_feature_probes\scatter3d_probe.py:164:    Panel.controls-panel {
+examples\css_feature_probes\scatter3d_probe.py:171:    Panel.column-panel {
+examples\css_feature_probes\scatter3d_probe.py:175:    Panel.stack-stage {
+examples\css_feature_probes\scatter3d_probe.py:181:    Panel.scroll-case {
+examples\css_feature_probes\scatter3d_probe.py:330:        with dg.Panel("Compact xyz_f32_v0", class_="case"):
+examples\css_feature_probes\scatter3d_probe.py:343:        with dg.Panel("Scalar point_instance_v1", class_="case"):
+examples\css_feature_probes\scatter3d_probe.py:363:    with dg.Panel("Live scatter controls", class_="controls-panel"):
+examples\css_feature_probes\scatter3d_probe.py:458:    with dg.Panel("Scalar normalization edge cases", class_="controls-panel"):
+examples\css_feature_probes\scatter3d_probe.py:461:            with dg.Panel("Collapsed linear range", class_="case"):
+examples\css_feature_probes\scatter3d_probe.py:478:            with dg.Panel("Log non-positive + NaN", class_="case"):
+examples\css_feature_probes\scatter3d_probe.py:498:        with dg.Panel("Categorical colors", class_="case"):
+examples\css_feature_probes\scatter3d_probe.py:513:        with dg.Panel("Explicit RGB colors", class_="case"):
+examples\css_feature_probes\scatter3d_probe.py:529:        with dg.Panel("Z-order and hit target", class_="case stack-stage"):
+examples\css_feature_probes\scatter3d_probe.py:551:        with dg.Panel("Scrollable rounded clip", class_="case scroll-case"):
+examples\css_feature_probes\scatter3d_probe.py:573:    with dg.Panel("Grid and Axes", class_="controls-panel"):
+examples\css_feature_probes\scatter3d_probe.py:577:            with dg.Panel("Grid scatter", class_="case"):
+examples\css_feature_probes\scatter3d_probe.py:594:            with dg.Panel("Grid controls", class_="controls-panel column-panel"):
+examples\css_feature_probes\scatter3d_probe.py:656:    with dg.Panel("Overlays", class_="controls-panel"):
+examples\css_feature_probes\scatter3d_probe.py:660:            with dg.Panel("Overlay scatter", class_="case"):
+examples\css_feature_probes\scatter3d_probe.py:674:            with dg.Panel("Overlay controls", class_="controls-panel column-panel"):
+examples\css_feature_probes\scatter3d_probe.py:741:    with dg.Panel("Annotations", class_="controls-panel"):
+examples\css_feature_probes\scatter3d_probe.py:745:            with dg.Panel("Annotation scatter", class_="case"):
+examples\css_feature_probes\scatter3d_probe.py:758:            with dg.Panel("Annotation controls", class_="controls-panel column-panel"):
+examples\css_feature_probes\scatter3d_probe.py:836:    with dg.Panel("Actors & Streaming", class_="controls-panel"):
+examples\css_feature_probes\scatter3d_probe.py:840:            with dg.Panel("Actor scatter", class_="case"):
+examples\css_feature_probes\scatter3d_probe.py:853:            with dg.Panel("Actor controls", class_="controls-panel column-panel"):
+examples\css_feature_probes\scatter3d_probe.py:966:    with dg.Panel("Selection & LOD", class_="controls-panel"):
+examples\css_feature_probes\scatter3d_probe.py:995:            with dg.Panel("300k point cloud", class_="case"):
+examples\css_feature_probes\scatter3d_probe.py:1002:            with dg.Panel("Controls", class_="controls-panel column-panel"):
+examples\css_feature_probes\scatter3d_probe.py:1034:    with dg.Panel("Mesh Overlays", class_="controls-panel"):
+examples\css_feature_probes\scatter3d_probe.py:1051:            with dg.Panel("Cluster cloud", class_="case"):
+examples\css_feature_probes\scatter3d_probe.py:1059:            with dg.Panel("Mesh controls", class_="controls-panel column-panel"):
+examples\css_feature_probes\scatter3d_probe.py:1093:    with dg.Panel("Export & Camera", class_="controls-panel"):
+examples\css_feature_probes\scatter3d_probe.py:1105:            with dg.Panel("Left view", class_="case"):
+examples\css_feature_probes\scatter3d_probe.py:1108:            with dg.Panel("Right view (linked)", class_="case"):
+examples\css_feature_probes\selectable_list_probe.py:35:    Panel.case {
+examples\css_feature_probes\selectable_list_probe.py:114:        with dg.Panel("Single select", class_="case"):
+examples\css_feature_probes\selectable_list_probe.py:133:        with dg.Panel("Multiple select", class_="case"):
+examples\css_feature_probes\scatter3d_dense_probe.py:94:    Panel.stage {
+examples\css_feature_probes\scatter3d_dense_probe.py:185:        with dg.Panel("Dense scalar volume", class_="stage"):
+examples\css_feature_probes\splitter_probe.py:50:    Splitter.workspace {
+examples\css_feature_probes\splitter_probe.py:55:    Splitter.nested {
+examples\css_feature_probes\splitter_probe.py:60:    Splitter::gutter {
+examples\css_feature_probes\splitter_probe.py:66:    Panel.pane-card {
+examples\css_feature_probes\splitter_probe.py:77:    Panel.preview {
+examples\css_feature_probes\splitter_probe.py:81:    Panel.navigator {
+examples\css_feature_probes\splitter_probe.py:85:    Panel.inspector {
+examples\css_feature_probes\splitter_probe.py:117:win = dg.Window("Splitter probe", width=1060, height=620)
+examples\css_feature_probes\splitter_probe.py:120:    dg.Label("Splitter", class_="title")
+examples\css_feature_probes\splitter_probe.py:123:    with dg.Splitter(
+examples\css_feature_probes\splitter_probe.py:130:        with dg.Pane():
+examples\css_feature_probes\splitter_probe.py:131:            with dg.Panel("Navigator", class_="pane-card navigator"):
+examples\css_feature_probes\splitter_probe.py:138:        with dg.Pane():
+examples\css_feature_probes\splitter_probe.py:139:            with dg.Splitter(
+examples\css_feature_probes\splitter_probe.py:146:                with dg.Pane():
+examples\css_feature_probes\splitter_probe.py:147:                    with dg.Panel("Preview", class_="pane-card preview"):
+examples\css_feature_probes\splitter_probe.py:153:                with dg.Pane():
+examples\css_feature_probes\splitter_probe.py:154:                    with dg.Panel("Log", class_="pane-card"):
+examples\css_feature_probes\splitter_probe.py:156:                        dg.Label("Pane children keep their own layout while resizing.", class_="caption")
+examples\css_feature_probes\splitter_probe.py:158:        with dg.Pane():
+examples\css_feature_probes\splitter_probe.py:159:            with dg.Panel("Inspector", class_="pane-card inspector"):
+examples\css_feature_probes\splitter_probe.py:165:    dg.Label("PASS: splitter gutters render and adjacent panes resize without clipping children.", class_="caption")
+examples\css_feature_probes\scatter_plot_2d_probe.py:108:    Panel.case {
+examples\css_feature_probes\scatter_plot_2d_probe.py:194:            with dg.Panel("Dense scalar color", class_="case"):
+examples\css_feature_probes\scatter_plot_2d_probe.py:209:            with dg.Panel("Categorical clusters", class_="case"):
+examples\css_feature_probes\selectors_probe.py:23:    Panel {
+examples\css_feature_probes\selectors_probe.py:74:    Panel.case {
+examples\css_feature_probes\selectors_probe.py:123:    Panel.descendant Button {
+examples\css_feature_probes\selectors_probe.py:127:    Panel.direct > Button {
+examples\css_feature_probes\selectors_probe.py:131:    Panel.direct Panel Button {
+examples\css_feature_probes\selectors_probe.py:136:    Panel.chain > HLayout > Button {
+examples\css_feature_probes\selectors_probe.py:141:    Panel.structural > Button:first-child {
+examples\css_feature_probes\selectors_probe.py:145:    Panel.structural > Button:nth-child(3) {
+examples\css_feature_probes\selectors_probe.py:149:    Panel.structural > Button:nth-child(2) {
+examples\css_feature_probes\selectors_probe.py:153:    Panel.structural > Panel:last-child:empty {
+examples\css_feature_probes\selectors_probe.py:161:    Panel.only > Label:only-child {
+examples\css_feature_probes\selectors_probe.py:166:    Panel.filtered > *:nth-child(2 of Button.primary) {
+examples\css_feature_probes\selectors_probe.py:184:    Panel.has-direct:has(> Badge[level="success"]) {
+examples\css_feature_probes\selectors_probe.py:189:    Panel.has-descendant:has(HLayout > Badge) {
+examples\css_feature_probes\selectors_probe.py:193:    Panel.sibling-source:has(+ Button.primary) {
+examples\css_feature_probes\selectors_probe.py:198:    Panel.has-checked:has(> Checkbox:checked) {
+examples\css_feature_probes\selectors_probe.py:253:        with dg.Panel("Type, class, id, key, attributes", class_="case"):
+examples\css_feature_probes\selectors_probe.py:262:        with dg.Panel("Descendant and child chains", class_="case descendant direct chain"):
+examples\css_feature_probes\selectors_probe.py:265:            with dg.Panel(style={"padding": 6, "gap": 6}):
+examples\css_feature_probes\selectors_probe.py:271:        with dg.Panel("Structural selectors", class_="case structural"):
+examples\css_feature_probes\selectors_probe.py:275:            dg.Panel()
+examples\css_feature_probes\selectors_probe.py:277:        with dg.Panel("Only child and filtered nth", class_="case"):
+examples\css_feature_probes\selectors_probe.py:278:            with dg.Panel(class_="only", style={"padding": 8}):
+examples\css_feature_probes\selectors_probe.py:280:            with dg.Panel(class_="filtered", style={"padding": 8, "gap": 6}):
+examples\css_feature_probes\selectors_probe.py:286:        with dg.Panel("Selector functions", class_="case has-direct has-descendant has-checked"):
+examples\css_feature_probes\selectors_probe.py:294:        with dg.Panel("Sibling :has(+ ...)", class_="case"):
+examples\css_feature_probes\selectors_probe.py:295:            with dg.Panel(class_="sibling-source"):
+examples\css_feature_probes\selectors_probe.py:300:        with dg.Panel("Dynamic states", class_="case"):
+examples\css_feature_probes\selectors_probe.py:308:        with dg.Panel("Expanded and collapsed", class_="case"):
+examples\css_feature_probes\startup_loading_probe.py:58:    Panel {
+examples\css_feature_probes\startup_loading_probe.py:87:            with dg.Panel("Startup Loading Screen"):
+examples\css_feature_probes\supports_probe.py:34:    Panel {
+examples\css_feature_probes\supports_probe.py:58:    Panel.case {
+examples\css_feature_probes\supports_probe.py:63:    Panel.pass {
+examples\css_feature_probes\supports_probe.py:68:    Panel.expected-false {
+examples\css_feature_probes\supports_probe.py:74:        Panel.declaration-pass {
+examples\css_feature_probes\supports_probe.py:87:        Panel.declaration-fail {
+examples\css_feature_probes\supports_probe.py:99:    @supports selector(Panel > Button.primary) {
+examples\css_feature_probes\supports_probe.py:100:        Panel.selector-pass {
+examples\css_feature_probes\supports_probe.py:113:        Panel.selector-fail {
+examples\css_feature_probes\supports_probe.py:120:        Panel.font-format-pass {
+examples\css_feature_probes\supports_probe.py:133:        Panel.font-format-fail {
+examples\css_feature_probes\supports_probe.py:140:        Panel.at-rule-pass {
+examples\css_feature_probes\supports_probe.py:153:        Panel.container-at-rule-pass {
+examples\css_feature_probes\supports_probe.py:166:        Panel.font-tech-pass {
+examples\css_feature_probes\supports_probe.py:183:        Panel.font-tech-fail {
+examples\css_feature_probes\supports_probe.py:203:        with dg.Panel(class_="case declaration-pass"):
+examples\css_feature_probes\supports_probe.py:207:        with dg.Panel(class_="case expected-false declaration-fail"):
+examples\css_feature_probes\supports_probe.py:212:        with dg.Panel(class_="case selector-pass"):
+examples\css_feature_probes\supports_probe.py:215:            dg.Label("selector(Panel > Button.primary) should match.", class_="caption")
+examples\css_feature_probes\supports_probe.py:217:        with dg.Panel(class_="case expected-false selector-fail"):
+examples\css_feature_probes\supports_probe.py:222:        with dg.Panel(class_="case font-format-pass"):
+examples\css_feature_probes\supports_probe.py:226:        with dg.Panel(class_="case expected-false font-format-fail"):
+examples\css_feature_probes\supports_probe.py:231:        with dg.Panel(class_="case at-rule-pass"):
+examples\css_feature_probes\supports_probe.py:235:        with dg.Panel(class_="case container-at-rule-pass"):
+examples\css_feature_probes\supports_probe.py:240:        with dg.Panel(class_="case font-tech-pass"):
+examples\css_feature_probes\supports_probe.py:244:        with dg.Panel(class_="case expected-false font-tech-fail"):
+examples\css_feature_probes\toggle_switch_probe.py:36:    Panel.case {
+examples\css_feature_probes\toggle_switch_probe.py:149:        with dg.Panel("Settings", class_="case"):
+examples\css_feature_probes\toggle_switch_probe.py:156:        with dg.Panel("Variants", class_="case"):
+examples\css_feature_probes\toolbar_probe.py:29:    Panel.case {
+examples\css_feature_probes\toolbar_probe.py:146:    with dg.Panel("Editor command surface", class_="case"):
+examples\css_feature_probes\toolbar_probe.py:161:    with dg.Panel("Horizontal and vertical placement", class_="case"):
+examples\css_feature_probes\tool_buttons_probe.py:66:    Panel.case {
+examples\css_feature_probes\tool_buttons_probe.py:205:    with dg.Panel("IconButton catalog", class_="case"):
+examples\css_feature_probes\tool_buttons_probe.py:217:    with dg.Panel("CSS icon color on light buttons", class_="case"):
+examples\css_feature_probes\tool_buttons_probe.py:225:    with dg.Panel("ImageButton, ArrowButton, SmallButton", class_="case"):
+examples\css_feature_probes\transitions_transforms_probe.py:44:    Panel {
+examples\css_feature_probes\transitions_transforms_probe.py:53:    Panel.case {
+examples\css_feature_probes\transitions_transforms_probe.py:157:    Panel.card-motion {
+examples\css_feature_probes\transitions_transforms_probe.py:163:    Panel.card-motion:hover {
+examples\css_feature_probes\transitions_transforms_probe.py:171:    Panel.child-motion {
+examples\css_feature_probes\transitions_transforms_probe.py:175:    Panel.child-motion:hover {
+examples\css_feature_probes\transitions_transforms_probe.py:229:        with dg.Panel("Button motion", class_="case"):
+examples\css_feature_probes\transitions_transforms_probe.py:235:        with dg.Panel("Transform shorthand", class_="case"):
+examples\css_feature_probes\transitions_transforms_probe.py:242:        with dg.Panel("Focus and open states", class_="case"):
+examples\css_feature_probes\transitions_transforms_probe.py:248:        with dg.Panel("Card transform", class_="case card-motion"):
+examples\css_feature_probes\transitions_transforms_probe.py:251:            with dg.Panel(class_="child-motion", style={"padding": 8, "gap": 6}):
+examples\css_feature_probes\transitions_transforms_probe.py:256:        with dg.Panel("Stateful controls", class_="case"):
+examples\css_feature_probes\transitions_transforms_probe.py:262:        with dg.Panel("Mixed timing", class_="case"):
+examples\css_feature_probes\thread_monitor_probe.py:61:    Panel.controls {
+examples\css_feature_probes\thread_monitor_probe.py:74:    Panel.controls::scrollbar-track,
+examples\css_feature_probes\thread_monitor_probe.py:75:    Panel.monitor-panel::scrollbar-track,
+examples\css_feature_probes\thread_monitor_probe.py:82:    Panel.controls::scrollbar-thumb,
+examples\css_feature_probes\thread_monitor_probe.py:83:    Panel.monitor-panel::scrollbar-thumb,
+examples\css_feature_probes\thread_monitor_probe.py:90:    Panel.controls Button {
+examples\css_feature_probes\thread_monitor_probe.py:95:    Panel.monitor-panel {
+examples\css_feature_probes\thread_monitor_probe.py:131:        with dg.Panel("Controls", class_="controls"):
+examples\css_feature_probes\tree_view_probe.py:35:    Panel.case {
+examples\css_feature_probes\tree_view_probe.py:122:        with dg.Panel("Data-driven tree", class_="case"):
+examples\css_feature_probes\tree_view_probe.py:158:        with dg.Panel("Manual tree", class_="case"):
+examples\css_feature_probes\typography_probe.py:46:    Panel {
+examples\css_feature_probes\typography_probe.py:55:    Panel.case {
+examples\css_feature_probes\typography_probe.py:144:    Panel.wrap-case {
+examples\css_feature_probes\typography_probe.py:188:        with dg.Panel("Transform and spacing", class_="case"):
+examples\css_feature_probes\typography_probe.py:195:        with dg.Panel("Line height and italic", class_="case"):
+examples\css_feature_probes\typography_probe.py:202:        with dg.Panel("Tabular numbers", class_="case"):
+examples\css_feature_probes\typography_probe.py:212:        with dg.Panel("Overflow", class_="case"):
+examples\css_feature_probes\typography_probe.py:219:    with dg.Panel("Wrapping behavior", class_="wrap-case"):
+examples\css_feature_probes\v4_scroll_benchmark_probe.py:139:    Panel.card {
+examples\css_feature_probes\v4_scroll_benchmark_probe.py:149:    Panel.tall {
+examples\css_feature_probes\v4_scroll_benchmark_probe.py:267:                with dg.Panel("Controls", class_="card"):
+examples\css_feature_probes\v4_scroll_benchmark_probe.py:279:                with dg.Panel("Property inspector", class_="card"):
+examples\css_feature_probes\v4_scroll_benchmark_probe.py:280:                    with dg.Splitter(orientation="horizontal", sizes=(120, "1fr"), min_sizes=(110, 240)):
+examples\css_feature_probes\v4_scroll_benchmark_probe.py:281:                        with dg.Pane(min_size=110):
+examples\css_feature_probes\v4_scroll_benchmark_probe.py:285:                        with dg.Pane(min_size=240):
+examples\css_feature_probes\v4_scroll_benchmark_probe.py:302:                with dg.Panel("Scatter and heatmap", class_="card tall"):
+examples\css_feature_probes\v4_scroll_benchmark_probe.py:324:                with dg.Panel("Table and bars", class_="card tall"):
+examples\css_feature_probes\v4_scroll_benchmark_probe.py:345:                    with dg.Panel(f"Filler card {section + 1}", class_="card"):
+examples\css_feature_probes\widget_metrics_probe.py:98:    Panel {
+examples\css_feature_probes\widget_metrics_probe.py:109:    Panel.case {
+examples\css_feature_probes\widget_metrics_probe.py:209:    Panel.scatter-case {
+examples\css_feature_probes\widget_metrics_probe.py:227:    Panel.scroll-scatter-case {
+examples\css_feature_probes\widget_metrics_probe.py:232:    Panel.scroll-scatter-case::scrollbar-track {
+examples\css_feature_probes\widget_metrics_probe.py:239:    Panel.scroll-scatter-case::scrollbar-thumb {
+examples\css_feature_probes\widget_metrics_probe.py:266:        with dg.Panel("TextArea rows", class_="case"):
+examples\css_feature_probes\widget_metrics_probe.py:280:        with dg.Panel("TextArea typography metrics", class_="case"):
+examples\css_feature_probes\widget_metrics_probe.py:295:        with dg.Panel("Scatter3D tiny points", class_="case scatter-case"):
+examples\css_feature_probes\widget_metrics_probe.py:300:        with dg.Panel("Scatter3D large points", class_="case scatter-case"):
+examples\css_feature_probes\widget_metrics_probe.py:306:        with dg.Panel("Scatter3D inside scrollable panel", class_="case scroll-scatter-case"):
+examples\css_feature_probes\widget_metrics_probe.py:313:        with dg.Panel("Compact table metrics", class_="case"):
+examples\css_feature_probes\widget_metrics_probe.py:318:        with dg.Panel("Roomy table metrics", class_="case"):
